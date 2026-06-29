@@ -15,6 +15,11 @@
 ;(() => {
     const starterQuizResultsControllerFlag = 'starterQuizResultsController'
     const starterQuizResultsDebugEnabled = true
+    const pendingQuizStorageKey = 'starterQuizPending'
+    const learnContentSectionSelector = '.section_results-learn'
+    const learnContentDefaultFilterField = 'categories'
+    const learnContentFilterWaitAttempts = 40
+    const learnContentFilterWaitMs = 250
 
     if (window[starterQuizResultsControllerFlag]) {
         if (starterQuizResultsDebugEnabled) {
@@ -27,12 +32,272 @@
 
     window[starterQuizResultsControllerFlag] = true
 
+    function normalizeLearnContentValue(value) {
+        return (value || '').trim()
+    }
+
+    function slugifyLearnContentValue(value) {
+        return normalizeLearnContentValue(value)
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/(^-|-$)/g, '')
+    }
+
+    function parseLearnContentJson(value) {
+        if (!value) return null
+        if (typeof value === 'object') return value
+
+        try {
+            const parsedValue = JSON.parse(value)
+            return parsedValue && typeof parsedValue === 'object'
+                ? parsedValue
+                : null
+        } catch (error) {
+            return null
+        }
+    }
+
+    function getLearnContentUrlListValues(params, keys) {
+        return keys
+            .flatMap((key) => params.getAll(key))
+            .flatMap((value) =>
+                normalizeLearnContentValue(value).split(/\s*[,|]\s*/),
+            )
+            .map(normalizeLearnContentValue)
+            .filter(Boolean)
+    }
+
+    function parseLearnContentTestSelectionItem(value) {
+        const text = normalizeLearnContentValue(value)
+        const separatorIndex = text.indexOf(':')
+
+        if (separatorIndex > 0) {
+            const rawId = text.slice(0, separatorIndex)
+            const rawLabel = text.slice(separatorIndex + 1)
+            const id =
+                slugifyLearnContentValue(rawId) ||
+                slugifyLearnContentValue(rawLabel)
+
+            return {
+                id,
+                label:
+                    normalizeLearnContentValue(rawLabel) ||
+                    normalizeLearnContentValue(rawId),
+            }
+        }
+
+        return {
+            id: slugifyLearnContentValue(text),
+            label: text,
+        }
+    }
+
+    function getLearnContentTestPendingQuizFromUrl() {
+        const params = new URLSearchParams(window.location.search)
+        const testMode = ['1', 'true', 'yes'].includes(
+            normalizeLearnContentValue(
+                params.get('starterQuizTest') || params.get('quizTest'),
+            ).toLowerCase(),
+        )
+
+        if (!testMode) return null
+
+        const categoriesById = new Map()
+
+        getLearnContentUrlListValues(params, ['category', 'categories']).forEach(
+            (value) => {
+                const category = parseLearnContentTestSelectionItem(value)
+                if (category.id) categoriesById.set(category.id, category)
+            },
+        )
+
+        getLearnContentUrlListValues(params, [
+            'subcategory',
+            'subcategories',
+        ]).forEach((value) => {
+            const parts = normalizeLearnContentValue(value)
+                .split('>')
+                .map(normalizeLearnContentValue)
+                .filter(Boolean)
+            const categoryPart = parts.length > 1 ? parts[0] : ''
+
+            if (!categoryPart) return
+
+            const category = parseLearnContentTestSelectionItem(categoryPart)
+            if (category.id && !categoriesById.has(category.id)) {
+                categoriesById.set(category.id, category)
+            }
+        })
+
+        return { categories: Array.from(categoriesById.values()) }
+    }
+
+    function getStoredLearnContentPendingQuiz() {
+        return parseLearnContentJson(
+            window.sessionStorage?.getItem(pendingQuizStorageKey),
+        )
+    }
+
+    function getLearnContentCategoryFilterValue(category) {
+        if (!category || typeof category !== 'object') return ''
+
+        const candidateValues = [
+            category.membershipId,
+            category.membershipID,
+            category.membership_id,
+            category.categoryMembershipId,
+            category.category_membership_id,
+            category.id,
+            category.value,
+        ]
+
+        for (const value of candidateValues) {
+            const normalizedValue = normalizeLearnContentValue(value)
+            if (normalizedValue) return normalizedValue
+        }
+
+        return slugifyLearnContentValue(category.label)
+    }
+
+    function getLearnContentCategoryFilters(pendingQuiz) {
+        const categories = Array.isArray(pendingQuiz?.categories)
+            ? pendingQuiz.categories
+            : []
+        const selectedCategoryFilters = Array.from(
+            new Set(categories.map(getLearnContentCategoryFilterValue).filter(Boolean)),
+        )
+        const selectedCategory = categories.find((category) =>
+            selectedCategoryFilters.includes(
+                getLearnContentCategoryFilterValue(category),
+            ),
+        )
+
+        return {
+            selectedCategory: selectedCategory || null,
+            selectedCategoryFilter: selectedCategoryFilters[0] || '',
+            selectedCategoryFilters,
+        }
+    }
+
+    function getWfAlgoliaRuntime() {
+        return window.WfAlgolia &&
+            typeof window.WfAlgolia.setFilter === 'function'
+            ? window.WfAlgolia
+            : null
+    }
+
+    function waitForWfAlgoliaRuntime() {
+        const runtime = getWfAlgoliaRuntime()
+        if (runtime) return Promise.resolve(runtime)
+
+        return new Promise((resolve) => {
+            let attempts = 0
+            const intervalId = window.setInterval(() => {
+                attempts += 1
+                const currentRuntime = getWfAlgoliaRuntime()
+
+                if (currentRuntime || attempts >= learnContentFilterWaitAttempts) {
+                    window.clearInterval(intervalId)
+                    resolve(currentRuntime || null)
+                }
+            }, learnContentFilterWaitMs)
+        })
+    }
+
+    async function syncLearnContentFilters(pendingQuiz, source = 'results') {
+        const learnContentSection = document.querySelector(
+            learnContentSectionSelector,
+        )
+
+        if (!learnContentSection) return false
+
+        const {
+            selectedCategory,
+            selectedCategoryFilter,
+            selectedCategoryFilters,
+        } = getLearnContentCategoryFilters(pendingQuiz)
+
+        if (!selectedCategoryFilter) return false
+
+        window.selectedCategory = selectedCategoryFilter
+        window.selectedCategoryFilters = selectedCategoryFilters
+
+        const wfAlgolia = await waitForWfAlgoliaRuntime()
+
+        if (!wfAlgolia) {
+            if (starterQuizResultsDebugEnabled) {
+                console.warn(
+                    '[Starter Quiz Funnel]',
+                    '[results]',
+                    'WfAlgolia runtime unavailable; LearnContent filters skipped',
+                    {
+                        source,
+                        selectedCategoryFilter,
+                        selectedCategoryFilters,
+                    },
+                )
+            }
+
+            return false
+        }
+
+        wfAlgolia.setFilter(
+            learnContentSection.getAttribute('data-quiz-learn-filter-field') ||
+                learnContentSection.getAttribute('wf-algolia-filter-field') ||
+                learnContentSection.getAttribute('wf-algolia-base-filter-field') ||
+                learnContentDefaultFilterField,
+            selectedCategoryFilters,
+        )
+        window.dispatchEvent(
+            new CustomEvent('starterQuizResultsReady', {
+                detail: {
+                    source,
+                    selectedCategory,
+                    selectedCategoryFilter,
+                    selectedCategoryFilters,
+                    learnContentSection,
+                },
+            }),
+        )
+
+        if (starterQuizResultsDebugEnabled) {
+            console.log(
+                '[Starter Quiz Funnel]',
+                '[results]',
+                'synced LearnContent filters',
+                {
+                    source,
+                    selectedCategory,
+                    selectedCategoryFilter,
+                    selectedCategoryFilters,
+                    filterField:
+                        learnContentSection.getAttribute(
+                            'data-quiz-learn-filter-field',
+                        ) ||
+                        learnContentSection.getAttribute(
+                            'wf-algolia-filter-field',
+                        ) ||
+                        learnContentSection.getAttribute(
+                            'wf-algolia-base-filter-field',
+                        ) ||
+                        learnContentDefaultFilterField,
+                },
+            )
+        }
+
+        return true
+    }
+
+    syncLearnContentFilters(
+        getLearnContentTestPendingQuizFromUrl() || getStoredLearnContentPendingQuiz(),
+        'early',
+    )
+
     document.addEventListener(
     'DOMContentLoaded',
     function starterQuizResultsController() {
     const debugStorageKey = 'starterQuizDebug'
     const debugLogPrefix = '[Starter Quiz Funnel]'
-    const pendingQuizStorageKey = 'starterQuizPending'
     const algoliaDefaultAppId = 'PKVW6M9OPZ'
     const algoliaDefaultIndexName = 'Freelancers3.0-dev'
     const recommendationAlgorithmVersion = 'category-subcategory-pairs-v16'
@@ -3760,6 +4025,7 @@
             return
         }
 
+        syncLearnContentFilters(pendingQuiz, 'resolved')
         renderTestModeControls(pendingQuiz)
 
         if (pendingQuiz.status && pendingQuiz.status !== 'ready') {
