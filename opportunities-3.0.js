@@ -147,6 +147,41 @@
       const el = scope.querySelector(`[name="${name}"]`)
       return el ? el.value.trim() : ''
     }
+    const multiVal = (name) => {
+      const values = []
+      const seen = new Set()
+      const add = (raw) => {
+        String(raw || '')
+          .split(',')
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .forEach((part) => {
+            const key = part.toLowerCase()
+            if (!seen.has(key)) {
+              seen.add(key)
+              values.push(part)
+            }
+          })
+      }
+
+      $$(`[name="${name}"]`, scope).forEach((el) => {
+        if (el instanceof HTMLSelectElement && el.multiple) {
+          Array.from(el.selectedOptions).forEach((opt) => add(opt.value || opt.textContent))
+          return
+        }
+        if (el instanceof HTMLInputElement && ['checkbox', 'radio'].includes(el.type)) {
+          if (el.checked) add(el.value)
+          return
+        }
+        if ('value' in el) add(el.value)
+      })
+
+      $$('[data-opp-role-value][aria-selected="true"], [data-opp-role-value].is-selected, [data-opp-role-value].w--current', scope).forEach((el) => {
+        add(el.getAttribute('data-opp-role-value') || el.textContent)
+      })
+
+      return values.join(', ')
+    }
     const checked = (name) => {
       const el = scope.querySelector(`[name="${name}"]:checked`)
       return el ? el.id : '' // project_type radios are keyed by id -> PROJECT_TYPE
@@ -164,7 +199,7 @@
       title: val('Opportunity-title'),
       description: val('Description'),
       exp_requirements: val('Requirements'),
-      role_name: val('Role-option'),
+      role_name: multiVal('Role-option') || multiVal('Function'),
       project_type,
       est_project_duration: checkedVal('Duration'),
       budget,
