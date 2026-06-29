@@ -17,9 +17,12 @@
     const starterQuizResultsDebugEnabled = true
     const pendingQuizStorageKey = 'starterQuizPending'
     const learnContentSectionSelector = '.section_results-learn'
+    const learnContentResultsSelector =
+        learnContentSectionSelector + ' [wf-algolia-element="results"]'
     const learnContentDefaultFilterField = 'categories'
     const learnContentFilterWaitAttempts = 40
     const learnContentFilterWaitMs = 250
+    const learnContentPostProcessDelays = [0, 100, 500]
 
     if (window[starterQuizResultsControllerFlag]) {
         if (starterQuizResultsDebugEnabled) {
@@ -204,6 +207,133 @@
         })
     }
 
+    function refreshLearnContentSwiper(resultsElement) {
+        const swiper = resultsElement
+            ?.closest('[data-swiper-scroll="swiper"]')
+            ?.__swiperScrollInstance
+
+        if (swiper && typeof swiper.update === 'function') {
+            try {
+                swiper.update()
+            } catch (error) {
+                if (starterQuizResultsDebugEnabled) {
+                    console.warn(
+                        '[Starter Quiz Funnel]',
+                        '[results]',
+                        'LearnContent swiper update failed',
+                        { error },
+                    )
+                }
+            }
+        }
+    }
+
+    function isLearnContentSlide(element) {
+        return Boolean(
+            element?.matches?.(
+                '[data-swiper-scroll="swiper-slide"], .content-card_component',
+            ),
+        )
+    }
+
+    function isLearnContentTemplateSlide(element) {
+        return (
+            element?.getAttribute?.('wf-algolia-element') === 'template' ||
+            element?.querySelector?.('[wf-algolia-element="template"]')
+        )
+    }
+
+    function isLearnContentInjectedSlide(element) {
+        return Boolean(element?.classList?.contains('wf-algolia-injected'))
+    }
+
+    function isLearnContentLockedSlide(element) {
+        return Boolean(element?.querySelector?.('.content-card_locked'))
+    }
+
+    function isLearnContentAuthoredPlaceholderSlide(element) {
+        return (
+            isLearnContentSlide(element) &&
+            !isLearnContentTemplateSlide(element) &&
+            !isLearnContentInjectedSlide(element) &&
+            !isLearnContentLockedSlide(element)
+        )
+    }
+
+    function normalizeLearnContentSlides(source = 'results') {
+        const resultsElement = document.querySelector(learnContentResultsSelector)
+        if (!resultsElement) return false
+
+        const slides = Array.from(resultsElement.children).filter(
+            isLearnContentSlide,
+        )
+        const lockedSlides = slides.filter(isLearnContentLockedSlide)
+        let didChange = false
+
+        slides.forEach((slide) => {
+            if (!isLearnContentAuthoredPlaceholderSlide(slide)) return
+
+            slide.classList.add('hide')
+            slide.setAttribute('aria-hidden', 'true')
+            didChange = true
+        })
+
+        lockedSlides.forEach((lockedSlide) => {
+            if (lockedSlide.parentElement !== resultsElement) return
+            if (resultsElement.lastElementChild === lockedSlide) return
+
+            resultsElement.appendChild(lockedSlide)
+            didChange = true
+        })
+
+        if (didChange) {
+            refreshLearnContentSwiper(resultsElement)
+
+            if (starterQuizResultsDebugEnabled) {
+                console.log(
+                    '[Starter Quiz Funnel]',
+                    '[results]',
+                    'normalized LearnContent slides',
+                    {
+                        source,
+                        hiddenPlaceholderCount: slides.filter(
+                            isLearnContentAuthoredPlaceholderSlide,
+                        ).length,
+                        lockedSlideCount: lockedSlides.length,
+                    },
+                )
+            }
+        }
+
+        return didChange
+    }
+
+    function scheduleNormalizeLearnContentSlides(source = 'results') {
+        learnContentPostProcessDelays.forEach((delay) => {
+            window.setTimeout(() => {
+                normalizeLearnContentSlides(source)
+            }, delay)
+        })
+    }
+
+    function bindLearnContentWfAlgoliaEvents(wfAlgolia) {
+        if (
+            !wfAlgolia ||
+            typeof wfAlgolia.on !== 'function' ||
+            window.__starterQuizLearnContentEventsBound
+        ) {
+            return
+        }
+
+        window.__starterQuizLearnContentEventsBound = true
+        wfAlgolia.on('results', () => {
+            scheduleNormalizeLearnContentSlides('wf-algolia-results')
+        })
+        wfAlgolia.on('refresh', () => {
+            scheduleNormalizeLearnContentSlides('wf-algolia-refresh')
+        })
+    }
+
     async function syncLearnContentFilters(pendingQuiz, source = 'results') {
         const learnContentSection = document.querySelector(
             learnContentSectionSelector,
@@ -241,6 +371,7 @@
             return false
         }
 
+        bindLearnContentWfAlgoliaEvents(wfAlgolia)
         wfAlgolia.setFilter(
             learnContentSection.getAttribute('data-quiz-learn-filter-field') ||
                 learnContentSection.getAttribute('wf-algolia-filter-field') ||
@@ -248,6 +379,7 @@
                 learnContentDefaultFilterField,
             selectedCategoryFilters,
         )
+        scheduleNormalizeLearnContentSlides(source)
         window.dispatchEvent(
             new CustomEvent('starterQuizResultsReady', {
                 detail: {
@@ -292,6 +424,7 @@
         getLearnContentTestPendingQuizFromUrl() || getStoredLearnContentPendingQuiz(),
         'early',
     )
+    scheduleNormalizeLearnContentSlides('initial')
 
     document.addEventListener(
     'DOMContentLoaded',
