@@ -164,11 +164,12 @@
       title: val('Opportunity-title'),
       description: val('Description'),
       exp_requirements: val('Requirements'),
+      role_name: val('Role-option'),
       project_type,
       est_project_duration: checkedVal('Duration'),
       budget,
       budget_frequency: BUDGET_FREQUENCY[project_type] || '',
-      // function_refs/category_refs/subcategory_refs intentionally omitted (see WIRING-GUIDE §taxonomy)
+      // Xano resolves role_name -> function/category/subcategory refs via v3 taxonomy tables.
     }
   }
 

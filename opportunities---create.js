@@ -70,7 +70,7 @@
    * Build the Xano create payload from the form's field `name`s.
    * `est_project_duration` reads the radio VALUE (e.g. "≤ 1 months"), not its id.
    * @param {HTMLFormElement} form
-   * @returns {{title:string, description:string, exp_requirements:string, project_type:string, est_project_duration:string, budget:string, budget_frequency:string}}
+   * @returns {{title:string, description:string, exp_requirements:string, role_name:string, project_type:string, est_project_duration:string, budget:string, budget_frequency:string}}
    */
   const readForm = (form) => {
     /** @param {string} name @returns {string} */
@@ -89,6 +89,7 @@
       title: val('Opportunity-title'),
       description: val('Description'),
       exp_requirements: val('Requirements'),
+      role_name: val('Role-option'),
       project_type,
       est_project_duration: durEl ? durEl.value : '',
       budget: project_type
