@@ -20,9 +20,12 @@
     const learnContentResultsSelector =
         learnContentSectionSelector + ' [wf-algolia-element="results"]'
     const learnContentDefaultFilterField = 'categories'
+    const learnContentDefaultAppId = 'PKVW6M9OPZ'
+    const learnContentDefaultIndexName = 'LearnContent'
+    const learnContentDefaultHitsPerPage = 4
     const learnContentFilterWaitAttempts = 40
     const learnContentFilterWaitMs = 250
-    const learnContentPostProcessDelays = [0, 100, 500]
+    const learnContentPostProcessDelays = [0, 100, 500, 1200]
 
     if (window[starterQuizResultsControllerFlag]) {
         if (starterQuizResultsDebugEnabled) {
@@ -181,24 +184,556 @@
         const categories = Array.isArray(pendingQuiz?.categories)
             ? pendingQuiz.categories
             : []
+        const selectedCategoryFilterGroups = categories
+            .map((category) => ({
+                category,
+                categoryId:
+                    normalizeLearnContentValue(category?.id) ||
+                    slugifyLearnContentValue(category?.label || category),
+                categoryLabel:
+                    normalizeLearnContentValue(category?.label) ||
+                    normalizeLearnContentValue(category?.value) ||
+                    normalizeLearnContentValue(category),
+                filterValues: getLearnContentCategoryFilterValues(category),
+            }))
+            .filter((group) => group.filterValues.length)
         const selectedCategoryFilters = Array.from(
             new Set(
-                categories
-                    .flatMap(getLearnContentCategoryFilterValues)
+                selectedCategoryFilterGroups
+                    .flatMap((group) => group.filterValues)
                     .filter(Boolean),
             ),
         )
-        const selectedCategory = categories.find((category) =>
-            getLearnContentCategoryFilterValues(category).some((value) =>
-                selectedCategoryFilters.includes(value),
-            ),
-        )
+        const selectedCategory = selectedCategoryFilterGroups[0]?.category || null
 
         return {
             selectedCategory: selectedCategory || null,
             selectedCategoryFilter: selectedCategoryFilters[0] || '',
+            selectedCategoryFilterGroups,
             selectedCategoryFilters,
         }
+    }
+
+    function getLearnContentSearchConfig(learnContentSection) {
+        const windowConfig =
+            window.starterQuizLearnContentAlgoliaConfig ||
+            window.starterQuizAlgoliaConfig ||
+            {}
+        const explicitElement = document.querySelector(
+            '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
+        )
+        const wfAlgoliaScript = document.querySelector(
+            'script[data-app-id][data-search-key]',
+        )
+
+        return {
+            appId:
+                normalizeLearnContentValue(windowConfig.appId) ||
+                normalizeLearnContentValue(
+                    explicitElement?.dataset.starterQuizAlgoliaAppId,
+                ) ||
+                normalizeLearnContentValue(explicitElement?.dataset.algoliaAppId) ||
+                normalizeLearnContentValue(
+                    wfAlgoliaScript?.getAttribute('data-app-id'),
+                ) ||
+                learnContentDefaultAppId,
+            searchKey:
+                normalizeLearnContentValue(windowConfig.searchKey) ||
+                normalizeLearnContentValue(
+                    explicitElement?.dataset.starterQuizAlgoliaSearchKey,
+                ) ||
+                normalizeLearnContentValue(
+                    explicitElement?.dataset.algoliaSearchKey,
+                ) ||
+                normalizeLearnContentValue(
+                    wfAlgoliaScript?.getAttribute('data-search-key'),
+                ),
+            indexName:
+                normalizeLearnContentValue(
+                    learnContentSection?.getAttribute('wf-algolia-index'),
+                ) ||
+                normalizeLearnContentValue(
+                    learnContentSection?.getAttribute(
+                        'data-quiz-learn-index-name',
+                    ),
+                ) ||
+                normalizeLearnContentValue(windowConfig.indexName) ||
+                learnContentDefaultIndexName,
+        }
+    }
+
+    function getLearnContentFilterField(learnContentSection) {
+        return (
+            learnContentSection.getAttribute('data-quiz-learn-filter-field') ||
+            learnContentSection.getAttribute('wf-algolia-filter-field') ||
+            learnContentSection.getAttribute('wf-algolia-base-filter-field') ||
+            learnContentDefaultFilterField
+        )
+    }
+
+    function getLearnContentHitsPerPage(learnContentSection) {
+        const rawValue =
+            learnContentSection.getAttribute('data-quiz-learn-limit') ||
+            learnContentSection.getAttribute('wf-algolia-hits-per-page') ||
+            learnContentSection.getAttribute('wf-algolia-per-page') ||
+            learnContentSection.getAttribute('data-hits-per-page')
+        const value = Number.parseInt(rawValue, 10)
+
+        return Number.isFinite(value) && value > 0
+            ? value
+            : learnContentDefaultHitsPerPage
+    }
+
+    function getLearnContentResultsElement(learnContentSection) {
+        return (
+            learnContentSection?.querySelector?.('[wf-algolia-element="results"]') ||
+            document.querySelector(learnContentResultsSelector)
+        )
+    }
+
+    function captureLearnContentTemplate(learnContentSection) {
+        const resultsElement = getLearnContentResultsElement(learnContentSection)
+        if (!resultsElement) return null
+
+        if (window.__starterQuizLearnContentTemplate) {
+            return window.__starterQuizLearnContentTemplate.cloneNode(true)
+        }
+
+        const template =
+            Array.from(resultsElement.children).find((child) =>
+                isLearnContentTemplateSlide(child),
+            ) || resultsElement.querySelector('[wf-algolia-element="template"]')
+
+        if (!template) return null
+
+        window.__starterQuizLearnContentTemplate = template.cloneNode(true)
+
+        return window.__starterQuizLearnContentTemplate.cloneNode(true)
+    }
+
+    function getLearnContentBoundElements(root, selector) {
+        if (!root) return []
+
+        return [
+            ...(root.matches?.(selector) ? [root] : []),
+            ...Array.from(root.querySelectorAll?.(selector) || []),
+        ]
+    }
+
+    function getLearnContentHitValue(hit, pathList) {
+        const paths = normalizeLearnContentValue(pathList)
+            .split('|')
+            .map(normalizeLearnContentValue)
+            .filter(Boolean)
+
+        for (const path of paths) {
+            const value = path
+                .split('.')
+                .reduce(
+                    (currentValue, key) =>
+                        currentValue && typeof currentValue === 'object'
+                            ? currentValue[key]
+                            : undefined,
+                    hit,
+                )
+
+            if (Array.isArray(value) && value.length) return value.join(', ')
+            if (value !== null && typeof value !== 'undefined' && value !== '') {
+                return value
+            }
+        }
+
+        return ''
+    }
+
+    function setLearnContentElementLink(element, href) {
+        if (!href) return
+
+        if (element.tagName === 'A') {
+            element.setAttribute('href', href)
+            return
+        }
+
+        const anchor = element.querySelector?.('a')
+        if (anchor) {
+            anchor.setAttribute('href', href)
+            return
+        }
+
+        element.setAttribute('href', href)
+    }
+
+    function populateLearnContentCard(card, hit) {
+        getLearnContentBoundElements(card, '[wf-algolia-text]').forEach(
+            (element) => {
+                const value = getLearnContentHitValue(
+                    hit,
+                    element.getAttribute('wf-algolia-text'),
+                )
+                element.textContent = Array.isArray(value)
+                    ? value.join(', ')
+                    : String(value || '')
+            },
+        )
+
+        getLearnContentBoundElements(card, '[wf-algolia-html]').forEach(
+            (element) => {
+                const value = getLearnContentHitValue(
+                    hit,
+                    element.getAttribute('wf-algolia-html'),
+                )
+                element.textContent = String(value || '')
+            },
+        )
+
+        getLearnContentBoundElements(card, '[wf-algolia-image]').forEach(
+            (element) => {
+                const src = getLearnContentHitValue(
+                    hit,
+                    element.getAttribute('wf-algolia-image'),
+                )
+                const alt = element.hasAttribute('wf-algolia-alt')
+                    ? getLearnContentHitValue(
+                          hit,
+                          element.getAttribute('wf-algolia-alt'),
+                      )
+                    : ''
+
+                if (src) element.setAttribute('src', String(src))
+                if (element.hasAttribute('srcset')) element.removeAttribute('srcset')
+                if (element.hasAttribute('wf-algolia-alt')) {
+                    element.setAttribute('alt', String(alt || ''))
+                }
+            },
+        )
+
+        getLearnContentBoundElements(
+            card,
+            '[wf-algolia-link], [wf-algolia-link-url]',
+        ).forEach((element) => {
+            const urlField = element.getAttribute('wf-algolia-link-url')
+            const linkField = element.getAttribute('wf-algolia-link')
+            const directUrl = urlField ? getLearnContentHitValue(hit, urlField) : ''
+
+            if (directUrl) {
+                setLearnContentElementLink(element, String(directUrl))
+                return
+            }
+
+            const rawLinkValue = linkField
+                ? getLearnContentHitValue(hit, linkField)
+                : ''
+            if (!rawLinkValue) return
+
+            const shouldSlugify = ['1', 'true', 'yes'].includes(
+                normalizeLearnContentValue(
+                    element.getAttribute('wf-algolia-link-slugify'),
+                ).toLowerCase(),
+            )
+            const linkValue = shouldSlugify
+                ? slugifyLearnContentValue(rawLinkValue)
+                : String(rawLinkValue)
+            const prefix =
+                element.getAttribute('wf-algolia-link-prefix') ||
+                element.getAttribute('wf-algolia-link-folder') ||
+                ''
+            const suffix = element.getAttribute('wf-algolia-link-suffix') || ''
+
+            setLearnContentElementLink(element, prefix + linkValue + suffix)
+        })
+    }
+
+    function prepareLearnContentCard(card, hit, group) {
+        if (!card) return null
+
+        card.classList?.add('wf-algolia-injected')
+        card.classList?.remove('hide')
+        card.removeAttribute?.('aria-hidden')
+        card.removeAttribute?.('wf-algolia-element')
+        card.querySelectorAll?.('[wf-algolia-element="template"]').forEach(
+            (element) => {
+                element.removeAttribute('wf-algolia-element')
+            },
+        )
+        card.dataset.starterQuizLearnRoundRobin = 'true'
+        card.dataset.starterQuizLearnCategory =
+            group.categoryId || group.categoryLabel || ''
+        card.dataset.starterQuizLearnObjectId =
+            normalizeLearnContentValue(hit.objectID) || ''
+
+        populateLearnContentCard(card, hit)
+
+        return card
+    }
+
+    function cloneLearnContentCard(template, hit, group, wfAlgolia) {
+        let card = null
+
+        if (typeof wfAlgolia?.cloneAndPopulate === 'function') {
+            try {
+                card = wfAlgolia.cloneAndPopulate(template, hit)
+            } catch (error) {
+                if (starterQuizResultsDebugEnabled) {
+                    console.warn(
+                        '[Starter Quiz Funnel]',
+                        '[results]',
+                        'WfAlgolia template population failed; using fallback',
+                        { error },
+                    )
+                }
+            }
+        }
+
+        if (!card || typeof card.cloneNode !== 'function') {
+            card = template.cloneNode(true)
+        }
+
+        return prepareLearnContentCard(card, hit, group)
+    }
+
+    function getLearnContentHitId(hit) {
+        return (
+            normalizeLearnContentValue(hit?.objectID) ||
+            normalizeLearnContentValue(hit?.id) ||
+            normalizeLearnContentValue(hit?.slug) ||
+            JSON.stringify(hit || {})
+        )
+    }
+
+    async function searchLearnContentGroup({
+        appId,
+        searchKey,
+        indexName,
+        filterField,
+        filterValues,
+        hitsPerPage,
+    }) {
+        if (!appId || !searchKey || !indexName || !filterValues?.length) {
+            return []
+        }
+
+        const response = await fetch(
+            `https://${appId}-dsn.algolia.net/1/indexes/${encodeURIComponent(
+                indexName,
+            )}/query`,
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Algolia-API-Key': searchKey,
+                    'X-Algolia-Application-Id': appId,
+                },
+                body: JSON.stringify({
+                    query: '',
+                    hitsPerPage,
+                    facetFilters: [
+                        filterValues.map((value) => `${filterField}:${value}`),
+                    ],
+                }),
+            },
+        )
+
+        if (!response.ok) {
+            throw new Error(`LearnContent search failed: ${response.status}`)
+        }
+
+        const data = await response.json()
+        return Array.isArray(data?.hits) ? data.hits : []
+    }
+
+    function pickRoundRobinLearnContentHits(groupResults, limit) {
+        const selectedHits = []
+        const seenHitIds = new Set()
+        const cursors = groupResults.map(() => 0)
+        let didAddHit = true
+
+        while (selectedHits.length < limit && didAddHit) {
+            didAddHit = false
+
+            groupResults.forEach((groupResult, groupIndex) => {
+                if (selectedHits.length >= limit) return
+
+                while (cursors[groupIndex] < groupResult.hits.length) {
+                    const hit = groupResult.hits[cursors[groupIndex]]
+                    cursors[groupIndex] += 1
+                    const hitId = getLearnContentHitId(hit)
+
+                    if (seenHitIds.has(hitId)) continue
+
+                    seenHitIds.add(hitId)
+                    selectedHits.push({
+                        hit,
+                        group: groupResult.group,
+                    })
+                    didAddHit = true
+                    break
+                }
+            })
+        }
+
+        return selectedHits
+    }
+
+    function removeLearnContentInjectedSlides(resultsElement) {
+        Array.from(resultsElement.children).forEach((child) => {
+            if (isLearnContentLockedSlide(child)) return
+            if (
+                child.dataset?.starterQuizLearnRoundRobin === 'true' ||
+                isLearnContentInjectedSlide(child)
+            ) {
+                child.remove()
+            }
+        })
+    }
+
+    async function renderRoundRobinLearnContent({
+        learnContentSection,
+        filterField,
+        selectedCategoryFilterGroups,
+        source,
+        wfAlgolia,
+    }) {
+        const resultsElement = getLearnContentResultsElement(learnContentSection)
+        const template = captureLearnContentTemplate(learnContentSection)
+
+        if (
+            !resultsElement ||
+            !template ||
+            !Array.isArray(selectedCategoryFilterGroups) ||
+            selectedCategoryFilterGroups.length < 2
+        ) {
+            return false
+        }
+
+        const { appId, searchKey, indexName } =
+            getLearnContentSearchConfig(learnContentSection)
+        const hitsPerPage = getLearnContentHitsPerPage(learnContentSection)
+        const cacheKey = JSON.stringify({
+            appId,
+            indexName,
+            filterField,
+            hitsPerPage,
+            filterGroups: selectedCategoryFilterGroups.map(
+                (group) => group.filterValues,
+            ),
+        })
+        const state =
+            window.__starterQuizLearnContentRoundRobinState ||
+            (window.__starterQuizLearnContentRoundRobinState = {
+                cache: new Map(),
+                pending: new Map(),
+                token: 0,
+            })
+        const token = (state.token += 1)
+
+        try {
+            let groupResults = state.cache.get(cacheKey)
+
+            if (!groupResults) {
+                let pendingRequest = state.pending.get(cacheKey)
+
+                if (!pendingRequest) {
+                    const perCategoryHits = Math.max(
+                        hitsPerPage,
+                        Math.ceil(hitsPerPage / selectedCategoryFilterGroups.length) +
+                            2,
+                    )
+
+                    pendingRequest = Promise.all(
+                        selectedCategoryFilterGroups.map(async (group) => ({
+                            group,
+                            hits: await searchLearnContentGroup({
+                                appId,
+                                searchKey,
+                                indexName,
+                                filterField,
+                                filterValues: group.filterValues,
+                                hitsPerPage: perCategoryHits,
+                            }),
+                        })),
+                    )
+                    state.pending.set(cacheKey, pendingRequest)
+                }
+
+                groupResults = await pendingRequest
+                state.pending.delete(cacheKey)
+                state.cache.set(cacheKey, groupResults)
+            }
+
+            if (token !== state.token && !state.cache.has(cacheKey)) return false
+
+            const selectedHits = pickRoundRobinLearnContentHits(
+                groupResults,
+                hitsPerPage,
+            )
+            if (!selectedHits.length) return false
+
+            removeLearnContentInjectedSlides(resultsElement)
+
+            const lockedSlides = Array.from(resultsElement.children).filter(
+                isLearnContentLockedSlide,
+            )
+            const firstLockedSlide = lockedSlides[0] || null
+
+            selectedHits.forEach(({ hit, group }) => {
+                const card = cloneLearnContentCard(
+                    template,
+                    hit,
+                    group,
+                    wfAlgolia,
+                )
+                if (!card) return
+
+                if (firstLockedSlide?.parentElement === resultsElement) {
+                    resultsElement.insertBefore(card, firstLockedSlide)
+                } else {
+                    resultsElement.appendChild(card)
+                }
+            })
+
+            normalizeLearnContentSlides(source + '-round-robin')
+            refreshLearnContentSwiper(resultsElement)
+
+            if (starterQuizResultsDebugEnabled) {
+                console.log(
+                    '[Starter Quiz Funnel]',
+                    '[results]',
+                    'rendered LearnContent round robin',
+                    {
+                        source,
+                        indexName,
+                        filterField,
+                        categoryCount: selectedCategoryFilterGroups.length,
+                        hitCount: selectedHits.length,
+                        order: selectedHits.map(
+                            ({ group }) =>
+                                group.categoryId || group.categoryLabel || '',
+                        ),
+                    },
+                )
+            }
+
+            return true
+        } catch (error) {
+            if (starterQuizResultsDebugEnabled) {
+                console.warn(
+                    '[Starter Quiz Funnel]',
+                    '[results]',
+                    'LearnContent round robin render failed',
+                    { error },
+                )
+            }
+
+            return false
+        }
+    }
+
+    function scheduleRoundRobinLearnContentRender(options) {
+        learnContentPostProcessDelays.forEach((delay) => {
+            window.setTimeout(() => {
+                renderRoundRobinLearnContent(options)
+            }, delay)
+        })
     }
 
     function getWfAlgoliaRuntime() {
@@ -346,9 +881,25 @@
 
         window.__starterQuizLearnContentEventsBound = true
         wfAlgolia.on('results', () => {
+            const lastSync = window.__starterQuizLearnContentLastSync
+            if (lastSync?.selectedCategoryFilterGroups?.length > 1) {
+                scheduleRoundRobinLearnContentRender({
+                    ...lastSync,
+                    source: 'wf-algolia-results',
+                    wfAlgolia,
+                })
+            }
             scheduleNormalizeLearnContentSlides('wf-algolia-results')
         })
         wfAlgolia.on('refresh', () => {
+            const lastSync = window.__starterQuizLearnContentLastSync
+            if (lastSync?.selectedCategoryFilterGroups?.length > 1) {
+                scheduleRoundRobinLearnContentRender({
+                    ...lastSync,
+                    source: 'wf-algolia-refresh',
+                    wfAlgolia,
+                })
+            }
             scheduleNormalizeLearnContentSlides('wf-algolia-refresh')
         })
     }
@@ -363,6 +914,7 @@
         const {
             selectedCategory,
             selectedCategoryFilter,
+            selectedCategoryFilterGroups,
             selectedCategoryFilters,
         } = getLearnContentCategoryFilters(pendingQuiz)
 
@@ -390,14 +942,27 @@
             return false
         }
 
+        const filterField = getLearnContentFilterField(learnContentSection)
+
+        window.__starterQuizLearnContentLastSync = {
+            learnContentSection,
+            filterField,
+            selectedCategoryFilterGroups,
+            source,
+        }
+
+        captureLearnContentTemplate(learnContentSection)
         bindLearnContentWfAlgoliaEvents(wfAlgolia)
-        wfAlgolia.setFilter(
-            learnContentSection.getAttribute('data-quiz-learn-filter-field') ||
-                learnContentSection.getAttribute('wf-algolia-filter-field') ||
-                learnContentSection.getAttribute('wf-algolia-base-filter-field') ||
-                learnContentDefaultFilterField,
-            selectedCategoryFilters,
-        )
+        wfAlgolia.setFilter(filterField, selectedCategoryFilters)
+        if (selectedCategoryFilterGroups.length > 1) {
+            scheduleRoundRobinLearnContentRender({
+                learnContentSection,
+                filterField,
+                selectedCategoryFilterGroups,
+                source,
+                wfAlgolia,
+            })
+        }
         scheduleNormalizeLearnContentSlides(source)
         window.dispatchEvent(
             new CustomEvent('starterQuizResultsReady', {
@@ -405,6 +970,7 @@
                     source,
                     selectedCategory,
                     selectedCategoryFilter,
+                    selectedCategoryFilterGroups,
                     selectedCategoryFilters,
                     learnContentSection,
                 },
@@ -420,18 +986,9 @@
                     source,
                     selectedCategory,
                     selectedCategoryFilter,
+                    selectedCategoryFilterGroups,
                     selectedCategoryFilters,
-                    filterField:
-                        learnContentSection.getAttribute(
-                            'data-quiz-learn-filter-field',
-                        ) ||
-                        learnContentSection.getAttribute(
-                            'wf-algolia-filter-field',
-                        ) ||
-                        learnContentSection.getAttribute(
-                            'wf-algolia-base-filter-field',
-                        ) ||
-                        learnContentDefaultFilterField,
+                    filterField,
                 },
             )
         }
