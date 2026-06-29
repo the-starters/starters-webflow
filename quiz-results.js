@@ -36,7 +36,7 @@
     window[starterQuizResultsControllerFlag] = true
 
     function normalizeLearnContentValue(value) {
-        return (value || '').trim()
+        return String(value || '').trim()
     }
 
     function slugifyLearnContentValue(value) {
@@ -83,6 +83,7 @@
 
             return {
                 id,
+                value: normalizeLearnContentValue(rawId),
                 label:
                     normalizeLearnContentValue(rawLabel) ||
                     normalizeLearnContentValue(rawId),
@@ -91,6 +92,7 @@
 
         return {
             id: slugifyLearnContentValue(text),
+            value: text,
             label: text,
         }
     }
@@ -141,8 +143,19 @@
         )
     }
 
-    function getLearnContentCategoryFilterValue(category) {
-        if (!category || typeof category !== 'object') return ''
+    function getLearnContentCategoryFilterValues(category) {
+        if (!category) return []
+
+        if (typeof category !== 'object') {
+            return Array.from(
+                new Set(
+                    [
+                        normalizeLearnContentValue(category),
+                        slugifyLearnContentValue(category),
+                    ].filter(Boolean),
+                ),
+            )
+        }
 
         const candidateValues = [
             category.membershipId,
@@ -152,14 +165,16 @@
             category.category_membership_id,
             category.id,
             category.value,
+            category.label,
+            slugifyLearnContentValue(category.label),
+            slugifyLearnContentValue(category.id),
         ]
 
-        for (const value of candidateValues) {
-            const normalizedValue = normalizeLearnContentValue(value)
-            if (normalizedValue) return normalizedValue
-        }
-
-        return slugifyLearnContentValue(category.label)
+        return Array.from(
+            new Set(
+                candidateValues.map(normalizeLearnContentValue).filter(Boolean),
+            ),
+        )
     }
 
     function getLearnContentCategoryFilters(pendingQuiz) {
@@ -167,11 +182,15 @@
             ? pendingQuiz.categories
             : []
         const selectedCategoryFilters = Array.from(
-            new Set(categories.map(getLearnContentCategoryFilterValue).filter(Boolean)),
+            new Set(
+                categories
+                    .flatMap(getLearnContentCategoryFilterValues)
+                    .filter(Boolean),
+            ),
         )
         const selectedCategory = categories.find((category) =>
-            selectedCategoryFilters.includes(
-                getLearnContentCategoryFilterValue(category),
+            getLearnContentCategoryFilterValues(category).some((value) =>
+                selectedCategoryFilters.includes(value),
             ),
         )
 
