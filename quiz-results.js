@@ -3463,6 +3463,15 @@
         return [first, ...initials].join(' ')
     }
 
+    function getFirstName(name) {
+        return normalize(name).split(/\s+/).filter(Boolean)[0] || ''
+    }
+
+    function getRecommendationButtonLabel(freelancer) {
+        const firstName = getFirstName(freelancer?.name)
+        return firstName ? 'Work with ' + firstName : 'Work with'
+    }
+
     /**
      * Resolves a card binding field name to a value on a normalized candidate.
      *
@@ -3632,6 +3641,46 @@
         return true
     }
 
+    function setRecommendationButtonLabel(cardElement, freelancer) {
+        const label = getRecommendationButtonLabel(freelancer)
+        const buttonGroups = cardElement.querySelectorAll(
+            '.expert-card_button-group, [data-quiz-button-group]',
+        )
+
+        buttonGroups.forEach((buttonGroup) => {
+            const explicitLabels = buttonGroup.querySelectorAll(
+                '[data-quiz-button-label], [data-quiz-card-button-label]',
+            )
+
+            if (explicitLabels.length) {
+                explicitLabels.forEach((element) => setCardText(element, label))
+                return
+            }
+
+            const textElements = buttonGroup.querySelectorAll(
+                '.button_main-text, .button-text, [data-button-text]',
+            )
+
+            if (textElements.length) {
+                textElements.forEach((element, index) => {
+                    if (index === 0) {
+                        setCardText(element, label)
+                        return
+                    }
+
+                    element.classList.add('hide')
+                    element.textContent = ''
+                })
+                return
+            }
+
+            buttonGroup.querySelectorAll('[data-quiz-cardbtn]').forEach((element) => {
+                const hadArrow = /(?:→|->)\s*$/.test(element.textContent || '')
+                setCardText(element, label + (hadArrow ? ' →' : ''))
+            })
+        })
+    }
+
     /**
      * Populates one existing card element from a freelancer recommendation.
      *
@@ -3776,6 +3825,8 @@
             element.setAttribute('href', url)
             element.classList.remove('hide')
         })
+
+        setRecommendationButtonLabel(cardElement, freelancer)
 
         return requiredSatisfied
     }
