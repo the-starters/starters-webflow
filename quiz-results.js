@@ -26,6 +26,10 @@
     const learnContentFilterWaitAttempts = 40
     const learnContentFilterWaitMs = 250
     const learnContentPostProcessDelays = [0, 100, 500, 1200]
+    const learnContentSwiperRefreshAttempts = 30
+    const learnContentSwiperRefreshMs = 100
+    const learnContentImageRefreshBoundAttribute =
+        'data-starter-quiz-learn-swiper-refresh-bound'
 
     if (window[starterQuizResultsControllerFlag]) {
         if (starterQuizResultsDebugEnabled) {
@@ -761,25 +765,116 @@
         })
     }
 
-    function refreshLearnContentSwiper(resultsElement) {
-        const swiper = resultsElement
-            ?.closest('[data-swiper-scroll="swiper"]')
-            ?.__swiperScrollInstance
+    function updateLearnContentSwiper(swiperElement, source = 'results') {
+        const swiper = swiperElement?.__swiperScrollInstance
 
-        if (swiper && typeof swiper.update === 'function') {
-            try {
-                swiper.update()
-            } catch (error) {
-                if (starterQuizResultsDebugEnabled) {
-                    console.warn(
-                        '[Starter Quiz Funnel]',
-                        '[results]',
-                        'LearnContent swiper update failed',
-                        { error },
-                    )
-                }
+        if (!swiper || typeof swiper.update !== 'function') return false
+
+        try {
+            swiper.update()
+            return true
+        } catch (error) {
+            if (starterQuizResultsDebugEnabled) {
+                console.warn(
+                    '[Starter Quiz Funnel]',
+                    '[results]',
+                    'LearnContent swiper update failed',
+                    { error, source },
+                )
             }
+            return false
         }
+    }
+
+    function scheduleLearnContentSwiperUpdate(swiperElement, source = 'results') {
+        const update = () => updateLearnContentSwiper(swiperElement, source)
+
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(update)
+            return
+        }
+
+        window.setTimeout(update, 0)
+    }
+
+    function waitForLearnContentSwiper(swiperElement, source = 'results') {
+        if (!swiperElement || swiperElement.__starterQuizLearnRefreshRetrying) {
+            return
+        }
+
+        swiperElement.__starterQuizLearnRefreshRetrying = true
+        let attempts = 0
+
+        const intervalId = window.setInterval(() => {
+            attempts += 1
+            const didUpdate = updateLearnContentSwiper(
+                swiperElement,
+                source + '-retry',
+            )
+
+            if (didUpdate || attempts >= learnContentSwiperRefreshAttempts) {
+                window.clearInterval(intervalId)
+                swiperElement.__starterQuizLearnRefreshRetrying = false
+            }
+        }, learnContentSwiperRefreshMs)
+    }
+
+    function bindLearnContentImageRefresh(resultsElement, swiperElement) {
+        if (!resultsElement || !swiperElement) return
+
+        resultsElement.querySelectorAll('img').forEach((image) => {
+            if (image.getAttribute(learnContentImageRefreshBoundAttribute)) return
+
+            image.setAttribute(learnContentImageRefreshBoundAttribute, 'true')
+            const refresh = () => {
+                refreshLearnContentSwiper(resultsElement, 'image-ready')
+            }
+
+            if (image.complete) {
+                scheduleLearnContentSwiperUpdate(swiperElement, 'image-complete')
+                return
+            }
+
+            image.addEventListener('load', refresh, { once: true })
+            image.addEventListener('error', refresh, { once: true })
+        })
+    }
+
+    function bindLearnContentWindowLoadRefresh() {
+        if (window.__starterQuizLearnContentWindowLoadRefreshBound) return
+
+        window.__starterQuizLearnContentWindowLoadRefreshBound = true
+        const refresh = () => {
+            refreshLearnContentSwiper(
+                document.querySelector(learnContentResultsSelector),
+                'window-load',
+            )
+        }
+
+        if (document.readyState === 'complete') {
+            window.setTimeout(refresh, 0)
+            return
+        }
+
+        window.addEventListener('load', refresh, { once: true })
+    }
+
+    function refreshLearnContentSwiper(resultsElement, source = 'results') {
+        const swiperElement = resultsElement?.closest(
+            '[data-swiper-scroll="swiper"]',
+        )
+
+        if (!swiperElement) return false
+
+        bindLearnContentImageRefresh(resultsElement, swiperElement)
+        bindLearnContentWindowLoadRefresh()
+
+        const didUpdate = updateLearnContentSwiper(swiperElement, source)
+        if (!didUpdate) {
+            waitForLearnContentSwiper(swiperElement, source)
+        }
+
+        return didUpdate
     }
 
     function isLearnContentSlide(element) {
@@ -840,9 +935,9 @@
             didChange = true
         })
 
-        if (didChange) {
-            refreshLearnContentSwiper(resultsElement)
+        refreshLearnContentSwiper(resultsElement, source)
 
+        if (didChange) {
             if (starterQuizResultsDebugEnabled) {
                 console.log(
                     '[Starter Quiz Funnel]',
