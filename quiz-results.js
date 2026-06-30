@@ -30,6 +30,13 @@
     const learnContentSwiperRefreshMs = 100
     const learnContentImageRefreshBoundAttribute =
         'data-starter-quiz-learn-swiper-refresh-bound'
+    const learnContentSwiperRuntimeClasses = [
+        'swiper-slide-active',
+        'swiper-slide-next',
+        'swiper-slide-prev',
+        'swiper-slide-visible',
+        'swiper-slide-fully-visible',
+    ]
 
     if (window[starterQuizResultsControllerFlag]) {
         if (starterQuizResultsDebugEnabled) {
@@ -450,8 +457,13 @@
     function prepareLearnContentCard(card, hit, group) {
         if (!card) return null
 
+        card.setAttribute?.('data-swiper-scroll', 'swiper-slide')
         card.classList?.add('wf-algolia-injected')
+        card.classList?.add('swiper-slide')
+        card.classList?.remove(...learnContentSwiperRuntimeClasses)
         card.classList?.remove('hide')
+        card.style?.removeProperty('width')
+        card.style?.removeProperty('margin-right')
         card.removeAttribute?.('aria-hidden')
         card.removeAttribute?.('wf-algolia-element')
         card.querySelectorAll?.('[wf-algolia-element="template"]').forEach(
@@ -765,13 +777,59 @@
         })
     }
 
+    function prepareLearnContentSwiperSlides(resultsElement) {
+        if (!resultsElement) return false
+
+        let didChange = false
+
+        Array.from(resultsElement.children).forEach((slide) => {
+            if (!isLearnContentSlide(slide)) return
+
+            if (slide.getAttribute('data-swiper-scroll') !== 'swiper-slide') {
+                slide.setAttribute('data-swiper-scroll', 'swiper-slide')
+                didChange = true
+            }
+
+            if (!slide.classList.contains('swiper-slide')) {
+                slide.classList.add('swiper-slide')
+                didChange = true
+            }
+
+            if (isLearnContentInjectedSlide(slide)) {
+                learnContentSwiperRuntimeClasses.forEach((className) => {
+                    if (slide.classList.contains(className)) {
+                        slide.classList.remove(className)
+                        didChange = true
+                    }
+                })
+
+                if (slide.style.width) {
+                    slide.style.removeProperty('width')
+                    didChange = true
+                }
+
+                if (slide.style.marginRight) {
+                    slide.style.removeProperty('margin-right')
+                    didChange = true
+                }
+            }
+        })
+
+        return didChange
+    }
+
     function updateLearnContentSwiper(swiperElement, source = 'results') {
         const swiper = swiperElement?.__swiperScrollInstance
 
         if (!swiper || typeof swiper.update !== 'function') return false
 
         try {
+            swiper.updateSize?.()
+            swiper.updateSlides?.()
+            swiper.updateProgress?.()
+            swiper.updateSlidesClasses?.()
             swiper.update()
+            swiper.scrollbar?.updateSize?.()
             return true
         } catch (error) {
             if (starterQuizResultsDebugEnabled) {
@@ -866,6 +924,7 @@
 
         if (!swiperElement) return false
 
+        prepareLearnContentSwiperSlides(resultsElement)
         bindLearnContentImageRefresh(resultsElement, swiperElement)
         bindLearnContentWindowLoadRefresh()
 
