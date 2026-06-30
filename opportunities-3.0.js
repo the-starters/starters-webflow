@@ -321,33 +321,21 @@
 
   async function initTalentList() {
     if (!(await gateOrRedirect('freelancer'))) return
-    if ($('[wf-algolia-element="results"]')) {
-      await initTalentAlgoliaMatch()
+    if (!$('[wf-algolia-element="results"]')) {
+      handleMissingTalentAlgoliaMarkup()
       return
     }
-    const tabEl = $('[data-opp-tab].active') || $('[data-opp-tab]')
-    const load = async (tab) => {
-      const res = await API.starterOppList(tab || '')
-      renderList('talent-opps', res.items, (card, row) => {
-        // browse tab -> row IS an opportunity; "Applied" tab -> row is an application
-        const o = row.opportunity || row
-        card.setAttribute('data-opp-id', o.id)
-        bind(card, 'title', o.title)
-        bind(card, 'company', o.company)
-        bind(card, 'project_type', o.project_type)
-        bind(card, 'budget', o.budget)
-        bind(card, 'created_at', fmtDate(o.created_at))
-        const link = $('[data-opp-detail-link]', card)
-        if (link) link.href = o.webflow_slug ? `/opportunities/${o.webflow_slug}` : '#'
-      })
-    }
-    await load(tabEl ? tabEl.getAttribute('data-opp-tab') : '')
-    $$('[data-opp-tab]').forEach((t) =>
-      t.addEventListener('click', () => {
-        $$('[data-opp-tab]').forEach((x) => x.classList.remove('active'))
-        t.classList.add('active')
-        load(t.getAttribute('data-opp-tab'))
-      }),
+    await initTalentAlgoliaMatch()
+  }
+
+  function handleMissingTalentAlgoliaMarkup() {
+    document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-markup')
+    const legacyList = $('.opportunities-list_collection-list') || $('[data-opp-list="talent-opps"]')
+    if (legacyList) legacyList.style.display = 'none'
+    const empty = $('.section_opportunities-empty') || $('[data-opp-empty="talent-opps"]')
+    if (empty) empty.style.display = ''
+    console.error(
+      '[opp30] /opportunities-freelancer-view must be wired as a wf-algolia browse feed; no [wf-algolia-element="results"] container was found.',
     )
   }
 
