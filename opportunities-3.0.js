@@ -445,10 +445,11 @@
   const setActiveApp = (id) => (activeApp = id ? parseInt(id, 10) : null)
 
   // When any element inside a card is clicked, capture that card's ids.
+  // wf-algolia-rendered cards expose the id as data-wf-algolia-hit-objectid (not data-opp-id).
   document.addEventListener('click', (e) => {
-    const card = e.target.closest('[data-opp-id]')
+    const card = e.target.closest('[data-opp-id], [data-wf-algolia-hit-objectid]')
     if (card) {
-      setActiveOpp(card.getAttribute('data-opp-id'))
+      setActiveOpp(card.getAttribute('data-opp-id') || card.getAttribute('data-wf-algolia-hit-objectid'))
       if (card.hasAttribute('data-app-id')) setActiveApp(card.getAttribute('data-app-id'))
     }
   })
@@ -542,15 +543,100 @@
     }
   }
 
+  /* ============ wf-algolia bridge (brand list page) ============ */
+  // The brand list renders via the wf-algolia package, whose cards expose
+  // data-wf-algolia-hit-objectid (not data-opp-id) and whose pagination + detail-link
+  // markup needs adjusting. This bridges those cards to the Opp30 handlers and fixes
+  // the card/pagination markup wf-algolia 1.0.4 can't drive on its own. No-op when the
+  // page has no wf-algolia results container.
+  function initWfAlgoliaBridge() {
+    const results = $('[wf-algolia-element="results"]')
+    if (!results) return
+    log('wf-algolia bridge active')
+
+    // Pagination: page-prev / page-number / page-next must share a parent (else
+    // wf-algolia's insertBefore throws), and the page-number template must drop
+    // is-inactive (which is display:none) so cloned page buttons are visible.
+    const fixPaginationMarkup = () => {
+      const tmpl = $('[wf-algolia-element="page-number"]')
+      if (!tmpl || !tmpl.parentElement) return
+      const parent = tmpl.parentElement
+      const prev = $('[wf-algolia-element="page-prev"]')
+      const next = $('[wf-algolia-element="page-next"]')
+      if (prev && prev.parentElement !== parent) parent.insertBefore(prev, parent.firstChild)
+      if (next && next.parentElement !== parent) parent.appendChild(next)
+      tmpl.classList.remove('is-inactive')
+    }
+
+    // Per-card: mirror the id to data-opp-id (for active-id tracking) and set a real
+    // /opportunities/<id> href on the detail link(s).
+    const fixCards = () => {
+      results.querySelectorAll('[data-wf-algolia-hit-objectid]').forEach((card) => {
+        const id = card.getAttribute('data-wf-algolia-hit-objectid')
+        if (!id) return
+        if (!card.hasAttribute('data-opp-id')) card.setAttribute('data-opp-id', id)
+        card
+          .querySelectorAll('a[wf-algolia-link], a[wf-algolia-link-url], a.clickable_link, a[data-opp-detail-link]')
+          .forEach((a) => a.setAttribute('href', '/opportunities/' + id))
+      })
+    }
+
+    // Current page gets a real is-active class (wf-algolia only sets a data attribute).
+    const fixActivePage = () => {
+      document
+        .querySelectorAll('.wf-algolia-page-num')
+        .forEach((n) => n.classList.toggle('is-active', n.getAttribute('data-wf-algolia-active') === 'true'))
+    }
+
+    fixPaginationMarkup()
+    const apply = () => {
+      fixCards()
+      fixActivePage()
+    }
+    apply()
+    new MutationObserver(apply).observe(results, { childList: true, subtree: true })
+    const pager = ($('[wf-algolia-element="page-number"]') || {}).parentElement
+    if (pager) new MutationObserver(fixActivePage).observe(pager, { childList: true, subtree: true, attributes: true })
+
+    // The close-opportunity modal's confirm button isn't tagged data-opp-submit, so
+    // wire it here -> brandOppClose(activeOpp) (activeOpp set by the card-click listener).
+    const closeModal = $('[data-modal-target="close-opportunity"]')
+    if (closeModal) {
+      const confirmBtn = Array.prototype.find.call(
+        closeModal.querySelectorAll('a, button, [role="button"]'),
+        (b) => /confirm/i.test((b.textContent || '').trim()),
+      )
+      if (confirmBtn && !confirmBtn.__opp30Wired) {
+        confirmBtn.__opp30Wired = true
+        confirmBtn.addEventListener('click', () => {
+          if (activeOpp) guard(confirmBtn, () => API.brandOppClose(activeOpp))
+        })
+      }
+    }
+
+    // If wf-algolia already rendered (and possibly crashed) before our markup fix, re-render.
+    if (window.WfAlgolia && typeof window.WfAlgolia.refresh === 'function') {
+      try {
+        window.WfAlgolia.refresh()
+      } catch (e) {
+        /* non-fatal */
+      }
+    }
+  }
+
   /* ========================= BOOTSTRAP ========================== */
   function boot() {
     wireModals()
     const p = location.pathname
     if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/\d+/)) initTalentDetail()
-    else if (p.includes('opportunities-brands-view')) initBrandList()
-    else if (p.includes('opportunities-freelancer-view')) initTalentList()
-    else if (p.includes('opportunities---create')) initBrandCreatePage()
+    else if (p.includes('opportunities-brands-view')) {
+      initBrandList()
+      initWfAlgoliaBridge()
+    } else if (p.includes('opportunities-freelancer-view')) {
+      initTalentList()
+      initWfAlgoliaBridge()
+    } else if (p.includes('opportunities---create')) initBrandCreatePage()
     // /all-modals: only wireModals() (already called) — no data fetch
   }
 
