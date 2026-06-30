@@ -598,20 +598,19 @@
     const pager = ($('[wf-algolia-element="page-number"]') || {}).parentElement
     if (pager) new MutationObserver(fixActivePage).observe(pager, { childList: true, subtree: true, attributes: true })
 
-    // The close-opportunity modal's confirm button isn't tagged data-opp-submit, so
-    // wire it here -> brandOppClose(activeOpp) (activeOpp set by the card-click listener).
+    // The close-opportunity modal's confirm button is a plain <div> (not tagged
+    // data-opp-submit), so use click delegation on the modal: any "Confirm" click
+    // -> brandOppClose(activeOpp) (activeOpp set by the card-click listener).
     const closeModal = $('[data-modal-target="close-opportunity"]')
-    if (closeModal) {
-      const confirmBtn = Array.prototype.find.call(
-        closeModal.querySelectorAll('a, button, [role="button"]'),
-        (b) => /confirm/i.test((b.textContent || '').trim()),
-      )
-      if (confirmBtn && !confirmBtn.__opp30Wired) {
-        confirmBtn.__opp30Wired = true
-        confirmBtn.addEventListener('click', () => {
-          if (activeOpp) guard(confirmBtn, () => API.brandOppClose(activeOpp))
-        })
-      }
+    if (closeModal && !closeModal.__opp30Wired) {
+      closeModal.__opp30Wired = true
+      closeModal.addEventListener('click', (e) => {
+        const btn =
+          e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') || e.target
+        if (/^confirm$/i.test((btn.textContent || '').trim()) && activeOpp) {
+          guard(btn, () => API.brandOppClose(activeOpp))
+        }
+      })
     }
 
     // If wf-algolia already rendered (and possibly crashed) before our markup fix, re-render.
