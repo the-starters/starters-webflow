@@ -119,6 +119,7 @@
     brandAppRestore: (application_id) =>
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     // starter / talent
+    starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
     starterOppList: (tab, page = 1, per_page = 20) =>
       call('starter/opportunities/list', { body: { tab, page, per_page } }),
     starterOppDetail: (opportunity_id) =>
@@ -320,6 +321,10 @@
 
   async function initTalentList() {
     if (!(await gateOrRedirect('freelancer'))) return
+    if ($('[wf-algolia-element="results"]')) {
+      await initTalentAlgoliaMatch()
+      return
+    }
     const tabEl = $('[data-opp-tab].active') || $('[data-opp-tab]')
     const load = async (tab) => {
       const res = await API.starterOppList(tab || '')
@@ -344,6 +349,60 @@
         load(t.getAttribute('data-opp-tab'))
       }),
     )
+  }
+
+  function filterValues(values) {
+    return Array.from(
+      new Set(
+        (Array.isArray(values) ? values : [])
+          .map((value) => parseInt(value, 10))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map(String),
+      ),
+    )
+  }
+
+  function waitForWfAlgolia(timeoutMs = 10000) {
+    if (window.WfAlgolia && typeof window.WfAlgolia.setFilter === 'function') {
+      return Promise.resolve(window.WfAlgolia)
+    }
+    return new Promise((resolve) => {
+      const startedAt = Date.now()
+      const timer = window.setInterval(() => {
+        if (window.WfAlgolia && typeof window.WfAlgolia.setFilter === 'function') {
+          window.clearInterval(timer)
+          resolve(window.WfAlgolia)
+          return
+        }
+        if (Date.now() - startedAt >= timeoutMs) {
+          window.clearInterval(timer)
+          resolve(null)
+        }
+      }, 100)
+    })
+  }
+
+  async function initTalentAlgoliaMatch() {
+    try {
+      const context = await API.starterMatchContext()
+      const categoryRefs = filterValues(context && context.category_refs)
+      window.Opp30TalentMatchContext = context
+      log('talent algolia match context', {
+        starter_id: context && context.starter_id,
+        category_refs: categoryRefs,
+        subcategory_refs: filterValues(context && context.subcategory_refs),
+      })
+      if (!categoryRefs.length) return
+
+      const wfAlgolia = await waitForWfAlgolia()
+      if (!wfAlgolia) {
+        console.warn('[opp30] wf-algolia unavailable; talent match filter skipped')
+        return
+      }
+      wfAlgolia.setFilter('category_refs', categoryRefs)
+    } catch (err) {
+      console.error('[opp30] failed to apply talent Algolia match filter', err)
+    }
   }
 
   async function initTalentDetail() {
