@@ -599,12 +599,13 @@
     if (pager) new MutationObserver(fixActivePage).observe(pager, { childList: true, subtree: true, attributes: true })
 
     // The close-opportunity modal's confirm button is a plain <div> (not tagged
-    // data-opp-submit), so use click delegation on the modal: any "Confirm" click
+    // data-opp-submit), and Finsweet relocates the modal after boot — so use
+    // DOCUMENT-level delegation: a "Confirm" click inside the close-opportunity modal
     // -> brandOppClose(activeOpp) (activeOpp set by the card-click listener).
-    const closeModal = $('[data-modal-target="close-opportunity"]')
-    if (closeModal && !closeModal.__opp30Wired) {
-      closeModal.__opp30Wired = true
-      closeModal.addEventListener('click', (e) => {
+    if (!window.__opp30CloseWired) {
+      window.__opp30CloseWired = true
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('[data-modal-target="close-opportunity"]')) return
         const btn =
           e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') || e.target
         if (/^confirm$/i.test((btn.textContent || '').trim()) && activeOpp) {
