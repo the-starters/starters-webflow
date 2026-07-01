@@ -595,6 +595,9 @@
       control.addEventListener('change', activate)
       control.addEventListener('click', activate)
     })
+    // Warm the memoized applied-ids fetch now (while the page shows "all") so the
+    // first Applied click doesn't wait on a fresh Xano round-trip.
+    fetchAppliedOppIds().catch(() => {})
     await setTalentTab(getInitialTalentTab())
     return true
   }
