@@ -396,7 +396,9 @@
         return
       }
       wfAlgolia.setFilter('category_refs', categoryRefs)
+      document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
     } catch (err) {
+      document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
       console.error('[opp30] failed to apply talent Algolia match filter', err)
     }
   }
@@ -855,6 +857,76 @@
     }
   }
 
+  function diagnoseFreelancerFeed() {
+    const scriptSrcs = $$('script[src]').map((script) => script.src || '')
+    const matchContext = window.Opp30TalentMatchContext || null
+    const categoryRefs = filterValues(matchContext && matchContext.category_refs)
+    const filterState =
+      window.WfAlgolia && typeof window.WfAlgolia.getFilterState === 'function'
+        ? window.WfAlgolia.getFilterState()
+        : null
+    const filterStateText = filterState == null ? '' : JSON.stringify(filterState)
+    const filterAttrs = $$(
+      '[wf-algolia-element="filter-group"], [wf-algolia-element="filter-item"], [wf-algolia-field], [wf-algolia-facet]',
+    ).map((el) => ({
+      tag: (el.tagName || '').toLowerCase(),
+      element: el.getAttribute('wf-algolia-element'),
+      field: el.getAttribute('wf-algolia-field'),
+      facet: el.getAttribute('wf-algolia-facet'),
+    }))
+    const tabControls = $$('[data-opp-talent-tab]').map((el) => ({
+      tab: el.getAttribute('data-opp-talent-tab'),
+      checked: 'checked' in el ? el.checked : null,
+      ariaPressed: el.getAttribute('aria-pressed'),
+      activeClass: el.classList?.contains?.('is-active') || false,
+    }))
+    const issues = []
+
+    if (!scriptSrcs.some((src) => /starters-webflow@(?:latest|v1\.3\.7)\/opportunities-3\.0\.js/.test(src))) {
+      issues.push('opportunities-3.0.js is not loaded from @latest or @v1.3.7.')
+    }
+    if (!window.WfAlgolia) issues.push('window.WfAlgolia is missing.')
+    if (!$('[wf-algolia-element="browse"]')) issues.push('Missing wf-algolia browse wrapper.')
+    if (!$('[wf-algolia-element="results"]')) issues.push('Missing wf-algolia results container.')
+    if (!$('[wf-algolia-element="template"]')) issues.push('Missing wf-algolia template card.')
+    if (!tabControls.some((control) => control.tab === 'all')) issues.push('Missing data-opp-talent-tab="all" control.')
+    if (!tabControls.some((control) => control.tab === 'applied')) {
+      issues.push('Missing data-opp-talent-tab="applied" control.')
+    }
+    if (!matchContext) issues.push('window.Opp30TalentMatchContext is missing.')
+    else if (!categoryRefs.length) issues.push('Opp30TalentMatchContext.category_refs is empty.')
+    if (categoryRefs.length && !filterStateText.includes('category_refs')) {
+      issues.push('WfAlgolia filter state does not show category_refs.')
+    }
+    if (filterAttrs.length) issues.push('Leftover wf-algolia filter attributes found on the page.')
+
+    return {
+      url: location.href,
+      htmlTalentTab: document.documentElement.getAttribute('data-opp30-talent-tab'),
+      htmlTalentAlgolia: document.documentElement.getAttribute('data-opp30-talent-algolia'),
+      scripts: {
+        opportunities30: scriptSrcs.filter((src) => /starters-webflow@.*\/opportunities-3\.0\.js/.test(src)),
+        wfAlgolia: scriptSrcs.filter((src) => /@candid-leap\/wf-algolia|wf-algolia/i.test(src)),
+      },
+      runtime: {
+        opp30Loaded: true,
+        wfAlgoliaLoaded: Boolean(window.WfAlgolia),
+        matchContextStarterId: matchContext && matchContext.starter_id,
+        categoryRefs,
+        filterState,
+      },
+      markup: {
+        browseCount: $$('[wf-algolia-element="browse"]').length,
+        resultsCount: $$('[wf-algolia-element="results"]').length,
+        templateCount: $$('[wf-algolia-element="template"]').length,
+        renderedCardsWithObjectId: $$('[data-wf-algolia-hit-objectid]').length,
+        tabControls,
+        filterAttrs,
+      },
+      issues,
+    }
+  }
+
   /* ========================= BOOTSTRAP ========================== */
   function boot() {
     wireModals()
@@ -875,5 +947,5 @@
   else boot()
 
   // expose for debugging / manual calls in console
-  window.Opp30 = { API, ensureXanoToken }
+  window.Opp30 = { API, ensureXanoToken, diagnoseFreelancerFeed }
 })()
