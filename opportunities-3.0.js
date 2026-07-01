@@ -460,6 +460,45 @@
     }
   }
 
+  const APPLIED_FIELD = 'objectID'
+  const APPLIED_EMPTY = '__none__'
+  let _talentAppliedIdsPromise = null
+
+  function fetchAppliedOppIds() {
+    if (!_talentAppliedIdsPromise) {
+      _talentAppliedIdsPromise = API.starterOppList('Applied').then((res) => {
+        const raw = Array.isArray(res) ? res : Array.isArray(res && res.items) ? res.items : []
+        const ids = raw
+          .map(normalizeAppliedItem)
+          .map((o) => o.opportunity_id || o.id)
+          .filter(Boolean)
+          .map(String)
+        return Array.from(new Set(ids))
+      })
+    }
+    return _talentAppliedIdsPromise
+  }
+
+  async function applyTalentAppliedFilter() {
+    const wfAlgolia = await waitForWfAlgolia()
+    if (!wfAlgolia) {
+      document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-wf-algolia')
+      console.warn('[opp30] wf-algolia unavailable; applied filter skipped')
+      return
+    }
+    const ids = await fetchAppliedOppIds()
+    wfAlgolia.setFilter(APPLIED_FIELD, ids.length ? ids : [APPLIED_EMPTY])
+    document.documentElement.setAttribute('data-opp30-talent-applied-count', String(ids.length))
+    document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
+  }
+
+  async function clearTalentAppliedFilter() {
+    const wfAlgolia = await waitForWfAlgolia()
+    if (wfAlgolia) wfAlgolia.setFilter(APPLIED_FIELD, [])
+    document.documentElement.removeAttribute('data-opp30-talent-applied-count')
+    await initTalentAlgoliaMatch()
+  }
+
   function normalizeTalentTab(value) {
     const tab = String(value || '').trim().toLowerCase()
     return tab === 'applied' ? 'applied' : 'all'
@@ -550,27 +589,17 @@
     const tab = normalizeTalentTab(value)
     const allPanel = getTalentAllPanel()
     const appliedPanel = getTalentAppliedPanel()
-    if (tab === 'applied' && !appliedPanel) {
-      document.documentElement.setAttribute('data-opp30-talent-tab', 'all')
-      if (allPanel) allPanel.style.display = ''
-      syncTalentTabControls('all')
-      console.warn(
-        '[opp30] Applied tab selected, but no [data-opp-talent-panel="applied"] or [data-opp-list="talent-applied"] exists.',
-      )
-      await initTalentAlgoliaMatch()
-      return
-    }
 
     document.documentElement.setAttribute('data-opp30-talent-tab', tab)
-    if (allPanel) allPanel.style.display = tab === 'all' ? '' : 'none'
-    if (appliedPanel) appliedPanel.style.display = tab === 'applied' ? '' : 'none'
+    if (allPanel) allPanel.style.display = ''
+    if (appliedPanel && appliedPanel !== allPanel) appliedPanel.style.display = tab === 'applied' ? '' : 'none'
     syncTalentTabControls(tab)
 
-    if (tab === 'all') {
-      await initTalentAlgoliaMatch()
+    if (tab === 'applied') {
+      await applyTalentAppliedFilter()
       return
     }
-    await loadTalentAppliedList()
+    await clearTalentAppliedFilter()
   }
 
   function normalizeAppliedItem(item) {
@@ -938,10 +967,13 @@
       ariaPressed: el.getAttribute('aria-pressed'),
       activeClass: el.classList?.contains?.('is-active') || false,
     }))
+    const activeTab = document.documentElement.getAttribute('data-opp30-talent-tab')
+    const appliedCountAttr = document.documentElement.getAttribute('data-opp30-talent-applied-count')
+    const appliedCount = appliedCountAttr == null ? null : Number(appliedCountAttr)
     const issues = []
 
-    if (!scriptSrcs.some((src) => /starters-webflow@(?:latest|v1\.3\.9)\/opportunities-3\.0\.js/.test(src))) {
-      issues.push('opportunities-3.0.js is not loaded from @latest or @v1.3.9.')
+    if (!scriptSrcs.some((src) => /starters-webflow@[^/]+\/opportunities-3\.0\.js/.test(src))) {
+      issues.push('opportunities-3.0.js is not loaded from a versioned/@latest jsDelivr URL.')
     }
     if (!window.WfAlgolia) issues.push('window.WfAlgolia is missing.')
     if (!$('[wf-algolia-element="browse"]')) issues.push('Missing wf-algolia browse wrapper.')
@@ -955,6 +987,9 @@
     else if (!categoryRefs.length) issues.push('Opp30TalentMatchContext.category_refs is empty.')
     if (categoryRefs.length && !filterStateText.includes('category_refs')) {
       issues.push('WfAlgolia filter state does not show category_refs.')
+    }
+    if (activeTab === 'applied' && !filterStateText.includes(APPLIED_FIELD)) {
+      issues.push('WfAlgolia filter state does not show the applied objectID filter.')
     }
     if (filterAttrs.length) issues.push('Leftover wf-algolia filter attributes found on the page.')
 
@@ -973,6 +1008,8 @@
         matchContextStarterId: matchContext && matchContext.starter_id,
         categoryRefs,
         filterState,
+        appliedFilterField: APPLIED_FIELD,
+        appliedCount,
       },
       markup: {
         browseCount: $$('[wf-algolia-element="browse"]').length,
