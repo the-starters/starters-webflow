@@ -368,9 +368,16 @@
   }
 
   function filterValues(values) {
+    const list = Array.isArray(values)
+      ? values
+      : typeof values === 'string'
+        ? values.split(',')
+        : values == null
+          ? []
+          : [values]
     return Array.from(
       new Set(
-        (Array.isArray(values) ? values : [])
+        list
           .map((value) => parseInt(value, 10))
           .filter((value) => Number.isFinite(value) && value > 0)
           .map(String),
