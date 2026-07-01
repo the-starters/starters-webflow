@@ -420,6 +420,44 @@
     return normalizeTalentTab((checked || $('[data-opp-talent-tab]') || {}).getAttribute?.('data-opp-talent-tab'))
   }
 
+  function stripTalentTabAlgoliaFilterAttrs() {
+    const filterAttrs = ['wf-algolia-field', 'wf-algolia-facet', 'wf-algolia-value', 'wf-algolia-operator']
+    const filterElements = new Set(['filter-group', 'filter-item'])
+    const candidates = new Set()
+
+    $$('[data-opp-talent-tab]').forEach((control) => {
+      let node = control
+      let depth = 0
+      while (node && node !== document.documentElement && depth < 4) {
+        const elementType = node.getAttribute?.('wf-algolia-element')
+        const hasFilterAttr =
+          filterElements.has(elementType) || filterAttrs.some((attr) => node.hasAttribute?.(attr))
+        if (node === control || hasFilterAttr || node.tagName === 'LABEL') candidates.add(node)
+        if (elementType === 'browse' || node.hasAttribute?.('data-opp-talent-panel')) break
+        node = node.parentElement
+        depth += 1
+      }
+    })
+
+    let removed = 0
+    candidates.forEach((el) => {
+      if (filterElements.has(el.getAttribute?.('wf-algolia-element'))) {
+        el.removeAttribute('wf-algolia-element')
+        removed += 1
+      }
+      filterAttrs.forEach((attr) => {
+        if (el.hasAttribute?.(attr)) {
+          el.removeAttribute(attr)
+          removed += 1
+        }
+      })
+    })
+
+    if (removed) {
+      console.warn('[opp30] Removed wf-algolia filter attributes from All/Applied tab controls.', { removed })
+    }
+  }
+
   function syncTalentTabControls(activeTab) {
     $$('[data-opp-talent-tab]').forEach((el) => {
       const tab = normalizeTalentTab(el.getAttribute('data-opp-talent-tab'))
@@ -433,6 +471,7 @@
   async function initTalentTabs() {
     const controls = $$('[data-opp-talent-tab]')
     if (!controls.length) return false
+    stripTalentTabAlgoliaFilterAttrs()
     controls.forEach((control) => {
       if (control.__opp30TalentTabWired) return
       control.__opp30TalentTabWired = true
