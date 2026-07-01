@@ -535,6 +535,7 @@
       console.warn(
         '[opp30] Applied tab selected, but no [data-opp-talent-panel="applied"] or [data-opp-list="talent-applied"] exists.',
       )
+      await initTalentAlgoliaMatch()
       return
     }
 
