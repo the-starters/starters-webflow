@@ -371,7 +371,7 @@
     const list = Array.isArray(values)
       ? values
       : typeof values === 'string'
-        ? values.split(',')
+        ? values.match(/-?\d+/g) || []
         : values == null
           ? []
           : [values]
@@ -383,6 +383,18 @@
           .map(String),
       ),
     )
+  }
+
+  function contextValue(context, field) {
+    if (!context) return undefined
+    if (typeof context === 'object') return context[field]
+    if (typeof context !== 'string') return undefined
+    try {
+      const parsed = JSON.parse(context)
+      if (parsed && typeof parsed === 'object') return parsed[field]
+    } catch {}
+    const match = context.match(new RegExp(`${field}\\s*:\\s*([^\\n}]+)`))
+    return match ? match[1] : undefined
   }
 
   function waitForWfAlgolia(timeoutMs = 10000) {
@@ -415,13 +427,16 @@
   async function initTalentAlgoliaMatch() {
     try {
       const context = await getTalentMatchContext()
-      const categoryRefs = filterValues(context && context.category_refs)
+      const categoryRefs = filterValues(contextValue(context, 'category_refs'))
+      const subcategoryRefs = filterValues(contextValue(context, 'subcategory_refs'))
       window.Opp30TalentMatchContext = context
       document.documentElement.setAttribute('data-opp30-talent-category-count', String(categoryRefs.length))
+      document.documentElement.setAttribute('data-opp30-talent-category-refs', categoryRefs.join(','))
+      document.documentElement.setAttribute('data-opp30-talent-context-type', Array.isArray(context) ? 'array' : typeof context)
       log('talent algolia match context', {
-        starter_id: context && context.starter_id,
+        starter_id: contextValue(context, 'starter_id'),
         category_refs: categoryRefs,
-        subcategory_refs: filterValues(context && context.subcategory_refs),
+        subcategory_refs: subcategoryRefs,
       })
       console.info('[opp30] talent algolia category ref count', categoryRefs.length)
       if (!categoryRefs.length) {
