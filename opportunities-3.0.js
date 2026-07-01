@@ -353,6 +353,7 @@
       renderList('brand-opps', res.items, (card, o) => {
         bind(card, 'title', o.title)
         bind(card, 'company', o.company)
+        bind(card, 'description', o.description)
         bind(card, 'project_type', o.project_type)
         bind(card, 'est_project_duration', o.est_project_duration)
         bind(card, 'est_hours', o.est_hours)
@@ -360,6 +361,10 @@
         bind(card, 'budget_frequency', o.budget_frequency)
         bind(card, 'status', o.status)
         bind(card, 'created_at', fmtDate(o.created_at))
+        bind(card, 'published_at', fmtDate(o.published_at))
+        // Drive [data-opp-if="status === 'Active'|'Closed'|'Pending Review'"] status
+        // pills (converted from the card's old wf-algolia-if attributes).
+        applyOppIf(card, o)
         const link = $('[data-opp-detail-link]', card)
         if (link) link.href = `/opportunities-details---brand-view?opp=${o.id}`
       })
