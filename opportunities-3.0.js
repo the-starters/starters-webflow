@@ -556,13 +556,27 @@
     }
   }
 
+  // The page's [data-tab-filters-check].w--redirected-checked rule is meant to paint
+  // the active pill, but it ties for specificity with .tab-item_button.is-inherit
+  // (background-color: inherit) and loses on source order — so toggling classes alone
+  // never paints anything. data-opp-tab-active is our own attribute (inert by default;
+  // add CSS for it in Designer if you want to style from there) and the inline style
+  // is what actually guarantees the paint, using the same design-system variables the
+  // dead rule already referenced.
   function syncTalentTabControls(activeTab) {
     $$('[data-opp-talent-tab]').forEach((el) => {
       const tab = normalizeTalentTab(el.getAttribute('data-opp-talent-tab'))
       const active = tab === activeTab
       if ('checked' in el && /^(radio|checkbox)$/i.test(el.type || '')) el.checked = active
       el.setAttribute('aria-pressed', active ? 'true' : 'false')
-      el.classList.toggle('is-active', active)
+      const label = el.closest('label')
+      if (!label) return
+      label.setAttribute('data-opp-tab-active', active ? 'true' : 'false')
+      const pill = $('[data-tab-filters-check]', label) || $('.tab-item_button', label)
+      if (pill) {
+        pill.style.backgroundColor = active ? 'var(--tab-filters-active-bg, var(--colors--olive, #434b43))' : ''
+        pill.style.color = active ? 'var(--tab-filters-active-color, var(--colors--white, #ffffff))' : ''
+      }
     })
   }
 
@@ -980,7 +994,7 @@
       tab: el.getAttribute('data-opp-talent-tab'),
       checked: 'checked' in el ? el.checked : null,
       ariaPressed: el.getAttribute('aria-pressed'),
-      activeClass: el.classList?.contains?.('is-active') || false,
+      activeAttr: el.closest('label')?.getAttribute('data-opp-tab-active') || 'false',
     }))
     const activeTab = document.documentElement.getAttribute('data-opp30-talent-tab')
     const appliedCountAttr = document.documentElement.getAttribute('data-opp30-talent-applied-count')
