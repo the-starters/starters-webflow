@@ -764,6 +764,20 @@
   const setActiveOpp = (id) => (activeOpp = id ? parseInt(id, 10) : null)
   const setActiveApp = (id) => (activeApp = id ? parseInt(id, 10) : null)
 
+  // Fill the apply modal's [data-opp-bind="company"/"title"] elements from
+  // whichever card was clicked. Cards render either via wf-algolia (wf-algolia-text)
+  // or renderList (data-opp-bind).
+  function fillApplyModalMeta(card) {
+    const modal = $('[data-modal-target="apply-opportunity"]')
+    if (!modal || !card) return
+    const cardText = (sel) => {
+      const el = $(sel, card)
+      return el ? el.textContent.trim() : ''
+    }
+    bind(modal, 'company', cardText('[wf-algolia-text="company"]') || cardText('[data-opp-bind="company"]'))
+    bind(modal, 'title', cardText('[wf-algolia-text="title"]') || cardText('[data-opp-bind="title"]'))
+  }
+
   // When any element inside a card is clicked, capture that card's ids.
   // wf-algolia-rendered cards expose the id as data-wf-algolia-hit-objectid (not data-opp-id).
   document.addEventListener('click', (e) => {
@@ -771,6 +785,7 @@
     if (card) {
       setActiveOpp(card.getAttribute('data-opp-id') || card.getAttribute('data-wf-algolia-hit-objectid'))
       if (card.hasAttribute('data-app-id')) setActiveApp(card.getAttribute('data-app-id'))
+      fillApplyModalMeta(card)
     }
   })
 
