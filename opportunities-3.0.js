@@ -229,8 +229,30 @@
   }
 
   /* ============== MEMBERSTACK GATE (reused from v2) ============== */
+  function waitForMemberstackDom(timeoutMs = 10000) {
+    if (window.$memberstackDom && typeof window.$memberstackDom.getCurrentMember === 'function') {
+      return Promise.resolve(window.$memberstackDom)
+    }
+    return new Promise((resolve) => {
+      const startedAt = Date.now()
+      const timer = window.setInterval(() => {
+        if (window.$memberstackDom && typeof window.$memberstackDom.getCurrentMember === 'function') {
+          window.clearInterval(timer)
+          resolve(window.$memberstackDom)
+          return
+        }
+        if (Date.now() - startedAt >= timeoutMs) {
+          window.clearInterval(timer)
+          resolve(null)
+        }
+      }, 100)
+    })
+  }
+
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
-    const { data: member } = await window.$memberstackDom.getCurrentMember()
+    const memberstack = await waitForMemberstackDom()
+    if (!memberstack) throw new Error('Memberstack not available')
+    const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       location.href = '/login'
       return null
@@ -320,13 +342,18 @@
   }
 
   async function initTalentList() {
-    if (!(await gateOrRedirect('freelancer'))) return
-    if (!$('[wf-algolia-element="results"]')) {
-      handleMissingTalentAlgoliaMarkup()
-      return
+    try {
+      if (!(await gateOrRedirect('freelancer'))) return
+      if (!$('[wf-algolia-element="results"]')) {
+        handleMissingTalentAlgoliaMarkup()
+        return
+      }
+      const tabsBound = await initTalentTabs()
+      if (!tabsBound) await initTalentAlgoliaMatch()
+    } catch (err) {
+      document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
+      console.error('[opp30] failed to initialize talent list', err)
     }
-    const tabsBound = await initTalentTabs()
-    if (!tabsBound) await initTalentAlgoliaMatch()
   }
 
   function handleMissingTalentAlgoliaMarkup() {
@@ -882,8 +909,8 @@
     }))
     const issues = []
 
-    if (!scriptSrcs.some((src) => /starters-webflow@(?:latest|v1\.3\.7)\/opportunities-3\.0\.js/.test(src))) {
-      issues.push('opportunities-3.0.js is not loaded from @latest or @v1.3.7.')
+    if (!scriptSrcs.some((src) => /starters-webflow@(?:latest|v1\.3\.8)\/opportunities-3\.0\.js/.test(src))) {
+      issues.push('opportunities-3.0.js is not loaded from @latest or @v1.3.8.')
     }
     if (!window.WfAlgolia) issues.push('window.WfAlgolia is missing.')
     if (!$('[wf-algolia-element="browse"]')) issues.push('Missing wf-algolia browse wrapper.')
@@ -947,5 +974,5 @@
   else boot()
 
   // expose for debugging / manual calls in console
-  window.Opp30 = { API, ensureXanoToken, diagnoseFreelancerFeed }
+  window.Opp30 = { API, ensureXanoToken, diagnoseFreelancerFeed, waitForMemberstackDom }
 })()
