@@ -463,6 +463,7 @@
   const APPLIED_FIELD = 'objectID'
   const APPLIED_EMPTY = '__none__'
   let _talentAppliedIdsPromise = null
+  let _talentAppliedIdsCache = null
 
   function fetchAppliedOppIds() {
     if (!_talentAppliedIdsPromise) {
@@ -473,10 +474,72 @@
           .map((o) => o.opportunity_id || o.id)
           .filter(Boolean)
           .map(String)
-        return Array.from(new Set(ids))
+        const deduped = Array.from(new Set(ids))
+        _talentAppliedIdsCache = deduped
+        return deduped
       })
     }
     return _talentAppliedIdsPromise
+  }
+
+  // Mirrors wf-algolia-if's grammar (truthy field, or ===/!==/>/>=/</<= against a
+  // literal) but evaluates against OUR per-card data instead of the Algolia hit,
+  // since "already applied" is member-specific and isn't an indexed field.
+  // Longest operators first so ">=" doesn't get matched as ">".
+  const OPP_IF_OPERATORS = ['===', '!==', '>=', '<=', '>', '<']
+  function evalOppIf(expr, data) {
+    const op = OPP_IF_OPERATORS.find((candidate) => expr.includes(candidate))
+    if (!op) return Boolean(data[expr.trim()])
+    const [left, right] = expr.split(op).map((s) => s.trim())
+    if (left === undefined || right === undefined) return false
+    const leftVal = data[left]
+    const rightVal = right.replace(/^["']|["']$/g, '')
+    const leftNum = parseFloat(leftVal)
+    const rightNum = parseFloat(rightVal)
+    const bothNumeric = !isNaN(leftNum) && !isNaN(rightNum)
+    switch (op) {
+      case '===':
+        return String(leftVal) === rightVal
+      case '!==':
+        return String(leftVal) !== rightVal
+      case '>':
+        return bothNumeric && leftNum > rightNum
+      case '>=':
+        return bothNumeric && leftNum >= rightNum
+      case '<':
+        return bothNumeric && leftNum < rightNum
+      case '<=':
+        return bothNumeric && leftNum <= rightNum
+      default:
+        return false
+    }
+  }
+
+  // Applies every [data-opp-if] inside a card against that card's data, e.g.
+  // data-opp-if="applied === false" on the Apply button hides it once applied.
+  // data-opp-display (mirrors wf-algolia-display) optionally forces the shown
+  // value — default is clearing the inline style so the element's own class
+  // (flex/grid/whatever) takes back over, unlike wf-algolia-if which defaults
+  // to a hardcoded display:block on show.
+  function applyOppIf(card, data) {
+    $$('[data-opp-if]', card).forEach((el) => {
+      const expr = el.getAttribute('data-opp-if')
+      const visible = evalOppIf(expr, data)
+      el.style.display = visible ? el.getAttribute('data-opp-display') || '' : 'none'
+    })
+  }
+
+  // Reads the sync cache (not the promise) so it's safe to call from a
+  // MutationObserver callback; call sites also re-run once the fetch resolves.
+  function markAppliedCards(container) {
+    if (!_talentAppliedIdsCache) return
+    const appliedIds = new Set(_talentAppliedIdsCache)
+    $$('[data-wf-algolia-hit-objectid]', container).forEach((card) => {
+      const id = card.getAttribute('data-wf-algolia-hit-objectid')
+      const applied = Boolean(id) && appliedIds.has(id)
+      card.setAttribute('data-opp-already-applied', applied ? 'true' : 'false')
+      applyOppIf(card, { applied })
+    })
   }
 
   async function applyTalentAppliedFilter() {
@@ -940,12 +1003,19 @@
         .forEach((n) => n.classList.toggle('is-active', n.getAttribute('data-wf-algolia-active') === 'true'))
     }
 
+    // starterOppList('Applied') is a starter-only endpoint; only relevant on the
+    // freelancer feed (this bridge also runs on the brand list page).
+    const isTalentFeed = location.pathname.includes('opportunities-freelancer-view')
+
     fixPaginationMarkup()
     const apply = () => {
       fixCards()
       fixActivePage()
+      if (isTalentFeed) markAppliedCards(results)
     }
     apply()
+    // Cards render before the applied-ids fetch resolves; re-mark once it's in.
+    if (isTalentFeed) fetchAppliedOppIds().then(apply).catch(() => {})
     new MutationObserver(apply).observe(results, { childList: true, subtree: true })
     const pager = ($('[wf-algolia-element="page-number"]') || {}).parentElement
     if (pager) new MutationObserver(fixActivePage).observe(pager, { childList: true, subtree: true, attributes: true })
