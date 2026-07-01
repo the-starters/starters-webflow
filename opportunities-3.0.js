@@ -325,7 +325,8 @@
       handleMissingTalentAlgoliaMarkup()
       return
     }
-    await initTalentAlgoliaMatch()
+    const tabsBound = await initTalentTabs()
+    if (!tabsBound) await initTalentAlgoliaMatch()
   }
 
   function handleMissingTalentAlgoliaMarkup() {
@@ -370,9 +371,16 @@
     })
   }
 
+  let _talentMatchContextPromise = null
+
+  function getTalentMatchContext() {
+    if (!_talentMatchContextPromise) _talentMatchContextPromise = API.starterMatchContext()
+    return _talentMatchContextPromise
+  }
+
   async function initTalentAlgoliaMatch() {
     try {
-      const context = await API.starterMatchContext()
+      const context = await getTalentMatchContext()
       const categoryRefs = filterValues(context && context.category_refs)
       window.Opp30TalentMatchContext = context
       log('talent algolia match context', {
@@ -390,6 +398,143 @@
       wfAlgolia.setFilter('category_refs', categoryRefs)
     } catch (err) {
       console.error('[opp30] failed to apply talent Algolia match filter', err)
+    }
+  }
+
+  function normalizeTalentTab(value) {
+    const tab = String(value || '').trim().toLowerCase()
+    return tab === 'applied' ? 'applied' : 'all'
+  }
+
+  function getTalentAllPanel() {
+    return $('[data-opp-talent-panel="all"]') || $('[wf-algolia-element="browse"]')
+  }
+
+  function getTalentAppliedPanel() {
+    const list = $('[data-opp-list="talent-applied"]')
+    return $('[data-opp-talent-panel="applied"]') || (list && list.closest('[data-opp-talent-panel]')) || list
+  }
+
+  function getInitialTalentTab() {
+    const checked = $$('[data-opp-talent-tab]').find((el) => 'checked' in el && el.checked)
+    return normalizeTalentTab((checked || $('[data-opp-talent-tab]') || {}).getAttribute?.('data-opp-talent-tab'))
+  }
+
+  function syncTalentTabControls(activeTab) {
+    $$('[data-opp-talent-tab]').forEach((el) => {
+      const tab = normalizeTalentTab(el.getAttribute('data-opp-talent-tab'))
+      const active = tab === activeTab
+      if ('checked' in el && /^(radio|checkbox)$/i.test(el.type || '')) el.checked = active
+      el.setAttribute('aria-pressed', active ? 'true' : 'false')
+      el.classList.toggle('is-active', active)
+    })
+  }
+
+  async function initTalentTabs() {
+    const controls = $$('[data-opp-talent-tab]')
+    if (!controls.length) return false
+    controls.forEach((control) => {
+      if (control.__opp30TalentTabWired) return
+      control.__opp30TalentTabWired = true
+      const activate = (event) => {
+        const target = event.currentTarget || event.target || control
+        if (/^radio$/i.test(target.type || '') && !target.checked) return
+        setTalentTab(target.getAttribute('data-opp-talent-tab'))
+      }
+      control.addEventListener('change', activate)
+      control.addEventListener('click', activate)
+    })
+    await setTalentTab(getInitialTalentTab())
+    return true
+  }
+
+  async function setTalentTab(value) {
+    const tab = normalizeTalentTab(value)
+    const allPanel = getTalentAllPanel()
+    const appliedPanel = getTalentAppliedPanel()
+    if (tab === 'applied' && !appliedPanel) {
+      document.documentElement.setAttribute('data-opp30-talent-tab', 'all')
+      if (allPanel) allPanel.style.display = ''
+      syncTalentTabControls('all')
+      console.warn(
+        '[opp30] Applied tab selected, but no [data-opp-talent-panel="applied"] or [data-opp-list="talent-applied"] exists.',
+      )
+      return
+    }
+
+    document.documentElement.setAttribute('data-opp30-talent-tab', tab)
+    if (allPanel) allPanel.style.display = tab === 'all' ? '' : 'none'
+    if (appliedPanel) appliedPanel.style.display = tab === 'applied' ? '' : 'none'
+    syncTalentTabControls(tab)
+
+    if (tab === 'all') {
+      await initTalentAlgoliaMatch()
+      return
+    }
+    await loadTalentAppliedList()
+  }
+
+  function normalizeAppliedItem(item) {
+    const opportunity =
+      item.opportunity ||
+      item.opportunities_v3 ||
+      item.opportunity_v3 ||
+      item.opportunity_record ||
+      {}
+    const opportunityId =
+      opportunity.id || item.opportunity_id || item.opportunities_v3_id || item.opportunity
+    return {
+      ...opportunity,
+      id: opportunityId || item.id,
+      opportunity_id: opportunityId || item.id,
+      application_id: item.id,
+      message: item.message || opportunity.message || '',
+      submitted_at: item.submitted_at || item.created_at || '',
+      title: opportunity.title || item.opportunity_title || item.title || '',
+      company: opportunity.company || item.company || '',
+      project_type: opportunity.project_type || item.project_type || '',
+      est_project_duration: opportunity.est_project_duration || item.est_project_duration || '',
+      budget: opportunity.budget || item.budget || '',
+      budget_frequency: opportunity.budget_frequency || item.budget_frequency || '',
+      description: opportunity.description || item.description || item.message || '',
+      status: opportunity.status || item.status || 'Applied',
+      created_at: opportunity.created_at || item.opportunity_created_at || '',
+    }
+  }
+
+  async function loadTalentAppliedList() {
+    const list = $('[data-opp-list="talent-applied"]')
+    if (!list) return
+    if (list.getAttribute('data-opp-loading') === 'true') return
+    list.setAttribute('data-opp-loading', 'true')
+    try {
+      const res = await API.starterOppList('Applied')
+      const raw = Array.isArray(res) ? res : Array.isArray(res && res.items) ? res.items : []
+      const items = raw.map(normalizeAppliedItem)
+      renderList('talent-applied', items, (card, o) => {
+        card.setAttribute('data-opp-id', o.opportunity_id || o.id)
+        if (o.application_id) card.setAttribute('data-app-id', o.application_id)
+        bind(card, 'title', o.title)
+        bind(card, 'company', o.company)
+        bind(card, 'description', o.description)
+        bind(card, 'project_type', o.project_type)
+        bind(card, 'est_project_duration', o.est_project_duration)
+        bind(card, 'budget', o.budget)
+        bind(card, 'budget_frequency', o.budget_frequency)
+        bind(card, 'message', o.message)
+        bind(card, 'submitted_at', fmtDate(o.submitted_at))
+        bind(card, 'created_at', fmtDate(o.created_at))
+        bind(card, 'status', o.status)
+        const link = $('[data-opp-detail-link]', card)
+        if (link && (o.opportunity_id || o.id)) link.href = `/opportunities/${o.opportunity_id || o.id}`
+        paintState(card, 'applied')
+      })
+    } catch (err) {
+      console.error('[opp30] failed to load applied opportunities', err)
+      const empty = $('[data-opp-empty="talent-applied"]')
+      if (empty) empty.style.display = ''
+    } finally {
+      list.setAttribute('data-opp-loading', 'false')
     }
   }
 
