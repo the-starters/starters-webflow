@@ -410,15 +410,23 @@
       const context = await getTalentMatchContext()
       const categoryRefs = filterValues(context && context.category_refs)
       window.Opp30TalentMatchContext = context
+      document.documentElement.setAttribute('data-opp30-talent-category-count', String(categoryRefs.length))
       log('talent algolia match context', {
         starter_id: context && context.starter_id,
         category_refs: categoryRefs,
         subcategory_refs: filterValues(context && context.subcategory_refs),
       })
-      if (!categoryRefs.length) return
+      console.info('[opp30] talent algolia category ref count', categoryRefs.length)
+      if (!categoryRefs.length) {
+        document.documentElement.setAttribute('data-opp30-talent-algolia', 'no-category-refs')
+        console.warn('[opp30] talent match context has no category_refs; Algolia match filter skipped')
+        return
+      }
 
+      document.documentElement.setAttribute('data-opp30-talent-algolia', 'waiting-wf-algolia')
       const wfAlgolia = await waitForWfAlgolia()
       if (!wfAlgolia) {
+        document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-wf-algolia')
         console.warn('[opp30] wf-algolia unavailable; talent match filter skipped')
         return
       }
@@ -909,8 +917,8 @@
     }))
     const issues = []
 
-    if (!scriptSrcs.some((src) => /starters-webflow@(?:latest|v1\.3\.8)\/opportunities-3\.0\.js/.test(src))) {
-      issues.push('opportunities-3.0.js is not loaded from @latest or @v1.3.8.')
+    if (!scriptSrcs.some((src) => /starters-webflow@(?:latest|v1\.3\.9)\/opportunities-3\.0\.js/.test(src))) {
+      issues.push('opportunities-3.0.js is not loaded from @latest or @v1.3.9.')
     }
     if (!window.WfAlgolia) issues.push('window.WfAlgolia is missing.')
     if (!$('[wf-algolia-element="browse"]')) issues.push('Missing wf-algolia browse wrapper.')
@@ -931,6 +939,7 @@
       url: location.href,
       htmlTalentTab: document.documentElement.getAttribute('data-opp30-talent-tab'),
       htmlTalentAlgolia: document.documentElement.getAttribute('data-opp30-talent-algolia'),
+      htmlTalentCategoryCount: document.documentElement.getAttribute('data-opp30-talent-category-count'),
       scripts: {
         opportunities30: scriptSrcs.filter((src) => /starters-webflow@.*\/opportunities-3\.0\.js/.test(src)),
         wfAlgolia: scriptSrcs.filter((src) => /@candid-leap\/wf-algolia|wf-algolia/i.test(src)),
