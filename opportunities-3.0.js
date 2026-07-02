@@ -221,7 +221,7 @@
       title: val('Opportunity-title'),
       description: val('Description'),
       exp_requirements: val('Requirements'),
-      role_name: multiVal('Role-option') || multiVal('Function'),
+      role_name: multiVal('Category-option') || multiVal('Role-option') || multiVal('Function'),
       project_type,
       est_project_duration: checkedVal('Duration'),
       budget,
