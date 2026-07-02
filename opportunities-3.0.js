@@ -24,6 +24,23 @@
   // load (duplicate embed, Webflow re-init) returns here instead of re-binding.
   if (window.Opp30) return
 
+  // Freelancer feed: hide the Algolia results until the current member's category
+  // filter is applied. wf-algolia paints the unfiltered `status:Active` set on load
+  // (which can include opportunities matched to a previously-signed-in account), so
+  // without this the wrong cards flash before initTalentAlgoliaMatch() narrows them.
+  // Injected synchronously (before wf-algolia renders); removed/overridden the moment
+  // the filtered results are ready. `visibility` (not `display`) preserves layout.
+  if (location.pathname.includes('opportunities-freelancer-view')) {
+    try {
+      const hideStyle = document.createElement('style')
+      hideStyle.id = 'opp30-talent-hide-until-filtered'
+      hideStyle.textContent = '[wf-algolia-element="results"]{visibility:hidden}'
+      ;(document.head || document.documentElement).appendChild(hideStyle)
+    } catch (e) {
+      /* non-fatal */
+    }
+  }
+
   /* ============================ CONFIG ============================ */
   /** Verbose console logging during rollout; set false for production quiet. @type {boolean} */
   const DEBUG_LOG = true
@@ -55,6 +72,10 @@
 
   /* ========================= AUTH BRIDGE ========================== */
   let _xanoToken = null
+  // Memberstack id the caches below were built for. When it changes (account
+  // switch), resetMemberScopedCaches() drops the stale token/context so the new
+  // member never inherits the previous member's data.
+  let _cacheMemberId = null
 
   async function getMemberstackToken() {
     const ms = window.$memberstackDom
@@ -249,14 +270,37 @@
     })
   }
 
+  // Drop every member-scoped cache when the signed-in member changes, so a new
+  // account never reuses the previous member's Xano token, match context, or
+  // applied-ids (which would leak the previous member's opportunities into the feed).
+  function resetMemberScopedCaches(memberId) {
+    if (memberId === _cacheMemberId) return
+    _cacheMemberId = memberId
+    _xanoToken = null
+    _talentMatchContextPromise = null
+    _talentAppliedIdsPromise = null
+    _talentAppliedIdsCache = null
+    window.Opp30TalentMatchContext = null
+    // Drop any Algolia results cached for the previous member.
+    if (window.WfAlgolia && typeof window.WfAlgolia.refresh === 'function') {
+      try {
+        window.WfAlgolia.refresh()
+      } catch (e) {
+        /* non-fatal */
+      }
+    }
+  }
+
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
+      resetMemberScopedCaches(null)
       location.href = '/login'
       return null
     }
+    resetMemberScopedCaches(member.id)
     const cf = member.customFields || {}
     if (expect === 'freelancer' && !cf['freelancer-dashboard-url']) {
       location.href = cf['brands-dashboard-url'] ? '/opportunities-brands-view' : '/'
@@ -309,6 +353,7 @@
       renderList('brand-opps', res.items, (card, o) => {
         bind(card, 'title', o.title)
         bind(card, 'company', o.company)
+        bind(card, 'description', o.description)
         bind(card, 'project_type', o.project_type)
         bind(card, 'est_project_duration', o.est_project_duration)
         bind(card, 'est_hours', o.est_hours)
@@ -316,6 +361,10 @@
         bind(card, 'budget_frequency', o.budget_frequency)
         bind(card, 'status', o.status)
         bind(card, 'created_at', fmtDate(o.created_at))
+        bind(card, 'published_at', fmtDate(o.published_at))
+        // Drive [data-opp-if="status === 'Active'|'Closed'|'Pending Review'"] status
+        // pills (converted from the card's old wf-algolia-if attributes).
+        applyOppIf(card, o)
         const link = $('[data-opp-detail-link]', card)
         if (link) link.href = `/opportunities-details---brand-view?opp=${o.id}`
       })
@@ -353,6 +402,7 @@
     } catch (err) {
       document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
       console.error('[opp30] failed to initialize talent list', err)
+      setTalentResultsHidden(false)
     }
   }
 
@@ -368,14 +418,33 @@
   }
 
   function filterValues(values) {
+    const list = Array.isArray(values)
+      ? values
+      : typeof values === 'string'
+        ? values.match(/-?\d+/g) || []
+        : values == null
+          ? []
+          : [values]
     return Array.from(
       new Set(
-        (Array.isArray(values) ? values : [])
+        list
           .map((value) => parseInt(value, 10))
           .filter((value) => Number.isFinite(value) && value > 0)
           .map(String),
       ),
     )
+  }
+
+  function contextValue(context, field) {
+    if (!context) return undefined
+    if (typeof context === 'object') return context[field]
+    if (typeof context !== 'string') return undefined
+    try {
+      const parsed = JSON.parse(context)
+      if (parsed && typeof parsed === 'object') return parsed[field]
+    } catch {}
+    const match = context.match(new RegExp(`${field}\\s*:\\s*([^\\n}]+)`))
+    return match ? match[1] : undefined
   }
 
   function waitForWfAlgolia(timeoutMs = 10000) {
@@ -398,6 +467,40 @@
     })
   }
 
+  // Show/hide the talent results container. Revealing also removes the early
+  // "hide-until-filtered" <style>, and the inline visibility wins over it either way.
+  function setTalentResultsHidden(hidden) {
+    const results = $('[wf-algolia-element="results"]')
+    if (results) results.style.visibility = hidden ? 'hidden' : 'visible'
+    if (!hidden) {
+      const rule = document.getElementById('opp30-talent-hide-until-filtered')
+      if (rule) rule.remove()
+    }
+  }
+
+  // Reveal the talent feed once the post-filter render has actually landed. Waits for
+  // the first results mutation after setFilter (so the filtered cards are in the DOM),
+  // with a fallback timeout so the feed can never stay stuck hidden.
+  function revealTalentResultsWhenReady() {
+    const results = $('[wf-algolia-element="results"]')
+    if (!results) return setTalentResultsHidden(false)
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      try {
+        observer.disconnect()
+      } catch (e) {
+        /* non-fatal */
+      }
+      window.clearTimeout(timer)
+      setTalentResultsHidden(false)
+    }
+    const observer = new MutationObserver(finish)
+    observer.observe(results, { childList: true, subtree: true })
+    const timer = window.setTimeout(finish, 1500)
+  }
+
   let _talentMatchContextPromise = null
 
   function getTalentMatchContext() {
@@ -408,18 +511,27 @@
   async function initTalentAlgoliaMatch() {
     try {
       const context = await getTalentMatchContext()
-      const categoryRefs = filterValues(context && context.category_refs)
+      const categoryRefs = filterValues(contextValue(context, 'category_refs'))
+      const subcategoryRefs = filterValues(contextValue(context, 'subcategory_refs'))
       window.Opp30TalentMatchContext = context
       document.documentElement.setAttribute('data-opp30-talent-category-count', String(categoryRefs.length))
+      document.documentElement.setAttribute('data-opp30-talent-category-refs', categoryRefs.join(','))
+      document.documentElement.setAttribute('data-opp30-talent-context-type', Array.isArray(context) ? 'array' : typeof context)
       log('talent algolia match context', {
-        starter_id: context && context.starter_id,
+        starter_id: contextValue(context, 'starter_id'),
         category_refs: categoryRefs,
-        subcategory_refs: filterValues(context && context.subcategory_refs),
+        subcategory_refs: subcategoryRefs,
       })
       console.info('[opp30] talent algolia category ref count', categoryRefs.length)
       if (!categoryRefs.length) {
         document.documentElement.setAttribute('data-opp30-talent-algolia', 'no-category-refs')
         console.warn('[opp30] talent match context has no category_refs; Algolia match filter skipped')
+        // No categories to match on: never fall back to the unfiltered feed. Collapse
+        // the results and surface the empty state instead of showing non-matching cards.
+        const results = $('[wf-algolia-element="results"]')
+        if (results) results.style.display = 'none'
+        const noResults = $('[wf-algolia-element="no-results"]')
+        if (noResults) noResults.style.display = ''
         return
       }
 
@@ -428,14 +540,121 @@
       if (!wfAlgolia) {
         document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-wf-algolia')
         console.warn('[opp30] wf-algolia unavailable; talent match filter skipped')
+        setTalentResultsHidden(false)
         return
       }
       wfAlgolia.setFilter('category_refs', categoryRefs)
       document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
+      revealTalentResultsWhenReady()
     } catch (err) {
       document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
       console.error('[opp30] failed to apply talent Algolia match filter', err)
+      setTalentResultsHidden(false)
     }
+  }
+
+  const APPLIED_FIELD = 'objectID'
+  const APPLIED_EMPTY = '__none__'
+  let _talentAppliedIdsPromise = null
+  let _talentAppliedIdsCache = null
+
+  function fetchAppliedOppIds() {
+    if (!_talentAppliedIdsPromise) {
+      _talentAppliedIdsPromise = API.starterOppList('Applied').then((res) => {
+        const raw = Array.isArray(res) ? res : Array.isArray(res && res.items) ? res.items : []
+        const ids = raw
+          .map(normalizeAppliedItem)
+          .map((o) => o.opportunity_id || o.id)
+          .filter(Boolean)
+          .map(String)
+        const deduped = Array.from(new Set(ids))
+        _talentAppliedIdsCache = deduped
+        return deduped
+      })
+    }
+    return _talentAppliedIdsPromise
+  }
+
+  // Mirrors wf-algolia-if's grammar (truthy field, or ===/!==/>/>=/</<= against a
+  // literal) but evaluates against OUR per-card data instead of the Algolia hit,
+  // since "already applied" is member-specific and isn't an indexed field.
+  // Longest operators first so ">=" doesn't get matched as ">".
+  const OPP_IF_OPERATORS = ['===', '!==', '>=', '<=', '>', '<']
+  function evalOppIf(expr, data) {
+    const op = OPP_IF_OPERATORS.find((candidate) => expr.includes(candidate))
+    if (!op) return Boolean(data[expr.trim()])
+    const [left, right] = expr.split(op).map((s) => s.trim())
+    if (left === undefined || right === undefined) return false
+    const leftVal = data[left]
+    const rightVal = right.replace(/^["']|["']$/g, '')
+    const leftNum = parseFloat(leftVal)
+    const rightNum = parseFloat(rightVal)
+    const bothNumeric = !isNaN(leftNum) && !isNaN(rightNum)
+    switch (op) {
+      case '===':
+        return String(leftVal) === rightVal
+      case '!==':
+        return String(leftVal) !== rightVal
+      case '>':
+        return bothNumeric && leftNum > rightNum
+      case '>=':
+        return bothNumeric && leftNum >= rightNum
+      case '<':
+        return bothNumeric && leftNum < rightNum
+      case '<=':
+        return bothNumeric && leftNum <= rightNum
+      default:
+        return false
+    }
+  }
+
+  // Applies every [data-opp-if] inside a card against that card's data, e.g.
+  // data-opp-if="applied === false" on the Apply button hides it once applied.
+  // data-opp-display (mirrors wf-algolia-display) optionally forces the shown
+  // value — default is clearing the inline style so the element's own class
+  // (flex/grid/whatever) takes back over, unlike wf-algolia-if which defaults
+  // to a hardcoded display:block on show.
+  function applyOppIf(card, data) {
+    $$('[data-opp-if]', card).forEach((el) => {
+      const expr = el.getAttribute('data-opp-if')
+      const visible = evalOppIf(expr, data)
+      el.style.display = visible ? el.getAttribute('data-opp-display') || '' : 'none'
+    })
+  }
+
+  // Reads the sync cache (not the promise) so it's safe to call from a
+  // MutationObserver callback; call sites also re-run once the fetch resolves.
+  function markAppliedCards(container) {
+    if (!_talentAppliedIdsCache) return
+    const appliedIds = new Set(_talentAppliedIdsCache)
+    $$('[data-wf-algolia-hit-objectid]', container).forEach((card) => {
+      const id = card.getAttribute('data-wf-algolia-hit-objectid')
+      const applied = Boolean(id) && appliedIds.has(id)
+      card.setAttribute('data-opp-already-applied', applied ? 'true' : 'false')
+      applyOppIf(card, { applied })
+    })
+  }
+
+  async function applyTalentAppliedFilter() {
+    const wfAlgolia = await waitForWfAlgolia()
+    if (!wfAlgolia) {
+      document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-wf-algolia')
+      console.warn('[opp30] wf-algolia unavailable; applied filter skipped')
+      setTalentResultsHidden(false)
+      return
+    }
+    const ids = await fetchAppliedOppIds()
+    wfAlgolia.setFilter(APPLIED_FIELD, ids.length ? ids : [APPLIED_EMPTY])
+    document.documentElement.setAttribute('data-opp30-talent-applied-count', String(ids.length))
+    document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
+    revealTalentResultsWhenReady()
+  }
+
+  async function clearTalentAppliedFilter() {
+    const wfAlgolia = await waitForWfAlgolia()
+    if (wfAlgolia) wfAlgolia.setFilter(APPLIED_FIELD, [])
+    document.documentElement.removeAttribute('data-opp30-talent-applied-count')
+    await initTalentAlgoliaMatch()
   }
 
   function normalizeTalentTab(value) {
@@ -495,13 +714,27 @@
     }
   }
 
+  // The page's [data-tab-filters-check].w--redirected-checked rule is meant to paint
+  // the active pill, but it ties for specificity with .tab-item_button.is-inherit
+  // (background-color: inherit) and loses on source order — so toggling classes alone
+  // never paints anything. data-opp-tab-active is our own attribute (inert by default;
+  // add CSS for it in Designer if you want to style from there) and the inline style
+  // is what actually guarantees the paint, using the same design-system variables the
+  // dead rule already referenced.
   function syncTalentTabControls(activeTab) {
     $$('[data-opp-talent-tab]').forEach((el) => {
       const tab = normalizeTalentTab(el.getAttribute('data-opp-talent-tab'))
       const active = tab === activeTab
       if ('checked' in el && /^(radio|checkbox)$/i.test(el.type || '')) el.checked = active
       el.setAttribute('aria-pressed', active ? 'true' : 'false')
-      el.classList.toggle('is-active', active)
+      const label = el.closest('label')
+      if (!label) return
+      label.setAttribute('data-opp-tab-active', active ? 'true' : 'false')
+      const pill = $('[data-tab-filters-check]', label) || $('.tab-item_button', label)
+      if (pill) {
+        pill.style.backgroundColor = active ? 'var(--tab-filters-active-bg, var(--colors--olive, #434b43))' : ''
+        pill.style.color = active ? 'var(--tab-filters-active-color, var(--colors--white, #ffffff))' : ''
+      }
     })
   }
 
@@ -520,6 +753,9 @@
       control.addEventListener('change', activate)
       control.addEventListener('click', activate)
     })
+    // Warm the memoized applied-ids fetch now (while the page shows "all") so the
+    // first Applied click doesn't wait on a fresh Xano round-trip.
+    fetchAppliedOppIds().catch(() => {})
     await setTalentTab(getInitialTalentTab())
     return true
   }
@@ -528,27 +764,17 @@
     const tab = normalizeTalentTab(value)
     const allPanel = getTalentAllPanel()
     const appliedPanel = getTalentAppliedPanel()
-    if (tab === 'applied' && !appliedPanel) {
-      document.documentElement.setAttribute('data-opp30-talent-tab', 'all')
-      if (allPanel) allPanel.style.display = ''
-      syncTalentTabControls('all')
-      console.warn(
-        '[opp30] Applied tab selected, but no [data-opp-talent-panel="applied"] or [data-opp-list="talent-applied"] exists.',
-      )
-      await initTalentAlgoliaMatch()
-      return
-    }
 
     document.documentElement.setAttribute('data-opp30-talent-tab', tab)
-    if (allPanel) allPanel.style.display = tab === 'all' ? '' : 'none'
-    if (appliedPanel) appliedPanel.style.display = tab === 'applied' ? '' : 'none'
+    if (allPanel) allPanel.style.display = ''
+    if (appliedPanel && appliedPanel !== allPanel) appliedPanel.style.display = tab === 'applied' ? '' : 'none'
     syncTalentTabControls(tab)
 
-    if (tab === 'all') {
-      await initTalentAlgoliaMatch()
+    if (tab === 'applied') {
+      await applyTalentAppliedFilter()
       return
     }
-    await loadTalentAppliedList()
+    await clearTalentAppliedFilter()
   }
 
   function normalizeAppliedItem(item) {
@@ -713,6 +939,20 @@
   const setActiveOpp = (id) => (activeOpp = id ? parseInt(id, 10) : null)
   const setActiveApp = (id) => (activeApp = id ? parseInt(id, 10) : null)
 
+  // Fill the apply modal's [data-opp-bind="company"/"title"] elements from
+  // whichever card was clicked. Cards render either via wf-algolia (wf-algolia-text)
+  // or renderList (data-opp-bind).
+  function fillApplyModalMeta(card) {
+    const modal = $('[data-modal-target="apply-opportunity"]')
+    if (!modal || !card) return
+    const cardText = (sel) => {
+      const el = $(sel, card)
+      return el ? el.textContent.trim() : ''
+    }
+    bind(modal, 'company', cardText('[wf-algolia-text="company"]') || cardText('[data-opp-bind="company"]'))
+    bind(modal, 'title', cardText('[wf-algolia-text="title"]') || cardText('[data-opp-bind="title"]'))
+  }
+
   // When any element inside a card is clicked, capture that card's ids.
   // wf-algolia-rendered cards expose the id as data-wf-algolia-hit-objectid (not data-opp-id).
   document.addEventListener('click', (e) => {
@@ -720,6 +960,7 @@
     if (card) {
       setActiveOpp(card.getAttribute('data-opp-id') || card.getAttribute('data-wf-algolia-hit-objectid'))
       if (card.hasAttribute('data-app-id')) setActiveApp(card.getAttribute('data-app-id'))
+      fillApplyModalMeta(card)
     }
   })
 
@@ -857,31 +1098,22 @@
         .forEach((n) => n.classList.toggle('is-active', n.getAttribute('data-wf-algolia-active') === 'true'))
     }
 
+    // starterOppList('Applied') is a starter-only endpoint; only relevant on the
+    // freelancer feed (this bridge also runs on the brand list page).
+    const isTalentFeed = location.pathname.includes('opportunities-freelancer-view')
+
     fixPaginationMarkup()
     const apply = () => {
       fixCards()
       fixActivePage()
+      if (isTalentFeed) markAppliedCards(results)
     }
     apply()
+    // Cards render before the applied-ids fetch resolves; re-mark once it's in.
+    if (isTalentFeed) fetchAppliedOppIds().then(apply).catch(() => {})
     new MutationObserver(apply).observe(results, { childList: true, subtree: true })
     const pager = ($('[wf-algolia-element="page-number"]') || {}).parentElement
     if (pager) new MutationObserver(fixActivePage).observe(pager, { childList: true, subtree: true, attributes: true })
-
-    // The close-opportunity modal's confirm button is a plain <div> (not tagged
-    // data-opp-submit), and Finsweet relocates the modal after boot — so use
-    // DOCUMENT-level delegation: a "Confirm" click inside the close-opportunity modal
-    // -> brandOppClose(activeOpp) (activeOpp set by the card-click listener).
-    if (!window.__opp30CloseWired) {
-      window.__opp30CloseWired = true
-      document.addEventListener('click', (e) => {
-        if (!e.target.closest('[data-modal-target="close-opportunity"]')) return
-        const btn =
-          e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') || e.target
-        if (/^confirm$/i.test((btn.textContent || '').trim()) && activeOpp) {
-          guard(btn, () => API.brandOppClose(activeOpp))
-        }
-      })
-    }
 
     // If wf-algolia already rendered (and possibly crashed) before our markup fix, re-render.
     if (window.WfAlgolia && typeof window.WfAlgolia.refresh === 'function') {
@@ -891,6 +1123,25 @@
         /* non-fatal */
       }
     }
+  }
+
+  // The close-opportunity modal's confirm button is a plain <div> (not tagged
+  // data-opp-submit), and Finsweet relocates the modal after boot — so use
+  // DOCUMENT-level delegation: a "Confirm" click inside the close-opportunity modal
+  // -> brandOppClose(activeOpp) (activeOpp set by the card-click listener). Wired on the
+  // brand list page independently of the wf-algolia bridge, so closing works whether the
+  // feed renders via Xano (data-opp-list="brand-opps") or the legacy wf-algolia markup.
+  function wireCloseOpportunityModal() {
+    if (window.__opp30CloseWired) return
+    window.__opp30CloseWired = true
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('[data-modal-target="close-opportunity"]')) return
+      const btn =
+        e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') || e.target
+      if (/^confirm$/i.test((btn.textContent || '').trim()) && activeOpp) {
+        guard(btn, () => API.brandOppClose(activeOpp))
+      }
+    })
   }
 
   function diagnoseFreelancerFeed() {
@@ -914,12 +1165,15 @@
       tab: el.getAttribute('data-opp-talent-tab'),
       checked: 'checked' in el ? el.checked : null,
       ariaPressed: el.getAttribute('aria-pressed'),
-      activeClass: el.classList?.contains?.('is-active') || false,
+      activeAttr: el.closest('label')?.getAttribute('data-opp-tab-active') || 'false',
     }))
+    const activeTab = document.documentElement.getAttribute('data-opp30-talent-tab')
+    const appliedCountAttr = document.documentElement.getAttribute('data-opp30-talent-applied-count')
+    const appliedCount = appliedCountAttr == null ? null : Number(appliedCountAttr)
     const issues = []
 
-    if (!scriptSrcs.some((src) => /starters-webflow@(?:latest|v1\.3\.9)\/opportunities-3\.0\.js/.test(src))) {
-      issues.push('opportunities-3.0.js is not loaded from @latest or @v1.3.9.')
+    if (!scriptSrcs.some((src) => /starters-webflow@[^/]+\/opportunities-3\.0\.js/.test(src))) {
+      issues.push('opportunities-3.0.js is not loaded from a versioned/@latest jsDelivr URL.')
     }
     if (!window.WfAlgolia) issues.push('window.WfAlgolia is missing.')
     if (!$('[wf-algolia-element="browse"]')) issues.push('Missing wf-algolia browse wrapper.')
@@ -933,6 +1187,9 @@
     else if (!categoryRefs.length) issues.push('Opp30TalentMatchContext.category_refs is empty.')
     if (categoryRefs.length && !filterStateText.includes('category_refs')) {
       issues.push('WfAlgolia filter state does not show category_refs.')
+    }
+    if (activeTab === 'applied' && !filterStateText.includes(APPLIED_FIELD)) {
+      issues.push('WfAlgolia filter state does not show the applied objectID filter.')
     }
     if (filterAttrs.length) issues.push('Leftover wf-algolia filter attributes found on the page.')
 
@@ -951,6 +1208,8 @@
         matchContextStarterId: matchContext && matchContext.starter_id,
         categoryRefs,
         filterState,
+        appliedFilterField: APPLIED_FIELD,
+        appliedCount,
       },
       markup: {
         browseCount: $$('[wf-algolia-element="browse"]').length,
@@ -971,7 +1230,12 @@
     if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/\d+/)) initTalentDetail()
     else if (p.includes('opportunities-brands-view')) {
+      // Brand feed renders from Xano (brand/opportunities/list) via initBrandList — a
+      // direct DB read, so a just-posted Active opportunity shows immediately (no Algolia
+      // indexing lag). initWfAlgoliaBridge stays a no-op unless legacy wf-algolia markup
+      // is still on the page (safe during the Designer markup migration).
       initBrandList()
+      wireCloseOpportunityModal()
       initWfAlgoliaBridge()
     } else if (p.includes('opportunities-freelancer-view')) {
       initTalentList()

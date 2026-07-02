@@ -1,0 +1,11 @@
+agent: codex
+
+ignore_patterns:
+  - "*.min.js"
+
+intent:
+  enabled: true
+
+test:
+  evidence:
+    store_in_repo: false
