@@ -954,11 +954,16 @@
   }
 
   // When any element inside a card is clicked, capture that card's ids.
-  // wf-algolia-rendered cards expose the id as data-wf-algolia-hit-objectid (not data-opp-id).
+  // wf-algolia-rendered cards expose the id as data-wf-algolia-hit-objectid,
+  // wf-xano-rendered cards as data-wf-xano-id (neither uses data-opp-id).
   document.addEventListener('click', (e) => {
-    const card = e.target.closest('[data-opp-id], [data-wf-algolia-hit-objectid]')
+    const card = e.target.closest('[data-opp-id], [data-wf-algolia-hit-objectid], [data-wf-xano-id]')
     if (card) {
-      setActiveOpp(card.getAttribute('data-opp-id') || card.getAttribute('data-wf-algolia-hit-objectid'))
+      setActiveOpp(
+        card.getAttribute('data-opp-id') ||
+          card.getAttribute('data-wf-algolia-hit-objectid') ||
+          card.getAttribute('data-wf-xano-id'),
+      )
       if (card.hasAttribute('data-app-id')) setActiveApp(card.getAttribute('data-app-id'))
       fillApplyModalMeta(card)
     }
