@@ -41,6 +41,8 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.min.js`
 - `opportunities-3.0.js`
 - `opportunities---create.js`
+- `all-starters/apply-button-disable.js`
+- `all-starters/range-backfill.js`
 
 After browser-facing changes, scan for accidental private exposure before publishing or tagging:
 
