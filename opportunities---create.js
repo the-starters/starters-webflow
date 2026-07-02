@@ -132,7 +132,7 @@
       title: val('Opportunity-title'),
       description: val('Description'),
       exp_requirements: val('Requirements'),
-      role_name: multiVal('Role-option'),
+      role_name: multiVal('Category-option') || multiVal('Role-option'),
       project_type,
       est_project_duration: durEl ? durEl.value : '',
       budget: project_type
