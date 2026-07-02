@@ -345,6 +345,17 @@
   }
 
   /* ===================== PAGE CONTROLLERS ======================== */
+  /** True when the brand feed is wf-xano-rendered: a list root (any of the three
+   *  root grammars — canonical wrapper, legacy wf-xano-list marker, v0.3.0
+   *  element="list" root) whose wf-xano-source targets brand/opportunities/list. */
+  function hasWfXanoBrandFeed() {
+    return !!$(
+      '[wf-xano-element="wrapper"][wf-xano-source*="brand/opportunities/list"], ' +
+        '[wf-xano-list][wf-xano-source*="brand/opportunities/list"], ' +
+        '[wf-xano-element="list"][wf-xano-source*="brand/opportunities/list"]',
+    )
+  }
+
   async function initBrandList() {
     if (!(await gateOrRedirect('brand'))) return
     const filter = $('[data-opp-filter]') // optional <select> with values '', Active, Pending Review, Closed
@@ -1251,11 +1262,14 @@
     if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/\d+/)) initTalentDetail()
     else if (p.includes('opportunities-brands-view')) {
-      // Brand feed renders from Xano (brand/opportunities/list) via initBrandList — a
-      // direct DB read, so a just-posted Active opportunity shows immediately (no Algolia
-      // indexing lag). initWfAlgoliaBridge stays a no-op unless legacy wf-algolia markup
-      // is still on the page (safe during the Designer markup migration).
-      initBrandList()
+      // Brand feed: when the page carries wf-xano brand-feed markup (Designer swap,
+      // 2026-07-02), the wf-xano library owns the render — initBrandList would repeat
+      // the member gate + trade-token + the same list query into the removed
+      // data-opp-list="brand-opps" container (~2.3s of discarded network, measured
+      // 2026-07-03). It stays as the fallback for un-migrated markup. The brand gate
+      // still runs either way so non-brand members are redirected.
+      if (hasWfXanoBrandFeed()) gateOrRedirect('brand')
+      else initBrandList()
       wireCloseOpportunityModal()
       initWfAlgoliaBridge()
       // The post-a-job modal on this page wraps the full Webflow create form, so
