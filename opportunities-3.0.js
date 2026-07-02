@@ -939,18 +939,33 @@
   const setActiveOpp = (id) => (activeOpp = id ? parseInt(id, 10) : null)
   const setActiveApp = (id) => (activeApp = id ? parseInt(id, 10) : null)
 
+  // Read a field's text from a card, whichever library rendered it:
+  // wf-algolia (wf-algolia-text), wf-xano (wf-xano-bind), or renderList (data-opp-bind).
+  function cardFieldText(card, field) {
+    const el =
+      $('[wf-algolia-text="' + field + '"]', card) ||
+      $('[wf-xano-bind="' + field + '"]', card) ||
+      $('[data-opp-bind="' + field + '"]', card)
+    return el ? el.textContent.trim() : ''
+  }
+
   // Fill the apply modal's [data-opp-bind="company"/"title"] elements from
-  // whichever card was clicked. Cards render either via wf-algolia (wf-algolia-text)
-  // or renderList (data-opp-bind).
+  // whichever card was clicked.
   function fillApplyModalMeta(card) {
     const modal = $('[data-modal-target="apply-opportunity"]')
     if (!modal || !card) return
-    const cardText = (sel) => {
-      const el = $(sel, card)
-      return el ? el.textContent.trim() : ''
-    }
-    bind(modal, 'company', cardText('[wf-algolia-text="company"]') || cardText('[data-opp-bind="company"]'))
-    bind(modal, 'title', cardText('[wf-algolia-text="title"]') || cardText('[data-opp-bind="title"]'))
+    bind(modal, 'company', cardFieldText(card, 'company'))
+    bind(modal, 'title', cardFieldText(card, 'title'))
+  }
+
+  // Fill the close-confirmation modal's [data-opp-bind="title"] with the
+  // clicked card's title, so the brand sees WHICH opportunity they're about
+  // to conclude (the Designer element was a static placeholder before).
+  function fillCloseModalMeta(card) {
+    const modal = $('[data-modal-target="close-opportunity"]')
+    if (!modal || !card) return
+    const title = cardFieldText(card, 'title')
+    if (title) bind(modal, 'title', title)
   }
 
   // When any element inside a card is clicked, capture that card's ids.
@@ -966,6 +981,7 @@
       )
       if (card.hasAttribute('data-app-id')) setActiveApp(card.getAttribute('data-app-id'))
       fillApplyModalMeta(card)
+      fillCloseModalMeta(card)
     }
   })
 
