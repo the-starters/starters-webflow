@@ -1242,6 +1242,9 @@
       initBrandList()
       wireCloseOpportunityModal()
       initWfAlgoliaBridge()
+      // The post-a-job modal on this page wraps the full Webflow create form, so
+      // wireModals' generic click binding skips it — bind the form handler here too.
+      initBrandCreatePage()
     } else if (p.includes('opportunities-freelancer-view')) {
       initTalentList()
       initWfAlgoliaBridge()
