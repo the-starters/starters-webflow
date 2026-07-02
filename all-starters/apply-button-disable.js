@@ -1,4 +1,3 @@
-<script>
 (function () {
   'use strict'
 
@@ -170,4 +169,3 @@
   }, 250)
   window.addEventListener('load', evaluate)
 })()
-</script>
