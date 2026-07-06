@@ -1,0 +1,476 @@
+<title>wf-debug-css — attribute-migration debug embed generator</title>
+<style>
+  :root {
+    --paper: #f4f5f7;
+    --card: #ffffff;
+    --ink: #252b34;
+    --muted: #606a76;
+    --line: #dde1e6;
+    --red: #e11d48;
+    --green: #16a34a;
+    --amber: #f59e0b;
+    --blue: #2b5fb0;
+    --code-bg: #1d232c;
+    --code-ink: #ccd5e0;
+    --code-dim: #6e7c8e;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Cascadia Code", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  html { background: var(--paper); }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 40px 24px 72px; }
+
+  /* ---------- header ---------- */
+  header.masthead { margin-bottom: 36px; }
+  .swatch-row { display: flex; gap: 6px; margin-bottom: 18px; }
+  .swatch-row span { width: 34px; height: 8px; border-radius: 2px; }
+  .swatch-row .s-red { background: var(--red); }
+  .swatch-row .s-green { background: var(--green); }
+  .swatch-row .s-amber {
+    background: repeating-linear-gradient(90deg, var(--amber) 0 6px, transparent 6px 10px);
+  }
+  h1 {
+    font-family: var(--mono);
+    font-size: clamp(1.5rem, 3.4vw, 2.1rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 10px;
+    text-wrap: balance;
+  }
+  .masthead p.lede { max-width: 62ch; color: var(--muted); margin: 0; }
+  .masthead p.lede strong { color: var(--ink); font-weight: 600; }
+
+  /* ---------- legend ---------- */
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 10px 22px;
+    margin: 22px 0 0; padding: 14px 16px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 9px; font-size: 13.5px; }
+  .legend-item .chip { width: 22px; height: 14px; border-radius: 2px; flex: none; }
+  .chip.c-red   { outline: 3px solid var(--red);   outline-offset: -3px; }
+  .chip.c-green { outline: 3px solid var(--green); outline-offset: -3px; }
+  .chip.c-amber { outline: 3px dashed var(--amber); outline-offset: -3px; }
+  .chip.c-banner { background: var(--red); }
+  .legend-item b { font-weight: 600; }
+  .legend-item small { color: var(--muted); }
+
+  /* ---------- main grid ---------- */
+  .workbench {
+    display: grid; grid-template-columns: minmax(320px, 5fr) 7fr;
+    gap: 28px; margin-top: 30px; align-items: start;
+  }
+  @media (max-width: 860px) { .workbench { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 22px;
+  }
+  .panel h2, .out-card h2 {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--muted); margin: 0 0 16px;
+  }
+
+  /* ---------- form ---------- */
+  .preset-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 22px; }
+  .preset-btn {
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    padding: 7px 12px; border-radius: 5px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--paper); color: var(--ink);
+  }
+  .preset-btn[aria-pressed="true"] {
+    background: var(--blue); border-color: var(--blue); color: #fff;
+  }
+  .preset-btn:focus-visible, .copy-btn:focus-visible,
+  input:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--blue); outline-offset: 2px;
+  }
+
+  form { display: flex; flex-direction: column; gap: 18px; }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .field label .tag {
+    font-weight: 400; color: var(--muted); letter-spacing: 0;
+  }
+  .field input, .field textarea {
+    font-family: var(--mono); font-size: 13px; color: var(--ink);
+    padding: 9px 11px; border: 1px solid var(--line); border-radius: 5px;
+    background: #fbfcfd; width: 100%; box-sizing: border-box;
+  }
+  .field textarea { resize: vertical; min-height: 54px; line-height: 1.5; }
+  .field .hint { font-size: 12.5px; color: var(--muted); margin: 0; }
+  .field .hint code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: var(--paper); padding: 1px 4px; border-radius: 3px;
+  }
+  .field-warn {
+    display: none; font-size: 12.5px; color: var(--red); font-weight: 600;
+  }
+  .field-warn.show { display: block; }
+
+  /* ---------- output ---------- */
+  .out-col { display: flex; flex-direction: column; gap: 24px; position: sticky; top: 20px; }
+  @media (max-width: 860px) { .out-col { position: static; } }
+  .out-card h2 { margin-bottom: 10px; }
+  .out-card .out-sub { font-size: 13px; color: var(--muted); margin: 0 0 10px; max-width: 60ch; }
+  .codebox { position: relative; }
+  .codebox pre {
+    background: var(--code-bg); color: var(--code-ink);
+    font-family: var(--mono); font-size: 12px; line-height: 1.6;
+    border-radius: 8px; padding: 18px 16px; margin: 0;
+    overflow-x: auto; max-height: 460px; overflow-y: auto;
+    tab-size: 2; white-space: pre;
+  }
+  .codebox pre .cm { color: var(--code-dim); }
+  .copy-btn {
+    position: absolute; top: 10px; right: 10px;
+    font-family: var(--mono); font-size: 11.5px; font-weight: 700;
+    padding: 6px 12px; border-radius: 5px; cursor: pointer;
+    border: 1px solid #3a4553; background: #29323e; color: #dfe6ee;
+  }
+  .copy-btn.done { background: var(--green); border-color: var(--green); color: #fff; }
+
+  /* ---------- workflow + gotchas ---------- */
+  .info-band {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 44px;
+  }
+  @media (max-width: 860px) { .info-band { grid-template-columns: 1fr; } }
+  .info-band h2 {
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--muted); margin: 0 0 14px;
+  }
+  ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 12px; }
+  ol.steps li {
+    counter-increment: step; display: grid;
+    grid-template-columns: 26px 1fr; gap: 10px; font-size: 14px;
+  }
+  ol.steps li::before {
+    content: counter(step);
+    font-family: var(--mono); font-size: 12px; font-weight: 700;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--ink); color: #fff;
+    display: flex; align-items: center; justify-content: center; margin-top: 1px;
+  }
+  ol.steps li b { font-weight: 600; }
+  ol.steps li .sd { color: var(--muted); }
+  ul.gotchas { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 11px; }
+  ul.gotchas li {
+    font-size: 13.5px; padding-left: 14px; position: relative; color: var(--ink);
+  }
+  ul.gotchas li::before {
+    content: ""; position: absolute; left: 0; top: 7px;
+    width: 6px; height: 6px; border-radius: 1px; background: var(--amber);
+  }
+  ul.gotchas li code, ol.steps code {
+    font-family: var(--mono); font-size: 12px;
+    background: #e9ecf0; padding: 1px 5px; border-radius: 3px; white-space: nowrap;
+  }
+  footer.foot {
+    margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--muted);
+  }
+  footer.foot code { font-family: var(--mono); font-size: 11.5px; }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="swatch-row" aria-hidden="true">
+      <span class="s-red"></span><span class="s-green"></span><span class="s-amber"></span>
+    </div>
+    <h1>wf-debug-css</h1>
+    <p class="lede">Generate the debug embed for Webflow attribute migrations. Paste it into the page while you work in the Designer: elements still on the <strong>old grammar outline red</strong>, migrated ones <strong>green</strong>, and anything carrying <strong>both grammars flashes amber</strong>. Done means zero red, zero amber — then delete the embed and republish.</p>
+
+    <div class="legend" role="list" aria-label="Color legend">
+      <div class="legend-item" role="listitem"><span class="chip c-red"></span><span><b>Red solid</b> <small>— still has old attributes</small></span></div>
+      <div class="legend-item" role="listitem"><span class="chip c-green"></span><span><b>Green solid</b> <small>— migrated</small></span></div>
+      <div class="legend-item" role="listitem"><span class="chip c-amber"></span><span><b>Amber dashed</b> <small>— both grammars, remove the old one</small></span></div>
+      <div class="legend-item" role="listitem"><span class="chip c-banner"></span><span><b>Red banner</b> <small>— section root missing the wrapper attribute</small></span></div>
+    </div>
+  </header>
+
+  <div class="workbench">
+    <section class="panel" aria-label="Migration settings">
+      <h2>Migration settings</h2>
+      <div class="preset-row" role="group" aria-label="Presets">
+        <button type="button" class="preset-btn" data-preset="algolia" aria-pressed="true">wf-algolia → wf-xano</button>
+        <button type="button" class="preset-btn" data-preset="legacy" aria-pressed="false">legacy → canonical wf-xano</button>
+        <button type="button" class="preset-btn" data-preset="custom" aria-pressed="false">custom</button>
+      </div>
+
+      <form id="cfg" autocomplete="off">
+        <div class="field">
+          <label for="scope">Section scope selector</label>
+          <input id="scope" type="text" placeholder=".brand-feed_wrapper" spellcheck="false" />
+          <p class="hint">CSS selector for the section being migrated — always page-specific, grab it from the live markup. Scoping keeps unrelated widgets (navbar Explore, other feeds) from being flagged.</p>
+          <p class="field-warn" id="scope-warn">Scope is required — an unscoped embed flags every matching element on the page.</p>
+        </div>
+
+        <div class="field">
+          <label for="oldAttrs">Old attributes <span class="tag">(outlined red)</span></label>
+          <textarea id="oldAttrs" rows="2" spellcheck="false"></textarea>
+          <p class="hint">Comma-separated. Leave out attributes that legitimately exist in <em>both</em> grammars (e.g. <code>wf-xano-display</code>) or they'll show as false reds.</p>
+        </div>
+
+        <div class="field">
+          <label for="newAttrs">New attributes <span class="tag">(outlined green)</span></label>
+          <textarea id="newAttrs" rows="2" spellcheck="false"></textarea>
+        </div>
+
+        <div class="field">
+          <label for="wrapperAttr">Section-root wrapper attribute</label>
+          <input id="wrapperAttr" type="text" spellcheck="false" />
+          <p class="hint">The banner fires if the scope root is missing this attribute, written as <code>name="value"</code>.</p>
+        </div>
+
+        <div class="field">
+          <label for="forceShow">Force-show hidden elements <span class="tag">(optional)</span></label>
+          <textarea id="forceShow" rows="2" spellcheck="false"></textarea>
+          <p class="hint">Selectors for empty/loader states that are <code>display:none</code> by default, so you can check them too. Comma-separated, scoped automatically.</p>
+        </div>
+      </form>
+    </section>
+
+    <div class="out-col">
+      <section class="out-card" aria-label="Debug CSS embed">
+        <h2>1 · Debug CSS embed</h2>
+        <p class="out-sub">Paste into an Embed element inside the section, or the page footer. The comment header is your reminder to delete it after migration.</p>
+        <div class="codebox">
+          <button type="button" class="copy-btn" data-target="css-out">Copy</button>
+          <pre id="css-out" tabindex="0"></pre>
+        </div>
+      </section>
+
+      <section class="out-card" aria-label="Inventory snippet">
+        <h2>2 · Inventory / verify snippet</h2>
+        <p class="out-sub">Run in the browser console on the live page — before migrating (to build the Remove → Add table from real markup) and after (must return <span style="font-family:var(--mono)">[]</span>).</p>
+        <div class="codebox">
+          <button type="button" class="copy-btn" data-target="js-out">Copy</button>
+          <pre id="js-out" tabindex="0"></pre>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="info-band">
+    <section aria-label="Workflow">
+      <h2>Workflow</h2>
+      <ol class="steps">
+        <li><span><b>Inventory the live markup first.</b> <span class="sd">Run snippet 2 on the published page — don't trust docs or memory. Build the per-element Remove → Add table from the dump.</span></span></li>
+        <li><span><b>Paste the debug embed</b> <span class="sd">into the page and publish (the Designer canvas shows outlines but is unreliable with the ⛔ labels — trust the published site).</span></span></li>
+        <li><span><b>Work the Designer until all green.</b> <span class="sd">Zero red, zero amber, no banner.</span></span></li>
+        <li><span><b>Verify from the browser.</b> <span class="sd">Snippet 2 returns <code>[]</code> and the new grammar renders — items present, states and pagination work.</span></span></li>
+        <li><span><b>Delete the embed,</b> <span class="sd">republish, and do a final functional check.</span></span></li>
+      </ol>
+    </section>
+
+    <section aria-label="Gotchas">
+      <h2>Gotchas</h2>
+      <ul class="gotchas">
+        <li><b>Scope everything.</b> Other widgets on the page may legitimately keep the old grammar — the navbar Explore mega-menu is wf-algolia and must stay.</li>
+        <li>Attributes shared by both grammars (like <code>wf-xano-display</code> on empty/loader elements) must not be in the old-attributes list.</li>
+        <li>Rendered clones can carry attributes copied from the template — inventory on a fresh load, and prefer checking the template element itself.</li>
+        <li>Webflow strips <b>valueless</b> custom attributes. Canonical markup is <code>wf-xano-element="wrapper|list|template|empty|loader|error|…"</code> (v0.4.0+); bare markers are legacy aliases.</li>
+        <li>Worked example with real classes: <code>3.0-build/BRAND-FEED-XANO-MIGRATION-CHECKLIST-2026-07-02.md</code> in the opportunities workflow folder.</li>
+      </ul>
+    </section>
+  </div>
+
+  <footer class="foot">
+    Source of truth: <code>.claude/skills/webflow-attr-migration-debug/SKILL.md</code> in the-starters workspace. This page only generates the embed — the inventory → paste → verify loop above is the actual skill.
+  </footer>
+</div>
+
+<script>
+(function () {
+  var PRESETS = {
+    algolia: {
+      oldAttrs: 'wf-algolia-element, wf-algolia-text, wf-algolia-if, wf-algolia-link',
+      newAttrs: 'wf-xano-element, wf-xano-bind, wf-xano-if, wf-xano-link',
+      wrapperAttr: 'wf-xano-element="wrapper"',
+      forceShow: '[wf-algolia-element="no-results"], [wf-algolia-element="loader"]'
+    },
+    legacy: {
+      oldAttrs: 'wf-xano-list, wf-xano-item, wf-xano-empty, wf-xano-loader, wf-xano-error',
+      newAttrs: 'wf-xano-element',
+      wrapperAttr: 'wf-xano-element="wrapper"',
+      forceShow: '[wf-xano-empty], [wf-xano-loader]'
+    },
+    custom: { oldAttrs: '', newAttrs: '', wrapperAttr: '', forceShow: '' }
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var fields = ['scope', 'oldAttrs', 'newAttrs', 'wrapperAttr', 'forceShow'];
+
+  function parseList(v) {
+    return v.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+  function esc(s) { return s.replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+  function scoped(scope, attr) {
+    // both descendant and scope-root-itself forms
+    return scope + ' [' + attr + '], ' + scope + '[' + attr + ']';
+  }
+
+  function buildCSS(cfg) {
+    var scope = cfg.scope || '<SECTION>';
+    var oldA = parseList(cfg.oldAttrs);
+    var newA = parseList(cfg.newAttrs);
+    var lines = [];
+    lines.push('<!-- 🔧 attr-migration debug — DELETE AFTER MIGRATION -->');
+    lines.push('<style>');
+
+    if (oldA.length) {
+      lines.push('  /* 🔴 still has old-grammar attributes */');
+      lines.push('  ' + oldA.map(function (a) { return scoped(scope, a); }).join(',\n  ') + ' {');
+      lines.push('    outline: 3px solid #e11d48 !important; outline-offset: -1px;');
+      lines.push('  }');
+    }
+    if (newA.length) {
+      lines.push('  /* 🟢 migrated */');
+      lines.push('  ' + newA.map(function (a) { return scoped(scope, a); }).join(',\n  ') + ' {');
+      lines.push('    outline: 3px solid #16a34a !important; outline-offset: -1px;');
+      lines.push('  }');
+    }
+    if (oldA.length && newA.length) {
+      var pairs = [];
+      newA.forEach(function (n) {
+        oldA.forEach(function (o) { pairs.push(scope + ' [' + n + '][' + o + ']'); });
+      });
+      lines.push('  /* 🟠 both grammars on one element */');
+      lines.push('  ' + pairs.join(',\n  ') + ' {');
+      lines.push('    outline: 3px dashed #f59e0b !important;');
+      lines.push('  }');
+    }
+
+    var wm = (cfg.wrapperAttr || '').match(/^\s*([\w-]+)\s*=\s*"?([^"]*)"?\s*$/);
+    if (wm) {
+      lines.push('  /* 🚨 section root not converted */');
+      lines.push('  ' + scope + ':not([' + wm[1] + '="' + wm[2] + '"])::before {');
+      lines.push('    content: "⚠ section missing ' + wm[1] + '=\\"' + wm[2] + '\\"";');
+      lines.push('    display: block; background: #e11d48; color: #fff;');
+      lines.push('    font: 700 13px/1.6 sans-serif; padding: 4px 10px;');
+      lines.push('  }');
+    }
+
+    if (oldA.length) {
+      lines.push('  /* ⛔ label offenders with the exact leftover attribute */');
+      oldA.forEach(function (a) {
+        lines.push('  ' + scope + ' [' + a + ']::after {');
+        lines.push('    content: " ⛔ ' + a + '=" attr(' + a + ');');
+        lines.push('    color: #e11d48; font: 700 11px/1 sans-serif;');
+        lines.push('  }');
+      });
+    }
+
+    var fs = parseList(cfg.forceShow);
+    if (fs.length) {
+      lines.push('  /* force-show hidden state elements (empty/loader) so they’re checkable */');
+      lines.push('  ' + fs.map(function (s) { return scope + ' ' + s; }).join(',\n  ') + ' {');
+      lines.push('    display: flex !important; min-height: 24px;');
+      lines.push('  }');
+    }
+
+    lines.push('</style>');
+    return lines.join('\n');
+  }
+
+  function buildJS(cfg) {
+    var scope = cfg.scope || '<SECTION>';
+    var oldA = parseList(cfg.oldAttrs);
+    return [
+      '// inventory: every element in the section still carrying old-grammar attributes',
+      '// must return [] when the migration is complete',
+      'const OLD = ' + JSON.stringify(oldA) + ';',
+      "const sec = document.querySelector('" + scope.replace(/'/g, "\\'") + "');",
+      'Array.from(sec.querySelectorAll(\'*\')).concat([sec])',
+      '  .filter(e => Array.from(e.attributes).some(a => OLD.includes(a.name)))',
+      "  .map(el => el.className + ' :: ' + Array.from(el.attributes)",
+      '    .filter(a => OLD.includes(a.name))',
+      '    .map(a => a.name + \'="\' + a.value + \'"\').join(\' \'))'
+    ].join('\n');
+  }
+
+  function render() {
+    var cfg = {};
+    fields.forEach(function (f) { cfg[f] = $(f).value; });
+    $('scope-warn').classList.toggle('show', !cfg.scope.trim());
+    var dim = function (t) {
+      return esc(t).replace(/(&lt;!--[\s\S]*?--&gt;|\/\*[^]*?\*\/|^\/\/.*$)/gm, '<span class="cm">$1</span>');
+    };
+    $('css-out').innerHTML = dim(buildCSS(cfg));
+    $('js-out').innerHTML = dim(buildJS(cfg));
+  }
+
+  function applyPreset(name) {
+    var p = PRESETS[name];
+    ['oldAttrs', 'newAttrs', 'wrapperAttr', 'forceShow'].forEach(function (f) {
+      $(f).value = p[f];
+    });
+    document.querySelectorAll('.preset-btn').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.preset === name));
+    });
+    render();
+  }
+
+  document.querySelectorAll('.preset-btn').forEach(function (b) {
+    b.addEventListener('click', function () { applyPreset(b.dataset.preset); });
+  });
+
+  fields.forEach(function (f) {
+    $(f).addEventListener('input', function () {
+      // editing attribute fields = custom territory; keep scope edits preset-neutral
+      if (f !== 'scope') {
+        var current = document.querySelector('.preset-btn[aria-pressed="true"]');
+        if (current && current.dataset.preset !== 'custom') {
+          var p = PRESETS[current.dataset.preset];
+          var untouched = ['oldAttrs', 'newAttrs', 'wrapperAttr', 'forceShow']
+            .every(function (k) { return $(k).value === p[k]; });
+          if (!untouched) {
+            document.querySelectorAll('.preset-btn').forEach(function (btn) {
+              btn.setAttribute('aria-pressed', String(btn.dataset.preset === 'custom'));
+            });
+          }
+        }
+      }
+      render();
+    });
+  });
+
+  document.querySelectorAll('.copy-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var text = $(btn.dataset.target).textContent;
+      var done = function () {
+        btn.textContent = 'Copied ✓';
+        btn.classList.add('done');
+        setTimeout(function () {
+          btn.textContent = 'Copy';
+          btn.classList.remove('done');
+        }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function () { fallback(text, done); });
+      } else { fallback(text, done); }
+      function fallback(t, cb) {
+        var ta = document.createElement('textarea');
+        ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta); cb();
+      }
+    });
+  });
+
+  applyPreset('algolia');
+})();
+</script>
