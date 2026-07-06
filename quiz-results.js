@@ -3663,27 +3663,39 @@
         }
 
         // Visibility toggles based on a field's truthiness, or on an exact
-        // (case-insensitive) match when data-quiz-show-if-value lists one or
-        // more comma-separated values, e.g.
-        // data-quiz-show-if="profile-type" data-quiz-show-if-value="Full".
+        // (case-insensitive) match when data-quiz-show-if-value and/or
+        // data-quiz-hide-if-value list one or more comma-separated values.
+        // hide-if-value wins over show-if-value; a missing field never
+        // matches a hide-if-value entry, so
+        // data-quiz-show-if="profile-type" data-quiz-hide-if-value="Consult"
+        // shows for every profile type except Consult, including records
+        // where the field is absent.
+        const parseShowIfValueList = (attributeValue) =>
+            (attributeValue || '')
+                .split(',')
+                .map((entry) => entry.trim().toLowerCase())
+                .filter(Boolean)
+
         cardElement
             .querySelectorAll('[data-quiz-show-if]')
             .forEach((element) => {
                 const field = element.getAttribute('data-quiz-show-if')
                 const value = getCardFieldValue(freelancer, field)
-                const expectedValues = (
-                    element.getAttribute('data-quiz-show-if-value') || ''
+                const expectedValues = parseShowIfValueList(
+                    element.getAttribute('data-quiz-show-if-value'),
                 )
-                    .split(',')
-                    .map((entry) => entry.trim().toLowerCase())
-                    .filter(Boolean)
-                const isShown = expectedValues.length
-                    ? expectedValues.includes(
-                          String(value ?? '')
-                              .trim()
-                              .toLowerCase(),
-                      )
-                    : !isEmptyCardValue(value)
+                const excludedValues = parseShowIfValueList(
+                    element.getAttribute('data-quiz-hide-if-value'),
+                )
+                const comparableValue = String(value ?? '')
+                    .trim()
+                    .toLowerCase()
+                const isShown =
+                    expectedValues.length || excludedValues.length
+                        ? (!expectedValues.length ||
+                              expectedValues.includes(comparableValue)) &&
+                          !excludedValues.includes(comparableValue)
+                        : !isEmptyCardValue(value)
                 element.classList.toggle('hide', !isShown)
             })
 
