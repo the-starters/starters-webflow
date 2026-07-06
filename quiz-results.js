@@ -2796,6 +2796,7 @@
                         'tagline',
                         'free-consulting-calls-t-f',
                         'paid-consulting-calls-t-f',
+                        'profile-type',
                         'availability',
                         'ranking-points',
                         'categories',
@@ -3661,12 +3662,28 @@
             }
         }
 
-        // Visibility toggles based on a field's truthiness.
+        // Visibility toggles based on a field's truthiness, or on an exact
+        // (case-insensitive) match when data-quiz-show-if-value lists one or
+        // more comma-separated values, e.g.
+        // data-quiz-show-if="profile-type" data-quiz-show-if-value="Full".
         cardElement
             .querySelectorAll('[data-quiz-show-if]')
             .forEach((element) => {
                 const field = element.getAttribute('data-quiz-show-if')
-                const isShown = !isEmptyCardValue(getCardFieldValue(freelancer, field))
+                const value = getCardFieldValue(freelancer, field)
+                const expectedValues = (
+                    element.getAttribute('data-quiz-show-if-value') || ''
+                )
+                    .split(',')
+                    .map((entry) => entry.trim().toLowerCase())
+                    .filter(Boolean)
+                const isShown = expectedValues.length
+                    ? expectedValues.includes(
+                          String(value ?? '')
+                              .trim()
+                              .toLowerCase(),
+                      )
+                    : !isEmptyCardValue(value)
                 element.classList.toggle('hide', !isShown)
             })
 
