@@ -3640,11 +3640,64 @@
         return true
     }
 
+    const cardConditionOperators = ['===', '!==', '>=', '<=', '>', '<']
+
+    /**
+     * Evaluates a wf-algolia-if / wf-xano-if style expression against a card
+     * record (ported from wf-xano's evalIf so every renderer shares one
+     * conditional grammar).
+     *
+     * Supports ===, !==, >=, <=, >, < with a field name on the left and a
+     * quoted string or number literal on the right; a bare field name checks
+     * truthiness. Equality compares as strings, ordering compares as numbers,
+     * matching the library behavior.
+     *
+     * @param {object} freelancer Normalized freelancer recommendation.
+     * @param {string} expression Condition expression.
+     * @returns {boolean} True when the element should be visible.
+     */
+    function evaluateCardCondition(freelancer, expression) {
+        const operator = cardConditionOperators.find(
+            (candidate) => expression.indexOf(candidate) > -1,
+        )
+
+        if (!operator) {
+            return Boolean(getCardFieldValue(freelancer, expression.trim()))
+        }
+
+        const parts = expression.split(operator)
+        const left = getCardFieldValue(freelancer, parts[0].trim())
+        const right = (parts[1] || '').trim().replace(/^["']|["']$/g, '')
+        const leftNumber = Number.parseFloat(left)
+        const rightNumber = Number.parseFloat(right)
+        const numeric = !Number.isNaN(leftNumber) && !Number.isNaN(rightNumber)
+
+        switch (operator) {
+            case '===':
+                return String(left) === right
+            case '!==':
+                return String(left) !== right
+            case '>':
+                return numeric && leftNumber > rightNumber
+            case '>=':
+                return numeric && leftNumber >= rightNumber
+            case '<':
+                return numeric && leftNumber < rightNumber
+            case '<=':
+                return numeric && leftNumber <= rightNumber
+            default:
+                return false
+        }
+    }
+
     /**
      * Populates one existing card element from a freelancer recommendation.
      *
-     * Reads data-quiz-* attributes inside the card and hides empty slots. A
-     * missing data-quiz-required field fails the card (caller hides it).
+     * Reads data-quiz-* attributes inside the card and hides empty slots — the
+     * wf-algolia grammar (wf-algolia-if / -text / -image / -format /
+     * -link-template) is accepted as an alias wherever the semantics match the
+     * library. A missing data-quiz-required field fails the card (caller
+     * hides it).
      *
      * @param {HTMLElement} cardElement Existing card/slide element.
      * @param {object} freelancer Normalized freelancer recommendation.
@@ -3662,46 +3715,36 @@
             }
         }
 
-        // Visibility toggles based on a field's truthiness, or on an exact
-        // (case-insensitive) match when data-quiz-show-if-value and/or
-        // data-quiz-hide-if-value list one or more comma-separated values.
-        // hide-if-value wins over show-if-value; a missing field never
-        // matches a hide-if-value entry, so
-        // data-quiz-show-if="profile-type" data-quiz-hide-if-value="Consult"
-        // shows for every profile type except Consult, including records
-        // where the field is absent.
-        const parseShowIfValueList = (attributeValue) =>
-            (attributeValue || '')
-                .split(',')
-                .map((entry) => entry.trim().toLowerCase())
-                .filter(Boolean)
-
+        // Visibility toggles. data-quiz-show-if hides the element when the
+        // field is falsy/empty. wf-algolia-if takes the same expression
+        // grammar as the wf-algolia and wf-xano libraries, e.g.
+        // wf-algolia-if="profile-type !== 'Consult'", so card markup shares
+        // one conditional dialect across all renderers.
         cardElement
             .querySelectorAll('[data-quiz-show-if]')
             .forEach((element) => {
                 const field = element.getAttribute('data-quiz-show-if')
-                const value = getCardFieldValue(freelancer, field)
-                const expectedValues = parseShowIfValueList(
-                    element.getAttribute('data-quiz-show-if-value'),
+                const isShown = !isEmptyCardValue(
+                    getCardFieldValue(freelancer, field),
                 )
-                const excludedValues = parseShowIfValueList(
-                    element.getAttribute('data-quiz-hide-if-value'),
-                )
-                const comparableValue = String(value ?? '')
-                    .trim()
-                    .toLowerCase()
-                const isShown =
-                    expectedValues.length || excludedValues.length
-                        ? (!expectedValues.length ||
-                              expectedValues.includes(comparableValue)) &&
-                          !excludedValues.includes(comparableValue)
-                        : !isEmptyCardValue(value)
                 element.classList.toggle('hide', !isShown)
             })
 
-        // Images.
-        cardElement.querySelectorAll('[data-quiz-img]').forEach((element) => {
-            const field = element.getAttribute('data-quiz-img')
+        cardElement.querySelectorAll('[wf-algolia-if]').forEach((element) => {
+            const isShown = evaluateCardCondition(
+                freelancer,
+                element.getAttribute('wf-algolia-if') || '',
+            )
+            element.classList.toggle('hide', !isShown)
+        })
+
+        // Images (data-quiz-img, or the library-shared wf-algolia-image).
+        cardElement
+            .querySelectorAll('[data-quiz-img], [wf-algolia-image]')
+            .forEach((element) => {
+            const field =
+                element.getAttribute('data-quiz-img') ||
+                element.getAttribute('wf-algolia-image')
             const url = normalize(getCardFieldValue(freelancer, field))
 
             if (!url) {
@@ -3716,13 +3759,22 @@
         })
 
         // Single-value text bindings (supports the rank-role composite token).
-        cardElement.querySelectorAll('[data-quiz-text]').forEach((element) => {
-            const field = element.getAttribute('data-quiz-text')
+        // wf-algolia-text / wf-algolia-format are accepted as aliases so card
+        // markup can use the shared library grammar.
+        cardElement
+            .querySelectorAll('[data-quiz-text], [wf-algolia-text]')
+            .forEach((element) => {
+            const field =
+                element.getAttribute('data-quiz-text') ||
+                element.getAttribute('wf-algolia-text')
             const fallbackFields =
                 element.getAttribute('data-quiz-fallback') ||
                 element.getAttribute('data-quiz-fallback-fields') ||
                 ''
-            const format = element.getAttribute('data-quiz-format') || ''
+            const format =
+                element.getAttribute('data-quiz-format') ||
+                element.getAttribute('wf-algolia-format') ||
+                ''
 
             if (field === 'rank-role') {
                 // Show the record's OWN subcategory, not the quiz selection that
@@ -3788,8 +3840,13 @@
         // Link bindings: fill an href from a "/hire/{slug}" style template,
         // mirroring wf-algolia's hit-link-template. {field} tokens are replaced
         // from the hit and URL-encoded. The element is hidden if a token is empty.
-        cardElement.querySelectorAll('[data-quiz-link]').forEach((element) => {
-            const template = element.getAttribute('data-quiz-link') || ''
+        cardElement
+            .querySelectorAll('[data-quiz-link], [wf-algolia-link-template]')
+            .forEach((element) => {
+            const template =
+                element.getAttribute('data-quiz-link') ||
+                element.getAttribute('wf-algolia-link-template') ||
+                ''
             let hasMissingToken = false
 
             const url = template.replace(/\{([^}]+)\}/g, (match, field) => {
