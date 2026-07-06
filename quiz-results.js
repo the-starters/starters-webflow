@@ -1163,7 +1163,7 @@
     const debugLogPrefix = '[Starter Quiz Funnel]'
     const algoliaDefaultAppId = 'PKVW6M9OPZ'
     const algoliaDefaultIndexName = 'Freelancers3.0-dev'
-    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v16'
+    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v17'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
     // Pool gathered per category before featured picks are drawn off the top,
