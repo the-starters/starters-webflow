@@ -3560,8 +3560,12 @@
     /**
      * Formats a bound value for display.
      *
+     * short-name is part of the shared library format vocabulary (wf-algolia
+     * fork + wf-xano ship the same value): first word kept, every following
+     * word abbreviated — "John Paul Dionisio" → "John P. D.".
+     *
      * @param {unknown} value Field value.
-     * @param {string} format One of currency, number, rank, or empty.
+     * @param {string} format One of currency, number, rank, short-name, or empty.
      * @returns {string} Formatted text.
      */
     function formatCardValue(value, format) {
@@ -3573,6 +3577,9 @@
         }
         if (format === 'rank') {
             return '#' + getRankingPoints(value)
+        }
+        if (format === 'short-name') {
+            return getLockedDisplayName(stripHtml(value))
         }
         return stripHtml(value)
     }
