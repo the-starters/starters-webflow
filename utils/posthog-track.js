@@ -15,8 +15,15 @@
 
   function platform() {
     if (window.STARTERS_PLATFORM) return String(window.STARTERS_PLATFORM)
+    // Exact host match, NOT substring: v2 prod "hirethestarters.com" contains
+    // the substring "thestarters.com", so a .includes() check mislabels all v2
+    // prod traffic as v3. v3 = the 3.0 staging site or the thestarters.com prod
+    // domain; everything else (hirethestarters.com, the-starters.webflow.io) = v2.
     const host = location.host
-    return host.includes('the-starters-3-0') || host.includes('thestarters.com') ? 'v3' : 'v2'
+    if (host.includes('the-starters-3-0') || host === 'thestarters.com' || host === 'www.thestarters.com') {
+      return 'v3'
+    }
+    return 'v2'
   }
 
   function track(name, props) {
