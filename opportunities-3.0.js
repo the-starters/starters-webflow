@@ -70,6 +70,20 @@
     'Full Time': 'year',
   }
 
+  // Memberstack plan id -> role label. Keyed by plan ID (names drift; dashboard
+  // names as of 2026-07-07: talent = "Dorxata Test Free Plan",
+  // brand-free = "Free Plan", brand-paid = "Premium Plan (Paying Client)").
+  // Members whose active plans are all unmapped are treated as roleless.
+  const MS_PLAN_ROLES = {
+    'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
+    'pln_free-plan-f6kn0dxz': 'brand-free',
+    'pln_new-paid-plan-463h04ph': 'brand-paid',
+    // 'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid', // test brand plan (4 members) — enable if test brand accounts need access
+  }
+  // Non-paying brands are not allowed on role-gated dual pages; send them to the
+  // free-brand home (same destination the quiz funnel uses for free members).
+  const BRAND_FREE_REDIRECT = '/quiz-results'
+
   /* ========================= AUTH BRIDGE ========================== */
   let _xanoToken = null
   // Memberstack id the caches below were built for. When it changes (account
@@ -102,6 +116,18 @@
     return _xanoToken
   }
 
+  // Funnel events (see platform-ops/architecture/posthog-funnel-events-plan.md).
+  // Fired from call() so an event only exists when the Xano write succeeded.
+  const track = (name, props) =>
+    window.StartersTrack && window.StartersTrack.track ? window.StartersTrack.track(name, props) : undefined
+  const TRACKED_CALLS = {
+    'brand/opportunities/create': 'opportunity_created',
+    'brand/opportunities/update': 'opportunity_updated',
+    'brand/opportunities/close': 'opportunity_closed',
+    'starter/applications/submit': 'application_submitted',
+    'starter/applications/update': 'application_updated',
+  }
+
   async function call(path, { method = 'POST', body } = {}) {
     const token = await ensureXanoToken()
     const res = await fetch(`${XANO_OPP_BASE}/${path}`, {
@@ -114,9 +140,19 @@
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) {
+      track('bridge_error', { path, status: res.status })
       throw Object.assign(new Error(data && data.message ? data.message : `API ${res.status}`), {
         status: res.status,
         data,
+      })
+    }
+    const event = TRACKED_CALLS[path]
+    if (event) {
+      track(event, {
+        opportunity_id:
+          (body && body.opportunity_id) || (data && (data.opportunity_id || data.id)) || undefined,
+        application_id: (body && body.application_id) || undefined,
+        has_message: path === 'starter/applications/submit' ? Boolean(body && body.message) : undefined,
       })
     }
     return data
@@ -313,6 +349,57 @@
     return member
   }
 
+  /** Resolve the member's role label from their ACTIVE Memberstack plans via
+   *  MS_PLAN_ROLES. Paid brand wins over free brand wins over talent, so a
+   *  member carrying several mapped plans lands on the highest-access label.
+   *  @returns {'brand-paid'|'brand-free'|'talent'|null} */
+  function memberPlanRole(member) {
+    const labels = (member.planConnections || [])
+      .filter((c) => c.active === true || c.status === 'ACTIVE')
+      .map((c) => MS_PLAN_ROLES[c.planId])
+      .filter(Boolean)
+    if (labels.includes('brand-paid')) return 'brand-paid'
+    if (labels.includes('brand-free')) return 'brand-free'
+    if (labels.includes('talent')) return 'talent'
+    return null
+  }
+
+  /** Plan-based gate for pages shared by talent AND paying brands
+   *  (/opportunities/<id>). Redirects: logged-out -> /login, free brand ->
+   *  BRAND_FREE_REDIRECT, unmapped plans -> /. Resolves {member, role} otherwise. */
+  async function gateByPlan() {
+    const memberstack = await waitForMemberstackDom()
+    if (!memberstack) throw new Error('Memberstack not available')
+    const { data: member } = await memberstack.getCurrentMember()
+    if (!member || !member.id) {
+      resetMemberScopedCaches(null)
+      location.href = '/login'
+      return null
+    }
+    resetMemberScopedCaches(member.id)
+    const role = memberPlanRole(member)
+    log('gateByPlan role:', role)
+    if (role === 'brand-free') {
+      location.href = BRAND_FREE_REDIRECT
+      return null
+    }
+    if (!role) {
+      location.href = '/'
+      return null
+    }
+    return { member, role }
+  }
+
+  /** Reveal the [data-opp-role] wrapper matching `role` ('talent' | 'brand') and
+   *  hide the rest. Pair with a page-head embed of
+   *  <style>[data-opp-role]{display:none}</style> so neither wrapper flashes
+   *  before this footer script resolves the member's plan. */
+  function showRoleWrapper(role) {
+    $$('[data-opp-role]').forEach((el) => {
+      el.style.display = el.getAttribute('data-opp-role') === role ? '' : 'none'
+    })
+  }
+
   /* ===================== GENERIC LIST RENDER ===================== */
   // Renders into [data-opp-list="<key>"] by cloning its [data-opp-card] template
   // and filling child [data-opp-bind="<field>"] / [data-opp-bind-id] elements.
@@ -390,6 +477,7 @@
     const oppId = parseInt(urlParam('opp'), 10)
     if (!oppId) return (location.href = '/opportunities-brands-view')
     setActiveOpp(oppId)
+    track('opportunity_viewed', { opportunity_id: oppId, viewer_role: 'brand' })
     const showArchived = false
     const res = await API.brandAppList(oppId, showArchived)
     renderList('applicants', res.items, (card, a) => {
@@ -859,14 +947,16 @@
     }
   }
 
-  async function initTalentDetail() {
-    if (!(await gateOrRedirect('freelancer'))) return
+  async function initTalentDetail(member) {
+    // Gate unless the caller (initOppDetailByRole) already resolved the member.
+    if (!member && !(await gateOrRedirect('freelancer'))) return
     // Slug IS the Xano ID (e.g. /opportunities/591)
     const oppId = parseInt(location.pathname.split('/').pop(), 10)
     if (!oppId) return (location.href = '/opportunities-freelancer-view')
     // CMS page already renders opportunity content — only fetch auth state
     const { opportunity: o, application: a } = await API.starterOppDetail(oppId)
     setActiveOpp(oppId)
+    track('opportunity_viewed', { opportunity_id: oppId, viewer_role: 'freelancer' })
     if (a) setActiveApp(a.id)
     paintState(document, appState(o, a))
     // mark-seen: flip edited → applied when the member views the updated opportunity
@@ -883,6 +973,34 @@
       const cl = $('[name="Cover-Letter"]', $('[data-modal-target="edit-application"]') || document)
       if (cl) cl.value = a.message || ''
     }
+  }
+
+  /** /opportunities/<id> CMS detail page, shared by talent and PAYING brands.
+   *  Gates by Memberstack plan (gateByPlan), reveals the matching
+   *  [data-opp-role="talent"|"brand"] wrapper, then runs that role's wiring.
+   *  Free brands never reach this point (redirected by the gate). */
+  async function initOppDetailByRole() {
+    const gate = await gateByPlan()
+    if (!gate) return
+    const wrapperRole = gate.role === 'talent' ? 'talent' : 'brand'
+    showRoleWrapper(wrapperRole)
+    if (wrapperRole === 'talent') {
+      await initTalentDetail(gate.member)
+      return
+    }
+    // Brand view: the CMS page renders the opportunity content; only wire the
+    // applicants list when the brand wrapper carries one (ownership is enforced
+    // server-side by brand/applications/list, so a foreign opp just errors/empties).
+    const oppId = parseInt(location.pathname.split('/').pop(), 10)
+    if (!oppId) return
+    setActiveOpp(oppId)
+    if (!$('[data-opp-role="brand"] [data-opp-list="applicants"]')) return
+    const res = await API.brandAppList(oppId)
+    renderList('applicants', res.items, (card, a) => {
+      card.setAttribute('data-app-id', a.id)
+      bind(card, 'message', a.message)
+      bind(card, 'submitted_at', fmtDate(a.submitted_at))
+    })
   }
 
   // Standalone brand "create opportunity" PAGE (/opportunities---create).
@@ -1267,7 +1385,7 @@
     wireModals()
     const p = location.pathname
     if (p.includes('opportunities-details---brand-view')) initBrandDetail()
-    else if (p.match(/^\/opportunities\/\d+/)) initTalentDetail()
+    else if (p.match(/^\/opportunities\/\d+/)) initOppDetailByRole()
     else if (p.includes('opportunities-brands-view')) {
       // Brand feed: when the page carries wf-xano brand-feed markup (Designer swap,
       // 2026-07-02), the wf-xano library owns the render — initBrandList would repeat
