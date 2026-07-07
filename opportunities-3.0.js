@@ -340,8 +340,9 @@
   }
 
   const bind = (card, field, value) => {
-    const el = $(`[data-opp-bind="${field}"]`, card)
-    if (el) el.textContent = value == null ? '' : value
+    $$(`[data-opp-bind="${field}"]`, card).forEach((el) => {
+      el.textContent = value == null ? '' : value
+    })
   }
 
   /* ===================== PAGE CONTROLLERS ======================== */
