@@ -404,6 +404,12 @@
   async function initTalentList() {
     try {
       if (!(await gateOrRedirect('freelancer'))) return
+      // wf-xano owns the feed when its wrapper is on the page (2026-07-03
+      // migration): don't hide anything, don't require wf-algolia markup.
+      if ($('[wf-xano-element="wrapper"], [wf-xano-list], [wf-xano-element="list"][wf-xano-source]')) {
+        document.documentElement.setAttribute('data-opp30-talent-algolia', 'wf-xano')
+        return
+      }
       if (!$('[wf-algolia-element="results"]')) {
         handleMissingTalentAlgoliaMarkup()
         return
