@@ -1152,6 +1152,20 @@
     }
   })
 
+  // A confirm button advances its form-flow immediately (data-form-flow-action
+  // ="next"), independent of whether the API call it also fires succeeds — on
+  // success guard() reloads the page, but on failure nothing rewinds the flow,
+  // stranding the modal on its success step for the rest of the session. The
+  // modal system dispatches "modal-open" and the flow engine exposes
+  // lumos.formFlow, so rewind any flow inside a modal whenever it opens.
+  window.addEventListener('modal-open', (e) => {
+    const modal = e.detail && e.detail.modal
+    const flowEl = modal && modal.querySelector('[data-form-flow]')
+    const flowId = flowEl && flowEl.getAttribute('data-form-flow')
+    const ff = window.lumos && window.lumos.formFlow
+    if (flowId && ff && ff.list && ff.list[flowId]) ff.reset(flowId)
+  })
+
   /* ====================== MODAL HANDLERS ======================== */
   function wireModals() {
     // CREATE
