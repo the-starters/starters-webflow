@@ -43,6 +43,39 @@ Do not discard local changes unless the user explicitly asks.
 - `opportunities---create.js`
 - `all-starters/apply-button-disable.js`
 - `all-starters/range-backfill.js`
+- `utils/loader.js` — env-switch script loader (`loadEnvScript`)
+- `utils/wf-validate.js` — declarative form validation (see below)
+
+## utils/wf-validate.js
+
+Attribute-driven form validation, same grammar family as wf-xano / Finsweet Attributes.
+Wraps the native Constraint Validation API: rules come from the attributes Webflow's
+Designer already sets (`required`, `type`, `pattern`, `min/max`, `minlength/maxlength`);
+the script renders styled error elements instead of the native browser bubbles and
+blocks invalid submits before Webflow's handler or page controllers see them.
+
+```html
+<form wf-validate-element="form">
+  <input name="Email" type="email" required
+         wf-validate-message-required="Please enter your email."
+         wf-validate-message-type="That doesn't look like an email." />
+  <div wf-validate-element="error">Replaced with the message at runtime</div>
+</form>
+```
+
+- Roles: `wf-validate-element="form | error | message"`. Error slots bind to the
+  nearest field, or explicitly via `wf-validate-for="<input name>"`.
+- Messages: `wf-validate-message-<rule>` on the input (`required`, `type`, `pattern`,
+  `minlength`, `maxlength`, `min`, `max`, `step`, `match`), `wf-validate-message` as
+  catch-all, browser default text as fallback.
+- Extras: `wf-validate-match="<name>"` (confirm-field rule); hidden (`display:none`)
+  fields are skipped, so per-variant required inputs don't block submit.
+- Styling is 100% Webflow-side: style the error element itself (inline text or
+  absolutely-positioned bubble) and the `is-wf-validate-invalid` class on fields.
+- Full grammar and behavior notes in the header of `utils/wf-validate.js`.
+
+Client-side validation is UX only — Xano bridge endpoints must keep validating
+server-side.
 
 After browser-facing changes, scan for accidental private exposure before publishing or tagging:
 
