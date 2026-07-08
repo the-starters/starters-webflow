@@ -1,36 +1,33 @@
-# v2 page footer code (manual paste — NOT jsDelivr)
+# v2 page footer code
 
-Source-of-truth mirror of the **live, secure** V2 Webflow page footer code.
+Source-of-truth for the **live, secure** V2 Webflow page footer logic. Two artifacts per page:
 
-These are **paste-in `<script>` blocks** for Webflow **Page Settings → Custom Code → Footer Code**. They are **not** CDN scripts and must **not** be loaded via jsDelivr / `<script src>` — unlike `v2/contract.js` and the top-level bundles in this repo.
+- **`<page>.js`** — CDN-loadable via jsDelivr with a single `<script defer>` tag (preferred).
+- **`<page>-footer.html`** — the original inline paste-in `<script>` block, kept as reference / fallback.
 
-## What lives here
+The `.js` is extracted verbatim from the `.html` (multi-block pages are concatenated in original order — they already shared one classic-script scope, so behaviour is identical). **Edit the `.html` source, then re-extract the `.js`** so the two never drift, or pick the `.js` as sole source once a page is fully migrated to CDN.
 
-One file per page, matching the page slug:
+## CDN script tags (paste into Webflow Page Settings → Footer, replacing the inline block)
 
-| File | Page |
+| Page | Tag |
 | --- | --- |
-| `opportunities-apply-footer.html` | `/opportunities-apply` |
-| `opportunities-applicants-footer.html` | `/opportunities-applicants` |
-| `opportunities-freelancer-view-footer.html` | `/opportunities-freelancer-view` |
-| `freelancer-edit-form-footer.html` | `/freelancer-edit-form` |
-| `freelancer-start-project-footer.html` | `/freelancer-start-project` |
-| `quiz-results-footer.html` | `/quiz-results` |
+| `/opportunities-apply` | `<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/opportunities-apply.js"></script>` |
+| `/opportunities-applicants` | `<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/opportunities-applicants.js"></script>` |
+| `/opportunities-freelancer-view` | `<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/opportunities-freelancer-view.js"></script>` |
+| `/freelancer-edit-form` | `<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/freelancer-edit-form.js"></script>` |
+| `/freelancer-start-project` | `<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/freelancer-start-project.js"></script>` |
+| `/quiz-results` | `<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/quiz-results.js"></script>` |
+
+`@latest` resolves to the highest **semver tag** — these files ship only after this branch is merged **and** a new tag is cut (see the `webflow-cdn-release` skill: tag + jsDelivr purge). For staging you can point at `@main` (post-merge) or `@<branch>` before then.
+
+External libraries (Memberstack, Quill, Algolia, etc.) are **not** in these files — they load elsewhere (site head / on-canvas embeds) and must stay there. `defer` is safe: these scripts already gate on `DOMContentLoaded` / `getCurrentMember()`.
 
 ## Rules
 
-- **Public repo — no secrets, ever.** These files are already browser-facing (served in each page's published source), so they contain only user/action data. Identity resolution + Airtable/Make calls happen server-side in the Xano bridge (`api:ZihCUE3Z`). Zero-tolerance scan before committing:
+- **Public repo — no secrets, ever.** Content is already browser-facing (served in each page's published source). Identity resolution + Airtable/Make calls happen server-side in the Xano bridge (`api:ZihCUE3Z`). Zero-tolerance scan before committing:
   ```sh
-  grep -nE 'api\.airtable\.com|hook\.us1\.make\.com|pat[A-Za-z0-9]{14}' *.html
+  grep -nE 'api\.airtable\.com|hook\.us1\.make\.com|pat[A-Za-z0-9]{14}' *.js *.html
   ```
-- **Never commit** `backups/` or `*-unsecure.html` files — the historical backups in the workspace intentionally preserve pre-remediation code with live secrets.
-- Deploy is **manual paste** (Webflow custom-code API writes are blocked by token capability). See the `webflow-footer-deploy` skill in the workspace.
-
-## Full working set + backups
-
-The authoritative editing location (with dated backups) is the local workspace, outside this repo:
-
-```
-product-workflows/opportunities/webflow/v2/webflow-footer-code/secure/   # these files
-product-workflows/opportunities/webflow/v2/webflow-footer-code/backups/  # dated + *-unsecure (NOT mirrored here)
-```
+- **Never commit** `backups/` or `*-unsecure.html` — the workspace backups intentionally preserve pre-remediation code with live secrets.
+- Full working set + dated backups live in the workspace (outside this repo):
+  `product-workflows/opportunities/webflow/v2/webflow-footer-code/`

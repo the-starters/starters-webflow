@@ -1,0 +1,410 @@
+/* freelancer-start-project.js — extracted from V2 secure footer (freelancer-start-project-footer.html).
+   Load via: <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v2/footers/freelancer-start-project.js"></script>
+   Source of truth: product-workflows/opportunities/webflow/v2/webflow-footer-code/secure/freelancer-start-project-footer.html */
+
+document.addEventListener('DOMContentLoaded', function () {
+    const XANO_LEGACY_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:ZihCUE3Z';
+
+    const callLegacyEndpoint = async (path, body) => {
+        const response = await fetch(`${XANO_LEGACY_BASE}/${path}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+            throw new Error(data?.message || `Request failed: ${response.status}`);
+        }
+        return data;
+    };
+
+    window.$memberstackDom.getCurrentMember().then(async ({ data: member }) => {
+        if (!member || !member.id) {
+            window.location.href = '/login';
+            return;
+        }
+
+        if (!member.customFields['completed-starter-profile']) {
+            if (member.loginRedirect && member.loginRedirect.includes('/starter-onboarding/step-')) {
+                window.location.replace(member.loginRedirect);
+            } else {
+                window.location.replace('/starter-onboarding/step-1');
+            }
+            return;
+        }
+
+        const memid = member.id;
+
+        document.querySelectorAll('[freelancer-dashboard-link]').forEach((link) => {
+            link.href = `/freelancers-v2/${member.id}`;
+        });
+
+        const freeContractInput = document.querySelector('input#free-contract');
+        const freeNameInput = document.querySelector('input#freeName');
+        const freeEmailInput = document.querySelector('input#FreeEmail');
+        const freeMemIDInput = document.querySelector('input#pushMemID');
+
+        const brandNameInput = document.querySelector('input#brand-name');
+        const brandContractInput = document.querySelector('input#brand-contract');
+        const brandNameContractInput = document.querySelector('input#brand-name-contract');
+        const brandHiringManagerName = document.querySelector('input#Hiring-manager-name');
+        const brandCompanyName = document.querySelector('input#Company-name');
+        const brandEmail = document.querySelector('input#Email');
+
+        const brandSearch = document.querySelector('input#brand-search');
+        const brandList = document.querySelector('#brand-list');
+        const brandsEmpty = document.querySelector('[brands-empty]');
+        const BRAND_CACHE_TTL_MS = 10 * 60 * 1000;
+        const brandCacheKey = `thestarters:fsp:eligible-brands:${memid}`;
+        const optionEmptyState = document.createElement('div');
+        optionEmptyState.className = 'brand-select__option empty-state';
+        optionEmptyState.textContent = 'No brands found';
+        const optionLoadingState = document.createElement('div');
+        optionLoadingState.className = 'brand-select__option loading-state';
+        optionLoadingState.textContent = 'Loading brands...';
+
+        if (!freeContractInput || !freeNameInput || !freeEmailInput || !freeMemIDInput) {
+            console.error('One or more freelancer inputs not found');
+        }
+        if (!brandNameInput || !brandContractInput || !brandNameContractInput || !brandHiringManagerName || !brandCompanyName || !brandEmail) {
+            console.error('One or more brand inputs not found');
+        }
+        if (!brandSearch || !brandList) {
+            console.error('One or more brand-search elements not found');
+        }
+
+        if (brandSearch && brandList) {
+            brandSearch.addEventListener('focus', searchOnFocus, true);
+            brandSearch.addEventListener('keyup', searchOnKeyUp, true);
+            brandSearch.addEventListener('blur', searchOnBlur, true);
+            brandSearch.classList.add('loaded');
+        }
+
+        document.addEventListener('mousedown', function (event) {
+            if (!event.target.classList.contains('brand-select__option')) return;
+            if (event.target.classList.contains('empty-state') || event.target.classList.contains('loading-state')) return;
+
+            const fullName = event.target.textContent.trim();
+            const webflowItemId = event.target.dataset.webflowItemId || '';
+            const companyName = event.target.dataset.companyName || '';
+            const email = event.target.dataset.email || '';
+
+            if (brandNameContractInput) brandNameContractInput.value = `${fullName} - ${webflowItemId}`;
+            if (brandNameInput) brandNameInput.value = fullName;
+            if (brandContractInput) brandContractInput.value = webflowItemId;
+            if (brandHiringManagerName) brandHiringManagerName.value = fullName;
+            if (brandCompanyName) brandCompanyName.value = companyName;
+            if (brandEmail) brandEmail.value = email;
+            if (brandSearch) brandSearch.value = fullName;
+        }, true);
+
+        const cachedPayload = getCachedEligibleBrands();
+        if (cachedPayload) {
+            renderEligiblePayload(cachedPayload);
+        } else {
+            showLoading();
+        }
+
+        try {
+            const payload = await callLegacyEndpoint('legacy/freelancer-start-project/eligible-brands', {
+                member_id: memid,
+            });
+            cacheEligibleBrands(payload);
+            renderEligiblePayload(payload);
+        } catch (error) {
+            console.error('Failed to load eligible brands:', error);
+            if (!cachedPayload) showEmpty();
+        }
+
+        if (freeContractInput) {
+            const intervalId = setInterval(() => {
+                const freeContracts = document.querySelectorAll('[data-free-contract]');
+                freeContracts.forEach((item) => {
+                    const itemMemID = item.textContent.trim();
+                    if (itemMemID === memid) {
+                        freeContractInput.value = item.dataset.freeContract || '';
+                        clearInterval(intervalId);
+                    }
+                });
+            }, 1000);
+        }
+
+        function addFreelancerServiceToList(value) {
+            if (!value) return;
+            const servicesList = document.querySelector('.form-contract-input.service');
+            if (!servicesList) return;
+            const option = document.createElement('option');
+            option.dataset.legacyServiceOption = 'true';
+            option.value = value;
+            option.textContent = value;
+            servicesList.appendChild(option);
+        }
+
+        function renderFreelancerServices(freelancer) {
+            const servicesList = document.querySelector('.form-contract-input.service');
+            if (servicesList) {
+                servicesList.querySelectorAll('[data-legacy-service-option="true"]').forEach((option) => {
+                    option.remove();
+                });
+            }
+
+            addFreelancerServiceToList(freelancer.Service_1);
+            addFreelancerServiceToList(freelancer.Service_2);
+            addFreelancerServiceToList(freelancer.Service_3);
+        }
+
+        function renderEligiblePayload(payload) {
+            const freelancer = payload.freelancer || {};
+            const brands = Array.isArray(payload.brands) ? payload.brands : [];
+
+            if (freeNameInput) freeNameInput.value = freelancer.full_name || '';
+            if (freeEmailInput) freeEmailInput.value = freelancer.email_address || '';
+            if (freeMemIDInput) freeMemIDInput.value = freelancer.memberstack_id || memid;
+
+            renderFreelancerServices(freelancer);
+            renderBrandOptions(brands);
+        }
+
+        function renderBrandOptions(brands) {
+            if (brands.length === 0) {
+                showEmpty();
+                return;
+            }
+
+            if (!brandList) return;
+            if (brandsEmpty) brandsEmpty.style.display = 'none';
+            brandList.style.display = '';
+            brandList.innerHTML = '';
+
+            brands.forEach((brand) => {
+                const option = document.createElement('div');
+                option.className = 'brand-select__option';
+                option.textContent = brand.full_name || '';
+                option.dataset.webflowItemId = brand.webflow_id || '';
+                option.dataset.companyName = brand.company_name || '';
+                option.dataset.email = brand.email_address || '';
+                brandList.insertAdjacentElement('beforeend', option);
+            });
+
+            brandList.insertAdjacentElement('beforeend', optionEmptyState);
+            brandFilter(brandSearch ? brandSearch.value : '');
+        }
+
+        function getCachedEligibleBrands() {
+            try {
+                const cached = sessionStorage.getItem(brandCacheKey);
+                if (!cached) return null;
+
+                const parsed = JSON.parse(cached);
+                if (!parsed || !parsed.createdAt || !parsed.payload) return null;
+                if (Date.now() - parsed.createdAt > BRAND_CACHE_TTL_MS) {
+                    sessionStorage.removeItem(brandCacheKey);
+                    return null;
+                }
+
+                return parsed.payload;
+            } catch (error) {
+                console.warn('Failed to read cached eligible brands:', error);
+                return null;
+            }
+        }
+
+        function cacheEligibleBrands(payload) {
+            try {
+                sessionStorage.setItem(brandCacheKey, JSON.stringify({
+                    createdAt: Date.now(),
+                    payload,
+                }));
+            } catch (error) {
+                console.warn('Failed to cache eligible brands:', error);
+            }
+        }
+
+        function brandListOpen() {
+            if (!brandList) return;
+            brandList.style.opacity = '1';
+            brandList.style.pointerEvents = 'auto';
+        }
+
+        function brandListClose() {
+            if (!brandList) return;
+            brandList.style.opacity = '0';
+            setTimeout(() => {
+                brandList.style.pointerEvents = 'none';
+            }, 100);
+        }
+
+        function brandFilter(text = '') {
+            if (!brandList) return;
+            const brandListItems = Array.from(brandList.children);
+            let matchCount = 0;
+
+            brandListItems.forEach((item) => {
+                const matches = item.textContent.toLowerCase().includes(text.toLowerCase());
+                item.style.display = matches ? 'block' : 'none';
+                if (matches && !item.classList.contains('empty-state')) matchCount++;
+            });
+
+            const emptyState = brandList.querySelector('.brand-select__option.empty-state');
+            if (emptyState) {
+                emptyState.style.display = matchCount === 0 ? 'block' : 'none';
+            }
+        }
+
+        function searchOnFocus() {
+            brandFilter(brandSearch ? brandSearch.value : '');
+            brandListOpen();
+        }
+
+        function searchOnKeyUp() {
+            brandFilter(brandSearch ? brandSearch.value : '');
+        }
+
+        function searchOnBlur() {
+            brandListClose();
+        }
+
+        function showEmpty() {
+            if (brandsEmpty) brandsEmpty.style.display = 'block';
+            if (brandList) brandList.style.display = 'none';
+        }
+
+        function showLoading() {
+            if (brandsEmpty) brandsEmpty.style.display = 'none';
+            if (!brandList) return;
+            brandList.style.display = '';
+            brandList.innerHTML = '';
+            brandList.insertAdjacentElement('beforeend', optionLoadingState);
+        }
+    });
+});
+
+/* ---- next footer block ---- */
+
+const startDateInput = document.querySelector('#start-date');
+const estimatedEndDateInput = document.querySelector('#estimated-end-date');
+const endDateInput = document.querySelector('#end-date');
+
+function disableEndDate() {
+    if (!endDateInput || !estimatedEndDateInput) return;
+    endDateInput.setAttribute('disabled', 'disabled');
+    endDateInput.value = '';
+    endDateInput.classList.add('disabled');
+    estimatedEndDateInput.setAttribute('disabled', 'disabled');
+    estimatedEndDateInput.value = '';
+    estimatedEndDateInput.classList.add('disabled');
+}
+
+if (startDateInput) {
+    startDateInput.addEventListener('change', function () {
+        if (startDateInput.value !== '') {
+            endDateInput?.removeAttribute('disabled');
+            endDateInput?.classList.remove('disabled');
+            estimatedEndDateInput?.removeAttribute('disabled');
+            estimatedEndDateInput?.classList.remove('disabled');
+        } else {
+            disableEndDate();
+        }
+    });
+}
+
+document.addEventListener('DOMContentLoaded', disableEndDate);
+
+const feeStructure = document.getElementById('fee-structure');
+if (feeStructure) {
+    feeStructure.addEventListener('change', disableEndDate);
+}
+
+/* ---- next footer block ---- */
+
+const monthsDropdown = document.getElementById('number-of-months');
+if (monthsDropdown && monthsDropdown.children.length <= 1) {
+    for (let index = 1; index <= 12; index++) {
+        const option = document.createElement('option');
+        option.value = index;
+        option.text = index;
+        monthsDropdown.appendChild(option);
+    }
+}
+
+/* ---- next footer block ---- */
+
+const weeksDropdown = document.getElementById('number-of-weeks');
+if (weeksDropdown && weeksDropdown.children.length <= 1) {
+    for (let index = 1; index <= 28; index++) {
+        const option = document.createElement('option');
+        option.value = index;
+        option.text = index;
+        weeksDropdown.appendChild(option);
+    }
+}
+
+/* ---- next footer block ---- */
+
+let contractFormState = 'start';
+const reviewBtn = document.getElementById('review-btn');
+const editBtn = document.getElementById('edit-btn');
+const contractHeader = document.getElementById('contract-header');
+
+function toggleContractHeader() {
+    if (!contractHeader) return;
+    if (contractFormState === 'start') {
+        contractHeader.innerText = 'Review Details';
+        contractFormState = 'review';
+    } else {
+        contractHeader.innerText = 'Start a Project';
+        contractFormState = 'start';
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+reviewBtn?.addEventListener('click', toggleContractHeader);
+editBtn?.addEventListener('click', toggleContractHeader);
+
+/* ---- next footer block ---- */
+
+/*
+ * Contract Form submits natively to Webflow (2026-07-06 revert).
+ * Webflow's form_submission event triggers the Make "Webflow Generate
+ * Project + Contract" scenarios; do not intercept the submit here.
+ * Brand eligibility data still loads through the Xano bridge above.
+ */
+const freeEmailInput = document.getElementById('FreeEmail');
+const contractStartDate = document.getElementById('start-date');
+const successEmails = document.querySelectorAll('.text-weight-bold.success-email-input');
+const successStartDate = document.querySelectorAll('.text-weight-bold.success-date-input');
+
+function updateSuccessFields() {
+    successEmails.forEach((element) => {
+        element.textContent = freeEmailInput ? freeEmailInput.value : '';
+    });
+    successStartDate.forEach((element) => {
+        element.textContent = contractStartDate ? contractStartDate.value : '';
+    });
+}
+
+reviewBtn?.addEventListener('click', updateSuccessFields);
+
+/* ---- next footer block ---- */
+
+let v2 = '1.0';
+document.addEventListener('DOMContentLoaded', function () {
+    function loadthestarters9fefc182a1d44de593d74e259d959cea(src) {
+        let script = document.createElement('script');
+        script.setAttribute('src', src);
+        script.setAttribute('type', 'module');
+        document.body.appendChild(script);
+        script.addEventListener('load', () => {
+            console.log('Slater loaded The Starters (Slater.app/4960)');
+        });
+        script.addEventListener('error', (event) => {
+            console.log('Error loading file', event);
+        });
+    }
+    let src = window.location.host.includes('webflow.io')
+        ? 'https://slater.app/4960.js'
+        : 'https://slater-app.s3.amazonaws.com/slater/4960.js?v=' + v2;
+    loadthestarters9fefc182a1d44de593d74e259d959cea(src);
+});
