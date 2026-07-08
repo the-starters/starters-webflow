@@ -1,0 +1,509 @@
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+
+    window.$memberstackDom.getCurrentMember().then(({ data: member }) => {
+      if (!member || !member.id) {
+        window.location.href = "/login";
+        return;
+      }
+
+      if (!member.customFields['brands-dashboard-url']) {
+        if (member.customFields['freelancer-dashboard-url']) {
+          window.location.href = '/opportunities-freelancer-view';
+        } else {
+          window.location.href = "/";
+        }
+      }
+
+
+      // See more btn	
+      function applySeeMoreHandler(text, elementsReady) {
+        const seeMoreBtn = text.nextElementSibling;
+
+        const lineHeight = parseFloat(window.getComputedStyle(text).lineHeight);
+        const maxHeight = lineHeight * 3;
+
+        // console.log(`🔍 Checking: ${text.textContent.trim().substring(0, 30)}...`);
+        // console.log("📏 scrollHeight:", text.scrollHeight, "clientHeight:", text.clientHeight);
+
+        if (text.scrollHeight === 0) {
+          elementsReady = false;
+        } else if (text.scrollHeight > maxHeight) {
+          text.style.maxHeight = `${maxHeight}px`;
+          text.style.overflow = "hidden";
+          text.style.display = "-webkit-box";
+          text.style.webkitBoxOrient = "vertical";
+          text.style.webkitLineClamp = "3";
+          seeMoreBtn.style.display = "inline"; // Show "See more"
+        }
+      }
+
+      function applySeeMore(retries = 7, timeout = 3000, startTime = Date.now()) {
+        let elementsReady = true;
+        const oppDescElements = Array.from(document.querySelectorAll(".opp-desc")).filter(el => {
+          return el.scrollHeight > 0;
+        });
+        const oppApplyDescElements = Array.from(document.querySelectorAll(".apply-opp-desc")).filter(el => {
+          return el.scrollHeight > 0;
+        });
+        const expDescElements = Array.from(document.querySelectorAll(".exp-desc")).filter(el => {
+          return el.scrollHeight > 0;
+        });
+
+        oppDescElements.forEach((description) => {
+          console.log('description')
+          applySeeMoreHandler(description, elementsReady)
+        });
+        oppApplyDescElements.forEach((description) => {
+          applySeeMoreHandler(description, elementsReady)
+        });
+        expDescElements.forEach((description) => {
+          applySeeMoreHandler(description, elementsReady)
+        });
+
+        if (!elementsReady && retries > 0 && (Date.now() - startTime) < timeout) {
+          console.log(`⏳ Waiting... Retry #${8 - retries}`);
+          setTimeout(() => applySeeMore(retries - 1, timeout, startTime), 300);
+        } else if (elementsReady) {
+          console.log("✅ All descriptions processed!");
+        } else {
+          console.warn("⚠️ Elements not ready after max retries.");
+        }
+      }
+
+      window.addEventListener('resize', function (event) {
+        setTimeout(() => {
+          document.querySelectorAll(".opp-desc, .apply-opp-desc, .exp-desc").forEach((description) => {
+            const seeMoreBtn = description.nextElementSibling;
+            const lineHeight = parseFloat(window.getComputedStyle(description).lineHeight);
+            const maxHeight = lineHeight * 3;
+
+            if (description.scrollHeight > maxHeight) {
+              description.style.maxHeight = `${maxHeight}px`;
+              description.style.overflow = "hidden";
+              description.style.display = "-webkit-box";
+              description.style.webkitBoxOrient = "vertical";
+              description.style.webkitLineClamp = "3";
+              seeMoreBtn.style.display = "inline"; // Show "See more"
+            } else {
+              seeMoreBtn.style.display = "none"; // Hide "See more"
+            }
+          });
+        }, 100);
+      });
+
+      document.addEventListener('click', function (event) {
+        if (event.target.hasAttribute('see-more-btn')) {
+          const seeMoreBtn = event.target;
+          const description = seeMoreBtn.previousElementSibling;
+
+          const lineHeight = parseFloat(window.getComputedStyle(description).lineHeight);
+          const maxHeight = lineHeight * 3;
+
+          if (description.style.webkitLineClamp === "3") {
+            description.style.webkitLineClamp = "unset";
+            description.style.maxHeight = "none";
+            seeMoreBtn.style.transform = "translateY(100%)";
+            seeMoreBtn.textContent = "See less";
+          } else {
+            description.style.webkitLineClamp = "3";
+            description.style.maxHeight = `${maxHeight}px`;
+            seeMoreBtn.style.transform = "translateY(0)";
+            seeMoreBtn.textContent = "See more";
+          }
+
+        }
+      });
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const opportunityId = urlParams.get('opp');
+
+      const XANO_LEGACY_BASE = "https://x08a-5ko8-jj1r.n7c.xano.io/api:ZihCUE3Z";
+
+      const callLegacyEndpoint = async (path, body) => {
+        const response = await fetch(`${XANO_LEGACY_BASE}/${path}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+          throw new Error(data?.message || `Request failed: ${response.status}`);
+        }
+        // Funnel events (platform-ops/architecture/posthog-funnel-events-plan.md):
+        // fires only on bridge success; StartersTrack loads from the site head.
+        const trackedEvent = {
+          "legacy/opportunities/apply": "application_submitted",
+          "legacy/opportunities/close": "opportunity_closed",
+          "legacy/freelancer-profile/update-request": "profile_updated"
+        }[path];
+        if (trackedEvent && window.StartersTrack) {
+          window.StartersTrack.track(trackedEvent, {
+            opportunity_id: (body && body.opportunity_id) || undefined
+          });
+        }
+        return data;
+      };
+
+
+      if (opportunityId) {
+
+        const fetchUrl = `https://x08a-5ko8-jj1r.n7c.xano.io/api:ZihCUE3Z/opportunities/${opportunityId}`;
+
+        const statuses = {
+          "Closed": "closed",
+          "Active": "active",
+          "Pending Review": "pending"
+        }
+
+        fetch(fetchUrl)
+          .then(response => {
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.json();
+        })
+          .then(data => {
+          const timestamp = data.created_at;
+          const date = new Date(timestamp);
+          const options = { year: 'numeric', month: 'long', day: 'numeric' };
+          const formatted = date.toLocaleDateString('en-US', options);
+
+          console.log("OPP DATA", data);
+
+          document.querySelector('.apply-opp-name').textContent = data.title;
+          document.querySelector('.proj-type').textContent = data.project_type || 'Not set';
+          document.querySelector('.proj-dur').textContent = data.est_project_duration;
+          document.querySelector('.est-hours').textContent = data.est_hours;
+          document.querySelector(".b-frequency").textContent = data.budget_frequency;
+          const slashNode = document.querySelector(".b-frequency").previousSibling;
+
+          if (data.project_type === 'Full Time') {
+            document.querySelector(".annual-sal").textContent = data.budget;
+          } else {
+            document.querySelector(".budget").textContent = data.budget;
+          }
+          document.querySelector('.apply-opp-desc').textContent = data.description;
+          document.querySelector('.exp-desc').textContent = data.exp_requirements;
+          document.querySelector('.opp-date').textContent = formatted;
+          document.querySelector('.opp-details-right').textContent = data._brands[0].company_name;
+
+          // Show project data depending on project type
+          if (data.project_type === 'One Time') {
+            document.querySelector(".est-hours").closest('.opp-details-item').style.display = 'none';
+            document.querySelector(".annual-sal").closest('.opp-details-item').style.display = 'none';
+            document.querySelector(".b-frequency").style.display = 'none';
+            slashNode.remove();
+          } else if (data.project_type === 'Ongoing Part Time') {
+            document.querySelector(".proj-dur").closest('.opp-details-item').style.display = 'none';
+            document.querySelector(".annual-sal").closest('.opp-details-item').style.display = 'none';
+          } else if (data.project_type === 'Full Time') {
+            document.querySelector(".proj-dur").closest('.opp-details-item').style.display = 'none';
+            document.querySelector(".est-hours").closest('.opp-details-item').style.display = 'none';
+            document.querySelector(".budget").closest('.opp-details-item').style.display = 'none';
+            document.querySelector(".b-frequency").style.display = 'none';
+            slashNode.remove();
+          }
+
+          const oppDetailsHolder = document.querySelector('.opp-details-holder');
+          oppDetailsHolder.setAttribute("data-project-status", statuses[data.status]);
+          oppDetailsHolder.querySelector(".pill-div.closed").style.display = data.status === "Closed" ? "block" : "none";
+          oppDetailsHolder.querySelector(".pill-div.active").style.display = data.status === "Active" ? "block" : "none";
+          oppDetailsHolder.querySelector(".pill-div.pending").style.display = data.status === "Pending Review" ? "block" : "none";
+
+          // Opportunity close modal
+          const oppCloseModal = document.querySelector('.opp-close-modal');
+
+          if (oppCloseModal) {
+            const oppName = document.querySelectorAll('[data-opp-name]');
+            const oppCloseModalOpen = document.querySelectorAll('[data-modal-close-opp-open]');
+            const oppCloseModalClose = document.querySelectorAll('[data-modal-close-opp-close]');
+            const oppCloseBtn = document.querySelector('[data-opp-close-btn]');
+            const oppCloseBtnAfterSubmit = document.querySelector('[data-btn-close-after-submit]');
+
+            oppName.forEach((name) => name.textContent = data.title);
+
+            oppCloseModalOpen.forEach((btn) => {
+              btn.addEventListener('click', () => openModal(oppCloseModal));
+
+              setTimeout(() => {
+                if (data.status === "Closed") {
+                  btn.style.pointerEvents = 'none';
+                  btn.style.opacity = '0.5';
+                  btn.textContent = 'Closed';
+                }
+              }, 1000)
+            });
+
+            oppCloseModalClose.forEach((btn) => {
+              btn.addEventListener('click', () => closeModal(oppCloseModal));
+            });
+
+            oppCloseBtnAfterSubmit.classList.add('deactivated');
+            oppCloseBtnAfterSubmit.textContent = 'Closing opportunity...'
+
+            function openModal(modal) {
+              modal.style.display = 'flex';
+            }
+
+            function closeModal(modal) {
+              modal.style.display = 'none';
+              window.location.reload();
+            }
+
+            // In-flight lock: block the duplicate close POST a mouse double-click
+            // would otherwise fire ~31ms apart (see bridge-reliability-standards.md,
+            // 2026-07-07). Boolean guard, not just pointer-events — pointer-events
+            // alone can't cancel an already-queued second click. Cleared on completion.
+            let closeInFlight = false;
+            oppCloseBtn.addEventListener('click', () => {
+              if (closeInFlight) return;
+              closeInFlight = true;
+              oppCloseBtn.style.pointerEvents = 'none';
+              oppCloseBtn.style.opacity = '0.5';
+
+              // Hide step-1-block and show step-2-block
+              const step1 = document.querySelector(".opp-close-1st-block");
+              const step2 = document.querySelector(".opp-close-2nd-block");
+
+              if (step1) step1.style.display = "none";
+              if (step2) step2.style.display = "block";
+
+              // Close opportunity via Xano so Airtable and Make secrets stay server-side.
+              callLegacyEndpoint('legacy/opportunities/close', {
+                member_id: member.id,
+                opportunity_id: data.id
+              })
+                .then(() => {
+                  closeInFlight = false;
+                  console.log('Status updated!');
+                  oppCloseBtnAfterSubmit.classList.remove('deactivated');
+                  oppCloseBtnAfterSubmit.textContent = 'Close window';
+                })
+                .catch(error => {
+                  closeInFlight = false;
+                  oppCloseBtn.style.pointerEvents = '';
+                  oppCloseBtn.style.opacity = '';
+                  console.error('Close opportunity error:', error);
+                  alert('There was an issue closing this opportunity. Please try again.');
+                  if (step1) step1.style.display = 'block';
+                  if (step2) step2.style.display = 'none';
+                });
+              // END: close opportunity
+            });
+          }
+          applySeeMore();
+        })
+          .catch(error => {
+          console.error('Error fetching opportunity:', error);
+        });
+      } else {
+        console.warn('No opportunities ID found in URL');
+      }
+
+
+      // Hide applicants total, count if no applicants
+      const hideApplicantsNumbers = () => {
+        const applicantsCountWrapper = document.querySelector('.opp-title-block__right');
+        const applicantsTotal = document.querySelector('.opp-applicants-total');
+        const loadMoreBtn = document.querySelector('[data-load-more]');
+        applicantsCountWrapper.style.display = "none";
+        loadMoreBtn.style.display = "none";
+        applicantsTotal.textContent = '(0)';
+      }
+
+      // Setup the observer, waiting when loading animation is finished
+      function addSeeMoreFunctionality() {
+        const targetElement = document.querySelector('.freelancer_dashboard .loading-lottie');
+        const observer = new MutationObserver((mutationsList) => {
+          mutationsList.forEach((mutation) => {
+            if (mutation.attributeName === 'style') {
+              applySeeMore();
+            }
+          });
+        });
+        // Observe only attribute changes
+        const config = { attributes: true };
+        // Start observing the target element
+        observer.observe(targetElement, config);
+        // Hide the loading animation
+      };
+
+      // URL parametrs check
+      const urlParams2 = new URLSearchParams(window.location.search);
+      const appId = urlParams2.get("app");
+
+      if (!appId) {
+        console.error("No 'app' query parameter found in the URL");
+
+        addSeeMoreFunctionality();
+        hideApplicantsNumbers();
+
+        return;
+      } else {
+        addSeeMoreFunctionality();
+      }
+
+      // Get applicants cards
+      const apiUrl = "https://x08a-5ko8-jj1r.n7c.xano.io/api:ZihCUE3Z/custom/get_applicants";
+      const postData = { payload: appId };
+
+      fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(postData)
+      })
+        .then(response => response.json())
+        .then(data => {
+        console.log("APP DATA:", data);
+
+        const noApplicantCard = document.querySelector(".no-applicant-card");
+        const applicantCards = document.querySelectorAll(".apply-body > .brand-apply-card"); // Select direct children
+
+        if (!data || !data[0] || !data[0].applicants || data[0].applicants.length === 0) {
+          console.error("No applicants found in the response");
+          if (noApplicantCard) {
+            noApplicantCard.style.display = "flex";
+
+          } else {
+            console.warn("Element with class 'no-applicant-card' not found.");
+          }
+
+          // Hide applicant cards
+          applicantCards.forEach(card => {
+            card.style.display = "none";
+          });
+
+          hideApplicantsNumbers();
+
+          return;
+        }
+
+        // If there are applicants, ensure no-applicant card is hidden and applicant cards are visible
+        if (noApplicantCard) {
+          noApplicantCard.style.display = "none";
+        }
+        applicantCards.forEach(card => {
+          card.style.display = "block"; // Or 'flex' depending on your CSS
+        });
+
+        const applicants = data[0].applicants;
+        const container = document.querySelector(".apply-body");
+        if (!container) {
+          console.error("Applicants container not found.");
+          return;
+        }
+
+        container.innerHTML = "";
+
+        applicants.forEach((applicant) => {
+          const freelancer = applicant._freelancers[0];
+          // console.log(freelancer)
+
+          const applicantCard = document.createElement("div");
+          applicantCard.classList.add("brand-apply-card", "applicant-mod");
+
+          applicantCard.innerHTML = `
+                	<div class="apply-card-img">
+                  	<div class="applicant-image-holder square">
+                    	<div id="average-rating-wrapper" class="rating-label">
+                      	<img src="https://cdn.prod.website-files.com/64eca13e21cf352668522aac/67ab5bf67340e076931fafda_star-full.svg" loading="lazy" alt="" class="rating-label-icon">
+                      	<div id="average-rating" class="rating-label-number is-freelacer-page">5.0</div>
+  </div>
+                    	<img src="${freelancer.image_link || 'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg'}" loading="lazy' alt="" class="img-cover">
+  </div>
+  </div>
+                  <div class="apply-card-content">
+                  	<div class="apply-card-top">
+                    	<div class="apply-card-applicant-info">
+                        <div>
+                          <div class="apply-name">${freelancer.full_name || "Applicant name"}</div>
+  </div>
+  </div>
+                      <div class="apply-card-submited">Submitted on ${applicant.submission_date}</div>
+  </div>
+                    <div class="opp-text-wrap">
+                    	<div fs-cmsfilter-field="stats" class="opp-desc">${applicant.cover_letter}</div>
+                    	<a href="#" see-more-btn class="see-more" style="display: none;">See more</a>
+  </div>
+                    <div class="opp-bott-block padding-top-30">
+                    	<div class="brand-apply-btn-grp">
+                    		<a href="${freelancer.webflow_profile_link || "#"}" class="button w-inline-block"><div>View Profile</div></a>
+  </div>
+  </div>
+  </div>
+                `;
+
+          container.appendChild(applicantCard);
+        });
+
+        // applicants count
+        const applicantsCountWrapper = document.querySelector('.opp-title-block__right')
+        const applicantsTotal = document.querySelector('.opp-applicants-total');
+        const applicantsCount = document.querySelector('.opp-applicants-count');
+        const applicantsNumber = document.querySelector('.opp-applicants-number');
+
+        applicantsTotal.textContent = `(${applicants.length})`;
+        applicantsCount.textContent = applicants.length;
+
+        // load more
+        const applicantsCards = Array.from(document.querySelectorAll('.brand-apply-card'));
+        const loadMoreBtn = document.querySelector("[data-load-more]");
+
+        if (loadMoreBtn) {
+          const pageStep = parseInt(loadMoreBtn.dataset.step) || 2;
+          let currentPage = 1;
+
+          // Show only the first pageStep cards when loading
+          applicantsCards.forEach((card, index) => {
+            card.style.display = index < pageStep ? "flex" : "none";
+          });
+
+          // Hide the button if the number of cards is less than or equal to the initial number
+          if (applicantsCards.length <= pageStep) {
+            loadMoreBtn.style.display = "none";
+          }
+
+          // update visible cards number
+          const updateVisibleCardsNumber = () => {
+            const applicantsCardsVisible = applicantsCards.filter(card => getComputedStyle(card).display === 'flex');
+            applicantsNumber.textContent = applicantsCardsVisible.length;
+          }
+
+          updateVisibleCardsNumber();
+
+          // Load more button on click
+          loadMoreBtn.addEventListener('click', function () {
+            currentPage++;
+            let availableLength = pageStep * currentPage;
+
+            let cardsCount = 0;
+            applicantsCards.forEach((card, index) => {
+              if (index < availableLength) {
+                card.style.display = "flex";
+                cardsCount++;
+
+                // update visible cards number
+                updateVisibleCardsNumber();
+              }
+            });
+
+            // Hide the button if there is nothing else to show
+            if (cardsCount >= applicantsCards.length) {
+              loadMoreBtn.style.display = "none";
+            }
+            applySeeMore();
+          });
+        }
+
+
+      })
+        .catch(error => {
+        console.error("Error:", error);
+      });
+    });
+
+  });
+</script>
