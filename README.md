@@ -63,8 +63,15 @@ blocks invalid submits before Webflow's handler or page controllers see them.
 </form>
 ```
 
-- Roles: `wf-validate-element="form | error | message"`. Error slots bind to the
-  nearest field, or explicitly via `wf-validate-for="<input name>"`.
+- Roles: `wf-validate-element="form | error | message | count"`. Error/count slots bind
+  to the nearest field, or explicitly via `wf-validate-for="<input name>"`.
+- `count` is a live character counter ("1,234 / 2,500") — max from the field's
+  `maxlength` or `wf-validate-count-max`. (Finsweet's "inputcounter" is a number
+  stepper, not a char counter — this fills that gap.)
+- An invalid field with no error slot gets a plain one auto-injected (class
+  `wf-validate_error-auto`), so a gated form never blocks submission invisibly.
+- `minlength`/`maxlength` are enforced by the script itself (native tooShort/tooLong
+  only fire for user-typed values, so JS-set/autofilled values would bypass them).
 - Messages: `wf-validate-message-<rule>` on the input (`required`, `type`, `pattern`,
   `minlength`, `maxlength`, `min`, `max`, `step`, `match`), `wf-validate-message` as
   catch-all, browser default text as fallback.
