@@ -1,0 +1,28 @@
+<!-- /freelancer-start-project — Slater loader.
+     Paste this SEPARATELY in the page footer, AFTER the freelancer-start-project.js CDN tag.
+     It is intentionally NOT bundled into freelancer-start-project.js: the real logic lives in
+     the Slater.app editor (project 4960 → assets.slater.app/slater/4960/9022.js, ~15KB of
+     contract-form field show/hide logic) which we do not track in this repo. Editing it means
+     editing the Slater project, not this repo. Keeping the loader here documents the exact
+     current markup. -->
+<script>
+let v2 = '1.0';
+document.addEventListener('DOMContentLoaded', function () {
+    function loadthestarters9fefc182a1d44de593d74e259d959cea(src) {
+        let script = document.createElement('script');
+        script.setAttribute('src', src);
+        script.setAttribute('type', 'module');
+        document.body.appendChild(script);
+        script.addEventListener('load', () => {
+            console.log('Slater loaded The Starters (Slater.app/4960)');
+        });
+        script.addEventListener('error', (event) => {
+            console.log('Error loading file', event);
+        });
+    }
+    let src = window.location.host.includes('webflow.io')
+        ? 'https://slater.app/4960.js'
+        : 'https://slater-app.s3.amazonaws.com/slater/4960.js?v=' + v2;
+    loadthestarters9fefc182a1d44de593d74e259d959cea(src);
+});
+</script>

@@ -386,25 +386,3 @@ function updateSuccessFields() {
 }
 
 reviewBtn?.addEventListener('click', updateSuccessFields);
-
-/* ---- next footer block ---- */
-
-let v2 = '1.0';
-document.addEventListener('DOMContentLoaded', function () {
-    function loadthestarters9fefc182a1d44de593d74e259d959cea(src) {
-        let script = document.createElement('script');
-        script.setAttribute('src', src);
-        script.setAttribute('type', 'module');
-        document.body.appendChild(script);
-        script.addEventListener('load', () => {
-            console.log('Slater loaded The Starters (Slater.app/4960)');
-        });
-        script.addEventListener('error', (event) => {
-            console.log('Error loading file', event);
-        });
-    }
-    let src = window.location.host.includes('webflow.io')
-        ? 'https://slater.app/4960.js'
-        : 'https://slater-app.s3.amazonaws.com/slater/4960.js?v=' + v2;
-    loadthestarters9fefc182a1d44de593d74e259d959cea(src);
-});
