@@ -1104,6 +1104,18 @@
     if (title) bind(modal, 'title', title)
   }
 
+  // Fill the cancel-application confirmation modal's [data-opp-bind="title"/
+  // "company"] from the clicked card, so the member sees WHICH application
+  // they're about to cancel.
+  function fillCancelModalMeta(card) {
+    const modal = $('[data-modal-target="cancel-application"]')
+    if (!modal || !card) return
+    const title = cardFieldText(card, 'title')
+    const company = cardFieldText(card, 'company')
+    if (title) bind(modal, 'title', title)
+    if (company) bind(modal, 'company', company)
+  }
+
   // When any element inside a card is clicked, capture that card's ids.
   // wf-algolia-rendered cards expose the id as data-wf-algolia-hit-objectid,
   // wf-xano-rendered cards as data-wf-xano-id (neither uses data-opp-id).
@@ -1115,9 +1127,14 @@
           card.getAttribute('data-wf-algolia-hit-objectid') ||
           card.getAttribute('data-wf-xano-id'),
       )
-      if (card.hasAttribute('data-app-id')) setActiveApp(card.getAttribute('data-app-id'))
+      // Always reset (null when absent): wf-xano/wf-algolia cards carry no
+      // data-app-id, and a stale id from a previously-clicked card must never
+      // leak into this card's cancel/edit actions. The cancel handler resolves
+      // the id from activeOpp when it's null.
+      setActiveApp(card.getAttribute('data-app-id'))
       fillApplyModalMeta(card)
       fillCloseModalMeta(card)
+      fillCancelModalMeta(card)
     }
   })
 
@@ -1186,10 +1203,21 @@
       })
 
     // CANCEL APPLICATION (confirmation)
+    // wf-xano/wf-algolia cards only carry the opportunity id, so the
+    // application id is resolved lazily via the detail endpoint (which
+    // returns the signed-in member's application for that opportunity).
     const cancelBtn = $('[data-opp-submit="cancel"]')
     if (cancelBtn)
       cancelBtn.addEventListener('click', () =>
-        guard(cancelBtn, () => API.starterAppCancel(activeApp)),
+        guard(cancelBtn, async () => {
+          let appId = activeApp
+          if (!appId && activeOpp) {
+            const detail = await API.starterOppDetail(activeOpp)
+            appId = detail && detail.application && detail.application.id
+          }
+          if (!appId) throw { data: { message: 'Could not find your application for this opportunity.' } }
+          return API.starterAppCancel(appId)
+        }),
       )
   }
 
