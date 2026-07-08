@@ -32,6 +32,12 @@
  *             field's maxlength, or wf-validate-count-max on the counter
  *             (Finsweet has no char-count solution — their "inputcounter" is
  *             a number stepper — so this fills that gap in our grammar).
+ *   submit  — mark a clickable OUTSIDE the form (or a non-native div button)
+ *             as the form's submitter, so its clicks are gated too. Native
+ *             submit buttons inside a bound form don't need it: their clicks
+ *             are gated automatically — page controllers that bind click on
+ *             the button (the opp30 modal pattern) and call the API directly
+ *             never fire while the form is invalid.
  *
  * Settings (on the input/select/textarea):
  *   wf-validate-message-<rule>  — per-rule message override. Rules: required,
@@ -372,6 +378,21 @@
   const bound = new WeakMap()
 
   /**
+   * Shared invalid-gate: validate, and on failure kill the event before any
+   * other listener sees it, then focus the first invalid field.
+   * @param {FormValidator} validator
+   * @param {Event} e
+   * @returns {void}
+   */
+  const gateEvent = (validator, e) => {
+    if (validator.validateAll()) return
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    const firstInvalid = validator.form.querySelector('.' + INVALID_CLASS)
+    if (firstInvalid) /** @type {HTMLElement} */ (firstInvalid).focus()
+  }
+
+  /**
    * Submit gate. Capture phase on document runs BEFORE any listener on the
    * form itself (capture travels document -> form), so invalid submits are
    * blocked no matter when Webflow's handler or page controllers were bound —
@@ -381,11 +402,40 @@
     'submit',
     (e) => {
       const validator = bound.get(/** @type {HTMLFormElement} */ (e.target))
-      if (!validator || validator.validateAll()) return
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      const firstInvalid = validator.form.querySelector('.' + INVALID_CLASS)
-      if (firstInvalid) /** @type {HTMLElement} */ (firstInvalid).focus()
+      if (validator) gateEvent(validator, e)
+    },
+    true,
+  )
+
+  /**
+   * Click gate. Page controllers often bind click on the submit button and
+   * call the API directly (the opp30 modal pattern) — that path never fires
+   * a submit event, so it must be gated at the click. Covers native submit
+   * buttons inside a bound form, plus wf-validate-element="submit" markers
+   * for buttons outside the form or non-native (div) buttons.
+   */
+  document.addEventListener(
+    'click',
+    (e) => {
+      const origin = e.target instanceof Element ? e.target : null
+      if (!origin) return
+      const marked = origin.closest('[wf-validate-element="submit"]')
+      const el =
+        marked || origin.closest('button[type="submit"], input[type="submit"], button:not([type])')
+      if (!el) return
+      let form = /** @type {HTMLFormElement | null} */ (el.closest('form'))
+      if (!form && marked) {
+        // marked submitters may sit outside the form (modal footers): walk up
+        // until a wrapper contains a bound form
+        let scope = marked.parentElement
+        while (scope && !form) {
+          const candidate = /** @type {HTMLFormElement | null} */ (scope.querySelector('form'))
+          if (candidate && bound.has(candidate)) form = candidate
+          scope = scope.parentElement
+        }
+      }
+      const validator = form && bound.get(form)
+      if (validator) gateEvent(validator, e)
     },
     true,
   )

@@ -63,8 +63,13 @@ blocks invalid submits before Webflow's handler or page controllers see them.
 </form>
 ```
 
-- Roles: `wf-validate-element="form | error | message | count"`. Error/count slots bind
-  to the nearest field, or explicitly via `wf-validate-for="<input name>"`.
+- Roles: `wf-validate-element="form | error | message | count | submit"`. Error/count
+  slots bind to the nearest field, or explicitly via `wf-validate-for="<input name>"`.
+- Invalid forms are gated on BOTH the submit event and clicks on submit buttons —
+  page controllers that bind click and call the API directly (the opp30 modal
+  pattern) never fire while the form is invalid. Put `wf-validate-element="submit"`
+  on clickables outside the form or on wrapper divs that carry the click handler
+  (e.g. the `data-opp-submit` button wrappers).
 - `count` is a live character counter ("1,234 / 2,500") — max from the field's
   `maxlength` or `wf-validate-count-max`. (Finsweet's "inputcounter" is a number
   stepper, not a char counter — this fills that gap.)
