@@ -1,0 +1,807 @@
+<script>
+  //const devMode = localStorage.getItem('dev-mode') === 'true';
+  const devMode = true;
+
+  pageLoader();
+  swipersInit();
+
+  const roleText = document.querySelectorAll('[data-text="role"]');
+  const titleRoleText = document.querySelectorAll('[data-text="Title Role"]');
+  let role = localStorage.getItem("ROLE");
+  let rate = localStorage.getItem("hourlyRate");
+  let availability = localStorage.getItem("hourPerWeek");
+  let industries = localStorage.getItem("industryExperiences");
+  const mainDiv = document.querySelector('[data-div="main"]');
+  const successDiv = document.querySelector('[data-div="success"]');
+  const confettiDiv = document.querySelector("[data-confetti]");
+  const showConfetti = document
+  .querySelector("[data-confetti]")
+  .getAttribute("data-confetti");
+
+  // check if from checkout
+  const url = window.location.href;
+  const urlParams = new URLSearchParams(url);
+  const fromCheckout = urlParams.get("fromCheckout");
+
+  let pageLoaded = false;
+  let fsLoaded = false;
+
+  // Your code that should run after the document has loaded goes here
+  setTimeout(function () {
+    pageLoaded = true;
+    if (fsLoaded && pageLoaded) {
+      fadeInFlex(mainDiv);
+      hideSuccessDiv();
+      setTimeout(function () {
+        confetti();
+      }, 1000);
+    }
+  }, 5700);
+
+  window.$memberstackDom.getCurrentMember().then((member) => {
+    if (!member.data) {
+      location.href = location.origin + '/login'
+      return;
+    }
+
+    // CMS Load - Finsweet Attributes
+    window.fsAttributes = window.fsAttributes || [];
+    window.fsAttributes.push([
+      "cmsload",
+      (listInstances) => {
+        if (devMode) console.log("cmsload Successfully loaded!");
+
+        role = member.data.customFields.role;
+        rate = member.data.customFields.rate;
+        availability = member.data.customFields.availability;
+        industries = member.data.customFields["industry-experience"];
+
+        titleRoleText.forEach((title) => {
+          title.textContent = role;
+        });
+
+        // Call the filter function when the CMS loads done
+        filterListItems();
+
+        // Getting `AI Bio Summary` for filtered items through Xano so Airtable credentials stay server-side.
+        let filteredCards = document.querySelectorAll('[data-card="freelancer"][style*="display: block"]');
+        if (filteredCards.length) {
+          filteredCards = Array.from(filteredCards)
+            .map(card => card.dataset.airtableId)
+            .filter(Boolean);
+
+          fetch('https://x08a-5ko8-jj1r.n7c.xano.io/api:ZihCUE3Z/legacy/quiz-results/profile-bios', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              member_id: member.data.id,
+              record_ids: filteredCards
+            })
+          })
+            .then(async response => {
+              const data = await response.json().catch(() => null);
+              if (!response.ok) {
+                throw new Error(data?.message || `Request failed: ${response.status}`);
+              }
+              return data;
+            })
+            .then(data => {
+              const records = Array.isArray(data?.records) ? data.records : [];
+              // Funnel event (platform-ops/architecture/posthog-funnel-events-plan.md)
+              if (window.StartersTrack) {
+                window.StartersTrack.track('quiz_results_viewed', { match_count: records.length });
+              }
+              records.forEach(record => {
+                const cardContent = document.querySelector(`[data-airtable-id="${record.id}"] [card-content]`);
+                if (cardContent && record.content) cardContent.innerHTML = record.content;
+              });
+            })
+            .catch(error => {
+              console.error('Failed to get profile bios:', error);
+            });
+        }
+
+        // Init the roles search function
+        roleSearchInit(role);
+
+        fsLoaded = true;
+        if (fsLoaded && pageLoaded) {
+          fadeInFlex(mainDiv);
+          hideSuccessDiv();
+          setTimeout(function () {
+            confetti();
+          }, 1000);
+        }
+
+        if (member.data.planConnections.length > 0) {
+          for (const connection of member.data.planConnections) {
+            if (connection.type === "SUBSCRIPTION") {
+              document.querySelectorAll("[data-flname]").forEach((flName) => {
+                flName.textContent = flName.getAttribute("data-flname");
+              });
+            }
+          }
+        }
+      }
+    ]);
+
+  });
+
+
+  /* FUNCTIONS */
+  function swipersInit() {
+
+    // Initialize the first Swiper instance
+    const swiper_hero = new Swiper('.swiper_hero', {
+      direction: 'horizontal',
+      loop: true,
+      initialSlide: 0,
+      slidesPerView: 5,
+      spaceBetween: 4,
+      centeredSlides: true,
+      mousewheel: {
+        forceToAxis: true
+      },
+      speed: 300,
+
+      autoplay: {
+        delay: 1500,
+        disableOnInteraction: true
+      },
+
+      breakpoints: {
+        320: {
+          slidesPerView: 1.25,
+          centeredSlides: true
+        },
+        640: {
+          slidesPerView: 1.75,
+          centeredSlides: true
+        },
+        768: {
+          slidesPerView: 2.5,
+          centeredSlides: true
+        },
+        1024: {
+          slidesPerView: 3,
+          centeredSlides: false
+        },
+        1280: {
+          slidesPerView: 4,
+          centeredSlides: false
+        }
+      },
+      pagination: {
+        el: '.swiper_hero .swiper-pagination',
+        clickable: true
+      },
+      navigation: {
+        nextEl: '.swiper_hero .button-next',
+        prevEl: '.swiper_hero .button-prev'
+      },
+      scrollbar: {
+        el: '.swiper_hero .swiper-scrollbar',
+        draggable: true
+      }
+    });
+
+    // Initialize the first Swiper instance
+    const swiper1 = new Swiper('.swiper1', {
+      direction: 'horizontal',
+      initialSlide: 0,
+      slidesPerView: 'auto',
+      centeredSlides: true,
+      spaceBetween: 8,
+      breakpoints: {
+        320: {
+          slidesPerView: 1,
+          centeredSlides: true
+        },
+        640: {
+          slidesPerView: 1.5,
+          centeredSlides: true
+        },
+        768: {
+          slidesPerView: 2,
+          centeredSlides: true
+        },
+        1024: { // New breakpoint for desktop
+          slidesPerView: 'auto',
+          centeredSlides: false
+        },
+        1280: {
+          slidesPerView: 'auto',
+          centeredSlides: false
+        }
+      },
+      pagination: {
+        el: '.swiper1 .swiper-pagination',
+        clickable: true
+      },
+      navigation: {
+        nextEl: '.swiper1 .button-next',
+        prevEl: '.swiper1 .button-prev'
+      },
+      scrollbar: {
+        el: '.swiper1 .swiper-scrollbar',
+        draggable: true
+      }
+    });
+
+
+    // Create controls specifically for Swiper2
+    $(".swiper2").append('<div class="swiper-controls"></div>');
+    $(".swiper2 .swiper-controls").append('<div class="swiper-pagination"></div>');
+    $(".swiper2 .swiper-controls").append('<div class="swiper-navigation"></div>');
+    $(".swiper2 .swiper-navigation").append('<div class="swiper-arrow button-prev"></div>');
+    $(".swiper2 .swiper-navigation").append('<div class="swiper-arrow button-next"></div>');
+    $(".swiper2").append('<div class="swiper-scrollbar"></div>');
+
+    // Initialize the second Swiper instance
+    const swiper2 = new Swiper('.swiper2', {
+      direction: 'horizontal',
+      loop: true,
+      initialSlide: 0,
+      slidesPerView: 3,
+      spaceBetween: 4,
+      centeredSlides: true,
+      mousewheel: {
+        forceToAxis: true
+      },
+      speed: 300,
+      breakpoints: {
+        320: {
+          slidesPerView: 1,
+          centeredSlides: true
+        },
+        640: {
+          slidesPerView: 2,
+          centeredSlides: false
+        },
+        768: {
+          slidesPerView: 3,
+          centeredSlides: false
+        }
+      },
+      pagination: {
+        el: '.swiper2 .swiper-pagination',
+        clickable: true
+      },
+      navigation: {
+        nextEl: '.swiper2 .button-next',
+        prevEl: '.swiper2 .button-prev'
+      },
+      scrollbar: {
+        el: '.swiper2 .swiper-scrollbar',
+        draggable: true
+      }
+    });
+
+  }
+
+  /* LOADER ANIMATION */
+  function pageLoader() {
+    const loader_line = document.querySelector("[loader-progress-line]");
+    const loader_step_2 = document.querySelector("[loader-step-2]");
+    const loader_step_3 = document.querySelector("[loader-step-3]");
+    if (!loader_line || !loader_step_2 || !loader_step_3) return;
+
+    const timeout = 2000;
+
+    setTimeout(() => {
+      loader_step_2.classList.add("active");
+      loader_line.classList.add("step-2");
+    }, timeout);
+
+    setTimeout(() => {
+      loader_step_3.classList.add("active");
+      loader_line.classList.add("step-3");
+    }, timeout * 2);
+
+    setTimeout(() => {
+      loader_step_2.classList.remove("active");
+      loader_step_3.classList.remove("active");
+      loader_line.classList.remove("step-2", "step-3");
+
+      pageLoader();
+    }, timeout * 3);
+  }
+
+  function fadeInFlex(element) {
+    element.style.opacity = 0;
+    element.style.display = "";
+    const fadeInInterval = setInterval(function () {
+      if (element.style.opacity < 1) {
+        element.style.opacity = Number(element.style.opacity) + 0.1;
+      } else {
+        clearInterval(fadeInInterval);
+      }
+    }, 50); // Adjust the time interval (ms) for a smoother fade-in effect
+  }
+
+  // Function to filter list items based on Role
+  function filterListItems(onlyMainRole = true) {
+    let listItems = document.querySelectorAll('[data-card="freelancer"]');
+
+    let filteredItems = [];
+    let sortingArray = [];
+    let mainItems;
+
+    if (onlyMainRole) {
+      listItems = document.querySelectorAll('[data-card="freelancer"]:not(.main_role)');
+
+      mainItems = document.querySelectorAll('[data-card="freelancer"].main_role');
+      for (let i = 0; i < mainItems.length; i++) {
+        filteredItems.push(mainItems[i]);
+      }
+    }
+
+    for (let i = 0; i < listItems.length; i++) {
+      let listItem = listItems[i];
+
+      // use only main role!
+      let allRoles = "";
+      let mainRole = listItem.querySelector('[data-text="Role"]').textContent;
+
+      if (onlyMainRole) {
+        allRoles = mainRole;
+        mainRole = mainRole.split('/')[0];
+      }
+
+      if (mainRole.includes(role) || (!onlyMainRole && allRoles.includes(role))) {
+        filteredItems.push(listItem);
+
+        if (onlyMainRole) {
+          listItem.classList.add('main_role');
+        }
+
+        // sorting array setup
+        let points = listItem.querySelector('[data-text="ranking-points"]').textContent;
+        points = points.trim() === '' ? 0 : points;
+        sortingArray.push({ item: listItem, points: parseInt(points) });
+      }
+    }
+
+    // sorting by ranking points
+    let sortedItems = sortingArray.sort((a, b) => b.points - a.points);
+    sortedItems = sortedItems.map(obj => obj.item);
+    for (let i = 0; i < sortedItems.length; i++) {
+      sortedItems[i].style.order = i + 1;
+    }
+
+    // condition
+    if (filteredItems.length === 3) {
+      if (devMode) console.log("a match!!");
+      // Stop and display the filteredItems
+      displayFilteredItems(filteredItems);
+
+    } else if (filteredItems.length > 3) {
+      if (devMode) console.log("more than 3 role, proceed to filter rates");
+      // Continue to the next factor (rate)
+      filterRate(sortedItems);
+
+    } else if (filteredItems.length < 3 && onlyMainRole) {
+      if (devMode) console.log("less than 3 roles, proceed to rerun filter roles");
+      // Rerun filter roles
+      if (onlyMainRole) {
+        filterListItems(false);
+      }
+
+    } else if (filteredItems.length < 3 && !onlyMainRole) {
+      // Just show items what we have
+      displayFilteredItems(filteredItems);
+    }
+  }
+
+  // Function to filter list items based on Rate
+  function filterRate(flItems) {
+    var listItems = flItems;
+    let filteredItems = [];
+    // Calculate the difference between flRate
+    const targetRate = rate;
+
+    // check if there's an exact match of rate
+    for (var i = 0; i < listItems.length; i++) {
+      var listItem = listItems[i];
+      var flRate = parseFloat(
+        listItem.querySelector('[data-text="Rate"]').textContent.replace("$", "")
+      );
+      if (Number(flRate) <= Number(targetRate)) {
+        filteredItems.push(listItem);
+      }
+    }
+
+    // condition
+    if (filteredItems.length === 3) {
+      if (devMode) console.log("match 3 rate");
+      // Stop and display the filteredItems
+      displayFilteredItems(filteredItems);
+    } else if (filteredItems.length > 3) {
+      if (devMode) console.log("more than 3 rate, proceed to filter availabilty");
+      // Continue to the next factor (availability)
+      filterAvailability(filteredItems);
+    } else if (filteredItems.length < 3) {
+      if (devMode) console.log("less than 3 rates, show the closest rates");
+      // stop and display the closest one
+      filteredItems = Array.from(listItems).map((listItem) => {
+        var flRate = parseFloat(
+          listItem
+          .querySelector('[data-text="Rate"]')
+          .textContent.replace("$", "")
+        );
+        var rateDifference = Math.abs(targetRate - flRate);
+        return { listItem, rateDifference };
+      });
+
+      // Sort list items based on rate
+      filteredItems.sort((a, b) => {
+        return a.rateDifference - b.rateDifference;
+      });
+
+      // restructure the array to remove rateDifference
+      filteredItems = filteredItems.map((obj) => obj.listItem);
+
+      displayFilteredItems(filteredItems);
+    }
+  }
+
+  // Function to filter list items based on Availability
+  function filterAvailability(flItems) {
+    var listItems = flItems;
+    let filteredItems = [];
+    const targetAvailability =
+          availability === "I don't know yet" ? "1-10" : availability;
+
+    // Exact match and above
+    for (var i = 0; i < listItems.length; i++) {
+      var listItem = listItems[i];
+      var flAvailability = listItem.querySelector('[data-text="Availability"]')
+      .textContent;
+
+      // Function to modify ranges containing "+"
+      function modifyRange(range) {
+        if (range.includes("+")) {
+          const start = Number(range.replace("+", ""));
+          return `${start}-${start + 20}`;
+        }
+        return range;
+      }
+
+      // Calculate the closest range
+      function calculateClosest(range) {
+        const parts = range.split("-");
+        const start = Number(parts[0]);
+        const end = Number(parts[1]);
+        return start + end;
+      }
+
+      const modifiedTargetAvailability = modifyRange(targetAvailability);
+      const modifiedFLAvailability = modifyRange(flAvailability);
+
+      if (
+        modifiedFLAvailability === modifiedTargetAvailability ||
+        calculateClosest(modifiedFLAvailability) >=
+        calculateClosest(modifiedTargetAvailability)
+      ) {
+        filteredItems.push(listItem);
+      }
+    }
+
+    // condition
+    if (filteredItems.length === 3) {
+      // Stop and display the filteredItems
+      if (devMode) console.log("match 3 availability");
+      displayFilteredItems(filteredItems);
+    } else if (filteredItems.length > 3) {
+      // Continue to the next factor (Industries)
+      if (devMode) console.log("more than 3 availability, proceed to filter industries experiences");
+      filterIndustry(filteredItems);
+    } else if (filteredItems.length < 3) {
+      if (devMode) console.log("less than 3 availability, show the closest availability");
+      // stop and display the closest availability
+
+      let avail = 0;
+
+      function formatAvailability() {
+        const parts = modifyRange(targetAvailability).split("-");
+        const start = Number(parts[0]);
+        const end = Number(parts[1]);
+        avail = start + end;
+      }
+
+      formatAvailability();
+
+      // calculate the closest range
+      function calculateClosest(range) {
+        const parts = range.split("-");
+        const start = Number(parts[0]);
+        const end = Number(parts[1]);
+        if (devMode) console.log(avail, start + end);
+        return avail - (start + end);
+      }
+
+      // Function to modify ranges containing "+"
+      function modifyRange(range) {
+        if (range.includes("+")) {
+          const start = Number(range.replace("+", ""));
+          if (devMode) console.log(start);
+          return `${start}-${start + 20}`;
+        }
+        return range;
+      }
+
+      // Your code to generate filteredItems
+      filteredItems = Array.from(listItems).map((listItem) => {
+        var flAvailability = listItem.querySelector('[data-text="Availability"]')
+        .textContent;
+
+        // Call calculateClosest to calculate the closest availability
+        var availabilityDifference = calculateClosest(
+          modifyRange(flAvailability)
+        );
+
+        return {
+          listItem,
+          availabilityDifference
+        };
+      });
+
+      // Sort list items based on availability difference
+      filteredItems
+        .sort(
+        (a, b) =>
+        Math.abs(a.availabilityDifference) -
+        Math.abs(b.availabilityDifference)
+      )
+        .map((obj) => obj.listItem);
+
+      // restructure the array to remove rateDifference
+      filteredItems = filteredItems.map((obj) => obj.listItem);
+
+      displayFilteredItems(filteredItems);
+    }
+  }
+
+  // Function to filter list items based on Industries Experience
+  function filterIndustry(flItems) {
+    var listItems = flItems;
+    let filteredItems = [];
+    const targetIndustries = industries;
+
+    if (targetIndustries !== "") {
+      for (var i = 0; i < listItems.length; i++) {
+        var listItem = listItems[i];
+        // get all industries from data-dov="industry" and make it in an array
+        var industryElements = listItem
+        .querySelector('[data-div="industry"]')
+        .querySelectorAll('[data-text="industry"]');
+        const industryTextArray = Array.from(industryElements).map(
+          (element) => element.textContent
+        );
+        // Join the text content into a comma-separated string
+        const flIndustries = industryTextArray.join(", ");
+
+        // Split the strings into arrays
+        const industriesArray = targetIndustries.split(", ");
+        const flIndustriesArray = flIndustries.split(", ");
+        let includesIndustry = true;
+        // Check if any industry in industriesArray is included in flIndustriesArray
+
+        includesIndustry = industriesArray.some((industry) =>
+                                                flIndustriesArray.includes(industry)
+                                               );
+        if (includesIndustry) {
+          filteredItems.push(listItem);
+        }
+      }
+
+      // filteredItems is less than 3, it will push random items inside filtered item, just to make sure that the items are 3 in total
+      if (filteredItems.length < 3) {
+        if (devMode) console.log("less than 3 industries, getting any random items");
+        // If there are fewer than 3 matching items, add random items from the list
+        while (filteredItems.length < 3) {
+          const randomIndex = Math.floor(Math.random() * listItems.length);
+          const randomItem = listItems[randomIndex];
+          if (!filteredItems.includes(randomItem)) {
+            filteredItems.push(randomItem);
+          }
+        }
+      } else {
+        if (devMode) console.log("Filtering industries");
+      }
+      // no more condition for industries and just display the top 3
+      displayFilteredItems(filteredItems);
+    } else {
+      // display filtered elements if theres no selected industries experiences
+      displayFilteredItems(flItems);
+    }
+  }
+
+  function displayFilteredItems(filteredItems) {
+    // Hide all list items
+    document.querySelectorAll('[data-card="freelancer"]').forEach((listItem) => {
+      listItem.style.display = "none";
+    });
+
+    if (devMode) {
+      console.log("filteredItems: ", filteredItems);
+    }
+
+    for (let i = 0; i < 3; i++) {
+      filteredItems[i].style.display = "block";
+    }
+    document
+      .querySelectorAll('[data-card="freelancer"]:not([style*="display: none"])')
+      .forEach((y, i) => {
+      y.querySelector("[data-flmatchindex]").textContent = "Match " + (i + 1);
+    });
+  }
+
+  function confetti() {
+    if (showConfetti === "true" && fromCheckout) {
+      confettiDiv.style.display = "block";
+      setTimeout(function () {
+        confettiDiv.style.display = "none";
+      }, 7500);
+    }
+  }
+
+  function hideSuccessDiv() {
+    successDiv.style.display = "none";
+    if (devMode) return;
+
+    setTimeout(() => {
+      successDiv.remove();
+    }, 1000);
+  }
+
+  function roleSearchInit(role = "Affiliate Marketer") {
+    const searchTrigger = document.querySelector('[roles-search-trigger]');
+    const searchDropdown = document.querySelector('[roles-search-dropdown]');
+    const searchInput = document.querySelector('[roles-search-input]');
+    const availNumText = document.querySelector('[roles-available-number]');
+    const startRateText = document.querySelector('[roles-starting-rate]');
+    const ratingText = document.querySelector('[roles-rating]');
+
+    if (!searchTrigger ||
+        !searchDropdown ||
+        !searchInput ||
+        !availNumText ||
+        !startRateText ||
+        !ratingText) return;
+
+    // Event handler for search items
+    const searchItems = document.querySelectorAll('[data-search-item]');
+    if (!searchItems.length) return;
+
+    searchItems.forEach((item) => {
+      const slug = item.dataset.roleSlug;
+
+      item.addEventListener('click', function () {
+        const rate = item.dataset.rolerate;
+        const availableNum = item.dataset.rolestarters;
+
+        if (!rate || !availableNum) return;
+
+        // Remove active class from previously active item (if it exists)
+        const prevActive = searchDropdown.querySelector('[data-search-item].is-active');
+        if (prevActive) prevActive.classList.remove('is-active');
+
+        // Set the clicked item as active
+        item.classList.add('is-active');
+
+        toggleData(rate, availableNum, item.dataset.roleplural, slug);
+        closeDropdown();
+      });
+
+      if (item.dataset.searchItem.toLowerCase() === role.toLowerCase()) {
+        item.dispatchEvent(new Event('click')); // Trigger click if it matches the role
+      }
+    });
+
+    // Initialize role icons grids
+    const roleIconsGrids = document.querySelectorAll(`[role-icons-grid]`);
+    roleIconsGrids.forEach(grid => {
+      grid.classList.add('is-init');
+    });
+
+    // Handle custom tabs for joining
+    const customTabs = document.querySelectorAll('[data-join-custom-tab]');
+    customTabs.forEach((tab) => {
+      tab.addEventListener('click', function () {
+        const method = tab.dataset.joinCustomTab;
+
+        if (!method) return;
+
+        // Trigger the click on the corresponding tab
+        document.querySelector(`[data-join-tab="${method}"]`)?.click();
+
+        // Remove active class from previously active item (if it exists)
+        const prevActive = document.querySelector('[data-join-custom-tab].w--current');
+        if (prevActive) prevActive.classList.remove('w--current');
+
+        // Set the clicked item as active
+        tab.classList.add('w--current');
+      });
+    });
+
+    // Event handler for search input
+    searchInput.addEventListener('input', function () {
+      const searchValue = searchInput.value.toLowerCase();
+      searchItems.forEach((item) => {
+        const itemText = item.dataset.searchItem.toLowerCase();
+        if (searchValue === "" || itemText.includes(searchValue)) {
+          item.style.display = 'flex';
+        } else {
+          item.style.display = 'none';
+        }
+      });
+    });
+
+    // Event handler for managing dropdown visibility
+    document.addEventListener('click', function (event) {
+      if (!searchTrigger.contains(event.target) && !searchDropdown.contains(event.target)) {
+        closeDropdown();
+      }
+
+      if (event.target.hasAttribute('roles-search-trigger')) {
+        if (searchDropdown.classList.contains('open')) {
+          closeDropdown();
+        } else {
+          openDropdown();
+        }
+      }
+    });
+
+    // Helper functions
+    function toggleData(rate, availableNum, pluralName, slug) {
+      // Previous SET
+      let roleIcons = document.querySelectorAll(`[role-icons-grid].active .roles__icons-icon`);
+      let animElems = [startRateText, availNumText, ratingText, ...roleIcons];
+
+      document.querySelectorAll('[text-role-plural]').forEach(elem => {
+        elem.textContent = pluralName;
+      });
+
+      animElems.forEach((textElement) => {
+        textElement.style.opacity = '0';
+        textElement.style.transform = 'scale(0.01)';
+      });
+
+      setTimeout(() => {
+
+        startRateText.textContent = rate.includes('$') ? rate : `$${rate}`;
+        availNumText.textContent = availableNum;
+
+        const activeRoleGrid = document.querySelector(`[role-icons-grid].active`);
+        if (activeRoleGrid) activeRoleGrid.classList.remove('active');
+
+        const roleGrid = document.querySelector(`[role-icons-grid="${slug}"]`);
+        if (roleGrid) roleGrid.classList.add('active');
+
+        // New SET
+        roleIcons = document.querySelectorAll(`[role-icons-grid="${slug}"] .roles__icons-icon`);
+        animElems = [startRateText, availNumText, ratingText, ...roleIcons];
+
+        animElems.forEach((textElement) => {
+          textElement.style.opacity = '1';
+          textElement.style.transform = 'scale(1)';
+        });
+      }, 300);
+    }
+
+    function closeDropdown() {
+      searchDropdown.classList.remove('open');
+      searchTrigger.classList.remove('open');
+    }
+
+    function openDropdown() {
+      searchDropdown.classList.add('open');
+      searchTrigger.classList.add('open');
+    }
+
+  }
+
+</script>
