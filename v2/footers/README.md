@@ -22,6 +22,10 @@ The `.js` is extracted verbatim from the `.html` (multi-block pages are concaten
 
 External libraries (Memberstack, Quill, Algolia, etc.) are **not** in these files — they load elsewhere (site head / on-canvas embeds) and must stay there. `defer` is safe: these scripts already gate on `DOMContentLoaded` / `getCurrentMember()`.
 
+### `/freelancer-start-project` — extra Slater tag
+
+This page's footer needs **two** tags: the CDN tag above **plus** a separate inline Slater loader (`freelancer-start-project-slater.html`). The Slater loader pulls `assets.slater.app/slater/4960/9022.js` (~15KB of contract-form field logic edited in the Slater.app project 4960, not in this repo). It is deliberately **not** bundled into `freelancer-start-project.js`. Paste order: CDN tag first, Slater tag second.
+
 ## Rules
 
 - **Public repo — no secrets, ever.** Content is already browser-facing (served in each page's published source). Identity resolution + Airtable/Make calls happen server-side in the Xano bridge (`api:ZihCUE3Z`). Zero-tolerance scan before committing:
