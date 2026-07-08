@@ -32,6 +32,9 @@
  *             field's maxlength, or wf-validate-count-max on the counter
  *             (Finsweet has no char-count solution — their "inputcounter" is
  *             a number stepper — so this fills that gap in our grammar).
+ *             wf-validate-count-mode="words" switches it to a word counter
+ *             ("312 / 500 words"); its max then comes from the field's
+ *             wf-validate-maxwords, or wf-validate-count-max on the counter.
  *   submit  — mark a clickable OUTSIDE the form (or a non-native div button)
  *             as the form's submitter, so its clicks are gated too. Native
  *             submit buttons inside a bound form don't need it: their clicks
@@ -42,10 +45,16 @@
  * Settings (on the input/select/textarea):
  *   wf-validate-message-<rule>  — per-rule message override. Rules: required,
  *                                 type, pattern, minlength, maxlength, min,
- *                                 max, step, match.
+ *                                 max, step, match, minwords, maxwords.
  *   wf-validate-message         — catch-all override for any failure.
  *   wf-validate-match="<name>"  — field must equal the field named <name>
  *                                 (e.g. confirm-password).
+ *   wf-validate-minwords / wf-validate-maxwords
+ *                               — word-count bounds (whitespace-separated
+ *                                 words). The native API has no word rules, so
+ *                                 these are enforced here; unlike maxlength
+ *                                 they don't block typing — the error shows
+ *                                 and submit is gated until within bounds.
  *   (no override)               — falls back to the browser's own localized
  *                                 validationMessage.
  *
@@ -114,7 +123,8 @@
    * @property {HTMLElement | null} error  bound error slot
    * @property {HTMLElement | null} messageEl  inner message target within the error slot
    * @property {HTMLElement | null} count  bound character-counter slot
-   * @property {number | null} countMax  counter denominator (maxlength / wf-validate-count-max)
+   * @property {number | null} countMax  counter denominator (maxlength / maxwords / wf-validate-count-max)
+   * @property {boolean} countWords  counter counts words instead of characters
    * @property {boolean} touched  whether errors may be shown yet
    */
 
@@ -147,6 +157,44 @@
   }
 
   /**
+   * Whitespace-separated word count; empty/blank values count as 0 words.
+   * @param {string} value
+   * @returns {number}
+   */
+  const wordCount = (value) => {
+    const trimmed = value.trim()
+    return trimmed ? trimmed.split(/\s+/).length : 0
+  }
+
+  /**
+   * Word-count bounds (wf-validate-minwords / wf-validate-maxwords). The
+   * Constraint Validation API has no word rules, so these are enforced here,
+   * mirroring lengthMessage.
+   * @param {HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement} el
+   * @returns {string} empty string when within bounds
+   */
+  const wordMessage = (el) => {
+    const words = wordCount(el.value)
+    const min = parseInt(el.getAttribute('wf-validate-minwords') || '', 10)
+    if (min > 0 && words > 0 && words < min) {
+      return (
+        el.getAttribute('wf-validate-message-minwords') ||
+        el.getAttribute('wf-validate-message') ||
+        'Please use at least ' + min + ' words (you are currently using ' + words + ').'
+      )
+    }
+    const max = parseInt(el.getAttribute('wf-validate-maxwords') || '', 10)
+    if (max > 0 && words > max) {
+      return (
+        el.getAttribute('wf-validate-message-maxwords') ||
+        el.getAttribute('wf-validate-message') ||
+        'Please use no more than ' + max + ' words (you are currently using ' + words + ').'
+      )
+    }
+    return ''
+  }
+
+  /**
    * Resolve the message for a failed control: per-rule override on the
    * control, then its catch-all override, then the browser's own text.
    * @param {HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement} el
@@ -155,6 +203,8 @@
   const messageFor = (el) => {
     const lengthMsg = lengthMessage(el)
     if (lengthMsg) return lengthMsg
+    const wordMsg = wordMessage(el)
+    if (wordMsg) return wordMsg
     const v = el.validity
     if (v.valid) return ''
     for (const flag in VALIDITY_RULE) {
@@ -207,7 +257,7 @@
         if (!name) return
         let group = this.groups.get(name)
         if (!group) {
-          group = { name, els: [], error: null, messageEl: null, count: null, countMax: null, touched: false }
+          group = { name, els: [], error: null, messageEl: null, count: null, countMax: null, countWords: false, touched: false }
           this.groups.set(name, group)
         }
         group.els.push(/** @type {HTMLInputElement} */ (el))
@@ -223,8 +273,11 @@
         const group = this.resolveTarget(/** @type {HTMLElement} */ (count))
         if (!group) return
         group.count = /** @type {HTMLElement} */ (count)
+        group.countWords = count.getAttribute('wf-validate-count-mode') === 'words'
         const max = parseInt(
-          count.getAttribute('wf-validate-count-max') || group.els[0].getAttribute('maxlength') || '',
+          count.getAttribute('wf-validate-count-max') ||
+            group.els[0].getAttribute(group.countWords ? 'wf-validate-maxwords' : 'maxlength') ||
+            '',
           10,
         )
         group.countMax = isNaN(max) ? null : max
@@ -292,15 +345,19 @@
     }
 
     /**
-     * Render "n / max" (or just "n" without a max) into the count slot.
+     * Render "n / max" (or just "n" without a max) into the count slot; word
+     * mode appends the unit ("312 / 500 words") since it's less self-evident
+     * than a character count.
      * @param {FieldGroup} group
      * @returns {void}
      */
     updateCount(group) {
       if (!group.count) return
-      const n = group.els[0].value.length
+      const n = group.countWords ? wordCount(group.els[0].value) : group.els[0].value.length
       group.count.textContent =
-        n.toLocaleString('en-US') + (group.countMax ? ' / ' + group.countMax.toLocaleString('en-US') : '')
+        n.toLocaleString('en-US') +
+        (group.countMax ? ' / ' + group.countMax.toLocaleString('en-US') : '') +
+        (group.countWords ? ' words' : '')
     }
 
     /**
