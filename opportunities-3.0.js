@@ -124,6 +124,7 @@
     'brand/opportunities/create': 'opportunity_created',
     'brand/opportunities/update': 'opportunity_updated',
     'brand/opportunities/close': 'opportunity_closed',
+    'brand/opportunities/reopen': 'opportunity_reopened',
     'starter/applications/submit': 'application_submitted',
     'starter/applications/update': 'application_updated',
   }
@@ -169,6 +170,8 @@
       call('brand/opportunities/update', { method: 'PATCH', body: { opportunity_id, ...payload } }),
     brandOppClose: (opportunity_id) =>
       call('brand/opportunities/close', { method: 'PATCH', body: { opportunity_id } }),
+    brandOppReopen: (opportunity_id) =>
+      call('brand/opportunities/reopen', { method: 'PATCH', body: { opportunity_id } }),
     brandAppList: (opportunity_id, archived = false, page = 1, per_page = 20) =>
       call('brand/applications/list', { body: { opportunity_id, archived, page, per_page } }),
     brandAppArchive: (application_id) =>
@@ -1104,6 +1107,16 @@
     if (title) bind(modal, 'title', title)
   }
 
+  // Fill the reopen-confirmation modal's [data-opp-bind="title"] with the
+  // clicked card's title, so the brand sees WHICH opportunity they're
+  // putting back on the marketplace.
+  function fillReopenModalMeta(card) {
+    const modal = $('[data-modal-target="reopen-opportunity"]')
+    if (!modal || !card) return
+    const title = cardFieldText(card, 'title')
+    if (title) bind(modal, 'title', title)
+  }
+
   // Fill the cancel-application confirmation modal's [data-opp-bind="title"/
   // "company"] from the clicked card, so the member sees WHICH application
   // they're about to cancel.
@@ -1134,6 +1147,7 @@
       setActiveApp(card.getAttribute('data-app-id'))
       fillApplyModalMeta(card)
       fillCloseModalMeta(card)
+      fillReopenModalMeta(card)
       fillCancelModalMeta(card)
     }
   })
@@ -1173,6 +1187,15 @@
     if (closeBtn)
       closeBtn.addEventListener('click', () =>
         guard(closeBtn, () => API.brandOppClose(activeOpp)),
+      )
+
+    // REOPEN closed opportunity (confirmation) — server re-activates it,
+    // clears closed_at, and re-syncs Webflow CMS + Algolia so the
+    // opportunity reappears in the talent feeds.
+    const reopenBtn = $('[data-opp-submit="reopen"]')
+    if (reopenBtn)
+      reopenBtn.addEventListener('click', () =>
+        guard(reopenBtn, () => API.brandOppReopen(activeOpp)),
       )
 
     // ARCHIVE / RESTORE applicant (confirmation)
