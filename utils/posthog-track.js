@@ -36,5 +36,29 @@
     }
   }
 
+  // Frontend error tracking: forward uncaught errors + unhandled promise
+  // rejections to PostHog (complements the server-side `bridge_error` event;
+  // links to session replay). Wired once. posthog.captureException is stubbed
+  // by the head snippet, so calls before array.js loads are queued, not lost.
+  function wireErrorCapture() {
+    if (window.__startersErrorsWired) return
+    window.__startersErrorsWired = true
+    const send = (err) => {
+      try {
+        const posthog = window.posthog
+        if (posthog && typeof posthog.captureException === 'function' && err) {
+          posthog.captureException(err, { platform: platform() })
+        }
+      } catch (e) {
+        /* never break the page */
+      }
+    }
+    window.addEventListener('error', (e) => send(e.error || new Error(e.message)))
+    window.addEventListener('unhandledrejection', (e) =>
+      send(e.reason instanceof Error ? e.reason : new Error(String(e.reason))),
+    )
+  }
+
   window.StartersTrack = window.StartersTrack || { track }
+  wireErrorCapture()
 })()
