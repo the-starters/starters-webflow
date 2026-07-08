@@ -41,8 +41,8 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.min.js`
 - `opportunities-3.0.js`
 - `opportunities---create.js`
-- `all-starters/apply-button-disable.js`
-- `all-starters/range-backfill.js`
+- `starters-list/apply-button-disable.js`
+- `starters-list/range-backfill.js`
 - `utils/loader.js` — env-switch script loader (`loadEnvScript`)
 - `utils/wf-validate.js` — declarative form validation (see below)
 
