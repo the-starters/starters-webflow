@@ -1,0 +1,76 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/swiper-scroll */
+[data-swiper-scroll-container] {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+  }
+
+  [data-swiper-scroll='swiper'] {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+    touch-action: pan-y pinch-zoom;
+  }
+
+  [data-swiper-scroll='swiper'] > [data-swiper-scroll='swiper-wrapper'] {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  [data-swiper-scroll='swiper'] a,
+  [data-swiper-scroll='swiper'] button {
+    cursor: pointer;
+  }
+
+  [data-swiper-scroll='swiper-wrapper'] {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    width: max-content;
+    min-width: 100%;
+    box-sizing: border-box;
+  }
+
+  [data-swiper-scroll='swiper-slide'] {
+    flex: 0 0 auto;
+    width: auto;
+    box-sizing: border-box;
+  }
+
+  [data-swiper-scroll='swiper-scrollbar'] {
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    position: relative;
+    user-select: none;
+  }
+
+  [data-swiper-scroll='swiper-scrollbar'] [data-scrollbar-thumb] {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    touch-action: none;
+    cursor: grab;
+  }
+
+  [data-swiper-scroll='swiper-scrollbar'] [data-scrollbar-thumb]:active {
+    cursor: grabbing;
+  }
+
+  [data-swiper-clip-sides='left'] {
+    clip-path: polygon(0 0, calc(100% + 100vw) 0, calc(100% + 100vw) 100%, 0% 100%);
+  }
+
+  [data-swiper-clip-sides='right'] {
+    clip-path: polygon(calc(0% - 100vw) 0, 100% 0, 100% 100%, calc(0% - 100vw) 100%);
+  }
+
+  [data-swiper-clip-sides='both']{
+    overflow: hidden;
+  }
