@@ -1164,6 +1164,14 @@
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
     if (flowId && ff && ff.list && ff.list[flowId]) ff.reset(flowId)
+    // Apply modal: rewind the F4 success screen (w-form-done) back to the form
+    // step, mirroring the form-flow reset above for the native success state.
+    if (modal && modal.matches && modal.matches('[data-modal-target="apply-opportunity"]')) {
+      const form = modal.querySelector('.expert-application_form') || modal.querySelector('form')
+      const done = modal.querySelector('.w-form-done')
+      if (form) form.style.display = ''
+      if (done) done.style.display = ''
+    }
   })
 
   /* ====================== MODAL HANDLERS ======================== */
@@ -1219,14 +1227,16 @@
         guard(archiveBtn, () => API.brandAppArchive(activeApp)),
       )
 
-    // APPLY
+    // APPLY — on success show the modal's native w-form-done "Application sent"
+    // screen (F4) in place instead of reloading (showApplySuccess falls back to
+    // a reload when that markup is missing).
     const applyBtn = $('[data-opp-submit="apply"]')
     if (applyBtn)
       applyBtn.addEventListener('click', async () => {
         const modal = $('[data-modal-target="apply-opportunity"]')
         const msg = ($('[name="Cover-Letter"]', modal) || {}).value || ''
         if (!msg.trim()) return alert('Please write a cover letter')
-        await guard(applyBtn, () => API.starterAppSubmit(activeOpp, msg.trim()))
+        await guard(applyBtn, () => API.starterAppSubmit(activeOpp, msg.trim()), showApplySuccess)
       })
 
     // EDIT APPLICATION
@@ -1258,14 +1268,16 @@
       )
   }
 
-  // Disables a button while its action runs; reloads on success (simple v1).
-  async function guard(btn, fn) {
+  // Disables a button while its action runs; on success runs onSuccess when
+  // given, else reloads (simple v1 behavior kept as the default/fallback).
+  async function guard(btn, fn, onSuccess) {
     const label = btn.textContent
     btn.style.pointerEvents = 'none'
     btn.style.opacity = '0.6'
     try {
       await fn()
-      location.reload()
+      if (onSuccess) onSuccess()
+      else location.reload()
     } catch (err) {
       console.error('[opp30]', err)
       alert((err && err.data && err.data.message) || 'Something went wrong. Please try again.')
@@ -1274,6 +1286,43 @@
       btn.textContent = label
     }
   }
+
+  /* ================== F4: APPLICATION-SENT SCREEN ================ */
+  // The apply modal's "Application sent" screen is the form block's native
+  // Webflow success state (.w-form-done) — hidden until swapped in here.
+  // Falls back to the old reload when the markup is missing.
+  function showApplySuccess() {
+    const modal = $('[data-modal-target="apply-opportunity"]')
+    const form = modal && ($('.expert-application_form', modal) || $('form', modal))
+    const done = modal && $('.w-form-done', modal)
+    if (!modal || !form || !done) return location.reload()
+    form.style.display = 'none'
+    done.style.display = 'block'
+    // Repaint the page behind the modal so closing it (any path) never shows a
+    // stale "Apply Now": flip the state blocks and re-run the wf-xano
+    // application card without a full reload.
+    try {
+      paintState(document, 'applied')
+      if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
+    } catch (e) {
+      /* non-fatal */
+    }
+  }
+
+  // F4 buttons carry no hooks in the Designer, so delegate by label within the
+  // success screen (same text-match pattern as wireCloseOpportunityModal).
+  document.addEventListener('click', (e) => {
+    const modal = e.target.closest('[data-modal-target="apply-opportunity"]')
+    if (!modal || !e.target.closest('.w-form-done')) return
+    const btn = e.target.closest('a, button, [role="button"], .button_main-wrap')
+    if (!btn) return
+    const label = (btn.textContent || '').trim().toLowerCase()
+    if (label.includes('back to opportunities')) {
+      location.href = '/opportunities-freelancer-view?tab=applied'
+    } else if (label.includes('view application')) {
+      location.reload()
+    }
+  })
 
   /* ============ wf-algolia bridge (brand list page) ============ */
   // The brand list renders via the wf-algolia package, whose cards expose
