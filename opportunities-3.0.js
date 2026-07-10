@@ -1241,6 +1241,7 @@
           const res = await API.starterAppSubmit(activeOpp, msg.trim())
           const newId = res && (res.id || (res.application && res.application.id))
           if (newId) setActiveApp(newId)
+          setEditPrefill(msg.trim()) // the new message is what an edit should start from
           return res
         }, showApplySuccess)
       })
@@ -1331,6 +1332,14 @@
   const showApplySuccess = () => showAppModalSuccess('apply-opportunity')
   const showEditAppSuccess = () => showAppModalSuccess('edit-application')
 
+  // Keep the edit modal's Cover-Letter in sync with the live application
+  // message across no-reload flows — initTalentDetail only prefills it at
+  // page load, so a same-page apply/withdraw would otherwise leave it stale.
+  function setEditPrefill(msg) {
+    const cl = $('[name="Cover-Letter"]', $('[data-modal-target="edit-application"]') || document)
+    if (cl) cl.value = msg || ''
+  }
+
   // Withdraw success: the cancel modal's form-flow already advanced to its
   // "withdrawn" step when the confirm button was clicked, so leave the modal
   // as-is (the member actually gets to read the confirmation now) and repaint
@@ -1339,6 +1348,7 @@
   // return 'not-applied', showing the Apply CTA + empty-state panel again.
   function showCancelSuccess() {
     setActiveApp(null) // the canceled id must never leak into a follow-up edit
+    setEditPrefill('') // no live application anymore — a future edit starts blank
     try {
       paintState(document, 'not-applied')
       if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
