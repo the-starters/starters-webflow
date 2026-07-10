@@ -1362,7 +1362,19 @@
       location.href = '/opportunities-freelancer-view?tab=applied'
     } else if (label.includes('view application')) {
       e.preventDefault()
-      location.reload()
+      // On the detail page the application is already on screen behind the
+      // modal (showApplySuccess repainted it) — just close the modal via the
+      // engine's own close element. On the feed the same modal applies from a
+      // card, so "View Application" navigates to that opportunity's page.
+      if (/^\/opportunities\/\d+/.test(location.pathname)) {
+        const closeEl = modal.querySelector('[data-modal-close]')
+        if (closeEl) closeEl.click()
+        else location.reload()
+      } else if (activeOpp) {
+        location.href = '/opportunities/' + activeOpp
+      } else {
+        location.reload()
+      }
     }
   })
 
