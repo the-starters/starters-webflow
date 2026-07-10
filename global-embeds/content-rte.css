@@ -1,0 +1,34 @@
+/* Floating quote mark — behind the text, top-left, scoped to .content_rte */
+.content_rte blockquote {
+    --quote-size: 7rem;                          /* glyph size */
+    --quote-color: rgba(182, 213, 215, 0.5);     /* #B6D5D7 @ 50% */
+    --quote-offset-x: -0.5rem;                   /* push left, can go negative past the edge */
+    --quote-offset-y: -1rem;                     /* push up above the first line */
+    --quote-text-pad: 1.75rem;                   /* nudge text right so it overlaps nicely */
+
+    position: relative;
+    isolation: isolate;         /* keeps the mark behind text, not behind the section */
+    padding-left: var(--quote-text-pad);
+  }
+
+  .content_rte blockquote::before {
+    content: "";
+    position: absolute;
+    top: var(--quote-offset-y);
+    left: var(--quote-offset-x);
+    z-index: -1;                /* behind the quote text */
+    width: var(--quote-size);
+    height: var(--quote-size);
+    pointer-events: none;
+    background-color: var(--quote-color);
+    -webkit-mask-image: var(--quote-mark);
+    mask-image: var(--quote-mark);
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-position: top left;
+    mask-position: top left;
+
+    --quote-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 115 115'%3E%3Cpath d='M99.6721 19.1668C101.641 19.1668 103.021 20.6618 103.021 22.3389C103.021 23.5321 102.327 24.8114 100.64 25.7075C92.0725 30.2452 82.1538 45.957 82.1538 55.6458C96.6054 55.205 102.883 68.0179 102.883 76.0487C102.883 85.6608 94.5546 95.8335 82.24 95.8335C66.7102 95.8335 59.0963 83.6291 59.0963 70.4041C59.0963 41.7452 91.8425 19.1668 99.6721 19.1668ZM47.764 19.1668C49.7286 19.1668 51.1134 20.6618 51.1134 22.3389C51.1134 23.5321 50.4186 24.8114 48.7319 25.7075C40.1644 30.2452 30.2457 45.957 30.2457 55.6458C44.6925 55.205 50.9744 68.0179 50.9744 76.0487C50.9744 85.6608 42.6417 95.8335 30.3319 95.8335C14.8021 95.8335 7.18814 83.6291 7.18814 70.4041C7.18814 41.7452 39.9296 19.1668 47.764 19.1668Z' fill='black'/%3E%3C/svg%3E");
+  }

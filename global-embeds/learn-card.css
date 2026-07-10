@@ -1,0 +1,15 @@
+.learn-card_heading {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+  }
+
+  @media (max-width: 767px) {
+    .learn-card_heading {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+    }
+  }

@@ -1,0 +1,11 @@
+.table-stats_component {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1px;
+  }
+
+  @media (max-width: 767px) {
+    .table-stats_component {
+      grid-template-columns: 1fr;
+    }
+  }

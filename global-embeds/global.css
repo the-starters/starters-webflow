@@ -1,0 +1,611 @@
+
+  html {
+    font-size: 16px;
+  }
+
+  @media screen and (max-width: 1600px) {
+    html {
+      font-size: calc(0.03961584633853543rem + 0.9603841536614646vw);
+    }
+  }
+  @media screen and (max-width: 767px) {
+    html {
+      font-size: 1rem;
+    }
+  }
+  @media screen and (max-width: 479px) {
+    html {
+      font-size: calc(0.17837078651685412rem + 3.370786516853932vw);
+    }
+  }
+  @media screen and (max-width: 390px) {
+    html {
+      font-size: calc(0.025000000000000022rem + 4vw);
+    }
+  }
+  @media screen and (max-width: 240px) {
+    html {
+      font-size: calc(0.3739539748953975rem + 1.6736401673640167vw);
+    }
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Clear Defaults */
+  a:not([class]) {
+    text-decoration: underline;
+  }
+
+  p,
+  blockquote,
+  label,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    text-wrap: inherit;
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+
+  select:has(option[value='']:checked) {
+    color: color-mix(in lab, currentcolor 60%, transparent);
+  }
+
+  .w-richtext > :not(div):first-child,
+  .w-richtext > div:first-child > :first-child {
+    margin-top: 0 !important;
+  }
+
+  .w-richtext > :last-child,
+  .w-richtext ol li:last-child,
+  .w-richtext ul li:last-child {
+    margin-bottom: 0 !important;
+  }
+
+  p:last-child,
+  ul:last-child,
+  ol:last-child {
+    margin-bottom: 0;
+  }
+
+  .hidden {
+    display: none !important;
+  }
+
+  a,
+  .w-input,
+  .w-select,
+  .w-tab-link,
+  .w-nav-link,
+  .w-slider-arrow-left,
+  .w-slider-arrow-right,
+  .w-dropdown-btn,
+  .w-dropdown-toggle,
+  .w-dropdown-link {
+    text-decoration: inherit;
+  }
+
+  .no-resize {
+    resize: none;
+  }
+
+  input {
+    height: auto !important;
+    box-sizing: border-box;
+    appearance: none !important;
+    -webkit-appearance: none !important;
+  }
+
+  .w-input:-webkit-autofill,
+  .w-input:-webkit-autofill:hover,
+  .w-input:-webkit-autofill:focus,
+  .w-input:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 1000px transparent inset !important;
+    background-color: transparent !important;
+    -webkit-text-fill-color: inherit !important;
+    caret-color: inherit !important;
+    border-color: inherit !important;
+    transition: background-color 5000s ease-in-out 0s !important;
+
+    background-image: inherit !important;
+    background-position: inherit !important;
+    background-repeat: no-repeat !important;
+    background-size: inherit !important;
+  }
+
+  .w-input:-moz-autofill {
+    background-color: transparent !important;
+  }
+
+  .w-input:autofill,
+  .w-input:autofill:hover,
+  .w-input:autofill:focus {
+    background-color: transparent !important;
+  }
+
+  input.subscribe-form_input:-webkit-autofill,
+  input.subscribe-form_input:-webkit-autofill:hover,
+  input.subscribe-form_input:-webkit-autofill:focus,
+  input.subscribe-form_input:-webkit-autofill:active,
+  input.search-bar_input:-webkit-autofill,
+  input.search-bar_input:-webkit-autofill:hover,
+  input.search-bar_input:-webkit-autofill:focus,
+  input.search-bar_input:-webkit-autofill:active {
+    font-size: 1rem !important;
+  }
+
+
+    /* Line-clamp utilities — truncate to N lines with an ellipsis ("...").
+     Desktop: text-style-1line, text-style-2lines … text-style-10lines.
+     Mobile (≤767px): add a -mob variant to clamp tighter on small screens
+     (e.g. class="text-style-5lines text-style-2lines-mob").
+     Pair with wf-xano-element="show-more" (wf-xano-class matches the class
+     applied to the target) to expand/collapse. */
+
+  /* Apply "..." after 1 line of text */
+  .text-style-1line {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+  }
+
+  /* Apply "..." after 2 lines of text */
+  .text-style-2lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  /* Apply "..." after 3 lines of text */
+  .text-style-3lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+  }
+
+  .text-style-4lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+  }
+
+  .text-style-5lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 5;
+    -webkit-box-orient: vertical;
+  }
+
+  .text-style-6lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 6;
+    -webkit-box-orient: vertical;
+  }
+
+  .text-style-7lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 7;
+    -webkit-box-orient: vertical;
+  }
+
+  .text-style-8lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 8;
+    -webkit-box-orient: vertical;
+  }
+
+  .text-style-9lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 9;
+    -webkit-box-orient: vertical;
+  }
+
+  .text-style-10lines {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-line-clamp: 10;
+    -webkit-box-orient: vertical;
+  }
+
+  @media screen and (max-width: 767px) {
+    .text-style-1line-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-2lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-3lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-4lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-5lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 5;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-6lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 6;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-7lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 7;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-8lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 8;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-9lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 9;
+      -webkit-box-orient: vertical;
+    }
+
+    .text-style-10lines-mob {
+      display: -webkit-box;
+      overflow: hidden;
+      -webkit-line-clamp: 10;
+      -webkit-box-orient: vertical;
+    }
+  }
+
+
+  .max-ch {
+    max-width: 50ch;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+  }
+
+  /* These classes are never overwritten */
+  .hide {
+    display: none !important;
+  }
+
+  .visible-mob-landscape {
+    display: none !important;
+  }
+
+  @media screen and (max-width: 991px) {
+    .hide,
+    .hide-tablet {
+      display: none !important;
+    }
+  }
+
+  @media screen and (max-width: 767px) {
+    .hide-mobile-landscape {
+      display: none !important;
+    }
+
+    .visible-mob-landscape {
+      display: block !important;
+    }
+  }
+
+  @media screen and (max-width: 479px) {
+    .hide-mobile {
+      display: none !important;
+    }
+  }
+
+  /* for disable button */
+  .form-with-validation input[type='submit'],
+  .form-with-validation button[type='submit'] {
+    transition: all 0.3s ease;
+  }
+
+  .form-with-validation .is-disabled,
+  .form-with-validation input[type='submit']:disabled,
+  .form-with-validation button[type='submit']:disabled {
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+  }
+
+  .form-with-validation .is-disabled:hover,
+  .form-with-validation input[type='submit']:disabled:hover,
+  .form-with-validation button[type='submit']:disabled:hover {
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  .is-disabled:hover {
+    filter: brightness(1) !important;
+  }
+
+  /* style for italic font */
+  em {
+    padding-left: 0.1em !important;
+  }
+
+  /* customize scrollbar */
+
+  /* Removes native scrollbar */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    overflow: -moz-scrollbars-none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Hide scrollbar for all figure in rich text */
+  .w-richtext-figure-type-image,
+  .w-richtext-figure-type-image > div,
+  figure.w-richtext-align-fullwidth {
+    overflow: auto !important; /* або overflow-y: auto; */
+    scrollbar-width: none !important; /* Firefox */
+    -ms-overflow-style: none !important; /* IE + старі Edge */
+  }
+
+  /* Chrome, Edge, Safari, Opera */
+  .w-richtext-figure-type-image::-webkit-scrollbar,
+  .w-richtext-figure-type-image > div::-webkit-scrollbar,
+  figure.w-richtext-align-fullwidth::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  /* Style for list */
+  .p-item_list {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  .p-item_list li {
+    position: relative;
+    padding-left: 1.25rem;
+  }
+
+  .p-item_list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.25rem;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  .p-item_list li::before {
+    width: 0.75rem;
+    height: 0.75rem;
+    background-image: url('https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/69d35bbd042ff8a03197f761_Check.svg');
+  }
+
+  /* custom scrollbar for content section, use with script */
+  .content_list,
+  .grid-3col.is-ways,
+  .content-wr-3col {
+    overflow-x: auto;
+    scrollbar-width: none; /* Firefox */
+  }
+
+  .content_list::-webkit-scrollbar,
+  .grid-3col.is-ways::-webkit-scrollbar,
+  .content-wr-3col::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
+  }
+
+  /* line after items */
+  .news_item:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 1px;
+    background-color: var(--border--border);
+    bottom: 0;
+    left: 0;
+  }
+
+  .news_item:after {
+    height: 2px;
+  }
+
+  .w-dropdown-link.w--current {
+    color: var(--fill--black);
+    background-color: var(--fill--primary);
+  }
+
+  .bg-g1,
+  [data-wf--background--variant='gradient'],
+  [data-bg='gradient'],
+  section.is-gradient {
+    background: linear-gradient(104deg, #caded9 25.12%, #77a2ab 100.36%);
+  }
+
+  /* Style for list */
+  .list-dark-mark {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  .list-dark-mark li {
+    position: relative;
+    padding-left: 1.25rem;
+  }
+
+  .list-dark-mark li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0.25rem;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+
+  .list-dark-mark li:before {
+    width: 0.875rem;
+    height: 0.875rem;
+    background-image: url('https://cdn.prod.website-files.com/69c573f20f82bd0f3384032c/69d8c3c9828b830f106bcfa0_Check.svg');
+  }
+
+  /*
+   * Hide native scrollbars (Windows Chrome shows classic arrow scrollbars).
+   * Use auto — not scroll — so tracks don’t reserve space when idle.
+   * Clip horizontal overflow so only vertical scroll is needed.
+   */
+
+  [hide-scrollbar] {
+    /* overflow-x: auto;
+    overflow-y: auto; */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  
+
+  [hide-scrollbar]::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+    background: transparent;
+  }
+
+  [hide-scrollbar]::-webkit-scrollbar-thumb,
+  [hide-scrollbar]::-webkit-scrollbar-track,
+  [hide-scrollbar]::-webkit-scrollbar-corner,
+  [hide-scrollbar]::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+    background: transparent;
+  }
+
+  section {
+    position: relative;
+  }
+
+  /* State Manager */
+  [data-state] {
+    --_state---true: 1;
+    --_state---false: 0;
+  }
+
+  .is-active,
+  .wf-design-mode [data-preview='True'],
+  .wf-design-mode [data-preview]:not(:has(> [data-w-instance-of])),
+  [data-state~='checked']:is(:checked, :has(:checked)),
+  [data-state~='current']:is(.w--current, :has(.w--current)),
+  [data-state~='open']:is(.w--open, :has(.w--open)),
+  [data-state~='pressed']:is([aria-pressed='true'], :has([aria-pressed='true'])),
+  [data-state~='expanded']:is([aria-expanded='true'], :has([aria-expanded='true'])),
+  [data-state~='external']:is([target='_blank'], :has([target='_blank'])) {
+    --_state---true: 0;
+    --_state---false: 1;
+  }
+
+  .wf-design-mode [data-trigger~='preview'],
+  [data-trigger~='focus']:is(:focus-visible, :has(:focus-visible)),
+  [data-trigger~='group']:has([data-trigger~='focus-other']:focus-visible, [data-trigger~='focus-other'] :focus-visible) [data-trigger~='focus-other']:not(:focus-visible, :has(:focus-visible)) {
+    --_trigger---on: 0;
+    --_trigger---off: 1;
+  }
+
+  @media (hover: hover) {
+    [data-trigger~='hover']:hover,
+    [data-trigger~='hover-if-clickable']:has(.clickable_wrap:not(.w-condition-invisible)):hover,
+    [data-trigger~='group']:has([data-trigger~='hover-other']:hover) [data-trigger~='hover-other']:not(:hover) {
+      --_trigger---on: 0;
+      --_trigger---off: 1;
+    }
+
+    [data-trigger~='hover-other']:hover {
+      --_trigger---on: 1 !important;
+      --_trigger---off: 0 !important;
+    }
+  }
+  @media (hover: none) {
+    [data-trigger~='mobile'] {
+      --_trigger---on: 0;
+      --_trigger---off: 1;
+    }
+  }
+
+  /* Slot Styler */
+  [data-slot] > .w-dyn-list,
+  [data-slot] > .w-dyn-list > *,
+  [data-slot] > .w-dyn-list > * > *,
+  [data-slot] > .u-display-contents > .w-dyn-list,
+  [data-slot] > .u-display-contents > .w-dyn-list > *,
+  [data-slot] > .u-display-contents > .w-dyn-list > * > *,
+  [data-slot] > .u-display-contents > .u-display-contents > .w-dyn-list,
+  [data-slot] > .u-display-contents > .u-display-contents > .w-dyn-list > *,
+  [data-slot] > .u-display-contents > .u-display-contents > .w-dyn-list > * > * {
+    display: contents;
+  }
+
+  /* Layout Slot */
+  .u-layout-column-2:has(> :not(.u-image-wrapper, .u-video, .u-iframe-wapper, .u-overlay)) {
+    aspect-ratio: auto;
+    border-radius: 0;
+    overflow: visible;
+  }
+
+  /* Hide */
+  .u-hide-if-empty:empty,
+  .u-hide-if-empty:has(> *):not(:has(> :not(.w-condition-invisible))),
+  .u-hide-if-empty-cms:not(:has(.w-dyn-item)) {
+    display: none !important;
+  }
+
+  html.wf-design-mode [data-wf-display='flex'] {
+    display: flex !important;
+  }
+
+  .wf-algolia-page-num[data-wf-algolia-active='true'] {
+    background-color: var(--_colors---fill--sunny-melon);
+  }

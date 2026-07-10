@@ -1,0 +1,74 @@
+
+  /* QUILL EDITOR - OVERWRITE */
+  .ql-editor.ql-blank::before {
+    font-style: normal !important;
+    color: rgba(0, 0, 0, 0.4) !important;
+  }
+  .ql-container {
+    font-size: 1rem !important;
+  }
+  .ql-editor {
+    min-height: 12.5rem !important;
+    max-height: 20rem !important;
+    padding: 0.75rem 0.75rem 2.5rem !important;
+  }
+  .ql-toolbar .ql-clean,
+  .ql-toolbar .ql-link,
+  .ql-toolbar .ql-italic,
+  .ql-toolbar .ql-bold,
+  .ql-toolbar .ql-list {
+    border: 1px solid #eee !important;
+    border-radius: 0.25rem !important;
+    width: 2rem !important;
+    height: 2rem !important;
+    padding: 0.25rem 0.3125rem !important;
+  }
+  .ql-toolbar .ql-clean svg,
+  .ql-toolbar .ql-link svg,
+  .ql-toolbar .ql-italic svg,
+  .ql-toolbar .ql-bold svg,
+  .ql-toolbar .ql-list svg {
+    width: 1.3rem !important;
+    height: 1.3rem !important;
+  }
+  .ql-toolbar .ql-header.ql-picker {
+    width: 6.25rem !important;
+    font-size: 0.875rem !important;
+  }
+  .ql-toolbar .ql-picker-label {
+    padding-inline: 0.5rem 0.125rem !important;
+  }
+  .ql-toolbar .ql-picker-label:hover,
+  .ql-toolbar .ql-picker-label.ql-active,
+  .ql-toolbar button.ql-active,
+  .ql-toolbar button:hover {
+    color: var(--colors--rollie-blue) !important;
+  }
+  .ql-toolbar .ql-picker-label:hover .ql-stroke,
+  .ql-toolbar .ql-picker-label.ql-active .ql-stroke,
+  .ql-toolbar button.ql-active .ql-stroke,
+  .ql-toolbar button:hover .ql-stroke {
+    stroke: var(--colors--rollie-blue) !important;
+  }
+  .ql-toolbar button.ql-active,
+  .ql-toolbar button:hover {
+    background: rgba(0, 0, 0, 0.035) !important;
+  }
+  .ql-toolbar .ql-bold,
+  .ql-toolbar .ql-formats {
+    margin-right: 0.5rem !important;
+  }
+  @media screen and (max-width: 479px) {
+    .ql-toolbar .ql-bold,
+    .ql-toolbar .ql-formats {
+      margin-right: 0.3125rem !important;
+    }
+    .ql-toolbar .ql-picker-label {
+      padding-inline: 0.125rem !important;
+    }
+  }
+
+  /* Quill Editor html in Rich Text */
+  .w-richtext li[data-list='bullet'] {
+    list-style: disc;
+  }
