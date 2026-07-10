@@ -1164,9 +1164,9 @@
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
     if (flowId && ff && ff.list && ff.list[flowId]) ff.reset(flowId)
-    // Apply modal: rewind the F4 success screen (w-form-done) back to the form
-    // step, mirroring the form-flow reset above for the native success state.
-    if (modal && modal.matches && modal.matches('[data-modal-target="apply-opportunity"]')) {
+    // Apply/edit-application modals: rewind the F4 success screen (w-form-done)
+    // back to the form step, mirroring the form-flow reset above.
+    if (modal && modal.matches && modal.matches(APP_FORM_MODALS)) {
       const form = modal.querySelector('.expert-application_form') || modal.querySelector('form')
       const done = modal.querySelector('.w-form-done')
       if (form) form.style.display = ''
@@ -1262,7 +1262,7 @@
           }
           if (!appId) throw { data: { message: 'Could not find your application for this opportunity.' } }
           return API.starterAppUpdate(appId, msg.trim())
-        })
+        }, showEditAppSuccess)
       })
 
     // CANCEL APPLICATION (confirmation)
@@ -1306,19 +1306,21 @@
   }
 
   /* ================== F4: APPLICATION-SENT SCREEN ================ */
-  // The apply modal's "Application sent" screen is the form block's native
-  // Webflow success state (.w-form-done) — hidden until swapped in here.
-  // Falls back to the old reload when the markup is missing.
-  function showApplySuccess() {
-    const modal = $('[data-modal-target="apply-opportunity"]')
+  // The apply AND edit-application modals share the same skeleton: the
+  // "Application sent" / "Application has been edited" screen is the form
+  // block's native Webflow success state (.w-form-done), hidden until swapped
+  // in here. Falls back to the old reload when the markup is missing.
+  const APP_FORM_MODALS = '[data-modal-target="apply-opportunity"], [data-modal-target="edit-application"]'
+  function showAppModalSuccess(target) {
+    const modal = $('[data-modal-target="' + target + '"]')
     const form = modal && ($('.expert-application_form', modal) || $('form', modal))
     const done = modal && $('.w-form-done', modal)
     if (!modal || !form || !done) return location.reload()
     form.style.display = 'none'
     done.style.display = 'block'
-    // Repaint the page behind the modal so closing it (any path) never shows a
-    // stale "Apply Now": flip the state blocks and re-run the wf-xano
-    // application card without a full reload.
+    // Repaint the page behind the modal so closing it (any path) never shows
+    // stale content: flip the state blocks and re-run the wf-xano application
+    // card (fresh message after an edit) without a full reload.
     try {
       paintState(document, 'applied')
       if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
@@ -1326,6 +1328,8 @@
       /* non-fatal */
     }
   }
+  const showApplySuccess = () => showAppModalSuccess('apply-opportunity')
+  const showEditAppSuccess = () => showAppModalSuccess('edit-application')
 
   // Withdraw success: the cancel modal's form-flow already advanced to its
   // "withdrawn" step when the confirm button was clicked, so leave the modal
@@ -1345,8 +1349,9 @@
 
   // F4 buttons carry no hooks in the Designer, so delegate by label within the
   // success screen (same text-match pattern as wireCloseOpportunityModal).
+  // Covers both app-form modals — apply and edit-application share the screen.
   document.addEventListener('click', (e) => {
-    const modal = e.target.closest('[data-modal-target="apply-opportunity"]')
+    const modal = e.target.closest(APP_FORM_MODALS)
     if (!modal || !e.target.closest('.w-form-done')) return
     // The design-system button is a cover-link: the <a.clickable_link> that
     // actually receives the click is EMPTY (its label lives in the sibling
