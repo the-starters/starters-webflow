@@ -1,0 +1,38 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/tabs */
+
+  [data-tab-component='panel-list'][data-preview='False'] > :not(.w-dyn-list, .u-display-contents),
+  [data-tab-component='panel-list'][data-preview='False'] > .w-dyn-list > * > * > *,
+  [data-tab-component='panel-list'][data-preview='False'] > .u-display-contents > .w-dyn-list > * > * > *,
+  [data-tab-component='panel-list'][data-preview='False'] > .u-display-contents > .u-display-contents > .w-dyn-list > * > * > *,
+  [data-tab-component='panel-list'][data-preview='False'] > .u-display-contents > :not(.w-dyn-list, .u-display-contents),
+  [data-tab-component='panel-list'][data-preview='False'] > .u-display-contents > .u-display-contents > :not(.w-dyn-list, .u-display-contents) {
+    display: none;
+  }
+  [data-tab-component='panel-list'] > :first-child:not(.w-dyn-list, .u-display-contents),
+  [data-tab-component='panel-list'] > .w-dyn-list > * > :first-child > *,
+  [data-tab-component='panel-list'] > .u-display-contents > .w-dyn-list > * > :first-child > *,
+  [data-tab-component='panel-list'] > .u-display-contents > .u-display-contents > .w-dyn-list > * > :first-child > *,
+  [data-tab-component='panel-list'] > .u-display-contents > :not(.w-dyn-list, .u-display-contents):first-child,
+  [data-tab-component='panel-list'] > .u-display-contents > .u-display-contents > :not(.w-dyn-list, .u-display-contents):first-child {
+    display: block;
+  }
+  .wf-design-mode [data-tab-component='button-list'] > :first-child:not(.w-dyn-list, .u-display-contents),
+  .wf-design-mode [data-tab-component='button-list'] > .w-dyn-list > * > :first-child > *,
+  .wf-design-mode [data-tab-component='button-list'] > .u-display-contents > :first-child:not(.w-dyn-list, .u-display-contents),
+  .wf-design-mode [data-tab-component='button-list'] > .u-display-contents > .u-display-contents > :first-child:not(.w-dyn-list, .u-display-contents),
+  .wf-design-mode [data-tab-component='button-list'] > .u-display-contents > .w-dyn-list > * > :first-child > *,
+  .wf-design-mode [data-tab-component='button-list'] > .u-display-contents > .u-display-contents > .w-dyn-list > * > :first-child > * {
+    --_state---true: 0;
+    --_state---false: 1;
+  }
+  [data-tab-component='button-list']:has([data-wf--tab-link--variant='link']) {
+    gap: 0rem;
+  }
+  [data-tab-component='button-list'] [role='tab'][data-tab-link-disabled='true'] {
+    pointer-events: none;
+    cursor: not-allowed;
+  }
+  [data-tab='next'][data-tab-nav-disabled='true'],
+  [data-tab='previous'][data-tab-nav-disabled='true'] {
+    cursor: not-allowed;
+  }

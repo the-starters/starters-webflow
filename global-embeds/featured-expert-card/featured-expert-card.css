@@ -1,0 +1,60 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/featured-expert-card */
+
+  [data-price-text]::before {
+    content: '$';
+  }
+
+  .company_list [data-company-list='item']:not(:last-child)::after {
+    content: ', ';
+  }
+
+  [data-company-list='item'] * {
+    display: inline;
+  }
+
+  .details-wrapper_reveal {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 300ms ease-out;
+  }
+
+  .details-wrapper_reveal-inner {
+    min-height: 0;
+    /* overflow: hidden; */
+  }
+
+  /* .details-wrapper_reveal-inner {
+      opacity: 1;
+      transform: translateY(6px);
+      transition:
+        opacity 200ms ease-out 200ms,
+        transform 300ms ease-out;
+    } */
+
+  .details-wrapper_description:has(p:empty) {
+    display: none;
+  }
+
+  @media (hover: hover) {
+    .featured-experts_item:hover .details-wrapper_reveal,
+    .featured-experts_details-wrapper:hover .details-wrapper_reveal {
+      grid-template-rows: 1fr;
+    }
+
+    .featured-experts_item:hover .details-wrapper_reveal-inner,
+    .featured-experts_details-wrapper:hover .details-wrapper_reveal-inner {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @media (max-width: 767px) {
+    .featured-experts_item[data-details-open] .details-wrapper_reveal {
+      grid-template-rows: 1fr;
+    }
+
+    .featured-experts_item[data-details-open] .details-wrapper_reveal-inner {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }

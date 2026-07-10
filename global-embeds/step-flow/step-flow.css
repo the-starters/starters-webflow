@@ -1,0 +1,142 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/step-flow */
+
+  /* Hide all footer button groups until form-flow JS shows the active step */
+  [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group] {
+    display: none;
+  }
+
+  /* Validation (opt-in via data-form-flow-validate="true"): red outline on a field
+     that failed validation after the user touched it or tried a blocked Continue. */
+  [data-form-flow] input[data-form-flow-field-invalid="true"] {
+    outline: 2px solid #ef4444;
+    outline-offset: 0;
+    border-color: #ef4444;
+  }
+
+  /* Runtime: child flows stay hidden until panel nav or form-flow activates them */
+  [data-form-flow="main-container"] > [data-form-flow] {
+    display: none;
+  }
+
+  /* Reveal previewable flows in Webflow Designer — honor each panel's declared
+     display-mode attribute (data-panel-nav-display). Designer-only: the published
+     site is JS-controlled, so these never touch the live render. Fallback to
+     contents when no display mode is set (preserves prior behavior). */
+  .wf-design-mode [data-form-flow][data-preview="true-contents"]:not([data-form-flow="main-container"]):not([data-panel-nav-display]) {
+    display: contents !important;
+  }
+
+  .wf-design-mode [data-form-flow][data-preview="true-contents"]:not([data-form-flow="main-container"])[data-panel-nav-display="block"] {
+    display: block !important;
+  }
+
+  .wf-design-mode [data-form-flow][data-preview="true-contents"]:not([data-form-flow="main-container"])[data-panel-nav-display="flex"] {
+    display: flex !important;
+  }
+
+  .wf-design-mode [data-form-flow][data-preview="true-contents"]:not([data-form-flow="main-container"])[data-panel-nav-display="grid"] {
+    display: grid !important;
+  }
+
+  .wf-design-mode [data-form-flow][data-preview="true-contents"]:not([data-form-flow="main-container"])[data-panel-nav-display="inline-flex"] {
+    display: inline-flex !important;
+  }
+
+  .wf-design-mode [data-form-flow][data-preview="true-contents"]:not([data-form-flow="main-container"])[data-panel-nav-display="inline-block"] {
+    display: inline-block !important;
+  }
+
+  .wf-design-mode [data-form-flow][data-preview="true-contents"]:not([data-form-flow="main-container"])[data-panel-nav-display="contents"] {
+    display: contents !important;
+  }
+
+  /* Hide sub-flow wrappers (step-2a, step-2b, …) */
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-subflow] {
+    display: none !important;
+  }
+
+  /* Hide all content steps except step-1 (works before JS hydrates data-form-flow-step) */
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-element^="step-"]:not([data-form-flow-subflow]):not([data-form-flow-entry]):not([data-form-flow-element="step-1"]) {
+    display: none !important;
+  }
+
+  /* Step-1 — linear flow content step. Honor the step's declared display-mode
+     attribute (data-form-flow-stored-display) so flex/grid steps preview correctly
+     in the Designer. Designer-only: the published site is JS-controlled, so these
+     never touch the live render. Fallback to block when no display mode is set
+     (preserves prior behavior). */
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-element="step-1"]:not([data-form-flow-entry]):not([data-form-flow-stored-display]) {
+    display: block !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-element="step-1"]:not([data-form-flow-entry])[data-form-flow-stored-display="block"] {
+    display: block !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-element="step-1"]:not([data-form-flow-entry])[data-form-flow-stored-display="flex"] {
+    display: flex !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-element="step-1"]:not([data-form-flow-entry])[data-form-flow-stored-display="grid"] {
+    display: grid !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-element="step-1"]:not([data-form-flow-entry])[data-form-flow-stored-display="inline-flex"] {
+    display: inline-flex !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-element="step-1"]:not([data-form-flow-entry])[data-form-flow-stored-display="inline-block"] {
+    display: inline-block !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-element="step-1"]:not([data-form-flow-entry])[data-form-flow-stored-display="contents"] {
+    display: contents !important;
+  }
+
+  /* Step-1 — multi-sub entry wrapper (radio gate) */
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-entry] {
+    display: contents !important;
+  }
+
+  /* Footer buttons — step-1 group only */
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group]:not([data-form-flow-button-group="step-1"]) {
+    display: none !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group="step-1"][data-form-flow-button-group-display="block"] {
+    display: block !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group="step-1"][data-form-flow-button-group-display="flex"] {
+    display: flex !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group="step-1"][data-form-flow-button-group-display="grid"] {
+    display: grid !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group="step-1"][data-form-flow-button-group-display="inline-flex"] {
+    display: inline-flex !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group="step-1"][data-form-flow-button-group-display="inline-block"] {
+    display: inline-block !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group="step-1"][data-form-flow-button-group-display="contents"] {
+    display: contents !important;
+  }
+
+  .wf-design-mode [data-form-flow]:not([data-form-flow="main-container"]) [data-form-flow-button-group="step-1"]:not([data-form-flow-button-group-display]) {
+    display: flex !important;
+  }
+
+  /* Shared footer on linear flows */
+  .wf-design-mode [data-form-flow]:not([data-form-flow-type="multi-sub"]):not([data-form-flow="main-container"]) [data-form-flow-footer] {
+    display: block !important;
+  }
+
+  /* Designer: show reset-panel hub */
+  .wf-design-mode [data-form-flow="main-container"] [data-form-flow-element="reset-panel"] {
+    display: block !important;
+  }

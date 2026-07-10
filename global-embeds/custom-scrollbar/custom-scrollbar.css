@@ -1,0 +1,25 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/custom-scrollbar */
+[data-scrollbar-theme='green'],
+[data-scrollbar-theme='blue'] {
+    background-color: var(--colors--silver);
+    height: 1rem;
+}
+
+[data-scrollbar-theme='green'] [data-scrollbar-thumb] {
+    background-color: var(--colors--rollie-green);
+}
+
+[data-scrollbar-theme='blue'] [data-scrollbar-thumb] {
+    background-color: var(--colors--rollie-blue);
+}
+
+[data-scroll-content] {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+[data-scroll-content]::-webkit-scrollbar {
+    display: none;
+}

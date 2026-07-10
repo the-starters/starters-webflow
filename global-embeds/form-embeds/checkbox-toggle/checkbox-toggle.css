@@ -1,0 +1,13 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/checkbox-toggle */
+
+  /* Avoid a flash: hide the item until the JS has wired the toggle.
+     Safe for the common "show when checked" default (checkbox starts unchecked). */
+     [data-checkbox-toggle]:not([data-checkbox-toggle-inited]) [data-checkbox-toggle-element="item"] {
+        display: none;
+      }
+    
+      /* The item carries .display-contents (display: contents), which would beat the
+         hidden attribute's UA style. Make hidden win once JS controls visibility. */
+      [data-checkbox-toggle-element="item"][hidden] {
+        display: none !important;
+      }

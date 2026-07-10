@@ -1,0 +1,225 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/timepicker */
+
+  /* ── Shared picker shell (kept self-contained so the timepicker can be used
+       on a page without the datepicker embed; identical values, harmless if both load). ── */
+  .ui-datepicker {
+    width: auto;
+    padding: 0;
+    border: 1px solid #d8d8d8;
+    border-radius: 8px;
+    background: #eee;
+    box-shadow:
+      0 0 0 3px var(--Fill-Primary, #eee),
+      0 4px 8px 0 rgba(0, 0, 0, 0.1);
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1;
+    overflow: hidden;
+  }
+
+  .ui-datepicker .ui-datepicker-header {
+    position: relative;
+    padding: 14px 48px 14px;
+    border: 0;
+    border-radius: 0;
+    background: #f1f1f1;
+    color: #202020;
+  }
+
+  .ui-datepicker .ui-datepicker-title {
+    margin: 0;
+    color: #202020;
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1;
+    text-align: center;
+  }
+
+  /* ── Timepicker body (the addon renders this inside #ui-datepicker-div). ── */
+  .ui-timepicker-div {
+    padding: 0;
+    background: #ffffff;
+  }
+
+  /* Section header ("Choose Time" / time preview). */
+  .ui-timepicker-div .ui-widget-header {
+    margin: 0;
+    padding: 14px 16px;
+    border: 0;
+    border-radius: 0;
+    background: #f1f1f1;
+    color: #202020;
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1;
+    text-align: center;
+  }
+
+  .ui-timepicker-div dl {
+    margin: 0;
+    padding: 12px 16px 4px;
+    text-align: left;
+  }
+
+  .ui-timepicker-div dl dt {
+    margin: 0 0 12px;
+    color: #202020;
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1;
+    padding-left: 0px;
+  }
+
+  .ui-timepicker-div dl dd {
+    margin: 0 0 14px;
+  }
+
+  /* Selected-time preview row — hidden (label + value). */
+  .ui-timepicker-div dl dt.ui_tpicker_time_label,
+  .ui-timepicker-div dl dd.ui_tpicker_time {
+    display: none;
+  }
+
+  /* ── Dropdowns (controlType: 'select'). ── */
+  .ui-timepicker-div select,
+  .ui-timepicker-div .ui-timepicker-select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d8d8d8;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #333333;
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition-property: border-color, box-shadow;
+    transition-duration: 160ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none'%3E%3Cpath d='M6 9l6 6 6-6' stroke='%23202020' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+  }
+
+  .ui-timepicker-div select:hover,
+  .ui-timepicker-div .ui-timepicker-select:hover {
+    border-color: #b8b8b8;
+  }
+
+  .ui-timepicker-div select:focus,
+  .ui-timepicker-div .ui-timepicker-select:focus {
+    outline: 0;
+    border-color: #20221f;
+    box-shadow: 0 0 0 3px rgba(32, 34, 31, 0.1);
+  }
+
+  /* ── Slider fallback (controlType: 'slider'), themed to match. ── */
+  .ui-timepicker-div .ui-slider {
+    margin: 8px 0 4px;
+    border: 0;
+    border-radius: 999px;
+    background: #eeeeee;
+  }
+
+  .ui-timepicker-div .ui-slider-horizontal {
+    height: 6px;
+  }
+
+  .ui-timepicker-div .ui-slider .ui-slider-handle {
+    top: -7px;
+    width: 20px;
+    height: 20px;
+    margin-left: -10px;
+    border: 0;
+    border-radius: 50%;
+    background: #20221f;
+    cursor: pointer;
+  }
+
+  .ui-timepicker-div .ui-slider .ui-slider-handle:focus {
+    outline: 0;
+    box-shadow: 0 0 0 3px rgba(32, 34, 31, 0.15);
+  }
+
+  /* ── Button panel (Now / Done). ── */
+  .ui-datepicker .ui-datepicker-buttonpane {
+    display: flex;
+    flex-direction: row;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0 16px 16px;
+    border: 0;
+    background: #ffffff;
+  }
+
+  .ui-datepicker .ui-datepicker-buttonpane button {
+    float: none;
+    width: 100%;
+    margin: 0;
+    padding: 9px 16px;
+    border: 1px solid #d8d8d8;
+    border-radius: 0.25rem;
+    background: #ffffff;
+    color: #333333;
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+    transition-property: background-color, color, transform;
+    transition-duration: 160ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  .ui-datepicker .ui-datepicker-buttonpane button:hover {
+    background: #eeeeee;
+    color: #1e211e;
+  }
+
+  .ui-datepicker .ui-datepicker-buttonpane button:active {
+    transform: scale(0.96);
+  }
+
+  /* The "Done" close button reads as the primary action. */
+  .ui-datepicker .ui-datepicker-buttonpane button.ui-datepicker-close {
+    border-color: #20221f;
+    background: #20221f;
+    color: #ffffff;
+  }
+
+  .ui-datepicker .ui-datepicker-buttonpane button.ui-datepicker-close:hover {
+    background: #000000;
+    color: #ffffff;
+  }
+
+  .ui-widget.ui-widget-content {
+    border: 0;
+  }
+
+  /* Mobile: never let the picker grow wider than the screen, and cap its height
+       so it scrolls internally rather than running off the bottom on short viewports
+       (the JS already flips it above the input when there's more room there). */
+  @media (max-width: 30rem) {
+    .ui-datepicker {
+      max-width: calc(100vw - 1.5rem);
+      max-height: calc(100vh - 1.5rem);
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+  }
+
+  [data-input-timepicker-modal],
+  .modal_dialog {
+    overflow: visible;
+  }
+
+  [data-input-timepicker-modal] .ui-datepicker,
+  .modal_dialog .ui-datepicker,
+  #ui-datepicker-div {
+    z-index: 999999 !important;
+  }

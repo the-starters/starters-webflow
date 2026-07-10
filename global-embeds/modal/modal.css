@@ -1,0 +1,10 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal */
+
+.modal_dialog::backdrop { opacity: 0; }
+.wf-design-mode .modal_dialog:not(:has(> [data-w-instance-of])),
+.wf-design-mode .modal_dialog[data-preview="True"] {
+	display: block;
+}
+.wf-design-mode .modal_dialog[data-preview="False"] {
+	display: none;
+}

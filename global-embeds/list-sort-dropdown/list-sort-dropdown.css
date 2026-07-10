@@ -1,0 +1,13 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/list-sort-dropdown */
+
+:is(.list-sort_dropdown-link) .icon-12 {
+    opacity: 0;
+  }
+  :is(.list-sort_dropdown-links-wrapper [aria-selected='true']) .icon-12 {
+    opacity: 1;
+  }
+
+
+  [fs-list-element="dropdown-label"] .icon-12{
+    display: none;
+  }

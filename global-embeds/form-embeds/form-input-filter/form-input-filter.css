@@ -1,0 +1,11 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter */
+
+  /**
+   * Form filter — hide the non-selected blocks.
+   *
+   * The blocks use `display: contents`, which would otherwise win over the native
+   * `[hidden]` rule, so force them off when the JS marks them hidden.
+   */
+  [data-input-filter-item][hidden] {
+    display: none !important;
+  } 

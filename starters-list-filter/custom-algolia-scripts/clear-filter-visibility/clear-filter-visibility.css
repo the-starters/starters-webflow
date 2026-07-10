@@ -1,0 +1,2 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/clear-filter-visibility */
+[wf-algolia-button="reset"].wf-reset-hidden { display: none !important; }

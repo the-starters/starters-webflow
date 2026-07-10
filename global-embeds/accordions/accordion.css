@@ -1,0 +1,15 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/accordions */
+.wf-design-mode .accordion_content_wrap,
+.wf-design-mode [data-accordion="content-wrap"]{
+	display: block;
+}
+
+.wf-design-mode .all-starters_filter-accordion-component{
+  background-color: var(--colors--olive);
+  outline-width: 2px;
+  outline-color: var(--colors--olive);
+}
+
+.wf-design-mode .all-starters_accordion-toggle-button{
+    color: var(--colors--white);
+}
