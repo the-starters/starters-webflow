@@ -1229,30 +1229,48 @@
 
     // APPLY — on success show the modal's native w-form-done "Application sent"
     // screen (F4) in place instead of reloading (showApplySuccess falls back to
-    // a reload when that markup is missing).
+    // a reload when that markup is missing). Capture the new application id so
+    // a follow-up edit/withdraw in the same page-life targets the right row.
     const applyBtn = $('[data-opp-submit="apply"]')
     if (applyBtn)
       applyBtn.addEventListener('click', async () => {
         const modal = $('[data-modal-target="apply-opportunity"]')
         const msg = ($('[name="Cover-Letter"]', modal) || {}).value || ''
         if (!msg.trim()) return alert('Please write a cover letter')
-        await guard(applyBtn, () => API.starterAppSubmit(activeOpp, msg.trim()), showApplySuccess)
+        await guard(applyBtn, async () => {
+          const res = await API.starterAppSubmit(activeOpp, msg.trim())
+          const newId = res && (res.id || (res.application && res.application.id))
+          if (newId) setActiveApp(newId)
+          return res
+        }, showApplySuccess)
       })
 
-    // EDIT APPLICATION
+    // EDIT APPLICATION — resolves the application id lazily (same as cancel)
+    // so it still works when activeApp is stale/null after a no-reload apply
+    // or withdraw earlier in the same page-life.
     const editAppBtn = $('[data-opp-submit="update-application"]')
     if (editAppBtn)
       editAppBtn.addEventListener('click', async () => {
         const modal = $('[data-modal-target="edit-application"]')
         const msg = ($('[name="Cover-Letter"]', modal) || {}).value || ''
         if (!msg.trim()) return alert('Please write a cover letter')
-        await guard(editAppBtn, () => API.starterAppUpdate(activeApp, msg.trim()))
+        await guard(editAppBtn, async () => {
+          let appId = activeApp
+          if (!appId && activeOpp) {
+            const detail = await API.starterOppDetail(activeOpp)
+            appId = detail && detail.application && detail.application.id
+          }
+          if (!appId) throw { data: { message: 'Could not find your application for this opportunity.' } }
+          return API.starterAppUpdate(appId, msg.trim())
+        })
       })
 
     // CANCEL APPLICATION (confirmation)
     // wf-xano/wf-algolia cards only carry the opportunity id, so the
     // application id is resolved lazily via the detail endpoint (which
     // returns the signed-in member's application for that opportunity).
+    // On success the modal's own form-flow "withdrawn" step stays visible
+    // (no reload) and the page repaints behind it.
     const cancelBtn = $('[data-opp-submit="cancel"]')
     if (cancelBtn)
       cancelBtn.addEventListener('click', () =>
@@ -1264,7 +1282,7 @@
           }
           if (!appId) throw { data: { message: 'Could not find your application for this opportunity.' } }
           return API.starterAppCancel(appId)
-        }),
+        }, showCancelSuccess),
       )
   }
 
@@ -1303,6 +1321,22 @@
     // application card without a full reload.
     try {
       paintState(document, 'applied')
+      if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
+    } catch (e) {
+      /* non-fatal */
+    }
+  }
+
+  // Withdraw success: the cancel modal's form-flow already advanced to its
+  // "withdrawn" step when the confirm button was clicked, so leave the modal
+  // as-is (the member actually gets to read the confirmation now) and repaint
+  // the page behind it. 'not-applied' mirrors what a fresh load would compute:
+  // the detail endpoint filters canceled applications, so appState() would
+  // return 'not-applied', showing the Apply CTA + empty-state panel again.
+  function showCancelSuccess() {
+    setActiveApp(null) // the canceled id must never leak into a follow-up edit
+    try {
+      paintState(document, 'not-applied')
       if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
     } catch (e) {
       /* non-fatal */
