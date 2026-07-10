@@ -991,12 +991,15 @@
       await initTalentDetail(gate.member)
       return
     }
-    // Brand view: the CMS page renders the opportunity content; only wire the
-    // applicants list when the brand wrapper carries one (ownership is enforced
-    // server-side by brand/applications/list, so a foreign opp just errors/empties).
+    // Brand view: the CMS page renders the opportunity content; wire the brand
+    // action modals, then the applicants list. When a wf-xano wrapper targets
+    // brand/applications/list the library owns the render (B3) — the legacy
+    // renderList fallback below only runs for un-migrated markup.
     const oppId = parseInt(location.pathname.split('/').pop(), 10)
     if (!oppId) return
     setActiveOpp(oppId)
+    wireCloseOpportunityModal()
+    if ($('[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]')) return
     if (!$('[data-opp-role="brand"] [data-opp-list="applicants"]')) return
     const res = await API.brandAppList(oppId)
     renderList('applicants', res.items, (card, a) => {
@@ -1357,6 +1360,29 @@
     }
   }
 
+  // B3 applicants (wf-xano rows): archive/restore are PER-ROW buttons cloned
+  // from the template after wireModals ran, so the single-button bindings
+  // there never see them — delegate instead. The row's data-wf-xano-id is the
+  // application id (the enriched brand/applications/list keeps id = app row).
+  // Success re-runs wf-xano (row moves between All/Archived) — no reload.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-opp-submit="archive"], [data-opp-submit="restore"]')
+    if (!btn) return
+    const row = btn.closest('[data-wf-xano-id]')
+    if (!row) return // static (non-wf-xano) buttons keep their wireModals path
+    e.preventDefault()
+    const appId = parseInt(row.getAttribute('data-wf-xano-id'), 10)
+    if (!appId) return
+    const action = btn.getAttribute('data-opp-submit')
+    guard(btn, () => (action === 'archive' ? API.brandAppArchive(appId) : API.brandAppRestore(appId)), () => {
+      try {
+        if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
+      } catch (err) {
+        /* non-fatal */
+      }
+    })
+  })
+
   // F4 buttons carry no hooks in the Designer, so delegate by label within the
   // success screen (same text-match pattern as wireCloseOpportunityModal).
   // Covers both app-form modals — apply and edit-application share the screen.
@@ -1478,7 +1504,13 @@
       if (!e.target.closest('[data-modal-target="close-opportunity"]')) return
       const btn =
         e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') || e.target
-      if (/^confirm$/i.test((btn.textContent || '').trim()) && activeOpp) {
+      // Two confirm shapes exist: the brands-view modal's plain "Confirm" div,
+      // and the detail-page modal's tagged [data-close-opp="confirm-button"]
+      // (whose label is "Close opportunity"). Match either.
+      const isConfirm =
+        /^confirm$/i.test((btn.textContent || '').trim()) ||
+        e.target.closest('[data-close-opp="confirm-button"]')
+      if (isConfirm && activeOpp) {
         guard(btn, () => API.brandOppClose(activeOpp))
       }
     })
