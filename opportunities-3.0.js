@@ -1317,9 +1317,14 @@
     const btn = e.target.closest('a, button, [role="button"], .button_main-wrap')
     if (!btn) return
     const label = (btn.textContent || '').trim().toLowerCase()
+    // preventDefault: the Designer anchors carry their own hrefs (View
+    // Application points at the retired /opportunities-details---freelancer-view)
+    // and the default navigation would win over the handlers below.
     if (label.includes('back to opportunities')) {
+      e.preventDefault()
       location.href = '/opportunities-freelancer-view?tab=applied'
     } else if (label.includes('view application')) {
+      e.preventDefault()
       location.reload()
     }
   })
