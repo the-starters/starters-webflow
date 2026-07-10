@@ -1314,7 +1314,10 @@
   document.addEventListener('click', (e) => {
     const modal = e.target.closest('[data-modal-target="apply-opportunity"]')
     if (!modal || !e.target.closest('.w-form-done')) return
-    const btn = e.target.closest('a, button, [role="button"], .button_main-wrap')
+    // The design-system button is a cover-link: the <a.clickable_link> that
+    // actually receives the click is EMPTY (its label lives in the sibling
+    // .button_main-text), so resolve the label from the .button_main-wrap.
+    const btn = e.target.closest('.button_main-wrap') || e.target.closest('a, button, [role="button"]')
     if (!btn) return
     const label = (btn.textContent || '').trim().toLowerCase()
     // preventDefault: the Designer anchors carry their own hrefs (View
