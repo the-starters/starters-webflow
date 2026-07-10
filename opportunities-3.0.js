@@ -950,11 +950,19 @@
     }
   }
 
+  // The page's Xano opportunity id: prefer the CMS-bound [data-opp-page-id]
+  // attribute (survives future slug-format changes); fall back to parsing the
+  // slug, which historically IS the Xano id (e.g. /opportunities/591).
+  function pageOppId() {
+    const el = $('[data-opp-page-id]')
+    const fromAttr = el && parseInt(el.getAttribute('data-opp-page-id'), 10)
+    return fromAttr || parseInt(location.pathname.split('/').pop(), 10)
+  }
+
   async function initTalentDetail(member) {
     // Gate unless the caller (initOppDetailByRole) already resolved the member.
     if (!member && !(await gateOrRedirect('freelancer'))) return
-    // Slug IS the Xano ID (e.g. /opportunities/591)
-    const oppId = parseInt(location.pathname.split('/').pop(), 10)
+    const oppId = pageOppId()
     if (!oppId) return (location.href = '/opportunities-freelancer-view')
     // CMS page already renders opportunity content — only fetch auth state
     const { opportunity: o, application: a } = await API.starterOppDetail(oppId)
@@ -995,10 +1003,26 @@
     // action modals, then the applicants list. When a wf-xano wrapper targets
     // brand/applications/list the library owns the render (B3) — the legacy
     // renderList fallback below only runs for un-migrated markup.
-    const oppId = parseInt(location.pathname.split('/').pop(), 10)
+    const oppId = pageOppId()
     if (!oppId) return
     setActiveOpp(oppId)
     wireCloseOpportunityModal()
+    // Ownership: plan gating (data-ms-content) can't know WHOSE opp this is —
+    // any paid brand sees the brand wrapper. The applicants list 404s for a
+    // foreign brand (server-side check), so probe it once and hide the
+    // [data-opp-owner-only] action cluster (Close/Edit/applicants) when this
+    // brand doesn't own the opportunity.
+    try {
+      await API.brandAppList(oppId, false, 1, 1)
+      document.documentElement.setAttribute('data-opp-brand-owner', 'true')
+    } catch (err) {
+      document.documentElement.setAttribute('data-opp-brand-owner', 'false')
+      $$('[data-opp-owner-only]').forEach((el) => {
+        el.style.display = 'none'
+      })
+      log('brand does not own this opportunity — owner-only UI hidden')
+      return
+    }
     if ($('[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]')) return
     if (!$('[data-opp-role="brand"] [data-opp-list="applicants"]')) return
     const res = await API.brandAppList(oppId)
