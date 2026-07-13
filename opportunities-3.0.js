@@ -78,7 +78,7 @@
     'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
     'pln_free-plan-f6kn0dxz': 'brand-free',
     'pln_new-paid-plan-463h04ph': 'brand-paid',
-    // 'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid', // test brand plan (4 members) — enable if test brand accounts need access
+    'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid', // test brand plan (4 members)
   }
   // Non-paying brands are not allowed on role-gated dual pages; send them to the
   // free-brand home (same destination the quiz funnel uses for free members).
