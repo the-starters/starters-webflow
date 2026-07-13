@@ -203,6 +203,239 @@
   const fmtDate = (ts) =>
     ts ? new Date(ts).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''
 
+  const CATEGORY_SET_EVENT = 'opp30:set-category-values'
+  const MAX_CATEGORY_SELECTIONS = 3
+
+  function parseStoredCategories(input) {
+    try {
+      const values = JSON.parse(input.getAttribute('data-opp30-selected-values') || '[]')
+      return Array.isArray(values) ? values.map(String).map((value) => value.trim()).filter(Boolean) : []
+    } catch (e) {
+      return []
+    }
+  }
+
+  function selectedOpportunityCategories(scope) {
+    const input = $('[name="Category-option"]', scope)
+    if (!input) return []
+    const stored = parseStoredCategories(input)
+    if (stored.length) return stored
+    const wrapper = input.closest('[ms-code-select-wrapper]') || scope
+    return $$('[ms-code-select="tag-name-selected"]', wrapper)
+      .map((el) => (el.textContent || '').trim())
+      .filter(Boolean)
+  }
+
+  // Shared category multiselect for Create + Edit. This replaces the old
+  // component-embedded script and keeps selected values in JSON so category
+  // labels containing commas remain a single value end-to-end.
+  function initOpportunityCategorySelects(root = document) {
+    $$('[ms-code-select-wrapper]', root).forEach((wrapper) => {
+      const input = $('[name="Category-option"]', wrapper)
+      if (!input || wrapper.getAttribute('data-opp30-category-select-inited') === 'true') return
+
+      const list = $('[ms-code-select="list"]', wrapper)
+      const selectedWrapper = $('[ms-code-select="selected-wrapper"]', wrapper)
+      if (!list || !selectedWrapper) return
+
+      wrapper.setAttribute('data-opp30-category-select-inited', 'true')
+      // The legacy Webflow embed uses this guard. Marking it here prevents both
+      // implementations from binding the same control during the migration.
+      wrapper.setAttribute('data-ms-code-select-inited', 'true')
+
+      const nearbyScope = wrapper.closest('form') || wrapper.closest('[data-modal-target]') || document
+      const modalScope = wrapper.closest('[data-modal-target]')
+      const optionScope = $$('.category-option', nearbyScope).length
+        ? nearbyScope
+        : modalScope && $$('.category-option', modalScope).length
+          ? modalScope
+          : document
+      const options = Array.from(
+        new Set(
+          $$('.category-option', optionScope)
+            .map((el) => (el.textContent || '').trim())
+            .filter(Boolean),
+        ),
+      ).sort((a, b) => a.localeCompare(b))
+      if (!options.length) return
+
+      const optionTemplate = $('[ms-code-select="tag-name-new"]', list)
+      const selectedTemplate = $('[ms-code-select="tag"]', selectedWrapper)
+      if (!optionTemplate || !selectedTemplate) return
+      optionTemplate.remove()
+      selectedTemplate.remove()
+
+      const emptyState = $('[ms-code-select="empty-state"]', wrapper)
+      let selected = parseStoredCategories(input)
+        .filter((value) => options.includes(value))
+        .slice(0, MAX_CATEGORY_SELECTIONS)
+      let query = ''
+      let highlightedIndex = -1
+      let focused = false
+
+      const warning = () => {
+        let el = $('#ms-limit-error', wrapper)
+        if (!el) {
+          el = document.createElement('div')
+          el.id = 'ms-limit-error'
+          el.style.cssText =
+            'color:#e11d48;font-size:0.75rem;font-weight:400;line-height:1.2;margin-top:4px;position:relative;z-index:0;'
+          el.textContent = `You can only select up to ${MAX_CATEGORY_SELECTIONS} options.`
+          list.insertAdjacentElement('afterend', el)
+        }
+        el.style.display = ''
+      }
+
+      const hideWarning = () => {
+        const el = $('#ms-limit-error', wrapper)
+        if (el) el.style.display = 'none'
+      }
+
+      const store = () => {
+        input.setAttribute('data-opp30-selected-values', JSON.stringify(selected))
+        if (!focused) input.value = selected.join(', ')
+      }
+
+      const createSelectedTag = (value) => {
+        const tag = selectedTemplate.cloneNode(true)
+        const name = $('[ms-code-select="tag-name-selected"]', tag)
+        if (name) name.textContent = value
+        const close = $('[ms-code-select="tag-close"]', tag)
+        if (close) {
+          close.addEventListener('mousedown', (event) => event.preventDefault())
+          close.addEventListener('click', (event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            selected = selected.filter((item) => item !== value)
+            render()
+            hideWarning()
+          })
+        }
+        return tag
+      }
+
+      const optionElements = options.map((value) => {
+        const option = optionTemplate.cloneNode(true)
+        option.textContent = value
+        option.setAttribute('data-opp30-category-value', value)
+        option.addEventListener('mousedown', (event) => event.preventDefault())
+        option.addEventListener('click', () => {
+          if (selected.includes(value)) return
+          if (selected.length >= MAX_CATEGORY_SELECTIONS) {
+            warning()
+            return
+          }
+          selected.push(value)
+          query = ''
+          input.value = ''
+          render()
+          input.focus()
+        })
+        list.appendChild(option)
+        return option
+      })
+
+      const visibleOptions = () =>
+        optionElements.filter((option) => option.style.display !== 'none')
+
+      const updateHighlight = () => {
+        optionElements.forEach((option) => {
+          option.classList.remove('highlighted')
+          option.style.backgroundColor = ''
+        })
+        const visible = visibleOptions()
+        if (highlightedIndex >= 0 && visible[highlightedIndex]) {
+          visible[highlightedIndex].classList.add('highlighted')
+          visible[highlightedIndex].style.backgroundColor = '#eee'
+        }
+      }
+
+      const render = () => {
+        selectedWrapper.replaceChildren(...selected.map(createSelectedTag))
+        store()
+        const needle = query.trim().toLowerCase()
+        let visibleCount = 0
+        optionElements.forEach((option) => {
+          const value = option.getAttribute('data-opp30-category-value') || ''
+          const show = !selected.includes(value) && value.toLowerCase().includes(needle)
+          option.style.display = show ? '' : 'none'
+          option.style.opacity = selected.length >= MAX_CATEGORY_SELECTIONS ? '0.4' : ''
+          option.style.cursor = selected.length >= MAX_CATEGORY_SELECTIONS ? 'not-allowed' : ''
+          if (show) visibleCount += 1
+        })
+        if (emptyState) emptyState.style.display = visibleCount === 0 && needle ? '' : 'none'
+        highlightedIndex = -1
+        updateHighlight()
+      }
+
+      input.addEventListener('focus', () => {
+        focused = true
+        query = ''
+        input.value = ''
+        list.style.display = ''
+        render()
+      })
+      input.addEventListener('input', () => {
+        query = input.value
+        render()
+      })
+      input.addEventListener('blur', () => {
+        window.setTimeout(() => {
+          focused = false
+          query = ''
+          list.style.display = 'none'
+          render()
+        }, 120)
+      })
+      input.addEventListener('keydown', (event) => {
+        const visible = visibleOptions()
+        if (!visible.length) return
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault()
+          const delta = event.key === 'ArrowDown' ? 1 : -1
+          highlightedIndex = (highlightedIndex + delta + visible.length) % visible.length
+          updateHighlight()
+        } else if (event.key === 'Enter' && highlightedIndex >= 0) {
+          event.preventDefault()
+          visible[highlightedIndex].click()
+        }
+      })
+      input.addEventListener(CATEGORY_SET_EVENT, (event) => {
+        const values = event.detail && Array.isArray(event.detail.values) ? event.detail.values : []
+        selected = values
+          .map(String)
+          .map((value) => value.trim())
+          .filter((value) => options.includes(value))
+          .slice(0, MAX_CATEGORY_SELECTIONS)
+        render()
+      })
+
+      list.style.display = 'none'
+      render()
+    })
+  }
+
+  function setOpportunityCategoryValues(scope, values) {
+    const input = $('[name="Category-option"]', scope)
+    if (!input) return
+    input.dispatchEvent(
+      new CustomEvent(CATEGORY_SET_EVENT, {
+        detail: { values: Array.isArray(values) ? values : [] },
+      }),
+    )
+  }
+
+  function validateOpportunityPayload(payload) {
+    if (!payload.title) return 'Please enter an opportunity title.'
+    if (!payload.description) return 'Please enter an opportunity description.'
+    if (!payload.exp_requirements) return 'Please enter the experience requirements.'
+    if (!payload.role_names || !payload.role_names.length) return 'Please select at least one category.'
+    if (!payload.project_type) return 'Please choose a project type.'
+    if (!payload.est_project_duration) return 'Please choose an estimated project duration.'
+    if (!payload.budget) return 'Please enter a budget.'
+    return ''
+  }
+
   // Read a modal/form's fields by their existing Webflow `name` attributes.
   function readOpportunityForm(scope) {
     const val = (name) => {
@@ -257,17 +490,23 @@
     // budget: one of three inputs is visible/required per project type
     const budget =
       val('One-Time-Budget') || val('Part-Time-Budget') || val('Full-Time-Budget')
-    return {
+    const role_names = selectedOpportunityCategories(scope)
+    const payload = {
       title: val('Opportunity-title'),
       description: val('Description'),
       exp_requirements: val('Requirements'),
-      role_name: multiVal('Category-option') || multiVal('Role-option') || multiVal('Function'),
       project_type,
       est_project_duration: checkedVal('Duration'),
       budget,
       budget_frequency: BUDGET_FREQUENCY[project_type] || '',
       // Xano resolves role_name -> function/category/subcategory refs via v3 taxonomy tables.
     }
+    if (role_names.length) payload.role_names = role_names
+    else {
+      const legacyRoleName = multiVal('Role-option') || multiVal('Function')
+      if (legacyRoleName) payload.role_name = legacyRoleName
+    }
+    return payload
   }
 
   // Application UI state (mirrors plan Phase 4). a = application row, o = opportunity.
@@ -988,13 +1227,12 @@
   }
 
   // Prefill the edit-opportunity modal with the opp's CURRENT values so a brand
-  // edits from reality (esp. the Duration/Project-Type radios, which otherwise
-  // submit their default-checked option and would clobber the real value). Text
-  // fields left empty are preserved server-side by the update guard; roles/refs
-  // are only touched if the brand changes them, so we don't prefill those here.
+  // edits from reality (including categories and the Duration/Project-Type
+  // radios, which otherwise submit their default state and clobber real values).
   async function prefillEditOpportunity(oppId) {
     const modal = $('[data-modal-target="edit-opportunity"]')
     if (!modal) return
+    initOpportunityCategorySelects(modal)
     let o
     try {
       o = await API.brandOppGet(oppId)
@@ -1004,11 +1242,19 @@
     if (!o) return
     const setVal = (name, val) => {
       const el = $(`[name="${name}"]`, modal)
-      if (el && val != null) el.value = val
+      if (el && val != null) {
+        el.value = val
+        // Word/character counter embeds listen for user input. Dispatch the
+        // same events after programmatic prefill so their displayed counts
+        // match the values the member sees.
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+        el.dispatchEvent(new Event('change', { bubbles: true }))
+      }
     }
     setVal('Opportunity-title', o.title)
     setVal('Description', o.description)
     setVal('Requirements', o.exp_requirements)
+    setOpportunityCategoryValues(modal, o.category_names)
     const budgetField =
       o.project_type === 'One Time'
         ? 'One-Time-Budget'
@@ -1114,9 +1360,8 @@
         e.stopImmediatePropagation()
         if (submitting) return
         const payload = readOpportunityForm(form)
-        if (!payload.title) return say('Please enter an opportunity title.')
-        if (!payload.project_type) return say('Please choose a project type.')
-        if (!payload.budget) return say('Please enter a budget.')
+        const validationMessage = validateOpportunityPayload(payload)
+        if (validationMessage) return say(validationMessage)
         submitting = true
         if (btn) {
           btn.disabled = true
@@ -1232,6 +1477,7 @@
   // lumos.formFlow, so rewind any flow inside a modal whenever it opens.
   window.addEventListener('modal-open', (e) => {
     const modal = e.detail && e.detail.modal
+    if (modal) initOpportunityCategorySelects(modal)
     const flowEl = modal && modal.querySelector('[data-form-flow]')
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
@@ -1260,7 +1506,8 @@
       createBtn.addEventListener('click', async () => {
         const modal = $('[data-modal-target="post-opportunity"]')
         const payload = readOpportunityForm(modal)
-        if (!payload.title) return alert('Please enter a title')
+        const validationMessage = validateOpportunityPayload(payload)
+        if (validationMessage) return alert(validationMessage)
         await guard(createBtn, () => API.brandOppCreate(payload))
       })
     else if (createBtn && (createPageForm || onCreatePage)) {
@@ -1276,6 +1523,8 @@
       editBtn.addEventListener('click', async () => {
         const modal = $('[data-modal-target="edit-opportunity"]')
         const payload = readOpportunityForm(modal)
+        const validationMessage = validateOpportunityPayload(payload)
+        if (validationMessage) return alert(validationMessage)
         await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), () => {
           const form = $('form', modal)
           const done = $('.w-form-done', modal)
@@ -1684,6 +1933,7 @@
 
   /* ========================= BOOTSTRAP ========================== */
   function boot() {
+    initOpportunityCategorySelects()
     wireModals()
     const p = location.pathname
     if (p.includes('opportunities-details---brand-view')) initBrandDetail()
@@ -1709,9 +1959,20 @@
     // /all-modals: only wireModals() (already called) — no data fetch
   }
 
+  // The CDN script is loaded with `defer` on opportunity pages, so the modal
+  // markup is available here before DOMContentLoaded. Claim the category
+  // widgets now; the legacy component embed sees its run-once flag and skips.
+  initOpportunityCategorySelects()
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)
   else boot()
 
   // expose for debugging / manual calls in console
-  window.Opp30 = { API, ensureXanoToken, diagnoseFreelancerFeed, waitForMemberstackDom }
+  window.Opp30 = {
+    API,
+    ensureXanoToken,
+    diagnoseFreelancerFeed,
+    waitForMemberstackDom,
+    initOpportunityCategorySelects,
+    readOpportunityForm,
+  }
 })()
