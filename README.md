@@ -40,6 +40,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.js`
 - `quiz-results.min.js`
 - `opportunities-3.0.js`
+- `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`
 - `opportunities---create.js`
 - `all-starters/apply-button-disable.js`
 - `all-starters/range-backfill.js`
