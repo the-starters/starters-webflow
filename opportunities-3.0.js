@@ -168,6 +168,7 @@
     brandOppCreate: (payload) => call('brand/opportunities/create', { body: payload }),
     brandOppUpdate: (opportunity_id, payload) =>
       call('brand/opportunities/update', { method: 'PATCH', body: { opportunity_id, ...payload } }),
+    brandOppGet: (opportunity_id) => call('brand/opportunities/get', { body: { opportunity_id } }),
     brandOppClose: (opportunity_id) =>
       call('brand/opportunities/close', { method: 'PATCH', body: { opportunity_id } }),
     brandOppReopen: (opportunity_id) =>
@@ -986,6 +987,49 @@
     }
   }
 
+  // Prefill the edit-opportunity modal with the opp's CURRENT values so a brand
+  // edits from reality (esp. the Duration/Project-Type radios, which otherwise
+  // submit their default-checked option and would clobber the real value). Text
+  // fields left empty are preserved server-side by the update guard; roles/refs
+  // are only touched if the brand changes them, so we don't prefill those here.
+  async function prefillEditOpportunity(oppId) {
+    const modal = $('[data-modal-target="edit-opportunity"]')
+    if (!modal) return
+    let o
+    try {
+      o = await API.brandOppGet(oppId)
+    } catch (e) {
+      return /* non-fatal: guard keeps existing values if the brand submits */
+    }
+    if (!o) return
+    const setVal = (name, val) => {
+      const el = $(`[name="${name}"]`, modal)
+      if (el && val != null) el.value = val
+    }
+    setVal('Opportunity-title', o.title)
+    setVal('Description', o.description)
+    setVal('Requirements', o.exp_requirements)
+    const budgetField =
+      o.project_type === 'One Time'
+        ? 'One-Time-Budget'
+        : o.project_type === 'Full Time'
+          ? 'Full-Time-Budget'
+          : 'Part-Time-Budget'
+    setVal(budgetField, o.budget)
+    // Check the matching radio (value === current) and mirror Webflow's
+    // visual class so the pre-selection shows when the modal opens.
+    const checkRadio = (name, current) =>
+      $$(`[name="${name}"]`, modal).forEach((el) => {
+        const on = el.value === current
+        el.checked = on
+        el.classList.toggle('w--redirected-checked', on)
+        const vis = el.parentElement && el.parentElement.querySelector('.w-radio-input')
+        if (vis) vis.classList.toggle('w--redirected-checked', on)
+      })
+    checkRadio('Project-Type', o.project_type)
+    checkRadio('Duration', o.est_project_duration)
+  }
+
   /** /opportunities/<id> CMS detail page, shared by talent and PAYING brands.
    *  Gates by Memberstack plan (gateByPlan), reveals the matching
    *  [data-opp-role="talent"|"brand"] wrapper, then runs that role's wiring.
@@ -1015,6 +1059,7 @@
     try {
       await API.brandAppList(oppId, false, 1, 1)
       document.documentElement.setAttribute('data-opp-brand-owner', 'true')
+      prefillEditOpportunity(oppId)
     } catch (err) {
       document.documentElement.setAttribute('data-opp-brand-owner', 'false')
       $$('[data-opp-owner-only]').forEach((el) => {
@@ -1222,13 +1267,25 @@
       log('skipped generic create click binding on full-page create form')
     }
 
-    // EDIT
+    // EDIT — on success show the edit modal's native w-form-done
+    // ("pending for review") screen instead of reloading. The update endpoint
+    // keeps existing values for any empty input (so a partial edit never wipes
+    // the opp), and the modal is prefilled with current values on load.
     const editBtn = $('[data-opp-submit="update"]')
     if (editBtn)
       editBtn.addEventListener('click', async () => {
         const modal = $('[data-modal-target="edit-opportunity"]')
         const payload = readOpportunityForm(modal)
-        await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload))
+        await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), () => {
+          const form = $('form', modal)
+          const done = $('.w-form-done', modal)
+          if (form && done) {
+            form.style.display = 'none'
+            done.style.display = 'block'
+          } else {
+            location.reload()
+          }
+        })
       })
 
     // CLOSE (confirmation)
