@@ -16,7 +16,7 @@
   const TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
-  const LOGIN_PATH = '/log-in'
+  const LOGIN_PATH = '/login'
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
     if (
