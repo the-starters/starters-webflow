@@ -1531,11 +1531,17 @@
       // Two confirm shapes exist: the brands-view modal's plain "Confirm" div,
       // and the detail-page modal's tagged [data-close-opp="confirm-button"]
       // (whose label is "Close opportunity"). Match either.
+      const flowConfirm = e.target.closest('[data-close-opp="confirm-button"]')
       const isConfirm =
-        /^confirm$/i.test((btn.textContent || '').trim()) ||
-        e.target.closest('[data-close-opp="confirm-button"]')
+        /^confirm$/i.test((btn.textContent || '').trim()) || flowConfirm
       if (isConfirm && activeOpp) {
-        guard(btn, () => API.brandOppClose(activeOpp))
+        // Detail-page modal drives its own form-flow "closed" confirmation step
+        // (data-form-flow-action="next" on the same button), so DON'T reload —
+        // that would kill the step the member just advanced to. A reload
+        // wouldn't reflect "Closed" anyway (Webflow CMS re-sync is async). The
+        // brands-list modal ("Confirm" div, no flow step) keeps the reload so
+        // the closed opp drops out of that feed.
+        guard(btn, () => API.brandOppClose(activeOpp), flowConfirm ? function () {} : undefined)
       }
     })
   }
