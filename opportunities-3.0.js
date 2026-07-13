@@ -402,10 +402,22 @@
       })
       input.addEventListener(CATEGORY_SET_EVENT, (event) => {
         const values = event.detail && Array.isArray(event.detail.values) ? event.detail.values : []
+        // Prefill (e.g. the opp's saved category_names) may differ from the
+        // option labels only in case/whitespace. Map each incoming value to the
+        // canonical option label so it still selects — mirroring an option
+        // click, which pushes the exact option label. Dedupe + cap like manual
+        // selection does. render() then draws the tags AND stores the JSON.
+        const byLower = new Map(options.map((opt) => [opt.toLowerCase(), opt]))
+        const seen = new Set()
         selected = values
           .map(String)
           .map((value) => value.trim())
-          .filter((value) => options.includes(value))
+          .map((value) => byLower.get(value.toLowerCase()))
+          .filter((value) => {
+            if (!value || seen.has(value)) return false
+            seen.add(value)
+            return true
+          })
           .slice(0, MAX_CATEGORY_SELECTIONS)
         render()
       })
@@ -1482,9 +1494,10 @@
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
     if (flowId && ff && ff.list && ff.list[flowId]) ff.reset(flowId)
-    // Apply/edit-application modals: rewind the F4 success screen (w-form-done)
-    // back to the form step, mirroring the form-flow reset above.
-    if (modal && modal.matches && modal.matches(APP_FORM_MODALS)) {
+    // Apply/edit-application AND edit-opportunity modals: rewind the success
+    // screen (w-form-done) back to the form step, mirroring the form-flow reset
+    // above, so a reopened modal never strands the brand on "pending for review".
+    if (modal && modal.matches && modal.matches(SUCCESS_SCREEN_MODALS)) {
       const form = modal.querySelector('.expert-application_form') || modal.querySelector('form')
       const done = modal.querySelector('.w-form-done')
       if (form) form.style.display = ''
@@ -1519,16 +1532,37 @@
     // keeps existing values for any empty input (so a partial edit never wipes
     // the opp), and the modal is prefilled with current values on load.
     const editBtn = $('[data-opp-submit="update"]')
-    if (editBtn)
+    if (editBtn) {
+      const editModal = $('[data-modal-target="edit-opportunity"]')
+      // The Submit control lives inside a Webflow .w-form, so clicking it also
+      // fires a native form submit that Webflow intercepts to flash its own
+      // inline .w-form-done/.w-form-fail toast (and can trigger a reload). Kill
+      // that in the capture phase (same technique as initBrandCreatePage) so
+      // ONLY our own success screen shows, after the real API call resolves.
+      const editForm = editModal && $('form', editModal)
+      if (editForm)
+        editForm.addEventListener(
+          'submit',
+          (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            e.stopImmediatePropagation()
+          },
+          true,
+        )
       editBtn.addEventListener('click', async () => {
-        const modal = $('[data-modal-target="edit-opportunity"]')
+        const modal = editModal || $('[data-modal-target="edit-opportunity"]')
         const payload = readOpportunityForm(modal)
         const validationMessage = validateOpportunityPayload(payload)
         if (validationMessage) return alert(validationMessage)
         await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), () => {
+          // No-reload success: swap the form for the modal's native w-form-done
+          // "pending for review" screen (same pattern as apply/edit-application).
           const form = $('form', modal)
           const done = $('.w-form-done', modal)
+          const fail = $('.w-form-fail', modal)
           if (form && done) {
+            if (fail) fail.style.display = 'none'
             form.style.display = 'none'
             done.style.display = 'block'
           } else {
@@ -1536,6 +1570,7 @@
           }
         })
       })
+    }
 
     // CLOSE (confirmation)
     const closeBtn = $('[data-opp-submit="close"]')
@@ -1645,6 +1680,9 @@
   // block's native Webflow success state (.w-form-done), hidden until swapped
   // in here. Falls back to the old reload when the markup is missing.
   const APP_FORM_MODALS = '[data-modal-target="apply-opportunity"], [data-modal-target="edit-application"]'
+  // Modals whose w-form-done success screen must rewind to the form on reopen:
+  // the two application modals plus the brand edit-opportunity modal.
+  const SUCCESS_SCREEN_MODALS = APP_FORM_MODALS + ', [data-modal-target="edit-opportunity"]'
   function showAppModalSuccess(target) {
     const modal = $('[data-modal-target="' + target + '"]')
     const form = modal && ($('.expert-application_form', modal) || $('form', modal))
