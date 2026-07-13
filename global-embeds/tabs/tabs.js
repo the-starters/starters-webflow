@@ -27,6 +27,13 @@
  * blur or when Next is clicked while blocked. Put `data-validate-ignore` on a
  * field or a wrapping group to exempt it; hidden required fields are skipped
  * automatically.
+ *
+ * Optional panel titles:
+ * - `data-tab-element="title"` on any text element anywhere inside the wrapper —
+ *   its text is set to the active panel's `data-tab-panel-title` on every activation.
+ * - `data-tab-panel-title="…"` on a panel (direct child of `panel-list`) — the value
+ *   pushed into the title element(s). A panel without the attribute restores each
+ *   title's original text; an empty value sets empty text.
  */
 document.addEventListener("DOMContentLoaded", function () {
   /** @type {string} Theme applied while a nav control is disabled. */
@@ -294,6 +301,10 @@ document.addEventListener("DOMContentLoaded", function () {
     const buttonItems = Array.from(buttonList?.children || []).filter(isTabSlotItem)
     const panelItems = Array.from(panelList?.children || []).filter(isTabSlotItem)
 
+    const titleTargets = Array.from(tabWrap.querySelectorAll("[data-tab-element='title']"))
+      .filter((el) => el.closest("[data-tab-component='wrapper']") === tabWrap)
+      .map((el) => ({ el, defaultText: el.textContent }))
+
     if (!buttonList || !panelList || !buttonItems.length || !panelItems.length) {
       console.warn("Missing tab elements in:", tabWrap)
       return
@@ -432,6 +443,15 @@ document.addEventListener("DOMContentLoaded", function () {
       setNavControlState(globalNav.nextWrap, globalNav.next, isNextDisabled || blockNext)
     }
 
+    /** Pushes the active panel's `data-tab-panel-title` into every title element. */
+    const updatePanelTitles = (index) => {
+      if (!titleTargets.length) return
+      const title = panelItems[index]?.getAttribute("data-tab-panel-title")
+      titleTargets.forEach(({ el, defaultText }) => {
+        el.textContent = title !== null && title !== undefined ? title : defaultText
+      })
+    }
+
     const makeActive = (index, focus = false, animate = true) => {
       if (animating) return
       if (index < 0 || index >= buttonItems.length) return
@@ -450,6 +470,7 @@ document.addEventListener("DOMContentLoaded", function () {
       })
 
       updateTabLinkStates(index)
+      updatePanelTitles(index)
       if (focus) buttonItems[index].focus()
 
       const previousPanel = panelItems[activeIndex]
