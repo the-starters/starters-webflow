@@ -1,1 +1,6 @@
 .DS_Store
+
+# Local-only self-test harness for the disabler engine — never commit.
+generate-contract/disabler-harness.html
+# Local-only warning-verification page for the disabler engine — never commit.
+generate-contract/disabler-warn-test.html
