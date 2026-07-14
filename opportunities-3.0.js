@@ -41,6 +41,23 @@
     }
   }
 
+  // Opportunity detail (/opportunities/<id>): hide the application-state CTAs
+  // (Apply / Applied / Withdraw / Edit application) until the member's applied
+  // state is resolved, so the wrong CTA never flashes before paintState() runs
+  // (the state comes from an async starter/opportunities/detail fetch). Injected
+  // synchronously; the first paintState() removes it. Brand-view state elements
+  // live inside the async-hidden talent wrapper, so this is a no-op for brands.
+  if (/^\/opportunities\/\d+/.test(location.pathname)) {
+    try {
+      const stateHide = document.createElement('style')
+      stateHide.id = 'opp30-detail-hide-until-state'
+      stateHide.textContent = '[data-opp-state]{display:none!important}'
+      ;(document.head || document.documentElement).appendChild(stateHide)
+    } catch (e) {
+      /* non-fatal */
+    }
+  }
+
   /* ============================ CONFIG ============================ */
   /** Verbose console logging during rollout; set false for production quiet. @type {boolean} */
   const DEBUG_LOG = true
@@ -534,6 +551,11 @@
 
   // Toggle elements tagged [data-opp-state="applied|edited|..."] under a root.
   function paintState(root, state) {
+    // Drop the detail-page hide-until-state guard now that we know the real
+    // state, so the shown CTAs (which paint via an empty inline display) aren't
+    // kept hidden by the guard's !important rule.
+    const stateGuard = document.getElementById('opp30-detail-hide-until-state')
+    if (stateGuard) stateGuard.remove()
     $$('[data-opp-state]', root).forEach((el) => {
       const states = el.getAttribute('data-opp-state').split(/\s+/)
       el.style.display = states.includes(state) ? '' : 'none'
@@ -1217,7 +1239,16 @@
     const oppId = pageOppId()
     if (!oppId) return (location.href = '/opportunities-freelancer-view')
     // CMS page already renders opportunity content — only fetch auth state
-    const { opportunity: o, application: a } = await API.starterOppDetail(oppId)
+    let o, a
+    try {
+      ;({ opportunity: o, application: a } = await API.starterOppDetail(oppId))
+    } catch (err) {
+      console.error('[opp30] failed to load application state', err)
+      // Reveal the not-applied CTAs (Apply) so a fetch failure never strands the
+      // member behind the hide-until-state guard with no visible action.
+      paintState(document, 'not-applied')
+      return
+    }
     setActiveOpp(oppId)
     track('opportunity_viewed', { opportunity_id: oppId, viewer_role: 'freelancer' })
     if (a) setActiveApp(a.id)
