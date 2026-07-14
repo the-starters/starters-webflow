@@ -166,6 +166,27 @@
         try { return panelList.style.visibility === "hidden"; } catch (e) { return false; }
       }
 
+      /* Tab-switch animation guard. An ANIMATED (GSAP) tab switch keeps the
+         OUTGOING panel visible during the fade, so revealing the message mid-
+         switch places it against the old height and it jumps to the top when the
+         layout settles — only noticeable on wider screens, where the height
+         delta is larger. While a switch is in flight we defer the reveal, then
+         re-evaluate once. FAIL-SAFE: `switching` ALWAYS clears after the delay,
+         so this can never leave the message stuck hidden (unlike checking a
+         panel's computed display, which is fragile on nested Webflow markup). */
+      var switching = false;
+      var switchTimer = null;
+      function switchDelayMs() {
+        try {
+          var wrap = document.querySelector('[data-tab-component="wrapper"]');
+          var d = wrap && parseFloat(wrap.getAttribute("data-duration"));
+          var dur = isFinite(d) && d > 0 ? d : 0.3; // seconds; tabs.js default 0.3
+          return Math.max(400, Math.min(Math.round(dur * 1000 + 300), 1500));
+        } catch (e) {
+          return 600;
+        }
+      }
+
       function evaluate() {
         try {
           // Empty query → default-results owns the view; never show no-results
@@ -180,17 +201,10 @@
             hideNoResults();
             return;
           }
-          // During an ANIMATED tab switch (e.g. GSAP fade) tabs.js flips
-          // data-tab-active to the incoming panel immediately, but that panel
-          // stays display:none until the outgoing panel finishes fading out and
-          // collapses. Revealing now would drop the message below the still-tall
-          // outgoing panel and make it jump up when the switch settles. Wait
-          // until the active panel is actually displayed; the observer re-fires
-          // when its display flips to block, so we reveal in the settled spot.
-          // No-op for instant (non-animated) switches — the active panel is
-          // already display:block.
-          var activePanel = getActivePanel();
-          if (activePanel && getComputedStyle(activePanel).display === "none") {
+          // Defer while a tab switch is animating (see the click handler /
+          // switchDelayMs): revealing mid-switch makes the message jump when the
+          // layout settles.
+          if (switching) {
             hideNoResults();
             return;
           }
@@ -244,13 +258,22 @@
         if (e.target === input) scheduleEvaluate();
       });
 
-      // Tab switch: re-evaluate AFTER tabs.js flips data-tab-active (next tick).
+      // Tab switch: hide the message immediately and hold the reveal across the
+      // switch-animation window, then re-evaluate once it settles (prevents the
+      // reveal-then-jump on animated switches). Rapid clicks just extend the
+      // window; it always ends and re-evaluates, so the message can't stay hidden.
       document.addEventListener("click", function (e) {
         if (
           e.target.closest &&
           e.target.closest('[data-tab-component="button-list"]')
         ) {
-          setTimeout(scheduleEvaluate, 0);
+          switching = true;
+          hideNoResults();
+          if (switchTimer) clearTimeout(switchTimer);
+          switchTimer = setTimeout(function () {
+            switching = false;
+            scheduleEvaluate();
+          }, switchDelayMs());
         }
       });
 

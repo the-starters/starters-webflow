@@ -16,7 +16,7 @@
       <div class="app-form_input_group">
         <label for="field-2" class="form_label">Estimated End Date</label>
         <div class="position-relative">
-          <input type="text" name="endDateInput" auto-complete="off" placeholder="MM/DD/YYYY" data-input-datepicker="" data-input-datepicker-role="end" class="form_input is-invoice-input hasDatepicker" id="dp1784048649965">
+          <input type="text" name="endDateInput" auto-complete="off" placeholder="MM/DD/YYYY" data-input-datepicker="" data-input-datepicker-role="end" data-disabler-element="target" data-disabler-target="end-date" class="form_input is-invoice-input hasDatepicker" id="dp1784048649965">
           <div class="floating-input-icon">
             <svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 24 24" fill="none" class="svg-icon">
               <g opacity="0.5">
@@ -30,7 +30,7 @@
     <div data-checkbox-toggle="" class="display-contents" data-checkbox-toggle-inited="true">
       <label data-checkbox-toggle-element="checkbox" class="w-checkbox modal-form_checkbox-field">
         <div class="w-checkbox-input w-checkbox-input--inputType-custom modal-form_checkbox w--redirected-checked"></div>
-        <input type="checkbox" name="no-end-date" id="no-end-date" data-name="no-end-date" style="opacity:0;position:absolute;z-index:-1" required="" data-tab-validate-touched="true" data-form-flow-validate-touched="true">
+        <input type="checkbox" name="no-end-date" id="no-end-date" data-name="no-end-date" data-disabler-element="checkbox" data-disabler-target="end-date" style="opacity:0;position:absolute;z-index:-1" required="" data-tab-validate-touched="true" data-form-flow-validate-touched="true">
         <span class="modal-form_checkbox-text w-form-label" for="no-end-date">No end date or will be ongoing until the project is completed/ended.</span>
       </label>
       <div data-checkbox-toggle-element="item" class="display-contents">
@@ -72,3 +72,4 @@
       </div>
     </div>
   </div>
+<script src="../global-embeds/form-embeds/disabler.js" defer></script>
