@@ -1,0 +1,120 @@
+/* Main CSS /search-brilliance */
+  /* Custom filter checkbox - hide check until checked, then whiten label, tint box, reveal check */
+  .icon-20.is-checkbox-starters {
+    display: none;
+  }
+
+  .filter-checkbox:has(input:checked) {
+    color: white;
+  }
+
+  .filter-checkbox:has(input:checked) .filter-checkbox_icon {
+    background-color: #434b43;
+  }
+
+  .filter-checkbox:has(input:checked) .icon-20.is-checkbox-starters {
+    display: block;
+  }
+
+  /* Small radio filter - whiten label when selected */
+  .radio-filter.is-small:has(input:checked) .radio-filter_label {
+    color: white;
+  }
+
+  /* Experts results - 3-column grid */
+  .search-results_experts-list {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-column-gap: 0.75rem;
+    grid-row-gap: 2rem;
+  }
+  /* Learn results - 2-column grid */
+  .search-results_learn-list {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    grid-column-gap: 0.75rem;
+    grid-row-gap: 0.75rem;
+  }
+
+  /* Search form - single-column grid */
+  .search-brilliance_form {
+    display: grid;
+    grid-template-columns: repeat(1, 1fr);
+  }
+
+  /* Webflow Designer only - force results visible for styling */
+  .wf-design-mode .search-brilliance_results {
+    display: flex !important;
+  }
+
+  /* Filter item icon - hidden until item is selected */
+  .search-brilliance_filter-item [data-filter-icon] {
+    display: none;
+  }
+
+  .search-brilliance_filter-item.is-selected [data-filter-icon] {
+    display: block;
+  }
+
+  /* Active tab - themed fill/color via tokens */
+  .search-brilliance_wrapper .tab-button_radio-field.is-active {
+    background-color: var(--_colors---tabs--tab-active-fill);
+    color: var(--_colors---tabs--tab-active-color);
+  }
+
+  /* Learn type visibility - hide all, show only session */
+  [data-learn-type] {
+    display: none;
+  }
+
+  [data-learn-type='session'] {
+    display: flex;
+  }
+
+  /* Selected Filters - CSS */
+
+  [data-selected-filters] {
+    display: none !important;
+  }
+
+  .wf-design-mode [data-selected-filters] {
+    display: flex !important;
+  }
+
+  [data-selected-filters]:has([wf-algolia-element='filter-tag-wrapper'] > .wf-algolia-injected) {
+    display: flex !important;
+  }
+
+  /* Loader - CSS */
+
+  [data-loader] {
+    --color-1: var(--_colors---search-brilliance--loader-fill);
+    --color-2: var(--_colors---search-brilliance--loader-spinner);
+    --size: 0.8px;
+
+    width: calc(48 * var(--size));
+    height: calc(48 * var(--size));
+    border: calc(5 * var(--size)) solid var(--color-1);
+    border-bottom-color: var(--color-2);
+    border-radius: 50%;
+    display: inline-block;
+    box-sizing: border-box;
+    animation: rotation 1s linear infinite;
+  }
+
+  @keyframes rotation {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* Mobile - collapse result grids to flex */
+  @media (max-width: 767px) {
+    .search-results_experts-list,
+    .search-results_learn-list {
+      display: flex !important;
+    }
+  }

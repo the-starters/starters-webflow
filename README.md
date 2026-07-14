@@ -53,6 +53,7 @@ Do not discard local changes unless the user explicitly asks.
 - `explore-search/explore-search-default-results.js` — keeps results visible on an empty query and fills each federated section with its index's default ranking
 - `explore-search/explore-search-hide-empty.js` — hides `[starters-algolia-hide]` wrappers while all their Algolia sections are empty
 - `explore-search/explore-search-list-loader.js` — shows a loader and masks list jank during result transitions (arms on first user interaction; force-hides the loader at init)
+- `explore-search/explore-search.css` — search-brilliance page styles (filter checkboxes/radios, result grids, selected-filter reveal, loader)
 - `explore-search/explore-search-demo.html` — standalone demo page for the explore-search embeds (source-of-truth reference, not CDN-loaded)
 - `explore-search-transitions/explore-search-transitions.js` — search overlay open/close transitions (GSAP timelines, inert-locked closed state)
 - `explore-search-transitions/explore-search-transitions.css` — companion styles for the search overlay transitions
