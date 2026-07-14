@@ -1,0 +1,3 @@
+.section_navbar:is([data-wf--navbar-v2--variant='transparent'], [data-wf--navbar-v2--variant='transparent-light']):has([data-nav-menu-open]) {
+    background-color: var(--_navbar---main--background);
+  }

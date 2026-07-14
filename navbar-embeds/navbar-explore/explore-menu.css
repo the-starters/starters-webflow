@@ -1,0 +1,135 @@
+
+  .wf-design-mode [data-show-menu='true'] :is(.explore, .explore_sub_list, .explore_fr) {
+    visibility: visible;
+    pointer-events: auto;
+    opacity: 1;
+    margin-top: 0;
+  }
+
+  .wf-design-mode .section_navbar .nav_list_wr {
+    display: none;
+  }
+
+  /* Designer only: float every column beside its parent row so they can be
+       styled (JS positions them at runtime; in the Designer JS never runs). */
+  .wf-design-mode [data-show-menu='true'] .explore_sub_list,
+  .wf-design-mode [data-show-menu='true'] .explore_fr {
+    position: absolute;
+    left: 100%;
+    top: 0;
+    max-height: none;
+    overflow: visible;
+  }
+  .wf-design-mode [data-show-menu='true'] .explore_list {
+    max-height: none;
+    overflow: visible;
+  }
+
+  /* Rotate the toggle chevron when open (JS toggles .is-active). */
+  .explore_toggle_icon {
+    transition: transform 250ms cubic-bezier(0.2, 0, 0, 1);
+  }
+  .explore_toggle.is-active .explore_toggle_icon {
+    transform: rotate(-180deg);
+  }
+
+  .explore {
+    visibility: hidden;
+    pointer-events: none;
+    opacity: 0;
+  }
+  .explore.is-open {
+    visibility: visible;
+    pointer-events: auto;
+    opacity: 1;
+  }
+
+  /* Columns fade + slide up on open (JS toggles the inline styles). The slide
+       uses margin-top, NOT transform: a transform on L2 would become the
+       containing block for the nested fixed L3 and clip it. */
+  .explore_sub_list,
+  .explore_fr {
+    visibility: hidden;
+    pointer-events: none;
+    opacity: 0;
+    margin-top: 8px;
+    transition:
+      opacity 100ms ease-out,
+      margin-top 250ms ease-out,
+      visibility 100ms ease-out;
+  }
+
+  /* Sibling switch: the incoming column waits one cycle (this transition-delay)
+       so it doesn't overlap the outgoing one. JS adds .is-switching only when a
+       sibling was open. Tune via --explore-switch-delay. */
+  .explore_sub_list.is-switching,
+  .explore_fr.is-switching {
+    transition-delay: var(--explore-switch-delay, 150ms);
+  }
+
+  /* Keep the row whose column is open highlighted (not just on hover). */
+  .explore_item.is-active,
+  .explore_sub_item.is-active {
+    background-color: var(--_navbar---explore--bg-active-item);
+  }
+  /* .explore_item.is-active:where(.w-variant-3582852f-2ee1-0851-7555-21560e49ca97),
+    .explore_item.is-active:where(.w-variant-f85b8f6d-e4d2-c5ba-e944-d2936a229004),
+    .explore_sub_item.is-active:where(.w-variant-3582852f-2ee1-0851-7555-21560e49ca97),
+    .explore_sub_item.is-active:where(.w-variant-f85b8f6d-e4d2-c5ba-e944-d2936a229004) {
+      background-color: var(--colors--silver);
+    } */
+
+  [data-block='search-list'] {
+    visibility: hidden;
+    pointer-events: none;
+    opacity: 0;
+  }
+  [data-block='search-list'].is-open {
+    visibility: visible;
+    pointer-events: auto;
+    opacity: 1;
+  }
+
+  /* Each column scrolls on its own (y only); columns 2/3 are fixed. */
+  .explore_list {
+    max-height: calc(100dvh - var(--explore-top, 80px) - 1rem);
+    overflow-y: auto;
+    overflow-x: clip;
+    overscroll-behavior: contain;
+  }
+
+  /* left / top / max-height are set in JS. Fixed positioning lets the column
+       escape .explore_list's scroll/clip box. */
+  .explore_sub_list,
+  .explore_fr {
+    position: fixed;
+    overflow-y: auto;
+    overflow-x: clip;
+    overscroll-behavior: contain;
+  }
+
+  /* Hide scrollbars, keep scrolling. */
+  .explore_list,
+  .explore_sub_list,
+  .explore_fr {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .explore_list::-webkit-scrollbar,
+  .explore_sub_list::-webkit-scrollbar,
+  .explore_fr::-webkit-scrollbar {
+    display: none;
+  }
+
+  [data-block='explore-list'] .explore_item > .explore_item_wr::after {
+    content: '';
+    flex: none;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-left: 12px;
+    margin-right: -2px;
+    border-right: 2px solid currentColor;
+    border-top: 2px solid currentColor;
+    transform: rotate(45deg);
+    opacity: 1;
+  }
