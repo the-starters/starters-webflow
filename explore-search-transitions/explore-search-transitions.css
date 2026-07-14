@@ -1,0 +1,23 @@
+  /* Closed state: clip-path collapsed to a flat line at the top.
+     GSAP animates clip-path on open — no CSS transition here.
+     pointer-events:none so nothing inside is clickable/focusable while hidden. */
+     [data-search-brilliance-wrapper] {
+        clip-path: polygon(0 0, 100% 0, 100% 0, 0 0);
+        pointer-events: none;
+      }
+    
+      /* Active state: restore interaction while open (clip-path driven by GSAP). */
+      [data-search-brilliance-wrapper].is-active {
+        pointer-events: auto;
+      }
+    
+      /* Webflow Designer preview — toggle via data-search-brilliance-preview on the wrapper. */
+      .wf-design-mode [data-search-brilliance-wrapper][data-search-brilliance-preview='True'] {
+        clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+        pointer-events: auto;
+      }
+    
+      .wf-design-mode [data-search-brilliance-wrapper][data-search-brilliance-preview='False'] {
+        clip-path: polygon(0 0, 100% 0, 100% 0, 0 0);
+        pointer-events: none;
+      }

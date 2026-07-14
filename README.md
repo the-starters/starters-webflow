@@ -46,6 +46,16 @@ Do not discard local changes unless the user explicitly asks.
 - `starters-list/range-backfill.js`
 - `utils/loader.js` — env-switch script loader (`loadEnvScript`)
 - `utils/wf-validate.js` — declarative form validation (see below)
+- `explore-search/explore-search-chip-fill.js` — chip click copies its text into the search input, fires the engine's `input` event, announces `explore-search:commit`
+- `explore-search/explore-search-tab-counts.js` — live per-index hit counts for the tab bar (intercepts the engine's own Algolia responses; zero extra operations)
+- `explore-search/explore-search-most-searched.js` — dynamic "Most Searched" chips from an Algolia Query Suggestions index, via a designer-owned template
+- `explore-search/explore-search-recent-searches.js` — the user's recent searches as chips, persisted in localStorage, recorded via `explore-search:commit`
+- `explore-search/explore-search-default-results.js` — keeps results visible on an empty query and fills each federated section with its index's default ranking
+- `explore-search/explore-search-hide-empty.js` — hides `[starters-algolia-hide]` wrappers while all their Algolia sections are empty
+- `explore-search/explore-search-list-loader.js` — shows a loader and masks list jank during result transitions (arms on first user interaction; force-hides the loader at init)
+- `explore-search/explore-search-demo.html` — standalone demo page for the explore-search embeds (source-of-truth reference, not CDN-loaded)
+- `explore-search-transitions/explore-search-transitions.js` — search overlay open/close transitions (GSAP timelines, inert-locked closed state)
+- `explore-search-transitions/explore-search-transitions.css` — companion styles for the search overlay transitions
 
 ## utils/wf-validate.js
 
