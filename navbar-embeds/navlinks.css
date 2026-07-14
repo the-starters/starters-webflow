@@ -1,0 +1,46 @@
+
+  /* Hide the nav link groups by default — in the Designer AND on the published
+     site — until the flow JS adds .ms-nav-ready to <html> (after gating settles).
+     No JS runs in the Designer, so they stay hidden there too. */
+  html:not(.ms-nav-ready) .nav_list_group,
+  html:not(.ms-nav-ready) .navbar_link-list-wrapper {
+    display: none !important;
+  }
+
+  /* ---- DESIGNER PREVIEW: show only the selected variant ----
+     Matched by ID (the ones you set) AND by [data-ms-content] (the old, proven
+     mapping), so whichever the element actually carries, the right list wins. */
+  .wf-design-mode [data-preview-nav='common'] #common,
+  .wf-design-mode [data-preview-nav='free'] #free,
+  .wf-design-mode [data-preview-nav='freelancer'] #freelancer,
+  .wf-design-mode [data-preview-nav='brand'] #brands,
+  .wf-design-mode [data-preview-nav='common'] [data-ms-content='!members'],
+  .wf-design-mode [data-preview-nav='free'] [data-ms-content='free-access-only'],
+  .wf-design-mode [data-preview-nav='freelancer'] [data-ms-content='freelancer-only'],
+  .wf-design-mode [data-preview-nav='brand'] [data-ms-content='premium-brands'] {
+    display: flex !important;
+
+  }
+
+/* <style>
+
+  .wf-design-mode .navbar_link-list{
+    display: none;
+  }
+  
+  .wf-design-mode [data-preview-nav='common'] #common,
+  .wf-design-mode [data-preview-nav='free'] #free,
+  .wf-design-mode [data-preview-nav='freelancer'] #freelancer,
+  .wf-design-mode [data-preview-nav='brand'] #brands,
+  .wf-design-mode [data-preview-nav='common'] [data-ms-content='!members'],
+  .wf-design-mode [data-preview-nav='free'] [data-ms-content='free-access-only'],
+  .wf-design-mode [data-preview-nav='freelancer'] [data-ms-content='freelancer-only'],
+  .wf-design-mode [data-preview-nav='brand'] [data-ms-content='premium-brands'] {
+    display: flex !important;
+
+  }
+  
+  .wf-design-mode .navbar_link-list-wrapper{
+    overflow: hidden;
+  }
+</style> */

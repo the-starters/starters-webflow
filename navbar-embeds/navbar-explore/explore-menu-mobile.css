@@ -1,0 +1,173 @@
+
+  /* Fixed navbar offset for the mobile explore menu (formerly measured by JS). */
+  @media (max-width: 991px) {
+    :root { --explore-mtop: 5.5rem; }
+  }
+  @media (max-width: 478px) {
+    :root { --explore-mtop: 4.8125rem; }
+  }
+
+  /* Explore menu — mobile (<= 991px): full-screen stacked columns L1 -> L2 -> L3
+     with a fixed back button. Desktop JS bails below 992px. */
+  @media (max-width: 991px) {
+    /* Full-screen panel. transform:none kills Webflow's translateX(-50%);
+       top + bottom pin it to the full device height. --explore-mtop = navbar
+       offset (a fixed CSS value: 5.5rem; 4.8125rem on mobile portrait). */
+    [data-block="explore-list"] {
+      top: var(--explore-mtop, 5.5rem) !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      height: auto !important;
+      transform: none !important;
+      transition: opacity 200ms ease, visibility 200ms ease;
+    }
+
+    [data-block="explore-list"] .explore_list {
+      width: 100%;
+      height: 100%;
+      max-height: none;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+
+    /* L1 rows: drop the desktop fixed height, add a right chevron (L1 has no
+       arrow-icon; the `.explore_item >` scope keeps it off L2/L3). */
+    [data-block="explore-list"] .explore_item {
+      height: auto !important;
+      min-height: 0 !important;
+      padding-right: 0.5rem;
+      padding-bottom: 0px;
+    }
+
+    [data-block="explore-list"] .explore_item > .explore_item_wr::after {
+      content: "";
+      flex: none;
+      width: 5px;
+      height: 5px;
+      margin-left: 12px;
+      margin-right: -6px;
+      border-right: 2px solid currentColor;
+      border-top: 2px solid currentColor;
+      transform: rotate(45deg);
+      opacity: 1;
+    }
+
+    /* L2 rows: drop the desktop height:100% (which fills the full-height mobile
+       column, showing one row per screen) so they collapse to label height. */
+    [data-block="explore-list"] .explore_sub_item {
+      height: auto !important;
+      min-height: 0 !important;
+      padding-bottom: 0 !important;
+    }
+
+    /* L2 + L3: full-screen fixed overlays, stacked in place and faded in/out. */
+    [data-block="explore-list"] .explore_sub_list,
+    [data-block="explore-list"] .explore_fr {
+      position: fixed !important;
+      top: var(--explore-mtop, 5.5rem) !important;
+      bottom: 0 !important;
+      left: 0 !important;
+      right: auto !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      height: auto !important;
+      max-height: none !important;
+      margin: 0 !important;
+      opacity: 0 !important;
+      visibility: hidden;
+      pointer-events: none;
+      overflow-y: auto;
+      overflow-x: hidden;
+      background-color: var(--_navbar---explore--bg);
+      transition: opacity 200ms ease, visibility 200ms ease;
+      padding-top: 60px;
+      padding-left: 1.25rem;
+      padding-right: 1.25rem;
+    }
+    [data-block="explore-list"] .explore_sub_list { z-index: 1001 !important; }
+    [data-block="explore-list"] .explore_fr { z-index: 1002 !important; }
+
+    /* Open (JS adds .is-open-m). */
+    [data-block="explore-list"] .explore_sub_list.is-open-m,
+    [data-block="explore-list"] .explore_fr.is-open-m {
+      opacity: 1 !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+    }
+
+    /* Hide in-row back wrappers; the fixed button handles back. */
+    [data-block="explore-list"] .explore_back-wrapper {
+      display: none !important;
+    }
+
+    /* Fixed back button. .is-shown delay waits for the column fade before fading in. */
+    [data-block="explore-list"] .explore_back-button--mobile {
+      position: fixed;
+      top: calc(var(--explore-mtop, 5.5rem) + 12px);
+      left: 16px;
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      border: none;
+      border-radius: 999px;
+      background-color: var(--_navbar---explore--bg-hover);
+      color: var(--_navbar---explore--color);
+      cursor: pointer;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 200ms ease, visibility 200ms ease;
+    }
+    [data-block="explore-list"] .explore_back-button--mobile.is-shown {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transition-delay: 200ms;
+    }
+    [data-block="explore-list"] .explore_back-button--mobile svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    /* Webflow Designer only: set data-mobile-menu-prev on the panel to preview a
+       column — "2" = L2, "3" = L3 (combine "2, 3"). .wf-design-mode never ships
+       live, so this has no effect on the published site. */
+    .wf-design-mode [data-mobile-menu-prev] {
+      opacity: 1 !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+    }
+    /* The Designer has no JS to lift host z-index, so drop the per-row stacking
+       contexts and let the fixed columns layer by their own z-index. */
+    .wf-design-mode [data-mobile-menu-prev] .explore_item,
+    .wf-design-mode [data-mobile-menu-prev] .explore_sub_item {
+      z-index: auto !important;
+    }
+    /* opacity:0 on a parent hides its children too, so "3" must also un-hide the
+       L2 ancestor for L3 to show. */
+    .wf-design-mode [data-mobile-menu-prev*="2"] .explore_sub_list,
+    .wf-design-mode [data-mobile-menu-prev*="3"] .explore_sub_list {
+      opacity: 1 !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+    }
+    .wf-design-mode [data-mobile-menu-prev*="3"] .explore_fr {
+      opacity: 1 !important;
+      visibility: visible !important;
+      pointer-events: auto !important;
+    }
+  }
+
+  /* Back button on phones only; hidden at tablet width and up. */
+  @media (min-width: 768px) {
+    [data-block="explore-list"] .explore_back-button--mobile {
+      display: none !important;
+    }
+  }

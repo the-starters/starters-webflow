@@ -1,0 +1,17 @@
+
+  @media (max-width: 767px) {
+    [data-navbar-dropdown] > .w-dropdown-list {
+      display: grid;
+      grid-template-rows: 0fr;
+      transition: grid-template-rows 0.3s ease-out;
+    }
+
+    [data-navbar-dropdown] > .w-dropdown-list.w--open {
+      grid-template-rows: 1fr;
+    }
+
+    [data-navbar-dropdown] > .w-dropdown-list [data-navbar-dropdown-link-wrapper] {
+      overflow: hidden;
+      min-height: 0;
+    }
+  }

@@ -1,0 +1,50 @@
+@media (max-width: 767px) {
+    /* Durations live on the dropdown itself (not :root) and are namespaced with
+       a -mobile- infix so they never clash with navbar-css.html's vars. */
+    .navbar_profile-dropdown {
+      --navbar--dropdown-mobile-open-duration: 400ms;
+      --navbar--dropdown-mobile-close-duration: 400ms;
+    }
+
+    /* Closed/initial state.
+       display:grid !important replaces Webflow's display:none so the height can
+       actually transition (0fr -> 1fr). visibility:hidden + opacity:0 hide the
+       list and pull its links out of the tab order while collapsed.
+       Guarded with :not(.wf-design-mode) so the Webflow Designer canvas keeps
+       its normal display toggling. */
+    html:not(.wf-design-mode) .navbar_profile-dropdown > .navbar_profile-dropdown-list {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: 0fr;
+      visibility: hidden;
+      opacity: 0;
+      transition:
+        grid-template-rows var(--navbar--dropdown-mobile-close-duration) ease,
+        opacity var(--navbar--dropdown-mobile-close-duration) ease,
+        visibility var(--navbar--dropdown-mobile-close-duration);
+    }
+
+    /* Open state — Webflow owns the .w--open toggle. Reassigning the close-var to
+       the open-var here lets open and close use independent durations. */
+    html:not(.wf-design-mode) .navbar_profile-dropdown > .navbar_profile-dropdown-list.w--open {
+      --navbar--dropdown-mobile-close-duration: var(--navbar--dropdown-mobile-open-duration);
+      grid-template-rows: 1fr;
+      visibility: visible;
+      opacity: 1;
+    }
+
+    /* The single grid child must clip + be allowed to shrink to zero so the
+       0fr -> 1fr row collapse is visible. */
+    html:not(.wf-design-mode) .navbar_profile-dropdown > .navbar_profile-dropdown-list > .navbar_profile-dropdown-link-wrapper {
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* Opted out of motion: snap instead of animate. */
+    @media (prefers-reduced-motion: reduce) {
+      .navbar_profile-dropdown {
+        --navbar--dropdown-mobile-open-duration: 0ms;
+        --navbar--dropdown-mobile-close-duration: 0ms;
+      }
+    }
+  }
