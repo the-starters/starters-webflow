@@ -180,6 +180,20 @@
             hideNoResults();
             return;
           }
+          // During an ANIMATED tab switch (e.g. GSAP fade) tabs.js flips
+          // data-tab-active to the incoming panel immediately, but that panel
+          // stays display:none until the outgoing panel finishes fading out and
+          // collapses. Revealing now would drop the message below the still-tall
+          // outgoing panel and make it jump up when the switch settles. Wait
+          // until the active panel is actually displayed; the observer re-fires
+          // when its display flips to block, so we reveal in the settled spot.
+          // No-op for instant (non-animated) switches — the active panel is
+          // already display:block.
+          var activePanel = getActivePanel();
+          if (activePanel && getComputedStyle(activePanel).display === "none") {
+            hideNoResults();
+            return;
+          }
           if (isActivePanelEmpty()) {
             showNoResults();
           } else {
