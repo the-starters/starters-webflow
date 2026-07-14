@@ -300,18 +300,27 @@
        HIDDEN (inline display:none / Display:None in Webflow) and the script reveals
        it only while >= 1 entry is stored — including live at the first mid-session
        commit. Script missing or storage blocked = section never appears.
-    10. Behavior is split across six standalone deferred scripts loaded at the end
+    10. Behavior is split across seven standalone deferred scripts loaded at the end
        of body (order doesn't matter; each is optional per use case and bails out
        quietly if its markup is absent): chip-fill, tab-counts, most-searched,
-       recent-searches, default-results, list-loader. Chip clicks reach the recents
-       recorder ONLY via the "explore-search:commit" CustomEvent — the files share
-       no globals.
+       recent-searches, default-results, list-loader, tab-no-results. Chip clicks
+       reach the recents recorder ONLY via the "explore-search:commit" CustomEvent —
+       the files share no globals.
     11. Transition loader: an authored-hidden [data-loader] element inside the
        search-wrapper is shown by explore-search-list-loader.js while Algolia
        "/queries" requests are in flight (the panel-list is masked with
        visibility:hidden meanwhile, keeping layout space). Minimum display 200ms;
        a numeric attribute value overrides (data-loader="350"). Loader missing or
        embed absent = nothing ever shows (fail-safe).
+    12. The shared [wf-algolia-element="no-results"] element is ALSO shown per
+       active tab by explore-search-tab-no-results.js: whenever the ACTIVE tab's
+       section is empty (the engine inline-hides 0-hit sections — the embed reads
+       that display:none), it reveals the message, not only when BOTH indices are
+       empty. It stays correct across tab switches and engine re-renders via a
+       MutationObserver on the results container plus a button-list click hook, and
+       force-hides on an empty query (default-results owns that state). It toggles a
+       !important CSS class so it wins over the engine's inline display:none.
+       Standalone; bails out quietly if the tabbed / no-results markup is absent.
   -->
 
   <!-- Algolia outside-click boundary: header + sidebar + main all live inside -->
@@ -469,8 +478,11 @@
 
             </div>
 
-            <!-- Single no-results element at the results-container level
-                 (this mode does not support per-section no-results). -->
+            <!-- Shared no-results element at the results-container level. The
+                 engine only reveals it when the WHOLE federated search is empty;
+                 explore-search-tab-no-results.js ALSO shows it whenever the active
+                 tab's panel has no populated section, via a !important forcing
+                 class (so it wins over the engine's inline display:none). -->
             <div wf-algolia-element="no-results" style="display: none">No matches found.</div>
           </div>
 
@@ -518,7 +530,7 @@
     data-insights="true"
   ></script>
 
-  <!-- Explore-search feature embeds. Five standalone deferred scripts —
+  <!-- Explore-search feature embeds. Seven standalone deferred scripts —
        load order does NOT matter and each is optional per use case (a file
        bails out quietly when its markup is absent). Deferred scripts run
        before DOMContentLoaded, so tab-counts' fetch/XHR interception is
@@ -536,6 +548,7 @@
   <script src="explore-search-recent-searches.js" defer></script>
   <script src="explore-search-default-results.js" defer></script>
   <script src="explore-search-list-loader.js" defer></script>
+  <script src="explore-search-tab-no-results.js" defer></script>
 
 </body>
 </html>
