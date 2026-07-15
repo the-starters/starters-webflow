@@ -1701,9 +1701,13 @@
       })
     }
 
-    // CLOSE (confirmation)
+    // CLOSE (confirmation). Close controls inside the close-opportunity modal
+    // are owned by wireCloseOpportunityModal() below. Binding them here as
+    // well sends two PATCH requests from one click and lets this default guard
+    // reload interrupt the detail modal's success step. Keep this direct path
+    // only for any legacy close control that lives outside that modal.
     const closeBtn = $('[data-opp-submit="close"]')
-    if (closeBtn)
+    if (closeBtn && !closeBtn.closest('[data-modal-target="close-opportunity"]'))
       closeBtn.addEventListener('click', () =>
         guard(closeBtn, () => API.brandOppClose(activeOpp)),
       )
