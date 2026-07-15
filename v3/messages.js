@@ -17,12 +17,10 @@
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const LOGIN_PATH = '/login'
-  const FEED_FILTER_ACTION = 'messages-feed-filter'
-
-  const FEED_FILTERS = {
-    all: {},
-    unread: { isUnread: true },
-    read: { isUnread: false },
+  const FEED_FILTER_ACTIONS = {
+    'messages-filter-all': {},
+    'messages-filter-unread': { isUnread: true },
+    'messages-filter-read': { isUnread: false },
   }
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
@@ -133,12 +131,10 @@
       return
     }
 
-    inbox.onCustomConversationAction(FEED_FILTER_ACTION, (event) => {
-      const filterName = event && event.params && event.params.choice
-      const filter = FEED_FILTERS[filterName]
-      if (!filter) return
-
-      inbox.setFeedFilter(filter)
+    Object.entries(FEED_FILTER_ACTIONS).forEach(([action, filter]) => {
+      inbox.onCustomConversationAction(action, () => {
+        inbox.setFeedFilter(filter)
+      })
     })
   }
 
