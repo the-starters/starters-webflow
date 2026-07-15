@@ -17,6 +17,13 @@
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const LOGIN_PATH = '/login'
+  const FEED_FILTER_ACTION = 'messages-feed-filter'
+
+  const FEED_FILTERS = {
+    all: {},
+    unread: { hasUnreadMessages: true },
+    read: { hasUnreadMessages: false },
+  }
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
     if (
@@ -118,6 +125,23 @@
     return fields
   }
 
+  function installFeedFilterActions(inbox) {
+    if (
+      typeof inbox.onCustomConversationAction !== 'function' ||
+      typeof inbox.setFeedFilter !== 'function'
+    ) {
+      return
+    }
+
+    inbox.onCustomConversationAction(FEED_FILTER_ACTION, (event) => {
+      const filterName = event && event.params && event.params.filter
+      const filter = FEED_FILTERS[filterName]
+      if (!filter) return
+
+      inbox.setFeedFilter(filter)
+    })
+  }
+
   async function mountMessages() {
     const container = document.getElementById('talkjs-container')
     if (!container) throw new Error('Missing #talkjs-container')
@@ -142,6 +166,7 @@
       theme: { name: TALKJS_THEME },
     })
 
+    installFeedFilterActions(inbox)
     inbox.mount(container)
   }
 
