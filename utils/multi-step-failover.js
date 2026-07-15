@@ -38,6 +38,10 @@
   function check() {
     // only wizard pages that actually use the engine
     if (!document.querySelector('form[data-form="multistep"]')) return
+    // page already repointed to our mirror — nothing to fail over to
+    if (document.querySelector('script[src*="vendor/videsigns-multi-step"]')) {
+      return console.info('[ms-failover] page uses the mirrored engine — probe skipped')
+    }
     const tag = document.querySelector('script[src*="videsigns/webflow-tools"][src*="multi-step"]')
     if (!tag) return inject('script tag removed from page')
     fetch(UPSTREAM, { cache: 'force-cache' })
