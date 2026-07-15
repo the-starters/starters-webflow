@@ -41,13 +41,13 @@
     }
   }
 
-  // Opportunity detail (/opportunities/<id>): hide the application-state CTAs
+  // Opportunity detail (/opportunities/<slug>): hide the application-state CTAs
   // (Apply / Applied / Withdraw / Edit application) until the member's applied
   // state is resolved, so the wrong CTA never flashes before paintState() runs
   // (the state comes from an async starter/opportunities/detail fetch). Injected
   // synchronously; the first paintState() removes it. Brand-view state elements
   // live inside the async-hidden talent wrapper, so this is a no-op for brands.
-  if (/^\/opportunities\/\d+/.test(location.pathname)) {
+  if (/^\/opportunities\/[^/]+\/?$/.test(location.pathname)) {
     try {
       const stateHide = document.createElement('style')
       stateHide.id = 'opp30-detail-hide-until-state'
@@ -216,6 +216,44 @@
   const $ = (sel, root = document) => root.querySelector(sel)
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel))
   const urlParam = (k) => new URL(location.href).searchParams.get(k)
+
+  function normalizedOpportunityPath(value) {
+    if (!value) return ''
+    try {
+      const currentUrl = new URL(location.href)
+      const url = new URL(String(value), currentUrl)
+      if (url.origin !== currentUrl.origin || !/^\/opportunities\/[^/]+\/?$/.test(url.pathname)) return ''
+      return url.pathname + url.search + url.hash
+    } catch (e) {
+      return ''
+    }
+  }
+
+  // URL labels may change independently of identity. Prefer the projected CMS
+  // path/slug and use the immutable Xano id only as a backwards-compatible fallback.
+  function opportunityPath(item) {
+    const record = item && typeof item === 'object' ? item : { id: item }
+    const projectedPath = normalizedOpportunityPath(record.url_path)
+    if (projectedPath) return projectedPath
+    const id = record.opportunity_id || record.id || record.objectID
+    const slug = String(record.webflow_slug || id || '').trim()
+    return slug ? '/opportunities/' + encodeURIComponent(slug) : ''
+  }
+
+  function cardOpportunityPath(card) {
+    if (!card) return ''
+    const link = $('a[data-opp-detail-link], a[wf-algolia-link-url], a[wf-algolia-link], a.clickable_link', card)
+    const renderedPath = link && normalizedOpportunityPath(link.getAttribute('href'))
+    if (renderedPath) return renderedPath
+    return opportunityPath({
+      id:
+        card.getAttribute('data-opp-id') ||
+        card.getAttribute('data-wf-algolia-hit-objectid') ||
+        card.getAttribute('data-wf-xano-id'),
+      url_path: card.getAttribute('data-opp-url-path'),
+      webflow_slug: card.getAttribute('data-opp-webflow-slug'),
+    })
+  }
 
   const fmtDate = (ts) =>
     ts ? new Date(ts).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : ''
@@ -642,7 +680,7 @@
   }
 
   /** Plan-based gate for pages shared by talent AND paying brands
-   *  (/opportunities/<id>). Redirects: logged-out -> /login, free brand ->
+   *  (/opportunities/<slug>). Redirects: logged-out -> /login, free brand ->
    *  BRAND_FREE_REDIRECT, unmapped plans -> /. Resolves {member, role} otherwise. */
   async function gateByPlan() {
     const memberstack = await waitForMemberstackDom()
@@ -706,6 +744,38 @@
   const bind = (card, field, value) => {
     $$(`[data-opp-bind="${field}"]`, card).forEach((el) => {
       el.textContent = value == null ? '' : value
+    })
+  }
+
+  // Match the Webflow CMS `full-overview` projection used by Xano's
+  // sync-webflow endpoint: escape the two editable source fields, preserve
+  // their line breaks as <br>, then separate Requirements from Description
+  // with one blank line. The CMS remains the reload-time mirror; this painter
+  // only keeps the already-open detail page current after an edit succeeds.
+  function escapeOpportunityHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (char) => {
+      const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+      return entities[char]
+    })
+  }
+
+  function opportunityMultilineHtml(value) {
+    return escapeOpportunityHtml(value).replace(/\r?\n/g, '<br>')
+  }
+
+  function opportunityOverviewHtml(opportunity) {
+    const description = opportunityMultilineHtml(opportunity && opportunity.description)
+    const requirements = opportunityMultilineHtml(opportunity && opportunity.exp_requirements)
+    return requirements ? description + '<br><br>' + requirements : description
+  }
+
+  function paintOpportunityDetail(opportunity) {
+    if (!opportunity || typeof opportunity !== 'object') return
+    ;['title', 'project_type', 'est_project_duration', 'budget', 'budget_frequency'].forEach((field) => {
+      if (opportunity[field] != null) bind(document, field, opportunity[field])
+    })
+    $$('[data-opp-bind="full_overview"]').forEach((el) => {
+      el.innerHTML = opportunityOverviewHtml(opportunity)
     })
   }
 
@@ -1212,7 +1282,10 @@
         bind(card, 'created_at', fmtDate(o.created_at))
         bind(card, 'status', o.status)
         const link = $('[data-opp-detail-link]', card)
-        if (link && (o.opportunity_id || o.id)) link.href = `/opportunities/${o.opportunity_id || o.id}`
+        if (link) {
+          const path = opportunityPath(o)
+          if (path) link.href = path
+        }
         paintState(card, 'applied')
       })
     } catch (err) {
@@ -1224,13 +1297,21 @@
     }
   }
 
+  function parseOpportunityId(value) {
+    const id = String(value || '').trim()
+    if (!/^[1-9]\d*$/.test(id)) return null
+    const parsed = Number(id)
+    return Number.isSafeInteger(parsed) ? parsed : null
+  }
+
   // The page's Xano opportunity id: prefer the CMS-bound [data-opp-page-id]
-  // attribute (survives future slug-format changes); fall back to parsing the
-  // slug, which historically IS the Xano id (e.g. /opportunities/591).
+  // attribute (survives future slug-format changes). Fall back only for the
+  // historical numeric slug, where the URL unambiguously represents the id.
   function pageOppId() {
     const el = $('[data-opp-page-id]')
-    const fromAttr = el && parseInt(el.getAttribute('data-opp-page-id'), 10)
-    return fromAttr || parseInt(location.pathname.split('/').pop(), 10)
+    if (el) return parseOpportunityId(el.getAttribute('data-opp-page-id'))
+    const slug = location.pathname.split('/').filter(Boolean).pop()
+    return parseOpportunityId(slug)
   }
 
   async function initTalentDetail(member) {
@@ -1319,7 +1400,7 @@
     checkRadio('Duration', o.est_project_duration)
   }
 
-  /** /opportunities/<id> CMS detail page, shared by talent and PAYING brands.
+  /** /opportunities/<slug> CMS detail page, shared by talent and PAYING brands.
    *  Gates by Memberstack plan (gateByPlan), reveals the matching
    *  [data-opp-role="talent"|"brand"] wrapper, then runs that role's wiring.
    *  Free brands never reach this point (redirected by the gate). */
@@ -1434,8 +1515,12 @@
   /* ==================== ACTIVE-ID TRACKING ====================== */
   // Confirmation/edit modals carry no id; we remember what was clicked.
   let activeOpp = null
+  let activeOppPath = ''
   let activeApp = null
-  const setActiveOpp = (id) => (activeOpp = id ? parseInt(id, 10) : null)
+  const setActiveOpp = (id, path = '') => {
+    activeOpp = id ? parseInt(id, 10) : null
+    activeOppPath = normalizedOpportunityPath(path) || opportunityPath(activeOpp)
+  }
   const setActiveApp = (id) => (activeApp = id ? parseInt(id, 10) : null)
 
   // Read a field's text from a card, whichever library rendered it:
@@ -1495,10 +1580,22 @@
   document.addEventListener('click', (e) => {
     const card = e.target.closest('[data-opp-id], [data-wf-algolia-hit-objectid], [data-wf-xano-id]')
     if (card) {
+      // wf-xano also stamps applicant rows with data-wf-xano-id, but that id is
+      // the application id — not the opportunity id. On the shared CMS detail
+      // page an applicant-card click must never replace the page-level
+      // activeOpp (otherwise Edit/Close sends the application id and Xano
+      // correctly returns "Opportunity not found"). Keep it only as activeApp.
+      const wfXanoRoot = card.closest('[wf-xano-source]')
+      const wfXanoSource = wfXanoRoot ? wfXanoRoot.getAttribute('wf-xano-source') || '' : ''
+      if (wfXanoSource.includes('applications/list')) {
+        setActiveApp(card.getAttribute('data-app-id') || card.getAttribute('data-wf-xano-id'))
+        return
+      }
       setActiveOpp(
         card.getAttribute('data-opp-id') ||
           card.getAttribute('data-wf-algolia-hit-objectid') ||
           card.getAttribute('data-wf-xano-id'),
+        cardOpportunityPath(card),
       )
       // Always reset (null when absent): wf-xano/wf-algolia cards carry no
       // data-app-id, and a stale id from a previously-clicked card must never
@@ -1586,7 +1683,8 @@
         const payload = readOpportunityForm(modal)
         const validationMessage = validateOpportunityPayload(payload)
         if (validationMessage) return alert(validationMessage)
-        await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), () => {
+        await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), (updatedOpportunity) => {
+          paintOpportunityDetail(updatedOpportunity)
           // No-reload success: swap the form for the modal's native w-form-done
           // "pending for review" screen (same pattern as apply/edit-application).
           const form = $('form', modal)
@@ -1603,9 +1701,13 @@
       })
     }
 
-    // CLOSE (confirmation)
+    // CLOSE (confirmation). Close controls inside the close-opportunity modal
+    // are owned by wireCloseOpportunityModal() below. Binding them here as
+    // well sends two PATCH requests from one click and lets this default guard
+    // reload interrupt the detail modal's success step. Keep this direct path
+    // only for any legacy close control that lives outside that modal.
     const closeBtn = $('[data-opp-submit="close"]')
-    if (closeBtn)
+    if (closeBtn && !closeBtn.closest('[data-modal-target="close-opportunity"]'))
       closeBtn.addEventListener('click', () =>
         guard(closeBtn, () => API.brandOppClose(activeOpp)),
       )
@@ -1693,8 +1795,8 @@
     btn.style.pointerEvents = 'none'
     btn.style.opacity = '0.6'
     try {
-      await fn()
-      if (onSuccess) onSuccess()
+      const result = await fn()
+      if (onSuccess) onSuccess(result)
       else location.reload()
     } catch (err) {
       console.error('[opp30]', err)
@@ -1806,12 +1908,12 @@
       // modal (showApplySuccess repainted it) — just close the modal via the
       // engine's own close element. On the feed the same modal applies from a
       // card, so "View Application" navigates to that opportunity's page.
-      if (/^\/opportunities\/\d+/.test(location.pathname)) {
+      if (/^\/opportunities\/[^/]+\/?$/.test(location.pathname)) {
         const closeEl = modal.querySelector('[data-modal-close]')
         if (closeEl) closeEl.click()
         else location.reload()
       } else if (activeOpp) {
-        location.href = '/opportunities/' + activeOpp
+        location.href = activeOppPath || opportunityPath(activeOpp)
       } else {
         location.reload()
       }
@@ -1843,8 +1945,8 @@
       tmpl.classList.remove('is-inactive')
     }
 
-    // Per-card: mirror the id to data-opp-id (for active-id tracking) and set a real
-    // /opportunities/<id> href on the detail link(s).
+    // Per-card: mirror the stable id to data-opp-id. Preserve a projected
+    // url_path/webflow_slug href from Algolia; use the Xano id only as fallback.
     const fixCards = () => {
       results.querySelectorAll('[data-wf-algolia-hit-objectid]').forEach((card) => {
         const id = card.getAttribute('data-wf-algolia-hit-objectid')
@@ -1852,7 +1954,9 @@
         if (!card.hasAttribute('data-opp-id')) card.setAttribute('data-opp-id', id)
         card
           .querySelectorAll('a[wf-algolia-link], a[wf-algolia-link-url], a.clickable_link, a[data-opp-detail-link]')
-          .forEach((a) => a.setAttribute('href', '/opportunities/' + id))
+          .forEach((a) => {
+            if (!normalizedOpportunityPath(a.getAttribute('href'))) a.setAttribute('href', opportunityPath(id))
+          })
       })
     }
 
@@ -2006,7 +2110,7 @@
     wireModals()
     const p = location.pathname
     if (p.includes('opportunities-details---brand-view')) initBrandDetail()
-    else if (p.match(/^\/opportunities\/\d+/)) initOppDetailByRole()
+    else if (p.match(/^\/opportunities\/[^/]+\/?$/)) initOppDetailByRole()
     else if (p.includes('opportunities-brands-view')) {
       // Brand feed: when the page carries wf-xano brand-feed markup (Designer swap,
       // 2026-07-02), the wf-xano library owns the render — initBrandList would repeat
@@ -2040,6 +2144,9 @@
     API,
     ensureXanoToken,
     diagnoseFreelancerFeed,
+    paintOpportunityDetail,
+    opportunityPath,
+    pageOppId,
     waitForMemberstackDom,
     initOpportunityCategorySelects,
     readOpportunityForm,
