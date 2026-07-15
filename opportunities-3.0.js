@@ -600,6 +600,19 @@
     })
   }
 
+  // Toggle [data-opp-status="active|closed"] elements by the opportunity's
+  // status, so the detail-page Close vs Reopen buttons swap WITHOUT a reload.
+  // (wf-xano-if can't drive these — they sit outside any wf-xano list scope —
+  // and CMS conditional visibility is decided server-side at load.) Values are
+  // space-separated like data-opp-state.
+  function paintOppStatus(status) {
+    const key = String(status || '') === 'Closed' ? 'closed' : 'active'
+    $$('[data-opp-status]').forEach((el) => {
+      const vals = el.getAttribute('data-opp-status').split(/\s+/)
+      el.style.display = vals.includes(key) ? '' : 'none'
+    })
+  }
+
   /* ============== MEMBERSTACK GATE (reused from v2) ============== */
   function waitForMemberstackDom(timeoutMs = 10000) {
     if (window.$memberstackDom && typeof window.$memberstackDom.getCurrentMember === 'function') {
@@ -1355,8 +1368,7 @@
   // radios, which otherwise submit their default state and clobber real values).
   async function prefillEditOpportunity(oppId) {
     const modal = $('[data-modal-target="edit-opportunity"]')
-    if (!modal) return
-    initOpportunityCategorySelects(modal)
+    if (modal) initOpportunityCategorySelects(modal)
     let o
     try {
       o = await API.brandOppGet(oppId)
@@ -1364,6 +1376,10 @@
       return /* non-fatal: guard keeps existing values if the brand submits */
     }
     if (!o) return
+    // Paint the Close/Reopen buttons from the live status (runs on brand-owner
+    // init; independent of the edit modal, which may not be present).
+    paintOppStatus(o.status)
+    if (!modal) return
     const setVal = (name, val) => {
       const el = $(`[name="${name}"]`, modal)
       if (el && val != null) {
@@ -1718,7 +1734,7 @@
     const reopenBtn = $('[data-opp-submit="reopen"]')
     if (reopenBtn)
       reopenBtn.addEventListener('click', () =>
-        guard(reopenBtn, () => API.brandOppReopen(activeOpp)),
+        guard(reopenBtn, () => API.brandOppReopen(activeOpp), () => paintOppStatus('Active')),
       )
 
     // ARCHIVE / RESTORE applicant (confirmation)
@@ -2020,7 +2036,7 @@
         // wouldn't reflect "Closed" anyway (Webflow CMS re-sync is async). The
         // brands-list modal ("Confirm" div, no flow step) keeps the reload so
         // the closed opp drops out of that feed.
-        guard(btn, () => API.brandOppClose(activeOpp), flowConfirm ? function () {} : undefined)
+        guard(btn, () => API.brandOppClose(activeOpp), flowConfirm ? function () { paintOppStatus('Closed') } : undefined)
       }
     })
   }
