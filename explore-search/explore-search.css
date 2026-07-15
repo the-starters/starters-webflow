@@ -91,9 +91,7 @@
     --color-1: var(--_colors---search-brilliance--loader-fill);
     --color-2: var(--_colors---search-brilliance--loader-spinner);
     --size: 0.8px;
-
-    width: calc(48 * var(--size));
-    height: calc(48 * var(--size));
+    
     border: calc(5 * var(--size)) solid var(--color-1);
     border-bottom-color: var(--color-2);
     border-radius: 50%;
