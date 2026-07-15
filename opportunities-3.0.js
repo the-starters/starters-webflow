@@ -1548,6 +1548,17 @@
   document.addEventListener('click', (e) => {
     const card = e.target.closest('[data-opp-id], [data-wf-algolia-hit-objectid], [data-wf-xano-id]')
     if (card) {
+      // wf-xano also stamps applicant rows with data-wf-xano-id, but that id is
+      // the application id — not the opportunity id. On the shared CMS detail
+      // page an applicant-card click must never replace the page-level
+      // activeOpp (otherwise Edit/Close sends the application id and Xano
+      // correctly returns "Opportunity not found"). Keep it only as activeApp.
+      const wfXanoRoot = card.closest('[wf-xano-source]')
+      const wfXanoSource = wfXanoRoot ? wfXanoRoot.getAttribute('wf-xano-source') || '' : ''
+      if (wfXanoSource.includes('applications/list')) {
+        setActiveApp(card.getAttribute('data-app-id') || card.getAttribute('data-wf-xano-id'))
+        return
+      }
       setActiveOpp(
         card.getAttribute('data-opp-id') ||
           card.getAttribute('data-wf-algolia-hit-objectid') ||
