@@ -56,6 +56,22 @@
     } catch (e) {
       /* non-fatal */
     }
+
+    // The brand Close/Reopen controls also depend on async Xano state. Keep
+    // both invisible and non-interactive until paintOppStatus() has the
+    // authoritative status, preventing the wrong action (or both actions)
+    // from flashing at startup. Include the legacy Designer selectors so the
+    // published page is protected before its old wf-xano-if markup is upgraded
+    // in prepareOpportunityStatusControls().
+    try {
+      const statusHide = document.createElement('style')
+      statusHide.id = 'opp30-detail-hide-until-status'
+      statusHide.textContent =
+        '[data-opp-status],[data-modal-trigger="close-opportunity"],[data-modal-trigger="reopen-opportunity"]{visibility:hidden!important;pointer-events:none!important}'
+      ;(document.head || document.documentElement).appendChild(statusHide)
+    } catch (e) {
+      /* non-fatal */
+    }
   }
 
   /* ============================ CONFIG ============================ */
@@ -600,17 +616,42 @@
     })
   }
 
+  // Upgrade the legacy published detail-page controls in place. wf-xano-if
+  // cannot evaluate these buttons because they live outside a wf-xano list
+  // scope. Adding the current data-opp-* contracts before wireModals() runs
+  // makes the Reopen action functional without waiting for a Designer publish.
+  function prepareOpportunityStatusControls() {
+    if (!/^\/opportunities\/[^/]+\/?$/.test(location.pathname)) return
+
+    const close = $('[data-modal-trigger="close-opportunity"]')
+    if (close) {
+      if (!close.hasAttribute('data-opp-status')) close.setAttribute('data-opp-status', 'active')
+      close.removeAttribute('wf-xano-if')
+    }
+
+    const reopen = $('[data-modal-trigger="reopen-opportunity"]')
+    if (reopen) {
+      if (!reopen.hasAttribute('data-opp-status')) reopen.setAttribute('data-opp-status', 'closed')
+      if (!reopen.hasAttribute('data-opp-submit')) reopen.setAttribute('data-opp-submit', 'reopen')
+      reopen.removeAttribute('wf-xano-if')
+    }
+  }
+
   // Toggle [data-opp-status="active|closed"] elements by the opportunity's
   // status, so the detail-page Close vs Reopen buttons swap WITHOUT a reload.
   // (wf-xano-if can't drive these — they sit outside any wf-xano list scope —
   // and CMS conditional visibility is decided server-side at load.) Values are
   // space-separated like data-opp-state.
   function paintOppStatus(status) {
+    prepareOpportunityStatusControls()
     const key = String(status || '') === 'Closed' ? 'closed' : 'active'
     $$('[data-opp-status]').forEach((el) => {
       const vals = el.getAttribute('data-opp-status').split(/\s+/)
       el.style.display = vals.includes(key) ? '' : 'none'
     })
+    document.documentElement.setAttribute('data-opp-status-ready', key)
+    const statusGuard = document.getElementById('opp30-detail-hide-until-status')
+    if (statusGuard) statusGuard.remove()
   }
 
   /* ============== MEMBERSTACK GATE (reused from v2) ============== */
@@ -1812,8 +1853,15 @@
     btn.style.opacity = '0.6'
     try {
       const result = await fn()
-      if (onSuccess) onSuccess(result)
-      else location.reload()
+      if (onSuccess) {
+        onSuccess(result)
+        // No-reload flows can expose the same control again later (for
+        // example Reopen -> Close -> Reopen). Restore interactivity after a
+        // successful repaint/success-screen transition so the next cycle is
+        // not left disabled by the previous guard() call.
+        btn.style.pointerEvents = ''
+        btn.style.opacity = ''
+      } else location.reload()
     } catch (err) {
       console.error('[opp30]', err)
       alert((err && err.data && err.data.message) || 'Something went wrong. Please try again.')
@@ -2123,6 +2171,7 @@
   /* ========================= BOOTSTRAP ========================== */
   function boot() {
     initOpportunityCategorySelects()
+    prepareOpportunityStatusControls()
     wireModals()
     const p = location.pathname
     if (p.includes('opportunities-details---brand-view')) initBrandDetail()
