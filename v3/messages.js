@@ -134,7 +134,7 @@
     }
 
     inbox.onCustomConversationAction(FEED_FILTER_ACTION, (event) => {
-      const filterName = event && event.params && event.params.filter
+      const filterName = event && event.params && event.params.choice
       const filter = FEED_FILTERS[filterName]
       if (!filter) return
 
