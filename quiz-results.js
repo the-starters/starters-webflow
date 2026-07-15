@@ -3761,6 +3761,10 @@
             }
 
             element.setAttribute('src', url)
+            // Webflow template imgs carry a placeholder srcset/sizes pair that
+            // outranks the src we just set, so the placeholder keeps rendering.
+            if (element.hasAttribute('srcset')) element.removeAttribute('srcset')
+            if (element.hasAttribute('sizes')) element.removeAttribute('sizes')
             element.setAttribute('alt', normalize(freelancer.name))
             element.classList.remove('hide')
         })
