@@ -747,6 +747,38 @@
     })
   }
 
+  // Match the Webflow CMS `full-overview` projection used by Xano's
+  // sync-webflow endpoint: escape the two editable source fields, preserve
+  // their line breaks as <br>, then separate Requirements from Description
+  // with one blank line. The CMS remains the reload-time mirror; this painter
+  // only keeps the already-open detail page current after an edit succeeds.
+  function escapeOpportunityHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (char) => {
+      const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+      return entities[char]
+    })
+  }
+
+  function opportunityMultilineHtml(value) {
+    return escapeOpportunityHtml(value).replace(/\r?\n/g, '<br>')
+  }
+
+  function opportunityOverviewHtml(opportunity) {
+    const description = opportunityMultilineHtml(opportunity && opportunity.description)
+    const requirements = opportunityMultilineHtml(opportunity && opportunity.exp_requirements)
+    return requirements ? description + '<br><br>' + requirements : description
+  }
+
+  function paintOpportunityDetail(opportunity) {
+    if (!opportunity || typeof opportunity !== 'object') return
+    ;['title', 'project_type', 'est_project_duration', 'budget', 'budget_frequency'].forEach((field) => {
+      if (opportunity[field] != null) bind(document, field, opportunity[field])
+    })
+    $$('[data-opp-bind="full_overview"]').forEach((el) => {
+      el.innerHTML = opportunityOverviewHtml(opportunity)
+    })
+  }
+
   /* ===================== PAGE CONTROLLERS ======================== */
   /** True when the brand feed is wf-xano-rendered: a list root (any of the three
    *  root grammars — canonical wrapper, legacy wf-xano-list marker, v0.3.0
@@ -1651,7 +1683,8 @@
         const payload = readOpportunityForm(modal)
         const validationMessage = validateOpportunityPayload(payload)
         if (validationMessage) return alert(validationMessage)
-        await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), () => {
+        await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), (updatedOpportunity) => {
+          paintOpportunityDetail(updatedOpportunity)
           // No-reload success: swap the form for the modal's native w-form-done
           // "pending for review" screen (same pattern as apply/edit-application).
           const form = $('form', modal)
@@ -1758,8 +1791,8 @@
     btn.style.pointerEvents = 'none'
     btn.style.opacity = '0.6'
     try {
-      await fn()
-      if (onSuccess) onSuccess()
+      const result = await fn()
+      if (onSuccess) onSuccess(result)
       else location.reload()
     } catch (err) {
       console.error('[opp30]', err)
@@ -2107,6 +2140,7 @@
     API,
     ensureXanoToken,
     diagnoseFreelancerFeed,
+    paintOpportunityDetail,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,
