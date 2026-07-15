@@ -1265,16 +1265,21 @@
     }
   }
 
+  function parseOpportunityId(value) {
+    const id = String(value || '').trim()
+    if (!/^[1-9]\d*$/.test(id)) return null
+    const parsed = Number(id)
+    return Number.isSafeInteger(parsed) ? parsed : null
+  }
+
   // The page's Xano opportunity id: prefer the CMS-bound [data-opp-page-id]
-  // attribute (survives future slug-format changes). The URL fallback supports
-  // both the historical numeric slug and the planned <seo-label>-<xano-id> form.
+  // attribute (survives future slug-format changes). Fall back only for the
+  // historical numeric slug, where the URL unambiguously represents the id.
   function pageOppId() {
     const el = $('[data-opp-page-id]')
-    const fromAttr = el && parseInt(el.getAttribute('data-opp-page-id'), 10)
-    if (fromAttr) return fromAttr
-    const slug = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() || '')
-    const trailingId = slug.match(/(?:^|-)(\d+)$/)
-    return trailingId ? parseInt(trailingId[1], 10) : null
+    if (el) return parseOpportunityId(el.getAttribute('data-opp-page-id'))
+    const slug = location.pathname.split('/').filter(Boolean).pop()
+    return parseOpportunityId(slug)
   }
 
   async function initTalentDetail(member) {
