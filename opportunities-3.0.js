@@ -623,6 +623,16 @@
   function prepareOpportunityStatusControls() {
     if (!/^\/opportunities\/[^/]+\/?$/.test(location.pathname)) return
 
+    // The published CMS detail badge is static Webflow text ("Open"/"Closed")
+    // with no data binding. Add a runtime contract so close/reopen responses
+    // can repaint it immediately while the CMS mirror catches up.
+    const brandTags = $('[data-ms-content="premium-brands"].opportunities-content_tag-wrapper')
+    const statusBadge = brandTags && $('.label_component', brandTags)
+    const statusBadgeText = statusBadge && $('.label_text', statusBadge)
+    if (statusBadge) statusBadge.setAttribute('data-opp-status-badge', '')
+    if (statusBadgeText && !statusBadgeText.hasAttribute('data-opp-bind'))
+      statusBadgeText.setAttribute('data-opp-bind', 'status_label')
+
     const close = $('[data-modal-trigger="close-opportunity"]')
     if (close) {
       if (!close.hasAttribute('data-opp-status')) close.setAttribute('data-opp-status', 'active')
@@ -825,12 +835,35 @@
 
   function paintOpportunityDetail(opportunity) {
     if (!opportunity || typeof opportunity !== 'object') return
-    ;['title', 'project_type', 'est_project_duration', 'budget', 'budget_frequency'].forEach((field) => {
+    ;['title', 'project_type', 'est_project_duration', 'budget', 'budget_frequency', 'status'].forEach((field) => {
       if (opportunity[field] != null) bind(document, field, opportunity[field])
     })
-    $$('[data-opp-bind="full_overview"]').forEach((el) => {
-      el.innerHTML = opportunityOverviewHtml(opportunity)
-    })
+    // Status-only mutation envelopes must not blank the existing overview.
+    if ('description' in opportunity || 'exp_requirements' in opportunity)
+      $$('[data-opp-bind="full_overview"]').forEach((el) => {
+        el.innerHTML = opportunityOverviewHtml(opportunity)
+      })
+    if (opportunity.status != null) {
+      const status = String(opportunity.status)
+      bind(document, 'status_label', status === 'Active' ? 'Open' : status)
+      $$('[data-opp-status-badge]').forEach((el) => {
+        el.setAttribute('data-opp-status-value', status.toLowerCase())
+      })
+      paintOppStatus(status)
+    }
+  }
+
+  // Lifecycle endpoints currently return the edited opportunity directly.
+  // Accept a small set of common envelopes as well, then fall back to the
+  // known transition status so the already-open page never remains stale.
+  function paintOpportunityMutationResult(result, fallbackStatus) {
+    const isRecord = (value) => value && typeof value === 'object' && !Array.isArray(value)
+    let opportunity = isRecord(result) ? result : {}
+    if (isRecord(opportunity.opportunity)) opportunity = opportunity.opportunity
+    else if (isRecord(opportunity.item)) opportunity = opportunity.item
+    else if (isRecord(opportunity.data)) opportunity = opportunity.data
+    if (opportunity.status == null) opportunity = { ...opportunity, status: fallbackStatus }
+    paintOpportunityDetail(opportunity)
   }
 
   /* ===================== PAGE CONTROLLERS ======================== */
@@ -1775,7 +1808,9 @@
     const reopenBtn = $('[data-opp-submit="reopen"]')
     if (reopenBtn)
       reopenBtn.addEventListener('click', () =>
-        guard(reopenBtn, () => API.brandOppReopen(activeOpp), () => paintOppStatus('Active')),
+        guard(reopenBtn, () => API.brandOppReopen(activeOpp), (reopenedOpportunity) =>
+          paintOpportunityMutationResult(reopenedOpportunity, 'Active'),
+        ),
       )
 
     // ARCHIVE / RESTORE applicant (confirmation)
@@ -2084,7 +2119,15 @@
         // wouldn't reflect "Closed" anyway (Webflow CMS re-sync is async). The
         // brands-list modal ("Confirm" div, no flow step) keeps the reload so
         // the closed opp drops out of that feed.
-        guard(btn, () => API.brandOppClose(activeOpp), flowConfirm ? function () { paintOppStatus('Closed') } : undefined)
+        guard(
+          btn,
+          () => API.brandOppClose(activeOpp),
+          flowConfirm
+            ? function (closedOpportunity) {
+                paintOpportunityMutationResult(closedOpportunity, 'Closed')
+              }
+            : undefined,
+        )
       }
     })
   }
