@@ -680,7 +680,7 @@
   }
 
   /** Plan-based gate for pages shared by talent AND paying brands
-   *  (/opportunities/<id>). Redirects: logged-out -> /login, free brand ->
+   *  (/opportunities/<slug>). Redirects: logged-out -> /login, free brand ->
    *  BRAND_FREE_REDIRECT, unmapped plans -> /. Resolves {member, role} otherwise. */
   async function gateByPlan() {
     const memberstack = await waitForMemberstackDom()
@@ -1368,7 +1368,7 @@
     checkRadio('Duration', o.est_project_duration)
   }
 
-  /** /opportunities/<id> CMS detail page, shared by talent and PAYING brands.
+  /** /opportunities/<slug> CMS detail page, shared by talent and PAYING brands.
    *  Gates by Memberstack plan (gateByPlan), reveals the matching
    *  [data-opp-role="talent"|"brand"] wrapper, then runs that role's wiring.
    *  Free brands never reach this point (redirected by the gate). */

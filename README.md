@@ -71,6 +71,21 @@ Do not discard local changes unless the user explicitly asks.
 - `navbar-embeds/navbar-explore/navbar-explore-mobile.js` — mobile explore menu stacked-column navigation with a fixed back button
 - `navbar-embeds/navbar-explore/view-all.js` — "view all" button routes to `/subcategories/<slug>` derived from the item's `wf-algolia-value`
 
+## Opportunities 3.0 URL Identity
+
+Opportunity detail URLs use the Webflow CMS slug as their label, while the immutable
+numeric Xano opportunity ID remains the API identity. Bind that ID to
+`data-opp-page-id` on the `/opportunities/<slug>` CMS detail page; a nonnumeric or
+missing bound value is not inferred from a text slug.
+
+List and Algolia projections should provide either a same-origin `url_path` matching
+`/opportunities/<slug>` or a `webflow_slug`. Custom-rendered cards can expose these as
+`data-opp-url-path` and `data-opp-webflow-slug`. Existing valid detail links are
+preserved; generated links prefer `url_path`, then `webflow_slug`, and finally the
+Xano ID. Existing `/opportunities/<id>` URLs remain supported as the
+backwards-compatible fallback, including detail pages that have not yet added
+`data-opp-page-id`. V2 opportunity scripts and query-parameter URLs are unchanged.
+
 ## utils/wf-validate.js
 
 Attribute-driven form validation, same grammar family as wf-xano / Finsweet Attributes.
