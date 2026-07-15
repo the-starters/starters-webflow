@@ -21,8 +21,8 @@
 
   const FEED_FILTERS = {
     all: {},
-    unread: { hasUnreadMessages: true },
-    read: { hasUnreadMessages: false },
+    unread: { isUnread: true },
+    read: { isUnread: false },
   }
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
