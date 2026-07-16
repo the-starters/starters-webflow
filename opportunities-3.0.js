@@ -689,11 +689,6 @@
       confirm.setAttribute('data-opp-element', 'loading-button')
     if (!confirm.hasAttribute('data-opp-loading')) confirm.setAttribute('data-opp-loading', 'false')
 
-    const label =
-      $('[data-opp-element="loading-label"]', confirm) || $('.button_main-text', confirm)
-    if (label && !label.hasAttribute('data-opp-element'))
-      label.setAttribute('data-opp-element', 'loading-label')
-
     if (!$('[data-opp-element="loading-spinner"]', confirm)) {
       const source = $(
         '[data-modal-trigger="close-opportunity"] [data-opp-element="loading-spinner"]',
