@@ -664,6 +664,101 @@
     if (statusGuard) statusGuard.remove()
   }
 
+  // Opportunity lifecycle controls use valued Webflow-safe attributes:
+  //   data-opp-element="loading-button|loading-label|loading-spinner"
+  //   data-opp-loading="false|true"
+  // Keep the authored Close/Reopen markup in charge of appearance while
+  // matching wf-xano's proven pending-state contract (busy/disabled ARIA,
+  // native disabled restoration, mutation class, and duplicate suppression).
+  // Close is confirmed inside a form-flow modal, so upgrade that confirmation
+  // control with a clone of the authored Close spinner when Designer markup
+  // only carries the loading parts on the page-level state button.
+  const activeActionGuards = new WeakMap()
+  const pendingElementSnapshots = new WeakMap()
+  const approvedCloseFlowAdvances = new WeakSet()
+
+  function prepareOpportunityLoadingControls() {
+    $$('[data-opp-element="loading-button"]').forEach((control) => {
+      if (!control.hasAttribute('data-opp-loading'))
+        control.setAttribute('data-opp-loading', 'false')
+    })
+
+    const confirm = $('[data-close-opp="confirm-button"]')
+    if (!confirm) return
+    if (!confirm.hasAttribute('data-opp-element'))
+      confirm.setAttribute('data-opp-element', 'loading-button')
+    if (!confirm.hasAttribute('data-opp-loading')) confirm.setAttribute('data-opp-loading', 'false')
+
+    const label =
+      $('[data-opp-element="loading-label"]', confirm) || $('.button_main-text', confirm)
+    if (label && !label.hasAttribute('data-opp-element'))
+      label.setAttribute('data-opp-element', 'loading-label')
+
+    if (!$('[data-opp-element="loading-spinner"]', confirm)) {
+      const source = $(
+        '[data-modal-trigger="close-opportunity"] [data-opp-element="loading-spinner"]',
+      )
+      if (source) confirm.appendChild(source.cloneNode(true))
+    }
+  }
+
+  function loadingControlFor(btn) {
+    prepareOpportunityLoadingControls()
+    return (btn && btn.closest('[data-opp-element="loading-button"]')) || btn
+  }
+
+  function setPendingElement(el, pending, isLoadingControl) {
+    if (!el) return
+    if (pending) {
+      if (!pendingElementSnapshots.has(el)) {
+        pendingElementSnapshots.set(el, {
+          ariaBusy: el.getAttribute('aria-busy'),
+          ariaDisabled: el.getAttribute('aria-disabled'),
+          disabled: 'disabled' in el ? el.disabled : undefined,
+          opacity: el.style.opacity,
+          pointerEvents: el.style.pointerEvents,
+        })
+      }
+      el.classList.add('is-wf-xano-mutating')
+      el.setAttribute('aria-busy', 'true')
+      el.setAttribute('aria-disabled', 'true')
+      if ('disabled' in el) el.disabled = true
+      el.style.pointerEvents = 'none'
+      if (isLoadingControl) el.setAttribute('data-opp-loading', 'true')
+      else el.style.opacity = '0.6'
+      return
+    }
+
+    const snapshot = pendingElementSnapshots.get(el)
+    el.classList.remove('is-wf-xano-mutating')
+    if (isLoadingControl) el.setAttribute('data-opp-loading', 'false')
+    if (!snapshot) return
+    if (snapshot.ariaBusy == null) el.removeAttribute('aria-busy')
+    else el.setAttribute('aria-busy', snapshot.ariaBusy)
+    if (snapshot.ariaDisabled == null) el.removeAttribute('aria-disabled')
+    else el.setAttribute('aria-disabled', snapshot.ariaDisabled)
+    if ('disabled' in el && snapshot.disabled !== undefined) el.disabled = snapshot.disabled
+    el.style.opacity = snapshot.opacity
+    el.style.pointerEvents = snapshot.pointerEvents
+    pendingElementSnapshots.delete(el)
+  }
+
+  function setOpportunityActionPending(btn, pending) {
+    const control = loadingControlFor(btn)
+    const hasLoadingUi =
+      control && control.matches('[data-opp-element="loading-button"]')
+    setPendingElement(control, pending, hasLoadingUi)
+    // Close's delegated click resolves to the inner native button while the
+    // loading UI lives on the outer confirmation control. Disable both so
+    // keyboard activation cannot bypass the visual pointer lock.
+    if (btn && btn !== control) setPendingElement(btn, pending, false)
+    const nativeControl =
+      control && $('button, input[type="button"], input[type="submit"]', control)
+    if (nativeControl && nativeControl !== btn)
+      setPendingElement(nativeControl, pending, false)
+    return control
+  }
+
   /* ============== MEMBERSTACK GATE (reused from v2) ============== */
   function waitForMemberstackDom(timeoutMs = 10000) {
     if (window.$memberstackDom && typeof window.$memberstackDom.getCurrentMember === 'function') {
@@ -1699,14 +1794,9 @@
     }
   })
 
-  // A confirm button advances its form-flow immediately (data-form-flow-action
-  // ="next"), independent of whether the API call it also fires succeeds — on
-  // success guard() reloads the page, but on failure nothing rewinds the flow,
-  // stranding the modal on its success step for the rest of the session. The
-  // modal system dispatches "modal-open" and the flow engine exposes
-  // lumos.formFlow, so rewind any flow inside a modal whenever it opens.
   window.addEventListener('modal-open', (e) => {
     const modal = e.detail && e.detail.modal
+    prepareOpportunityLoadingControls()
     if (modal) initOpportunityCategorySelects(modal)
     const flowEl = modal && modal.querySelector('[data-form-flow]')
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
@@ -1882,28 +1972,35 @@
 
   // Disables a button while its action runs; on success runs onSuccess when
   // given, else reloads (simple v1 behavior kept as the default/fallback).
-  async function guard(btn, fn, onSuccess) {
-    const label = btn.textContent
-    btn.style.pointerEvents = 'none'
-    btn.style.opacity = '0.6'
-    try {
-      const result = await fn()
-      if (onSuccess) {
-        onSuccess(result)
-        // No-reload flows can expose the same control again later (for
-        // example Reopen -> Close -> Reopen). Restore interactivity after a
-        // successful repaint/success-screen transition so the next cycle is
-        // not left disabled by the previous guard() call.
-        btn.style.pointerEvents = ''
-        btn.style.opacity = ''
-      } else location.reload()
-    } catch (err) {
-      console.error('[opp30]', err)
-      alert((err && err.data && err.data.message) || 'Something went wrong. Please try again.')
-      btn.style.pointerEvents = ''
-      btn.style.opacity = ''
-      btn.textContent = label
-    }
+  function guard(btn, fn, onSuccess) {
+    const control = loadingControlFor(btn)
+    const guardKey = control || btn
+    if (guardKey && activeActionGuards.has(guardKey)) return activeActionGuards.get(guardKey)
+
+    const request = (async () => {
+      setOpportunityActionPending(btn, true)
+      try {
+        const result = await fn()
+        if (onSuccess) {
+          await onSuccess(result)
+          // No-reload flows can expose the same control again later (for
+          // example Reopen -> Close -> Reopen). Restore the valued loading
+          // state after the authoritative repaint/success transition.
+          setOpportunityActionPending(btn, false)
+        } else location.reload()
+        return result
+      } catch (err) {
+        console.error('[opp30]', err)
+        setOpportunityActionPending(btn, false)
+        alert((err && err.data && err.data.message) || 'Something went wrong. Please try again.')
+        return null
+      } finally {
+        if (guardKey) activeActionGuards.delete(guardKey)
+      }
+    })()
+
+    if (guardKey) activeActionGuards.set(guardKey, request)
+    return request
   }
 
   /* ================== F4: APPLICATION-SENT SCREEN ================ */
@@ -2102,33 +2199,45 @@
   function wireCloseOpportunityModal() {
     if (window.__opp30CloseWired) return
     window.__opp30CloseWired = true
+
+    document.addEventListener(
+      'click',
+      (e) => {
+        const flowConfirm = e.target.closest('[data-close-opp="confirm-button"]')
+        if (!flowConfirm) return
+        if (approvedCloseFlowAdvances.has(flowConfirm)) {
+          approvedCloseFlowAdvances.delete(flowConfirm)
+          return
+        }
+        if (!e.target.closest('[data-modal-target="close-opportunity"]') || !activeOpp) return
+
+        e.preventDefault()
+        e.stopPropagation()
+
+        const btn =
+          e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') ||
+          flowConfirm
+        guard(btn, () => API.brandOppClose(activeOpp), (closedOpportunity) => {
+          paintOpportunityMutationResult(closedOpportunity, 'Closed')
+          setOpportunityActionPending(btn, false)
+          approvedCloseFlowAdvances.add(flowConfirm)
+          try {
+            flowConfirm.click()
+          } finally {
+            approvedCloseFlowAdvances.delete(flowConfirm)
+          }
+        })
+      },
+      true,
+    )
+
     document.addEventListener('click', (e) => {
       if (!e.target.closest('[data-modal-target="close-opportunity"]')) return
+      if (e.target.closest('[data-close-opp="confirm-button"]')) return
       const btn =
         e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') || e.target
-      // Two confirm shapes exist: the brands-view modal's plain "Confirm" div,
-      // and the detail-page modal's tagged [data-close-opp="confirm-button"]
-      // (whose label is "Close opportunity"). Match either.
-      const flowConfirm = e.target.closest('[data-close-opp="confirm-button"]')
-      const isConfirm =
-        /^confirm$/i.test((btn.textContent || '').trim()) || flowConfirm
-      if (isConfirm && activeOpp) {
-        // Detail-page modal drives its own form-flow "closed" confirmation step
-        // (data-form-flow-action="next" on the same button), so DON'T reload —
-        // that would kill the step the member just advanced to. A reload
-        // wouldn't reflect "Closed" anyway (Webflow CMS re-sync is async). The
-        // brands-list modal ("Confirm" div, no flow step) keeps the reload so
-        // the closed opp drops out of that feed.
-        guard(
-          btn,
-          () => API.brandOppClose(activeOpp),
-          flowConfirm
-            ? function (closedOpportunity) {
-                paintOpportunityMutationResult(closedOpportunity, 'Closed')
-              }
-            : undefined,
-        )
-      }
+      if (/^confirm$/i.test((btn.textContent || '').trim()) && activeOpp)
+        guard(btn, () => API.brandOppClose(activeOpp))
     })
   }
 
@@ -2215,6 +2324,7 @@
   function boot() {
     initOpportunityCategorySelects()
     prepareOpportunityStatusControls()
+    prepareOpportunityLoadingControls()
     wireModals()
     const p = location.pathname
     if (p.includes('opportunities-details---brand-view')) initBrandDetail()
