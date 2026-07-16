@@ -675,6 +675,7 @@
   // only carries the loading parts on the page-level state button.
   const activeActionGuards = new WeakMap()
   const pendingElementSnapshots = new WeakMap()
+  const approvedCloseFlowAdvances = new WeakSet()
 
   function prepareOpportunityLoadingControls() {
     $$('[data-opp-element="loading-button"]').forEach((control) => {
@@ -1793,12 +1794,6 @@
     }
   })
 
-  // A confirm button advances its form-flow immediately (data-form-flow-action
-  // ="next"), independent of whether the API call it also fires succeeds — on
-  // success guard() reloads the page, but on failure nothing rewinds the flow,
-  // stranding the modal on its success step for the rest of the session. The
-  // modal system dispatches "modal-open" and the flow engine exposes
-  // lumos.formFlow, so rewind any flow inside a modal whenever it opens.
   window.addEventListener('modal-open', (e) => {
     const modal = e.detail && e.detail.modal
     prepareOpportunityLoadingControls()
@@ -2204,33 +2199,45 @@
   function wireCloseOpportunityModal() {
     if (window.__opp30CloseWired) return
     window.__opp30CloseWired = true
+
+    document.addEventListener(
+      'click',
+      (e) => {
+        const flowConfirm = e.target.closest('[data-close-opp="confirm-button"]')
+        if (!flowConfirm) return
+        if (approvedCloseFlowAdvances.has(flowConfirm)) {
+          approvedCloseFlowAdvances.delete(flowConfirm)
+          return
+        }
+        if (!e.target.closest('[data-modal-target="close-opportunity"]') || !activeOpp) return
+
+        e.preventDefault()
+        e.stopPropagation()
+
+        const btn =
+          e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') ||
+          flowConfirm
+        guard(btn, () => API.brandOppClose(activeOpp), (closedOpportunity) => {
+          paintOpportunityMutationResult(closedOpportunity, 'Closed')
+          setOpportunityActionPending(btn, false)
+          approvedCloseFlowAdvances.add(flowConfirm)
+          try {
+            flowConfirm.click()
+          } finally {
+            approvedCloseFlowAdvances.delete(flowConfirm)
+          }
+        })
+      },
+      true,
+    )
+
     document.addEventListener('click', (e) => {
       if (!e.target.closest('[data-modal-target="close-opportunity"]')) return
+      if (e.target.closest('[data-close-opp="confirm-button"]')) return
       const btn =
         e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') || e.target
-      // Two confirm shapes exist: the brands-view modal's plain "Confirm" div,
-      // and the detail-page modal's tagged [data-close-opp="confirm-button"]
-      // (whose label is "Close opportunity"). Match either.
-      const flowConfirm = e.target.closest('[data-close-opp="confirm-button"]')
-      const isConfirm =
-        /^confirm$/i.test((btn.textContent || '').trim()) || flowConfirm
-      if (isConfirm && activeOpp) {
-        // Detail-page modal drives its own form-flow "closed" confirmation step
-        // (data-form-flow-action="next" on the same button), so DON'T reload —
-        // that would kill the step the member just advanced to. A reload
-        // wouldn't reflect "Closed" anyway (Webflow CMS re-sync is async). The
-        // brands-list modal ("Confirm" div, no flow step) keeps the reload so
-        // the closed opp drops out of that feed.
-        guard(
-          btn,
-          () => API.brandOppClose(activeOpp),
-          flowConfirm
-            ? function (closedOpportunity) {
-                paintOpportunityMutationResult(closedOpportunity, 'Closed')
-              }
-            : undefined,
-        )
-      }
+      if (/^confirm$/i.test((btn.textContent || '').trim()) && activeOpp)
+        guard(btn, () => API.brandOppClose(activeOpp))
     })
   }
 
