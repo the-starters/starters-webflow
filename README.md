@@ -94,6 +94,7 @@ valued attributes (Webflow does not reliably preserve empty custom attributes):
 ```html
 <div data-opp-element="loading-button" data-opp-loading="false">
   <span data-opp-element="loading-label">Reopen opportunity</span>
+  <span data-opp-element="loading-hide">Optional helper or icon</span>
   <span data-opp-element="loading-spinner">...</span>
 </div>
 ```
@@ -109,6 +110,16 @@ Hiding the label is opt-in. Only text explicitly authored with
 `data-opp-element="loading-label"` should be hidden by loading CSS. Untagged
 button text remains visible while the spinner runs; the script does not add the
 label attribute automatically.
+
+Use `data-opp-element="loading-hide"` on any other child that should become
+invisible while its loading-button ancestor is pending:
+
+```css
+[data-opp-loading='true'] [data-opp-element='loading-label'],
+[data-opp-loading='true'] [data-opp-element='loading-hide'] {
+  visibility: hidden;
+}
+```
 
 The Close form-flow confirmation remains identified by
 `data-close-opp="confirm-button"`. The script upgrades it to a loading button and,

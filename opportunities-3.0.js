@@ -666,7 +666,7 @@
 
   // Opportunity lifecycle controls use valued Webflow-safe attributes:
   //   data-opp-element="loading-button|loading-spinner"
-  //   data-opp-element="loading-label" (optional; never inferred from button text)
+  //   data-opp-element="loading-label|loading-hide" (optional CSS hide targets)
   //   data-opp-loading="false|true"
   // Keep the authored Close/Reopen markup in charge of appearance while
   // matching wf-xano's proven pending-state contract (busy/disabled ARIA,
