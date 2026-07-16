@@ -86,6 +86,31 @@ Xano ID. Existing `/opportunities/<id>` URLs remain supported as the
 backwards-compatible fallback, including detail pages that have not yet added
 `data-opp-page-id`. V2 opportunity scripts and query-parameter URLs are unchanged.
 
+## Opportunities 3.0 Lifecycle Loading States
+
+Close and Reopen controls can keep their loading appearance in Webflow by using
+valued attributes (Webflow does not reliably preserve empty custom attributes):
+
+```html
+<div data-opp-element="loading-button" data-opp-loading="false">
+  <span data-opp-element="loading-label">Reopen opportunity</span>
+  <span data-opp-element="loading-spinner">...</span>
+</div>
+```
+
+Style the label and spinner from the wrapper's `data-opp-loading="false|true"`
+value. While the lifecycle request is pending, `opportunities-3.0.js` sets the
+value to `true`, adds `is-wf-xano-mutating`, marks the control busy and disabled
+for assistive technology, disables any nested native control, and suppresses
+duplicate writes. The original state is restored after an error or a successful
+no-reload Close/Reopen repaint.
+
+The Close form-flow confirmation remains identified by
+`data-close-opp="confirm-button"`. The script upgrades it to a loading button and,
+when necessary, clones the spinner authored inside the page-level
+`data-modal-trigger="close-opportunity"` control. The form-flow advances only after
+the Close request succeeds; an error leaves the confirmation step open and usable.
+
 ## utils/wf-validate.js
 
 Attribute-driven form validation, same grammar family as wf-xano / Finsweet Attributes.
