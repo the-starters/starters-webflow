@@ -665,7 +665,8 @@
   }
 
   // Opportunity lifecycle controls use valued Webflow-safe attributes:
-  //   data-opp-element="loading-button|loading-label|loading-spinner"
+  //   data-opp-element="loading-button|loading-spinner"
+  //   data-opp-element="loading-label" (optional; never inferred from button text)
   //   data-opp-loading="false|true"
   // Keep the authored Close/Reopen markup in charge of appearance while
   // matching wf-xano's proven pending-state contract (busy/disabled ARIA,
@@ -688,11 +689,6 @@
     if (!confirm.hasAttribute('data-opp-element'))
       confirm.setAttribute('data-opp-element', 'loading-button')
     if (!confirm.hasAttribute('data-opp-loading')) confirm.setAttribute('data-opp-loading', 'false')
-
-    const label =
-      $('[data-opp-element="loading-label"]', confirm) || $('.button_main-text', confirm)
-    if (label && !label.hasAttribute('data-opp-element'))
-      label.setAttribute('data-opp-element', 'loading-label')
 
     if (!$('[data-opp-element="loading-spinner"]', confirm)) {
       const source = $(

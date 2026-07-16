@@ -105,6 +105,11 @@ for assistive technology, disables any nested native control, and suppresses
 duplicate writes. The original state is restored after an error or a successful
 no-reload Close/Reopen repaint.
 
+Hiding the label is opt-in. Only text explicitly authored with
+`data-opp-element="loading-label"` should be hidden by loading CSS. Untagged
+button text remains visible while the spinner runs; the script does not add the
+label attribute automatically.
+
 The Close form-flow confirmation remains identified by
 `data-close-opp="confirm-button"`. The script upgrades it to a loading button and,
 when necessary, clones the spinner authored inside the page-level
