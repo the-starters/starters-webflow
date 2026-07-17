@@ -1,10 +1,14 @@
 /**
  * Starter Dashboard 3.0 — Messages tile.
  *
- * Binds the #messages tile on /starter-dashboard to TalkJS unread
- * conversations (same prod app as /messages). Waits for Memberstack,
- * loads TalkJS, then renders the unread count badge and preview cards
- * from `session.unreads`. Shows the empty state when nothing is unread.
+ * Binds the #messages tile on /starter-dashboard to the member's recent
+ * TalkJS conversations. Two data sources, merged:
+ *   - Xano `starter/messages/recent` (TalkJS REST proxy) → recent
+ *     conversations including already-read ones.
+ *   - TalkJS JS SDK `session.unreads` → live unread state + sender
+ *     name/photo enrichment, and the unread count badge.
+ * If the Xano endpoint is unavailable the tile degrades to unreads-only.
+ * Shows the empty state when there are no conversations at all.
  */
 ;(function () {
   'use strict'
@@ -14,6 +18,10 @@
 
   const TALKJS_APP_ID = 'LmYV8DIA'
   const TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
+  const XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
+  const XANO_TRADE_TOKEN_PATH = '/auth/trade-token/v3'
+  const XANO_OPP_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30'
+  const RECENT_MESSAGES_PATH = '/starter/messages/recent'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const MESSAGES_PATH = '/messages'
@@ -165,29 +173,76 @@
     if (refs.emptyCard) refs.emptyCard.style.display = ''
   }
 
-  function unreadDisplay(unread) {
+  async function getMemberstackToken(memberstack) {
+    const token = await memberstack.getMemberCookie()
+    if (!token) throw new Error('No Memberstack session')
+    return token
+  }
+
+  async function fetchRecentConversations(memberstack) {
+    const msToken = await getMemberstackToken(memberstack)
+    const tradeRes = await fetch(
+      XANO_AUTH_BASE +
+        XANO_TRADE_TOKEN_PATH +
+        '?token=' +
+        encodeURIComponent(msToken),
+    )
+    const tradeData = await tradeRes.json().catch(() => null)
+    if (!tradeRes.ok) throw new Error('trade-token failed')
+    const xanoToken =
+      typeof tradeData === 'string'
+        ? tradeData
+        : tradeData && (tradeData.authToken || tradeData.token)
+    if (!xanoToken) throw new Error('trade-token returned no token')
+
+    const res = await fetch(XANO_OPP_BASE + RECENT_MESSAGES_PATH, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + xanoToken,
+      },
+    })
+    const data = await res.json().catch(() => null)
+    if (!res.ok) throw new Error('recent messages request failed')
+    return (data && data.items) || []
+  }
+
+  // Normalized card model. `unread` entries come from the SDK (rich sender
+  // snapshot); `recent` entries come from the Xano REST proxy (lean).
+  function displayFromUnread(unread) {
     const conversation = unread.conversation || {}
     const lastMessage = unread.lastMessage || {}
-    const sender =
-      (!lastMessage.isByMe && lastMessage.sender) || null
+    const sender = (!lastMessage.isByMe && lastMessage.sender) || null
 
     return {
+      id: conversation.id || null,
       title:
-        conversation.subject ||
-        (sender && sender.name) ||
-        'Conversation',
-      photoUrl:
-        conversation.photoUrl || (sender && sender.photoUrl) || null,
+        conversation.subject || (sender && sender.name) || 'Conversation',
+      photoUrl: conversation.photoUrl || (sender && sender.photoUrl) || null,
       preview:
         lastMessage.body ||
         (lastMessage.attachment ? 'Sent an attachment' : ''),
       timestamp: lastMessage.timestamp || null,
+      unread: true,
     }
   }
 
-  function renderItem(refs, unread) {
+  function displayFromRecent(conv, unreadsById) {
+    const enrich = conv.id && unreadsById[conv.id]
+    if (enrich) return displayFromUnread(enrich)
+
+    return {
+      id: conv.id || null,
+      title: conv.subject || 'Conversation',
+      photoUrl: conv.photo_url || null,
+      preview: conv.last_message_text || '',
+      timestamp: conv.last_message_at || null,
+      unread: Boolean(conv.unread),
+    }
+  }
+
+  function renderItem(refs, display) {
     const item = refs.template.cloneNode(true)
-    const display = unreadDisplay(unread)
 
     const heading = item.querySelector('.message-item_message h3')
     if (heading) heading.textContent = display.title
@@ -219,7 +274,7 @@
       }
     }
 
-    item.classList.add('is-new')
+    item.classList.toggle('is-new', display.unread)
 
     const button = item.querySelector('.clickable_btn')
     const target = button || item
@@ -230,17 +285,42 @@
     return item
   }
 
-  function renderUnreads(refs, unreads) {
-    const count = unreads.length
+  function renderTile(refs, state) {
+    const unreads = state.unreads || []
+    const unreadsById = {}
+    unreads.forEach((unread) => {
+      const id = unread.conversation && unread.conversation.id
+      if (id) unreadsById[id] = unread
+    })
+
+    let displays
+    if (state.recent) {
+      const recentIds = {}
+      displays = state.recent.map((conv) => {
+        if (conv.id) recentIds[conv.id] = true
+        return displayFromRecent(conv, unreadsById)
+      })
+      // Unread conversations the REST snapshot hasn't caught up with yet.
+      unreads.forEach((unread) => {
+        const id = unread.conversation && unread.conversation.id
+        if (!id || !recentIds[id]) displays.push(displayFromUnread(unread))
+      })
+    } else {
+      displays = unreads.map(displayFromUnread)
+    }
+
+    const unreadCount = state.recent
+      ? displays.filter((d) => d.unread).length
+      : unreads.length
 
     if (refs.badge) {
-      refs.badge.textContent = String(count)
-      refs.badge.style.display = count > 0 ? '' : 'none'
+      refs.badge.textContent = String(unreadCount)
+      refs.badge.style.display = unreadCount > 0 ? '' : 'none'
     }
 
     refs.list.querySelectorAll('.message_item').forEach((node) => node.remove())
 
-    if (count === 0) {
+    if (displays.length === 0) {
       refs.list.style.display = 'none'
       if (refs.emptyCard) refs.emptyCard.style.display = ''
       return
@@ -249,16 +329,11 @@
     refs.list.style.display = ''
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
 
-    unreads
-      .slice()
-      .sort(
-        (a, b) =>
-          ((b.lastMessage && b.lastMessage.timestamp) || 0) -
-          ((a.lastMessage && a.lastMessage.timestamp) || 0),
-      )
+    displays
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
       .slice(0, MAX_PREVIEW_ITEMS)
-      .forEach((unread) => {
-        refs.list.appendChild(renderItem(refs, unread))
+      .forEach((display) => {
+        refs.list.appendChild(renderItem(refs, display))
       })
   }
 
@@ -281,6 +356,32 @@
     const member = response && response.data
     if (!member || !member.id) return
 
+    const state = { recent: null, unreads: [] }
+    const rerender = () => {
+      try {
+        renderTile(refs, state)
+      } catch (error) {
+        console.error(
+          '[starter-dashboard] Unable to render Messages tile',
+          error,
+        )
+      }
+    }
+
+    // Recent conversations (including read ones) via the Xano proxy.
+    // Non-fatal: the tile degrades to unreads-only if it fails.
+    fetchRecentConversations(memberstack)
+      .then((items) => {
+        state.recent = items
+        rerender()
+      })
+      .catch((error) => {
+        console.warn(
+          '[starter-dashboard] Recent conversations unavailable, showing unreads only',
+          error,
+        )
+      })
+
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
     const session = new Talk.Session({
@@ -289,14 +390,8 @@
     })
 
     session.unreads.onChange((unreads) => {
-      try {
-        renderUnreads(refs, unreads || [])
-      } catch (error) {
-        console.error(
-          '[starter-dashboard] Unable to render Messages tile',
-          error,
-        )
-      }
+      state.unreads = unreads || []
+      rerender()
     })
   }
 
