@@ -136,21 +136,29 @@
     return token
   }
 
-  async function ensureXanoToken() {
+  function assertMemberScopeGeneration(generation) {
+    if (generation === _memberScopeGeneration) return
+    throw Object.assign(new Error('Member session changed during request'), {
+      code: 'MEMBER_SCOPE_CHANGED',
+    })
+  }
+
+  async function ensureXanoToken(generation = _memberScopeGeneration) {
+    assertMemberScopeGeneration(generation)
     if (_xanoToken) return _xanoToken
-    const generation = _memberScopeGeneration
     const msToken = await getMemberstackToken()
+    assertMemberScopeGeneration(generation)
     const res = await fetch(
       `${XANO_AUTH_BASE}${XANO_TRADE_TOKEN_PATH}?token=${encodeURIComponent(msToken)}`,
     )
     const data = await res.json().catch(() => null)
+    assertMemberScopeGeneration(generation)
     if (!res.ok) {
       throw Object.assign(new Error('trade-token failed'), { status: res.status, data })
     }
     // create_auth_token may return a raw string or { authToken }/{ token }
     const token = typeof data === 'string' ? data : data.authToken || data.token
     if (!token) throw new Error('trade-token returned no token')
-    if (generation !== _memberScopeGeneration) return ensureXanoToken()
     _xanoToken = token
     return token
   }
@@ -169,7 +177,9 @@
   }
 
   async function call(path, { method = 'POST', body } = {}) {
-    const token = await ensureXanoToken()
+    const generation = _memberScopeGeneration
+    const token = await ensureXanoToken(generation)
+    assertMemberScopeGeneration(generation)
     const res = await fetch(`${XANO_OPP_BASE}/${path}`, {
       method,
       headers: {
@@ -178,7 +188,9 @@
       },
       body: body ? JSON.stringify(body) : undefined,
     })
+    assertMemberScopeGeneration(generation)
     const data = await res.json().catch(() => null)
+    assertMemberScopeGeneration(generation)
     if (!res.ok) {
       track('bridge_error', { path, status: res.status })
       throw Object.assign(new Error(data && data.message ? data.message : `API ${res.status}`), {
@@ -195,6 +207,7 @@
         has_message: path === 'starter/applications/submit' ? Boolean(body && body.message) : undefined,
       })
     }
+    assertMemberScopeGeneration(generation)
     return data
   }
 
