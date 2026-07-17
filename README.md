@@ -134,6 +134,32 @@ attributes `data-opp30-talent-tab`, `data-opp30-talent-algolia`,
 incomplete profile sets `data-opp30-profile-categories="missing"`; dashboard setup
 sets `data-opp30-dashboard-match` to `ready`, `profile-incomplete`, or `error`.
 
+### Opportunity matching QA mode
+
+Append `?opp_debug=1` to either `/starter-dashboard` or
+`/opportunities-freelancer-view` to load the shared, authenticated matching QA panel.
+The panel lazy-loads `lil-gui@0.21.0`; neither the library nor the extra Xano reads run
+for normal visitors. The dashboard's View all link keeps the query parameter so a
+tester can inspect both surfaces in one session.
+
+The panel shows the starter's category names/refs and reconciles the complete Active
+opportunity set into total active, category matching, matching-not-applied, active
+applied, matching/applied overlap, applied non-matches, and the unique visible union.
+Its equation is `matching + applied - overlap = unique visible`. Xano's
+`available_matching_total` and category-matched `itemsTotal` are checked against the
+independently reconciled QA counts; a difference changes the panel/root status from
+`PASS` to `CHECK`.
+
+Floating labels on rendered wf-xano and wf-algolia cards show the opportunity
+categories, current overlap, applied state, and why the card is visible. Panel filters
+only hide/show cards already rendered in the DOM; they never change the production
+query. Use **Exit QA mode** to remove the query parameter, or run the same structured
+diagnostic without the panel via:
+
+```js
+await window.Opp30.diagnoseOpportunityMatching()
+```
+
 ## Opportunities 3.0 Lifecycle Loading States
 
 Close and Reopen controls can keep their loading appearance in Webflow by using
