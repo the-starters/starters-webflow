@@ -123,6 +123,9 @@
   // switch), resetMemberScopedCaches() drops the stale token/context so the new
   // member never inherits the previous member's data.
   let _cacheMemberId = null
+  let _memberScopeGeneration = 0
+  let _memberScopeAuthChangeWired = false
+  const MEMBER_SCOPE_RESET_EVENT = 'opp30:member-scope-reset'
 
   async function getMemberstackToken() {
     const ms = window.$memberstackDom
@@ -133,20 +136,31 @@
     return token
   }
 
-  async function ensureXanoToken() {
+  function assertMemberScopeGeneration(generation) {
+    if (generation === _memberScopeGeneration) return
+    throw Object.assign(new Error('Member session changed during request'), {
+      code: 'MEMBER_SCOPE_CHANGED',
+    })
+  }
+
+  async function ensureXanoToken(generation = _memberScopeGeneration) {
+    assertMemberScopeGeneration(generation)
     if (_xanoToken) return _xanoToken
     const msToken = await getMemberstackToken()
+    assertMemberScopeGeneration(generation)
     const res = await fetch(
       `${XANO_AUTH_BASE}${XANO_TRADE_TOKEN_PATH}?token=${encodeURIComponent(msToken)}`,
     )
     const data = await res.json().catch(() => null)
+    assertMemberScopeGeneration(generation)
     if (!res.ok) {
       throw Object.assign(new Error('trade-token failed'), { status: res.status, data })
     }
     // create_auth_token may return a raw string or { authToken }/{ token }
-    _xanoToken = typeof data === 'string' ? data : data.authToken || data.token
-    if (!_xanoToken) throw new Error('trade-token returned no token')
-    return _xanoToken
+    const token = typeof data === 'string' ? data : data.authToken || data.token
+    if (!token) throw new Error('trade-token returned no token')
+    _xanoToken = token
+    return token
   }
 
   // Funnel events (see platform-ops/architecture/posthog-funnel-events-plan.md).
@@ -163,7 +177,9 @@
   }
 
   async function call(path, { method = 'POST', body } = {}) {
-    const token = await ensureXanoToken()
+    const generation = _memberScopeGeneration
+    const token = await ensureXanoToken(generation)
+    assertMemberScopeGeneration(generation)
     const res = await fetch(`${XANO_OPP_BASE}/${path}`, {
       method,
       headers: {
@@ -172,7 +188,9 @@
       },
       body: body ? JSON.stringify(body) : undefined,
     })
+    assertMemberScopeGeneration(generation)
     const data = await res.json().catch(() => null)
+    assertMemberScopeGeneration(generation)
     if (!res.ok) {
       track('bridge_error', { path, status: res.status })
       throw Object.assign(new Error(data && data.message ? data.message : `API ${res.status}`), {
@@ -189,6 +207,7 @@
         has_message: path === 'starter/applications/submit' ? Boolean(body && body.message) : undefined,
       })
     }
+    assertMemberScopeGeneration(generation)
     return data
   }
 
@@ -214,8 +233,8 @@
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     // starter / talent
     starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
-    starterOppList: (tab, page = 1, per_page = 20) =>
-      call('starter/opportunities/list', { body: { tab, page, per_page } }),
+    starterOppList: (tab, page = 1, per_page = 20, options = {}) =>
+      call('starter/opportunities/list', { body: { tab, page, per_page, ...options } }),
     starterOppDetail: (opportunity_id) =>
       call('starter/opportunities/detail', { body: { opportunity_id } }),
     starterAppSubmit: (opportunity_id, message) =>
@@ -782,6 +801,7 @@
   function resetMemberScopedCaches(memberId) {
     if (memberId === _cacheMemberId) return
     _cacheMemberId = memberId
+    _memberScopeGeneration += 1
     _xanoToken = null
     _talentMatchContextPromise = null
     _talentAppliedIdsPromise = null
@@ -795,6 +815,21 @@
         /* non-fatal */
       }
     }
+    window.dispatchEvent(new CustomEvent(MEMBER_SCOPE_RESET_EVENT, { detail: { memberId } }))
+  }
+
+  async function wireMemberScopeAuthChange() {
+    if (_memberScopeAuthChangeWired) return
+    const memberstack = await waitForMemberstackDom()
+    if (
+      _memberScopeAuthChangeWired ||
+      !memberstack ||
+      typeof memberstack.onAuthChange !== 'function'
+    ) {
+      return
+    }
+    _memberScopeAuthChangeWired = true
+    memberstack.onAuthChange((member) => resetMemberScopedCaches(member?.id || null))
   }
 
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
@@ -1199,6 +1234,12 @@
   function getTalentMatchContext() {
     if (!_talentMatchContextPromise) _talentMatchContextPromise = API.starterMatchContext()
     return _talentMatchContextPromise
+  }
+
+  function refreshTalentMatchContext() {
+    _talentMatchContextPromise = null
+    window.Opp30TalentMatchContext = null
+    return getTalentMatchContext()
   }
 
   function queueTalentAlgoliaFilterChange(change) {
@@ -2511,6 +2552,86 @@
     })
   }
 
+  /* ================= OPPORTUNITY MATCH QA MODE ================== */
+  const OPP_MATCH_DEBUG_PARAM = 'opp_debug'
+  const OPP_MATCH_DEBUG_SCRIPT =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0-debug.js'
+
+  function opportunityMatchDebugEnabled() {
+    const value = String(urlParam(OPP_MATCH_DEBUG_PARAM) || '').trim().toLowerCase()
+    return ['1', 'true', 'yes', 'on'].includes(value)
+  }
+
+  function preserveOpportunityMatchDebugLink(link, value) {
+    if (!link || !link.matches?.('a[href]')) return
+    try {
+      const target = new URL(link.href, location.href)
+      if (target.origin !== location.origin) return
+      if (!/^\/opportunities-freelancer-view\/?$/.test(target.pathname)) return
+      if (target.searchParams.get(OPP_MATCH_DEBUG_PARAM) === value) return
+      target.searchParams.set(OPP_MATCH_DEBUG_PARAM, value)
+      link.href = `${target.pathname}${target.search}${target.hash}`
+    } catch (e) {
+      /* non-fatal */
+    }
+  }
+
+  function loadOpportunityMatchDebug() {
+    const value = urlParam(OPP_MATCH_DEBUG_PARAM) || '1'
+    const preserveLinks = (root) => {
+      if (root?.matches?.('a[href]')) preserveOpportunityMatchDebugLink(root, value)
+      root?.querySelectorAll?.('a[href]').forEach((link) =>
+        preserveOpportunityMatchDebugLink(link, value),
+      )
+    }
+
+    preserveLinks(document)
+    const linkObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes') {
+          preserveOpportunityMatchDebugLink(mutation.target, value)
+          return
+        }
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType === 1) preserveLinks(node)
+        })
+      })
+    })
+    linkObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['href'],
+      childList: true,
+      subtree: true,
+    })
+    document.addEventListener(
+      'click',
+      (event) => preserveOpportunityMatchDebugLink(event.target.closest?.('a[href]'), value),
+      true,
+    )
+
+    window.Opp30MatchDebugBridge = {
+      API,
+      contextValue,
+      filterValues,
+      getTalentMatchContext,
+      refreshTalentMatchContext,
+      memberScopeResetEvent: MEMBER_SCOPE_RESET_EVENT,
+    }
+
+    const script = document.createElement('script')
+    script.id = 'opp30-match-debug-script'
+    script.src = OPP_MATCH_DEBUG_SCRIPT
+    script.async = true
+    script.addEventListener(
+      'error',
+      () => {
+        document.documentElement.setAttribute('data-opp30-match-debug', 'error')
+        console.error('[opp30] failed to load opportunity matching QA mode')
+      },
+      { once: true },
+    )
+    ;(document.head || document.documentElement).appendChild(script)
+  }
   function diagnoseFreelancerFeed() {
     const scriptSrcs = $$('script[src]').map((script) => script.src || '')
     const matchContext = window.Opp30TalentMatchContext || null
@@ -2592,6 +2713,7 @@
 
   /* ========================= BOOTSTRAP ========================== */
   function boot() {
+    wireMemberScopeAuthChange()
     initOpportunityCategorySelects()
     prepareOpportunityStatusControls()
     prepareOpportunityLoadingControls()
@@ -2618,6 +2740,12 @@
       initTalentList()
       initWfAlgoliaBridge()
     } else if (p.includes('opportunities---create')) initBrandCreatePage()
+    if (
+      opportunityMatchDebugEnabled() &&
+      (p.includes('starter-dashboard') || p.includes('opportunities-freelancer-view'))
+    ) {
+      loadOpportunityMatchDebug()
+    }
     // /all-modals: only wireModals() (already called) — no data fetch
   }
 
@@ -2630,6 +2758,7 @@
 
   // expose for debugging / manual calls in console
   window.Opp30 = {
+    ...window.Opp30,
     API,
     ensureXanoToken,
     diagnoseFreelancerFeed,
