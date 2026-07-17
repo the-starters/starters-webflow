@@ -156,10 +156,17 @@
     const template = list && list.querySelector('.message_item')
     if (!list || !template) return null
 
+    // The tile can contain several .dash_card wrappers; the empty state is
+    // the one holding .tile-item_empty-state-layout.
+    const emptyLayout = tile.querySelector('.tile-item_empty-state-layout')
+
     return {
       tile,
       badge: tile.querySelector('.tile-item_notification-text'),
-      emptyCard: tile.querySelector('.dash_card'),
+      emptyCard:
+        (emptyLayout && emptyLayout.closest('.dash_card')) ||
+        emptyLayout ||
+        tile.querySelector('.dash_card'),
       viewAll: tile.querySelector('.button_main-wrap .clickable_btn'),
       list,
       template: template.cloneNode(true),
