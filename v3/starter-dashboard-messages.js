@@ -10,9 +10,13 @@
  * If the Xano endpoint is unavailable the tile degrades to unreads-only.
  * Shows the empty state when there are no conversations at all.
  *
- * Wiring: elements are located by `data-messages-element` attributes
- * (tile, badge, loading, empty, list, item, avatar, title, preview, time,
- * view-all), with the original class-based selectors as fallbacks.
+ * Wiring (wf-xano-style, multi-instance): each `data-messages-element="wrapper"`
+ * scopes one rendered instance containing `list`, `template` (first card),
+ * `empty`, `loading`, `total` (unread count) and `view-all`, with card fields
+ * `avatar`, `title`, `preview`, `time` inside the template. Optional
+ * `data-messages-limit="<n>"` on the wrapper caps rendered cards (default 8).
+ * All instances share one TalkJS session + one Xano fetch. The original
+ * class-based selectors remain as fallbacks (legacy wrapper: `#messages`).
  */
 ;(function () {
   'use strict'
@@ -165,41 +169,52 @@
     )
   }
 
-  function collectTileRefs() {
-    const tile =
-      document.querySelector(attrSel('tile')) ||
-      document.getElementById('messages')
-    if (!tile) return null
+  function findWrappers() {
+    const wrappers = Array.prototype.slice.call(
+      document.querySelectorAll(attrSel('wrapper')),
+    )
+    if (wrappers.length) return wrappers
+    const legacy = document.getElementById('messages')
+    return legacy ? [legacy] : []
+  }
 
-    const list = pick(tile, 'list', '.tile-item_message-list')
+  function collectInstanceRefs(wrapper) {
+    const list = pick(wrapper, 'list', '.tile-item_message-list')
     const template =
-      list && (list.querySelector(attrSel('item')) || list.querySelector('.message_item'))
+      list &&
+      (list.querySelector(attrSel('template')) ||
+        list.querySelector('.message_item'))
     if (!list || !template) return null
     // Removal must clear both grammars: Designer placeholders may carry
     // only the class while the template carries the attribute.
-    const itemSelector = attrSel('item') + ', .message_item'
+    const itemSelector = attrSel('template') + ', .message_item'
 
     // Fallback anchors: the tile contains several .dash_card wrappers — a
     // loading-spinner card and the empty state (the one holding
     // .tile-item_empty-state-layout).
-    const emptyLayout = tile.querySelector('.tile-item_empty-state-layout')
+    const emptyLayout = wrapper.querySelector('.tile-item_empty-state-layout')
     const emptyCard =
-      pick(tile, 'empty') ||
+      pick(wrapper, 'empty') ||
       (emptyLayout && emptyLayout.closest('.dash_card')) ||
       emptyLayout ||
-      tile.querySelector('.dash_card')
-    const spinner = tile.querySelector('.dash_card .button_spinner')
+      wrapper.querySelector('.dash_card')
+    const spinner = wrapper.querySelector('.dash_card .button_spinner')
     const loadingCard =
-      pick(tile, 'loading') || (spinner && spinner.closest('.dash_card'))
+      pick(wrapper, 'loading') || (spinner && spinner.closest('.dash_card'))
+
+    const limit =
+      parseInt(wrapper.getAttribute('data-messages-limit'), 10) ||
+      MAX_PREVIEW_ITEMS
 
     return {
-      tile,
-      badge: pick(tile, 'badge', '.tile-item_notification-text'),
+      wrapper,
+      total: pick(wrapper, 'total', '.tile-item_notification-text'),
       emptyCard,
       loadingCard: loadingCard !== emptyCard ? loadingCard : null,
-      viewAll: pick(tile, 'view-all', '.button_main-wrap .clickable_btn'),
+      viewAll: pick(wrapper, 'view-all', '.button_main-wrap .clickable_btn'),
       list,
       itemSelector,
+      limit,
       template: template.cloneNode(true),
     }
   }
@@ -210,7 +225,7 @@
     refs.list
       .querySelectorAll(refs.itemSelector)
       .forEach((node) => node.remove())
-    if (refs.badge) refs.badge.style.display = 'none'
+    if (refs.total) refs.total.style.display = 'none'
     refs.list.style.display = 'none'
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
     if (refs.loadingCard) refs.loadingCard.style.display = ''
@@ -358,9 +373,9 @@
 
     if (refs.loadingCard) refs.loadingCard.style.display = 'none'
 
-    if (refs.badge) {
-      refs.badge.textContent = String(unreadCount)
-      refs.badge.style.display = unreadCount > 0 ? '' : 'none'
+    if (refs.total) {
+      refs.total.textContent = String(unreadCount)
+      refs.total.style.display = unreadCount > 0 ? '' : 'none'
     }
 
     refs.list
@@ -378,27 +393,32 @@
 
     displays
       .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
-      .slice(0, MAX_PREVIEW_ITEMS)
+      .slice(0, refs.limit)
       .forEach((display) => {
         refs.list.appendChild(renderItem(refs, display))
       })
   }
 
   async function mountTile() {
-    const refs = collectTileRefs()
-    if (!refs) return
+    const instances = findWrappers()
+      .map(collectInstanceRefs)
+      .filter(Boolean)
+    if (!instances.length) return
 
-    clearPlaceholders(refs)
-
-    if (refs.viewAll) {
-      refs.viewAll.addEventListener('click', () => {
-        window.location.assign(MESSAGES_PATH)
-      })
-    }
+    instances.forEach((refs) => {
+      clearPlaceholders(refs)
+      if (refs.viewAll) {
+        refs.viewAll.addEventListener('click', () => {
+          window.location.assign(MESSAGES_PATH)
+        })
+      }
+    })
 
     const showEmpty = () => {
-      if (refs.loadingCard) refs.loadingCard.style.display = 'none'
-      if (refs.emptyCard) refs.emptyCard.style.display = ''
+      instances.forEach((refs) => {
+        if (refs.loadingCard) refs.loadingCard.style.display = 'none'
+        if (refs.emptyCard) refs.emptyCard.style.display = ''
+      })
     }
 
     const memberstack = await waitForMemberstackDom()
@@ -416,14 +436,16 @@
 
     const state = { recent: null, unreads: [] }
     const rerender = () => {
-      try {
-        renderTile(refs, state)
-      } catch (error) {
-        console.error(
-          '[starter-dashboard] Unable to render Messages tile',
-          error,
-        )
-      }
+      instances.forEach((refs) => {
+        try {
+          renderTile(refs, state)
+        } catch (error) {
+          console.error(
+            '[starter-dashboard] Unable to render Messages tile',
+            error,
+          )
+        }
+      })
     }
 
     // Recent conversations (including read ones) via the Xano proxy.
@@ -459,21 +481,23 @@
         '[starter-dashboard] Unable to mount Messages tile',
         error,
       )
-      // Never strand the tile on the loading spinner.
-      const tile =
-        document.querySelector(attrSel('tile')) ||
-        document.getElementById('messages')
-      const spinner = tile && tile.querySelector('.dash_card .button_spinner')
-      const loadingCard =
-        pick(tile, 'loading') || (spinner && spinner.closest('.dash_card'))
-      if (loadingCard) loadingCard.style.display = 'none'
-      const hasCards =
-        tile && tile.querySelector(attrSel('item') + ', .message_item')
-      const emptyLayout =
-        tile && tile.querySelector('.tile-item_empty-state-layout')
-      const emptyCard =
-        pick(tile, 'empty') || (emptyLayout && emptyLayout.closest('.dash_card'))
-      if (emptyCard && !hasCards) emptyCard.style.display = ''
+      // Never strand any instance on the loading spinner.
+      findWrappers().forEach((wrapper) => {
+        const spinner = wrapper.querySelector('.dash_card .button_spinner')
+        const loadingCard =
+          pick(wrapper, 'loading') || (spinner && spinner.closest('.dash_card'))
+        if (loadingCard) loadingCard.style.display = 'none'
+        const hasCards = wrapper.querySelector(
+          attrSel('template') + ', .message_item',
+        )
+        const emptyLayout = wrapper.querySelector(
+          '.tile-item_empty-state-layout',
+        )
+        const emptyCard =
+          pick(wrapper, 'empty') ||
+          (emptyLayout && emptyLayout.closest('.dash_card'))
+        if (emptyCard && !hasCards) emptyCard.style.display = ''
+      })
     })
   }
 
