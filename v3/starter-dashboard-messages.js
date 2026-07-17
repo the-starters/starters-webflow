@@ -217,6 +217,9 @@
       parseInt(wrapper.getAttribute('data-messages-limit'), 10) ||
       MAX_PREVIEW_ITEMS
 
+    const unreadClass =
+      wrapper.getAttribute('data-messages-class-unread') || 'is-new'
+
     return {
       wrapper,
       total: pick(wrapper, 'total', '.tile-item_notification-text'),
@@ -226,6 +229,7 @@
       list,
       itemSelector,
       limit,
+      unreadClass,
       template: template.cloneNode(true),
     }
   }
@@ -361,7 +365,10 @@
       avatar.style.backgroundPosition = 'center'
     }
 
-    item.classList.toggle('is-new', display.unread)
+    item.classList.toggle(refs.unreadClass, display.unread)
+    // Drop the legacy default so stale Designer styling can't linger when a
+    // custom unread class is configured.
+    if (refs.unreadClass !== 'is-new') item.classList.remove('is-new')
 
     const button = item.querySelector('.clickable_btn')
     const target = button || item
