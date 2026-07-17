@@ -421,7 +421,13 @@
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
 
     displays
-      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+      // Unread first (the tile is capped, so unreads must never be pushed
+      // out by newer read conversations), then most recent within each group.
+      .sort(
+        (a, b) =>
+          (b.unread ? 1 : 0) - (a.unread ? 1 : 0) ||
+          (b.timestamp || 0) - (a.timestamp || 0),
+      )
       .slice(0, refs.limit)
       .forEach((display) => {
         refs.list.appendChild(renderItem(refs, display))
