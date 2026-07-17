@@ -217,8 +217,11 @@
       parseInt(wrapper.getAttribute('data-messages-limit'), 10) ||
       MAX_PREVIEW_ITEMS
 
+    // Accepted on the wrapper or on the template card itself.
     const unreadClass =
-      wrapper.getAttribute('data-messages-class-unread') || 'is-new'
+      wrapper.getAttribute('data-messages-class-unread') ||
+      template.getAttribute('data-messages-class-unread') ||
+      'is-new'
 
     return {
       wrapper,
