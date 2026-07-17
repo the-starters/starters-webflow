@@ -9,6 +9,10 @@
  *     name/photo enrichment, and the unread count badge.
  * If the Xano endpoint is unavailable the tile degrades to unreads-only.
  * Shows the empty state when there are no conversations at all.
+ *
+ * Wiring: elements are located by `data-messages-element` attributes
+ * (tile, badge, loading, empty, list, item, avatar, title, preview, time,
+ * view-all), with the original class-based selectors as fallbacks.
  */
 ;(function () {
   'use strict'
@@ -148,31 +152,54 @@
       .map((part) => part[0].toUpperCase())
   }
 
+  // Preferred wiring: data-messages-element attributes (Designer-proof).
+  // Class-based selectors remain as fallbacks for pages not yet migrated.
+  const ATTR = 'data-messages-element'
+  const attrSel = (name) => '[' + ATTR + '="' + name + '"]'
+
+  function pick(root, name, fallbackSelector) {
+    if (!root) return null
+    return (
+      root.querySelector(attrSel(name)) ||
+      (fallbackSelector ? root.querySelector(fallbackSelector) : null)
+    )
+  }
+
   function collectTileRefs() {
-    const tile = document.getElementById('messages')
+    const tile =
+      document.querySelector(attrSel('tile')) ||
+      document.getElementById('messages')
     if (!tile) return null
 
-    const list = tile.querySelector('.tile-item_message-list')
-    const template = list && list.querySelector('.message_item')
+    const list = pick(tile, 'list', '.tile-item_message-list')
+    const template =
+      list && (list.querySelector(attrSel('item')) || list.querySelector('.message_item'))
     if (!list || !template) return null
+    // Removal must clear both grammars: Designer placeholders may carry
+    // only the class while the template carries the attribute.
+    const itemSelector = attrSel('item') + ', .message_item'
 
-    // The tile contains several .dash_card wrappers: a loading-spinner card
-    // and the empty state (the one holding .tile-item_empty-state-layout).
+    // Fallback anchors: the tile contains several .dash_card wrappers — a
+    // loading-spinner card and the empty state (the one holding
+    // .tile-item_empty-state-layout).
     const emptyLayout = tile.querySelector('.tile-item_empty-state-layout')
     const emptyCard =
+      pick(tile, 'empty') ||
       (emptyLayout && emptyLayout.closest('.dash_card')) ||
       emptyLayout ||
       tile.querySelector('.dash_card')
     const spinner = tile.querySelector('.dash_card .button_spinner')
-    const loadingCard = spinner && spinner.closest('.dash_card')
+    const loadingCard =
+      pick(tile, 'loading') || (spinner && spinner.closest('.dash_card'))
 
     return {
       tile,
-      badge: tile.querySelector('.tile-item_notification-text'),
+      badge: pick(tile, 'badge', '.tile-item_notification-text'),
       emptyCard,
       loadingCard: loadingCard !== emptyCard ? loadingCard : null,
-      viewAll: tile.querySelector('.button_main-wrap .clickable_btn'),
+      viewAll: pick(tile, 'view-all', '.button_main-wrap .clickable_btn'),
       list,
+      itemSelector,
       template: template.cloneNode(true),
     }
   }
@@ -180,7 +207,9 @@
   // Boot state: designer loading spinner visible, everything else hidden
   // until the first render.
   function clearPlaceholders(refs) {
-    refs.list.querySelectorAll('.message_item').forEach((node) => node.remove())
+    refs.list
+      .querySelectorAll(refs.itemSelector)
+      .forEach((node) => node.remove())
     if (refs.badge) refs.badge.style.display = 'none'
     refs.list.style.display = 'none'
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
@@ -258,16 +287,16 @@
   function renderItem(refs, display) {
     const item = refs.template.cloneNode(true)
 
-    const heading = item.querySelector('.message-item_message h3')
+    const heading = pick(item, 'title', '.message-item_message h3')
     if (heading) heading.textContent = display.title
 
-    const preview = item.querySelector('.message-item_message p')
+    const preview = pick(item, 'preview', '.message-item_message p')
     if (preview) preview.textContent = display.preview
 
-    const timeEl = item.querySelector('.message-item_layout > p')
+    const timeEl = pick(item, 'time', '.message-item_layout > p')
     if (timeEl) timeEl.textContent = timeAgo(display.timestamp)
 
-    const avatar = item.querySelector('.message-item_profile-image')
+    const avatar = pick(item, 'avatar', '.message-item_profile-image')
     if (avatar) {
       const initialsEl = avatar.querySelector('p')
       if (display.photoUrl) {
@@ -334,7 +363,9 @@
       refs.badge.style.display = unreadCount > 0 ? '' : 'none'
     }
 
-    refs.list.querySelectorAll('.message_item').forEach((node) => node.remove())
+    refs.list
+      .querySelectorAll(refs.itemSelector)
+      .forEach((node) => node.remove())
 
     if (displays.length === 0) {
       refs.list.style.display = 'none'
@@ -429,14 +460,19 @@
         error,
       )
       // Never strand the tile on the loading spinner.
-      const tile = document.getElementById('messages')
+      const tile =
+        document.querySelector(attrSel('tile')) ||
+        document.getElementById('messages')
       const spinner = tile && tile.querySelector('.dash_card .button_spinner')
-      const loadingCard = spinner && spinner.closest('.dash_card')
+      const loadingCard =
+        pick(tile, 'loading') || (spinner && spinner.closest('.dash_card'))
       if (loadingCard) loadingCard.style.display = 'none'
-      const hasCards = tile && tile.querySelector('.message_item')
+      const hasCards =
+        tile && tile.querySelector(attrSel('item') + ', .message_item')
       const emptyLayout =
         tile && tile.querySelector('.tile-item_empty-state-layout')
-      const emptyCard = emptyLayout && emptyLayout.closest('.dash_card')
+      const emptyCard =
+        pick(tile, 'empty') || (emptyLayout && emptyLayout.closest('.dash_card'))
       if (emptyCard && !hasCards) emptyCard.style.display = ''
     })
   }
