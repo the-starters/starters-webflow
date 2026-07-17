@@ -1124,6 +1124,14 @@
     })
   }
 
+  function showTalentIncompleteProfilePrompt() {
+    const results = $('[wf-algolia-element="results"]')
+    if (results && results.style.display !== 'none') results.style.display = 'none'
+    const noResults = $('[wf-algolia-element="no-results"]')
+    if (noResults && noResults.style.display !== '') noResults.style.display = ''
+    paintIncompleteProfilePrompt()
+  }
+
   function waitForWfAlgolia(timeoutMs = 10000) {
     if (window.WfAlgolia && typeof window.WfAlgolia.setFilter === 'function') {
       return Promise.resolve(window.WfAlgolia)
@@ -1344,11 +1352,7 @@
         console.warn('[opp30] talent match context has no category_refs; Algolia match filter skipped')
         // No categories to match on: never fall back to the unfiltered feed. Collapse
         // the results and surface the empty state instead of showing non-matching cards.
-        const results = $('[wf-algolia-element="results"]')
-        if (results) results.style.display = 'none'
-        const noResults = $('[wf-algolia-element="no-results"]')
-        if (noResults) noResults.style.display = ''
-        paintIncompleteProfilePrompt()
+        showTalentIncompleteProfilePrompt()
         return
       }
 
@@ -2422,11 +2426,23 @@
       fixCards()
       fixActivePage()
       if (isTalentFeed) markAppliedCards(results)
+      if (
+        isTalentFeed &&
+        _talentRequestedTab !== 'applied' &&
+        document.documentElement.getAttribute('data-opp30-talent-algolia') === 'no-category-refs'
+      ) {
+        showTalentIncompleteProfilePrompt()
+      }
     }
     apply()
     // Cards render before the applied-ids fetch resolves; re-mark once it's in.
     if (isTalentFeed) fetchAppliedOppIds().then(apply).catch(() => {})
-    new MutationObserver(apply).observe(results, { childList: true, subtree: true })
+    const resultsObserver = new MutationObserver(apply)
+    resultsObserver.observe(results, { childList: true, subtree: true })
+    const noResults = $('[wf-algolia-element="no-results"]')
+    if (isTalentFeed && noResults) {
+      resultsObserver.observe(noResults, { attributes: true, attributeFilter: ['style'] })
+    }
     const pager = ($('[wf-algolia-element="page-number"]') || {}).parentElement
     if (pager) new MutationObserver(fixActivePage).observe(pager, { childList: true, subtree: true, attributes: true })
 
