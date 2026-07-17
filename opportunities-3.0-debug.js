@@ -338,7 +338,20 @@
     if (location.pathname.includes('starter-dashboard')) {
       return $$('[wf-xano-instance="dash-applied-opps"]')
     }
-    return $$('[wf-algolia-element="results"]')
+
+    // The V3 opportunity feed currently renders through wf-xano. A separate,
+    // site-wide Algolia search overlay also has wf-algolia-element="results";
+    // targeting that generic container paints hidden freelancer/search cards
+    // instead of the opportunity feed.
+    const xanoRoots = $$('[wf-xano-instance="talent-opps"]')
+    if (xanoRoots.length) return xanoRoots
+
+    // Keep a narrow fallback for a future Algolia feed migration. Requiring an
+    // opportunity-card descendant prevents the global search overlay from
+    // being mistaken for this page's feed.
+    return $$('[wf-algolia-element="results"]').filter((root) =>
+      root.querySelector('.opportunity-card'),
+    )
   }
 
   function renderedCards(data) {
@@ -415,6 +428,14 @@
   }
 
   function ensureStyles() {
+    if (!document.getElementById('opp30-lil-gui-styles')) {
+      const link = document.createElement('link')
+      link.id = 'opp30-lil-gui-styles'
+      link.rel = 'stylesheet'
+      link.href = GUI_STYLE
+      ;(document.head || document.documentElement).appendChild(link)
+    }
+
     if (!document.getElementById('opp30-match-debug-styles')) {
       const style = document.createElement('style')
       style.id = 'opp30-match-debug-styles'
@@ -431,17 +452,31 @@
         [data-opp-debug-match="true"] [data-opp-debug-card-overlay]{border-color:#2d7d46;background:rgba(235,250,239,.97)}
         [data-opp-debug-applied="true"] [data-opp-debug-card-overlay]{box-shadow:inset 3px 0 #4263a5,0 2px 8px rgba(0,0,0,.15)}
         [data-opp-debug-match="true"][data-opp-debug-applied="true"] [data-opp-debug-card-overlay]{box-shadow:inset 3px 0 #6b45a8,0 2px 8px rgba(0,0,0,.15)}
-        .lil-gui.root[data-opp-debug-gui]{z-index:2147483646!important;--width:370px}
+        .lil-gui[data-opp-debug-gui]{
+          --opp-debug-panel-top:72px;position:fixed!important;
+          top:var(--opp-debug-panel-top)!important;right:12px!important;bottom:auto!important;
+          z-index:2147483646!important;width:min(420px,calc(100vw - 24px))!important;
+          max-height:calc(100dvh - var(--opp-debug-panel-top) - 12px);overflow:auto;
+          --width:min(420px,calc(100vw - 24px));
+          --name-width:34%
+        }
+        [data-opp-debug-profile-categories]{
+          display:flex;flex-wrap:wrap;gap:.35rem;padding:.45rem .5rem .6rem;
+          border-top:1px solid var(--widget-color)
+        }
+        [data-opp-debug-category]{
+          display:inline-flex;max-width:100%;padding:.25rem .4rem;border:1px solid #667066;
+          border-radius:999px;background:#f1f4ed;color:#20251f;font:600 11px/1.25 system-ui,sans-serif;
+          white-space:normal;overflow-wrap:anywhere
+        }
+        @media (max-width:991px){
+          .lil-gui[data-opp-debug-gui]{--opp-debug-panel-top:88px}
+        }
+        @media (max-width:478px){
+          .lil-gui[data-opp-debug-gui]{--opp-debug-panel-top:77px}
+        }
       `
       ;(document.head || document.documentElement).appendChild(style)
-    }
-
-    if (!document.getElementById('opp30-lil-gui-styles')) {
-      const link = document.createElement('link')
-      link.id = 'opp30-lil-gui-styles'
-      link.rel = 'stylesheet'
-      link.href = GUI_STYLE
-      ;(document.head || document.documentElement).appendChild(link)
     }
   }
 
@@ -517,7 +552,7 @@
             (node.matches?.(CARD_SELECTOR) ||
               node.querySelector?.(CARD_SELECTOR) ||
               node.matches?.(
-                '[wf-xano-instance="dash-applied-opps"], [wf-algolia-element="results"]',
+                '[wf-xano-instance="dash-applied-opps"], [wf-xano-instance="talent-opps"], [wf-algolia-element="results"]',
               )),
         ),
       )
@@ -530,6 +565,24 @@
     const controller = folder.add(state, property).name(label)
     controller.disable?.()
     return controller
+  }
+
+  function addProfileCategories(folder, refs) {
+    const container = document.createElement('div')
+    container.setAttribute('data-opp-debug-profile-categories', '')
+    const values = bridge.filterValues(refs)
+    const categories = values.length ? values : [null]
+
+    categories.forEach((ref) => {
+      const chip = document.createElement('span')
+      chip.setAttribute('data-opp-debug-category', '')
+      chip.textContent = ref == null ? 'No categories' : categoryLabel(ref)
+      container.appendChild(chip)
+    })
+
+    const children = folder.$children || folder.domElement.querySelector('.lil-children')
+    children.appendChild(container)
+    return container
   }
 
   function clearDebugDom() {
@@ -566,7 +619,6 @@
 
         const state = {
           route: data.route,
-          freelancerCategories: categoryLabels(data.starter.categoryRefs),
           totalActive: data.counts.totalActive,
           categoryMatching: data.counts.categoryMatching,
           availableMatching: data.counts.availableMatching,
@@ -593,7 +645,7 @@
         gui.domElement.setAttribute('data-opp-debug-gui', '')
         const profile = gui.addFolder('Freelancer profile')
         addReadOnly(profile, state, 'route', 'Page')
-        addReadOnly(profile, state, 'freelancerCategories', 'Categories')
+        addProfileCategories(profile, data.starter.categoryRefs)
 
         const counts = gui.addFolder('Active opportunity counts')
         addReadOnly(counts, state, 'totalActive', 'Total active')
@@ -667,6 +719,7 @@
 
   Object.assign(window.Opp30 || (window.Opp30 = {}), {
     diagnoseOpportunityMatching,
+    findOpportunityMatchCardRoots: cardRoots,
     initOpportunityMatchDebug: initialize,
     resolveOpportunityMatchCardId: opportunityCardId,
     summarizeOpportunityMatching,

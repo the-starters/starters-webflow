@@ -6,7 +6,29 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(path.join(__dirname, 'opportunities-3.0-debug.js'), 'utf8')
 
-function loadDebugModule() {
+test('QA panel styles follow lil-gui and cover navbar breakpoints', () => {
+  assert.ok(
+    source.indexOf("link.id = 'opp30-lil-gui-styles'") <
+      source.indexOf("style.id = 'opp30-match-debug-styles'"),
+  )
+  assert.match(source, /--opp-debug-panel-top:72px/)
+  assert.match(source, /max-width:991px[\s\S]*--opp-debug-panel-top:88px/)
+  assert.match(source, /max-width:478px[\s\S]*--opp-debug-panel-top:77px/)
+  assert.match(
+    source,
+    /max-height:calc\(100dvh - var\(--opp-debug-panel-top\) - 12px\)/,
+  )
+})
+
+test('profile category chips mount in the collapsible lil-gui children', () => {
+  assert.match(
+    source,
+    /folder\.\$children \|\| folder\.domElement\.querySelector\('\.lil-children'\)/,
+  )
+  assert.doesNotMatch(source, /querySelector\('\.children'\) \|\| folder\.domElement/)
+})
+
+function loadDebugModule(options = {}) {
   const documentElement = {
     appendChild() {},
     setAttribute() {},
@@ -16,7 +38,7 @@ function loadDebugModule() {
     getElementById: () => null,
     head: documentElement,
     querySelector: () => null,
-    querySelectorAll: () => [],
+    querySelectorAll: options.querySelectorAll || (() => []),
   }
   const window = {
     Opp30: {},
@@ -41,13 +63,51 @@ function loadDebugModule() {
     document,
     location: {
       href: 'https://example.test/starter-dashboard?opp_debug=1',
-      pathname: '/starter-dashboard',
+      pathname: options.pathname || '/starter-dashboard',
     },
     window,
   })
   vm.runInContext(source, context)
   return window.Opp30
 }
+
+test('freelancer feed targets talent-opps instead of the global search results', () => {
+  const talentRoot = { querySelector: () => null }
+  const hiddenGlobalSearchRoot = { querySelector: () => null }
+  const debug = loadDebugModule({
+    pathname: '/opportunities-freelancer-view',
+    querySelectorAll: (selector) => {
+      if (selector === '[wf-xano-instance="talent-opps"]') return [talentRoot]
+      if (selector === '[wf-algolia-element="results"]') return [hiddenGlobalSearchRoot]
+      return []
+    },
+  })
+
+  const roots = debug.findOpportunityMatchCardRoots()
+  assert.equal(roots.length, 1)
+  assert.equal(roots[0], talentRoot)
+})
+
+test('Algolia fallback ignores a global search root without opportunity cards', () => {
+  const hiddenGlobalSearchRoot = { querySelector: () => null }
+  const opportunityRoot = {
+    querySelector: (selector) => (selector === '.opportunity-card' ? {} : null),
+  }
+  const debug = loadDebugModule({
+    pathname: '/opportunities-freelancer-view',
+    querySelectorAll: (selector) => {
+      if (selector === '[wf-xano-instance="talent-opps"]') return []
+      if (selector === '[wf-algolia-element="results"]') {
+        return [hiddenGlobalSearchRoot, opportunityRoot]
+      }
+      return []
+    },
+  })
+
+  const roots = debug.findOpportunityMatchCardRoots()
+  assert.equal(roots.length, 1)
+  assert.equal(roots[0], opportunityRoot)
+})
 
 function dashboardCard(attributes, href) {
   const root = {}
