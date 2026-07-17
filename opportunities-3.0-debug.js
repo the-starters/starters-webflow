@@ -428,6 +428,14 @@
   }
 
   function ensureStyles() {
+    if (!document.getElementById('opp30-lil-gui-styles')) {
+      const link = document.createElement('link')
+      link.id = 'opp30-lil-gui-styles'
+      link.rel = 'stylesheet'
+      link.href = GUI_STYLE
+      ;(document.head || document.documentElement).appendChild(link)
+    }
+
     if (!document.getElementById('opp30-match-debug-styles')) {
       const style = document.createElement('style')
       style.id = 'opp30-match-debug-styles'
@@ -445,9 +453,11 @@
         [data-opp-debug-applied="true"] [data-opp-debug-card-overlay]{box-shadow:inset 3px 0 #4263a5,0 2px 8px rgba(0,0,0,.15)}
         [data-opp-debug-match="true"][data-opp-debug-applied="true"] [data-opp-debug-card-overlay]{box-shadow:inset 3px 0 #6b45a8,0 2px 8px rgba(0,0,0,.15)}
         .lil-gui[data-opp-debug-gui]{
-          position:fixed!important;top:72px!important;right:12px!important;bottom:auto!important;
+          --opp-debug-panel-top:72px;position:fixed!important;
+          top:var(--opp-debug-panel-top)!important;right:12px!important;bottom:auto!important;
           z-index:2147483646!important;width:min(420px,calc(100vw - 24px))!important;
-          max-height:calc(100dvh - 84px);overflow:auto;--width:min(420px,calc(100vw - 24px));
+          max-height:calc(100dvh - var(--opp-debug-panel-top) - 12px);overflow:auto;
+          --width:min(420px,calc(100vw - 24px));
           --name-width:34%
         }
         [data-opp-debug-profile-categories]{
@@ -459,16 +469,14 @@
           border-radius:999px;background:#f1f4ed;color:#20251f;font:600 11px/1.25 system-ui,sans-serif;
           white-space:normal;overflow-wrap:anywhere
         }
+        @media (max-width:991px){
+          .lil-gui[data-opp-debug-gui]{--opp-debug-panel-top:88px}
+        }
+        @media (max-width:478px){
+          .lil-gui[data-opp-debug-gui]{--opp-debug-panel-top:77px}
+        }
       `
       ;(document.head || document.documentElement).appendChild(style)
-    }
-
-    if (!document.getElementById('opp30-lil-gui-styles')) {
-      const link = document.createElement('link')
-      link.id = 'opp30-lil-gui-styles'
-      link.rel = 'stylesheet'
-      link.href = GUI_STYLE
-      ;(document.head || document.documentElement).appendChild(link)
     }
   }
 
@@ -572,7 +580,7 @@
       container.appendChild(chip)
     })
 
-    const children = folder.domElement.querySelector('.children') || folder.domElement
+    const children = folder.$children || folder.domElement.querySelector('.lil-children')
     children.appendChild(container)
     return container
   }

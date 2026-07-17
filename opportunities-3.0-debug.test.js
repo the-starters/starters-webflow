@@ -6,6 +6,28 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(path.join(__dirname, 'opportunities-3.0-debug.js'), 'utf8')
 
+test('QA panel styles follow lil-gui and cover navbar breakpoints', () => {
+  assert.ok(
+    source.indexOf("link.id = 'opp30-lil-gui-styles'") <
+      source.indexOf("style.id = 'opp30-match-debug-styles'"),
+  )
+  assert.match(source, /--opp-debug-panel-top:72px/)
+  assert.match(source, /max-width:991px[\s\S]*--opp-debug-panel-top:88px/)
+  assert.match(source, /max-width:478px[\s\S]*--opp-debug-panel-top:77px/)
+  assert.match(
+    source,
+    /max-height:calc\(100dvh - var\(--opp-debug-panel-top\) - 12px\)/,
+  )
+})
+
+test('profile category chips mount in the collapsible lil-gui children', () => {
+  assert.match(
+    source,
+    /folder\.\$children \|\| folder\.domElement\.querySelector\('\.lil-children'\)/,
+  )
+  assert.doesNotMatch(source, /querySelector\('\.children'\) \|\| folder\.domElement/)
+})
+
 function loadDebugModule(options = {}) {
   const documentElement = {
     appendChild() {},
