@@ -108,6 +108,10 @@ the `category_refs` filter, so an application remains discoverable after the sta
 changes or removes profile categories. Returning to All restores the current
 category filter.
 
+Memberstack account changes clear the cached Xano token, match context, applied IDs,
+and Algolia results. Requests that were already in flight reject with
+`MEMBER_SCOPE_CHANGED` instead of returning or tracking data for the previous member.
+
 If the match context has no valid positive category refs, All stays collapsed and
 the existing `[wf-algolia-element="no-results"]` state becomes a Complete profile
 prompt linking to `/starter-edit-profile`; the script never exposes the unfiltered
@@ -139,24 +143,40 @@ sets `data-opp30-dashboard-match` to `ready`, `profile-incomplete`, or `error`.
 
 Append `?opp_debug=1` to either `/starter-dashboard` or
 `/opportunities-freelancer-view` to load the shared, authenticated matching QA panel.
+The values `1`, `true`, `yes`, and `on` are accepted case-insensitively; other values
+leave QA mode disabled. While enabled, `data-opp30-match-debug` on the document root
+reports `loading`, `pass`, `check`, or `error`.
+
 The production binder lazy-loads `opportunities-3.0-debug.js`, which then loads
 `lil-gui@0.21.0`; neither debug script, the library, nor the extra Xano reads run for
-normal visitors. The dashboard's View all link keeps the query parameter so a tester
-can inspect both surfaces in one session.
+normal visitors. Same-origin dashboard links to `/opportunities-freelancer-view`,
+including View all, keep the query parameter so a tester can inspect both surfaces in
+one session.
 
-The panel shows the starter's category names/refs and reconciles the complete Active
-opportunity set into total active, category matching, matching-not-applied, active
-applied, matching/applied overlap, applied non-matches, and the unique visible union.
-Its equation is `matching + applied - overlap = unique visible`. Xano's
-`available_matching_total` and category-matched `itemsTotal` are checked against the
-independently reconciled QA counts; a difference changes the panel/root status from
-`PASS` to `CHECK`.
+The panel shows the starter's category names/refs and pages through the Active
+opportunity set to reconcile total active, category matching, matching-not-applied,
+active applied, matching/applied overlap, applied non-matches, and the unique visible
+union. Its equation is `matching + applied - overlap = unique visible`. Loading is
+capped at 100 pages of 100; an incomplete Active set changes the status to `CHECK`.
+Xano's `available_matching_total` and the `itemsTotal` returned with
+`match_categories: true` are checked against the independently reconciled QA counts;
+a difference also changes the panel/root status from `PASS` to `CHECK` (and the root
+attribute from `pass` to `check`).
 
 Floating labels are scoped to the dashboard opportunity list and freelancer Algolia
 results. They show the opportunity categories, current overlap, applied state, and why
 the card is visible. Panel filters only hide/show cards already rendered in those
-containers; they never change the production query. Use **Exit QA mode** to remove the
-query parameter, or run the same structured diagnostic without the panel via:
+containers; they never change the production query. Dashboard cards prefer an
+explicit `data-opportunity-id`, `data-opp-id`, or `data-wf-algolia-hit-objectid`.
+Otherwise, their `data-wf-xano-id` is mapped as an application ID, with a unique
+same-origin `/opportunities/<id-or-slug>` detail link as the fallback; ambiguous links
+are not labeled.
+
+Use **Refresh Xano data** to refetch the match context and QA data, **Copy diagnostic
+JSON** to copy the report when the Clipboard API is available (or log it otherwise),
+**Log tables to console** for readable console output, and **Exit QA mode** to remove
+the query parameter. The current structured result is also available at
+`window.Opp30MatchDebug.data`, or can be regenerated without using the panel via:
 
 ```js
 await window.Opp30.diagnoseOpportunityMatching()
