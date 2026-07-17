@@ -6,7 +6,7 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(path.join(__dirname, 'opportunities-3.0-debug.js'), 'utf8')
 
-function loadDebugModule() {
+function loadDebugModule(options = {}) {
   const documentElement = {
     appendChild() {},
     setAttribute() {},
@@ -16,7 +16,7 @@ function loadDebugModule() {
     getElementById: () => null,
     head: documentElement,
     querySelector: () => null,
-    querySelectorAll: () => [],
+    querySelectorAll: options.querySelectorAll || (() => []),
   }
   const window = {
     Opp30: {},
@@ -41,13 +41,51 @@ function loadDebugModule() {
     document,
     location: {
       href: 'https://example.test/starter-dashboard?opp_debug=1',
-      pathname: '/starter-dashboard',
+      pathname: options.pathname || '/starter-dashboard',
     },
     window,
   })
   vm.runInContext(source, context)
   return window.Opp30
 }
+
+test('freelancer feed targets talent-opps instead of the global search results', () => {
+  const talentRoot = { querySelector: () => null }
+  const hiddenGlobalSearchRoot = { querySelector: () => null }
+  const debug = loadDebugModule({
+    pathname: '/opportunities-freelancer-view',
+    querySelectorAll: (selector) => {
+      if (selector === '[wf-xano-instance="talent-opps"]') return [talentRoot]
+      if (selector === '[wf-algolia-element="results"]') return [hiddenGlobalSearchRoot]
+      return []
+    },
+  })
+
+  const roots = debug.findOpportunityMatchCardRoots()
+  assert.equal(roots.length, 1)
+  assert.equal(roots[0], talentRoot)
+})
+
+test('Algolia fallback ignores a global search root without opportunity cards', () => {
+  const hiddenGlobalSearchRoot = { querySelector: () => null }
+  const opportunityRoot = {
+    querySelector: (selector) => (selector === '.opportunity-card' ? {} : null),
+  }
+  const debug = loadDebugModule({
+    pathname: '/opportunities-freelancer-view',
+    querySelectorAll: (selector) => {
+      if (selector === '[wf-xano-instance="talent-opps"]') return []
+      if (selector === '[wf-algolia-element="results"]') {
+        return [hiddenGlobalSearchRoot, opportunityRoot]
+      }
+      return []
+    },
+  })
+
+  const roots = debug.findOpportunityMatchCardRoots()
+  assert.equal(roots.length, 1)
+  assert.equal(roots[0], opportunityRoot)
+})
 
 function dashboardCard(attributes, href) {
   const root = {}
