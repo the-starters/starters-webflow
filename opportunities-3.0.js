@@ -1179,13 +1179,85 @@
   }
 
   let _talentMatchContextPromise = null
+  let _talentAlgoliaFilterQueue = Promise.resolve()
+  let _talentRequestedTab = null
+  let _talentRequestedTabPromise = null
 
   function getTalentMatchContext() {
     if (!_talentMatchContextPromise) _talentMatchContextPromise = API.starterMatchContext()
     return _talentMatchContextPromise
   }
 
-  async function initTalentAlgoliaMatch() {
+  function queueTalentAlgoliaFilterChange(change) {
+    const queued = _talentAlgoliaFilterQueue.catch(() => {}).then(change)
+    _talentAlgoliaFilterQueue = queued
+    return queued
+  }
+
+  function talentAlgoliaFacetFilters(result) {
+    try {
+      const value = new URLSearchParams(result?.params || '').get('facetFilters')
+      if (!value) return []
+      return JSON.parse(value).flat(Infinity).map(String)
+    } catch {
+      return []
+    }
+  }
+
+  function talentAlgoliaResultsMatchState(payload, wfAlgolia) {
+    const state =
+      typeof wfAlgolia.getFilterState === 'function' ? wfAlgolia.getFilterState() : {}
+    const expected = ['category_refs', APPLIED_FIELD].map((field) => ({
+      field,
+      values: Array.from(state[field]?.values || []).map(String).sort(),
+    }))
+    const results = Array.isArray(payload?.results) ? payload.results : [payload]
+    return (
+      results.length > 0 &&
+      results.every((result) => {
+        const filters = talentAlgoliaFacetFilters(result)
+        return expected.every(({ field, values }) => {
+          const prefix = `${field}:`
+          const actual = filters
+            .filter((filter) => filter.startsWith(prefix))
+            .map((filter) => filter.slice(prefix.length))
+            .sort()
+          return values.length === actual.length && values.every((value, index) => value === actual[index])
+        })
+      })
+    )
+  }
+
+  function setTalentAlgoliaFilterAndWait(wfAlgolia, field, values) {
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const finish = (err) => {
+        if (settled) return
+        settled = true
+        wfAlgolia.off('results', handleResults)
+        wfAlgolia.off('error', handleError)
+        if (err) reject(err)
+        else resolve()
+      }
+      const handleResults = (payload) => {
+        if (talentAlgoliaResultsMatchState(payload, wfAlgolia)) finish()
+      }
+      const handleError = (err) => finish(err instanceof Error ? err : new Error(String(err)))
+      wfAlgolia.on('results', handleResults)
+      wfAlgolia.on('error', handleError)
+      try {
+        wfAlgolia.setFilter(field, values)
+      } catch (err) {
+        finish(err)
+      }
+    })
+  }
+
+  function initTalentAlgoliaMatch(clearApplied = false) {
+    return queueTalentAlgoliaFilterChange(() => applyTalentAlgoliaMatch(clearApplied))
+  }
+
+  async function applyTalentAlgoliaMatch(clearApplied) {
     try {
       const context = await getTalentMatchContext()
       const categoryRefs = filterValues(contextValue(context, 'category_refs'))
@@ -1221,13 +1293,25 @@
         setTalentResultsHidden(false)
         return
       }
-      wfAlgolia.setFilter('category_refs', categoryRefs)
+      setTalentResultsHidden(true)
+      const filterState =
+        typeof wfAlgolia.getFilterState === 'function' ? wfAlgolia.getFilterState() : {}
+      const appliedValues = filterState[APPLIED_FIELD]?.values || []
+      await setTalentAlgoliaFilterAndWait(wfAlgolia, 'category_refs', categoryRefs)
+      if (clearApplied && appliedValues.length) {
+        await setTalentAlgoliaFilterAndWait(wfAlgolia, APPLIED_FIELD, [])
+      }
       document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
-      revealTalentResultsWhenReady()
+      const results = $('[wf-algolia-element="results"]')
+      if (results) results.style.display = ''
+      if (_talentRequestedTab !== 'applied') setTalentResultsHidden(false)
     } catch (err) {
       document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
       console.error('[opp30] failed to apply talent Algolia match filter', err)
-      setTalentResultsHidden(false)
+      const results = $('[wf-algolia-element="results"]')
+      if (results) results.style.display = 'none'
+      const noResults = $('[wf-algolia-element="no-results"]')
+      if (noResults) noResults.style.display = ''
     }
   }
 
@@ -1313,34 +1397,48 @@
     })
   }
 
-  async function applyTalentAppliedFilter() {
-    const wfAlgolia = await waitForWfAlgolia()
-    if (!wfAlgolia) {
-      document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-wf-algolia')
-      console.warn('[opp30] wf-algolia unavailable; applied filter skipped')
-      setTalentResultsHidden(false)
-      return
-    }
-    const ids = await fetchAppliedOppIds()
-    // Applied history is independent of the starter's current profile categories.
-    // Clear the match facet first so changing roles/categories later cannot hide an
-    // opportunity they already applied to. Keep the results hidden while the two
-    // filter updates settle to avoid briefly painting the category intersection.
-    setTalentResultsHidden(true)
-    wfAlgolia.setFilter('category_refs', [])
-    wfAlgolia.setFilter(APPLIED_FIELD, ids.length ? ids : [APPLIED_EMPTY])
-    const results = $('[wf-algolia-element="results"]')
-    if (results) results.style.display = ''
-    document.documentElement.setAttribute('data-opp30-talent-applied-count', String(ids.length))
-    document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
-    revealTalentResultsWhenReady()
+  function applyTalentAppliedFilter() {
+    return queueTalentAlgoliaFilterChange(async () => {
+      try {
+        const wfAlgolia = await waitForWfAlgolia()
+        if (!wfAlgolia) {
+          document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-wf-algolia')
+          console.warn('[opp30] wf-algolia unavailable; applied filter skipped')
+          setTalentResultsHidden(false)
+          return
+        }
+        const ids = await fetchAppliedOppIds()
+        setTalentResultsHidden(true)
+        const filterState =
+          typeof wfAlgolia.getFilterState === 'function' ? wfAlgolia.getFilterState() : {}
+        const categoryValues = filterState.category_refs?.values || []
+        await setTalentAlgoliaFilterAndWait(
+          wfAlgolia,
+          APPLIED_FIELD,
+          ids.length ? ids : [APPLIED_EMPTY],
+        )
+        if (categoryValues.length) {
+          await setTalentAlgoliaFilterAndWait(wfAlgolia, 'category_refs', [])
+        }
+        const results = $('[wf-algolia-element="results"]')
+        if (results) results.style.display = ''
+        document.documentElement.setAttribute('data-opp30-talent-applied-count', String(ids.length))
+        document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
+        if (_talentRequestedTab === 'applied') setTalentResultsHidden(false)
+      } catch (err) {
+        document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
+        console.error('[opp30] failed to apply talent applied filter', err)
+        const results = $('[wf-algolia-element="results"]')
+        if (results) results.style.display = 'none'
+        const noResults = $('[wf-algolia-element="no-results"]')
+        if (noResults) noResults.style.display = ''
+      }
+    })
   }
 
-  async function clearTalentAppliedFilter() {
-    const wfAlgolia = await waitForWfAlgolia()
-    if (wfAlgolia) wfAlgolia.setFilter(APPLIED_FIELD, [])
+  function clearTalentAppliedFilter() {
     document.documentElement.removeAttribute('data-opp30-talent-applied-count')
-    await initTalentAlgoliaMatch()
+    return initTalentAlgoliaMatch(true)
   }
 
   function normalizeTalentTab(value) {
@@ -1448,6 +1546,8 @@
 
   async function setTalentTab(value) {
     const tab = normalizeTalentTab(value)
+    if (tab === _talentRequestedTab && _talentRequestedTabPromise) return _talentRequestedTabPromise
+    _talentRequestedTab = tab
     const allPanel = getTalentAllPanel()
     const appliedPanel = getTalentAppliedPanel()
 
@@ -1456,11 +1556,13 @@
     if (appliedPanel && appliedPanel !== allPanel) appliedPanel.style.display = tab === 'applied' ? '' : 'none'
     syncTalentTabControls(tab)
 
-    if (tab === 'applied') {
-      await applyTalentAppliedFilter()
-      return
+    const transition = tab === 'applied' ? applyTalentAppliedFilter() : clearTalentAppliedFilter()
+    _talentRequestedTabPromise = transition
+    try {
+      await transition
+    } finally {
+      if (_talentRequestedTabPromise === transition) _talentRequestedTabPromise = null
     }
-    await clearTalentAppliedFilter()
   }
 
   function normalizeAppliedItem(item) {
