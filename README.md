@@ -39,7 +39,7 @@ Do not discard local changes unless the user explicitly asks.
 
 - `quiz-results.js`
 - `quiz-results.min.js`
-- `opportunities-3.0.js`
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`
 - `opportunities---create.js`
 - `starters-list/apply-button-disable.js`
@@ -85,6 +85,54 @@ preserved; generated links prefer `url_path`, then `webflow_slug`, and finally t
 Xano ID. Existing `/opportunities/<id>` URLs remain supported as the
 backwards-compatible fallback, including detail pages that have not yet added
 `data-opp-page-id`. V2 opportunity scripts and query-parameter URLs are unchanged.
+
+## Opportunities 3.0 Starter Matching
+
+Load `opportunities-3.0.js` on `/opportunities-freelancer-view` and
+`/starter-dashboard` from the existing `@latest` jsDelivr path:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0.js"></script>
+```
+
+The starter feed's All tab reads the authenticated
+`starter/profile/match-context` response and applies its positive `category_refs`
+values to Algolia. Results stay hidden while filter changes are in flight, and
+responses are shown only when their facet filters match the requested tab, preventing
+an unfiltered or stale feed from flashing.
+
+The Applied tab is historical member state, not another category match. It filters
+Algolia by the opportunity IDs returned from the starter's Applied list and removes
+the `category_refs` filter, so an application remains discoverable after the starter
+changes or removes profile categories. Returning to All restores the current
+category filter.
+
+If the match context has no valid positive category refs, All stays collapsed and
+the existing `[wf-algolia-element="no-results"]` state becomes a Complete profile
+prompt linking to `/starter-edit-profile`; the script never exposes the unfiltered
+feed. On `/starter-dashboard`, the same prompt is painted only into
+`[wf-xano-instance="dash-applied-opps"] [wf-xano-element="empty"]`, so existing
+applied cards are unaffected.
+
+Keep these Webflow markup contracts in place:
+
+- The feed needs `[wf-algolia-element="browse"]`,
+  `[wf-algolia-element="results"]`, `[wf-algolia-element="template"]`, and
+  `[wf-algolia-element="no-results"]`; rendered cards expose
+  `data-wf-algolia-hit-objectid`.
+- All and Applied controls use `data-opp-talent-tab="all|applied"`. Do not also make
+  them wf-algolia filter controls; the binder removes conflicting filter attributes.
+- The dashboard applied list keeps `wf-xano-instance="dash-applied-opps"` and its
+  `wf-xano-element="empty"` descendant.
+- The binder marks an incomplete target with `data-opp-profile-incomplete="true"`,
+  rewrites its first two paragraphs when present, and appends one idempotent
+  `data-opp-complete-profile` link.
+
+For rollout diagnostics, inspect `window.Opp30.diagnoseFreelancerFeed()` and the root
+attributes `data-opp30-talent-tab`, `data-opp30-talent-algolia`,
+`data-opp30-talent-category-count`, and `data-opp30-talent-category-refs`. An
+incomplete profile sets `data-opp30-profile-categories="missing"`; dashboard setup
+sets `data-opp30-dashboard-match` to `ready`, `profile-incomplete`, or `error`.
 
 ## Opportunities 3.0 Lifecycle Loading States
 

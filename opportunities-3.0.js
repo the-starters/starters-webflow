@@ -1,11 +1,11 @@
 /*!
  * Opportunities 3.0 — Webflow ↔ Xano binder
  * ------------------------------------------------------------------
- * Wires the existing 3.0 UI (pages + modals on /all-modals) to the
- * authenticated "Opportunities 3.0" Xano API group.
+ * Wires the existing 3.0 UI (opportunity pages, starter-dashboard, and
+ * modals on /all-modals) to the authenticated "Opportunities 3.0" Xano API group.
  *
- * Load this ONCE per opportunities page via a page (or site) custom-code
- * embed, AFTER @xano/js-sdk and memberstack-x have loaded (footer).
+ * Load this ONCE per supported page via a page (or site) custom-code embed,
+ * AFTER @xano/js-sdk and memberstack-x have loaded (footer).
  *
  * Auth model (important):
  *   1. Memberstack issues a member JWT on login.
@@ -24,12 +24,12 @@
   // load (duplicate embed, Webflow re-init) returns here instead of re-binding.
   if (window.Opp30) return
 
-  // Freelancer feed: hide the Algolia results until the current member's category
-  // filter is applied. wf-algolia paints the unfiltered `status:Active` set on load
-  // (which can include opportunities matched to a previously-signed-in account), so
-  // without this the wrong cards flash before initTalentAlgoliaMatch() narrows them.
-  // Injected synchronously (before wf-algolia renders); removed/overridden the moment
-  // the filtered results are ready. `visibility` (not `display`) preserves layout.
+  // Freelancer feed: hide Algolia results until the requested tab's filters are
+  // applied. All uses the current member's category refs; Applied deliberately uses
+  // application IDs without categories. wf-algolia paints the unfiltered
+  // `status:Active` set on load (which can include opportunities matched to a
+  // previously-signed-in account), so the wrong cards must never flash during init or
+  // tab transitions. `visibility` (not `display`) preserves layout while filtering.
   if (location.pathname.includes('opportunities-freelancer-view')) {
     try {
       const hideStyle = document.createElement('style')
@@ -1473,6 +1473,8 @@
     })
   }
 
+  // Applied is historical member state: filter by application-linked opportunity IDs
+  // and remove category_refs so later profile edits cannot hide prior applications.
   function applyTalentAppliedFilter() {
     return queueTalentAlgoliaFilterChange(async () => {
       _talentAlgoliaFilterTransitioning = true
@@ -1675,6 +1677,8 @@
     }
   }
 
+  // The dashboard's applied cards remain category-independent. Only replace its empty
+  // state with profile guidance when the starter has no valid matching categories.
   async function initStarterDashboardOpportunityMatch() {
     try {
       if (!(await gateOrRedirect('freelancer'))) return
@@ -2370,12 +2374,12 @@
     }
   })
 
-  /* ============ wf-algolia bridge (brand list page) ============ */
-  // The brand list renders via the wf-algolia package, whose cards expose
+  /* ============ wf-algolia bridge (opportunity feeds) ============ */
+  // Brand and starter feeds render via the wf-algolia package, whose cards expose
   // data-wf-algolia-hit-objectid (not data-opp-id) and whose pagination + detail-link
-  // markup needs adjusting. This bridges those cards to the Opp30 handlers and fixes
-  // the card/pagination markup wf-algolia 1.0.4 can't drive on its own. No-op when the
-  // page has no wf-algolia results container.
+  // markup needs adjusting. This bridges those cards to the Opp30 handlers, preserves
+  // the starter incomplete-profile state across Algolia renders, and fixes markup
+  // wf-algolia 1.0.4 can't drive on its own. No-op without a results container.
   function initWfAlgoliaBridge() {
     const results = $('[wf-algolia-element="results"]')
     if (!results) return
