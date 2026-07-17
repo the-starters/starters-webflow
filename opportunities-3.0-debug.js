@@ -6,7 +6,8 @@
 
   const GUI_SCRIPT = 'https://cdn.jsdelivr.net/npm/lil-gui@0.21.0'
   const GUI_STYLE = 'https://cdn.jsdelivr.net/npm/lil-gui@0.21.0/dist/lil-gui.min.css'
-  const CARD_SELECTOR = '[data-opp-id], [data-wf-algolia-hit-objectid], [data-wf-xano-id]'
+  const CARD_SELECTOR =
+    '[data-opportunity-id], [data-opp-id], [data-wf-algolia-hit-objectid], [data-wf-xano-id]'
   const CATEGORY_NAMES = {
     1: 'Hiring & Team Building',
     2: 'Operations & Supply Chain',
@@ -77,6 +78,58 @@
       itemsTotal: total == null ? rows.length : total,
       complete: total == null || rows.length >= total,
     }
+  }
+
+  async function fetchAllAppliedRecords() {
+    const perPage = 100
+    const rows = []
+    let page = 1
+    let total = null
+
+    while (page <= 100) {
+      const response = await bridge.API.starterOppList('Applied', page, perPage)
+      const items = Array.isArray(response)
+        ? response
+        : Array.isArray(response?.items)
+          ? response.items
+          : []
+      if (total == null) total = numericTotal(response?.itemsTotal, items.length)
+      rows.push(...items)
+      if (!items.length || rows.length >= total || Array.isArray(response)) break
+      page += 1
+    }
+
+    return {
+      rows,
+      itemsTotal: total == null ? rows.length : total,
+    }
+  }
+
+  function applicationOpportunityIds(applicationRows) {
+    const ids = {}
+    ;(Array.isArray(applicationRows) ? applicationRows : []).forEach((application) => {
+      if (!application || typeof application !== 'object') return
+      const opportunity =
+        application.opportunity && typeof application.opportunity === 'object'
+          ? application.opportunity
+          : application.opportunities_v3 && typeof application.opportunities_v3 === 'object'
+            ? application.opportunities_v3
+            : application.opportunity_v3 && typeof application.opportunity_v3 === 'object'
+              ? application.opportunity_v3
+              : application.opportunity_record && typeof application.opportunity_record === 'object'
+                ? application.opportunity_record
+                : null
+      const applicationId = application.application_id || application.id
+      const opportunityId =
+        opportunity?.id ||
+        application.opportunity_id ||
+        application.opportunities_v3_id ||
+        (application.opportunity && typeof application.opportunity !== 'object'
+          ? application.opportunity
+          : '')
+      if (applicationId && opportunityId) ids[String(applicationId)] = String(opportunityId)
+    })
+    return ids
   }
 
   function summarizeOpportunityMatching(activeRows, starterCategoryRefs, server = {}) {
@@ -160,6 +213,7 @@
         formula: `${categoryMatching} + ${activeApplied} - ${matchingAppliedOverlap} = ${uniqueVisible}`,
         issues,
       },
+      applicationOpportunityIds: applicationOpportunityIds(server.applicationRows),
       cards,
     }
   }
@@ -171,7 +225,7 @@
     const [active, matched, applied] = await Promise.all([
       fetchAllActiveOpportunities(),
       bridge.API.starterOppList('Active', 1, 1, { match_categories: true }),
-      bridge.API.starterOppList('Applied', 1, 1),
+      fetchAllAppliedRecords(),
     ])
     const data = summarizeOpportunityMatching(
       active.rows,
@@ -181,7 +235,8 @@
         activeComplete: active.complete,
         availableMatching: matched?.available_matching_total,
         uniqueVisible: matched?.itemsTotal,
-        allApplications: applied?.itemsTotal,
+        allApplications: applied.itemsTotal,
+        applicationRows: applied.rows,
       },
     )
     data.starter.id = bridge.contextValue(matchContext, 'starter_id') || null
@@ -195,19 +250,42 @@
     return dataPromise
   }
 
-  function opportunityCardId(card) {
+  function detailLinkOpportunityId(card) {
+    const links = []
+    if (card.matches?.('a[href]')) links.push(card)
+    links.push(...Array.from(card.querySelectorAll?.('a[href]') || []))
+    for (const link of links) {
+      try {
+        const url = new URL(link.getAttribute('href'), location.href)
+        if (url.origin !== new URL(location.href).origin) continue
+        const match = url.pathname.match(/^\/opportunities\/([1-9]\d*)\/?$/)
+        if (match) return match[1]
+      } catch (error) {
+        continue
+      }
+    }
+    return ''
+  }
+
+  function opportunityCardId(card, data) {
     const explicitId =
+      card.getAttribute('data-opportunity-id') ||
       card.getAttribute('data-opp-id') ||
       card.getAttribute('data-wf-algolia-hit-objectid')
     if (explicitId) return String(explicitId)
 
+    const dashboardRoot = card.closest('[wf-xano-instance="dash-applied-opps"]')
+    if (dashboardRoot) {
+      const applicationId = String(card.getAttribute('data-wf-xano-id') || '')
+      const mappedId = applicationId && data?.applicationOpportunityIds?.[applicationId]
+      return mappedId ? String(mappedId) : detailLinkOpportunityId(card)
+    }
+
     const sourceRoot = card.closest('[wf-xano-source]')
     const source = sourceRoot?.getAttribute('wf-xano-source') || ''
-    const instance = card.closest('[wf-xano-instance]')?.getAttribute('wf-xano-instance')
     if (
       !/(?:starter|brand)\/opportunities\/list/.test(source) ||
       /applications\/list/.test(source) ||
-      instance === 'dash-applied-opps' ||
       card.hasAttribute('data-app-id')
     ) {
       return ''
@@ -222,20 +300,20 @@
     return $$('[wf-algolia-element="results"]')
   }
 
-  function renderedCards() {
+  function renderedCards(data) {
     const cards = cardRoots().flatMap((root) => {
       const matches = $$(CARD_SELECTOR, root)
       if (root.matches(CARD_SELECTOR)) matches.unshift(root)
       return matches
     })
-    const uniqueCards = Array.from(new Set(cards)).filter((card) => opportunityCardId(card))
+    const uniqueCards = Array.from(new Set(cards)).filter((card) => opportunityCardId(card, data))
     return uniqueCards.filter((card) => {
-      const id = opportunityCardId(card)
+      const id = opportunityCardId(card, data)
       return !uniqueCards.some(
         (candidate) =>
           candidate !== card &&
           candidate.contains(card) &&
-          opportunityCardId(candidate) === id,
+          opportunityCardId(candidate, data) === id,
       )
     })
   }
@@ -252,8 +330,8 @@
 
   function paintCards(data, state) {
     const byId = new Map(data.cards.map((card) => [card.id, card]))
-    renderedCards().forEach((element) => {
-      const id = opportunityCardId(element)
+    renderedCards(data).forEach((element) => {
+      const id = opportunityCardId(element, data)
       const card = byId.get(id) || null
       element.setAttribute('data-opp-debug-card', 'true')
       element.setAttribute('data-opp-debug-known', card ? 'true' : 'false')
@@ -549,6 +627,7 @@
   Object.assign(window.Opp30 || (window.Opp30 = {}), {
     diagnoseOpportunityMatching,
     initOpportunityMatchDebug: initialize,
+    resolveOpportunityMatchCardId: opportunityCardId,
     summarizeOpportunityMatching,
   })
   initialize()

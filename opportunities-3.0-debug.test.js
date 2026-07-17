@@ -1,0 +1,111 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const test = require('node:test')
+const vm = require('node:vm')
+
+const source = fs.readFileSync(path.join(__dirname, 'opportunities-3.0-debug.js'), 'utf8')
+
+function loadDebugModule() {
+  const documentElement = {
+    appendChild() {},
+    setAttribute() {},
+  }
+  const document = {
+    documentElement,
+    getElementById: () => null,
+    head: documentElement,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  }
+  const window = {
+    Opp30: {},
+    Opp30MatchDebugBridge: {
+      API: {},
+      contextValue: () => null,
+      filterValues: (values) =>
+        (Array.isArray(values) ? values : [])
+          .map(String)
+          .map((value) => value.trim())
+          .filter(Boolean),
+      getTalentMatchContext: () => new Promise(() => {}),
+      memberScopeResetEvent: 'opp30:member-scope-reset',
+    },
+    addEventListener() {},
+    lil: { GUI: class GUI {} },
+  }
+  window.window = window
+  const context = vm.createContext({
+    URL,
+    console,
+    document,
+    location: {
+      href: 'https://example.test/starter-dashboard?opp_debug=1',
+      pathname: '/starter-dashboard',
+    },
+    window,
+  })
+  vm.runInContext(source, context)
+  return window.Opp30
+}
+
+function dashboardCard(attributes, href) {
+  const root = {}
+  const link = {
+    getAttribute: (name) => (name === 'href' ? href : null),
+  }
+  return {
+    closest(selector) {
+      return selector === '[wf-xano-instance="dash-applied-opps"]' ? root : null
+    },
+    getAttribute: (name) => attributes[name] || null,
+    hasAttribute: (name) => Object.hasOwn(attributes, name),
+    matches: () => false,
+    querySelectorAll: (selector) => (selector === 'a[href]' ? [link] : []),
+  }
+}
+
+test('dashboard application cards resolve their nested opportunity identity', () => {
+  const debug = loadDebugModule()
+  const data = debug.summarizeOpportunityMatching(
+    [{ id: 42, category_refs: [6], applied: true }],
+    [6],
+    {
+      applicationRows: [{ id: 501, opportunities_v3: { id: 42 } }],
+    },
+  )
+  const card = dashboardCard(
+    { 'data-wf-xano-id': '501' },
+    '/opportunities/999',
+  )
+
+  assert.equal(debug.resolveOpportunityMatchCardId(card, data), '42')
+})
+
+test('dashboard application cards fall back to their opportunity detail link', () => {
+  const debug = loadDebugModule()
+  const card = dashboardCard(
+    { 'data-wf-xano-id': '501' },
+    '/opportunities/42?opp_debug=1',
+  )
+
+  assert.equal(
+    debug.resolveOpportunityMatchCardId(card, { applicationOpportunityIds: {} }),
+    '42',
+  )
+})
+
+test('explicit dashboard opportunity identity takes precedence over application identity', () => {
+  const debug = loadDebugModule()
+  const card = dashboardCard(
+    { 'data-opportunity-id': '42', 'data-wf-xano-id': '501' },
+    '/opportunities/999',
+  )
+
+  assert.equal(
+    debug.resolveOpportunityMatchCardId(card, {
+      applicationOpportunityIds: { 501: '77' },
+    }),
+    '42',
+  )
+})
