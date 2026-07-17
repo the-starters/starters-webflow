@@ -1098,6 +1098,32 @@
     return match ? match[1] : undefined
   }
 
+  function paintIncompleteProfilePrompt() {
+    document.documentElement.setAttribute('data-opp30-profile-categories', 'missing')
+    const targets = [
+      $('[wf-xano-instance="dash-applied-opps"] [wf-xano-element="empty"]'),
+      $('[wf-algolia-element="no-results"]'),
+    ].filter(Boolean)
+
+    targets.forEach((target) => {
+      target.setAttribute('data-opp-profile-incomplete', 'true')
+      const paragraphs = $$('p', target)
+      if (paragraphs[0]) paragraphs[0].textContent = 'Complete your profile to see matching opportunities.'
+      if (paragraphs[1]) {
+        paragraphs[1].textContent = 'Add your roles so we can match opportunities to your expertise.'
+      }
+      if ($('[data-opp-complete-profile]', target)) return
+      const link = document.createElement('a')
+      link.href = '/starter-edit-profile'
+      link.textContent = 'Complete profile'
+      link.className = 'text-style-link'
+      link.setAttribute('data-opp-complete-profile', '')
+      link.style.display = 'inline-block'
+      link.style.marginTop = '0.75rem'
+      ;($('.tile-item_empty-state-layout', target) || target).appendChild(link)
+    })
+  }
+
   function waitForWfAlgolia(timeoutMs = 10000) {
     if (window.WfAlgolia && typeof window.WfAlgolia.setFilter === 'function') {
       return Promise.resolve(window.WfAlgolia)
@@ -1183,6 +1209,7 @@
         if (results) results.style.display = 'none'
         const noResults = $('[wf-algolia-element="no-results"]')
         if (noResults) noResults.style.display = ''
+        paintIncompleteProfilePrompt()
         return
       }
 
@@ -1295,7 +1322,15 @@
       return
     }
     const ids = await fetchAppliedOppIds()
+    // Applied history is independent of the starter's current profile categories.
+    // Clear the match facet first so changing roles/categories later cannot hide an
+    // opportunity they already applied to. Keep the results hidden while the two
+    // filter updates settle to avoid briefly painting the category intersection.
+    setTalentResultsHidden(true)
+    wfAlgolia.setFilter('category_refs', [])
     wfAlgolia.setFilter(APPLIED_FIELD, ids.length ? ids : [APPLIED_EMPTY])
+    const results = $('[wf-algolia-element="results"]')
+    if (results) results.style.display = ''
     document.documentElement.setAttribute('data-opp30-talent-applied-count', String(ids.length))
     document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
     revealTalentResultsWhenReady()
@@ -1453,6 +1488,25 @@
       description: opportunity.description || item.description || item.message || '',
       status: opportunity.status || item.status || 'Applied',
       created_at: opportunity.created_at || item.opportunity_created_at || '',
+    }
+  }
+
+  async function initStarterDashboardOpportunityMatch() {
+    try {
+      if (!(await gateOrRedirect('freelancer'))) return
+      const context = await getTalentMatchContext()
+      const categoryRefs = filterValues(contextValue(context, 'category_refs'))
+      window.Opp30TalentMatchContext = context
+      document.documentElement.setAttribute('data-opp30-talent-category-count', String(categoryRefs.length))
+      document.documentElement.setAttribute('data-opp30-talent-category-refs', categoryRefs.join(','))
+      document.documentElement.setAttribute(
+        'data-opp30-dashboard-match',
+        categoryRefs.length ? 'ready' : 'profile-incomplete',
+      )
+      if (!categoryRefs.length) paintIncompleteProfilePrompt()
+    } catch (err) {
+      document.documentElement.setAttribute('data-opp30-dashboard-match', 'error')
+      console.error('[opp30] failed to initialize dashboard opportunity match context', err)
     }
   }
 
@@ -2343,7 +2397,8 @@
     prepareOpportunityLoadingControls()
     wireModals()
     const p = location.pathname
-    if (p.includes('opportunities-details---brand-view')) initBrandDetail()
+    if (p.includes('starter-dashboard')) initStarterDashboardOpportunityMatch()
+    else if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/[^/]+\/?$/)) initOppDetailByRole()
     else if (p.includes('opportunities-brands-view')) {
       // Brand feed: when the page carries wf-xano brand-feed markup (Designer swap,
