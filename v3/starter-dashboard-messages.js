@@ -324,8 +324,9 @@
     const timeEl = pick(item, 'time', '.message-item_layout > p')
     if (timeEl) timeEl.textContent = timeAgo(display.timestamp)
 
-    // Initials text element (published grammar: name_initials); the avatar
-    // circle is its container (or the explicit avatar/class fallback).
+    // Avatar: either an <img> (published markup) or a container div
+    // (legacy). Photo → show it and hide the initials text; no photo →
+    // hide the image so the initials render.
     const initialsEl =
       pick(item, 'name_initials') ||
       (function () {
@@ -335,18 +336,29 @@
     const avatar =
       pick(item, 'avatar', '.message-item_profile-image') ||
       (initialsEl && initialsEl.parentElement)
+    const avatarIsImg = avatar && avatar.tagName === 'IMG'
 
     if (initialsEl) {
       initialsEl.textContent = applyFormat(initialsEl, initials(display.title))
+      initialsEl.style.display = display.photoUrl ? 'none' : ''
     }
-    if (avatar && display.photoUrl) {
+
+    if (avatarIsImg) {
+      if (display.photoUrl) {
+        // Webflow template imgs carry srcset/sizes that outrank a JS-set
+        // src — strip them or the placeholder keeps rendering.
+        avatar.removeAttribute('srcset')
+        avatar.removeAttribute('sizes')
+        avatar.src = display.photoUrl
+        avatar.alt = display.title
+        avatar.style.display = ''
+      } else {
+        avatar.style.display = 'none'
+      }
+    } else if (avatar && display.photoUrl) {
       avatar.style.backgroundImage = 'url("' + display.photoUrl + '")'
       avatar.style.backgroundSize = 'cover'
       avatar.style.backgroundPosition = 'center'
-      if (initialsEl) {
-        initialsEl.textContent = ''
-        initialsEl.style.display = 'none'
-      }
     }
 
     item.classList.toggle('is-new', display.unread)
