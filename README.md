@@ -40,6 +40,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.js`
 - `quiz-results.min.js`
 - `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds
+- `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`
 - `opportunities---create.js`
 - `starters-list/apply-button-disable.js`
@@ -138,9 +139,10 @@ sets `data-opp30-dashboard-match` to `ready`, `profile-incomplete`, or `error`.
 
 Append `?opp_debug=1` to either `/starter-dashboard` or
 `/opportunities-freelancer-view` to load the shared, authenticated matching QA panel.
-The panel lazy-loads `lil-gui@0.21.0`; neither the library nor the extra Xano reads run
-for normal visitors. The dashboard's View all link keeps the query parameter so a
-tester can inspect both surfaces in one session.
+The production binder lazy-loads `opportunities-3.0-debug.js`, which then loads
+`lil-gui@0.21.0`; neither debug script, the library, nor the extra Xano reads run for
+normal visitors. The dashboard's View all link keeps the query parameter so a tester
+can inspect both surfaces in one session.
 
 The panel shows the starter's category names/refs and reconciles the complete Active
 opportunity set into total active, category matching, matching-not-applied, active
@@ -150,11 +152,11 @@ Its equation is `matching + applied - overlap = unique visible`. Xano's
 independently reconciled QA counts; a difference changes the panel/root status from
 `PASS` to `CHECK`.
 
-Floating labels on rendered wf-xano and wf-algolia cards show the opportunity
-categories, current overlap, applied state, and why the card is visible. Panel filters
-only hide/show cards already rendered in the DOM; they never change the production
-query. Use **Exit QA mode** to remove the query parameter, or run the same structured
-diagnostic without the panel via:
+Floating labels are scoped to the dashboard opportunity list and freelancer Algolia
+results. They show the opportunity categories, current overlap, applied state, and why
+the card is visible. Panel filters only hide/show cards already rendered in those
+containers; they never change the production query. Use **Exit QA mode** to remove the
+query parameter, or run the same structured diagnostic without the panel via:
 
 ```js
 await window.Opp30.diagnoseOpportunityMatching()

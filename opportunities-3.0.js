@@ -123,6 +123,8 @@
   // switch), resetMemberScopedCaches() drops the stale token/context so the new
   // member never inherits the previous member's data.
   let _cacheMemberId = null
+  let _memberScopeGeneration = 0
+  const MEMBER_SCOPE_RESET_EVENT = 'opp30:member-scope-reset'
 
   async function getMemberstackToken() {
     const ms = window.$memberstackDom
@@ -135,6 +137,7 @@
 
   async function ensureXanoToken() {
     if (_xanoToken) return _xanoToken
+    const generation = _memberScopeGeneration
     const msToken = await getMemberstackToken()
     const res = await fetch(
       `${XANO_AUTH_BASE}${XANO_TRADE_TOKEN_PATH}?token=${encodeURIComponent(msToken)}`,
@@ -144,9 +147,11 @@
       throw Object.assign(new Error('trade-token failed'), { status: res.status, data })
     }
     // create_auth_token may return a raw string or { authToken }/{ token }
-    _xanoToken = typeof data === 'string' ? data : data.authToken || data.token
-    if (!_xanoToken) throw new Error('trade-token returned no token')
-    return _xanoToken
+    const token = typeof data === 'string' ? data : data.authToken || data.token
+    if (!token) throw new Error('trade-token returned no token')
+    if (generation !== _memberScopeGeneration) return ensureXanoToken()
+    _xanoToken = token
+    return token
   }
 
   // Funnel events (see platform-ops/architecture/posthog-funnel-events-plan.md).
@@ -782,6 +787,7 @@
   function resetMemberScopedCaches(memberId) {
     if (memberId === _cacheMemberId) return
     _cacheMemberId = memberId
+    _memberScopeGeneration += 1
     _xanoToken = null
     _talentMatchContextPromise = null
     _talentAppliedIdsPromise = null
@@ -795,6 +801,7 @@
         /* non-fatal */
       }
     }
+    window.dispatchEvent(new CustomEvent(MEMBER_SCOPE_RESET_EVENT, { detail: { memberId } }))
   }
 
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
@@ -1199,6 +1206,12 @@
   function getTalentMatchContext() {
     if (!_talentMatchContextPromise) _talentMatchContextPromise = API.starterMatchContext()
     return _talentMatchContextPromise
+  }
+
+  function refreshTalentMatchContext() {
+    _talentMatchContextPromise = null
+    window.Opp30TalentMatchContext = null
+    return getTalentMatchContext()
   }
 
   function queueTalentAlgoliaFilterChange(change) {
@@ -2513,501 +2526,84 @@
 
   /* ================= OPPORTUNITY MATCH QA MODE ================== */
   const OPP_MATCH_DEBUG_PARAM = 'opp_debug'
-  const OPP_MATCH_DEBUG_GUI_SCRIPT = 'https://cdn.jsdelivr.net/npm/lil-gui@0.21.0'
-  const OPP_MATCH_DEBUG_GUI_STYLE =
-    'https://cdn.jsdelivr.net/npm/lil-gui@0.21.0/dist/lil-gui.min.css'
-  const OPP_MATCH_DEBUG_CARD_SELECTOR =
-    '[data-wf-xano-id], [data-wf-algolia-hit-objectid], [data-opp-id]'
-  // Debug labels only. Stable IDs/names mirror Xano main_categories_v3,
-  // read-only verified 2026-07-17; matching still uses the live numeric refs.
-  const MAIN_CATEGORY_NAMES = {
-    1: 'Hiring & Team Building',
-    2: 'Operations & Supply Chain',
-    3: 'Finance',
-    4: 'Marketing Strategy & Leadership',
-    5: 'Physical Product & Development',
-    6: 'AI & Technology',
-    7: 'Retail & Marketplace',
-    8: 'Analytics & Experimentation',
-    9: 'Retention & CRM',
-    10: 'Influencer, Affiliate & PR',
-    11: 'Creative & Brand',
-    12: 'Content & Organic',
-    13: 'Paid Media',
-  }
-
-  let _opportunityMatchDebugDataPromise = null
-  let _opportunityMatchDebugGuiPromise = null
-  let _opportunityMatchDebugObserver = null
+  const OPP_MATCH_DEBUG_SCRIPT =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0-debug.js'
 
   function opportunityMatchDebugEnabled() {
     const value = String(urlParam(OPP_MATCH_DEBUG_PARAM) || '').trim().toLowerCase()
     return ['1', 'true', 'yes', 'on'].includes(value)
   }
 
-  function opportunityMatchDebugRoute() {
-    if (location.pathname.includes('starter-dashboard')) return 'Starter dashboard'
-    if (location.pathname.includes('opportunities-freelancer-view')) return 'Opportunity feed'
-    return location.pathname
-  }
-
-  function opportunityCategoryRefs(item) {
-    return filterValues(item && item.category_refs)
-  }
-
-  function opportunityCategoryLabel(ref, showRefs = true) {
-    const name = MAIN_CATEGORY_NAMES[Number(ref)] || 'Unknown category'
-    return showRefs ? `${name} [${ref}]` : name
-  }
-
-  function opportunityCategoryLabels(refs, showRefs = true) {
-    const values = filterValues(refs)
-    return values.length
-      ? values.map((ref) => opportunityCategoryLabel(ref, showRefs)).join(' · ')
-      : 'No categories'
-  }
-
-  function numericTotal(value, fallback = 0) {
-    const number = Number(value)
-    return Number.isFinite(number) && number >= 0 ? number : fallback
-  }
-
-  async function fetchAllActiveOpportunitiesForDebug() {
-    const perPage = 100
-    const rows = []
-    let page = 1
-    let total = null
-
-    while (page <= 100) {
-      const response = await API.starterOppList('Active', page, perPage)
-      const items = Array.isArray(response?.items) ? response.items : []
-      if (total == null) total = numericTotal(response?.itemsTotal, items.length)
-      rows.push(...items)
-      if (!items.length || rows.length >= total) break
-      page += 1
-    }
-
-    return {
-      rows,
-      itemsTotal: total == null ? rows.length : total,
-      complete: total == null ? true : rows.length >= total,
+  function preserveOpportunityMatchDebugLink(link, value) {
+    if (!link || !link.matches?.('a[href]')) return
+    try {
+      const target = new URL(link.href, location.href)
+      if (target.origin !== location.origin) return
+      if (!/^\/opportunities-freelancer-view\/?$/.test(target.pathname)) return
+      if (target.searchParams.get(OPP_MATCH_DEBUG_PARAM) === value) return
+      target.searchParams.set(OPP_MATCH_DEBUG_PARAM, value)
+      link.href = `${target.pathname}${target.search}${target.hash}`
+    } catch (e) {
+      /* non-fatal */
     }
   }
 
-  function summarizeOpportunityMatching(activeRows, starterCategoryRefs, server = {}) {
-    const starterRefs = filterValues(starterCategoryRefs)
-    const starterSet = new Set(starterRefs)
-    const cards = (Array.isArray(activeRows) ? activeRows : []).map((opportunity) => {
-      const categoryRefs = opportunityCategoryRefs(opportunity)
-      const matchRefs = categoryRefs.filter((ref) => starterSet.has(ref))
-      const categoryMatch = matchRefs.length > 0
-      const applied = opportunity.applied === true
-      let visibilityReason = 'Not in matching or applied results'
-      if (categoryMatch && applied) visibilityReason = 'Category match + applied'
-      else if (categoryMatch) visibilityReason = 'Category match'
-      else if (applied) visibilityReason = 'Applied history; no current category match'
-
-      return {
-        id: String(opportunity.id || opportunity.opportunity_id || opportunity.objectID || ''),
-        title: String(opportunity.title || 'Untitled opportunity'),
-        categoryRefs,
-        categoryLabels: categoryRefs.map((ref) => opportunityCategoryLabel(ref, false)),
-        matchRefs,
-        applied,
-        categoryMatch,
-        visibilityReason,
-      }
-    })
-
-    const categoryMatching = cards.filter((card) => card.categoryMatch).length
-    const activeApplied = cards.filter((card) => card.applied).length
-    const matchingAppliedOverlap = cards.filter(
-      (card) => card.categoryMatch && card.applied,
-    ).length
-    const availableMatching = categoryMatching - matchingAppliedOverlap
-    const appliedNonMatching = activeApplied - matchingAppliedOverlap
-    const uniqueVisible = categoryMatching + activeApplied - matchingAppliedOverlap
-    const serverAvailableMatching =
-      server.availableMatching == null ? null : numericTotal(server.availableMatching)
-    const serverUniqueVisible =
-      server.uniqueVisible == null ? null : numericTotal(server.uniqueVisible)
-    const issues = []
-
-    if (server.activeComplete === false) {
-      issues.push(
-        `Only ${cards.length} of ${numericTotal(server.totalActive, cards.length)} active opportunities were loaded.`,
-      )
-    }
-    if (
-      serverAvailableMatching != null &&
-      serverAvailableMatching !== availableMatching
-    ) {
-      issues.push(
-        `Available-match mismatch: Xano=${serverAvailableMatching}, QA reconciliation=${availableMatching}.`,
-      )
-    }
-    if (serverUniqueVisible != null && serverUniqueVisible !== uniqueVisible) {
-      issues.push(
-        `Unique-visible mismatch: Xano=${serverUniqueVisible}, QA reconciliation=${uniqueVisible}.`,
-      )
-    }
-
-    return {
-      route: opportunityMatchDebugRoute(),
-      generatedAt: new Date().toISOString(),
-      starter: {
-        categoryRefs: starterRefs,
-        categoryLabels: starterRefs.map((ref) => opportunityCategoryLabel(ref, false)),
-      },
-      counts: {
-        totalActive: numericTotal(server.totalActive, cards.length),
-        categoryMatching,
-        availableMatching,
-        activeApplied,
-        allApplications: numericTotal(server.allApplications),
-        matchingAppliedOverlap,
-        appliedNonMatching,
-        uniqueVisible,
-      },
-      server: {
-        availableMatching: serverAvailableMatching,
-        uniqueVisible: serverUniqueVisible,
-      },
-      reconciliation: {
-        status: issues.length ? 'CHECK' : 'PASS',
-        formula: `${categoryMatching} + ${activeApplied} - ${matchingAppliedOverlap} = ${uniqueVisible}`,
-        issues,
-      },
-      cards,
-    }
-  }
-
-  function loadOpportunityMatchDebugData({ refresh = false } = {}) {
-    if (refresh) _opportunityMatchDebugDataPromise = null
-    if (!_opportunityMatchDebugDataPromise) {
-      _opportunityMatchDebugDataPromise = Promise.all([
-        getTalentMatchContext(),
-        fetchAllActiveOpportunitiesForDebug(),
-        API.starterOppList('Active', 1, 1, { match_categories: true }),
-        API.starterOppList('Applied', 1, 1),
-      ]).then(([context, active, matched, applied]) => {
-        const data = summarizeOpportunityMatching(
-          active.rows,
-          contextValue(context, 'category_refs'),
-          {
-            totalActive: active.itemsTotal,
-            activeComplete: active.complete,
-            availableMatching: matched?.available_matching_total,
-            uniqueVisible: matched?.itemsTotal,
-            allApplications: applied?.itemsTotal,
-          },
-        )
-        data.starter.id = contextValue(context, 'starter_id') || null
-        return data
-      })
-    }
-    return _opportunityMatchDebugDataPromise
-  }
-
-  function opportunityDebugCardId(card) {
-    return String(
-      card.getAttribute('data-wf-xano-id') ||
-        card.getAttribute('data-wf-algolia-hit-objectid') ||
-        card.getAttribute('data-opp-id') ||
-        '',
-    )
-  }
-
-  function renderedOpportunityDebugCards() {
-    const cards = $$(OPP_MATCH_DEBUG_CARD_SELECTOR)
-    return cards.filter((card) => {
-      const id = opportunityDebugCardId(card)
-      if (!id) return false
-      return !cards.some(
-        (candidate) =>
-          candidate !== card &&
-          candidate.contains(card) &&
-          opportunityDebugCardId(candidate) === id,
-      )
-    })
-  }
-
-  function opportunityDebugViewMatches(view, card) {
-    if (view === 'Matching') return Boolean(card?.categoryMatch)
-    if (view === 'Available matches') return Boolean(card?.categoryMatch && !card?.applied)
-    if (view === 'Applied') return Boolean(card?.applied)
-    if (view === 'Match + applied') return Boolean(card?.categoryMatch && card?.applied)
-    if (view === 'Applied non-match') return Boolean(card?.applied && !card?.categoryMatch)
-    if (view === 'Non-match') return Boolean(card && !card.categoryMatch)
-    return true
-  }
-
-  function paintOpportunityMatchDebugCards(data, state) {
-    const byId = new Map(data.cards.map((card) => [card.id, card]))
-    renderedOpportunityDebugCards().forEach((element) => {
-      const id = opportunityDebugCardId(element)
-      const card = byId.get(id) || null
-      element.setAttribute('data-opp-debug-card', 'true')
-      element.setAttribute('data-opp-debug-known', card ? 'true' : 'false')
-      element.setAttribute('data-opp-debug-match', card?.categoryMatch ? 'true' : 'false')
-      element.setAttribute('data-opp-debug-applied', card?.applied ? 'true' : 'false')
-      element.setAttribute(
-        'data-opp-debug-hidden',
-        opportunityDebugViewMatches(state.view, card) ? 'false' : 'true',
-      )
-
-      let overlay = $('[data-opp-debug-card-overlay]', element)
-      if (!overlay) {
-        overlay = document.createElement('div')
-        overlay.setAttribute('data-opp-debug-card-overlay', '')
-        overlay.setAttribute('aria-label', 'Opportunity matching diagnostic')
-        element.appendChild(overlay)
-      }
-      overlay.style.display = state.showCardLabels ? '' : 'none'
-      overlay.replaceChildren()
-
-      const status = document.createElement('strong')
-      status.textContent = card ? card.visibilityReason : `Unknown opportunity ID ${id}`
-      overlay.appendChild(status)
-
-      if (card) {
-        const categories = document.createElement('span')
-        categories.textContent = `Opportunity: ${opportunityCategoryLabels(
-          card.categoryRefs,
-          state.showRefs,
-        )}`
-        overlay.appendChild(categories)
-
-        const overlap = document.createElement('span')
-        overlap.textContent = `Overlap: ${
-          card.matchRefs.length
-            ? opportunityCategoryLabels(card.matchRefs, state.showRefs)
-            : 'None'
-        } · Applied: ${card.applied ? 'Yes' : 'No'}`
-        overlay.appendChild(overlap)
-      }
-    })
-  }
-
-  function ensureOpportunityMatchDebugStyles() {
-    if (!document.getElementById('opp30-match-debug-styles')) {
-      const style = document.createElement('style')
-      style.id = 'opp30-match-debug-styles'
-      style.textContent = `
-        [data-opp-debug-card="true"]{position:relative!important}
-        [data-opp-debug-hidden="true"]{display:none!important}
-        [data-opp-debug-card-overlay]{
-          position:absolute;z-index:50;top:.4rem;right:.4rem;display:flex;max-width:82%;
-          flex-direction:column;gap:.15rem;padding:.35rem .45rem;border:1px solid #2f3730;
-          border-radius:.25rem;background:rgba(248,249,244,.96);box-shadow:0 2px 8px rgba(0,0,0,.15);
-          color:#20251f;font:500 10px/1.25 system-ui,sans-serif;pointer-events:none
-        }
-        [data-opp-debug-card-overlay] strong{font-weight:750}
-        [data-opp-debug-match="true"] [data-opp-debug-card-overlay]{border-color:#2d7d46;background:rgba(235,250,239,.97)}
-        [data-opp-debug-applied="true"] [data-opp-debug-card-overlay]{box-shadow:inset 3px 0 #4263a5,0 2px 8px rgba(0,0,0,.15)}
-        [data-opp-debug-match="true"][data-opp-debug-applied="true"] [data-opp-debug-card-overlay]{box-shadow:inset 3px 0 #6b45a8,0 2px 8px rgba(0,0,0,.15)}
-        .lil-gui.root[data-opp-debug-gui]{z-index:2147483646!important;--width:370px}
-      `
-      ;(document.head || document.documentElement).appendChild(style)
-    }
-
-    if (!document.getElementById('opp30-lil-gui-styles')) {
-      const link = document.createElement('link')
-      link.id = 'opp30-lil-gui-styles'
-      link.rel = 'stylesheet'
-      link.href = OPP_MATCH_DEBUG_GUI_STYLE
-      ;(document.head || document.documentElement).appendChild(link)
-    }
-  }
-
-  function loadOpportunityMatchDebugGuiLibrary() {
-    if (window.lil?.GUI) return Promise.resolve(window.lil.GUI)
-    const existing = document.getElementById('opp30-lil-gui-script')
-    return new Promise((resolve, reject) => {
-      const finish = () => {
-        if (window.lil?.GUI) resolve(window.lil.GUI)
-        else reject(new Error('lil-gui loaded without window.lil.GUI'))
-      }
-      if (existing) {
-        existing.addEventListener('load', finish, { once: true })
-        existing.addEventListener('error', () => reject(new Error('Failed to load lil-gui')), {
-          once: true,
-        })
-        return
-      }
-      const script = document.createElement('script')
-      script.id = 'opp30-lil-gui-script'
-      script.src = OPP_MATCH_DEBUG_GUI_SCRIPT
-      script.async = true
-      script.addEventListener('load', finish, { once: true })
-      script.addEventListener('error', () => reject(new Error('Failed to load lil-gui')), {
-        once: true,
-      })
-      ;(document.head || document.documentElement).appendChild(script)
-    })
-  }
-
-  function preserveOpportunityMatchDebugLinks() {
+  function loadOpportunityMatchDebug() {
     const value = urlParam(OPP_MATCH_DEBUG_PARAM) || '1'
-    $$('a[href]').forEach((link) => {
-      try {
-        const target = new URL(link.href, location.href)
-        if (target.origin !== new URL(location.href).origin) return
-        if (!target.pathname.includes('opportunities-freelancer-view')) return
-        target.searchParams.set(OPP_MATCH_DEBUG_PARAM, value)
-        link.href = `${target.pathname}${target.search}${target.hash}`
-      } catch (e) {
-        /* non-fatal */
-      }
-    })
-  }
+    const preserveLinks = (root) => {
+      if (root?.matches?.('a[href]')) preserveOpportunityMatchDebugLink(root, value)
+      root?.querySelectorAll?.('a[href]').forEach((link) =>
+        preserveOpportunityMatchDebugLink(link, value),
+      )
+    }
 
-  function copyOpportunityMatchDiagnostic(data) {
-    const text = JSON.stringify(data, null, 2)
-    if (navigator.clipboard?.writeText) {
-      return navigator.clipboard.writeText(text).then(() => {
-        console.info('[opp30] opportunity matching diagnostic copied')
+    preserveLinks(document)
+    const linkObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes') {
+          preserveOpportunityMatchDebugLink(mutation.target, value)
+          return
+        }
+        mutation.addedNodes.forEach((node) => {
+          if (node.nodeType === 1) preserveLinks(node)
+        })
       })
-    }
-    console.info('[opp30] opportunity matching diagnostic', data)
-    return Promise.resolve()
-  }
-
-  async function diagnoseOpportunityMatching({ refresh = false } = {}) {
-    const data = await loadOpportunityMatchDebugData({ refresh })
-    console.groupCollapsed?.(
-      `[opp30] opportunity matching QA: ${data.reconciliation.status}`,
+    })
+    linkObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['href'],
+      childList: true,
+      subtree: true,
+    })
+    document.addEventListener(
+      'click',
+      (event) => preserveOpportunityMatchDebugLink(event.target.closest?.('a[href]'), value),
+      true,
     )
-    console.info('[opp30] freelancer categories', data.starter)
-    console.table?.([data.counts])
-    console.table?.(data.cards)
-    if (data.reconciliation.issues.length) {
-      console.warn('[opp30] opportunity matching reconciliation issues', data.reconciliation.issues)
+
+    window.Opp30MatchDebugBridge = {
+      API,
+      contextValue,
+      filterValues,
+      getTalentMatchContext,
+      refreshTalentMatchContext,
+      memberScopeResetEvent: MEMBER_SCOPE_RESET_EVENT,
     }
-    console.groupEnd?.()
-    return data
+
+    const script = document.createElement('script')
+    script.id = 'opp30-match-debug-script'
+    script.src = OPP_MATCH_DEBUG_SCRIPT
+    script.async = true
+    script.addEventListener(
+      'error',
+      () => {
+        document.documentElement.setAttribute('data-opp30-match-debug', 'error')
+        console.error('[opp30] failed to load opportunity matching QA mode')
+      },
+      { once: true },
+    )
+    ;(document.head || document.documentElement).appendChild(script)
   }
-
-  function observeOpportunityMatchDebugCards(data, state) {
-    if (_opportunityMatchDebugObserver) _opportunityMatchDebugObserver.disconnect()
-    if (!document.body) return
-    _opportunityMatchDebugObserver = new MutationObserver((mutations) => {
-      const addedCards = mutations.some((mutation) =>
-        Array.from(mutation.addedNodes || []).some(
-          (node) =>
-            node.nodeType === 1 &&
-            (node.matches?.(OPP_MATCH_DEBUG_CARD_SELECTOR) ||
-              node.querySelector?.(OPP_MATCH_DEBUG_CARD_SELECTOR)),
-        ),
-      )
-      if (addedCards) paintOpportunityMatchDebugCards(data, state)
-    })
-    _opportunityMatchDebugObserver.observe(document.body, { childList: true, subtree: true })
-  }
-
-  function addOpportunityDebugReadOnly(folder, state, property, label) {
-    const controller = folder.add(state, property).name(label)
-    if (typeof controller.disable === 'function') controller.disable()
-    return controller
-  }
-
-  async function initOpportunityMatchDebug({ refresh = false } = {}) {
-    if (_opportunityMatchDebugGuiPromise && !refresh) return _opportunityMatchDebugGuiPromise
-    _opportunityMatchDebugGuiPromise = Promise.all([
-      loadOpportunityMatchDebugData({ refresh }),
-      loadOpportunityMatchDebugGuiLibrary(),
-    ]).then(([data, GUI]) => {
-      ensureOpportunityMatchDebugStyles()
-      preserveOpportunityMatchDebugLinks()
-
-      if (window.Opp30MatchDebug?.gui) window.Opp30MatchDebug.gui.destroy()
-      const state = {
-        route: data.route,
-        freelancerCategories: opportunityCategoryLabels(data.starter.categoryRefs),
-        totalActive: data.counts.totalActive,
-        categoryMatching: data.counts.categoryMatching,
-        availableMatching: data.counts.availableMatching,
-        activeApplied: data.counts.activeApplied,
-        allApplications: data.counts.allApplications,
-        matchingApplied: data.counts.matchingAppliedOverlap,
-        appliedNonMatching: data.counts.appliedNonMatching,
-        uniqueVisible: data.counts.uniqueVisible,
-        reconciliation: `${data.reconciliation.status}: ${data.reconciliation.formula}`,
-        view: 'All rendered',
-        showCardLabels: true,
-        showRefs: true,
-        refresh: () => initOpportunityMatchDebug({ refresh: true }),
-        copyJSON: () => copyOpportunityMatchDiagnostic(data),
-        logToConsole: () => diagnoseOpportunityMatching(),
-        exitQAMode: () => {
-          const target = new URL(location.href)
-          target.searchParams.delete(OPP_MATCH_DEBUG_PARAM)
-          location.href = target.toString()
-        },
-      }
-
-      const gui = new GUI({ title: 'Opportunity matching QA', width: 370 })
-      gui.domElement.setAttribute('data-opp-debug-gui', '')
-      const profile = gui.addFolder('Freelancer profile')
-      addOpportunityDebugReadOnly(profile, state, 'route', 'Page')
-      addOpportunityDebugReadOnly(
-        profile,
-        state,
-        'freelancerCategories',
-        'Categories',
-      )
-
-      const counts = gui.addFolder('Active opportunity counts')
-      addOpportunityDebugReadOnly(counts, state, 'totalActive', 'Total active')
-      addOpportunityDebugReadOnly(counts, state, 'categoryMatching', 'Category matches')
-      addOpportunityDebugReadOnly(counts, state, 'availableMatching', 'Matching, not applied')
-      addOpportunityDebugReadOnly(counts, state, 'activeApplied', 'Applied + active')
-      addOpportunityDebugReadOnly(counts, state, 'matchingApplied', 'Match + applied overlap')
-      addOpportunityDebugReadOnly(counts, state, 'appliedNonMatching', 'Applied non-matches')
-      addOpportunityDebugReadOnly(counts, state, 'uniqueVisible', 'Unique visible union')
-      addOpportunityDebugReadOnly(counts, state, 'allApplications', 'Applications, all statuses')
-      addOpportunityDebugReadOnly(counts, state, 'reconciliation', 'QA equation')
-
-      const inspect = gui.addFolder('Inspect rendered cards')
-      inspect
-        .add(state, 'view', [
-          'All rendered',
-          'Matching',
-          'Available matches',
-          'Applied',
-          'Match + applied',
-          'Applied non-match',
-          'Non-match',
-        ])
-        .name('Show')
-        .onChange(() => paintOpportunityMatchDebugCards(data, state))
-      inspect
-        .add(state, 'showCardLabels')
-        .name('Floating card labels')
-        .onChange(() => paintOpportunityMatchDebugCards(data, state))
-      inspect
-        .add(state, 'showRefs')
-        .name('Show raw refs')
-        .onChange(() => paintOpportunityMatchDebugCards(data, state))
-
-      const actions = gui.addFolder('Actions')
-      actions.add(state, 'refresh').name('Refresh Xano data')
-      actions.add(state, 'copyJSON').name('Copy diagnostic JSON')
-      actions.add(state, 'logToConsole').name('Log tables to console')
-      actions.add(state, 'exitQAMode').name('Exit QA mode')
-
-      paintOpportunityMatchDebugCards(data, state)
-      observeOpportunityMatchDebugCards(data, state)
-      document.documentElement.setAttribute(
-        'data-opp30-match-debug',
-        data.reconciliation.status.toLowerCase(),
-      )
-      window.Opp30MatchDebug = { data, gui, state }
-      return window.Opp30MatchDebug
-    })
-    return _opportunityMatchDebugGuiPromise
-  }
-
   function diagnoseFreelancerFeed() {
     const scriptSrcs = $$('script[src]').map((script) => script.src || '')
     const matchContext = window.Opp30TalentMatchContext || null
@@ -3119,10 +2715,7 @@
       opportunityMatchDebugEnabled() &&
       (p.includes('starter-dashboard') || p.includes('opportunities-freelancer-view'))
     ) {
-      initOpportunityMatchDebug().catch((err) => {
-        document.documentElement.setAttribute('data-opp30-match-debug', 'error')
-        console.error('[opp30] failed to initialize opportunity matching QA mode', err)
-      })
+      loadOpportunityMatchDebug()
     }
     // /all-modals: only wireModals() (already called) — no data fetch
   }
@@ -3136,12 +2729,10 @@
 
   // expose for debugging / manual calls in console
   window.Opp30 = {
+    ...window.Opp30,
     API,
     ensureXanoToken,
     diagnoseFreelancerFeed,
-    diagnoseOpportunityMatching,
-    initOpportunityMatchDebug,
-    summarizeOpportunityMatching,
     paintOpportunityDetail,
     opportunityPath,
     pageOppId,
