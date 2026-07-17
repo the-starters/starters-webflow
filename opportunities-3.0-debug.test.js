@@ -84,15 +84,83 @@ test('dashboard application cards resolve their nested opportunity identity', ()
 
 test('dashboard application cards fall back to their opportunity detail link', () => {
   const debug = loadDebugModule()
+  const data = debug.summarizeOpportunityMatching(
+    [{ id: 42, category_refs: [6] }],
+    [6],
+  )
   const card = dashboardCard(
     { 'data-wf-xano-id': '501' },
     '/opportunities/42?opp_debug=1',
   )
 
+  assert.equal(debug.resolveOpportunityMatchCardId(card, data), '42')
+})
+
+test('dashboard application cards resolve slug detail links against active records', () => {
+  const debug = loadDebugModule()
+  const data = debug.summarizeOpportunityMatching(
+    [
+      {
+        id: 42,
+        category_refs: [6],
+        webflow_slug: 'growth-operator',
+      },
+    ],
+    [6],
+  )
+  const card = dashboardCard(
+    { 'data-wf-xano-id': '501' },
+    '/opportunities/growth-operator?opp_debug=1',
+  )
+
+  assert.equal(debug.resolveOpportunityMatchCardId(card, data), '42')
+})
+
+test('dashboard application cards normalize full and relative opportunity paths', () => {
+  const debug = loadDebugModule()
+  const data = debug.summarizeOpportunityMatching(
+    [
+      {
+        id: 42,
+        category_refs: [6],
+        url_path: 'https://example.test/opportunities/growth-operator/',
+      },
+      { id: 77, category_refs: [6], url_path: '/opportunities/retention-lead' },
+    ],
+    [6],
+  )
+
   assert.equal(
-    debug.resolveOpportunityMatchCardId(card, { applicationOpportunityIds: {} }),
+    debug.resolveOpportunityMatchCardId(
+      dashboardCard({ 'data-wf-xano-id': '501' }, '/opportunities/growth-operator'),
+      data,
+    ),
     '42',
   )
+  assert.equal(
+    debug.resolveOpportunityMatchCardId(
+      dashboardCard({ 'data-wf-xano-id': '502' }, '/opportunities/retention-lead'),
+      data,
+    ),
+    '77',
+  )
+})
+
+test('dashboard slug fallback rejects ambiguous active opportunity identities', () => {
+  const debug = loadDebugModule()
+  const data = debug.summarizeOpportunityMatching(
+    [
+      { id: 42, category_refs: [6], webflow_slug: 'growth-operator' },
+      { id: 77, category_refs: [6], url_path: 'opportunities/growth-operator' },
+    ],
+    [6],
+  )
+  const card = dashboardCard(
+    { 'data-wf-xano-id': '501' },
+    '/opportunities/growth-operator',
+  )
+
+  assert.equal(debug.resolveOpportunityMatchCardId(card, data), '')
 })
 
 test('explicit dashboard opportunity identity takes precedence over application identity', () => {

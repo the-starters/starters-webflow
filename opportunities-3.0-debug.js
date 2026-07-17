@@ -148,6 +148,8 @@
       return {
         id: String(opportunity.id || opportunity.opportunity_id || opportunity.objectID || ''),
         title: String(opportunity.title || 'Untitled opportunity'),
+        urlPath: String(opportunity.url_path || ''),
+        webflowSlug: String(opportunity.webflow_slug || ''),
         categoryRefs: refs,
         categoryLabels: refs.map((ref) => categoryLabel(ref, false)),
         matchRefs,
@@ -250,21 +252,60 @@
     return dataPromise
   }
 
-  function detailLinkOpportunityId(card) {
+  function decodedPathSegment(value) {
+    try {
+      return decodeURIComponent(value)
+    } catch (error) {
+      return ''
+    }
+  }
+
+  function opportunityDetailSegment(value, allowBareSlug = false) {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    if (allowBareSlug && !/[/?#]/.test(raw)) return decodedPathSegment(raw)
+
+    try {
+      const base = new URL(location.href)
+      const url = new URL(raw, base)
+      if (url.origin !== base.origin) return ''
+      const segments = url.pathname.split('/').filter(Boolean)
+      if (segments.length !== 2 || segments[0] !== 'opportunities') return ''
+      return decodedPathSegment(segments[1])
+    } catch (error) {
+      return ''
+    }
+  }
+
+  function opportunityIdentitySegments(opportunity) {
+    return new Set(
+      [
+        String(opportunity?.id || '').trim(),
+        opportunityDetailSegment(opportunity?.urlPath),
+        opportunityDetailSegment(opportunity?.webflowSlug, true),
+      ].filter(Boolean),
+    )
+  }
+
+  function detailLinkOpportunityId(card, data) {
     const links = []
     if (card.matches?.('a[href]')) links.push(card)
     links.push(...Array.from(card.querySelectorAll?.('a[href]') || []))
+    const segments = new Set()
     for (const link of links) {
-      try {
-        const url = new URL(link.getAttribute('href'), location.href)
-        if (url.origin !== new URL(location.href).origin) continue
-        const match = url.pathname.match(/^\/opportunities\/([1-9]\d*)\/?$/)
-        if (match) return match[1]
-      } catch (error) {
-        continue
-      }
+      const segment = opportunityDetailSegment(link.getAttribute('href'))
+      if (segment) segments.add(segment)
     }
-    return ''
+
+    const ids = new Set()
+    ;(Array.isArray(data?.cards) ? data.cards : []).forEach((opportunity) => {
+      if (!opportunity.id) return
+      const identities = opportunityIdentitySegments(opportunity)
+      if (Array.from(segments).some((segment) => identities.has(segment))) {
+        ids.add(String(opportunity.id))
+      }
+    })
+    return ids.size === 1 ? Array.from(ids)[0] : ''
   }
 
   function opportunityCardId(card, data) {
@@ -278,7 +319,7 @@
     if (dashboardRoot) {
       const applicationId = String(card.getAttribute('data-wf-xano-id') || '')
       const mappedId = applicationId && data?.applicationOpportunityIds?.[applicationId]
-      return mappedId ? String(mappedId) : detailLinkOpportunityId(card)
+      return mappedId ? String(mappedId) : detailLinkOpportunityId(card, data)
     }
 
     const sourceRoot = card.closest('[wf-xano-source]')
