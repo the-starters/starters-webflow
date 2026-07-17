@@ -13,7 +13,9 @@
  * Wiring (wf-xano-style, multi-instance): each `data-messages-element="wrapper"`
  * scopes one rendered instance containing `list`, `template` (first card),
  * `empty`, `loading`, `total` (unread count) and `view-all`, with card fields
- * `avatar`, `title`, `preview`, `time` inside the template. Optional
+ * `name` (alias `title`), `name_initials`, `preview`, `time` and optional
+ * `avatar` container inside the template. `data-messages-format="uppercase|
+ * lowercase"` transforms a bound element's text. Optional
  * `data-messages-limit="<n>"` on the wrapper caps rendered cards (default 8).
  * All instances share one TalkJS session + one Xano fetch. The original
  * class-based selectors remain as fallbacks (legacy wrapper: `#messages`).
@@ -154,6 +156,15 @@
       .filter(Boolean)
       .slice(0, 2)
       .map((part) => part[0].toUpperCase())
+      .join('')
+  }
+
+  // data-messages-format on a bound element transforms its rendered text.
+  function applyFormat(el, text) {
+    const format = el.getAttribute('data-messages-format')
+    if (format === 'uppercase') return String(text).toUpperCase()
+    if (format === 'lowercase') return String(text).toLowerCase()
+    return text
   }
 
   // Preferred wiring: data-messages-element attributes (Designer-proof).
@@ -302,33 +313,39 @@
   function renderItem(refs, display) {
     const item = refs.template.cloneNode(true)
 
-    const heading = pick(item, 'title', '.message-item_message h3')
-    if (heading) heading.textContent = display.title
+    // `name` is the published grammar; `title` kept as an alias.
+    const heading =
+      pick(item, 'name') || pick(item, 'title', '.message-item_message h3')
+    if (heading) heading.textContent = applyFormat(heading, display.title)
 
     const preview = pick(item, 'preview', '.message-item_message p')
-    if (preview) preview.textContent = display.preview
+    if (preview) preview.textContent = applyFormat(preview, display.preview)
 
     const timeEl = pick(item, 'time', '.message-item_layout > p')
     if (timeEl) timeEl.textContent = timeAgo(display.timestamp)
 
-    const avatar = pick(item, 'avatar', '.message-item_profile-image')
-    if (avatar) {
-      const initialsEl = avatar.querySelector('p')
-      if (display.photoUrl) {
-        avatar.style.backgroundImage = 'url("' + display.photoUrl + '")'
-        avatar.style.backgroundSize = 'cover'
-        avatar.style.backgroundPosition = 'center'
-        if (initialsEl) {
-          initialsEl.textContent = ''
-          initialsEl.style.display = 'none'
-        }
-      } else if (initialsEl) {
+    // Initials text element (published grammar: name_initials); the avatar
+    // circle is its container (or the explicit avatar/class fallback).
+    const initialsEl =
+      pick(item, 'name_initials') ||
+      (function () {
+        const circle = item.querySelector('.message-item_profile-image')
+        return circle && circle.querySelector('p')
+      })()
+    const avatar =
+      pick(item, 'avatar', '.message-item_profile-image') ||
+      (initialsEl && initialsEl.parentElement)
+
+    if (initialsEl) {
+      initialsEl.textContent = applyFormat(initialsEl, initials(display.title))
+    }
+    if (avatar && display.photoUrl) {
+      avatar.style.backgroundImage = 'url("' + display.photoUrl + '")'
+      avatar.style.backgroundSize = 'cover'
+      avatar.style.backgroundPosition = 'center'
+      if (initialsEl) {
         initialsEl.textContent = ''
-        initials(display.title).forEach((letter) => {
-          const span = document.createElement('span')
-          span.textContent = letter
-          initialsEl.appendChild(span)
-        })
+        initialsEl.style.display = 'none'
       }
     }
 
