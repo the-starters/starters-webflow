@@ -153,21 +153,27 @@ normal visitors. Same-origin dashboard links to `/opportunities-freelancer-view`
 including View all, keep the query parameter so a tester can inspect both surfaces in
 one session.
 
-The panel shows the starter's category names/refs and pages through the Active
-opportunity set to reconcile total active, category matching, matching-not-applied,
-active applied, matching/applied overlap, applied non-matches, and the unique visible
-union. Its equation is `matching + applied - overlap = unique visible`. Loading is
-capped at 100 pages of 100; an incomplete Active set changes the status to `CHECK`.
-Xano's `available_matching_total` and the `itemsTotal` returned with
-`match_categories: true` are checked against the independently reconciled QA counts;
-a difference also changes the panel/root status from `PASS` to `CHECK` (and the root
-attribute from `pass` to `check`).
+The panel stays fixed below the navbar at desktop, tablet, and mobile breakpoints and
+scrolls within the remaining viewport. The starter's complete category list is shown
+as wrapping name/ref chips. The panel pages through the Active opportunity set to
+reconcile total active, category matching, matching-not-applied, active applied,
+matching/applied overlap, applied non-matches, and the unique visible union. Its
+equation is `matching + applied - overlap = unique visible`. Loading is capped at 100
+pages of 100; an incomplete Active set changes the status to `CHECK`. Xano's
+`available_matching_total` and the `itemsTotal` returned with `match_categories: true`
+are checked against the independently reconciled QA counts; a difference also changes
+the panel/root status from `PASS` to `CHECK` (and the root attribute from `pass` to
+`check`).
 
-Floating labels are scoped to the dashboard opportunity list and freelancer Algolia
-results. They show the opportunity categories, current overlap, applied state, and why
-the card is visible. Panel filters only hide/show cards already rendered in those
-containers; they never change the production query. Dashboard cards prefer an
-explicit `data-opportunity-id`, `data-opp-id`, or `data-wf-algolia-hit-objectid`.
+Floating labels are scoped to the dashboard opportunity list and the live freelancer
+`[wf-xano-instance="talent-opps"]` feed. If that feed is absent, the narrow future
+Algolia fallback accepts only `[wf-algolia-element="results"]` roots containing an
+`.opportunity-card`, so it ignores the site-wide search overlay. The **Floating card
+labels** control toggles labels that show the opportunity categories, current overlap,
+applied state, and why the card is visible. Panel filters only hide/show cards already
+rendered in those containers; they never change the production query. Dashboard cards
+prefer an explicit `data-opportunity-id`, `data-opp-id`, or
+`data-wf-algolia-hit-objectid`.
 Otherwise, their `data-wf-xano-id` is mapped as an application ID, with a unique
 same-origin `/opportunities/<id-or-slug>` detail link as the fallback; ambiguous links
 are not labeled.
