@@ -156,28 +156,35 @@
     const template = list && list.querySelector('.message_item')
     if (!list || !template) return null
 
-    // The tile can contain several .dash_card wrappers; the empty state is
-    // the one holding .tile-item_empty-state-layout.
+    // The tile contains several .dash_card wrappers: a loading-spinner card
+    // and the empty state (the one holding .tile-item_empty-state-layout).
     const emptyLayout = tile.querySelector('.tile-item_empty-state-layout')
+    const emptyCard =
+      (emptyLayout && emptyLayout.closest('.dash_card')) ||
+      emptyLayout ||
+      tile.querySelector('.dash_card')
+    const spinner = tile.querySelector('.dash_card .button_spinner')
+    const loadingCard = spinner && spinner.closest('.dash_card')
 
     return {
       tile,
       badge: tile.querySelector('.tile-item_notification-text'),
-      emptyCard:
-        (emptyLayout && emptyLayout.closest('.dash_card')) ||
-        emptyLayout ||
-        tile.querySelector('.dash_card'),
+      emptyCard,
+      loadingCard: loadingCard !== emptyCard ? loadingCard : null,
       viewAll: tile.querySelector('.button_main-wrap .clickable_btn'),
       list,
       template: template.cloneNode(true),
     }
   }
 
+  // Boot state: designer loading spinner visible, everything else hidden
+  // until the first render.
   function clearPlaceholders(refs) {
     refs.list.querySelectorAll('.message_item').forEach((node) => node.remove())
     if (refs.badge) refs.badge.style.display = 'none'
     refs.list.style.display = 'none'
-    if (refs.emptyCard) refs.emptyCard.style.display = ''
+    if (refs.emptyCard) refs.emptyCard.style.display = 'none'
+    if (refs.loadingCard) refs.loadingCard.style.display = ''
   }
 
   async function getMemberstackToken(memberstack) {
@@ -320,6 +327,8 @@
       ? displays.filter((d) => d.unread).length
       : unreads.length
 
+    if (refs.loadingCard) refs.loadingCard.style.display = 'none'
+
     if (refs.badge) {
       refs.badge.textContent = String(unreadCount)
       refs.badge.style.display = unreadCount > 0 ? '' : 'none'
@@ -356,12 +365,23 @@
       })
     }
 
+    const showEmpty = () => {
+      if (refs.loadingCard) refs.loadingCard.style.display = 'none'
+      if (refs.emptyCard) refs.emptyCard.style.display = ''
+    }
+
     const memberstack = await waitForMemberstackDom()
-    if (!memberstack) return
+    if (!memberstack) {
+      showEmpty()
+      return
+    }
 
     const response = await memberstack.getCurrentMember()
     const member = response && response.data
-    if (!member || !member.id) return
+    if (!member || !member.id) {
+      showEmpty()
+      return
+    }
 
     const state = { recent: null, unreads: [] }
     const rerender = () => {
@@ -408,6 +428,16 @@
         '[starter-dashboard] Unable to mount Messages tile',
         error,
       )
+      // Never strand the tile on the loading spinner.
+      const tile = document.getElementById('messages')
+      const spinner = tile && tile.querySelector('.dash_card .button_spinner')
+      const loadingCard = spinner && spinner.closest('.dash_card')
+      if (loadingCard) loadingCard.style.display = 'none'
+      const hasCards = tile && tile.querySelector('.message_item')
+      const emptyLayout =
+        tile && tile.querySelector('.tile-item_empty-state-layout')
+      const emptyCard = emptyLayout && emptyLayout.closest('.dash_card')
+      if (emptyCard && !hasCards) emptyCard.style.display = ''
     })
   }
 
