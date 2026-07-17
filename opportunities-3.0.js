@@ -124,6 +124,7 @@
   // member never inherits the previous member's data.
   let _cacheMemberId = null
   let _memberScopeGeneration = 0
+  let _memberScopeAuthChangeWired = false
   const MEMBER_SCOPE_RESET_EVENT = 'opp30:member-scope-reset'
 
   async function getMemberstackToken() {
@@ -802,6 +803,20 @@
       }
     }
     window.dispatchEvent(new CustomEvent(MEMBER_SCOPE_RESET_EVENT, { detail: { memberId } }))
+  }
+
+  async function wireMemberScopeAuthChange() {
+    if (_memberScopeAuthChangeWired) return
+    const memberstack = await waitForMemberstackDom()
+    if (
+      _memberScopeAuthChangeWired ||
+      !memberstack ||
+      typeof memberstack.onAuthChange !== 'function'
+    ) {
+      return
+    }
+    _memberScopeAuthChangeWired = true
+    memberstack.onAuthChange((member) => resetMemberScopedCaches(member?.id || null))
   }
 
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
@@ -2685,6 +2700,7 @@
 
   /* ========================= BOOTSTRAP ========================== */
   function boot() {
+    wireMemberScopeAuthChange()
     initOpportunityCategorySelects()
     prepareOpportunityStatusControls()
     prepareOpportunityLoadingControls()

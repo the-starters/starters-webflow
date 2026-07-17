@@ -164,31 +164,33 @@
     }
   }
 
+  async function fetchDebugData(refreshContext) {
+    const matchContext = await (refreshContext
+      ? bridge.refreshTalentMatchContext()
+      : bridge.getTalentMatchContext())
+    const [active, matched, applied] = await Promise.all([
+      fetchAllActiveOpportunities(),
+      bridge.API.starterOppList('Active', 1, 1, { match_categories: true }),
+      bridge.API.starterOppList('Applied', 1, 1),
+    ])
+    const data = summarizeOpportunityMatching(
+      active.rows,
+      bridge.contextValue(matchContext, 'category_refs'),
+      {
+        totalActive: active.itemsTotal,
+        activeComplete: active.complete,
+        availableMatching: matched?.available_matching_total,
+        uniqueVisible: matched?.itemsTotal,
+        allApplications: applied?.itemsTotal,
+      },
+    )
+    data.starter.id = bridge.contextValue(matchContext, 'starter_id') || null
+    return data
+  }
+
   function loadData(refreshContext = false) {
     if (!dataPromise) {
-      const context = refreshContext
-        ? bridge.refreshTalentMatchContext()
-        : bridge.getTalentMatchContext()
-      dataPromise = Promise.all([
-        context,
-        fetchAllActiveOpportunities(),
-        bridge.API.starterOppList('Active', 1, 1, { match_categories: true }),
-        bridge.API.starterOppList('Applied', 1, 1),
-      ]).then(([matchContext, active, matched, applied]) => {
-        const data = summarizeOpportunityMatching(
-          active.rows,
-          bridge.contextValue(matchContext, 'category_refs'),
-          {
-            totalActive: active.itemsTotal,
-            activeComplete: active.complete,
-            availableMatching: matched?.available_matching_total,
-            uniqueVisible: matched?.itemsTotal,
-            allApplications: applied?.itemsTotal,
-          },
-        )
-        data.starter.id = bridge.contextValue(matchContext, 'starter_id') || null
-        return data
-      })
+      dataPromise = fetchDebugData(refreshContext)
     }
     return dataPromise
   }
