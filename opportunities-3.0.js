@@ -924,16 +924,36 @@
     return requirements ? description + '<br><br>' + requirements : description
   }
 
+  function paintRichText(field, value) {
+    const html = opportunityMultilineHtml(value)
+    $$(`[data-opp-bind="${field}"]`).forEach((el) => {
+      el.innerHTML = html
+    })
+  }
+
   function paintOpportunityDetail(opportunity) {
     if (!opportunity || typeof opportunity !== 'object') return
     ;['title', 'project_type', 'est_project_duration', 'budget', 'budget_frequency', 'status'].forEach((field) => {
       if (opportunity[field] != null) bind(document, field, opportunity[field])
     })
-    // Status-only mutation envelopes must not blank the existing overview.
-    if ('description' in opportunity || 'exp_requirements' in opportunity)
+    // The detail page renders Description and Experience Requirements as two
+    // separate rich-text elements (data-opp-bind="job_description" and
+    // "experience_requirements"). Paint each from its own source field, keeping
+    // line breaks as <br>. Legacy pages that still carry one combined
+    // "full_overview" element get the concatenated projection. Status-only
+    // mutation envelopes carry neither key, so they never blank existing copy.
+    if ('description' in opportunity || 'exp_requirements' in opportunity) {
+      if ('description' in opportunity) paintRichText('job_description', opportunity.description)
+      if ('exp_requirements' in opportunity) {
+        paintRichText('experience_requirements', opportunity.exp_requirements)
+        // Tolerate the Designer typo currently on the CMS template
+        // (experience_equirements) so repaint works before it is corrected.
+        paintRichText('experience_equirements', opportunity.exp_requirements)
+      }
       $$('[data-opp-bind="full_overview"]').forEach((el) => {
         el.innerHTML = opportunityOverviewHtml(opportunity)
       })
+    }
     if (opportunity.status != null) {
       const status = String(opportunity.status)
       bind(document, 'status_label', status === 'Active' ? 'Open' : status)
