@@ -1,11 +1,11 @@
 /*!
  * Opportunities 3.0 — Webflow ↔ Xano binder
  * ------------------------------------------------------------------
- * Wires the existing 3.0 UI (pages + modals on /all-modals) to the
- * authenticated "Opportunities 3.0" Xano API group.
+ * Wires the existing 3.0 UI (opportunity pages, starter-dashboard, and
+ * modals on /all-modals) to the authenticated "Opportunities 3.0" Xano API group.
  *
- * Load this ONCE per opportunities page via a page (or site) custom-code
- * embed, AFTER @xano/js-sdk and memberstack-x have loaded (footer).
+ * Load this ONCE per supported page via a page (or site) custom-code embed,
+ * AFTER @xano/js-sdk and memberstack-x have loaded (footer).
  *
  * Auth model (important):
  *   1. Memberstack issues a member JWT on login.
@@ -24,12 +24,12 @@
   // load (duplicate embed, Webflow re-init) returns here instead of re-binding.
   if (window.Opp30) return
 
-  // Freelancer feed: hide the Algolia results until the current member's category
-  // filter is applied. wf-algolia paints the unfiltered `status:Active` set on load
-  // (which can include opportunities matched to a previously-signed-in account), so
-  // without this the wrong cards flash before initTalentAlgoliaMatch() narrows them.
-  // Injected synchronously (before wf-algolia renders); removed/overridden the moment
-  // the filtered results are ready. `visibility` (not `display`) preserves layout.
+  // Freelancer feed: hide Algolia results until the requested tab's filters are
+  // applied. All uses the current member's category refs; Applied deliberately uses
+  // application IDs without categories. wf-algolia paints the unfiltered
+  // `status:Active` set on load (which can include opportunities matched to a
+  // previously-signed-in account), so the wrong cards must never flash during init or
+  // tab transitions. `visibility` (not `display`) preserves layout while filtering.
   if (location.pathname.includes('opportunities-freelancer-view')) {
     try {
       const hideStyle = document.createElement('style')
@@ -1098,6 +1098,40 @@
     return match ? match[1] : undefined
   }
 
+  function paintIncompleteProfilePrompt() {
+    document.documentElement.setAttribute('data-opp30-profile-categories', 'missing')
+    const targets = [
+      $('[wf-xano-instance="dash-applied-opps"] [wf-xano-element="empty"]'),
+      $('[wf-algolia-element="no-results"]'),
+    ].filter(Boolean)
+
+    targets.forEach((target) => {
+      target.setAttribute('data-opp-profile-incomplete', 'true')
+      const paragraphs = $$('p', target)
+      if (paragraphs[0]) paragraphs[0].textContent = 'Complete your profile to see matching opportunities.'
+      if (paragraphs[1]) {
+        paragraphs[1].textContent = 'Add your roles so we can match opportunities to your expertise.'
+      }
+      if ($('[data-opp-complete-profile]', target)) return
+      const link = document.createElement('a')
+      link.href = '/starter-edit-profile'
+      link.textContent = 'Complete profile'
+      link.className = 'text-style-link'
+      link.setAttribute('data-opp-complete-profile', '')
+      link.style.display = 'inline-block'
+      link.style.marginTop = '0.75rem'
+      ;($('.tile-item_empty-state-layout', target) || target).appendChild(link)
+    })
+  }
+
+  function showTalentIncompleteProfilePrompt() {
+    const results = $('[wf-algolia-element="results"]')
+    if (results && results.style.display !== 'none') results.style.display = 'none'
+    const noResults = $('[wf-algolia-element="no-results"]')
+    if (noResults && noResults.style.display !== '') noResults.style.display = ''
+    paintIncompleteProfilePrompt()
+  }
+
   function waitForWfAlgolia(timeoutMs = 10000) {
     if (window.WfAlgolia && typeof window.WfAlgolia.setFilter === 'function') {
       return Promise.resolve(window.WfAlgolia)
@@ -1153,13 +1187,151 @@
   }
 
   let _talentMatchContextPromise = null
+  let _talentAlgoliaFilterQueue = Promise.resolve()
+  let _talentAlgoliaExpectedFilters = null
+  let _talentAlgoliaFilterTransitioning = false
+  let _talentAlgoliaGuard = null
+  let _talentAlgoliaRecoveryPromise = null
+  let _talentRequestedTab = null
+  let _talentRequestedTabPromise = null
+  const TALENT_ALGOLIA_RESULT_TIMEOUT_MS = 10000
 
   function getTalentMatchContext() {
     if (!_talentMatchContextPromise) _talentMatchContextPromise = API.starterMatchContext()
     return _talentMatchContextPromise
   }
 
-  async function initTalentAlgoliaMatch() {
+  function queueTalentAlgoliaFilterChange(change) {
+    const queued = _talentAlgoliaFilterQueue.catch(() => {}).then(change)
+    _talentAlgoliaFilterQueue = queued
+    return queued
+  }
+
+  function talentAlgoliaFacetFilters(result) {
+    try {
+      const value = new URLSearchParams(result?.params || '').get('facetFilters')
+      if (!value) return []
+      return JSON.parse(value).flat(Infinity).map(String)
+    } catch {
+      return []
+    }
+  }
+
+  function talentAlgoliaFilterSnapshot(wfAlgolia, overrides = {}) {
+    const state =
+      typeof wfAlgolia.getFilterState === 'function' ? wfAlgolia.getFilterState() : {}
+    return Object.fromEntries(
+      ['category_refs', APPLIED_FIELD].map((field) => [
+        field,
+        Array.from(Object.hasOwn(overrides, field) ? overrides[field] : state[field]?.values || [])
+          .map(String)
+          .sort(),
+      ]),
+    )
+  }
+
+  function talentAlgoliaResultsMatchFilters(payload, expected) {
+    const results = Array.isArray(payload?.results) ? payload.results : [payload]
+    return (
+      results.length > 0 &&
+      results.every((result) => {
+        const filters = talentAlgoliaFacetFilters(result)
+        return Object.entries(expected).every(([field, values]) => {
+          const prefix = `${field}:`
+          const actual = filters
+            .filter((filter) => filter.startsWith(prefix))
+            .map((filter) => filter.slice(prefix.length))
+            .sort()
+          return values.length === actual.length && values.every((value, index) => value === actual[index])
+        })
+      })
+    )
+  }
+
+  function waitForTalentAlgoliaResults(wfAlgolia, expected, request) {
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let timer = null
+      const finish = (err) => {
+        if (settled) return
+        settled = true
+        if (timer !== null) window.clearTimeout(timer)
+        wfAlgolia.off('results', handleResults)
+        wfAlgolia.off('error', handleError)
+        if (err) reject(err)
+        else resolve()
+      }
+      const handleResults = (payload) => {
+        if (talentAlgoliaResultsMatchFilters(payload, expected)) finish()
+      }
+      const handleError = (err) => finish(err instanceof Error ? err : new Error(String(err)))
+      wfAlgolia.on('results', handleResults)
+      wfAlgolia.on('error', handleError)
+      timer = window.setTimeout(
+        () => finish(new Error('Timed out waiting for wf-algolia results')),
+        TALENT_ALGOLIA_RESULT_TIMEOUT_MS,
+      )
+      try {
+        request()
+      } catch (err) {
+        finish(err)
+      }
+    })
+  }
+
+  function setTalentAlgoliaFilterAndWait(wfAlgolia, field, values) {
+    const expected = talentAlgoliaFilterSnapshot(wfAlgolia, { [field]: values })
+    return waitForTalentAlgoliaResults(wfAlgolia, expected, () => wfAlgolia.setFilter(field, values))
+  }
+
+  function ensureTalentAlgoliaResultsGuard(wfAlgolia) {
+    if (_talentAlgoliaGuard?.wfAlgolia === wfAlgolia) return
+    if (_talentAlgoliaGuard) {
+      _talentAlgoliaGuard.wfAlgolia.off('results', _talentAlgoliaGuard.handleResults)
+    }
+    const handleResults = (payload) => {
+      const expected = _talentAlgoliaExpectedFilters
+      if (!expected || talentAlgoliaResultsMatchFilters(payload, expected)) return
+      setTalentResultsHidden(true)
+      if (_talentAlgoliaFilterTransitioning || _talentAlgoliaRecoveryPromise) return
+      const recovery = queueTalentAlgoliaFilterChange(async () => {
+        _talentAlgoliaFilterTransitioning = true
+        try {
+          await waitForTalentAlgoliaResults(wfAlgolia, expected, () => {
+            if (typeof wfAlgolia.refresh === 'function') wfAlgolia.refresh()
+            else wfAlgolia.setFilter('category_refs', expected.category_refs)
+          })
+          if (_talentAlgoliaExpectedFilters === expected && !_talentRequestedTabPromise) {
+            setTalentResultsHidden(false)
+          }
+        } catch (err) {
+          _talentAlgoliaExpectedFilters = null
+          document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
+          console.error('[opp30] failed to recover stale talent Algolia results', err)
+          const results = $('[wf-algolia-element="results"]')
+          if (results) results.style.display = 'none'
+          const noResults = $('[wf-algolia-element="no-results"]')
+          if (noResults) noResults.style.display = ''
+        } finally {
+          _talentAlgoliaFilterTransitioning = false
+        }
+      })
+      _talentAlgoliaRecoveryPromise = recovery
+      const clearRecovery = () => {
+        if (_talentAlgoliaRecoveryPromise === recovery) _talentAlgoliaRecoveryPromise = null
+      }
+      recovery.then(clearRecovery, clearRecovery)
+    }
+    wfAlgolia.on('results', handleResults)
+    _talentAlgoliaGuard = { wfAlgolia, handleResults }
+  }
+
+  function initTalentAlgoliaMatch(clearApplied = false) {
+    return queueTalentAlgoliaFilterChange(() => applyTalentAlgoliaMatch(clearApplied))
+  }
+
+  async function applyTalentAlgoliaMatch(clearApplied) {
+    _talentAlgoliaFilterTransitioning = true
     try {
       const context = await getTalentMatchContext()
       const categoryRefs = filterValues(contextValue(context, 'category_refs'))
@@ -1175,14 +1347,12 @@
       })
       console.info('[opp30] talent algolia category ref count', categoryRefs.length)
       if (!categoryRefs.length) {
+        _talentAlgoliaExpectedFilters = null
         document.documentElement.setAttribute('data-opp30-talent-algolia', 'no-category-refs')
         console.warn('[opp30] talent match context has no category_refs; Algolia match filter skipped')
         // No categories to match on: never fall back to the unfiltered feed. Collapse
         // the results and surface the empty state instead of showing non-matching cards.
-        const results = $('[wf-algolia-element="results"]')
-        if (results) results.style.display = 'none'
-        const noResults = $('[wf-algolia-element="no-results"]')
-        if (noResults) noResults.style.display = ''
+        showTalentIncompleteProfilePrompt()
         return
       }
 
@@ -1194,13 +1364,30 @@
         setTalentResultsHidden(false)
         return
       }
-      wfAlgolia.setFilter('category_refs', categoryRefs)
+      ensureTalentAlgoliaResultsGuard(wfAlgolia)
+      setTalentResultsHidden(true)
+      const filterState =
+        typeof wfAlgolia.getFilterState === 'function' ? wfAlgolia.getFilterState() : {}
+      const appliedValues = filterState[APPLIED_FIELD]?.values || []
+      await setTalentAlgoliaFilterAndWait(wfAlgolia, 'category_refs', categoryRefs)
+      if (clearApplied && appliedValues.length) {
+        await setTalentAlgoliaFilterAndWait(wfAlgolia, APPLIED_FIELD, [])
+      }
+      _talentAlgoliaExpectedFilters = talentAlgoliaFilterSnapshot(wfAlgolia)
       document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
-      revealTalentResultsWhenReady()
+      const results = $('[wf-algolia-element="results"]')
+      if (results) results.style.display = ''
+      if (_talentRequestedTab !== 'applied') setTalentResultsHidden(false)
     } catch (err) {
+      _talentAlgoliaExpectedFilters = null
       document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
       console.error('[opp30] failed to apply talent Algolia match filter', err)
-      setTalentResultsHidden(false)
+      const results = $('[wf-algolia-element="results"]')
+      if (results) results.style.display = 'none'
+      const noResults = $('[wf-algolia-element="no-results"]')
+      if (noResults) noResults.style.display = ''
+    } finally {
+      _talentAlgoliaFilterTransitioning = false
     }
   }
 
@@ -1286,26 +1473,56 @@
     })
   }
 
-  async function applyTalentAppliedFilter() {
-    const wfAlgolia = await waitForWfAlgolia()
-    if (!wfAlgolia) {
-      document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-wf-algolia')
-      console.warn('[opp30] wf-algolia unavailable; applied filter skipped')
-      setTalentResultsHidden(false)
-      return
-    }
-    const ids = await fetchAppliedOppIds()
-    wfAlgolia.setFilter(APPLIED_FIELD, ids.length ? ids : [APPLIED_EMPTY])
-    document.documentElement.setAttribute('data-opp30-talent-applied-count', String(ids.length))
-    document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
-    revealTalentResultsWhenReady()
+  // Applied is historical member state: filter by application-linked opportunity IDs
+  // and remove category_refs so later profile edits cannot hide prior applications.
+  function applyTalentAppliedFilter() {
+    return queueTalentAlgoliaFilterChange(async () => {
+      _talentAlgoliaFilterTransitioning = true
+      try {
+        const wfAlgolia = await waitForWfAlgolia()
+        if (!wfAlgolia) {
+          document.documentElement.setAttribute('data-opp30-talent-algolia', 'missing-wf-algolia')
+          console.warn('[opp30] wf-algolia unavailable; applied filter skipped')
+          setTalentResultsHidden(false)
+          return
+        }
+        const ids = await fetchAppliedOppIds()
+        ensureTalentAlgoliaResultsGuard(wfAlgolia)
+        setTalentResultsHidden(true)
+        const filterState =
+          typeof wfAlgolia.getFilterState === 'function' ? wfAlgolia.getFilterState() : {}
+        const categoryValues = filterState.category_refs?.values || []
+        await setTalentAlgoliaFilterAndWait(
+          wfAlgolia,
+          APPLIED_FIELD,
+          ids.length ? ids : [APPLIED_EMPTY],
+        )
+        if (categoryValues.length) {
+          await setTalentAlgoliaFilterAndWait(wfAlgolia, 'category_refs', [])
+        }
+        _talentAlgoliaExpectedFilters = talentAlgoliaFilterSnapshot(wfAlgolia)
+        const results = $('[wf-algolia-element="results"]')
+        if (results) results.style.display = ''
+        document.documentElement.setAttribute('data-opp30-talent-applied-count', String(ids.length))
+        document.documentElement.setAttribute('data-opp30-talent-algolia', 'filtered')
+        if (_talentRequestedTab === 'applied') setTalentResultsHidden(false)
+      } catch (err) {
+        _talentAlgoliaExpectedFilters = null
+        document.documentElement.setAttribute('data-opp30-talent-algolia', 'error')
+        console.error('[opp30] failed to apply talent applied filter', err)
+        const results = $('[wf-algolia-element="results"]')
+        if (results) results.style.display = 'none'
+        const noResults = $('[wf-algolia-element="no-results"]')
+        if (noResults) noResults.style.display = ''
+      } finally {
+        _talentAlgoliaFilterTransitioning = false
+      }
+    })
   }
 
-  async function clearTalentAppliedFilter() {
-    const wfAlgolia = await waitForWfAlgolia()
-    if (wfAlgolia) wfAlgolia.setFilter(APPLIED_FIELD, [])
+  function clearTalentAppliedFilter() {
     document.documentElement.removeAttribute('data-opp30-talent-applied-count')
-    await initTalentAlgoliaMatch()
+    return initTalentAlgoliaMatch(true)
   }
 
   function normalizeTalentTab(value) {
@@ -1413,6 +1630,8 @@
 
   async function setTalentTab(value) {
     const tab = normalizeTalentTab(value)
+    if (tab === _talentRequestedTab && _talentRequestedTabPromise) return _talentRequestedTabPromise
+    _talentRequestedTab = tab
     const allPanel = getTalentAllPanel()
     const appliedPanel = getTalentAppliedPanel()
 
@@ -1421,11 +1640,13 @@
     if (appliedPanel && appliedPanel !== allPanel) appliedPanel.style.display = tab === 'applied' ? '' : 'none'
     syncTalentTabControls(tab)
 
-    if (tab === 'applied') {
-      await applyTalentAppliedFilter()
-      return
+    const transition = tab === 'applied' ? applyTalentAppliedFilter() : clearTalentAppliedFilter()
+    _talentRequestedTabPromise = transition
+    try {
+      await transition
+    } finally {
+      if (_talentRequestedTabPromise === transition) _talentRequestedTabPromise = null
     }
-    await clearTalentAppliedFilter()
   }
 
   function normalizeAppliedItem(item) {
@@ -1453,6 +1674,27 @@
       description: opportunity.description || item.description || item.message || '',
       status: opportunity.status || item.status || 'Applied',
       created_at: opportunity.created_at || item.opportunity_created_at || '',
+    }
+  }
+
+  // The dashboard's applied cards remain category-independent. Only replace its empty
+  // state with profile guidance when the starter has no valid matching categories.
+  async function initStarterDashboardOpportunityMatch() {
+    try {
+      if (!(await gateOrRedirect('freelancer'))) return
+      const context = await getTalentMatchContext()
+      const categoryRefs = filterValues(contextValue(context, 'category_refs'))
+      window.Opp30TalentMatchContext = context
+      document.documentElement.setAttribute('data-opp30-talent-category-count', String(categoryRefs.length))
+      document.documentElement.setAttribute('data-opp30-talent-category-refs', categoryRefs.join(','))
+      document.documentElement.setAttribute(
+        'data-opp30-dashboard-match',
+        categoryRefs.length ? 'ready' : 'profile-incomplete',
+      )
+      if (!categoryRefs.length) paintIncompleteProfilePrompt()
+    } catch (err) {
+      document.documentElement.setAttribute('data-opp30-dashboard-match', 'error')
+      console.error('[opp30] failed to initialize dashboard opportunity match context', err)
     }
   }
 
@@ -2132,12 +2374,12 @@
     }
   })
 
-  /* ============ wf-algolia bridge (brand list page) ============ */
-  // The brand list renders via the wf-algolia package, whose cards expose
+  /* ============ wf-algolia bridge (opportunity feeds) ============ */
+  // Brand and starter feeds render via the wf-algolia package, whose cards expose
   // data-wf-algolia-hit-objectid (not data-opp-id) and whose pagination + detail-link
-  // markup needs adjusting. This bridges those cards to the Opp30 handlers and fixes
-  // the card/pagination markup wf-algolia 1.0.4 can't drive on its own. No-op when the
-  // page has no wf-algolia results container.
+  // markup needs adjusting. This bridges those cards to the Opp30 handlers, preserves
+  // the starter incomplete-profile state across Algolia renders, and fixes markup
+  // wf-algolia 1.0.4 can't drive on its own. No-op without a results container.
   function initWfAlgoliaBridge() {
     const results = $('[wf-algolia-element="results"]')
     if (!results) return
@@ -2188,11 +2430,23 @@
       fixCards()
       fixActivePage()
       if (isTalentFeed) markAppliedCards(results)
+      if (
+        isTalentFeed &&
+        _talentRequestedTab !== 'applied' &&
+        document.documentElement.getAttribute('data-opp30-talent-algolia') === 'no-category-refs'
+      ) {
+        showTalentIncompleteProfilePrompt()
+      }
     }
     apply()
     // Cards render before the applied-ids fetch resolves; re-mark once it's in.
     if (isTalentFeed) fetchAppliedOppIds().then(apply).catch(() => {})
-    new MutationObserver(apply).observe(results, { childList: true, subtree: true })
+    const resultsObserver = new MutationObserver(apply)
+    resultsObserver.observe(results, { childList: true, subtree: true })
+    const noResults = $('[wf-algolia-element="no-results"]')
+    if (isTalentFeed && noResults) {
+      resultsObserver.observe(noResults, { attributes: true, attributeFilter: ['style'] })
+    }
     const pager = ($('[wf-algolia-element="page-number"]') || {}).parentElement
     if (pager) new MutationObserver(fixActivePage).observe(pager, { childList: true, subtree: true, attributes: true })
 
@@ -2343,7 +2597,8 @@
     prepareOpportunityLoadingControls()
     wireModals()
     const p = location.pathname
-    if (p.includes('opportunities-details---brand-view')) initBrandDetail()
+    if (p.includes('starter-dashboard')) initStarterDashboardOpportunityMatch()
+    else if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/[^/]+\/?$/)) initOppDetailByRole()
     else if (p.includes('opportunities-brands-view')) {
       // Brand feed: when the page carries wf-xano brand-feed markup (Designer swap,
