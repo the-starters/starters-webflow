@@ -29,8 +29,9 @@
     { path: '/api:tCpV3oqd/grants/create_virtual_account', prefix: false },
     { path: '/api:tCpV3oqd/grants/create_virtual_calendar', prefix: false },
     { path: '/api:tCpV3oqd/grants/add_virtual/v3', prefix: false },
-    // grants/add/v3 is called by v3/connect-success.js after the OAuth return;
-    // it exchanges the code and persists the grant server-side in one call.
+    // grants/add/v3 is called by the availability writer when the OAuth
+    // return (?code&state) lands back on the Booking-stage page; it exchanges
+    // the code and persists the grant server-side in one call.
     { path: '/api:tCpV3oqd/grants/add/v3', prefix: false },
     { path: '/api:tCpV3oqd/grants/delete', prefix: false },
     { path: '/api:tCpV3oqd/nylas_configurations/get_all', prefix: false },
