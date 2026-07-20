@@ -69,8 +69,7 @@ function loadInitializer(options = {}) {
       },
     },
     getStarterByMemberId: options.getStarterByMemberId,
-    getXanoAuthToken: options.getXanoAuthToken,
-    fetch: options.fetch,
+    $memberstackDom: options.memberstack,
     dispatchEvent(event) {
       events.push(event)
     },
@@ -133,38 +132,38 @@ test('shows Manage availability when the starter has saved availability', async 
   assert.equal(result.events[0].detail.source, 'starter')
 })
 
-test('reads the authenticated starter when no page reader is installed', async () => {
-  const availability = { items: { general: {} }, manager: 'platform' }
-  let request
-  const result = loadInitializer({
-    getXanoAuthToken: async () => 'xano-token',
-    fetch: async (url, init) => {
-      request = { url, init }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ data: [{ availability }] }),
-      }
-    },
-  })
+test('keeps actions hidden when the page scheduling reader is missing', async () => {
+  const result = loadInitializer()
   await settle()
 
-  assert.match(request.url, /\/api:KZf7nFnk\/starter\/get\?member_id=member-a$/)
-  assert.equal(request.init.headers.Authorization, 'Bearer xano-token')
-  assert.equal(result.update.style.display, 'flex')
-  assert.equal(result.events[0].detail.source, 'starter')
+  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+  assert.equal(result.events[0].type, 'starterSchedulingAvailabilityError')
 })
 
-test('treats an authenticated missing starter row as first-time setup', async () => {
+test('rejects a member switch while scheduling availability is loading', async () => {
+  let activeMember = { id: 'member-a' }
+  let resolveStarter
+  const starter = new Promise((resolve) => {
+    resolveStarter = resolve
+  })
   const result = loadInitializer({
-    getXanoAuthToken: async () => 'xano-token',
-    fetch: async () => ({ status: 404 }),
+    memberstack: {
+      getCurrentMember: async () => ({ data: activeMember }),
+    },
+    getStarterByMemberId: async () => starter,
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'flex')
+  activeMember = { id: 'member-b' }
+  resolveStarter({ availability: { items: { general: {} }, manager: 'platform' } })
+  await settle()
+
+  assert.equal(result.init.style.display, 'none')
   assert.equal(result.update.style.display, 'none')
-  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'init')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+  assert.equal(result.window.STARTER_AVAILABILITY, null)
 })
 
 test('uses member-scoped cached availability before the legacy endpoint', async () => {

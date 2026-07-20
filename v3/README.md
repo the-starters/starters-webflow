@@ -67,10 +67,12 @@ availability, accepts the legacy scheduling availability shape
 (`{ items, manager? }`), and treats a V3 starter without a legacy scheduling row
 as a first-time setup instead of leaving both controls hidden. It also selects
 the correct initial modal step.
-The initializer prefers a page-provided `window.getStarterByMemberId(memberId)`
-reader; otherwise it reads the starter directly using `getXanoAuthToken` from
-`scheduling-auth.js`. Failed or malformed reads keep both actions hidden, set
-the document status to `error`, and can be retried with
+The initializer requires the page-provided
+`window.getStarterByMemberId(memberId)` scheduling reader. The canonical profile
+reader is not a fallback because its `Availability` field is the workload range,
+not the legacy scheduling object. Failed or malformed reads, or a Memberstack
+member change during the read, keep both actions hidden, set the document status
+to `error`, and can be retried with
 `window.StarterSchedulingAvailability.initialize()`.
 
 Webflow markup contract:

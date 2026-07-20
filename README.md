@@ -118,10 +118,11 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 
 ### Booking-stage availability controls
 
-On the same staging hostname, `v3/scheduling-availability-init.js` uses the
-authenticated starter row to reveal `[init-availability]` for a first-time setup or
-`[update-availability]` for a saved legacy schedule, and selects the corresponding
-`[availability-step]`. Load it after the auth bridge on the renamed
+On the same staging hostname, `v3/scheduling-availability-init.js` uses the page's
+existing `getStarterByMemberId(memberId)` scheduling reader to reveal
+`[init-availability]` for a first-time setup or `[update-availability]` for a saved
+legacy schedule, and selects the corresponding `[availability-step]`. Load it after
+the auth bridge on the renamed
 `Starter Dashboard - Booking stage` page; it does not write scheduling data or run on
 the custom domains.
 

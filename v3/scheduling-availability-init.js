@@ -2,8 +2,6 @@
   'use strict'
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
-  const STARTER_ENDPOINT =
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter/get'
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const CACHE_TTL_MS = 5 * 60 * 1000
   const STATUS_ATTRIBUTE = 'data-scheduling-availability-init'
@@ -77,52 +75,26 @@
   }
 
   async function readStarter(memberId) {
-    if (typeof window.getStarterByMemberId === 'function') {
-      return window.getStarterByMemberId(memberId)
+    if (typeof window.getStarterByMemberId !== 'function') {
+      throw new Error('Legacy scheduling availability reader not available')
     }
-    if (typeof window.getXanoAuthToken !== 'function') {
-      throw new Error('Scheduling auth reader not available')
-    }
-
-    const token = await window.getXanoAuthToken()
-    const response = await window.fetch(
-      STARTER_ENDPOINT + '?member_id=' + encodeURIComponent(memberId),
-      { headers: { Authorization: 'Bearer ' + token } },
-    )
-    if (response.status === 404) return null
-
-    const data = await response.json().catch(function () {
-      throw new Error('Starter reader returned invalid JSON')
-    })
-    if (!response.ok) throw new Error('Starter reader failed (' + response.status + ')')
-
-    let starter = data
-    if (starter && Object.prototype.hasOwnProperty.call(starter, 'starter')) {
-      starter = starter.starter
-    } else if (starter && Object.prototype.hasOwnProperty.call(starter, 'data')) {
-      starter = starter.data
-    }
-    if (Array.isArray(starter)) starter = starter[0] || null
-    if (starter !== null && (typeof starter !== 'object' || Array.isArray(starter))) {
-      throw new Error('Starter reader returned invalid data')
-    }
-    return starter
+    return window.getStarterByMemberId(memberId)
   }
 
   async function currentMember() {
+    const memberstack = window.$memberstackDom
+    if (memberstack && typeof memberstack.getCurrentMember === 'function') {
+      const result = await memberstack.getCurrentMember()
+      const member = result && result.data
+      if (member && member.id) return member
+    }
+
     if (window.memberReady && typeof window.memberReady.then === 'function') {
       const member = await window.memberReady
       if (member && member.id) return member
     }
 
-    const memberstack = window.$memberstackDom
-    if (!memberstack || typeof memberstack.getCurrentMember !== 'function') {
-      throw new Error('Memberstack not available')
-    }
-    const result = await memberstack.getCurrentMember()
-    const member = result && result.data
-    if (!member || !member.id) throw new Error('No logged-in member')
-    return member
+    throw new Error('No logged-in member')
   }
 
   async function loadAvailability(member) {
@@ -130,6 +102,12 @@
     if (cached) return { availability: cached, source: 'cache' }
 
     const starter = await readStarter(member.id)
+    const verifiedMember = await currentMember()
+    if (verifiedMember.id !== member.id) {
+      const error = new Error('Member session changed during availability read')
+      error.code = 'MEMBER_SCOPE_CHANGED'
+      throw error
+    }
     if (starter && starter.availability != null) {
       const availability = normalizeAvailability(starter.availability)
       if (!availability) throw new Error('Starter availability is invalid')
