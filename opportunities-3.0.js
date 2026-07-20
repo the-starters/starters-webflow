@@ -1054,9 +1054,15 @@
     // fresh Xano state (same pattern the apply/cancel/edit flows already use).
     // Detail pages carry no brand/opportunities/list feed, so this is a no-op
     // there and their in-place paintOpportunityDetail repaint is unaffected.
-    if (hasWfXanoBrandFeed() && window.WfXano && typeof window.WfXano.refresh === 'function') {
+    //
+    // Return the refresh PROMISE (WfXano.refresh(root) resolves after the feed
+    // re-fetches and re-renders) so an awaiting caller — guard() awaits the
+    // reopen onSuccess — keeps the loading spinner on until the card actually
+    // repaints, with no window where the spinner is gone but the card is stale.
+    const feedRoot = wfXanoBrandFeedRoot()
+    if (feedRoot && window.WfXano && typeof window.WfXano.refresh === 'function') {
       try {
-        window.WfXano.refresh()
+        return Promise.resolve(window.WfXano.refresh(feedRoot))
       } catch (e) {
         /* non-fatal: reload-time CMS mirror still corrects the card */
       }
@@ -1064,15 +1070,20 @@
   }
 
   /* ===================== PAGE CONTROLLERS ======================== */
-  /** True when the brand feed is wf-xano-rendered: a list root (any of the three
-   *  root grammars — canonical wrapper, legacy wf-xano-list marker, v0.3.0
-   *  element="list" root) whose wf-xano-source targets brand/opportunities/list. */
+  // The brand feed is wf-xano-rendered when a list root — any of the three root
+  // grammars (canonical wrapper, legacy wf-xano-list marker, v0.3.0 element="list"
+  // root) — carries a wf-xano-source targeting brand/opportunities/list.
+  const WF_XANO_BRAND_FEED_SEL =
+    '[wf-xano-element="wrapper"][wf-xano-source*="brand/opportunities/list"], ' +
+    '[wf-xano-list][wf-xano-source*="brand/opportunities/list"], ' +
+    '[wf-xano-element="list"][wf-xano-source*="brand/opportunities/list"]'
+  /** The wf-xano brand-feed root element, or null when the feed isn't on the page.
+   *  Its .__wfXano instance is what WfXano.refresh(root) re-fetches + re-renders. */
+  function wfXanoBrandFeedRoot() {
+    return $(WF_XANO_BRAND_FEED_SEL)
+  }
   function hasWfXanoBrandFeed() {
-    return !!$(
-      '[wf-xano-element="wrapper"][wf-xano-source*="brand/opportunities/list"], ' +
-        '[wf-xano-list][wf-xano-source*="brand/opportunities/list"], ' +
-        '[wf-xano-element="list"][wf-xano-source*="brand/opportunities/list"]',
-    )
+    return !!wfXanoBrandFeedRoot()
   }
 
   async function initBrandList() {
