@@ -95,8 +95,9 @@ Runtime contract:
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
 - `starterSchedulingAvailabilityReady` carries `{ memberId, source, state }`;
-  `source` is `cache`, `starter`, or `default`, and `state` is `init`, `update`,
-  or `null` when neither control exists.
+  `source` is `cache`, `starter`, `default`, or `query-test`, and `state` is
+  `init`, `update`, or `null` when neither control exists. For `query-test`,
+  `memberId` is the selected test member rather than the authenticated member.
 - `starterSchedulingAvailabilityError` carries `{ message }` after a failed read.
 - `window.StarterSchedulingAvailability` exposes `initialize()` for retries,
   `normalizeAvailability(value)` for the legacy object or JSON-string shape,
@@ -114,6 +115,38 @@ Webflow staging loader:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-auth.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-availability-init.js"></script>
 ```
+
+Temporary staging QA override (`?test_member_id=`):
+
+- On `the-starters-3-0.webflow.io` only, an allowlisted Memberstack Test-Data
+  sandbox member ID may be supplied via the `test_member_id` query parameter,
+  e.g. `https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage?test_member_id=mem_TEST_ID`
+  (placeholder — the real allowlist lives in `TEST_MEMBER_ALLOWLIST` in
+  `scheduling-availability-init.js`; never allowlist a live member ID).
+- The override is read/UI-state only: it changes which member's legacy
+  availability is read and which control (`Connect Calendar` vs
+  `Manage availability`) renders. It never bypasses Bearer authentication or
+  server ownership checks — `xanoAuthFetch` still authenticates as the
+  logged-in tester — and it is never used for profile or scheduling writes.
+  A tester who needs to submit changes must log in as that member.
+- The override requires `window.xanoAuthFetch`; if the authenticated reader is
+  unavailable, initialization fails closed instead of using the page-provided
+  unauthenticated fallback.
+- Malformed values and values not in `TEST_MEMBER_ALLOWLIST` are ignored with a
+  concise console warning (the supplied value is not echoed), and the
+  authenticated member is used as before. A missing parameter silently keeps
+  the default authenticated-member behavior.
+- Once an override is accepted, the document root carries
+  `data-scheduling-test-member="true"` (including after a subsequent read
+  error), and a successful ready event reports `source: "query-test"` with the
+  override ID as `memberId`.
+- Cached availability stays member-scoped: the override ID gets its own
+  five-minute cache entry and never reuses the authenticated member's cache.
+- ⛔ **LAUNCH BLOCKER**: remove the override (`TEST_MEMBER_*` constants,
+  `resolveTestMemberOverride`, and this section) before enabling this script
+  on `thestarters.com` / `www.thestarters.com`. It is independently
+  hostname-gated as defense in depth, but must not ship to the custom
+  production domains.
 
 Run its focused test with:
 

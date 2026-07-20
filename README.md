@@ -130,6 +130,13 @@ cache and member revalidation. Load it after the auth bridge on the renamed
 `Starter Dashboard - Booking stage` page; it does not write scheduling data or run on
 the custom domains.
 
+For staging QA, an allowlisted Memberstack Test-Data member can be selected with
+`?test_member_id=<memberstack_member_id>`. This changes only the member whose saved
+availability is read and rendered; the logged-in tester still supplies the Bearer
+authentication, and the override is never used for writes. Remove this temporary
+override before enabling the initializer on either custom production domain. See
+`v3/README.md` for its validation, cache, status-marker, and removal contracts.
+
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-auth.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-availability-init.js"></script>

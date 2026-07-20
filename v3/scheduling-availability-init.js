@@ -8,6 +8,17 @@
   const CACHE_TTL_MS = 5 * 60 * 1000
   const STATUS_ATTRIBUTE = 'data-scheduling-availability-init'
 
+  // TEMPORARY staging QA override (?test_member_id=...). Read/UI-state only:
+  // it never bypasses Bearer auth or server ownership checks, and must never
+  // be used for profile or scheduling writes. Allowlist Memberstack Test-Data
+  // sandbox QA members only — never live member IDs.
+  // ⛔ LAUNCH BLOCKER: remove this override before enabling the script on the
+  // custom production domains (thestarters.com / www.thestarters.com).
+  const TEST_MEMBER_PARAM = 'test_member_id'
+  const TEST_MEMBER_ALLOWLIST = ['mem_sb_cmqhuaxn80d270sseeo74fn7i']
+  const TEST_MEMBER_ID_PATTERN = /^mem_(?:sb_)?[a-z0-9]{10,64}$/
+  const TEST_MEMBER_ATTRIBUTE = 'data-scheduling-test-member'
+
   if (window.location.hostname !== STAGING_HOST) return
   if (window.__tsSchedulingAvailabilityInit) return
   window.__tsSchedulingAvailabilityInit = true
@@ -105,6 +116,32 @@
     throw new Error('Legacy scheduling availability reader not available')
   }
 
+  function resolveTestMemberOverride() {
+    // Independently hostname-gated so the override stays dead on the custom
+    // production domains even if the top-level staging guard is later lifted.
+    if (window.location.hostname !== STAGING_HOST) return null
+    let value = null
+    try {
+      value = new URLSearchParams(window.location.search).get(TEST_MEMBER_PARAM)
+    } catch (error) {
+      return null
+    }
+    if (!value) return null
+    if (
+      !TEST_MEMBER_ID_PATTERN.test(value) ||
+      TEST_MEMBER_ALLOWLIST.indexOf(value) === -1
+    ) {
+      // Deliberately does not echo the supplied value.
+      console.warn(
+        '[scheduling-availability] ignoring ' +
+          TEST_MEMBER_PARAM +
+          ': not an allowlisted staging test member',
+      )
+      return null
+    }
+    return value
+  }
+
   async function currentMember() {
     const memberstack = window.$memberstackDom
     if (memberstack && typeof memberstack.getCurrentMember === 'function') {
@@ -122,13 +159,13 @@
     throw new Error('No logged-in member')
   }
 
-  async function loadAvailability(member) {
-    const cached = readCachedAvailability(member.id)
+  async function loadAvailability(readMemberId, sessionMemberId) {
+    const cached = readCachedAvailability(readMemberId)
     if (cached) return { availability: cached, source: 'cache' }
 
-    const starter = await readStarter(member.id)
+    const starter = await readStarter(readMemberId)
     const verifiedMember = await currentMember()
-    if (verifiedMember.id !== member.id) {
+    if (verifiedMember.id !== sessionMemberId) {
       const error = new Error('Member session changed during availability read')
       error.code = 'MEMBER_SCOPE_CHANGED'
       throw error
@@ -141,7 +178,7 @@
 
     const availability = normalizeAvailability(starter.availability)
     if (!availability) throw new Error('Starter availability is invalid')
-    writeCachedAvailability(member.id, availability)
+    writeCachedAvailability(readMemberId, availability)
     return { availability, source: 'starter' }
   }
 
@@ -203,13 +240,28 @@
     setStatus('loading')
     try {
       const member = await currentMember()
-      const result = await loadAvailability(member)
+      const testMemberId = resolveTestMemberOverride()
+      if (testMemberId && typeof window.xanoAuthFetch !== 'function') {
+        throw new Error('Authenticated staging test-member reader not available')
+      }
+      // The override only changes which member's availability is read and
+      // which UI state renders; the session anchor stays the authenticated
+      // member, and xanoAuthFetch keeps authenticating as that member.
+      const readMemberId = testMemberId || member.id
+      if (testMemberId) {
+        document.documentElement.setAttribute(TEST_MEMBER_ATTRIBUTE, 'true')
+      }
+      const result = await loadAvailability(readMemberId, member.id)
       window.STARTER_AVAILABILITY = result.availability
       const state = renderState(result.availability)
       setStatus(state || 'missing-controls')
       window.dispatchEvent(
         new CustomEvent('starterSchedulingAvailabilityReady', {
-          detail: { memberId: member.id, source: result.source, state },
+          detail: {
+            memberId: readMemberId,
+            source: testMemberId ? 'query-test' : result.source,
+            state,
+          },
         }),
       )
       return state
