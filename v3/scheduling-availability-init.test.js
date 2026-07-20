@@ -58,7 +58,10 @@ function loadInitializer(options = {}) {
 
   const member = options.member || { id: 'member-a', customFields: {} }
   const window = {
-    location: { hostname: options.hostname || 'the-starters-3-0.webflow.io' },
+    location: {
+      hostname: options.hostname || 'the-starters-3-0.webflow.io',
+      search: options.search || '',
+    },
     memberReady: Promise.resolve(member),
     localStorage: {
       getItem(key) {
@@ -83,14 +86,20 @@ function loadInitializer(options = {}) {
     }
   }
 
+  const warnings = []
   vm.runInNewContext(source, {
     CustomEvent,
-    console: { warn() {} },
+    URLSearchParams,
+    console: {
+      warn(...args) {
+        warnings.push(args.join(' '))
+      },
+    },
     document,
     window,
   })
 
-  return { attributes, events, init, steps, storage, update, window }
+  return { attributes, events, init, steps, storage, update, warnings, window }
 }
 
 async function settle() {
@@ -345,4 +354,148 @@ test('marks pages without availability controls as not applicable', async () => 
   await settle()
 
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'not-applicable')
+})
+
+const ALLOWED_TEST_MEMBER = 'mem_sb_cmqhuaxn80d270sseeo74fn7i'
+
+test('reads an allowlisted test member on the Webflow staging hostname', async () => {
+  const calls = []
+  const availability = { items: { general: {} }, manager: 'platform' }
+  const result = loadInitializer({
+    search: `?test_member_id=${ALLOWED_TEST_MEMBER}`,
+    xanoAuthFetch: async (url, init) => {
+      calls.push({ url, init })
+      return { ok: true, status: 200, json: async () => ({ availability }) }
+    },
+  })
+  await settle()
+
+  assert.equal(calls.length, 1)
+  assert.match(calls[0].url, /\/api:tCpV3oqd\/starter\/get_by_memberstack$/)
+  assert.deepEqual(JSON.parse(calls[0].init.body), { member_id: ALLOWED_TEST_MEMBER })
+  assert.equal(result.update.style.display, 'flex')
+  assert.equal(result.events[0].type, 'starterSchedulingAvailabilityReady')
+  assert.equal(result.events[0].detail.source, 'query-test')
+  assert.equal(result.events[0].detail.memberId, ALLOWED_TEST_MEMBER)
+  assert.equal(result.attributes.get('data-scheduling-test-member'), 'true')
+})
+
+test('missing test_member_id keeps the authenticated-member behavior', async () => {
+  let request
+  const result = loadInitializer({
+    xanoAuthFetch: async (url, init) => {
+      request = { url, init }
+      return { ok: true, status: 200, json: async () => null }
+    },
+  })
+  await settle()
+
+  assert.deepEqual(JSON.parse(request.init.body), { member_id: 'member-a' })
+  assert.equal(result.events[0].detail.memberId, 'member-a')
+  assert.equal(result.events[0].detail.source, 'default')
+  assert.equal(result.attributes.has('data-scheduling-test-member'), false)
+})
+
+test('ignores an invalid test_member_id with a warning and no echoed value', async () => {
+  let request
+  const result = loadInitializer({
+    search: '?test_member_id=<script>alert(1)</script>',
+    xanoAuthFetch: async (url, init) => {
+      request = { url, init }
+      return { ok: true, status: 200, json: async () => null }
+    },
+  })
+  await settle()
+
+  assert.deepEqual(JSON.parse(request.init.body), { member_id: 'member-a' })
+  assert.equal(result.attributes.has('data-scheduling-test-member'), false)
+  const warning = result.warnings.find((entry) => entry.includes('test_member_id'))
+  assert.ok(warning, 'expected a concise ignore warning')
+  assert.ok(!warning.includes('alert'), 'warning must not echo the supplied value')
+})
+
+test('ignores a well-formed but non-allowlisted test_member_id', async () => {
+  let request
+  const result = loadInitializer({
+    search: '?test_member_id=mem_sb_zzzzzzzzzzzzzzzzzzzzzzzzz',
+    xanoAuthFetch: async (url, init) => {
+      request = { url, init }
+      return { ok: true, status: 200, json: async () => null }
+    },
+  })
+  await settle()
+
+  assert.deepEqual(JSON.parse(request.init.body), { member_id: 'member-a' })
+  assert.equal(result.attributes.has('data-scheduling-test-member'), false)
+  assert.ok(result.warnings.some((entry) => entry.includes('test_member_id')))
+})
+
+test('test_member_id is inert on both custom production domains', () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const result = loadInitializer({
+      hostname,
+      search: `?test_member_id=${ALLOWED_TEST_MEMBER}`,
+    })
+    assert.equal(result.window.StarterSchedulingAvailability, undefined)
+    assert.deepEqual(result.init.style, {})
+    assert.equal(result.attributes.has('data-scheduling-test-member'), false)
+  }
+})
+
+test('never reuses the authenticated member cache for an override read', async () => {
+  const calls = []
+  const result = loadInitializer({
+    search: `?test_member_id=${ALLOWED_TEST_MEMBER}`,
+    storage: {
+      'starter-scheduling-availability:member-a': JSON.stringify({
+        cachedAt: Date.now(),
+        availability: { items: { general: {} }, manager: 'platform' },
+      }),
+    },
+    xanoAuthFetch: async (url, init) => {
+      calls.push({ url, init })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ availability: { items: { qa: {} }, manager: null } }),
+      }
+    },
+  })
+  await settle()
+
+  assert.equal(calls.length, 1, 'override must bypass the authenticated member cache')
+  assert.deepEqual(JSON.parse(calls[0].init.body), { member_id: ALLOWED_TEST_MEMBER })
+  const overrideCache = JSON.parse(
+    result.storage.get(`starter-scheduling-availability:${ALLOWED_TEST_MEMBER}`),
+  )
+  assert.deepEqual(overrideCache.availability.items, { qa: {} })
+  const authenticatedCache = JSON.parse(
+    result.storage.get('starter-scheduling-availability:member-a'),
+  )
+  assert.deepEqual(authenticatedCache.availability.items, { general: {} })
+})
+
+test('an override read issues only the legacy read call — no write payloads', async () => {
+  const calls = []
+  loadInitializer({
+    search: `?test_member_id=${ALLOWED_TEST_MEMBER}`,
+    xanoAuthFetch: async (url, init) => {
+      calls.push({ url, init })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ availability: { items: { qa: {} }, manager: null } }),
+      }
+    },
+  })
+  await settle()
+
+  assert.equal(calls.length, 1)
+  assert.match(calls[0].url, /\/api:tCpV3oqd\/starter\/get_by_memberstack$/)
+  for (const call of calls) {
+    assert.ok(
+      /\/starter\/get_by_memberstack$/.test(call.url),
+      'overridden ID must never reach a non-read endpoint',
+    )
+  }
 })
