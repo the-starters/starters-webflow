@@ -229,6 +229,56 @@ test('legacy wrapper falls back only when initial token acquisition fails', asyn
   assert.equal(schedulingCalls, 1)
 })
 
+test('availability-writer endpoints are authenticated', async () => {
+  const WRITER_PATHS = [
+    '/api:tCpV3oqd/starter/update_availability',
+    '/api:tCpV3oqd/starter/set_timezone',
+    '/api:tCpV3oqd/starter/clear_calendar_data',
+    '/api:tCpV3oqd/grants/oauth/v3',
+    '/api:tCpV3oqd/grants/create_virtual_account',
+    '/api:tCpV3oqd/grants/create_virtual_calendar',
+    '/api:tCpV3oqd/grants/add_virtual/v3',
+    '/api:tCpV3oqd/grants/add/v3',
+    '/api:tCpV3oqd/grants/delete',
+    '/api:tCpV3oqd/nylas_configurations/get_all',
+  ]
+  const authHeaders = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-a' })
+    }
+    authHeaders.push(request.headers.get('Authorization'))
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  for (const path of WRITER_PATHS) {
+    await window.xanoAuthFetch(XANO_ORIGIN + path, { method: 'POST', body: '{}' })
+  }
+
+  assert.equal(authHeaders.length, WRITER_PATHS.length)
+  for (const header of authHeaders) assert.equal(header, 'Bearer xano-a')
+})
+
+test('writer endpoint list does not blanket-authenticate the scheduling group', async () => {
+  let tradeCount = 0
+  let receivedRequest
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) tradeCount += 1
+    receivedRequest = request
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(`${XANO_ORIGIN}/api:tCpV3oqd/booking_record/get`, {
+    method: 'POST',
+    body: '{}',
+  })
+
+  assert.equal(tradeCount, 0)
+  assert.equal(receivedRequest.headers.has('Authorization'), false)
+})
+
 test('auth changes invalidate cache and in-flight scheduling responses', async () => {
   let memberstackToken = 'memberstack-a'
   let tradeCount = 0
