@@ -225,6 +225,14 @@ Designer follow-up):
   controls are plain), so the legacy manager-restore close branch is
   currently dead but harmless.
 
+Grant state (`nylas_grant_id`/`email`/`calendar_id`) is sourced from the
+scheduling row via an authenticated `get_by_memberstack` read at bootstrap,
+with the Memberstack custom-field mirror as fallback only. The admin PATCH
+that maintains that mirror uses the live Memberstack key, so it cannot write
+Test-Data members — sourcing from the row keeps sandbox QA (and any member
+whose mirror drifts) working. A grant-less save now returns to the `default`
+step instead of legacy's silent dead-end on the form.
+
 Deliberately NOT ported from the legacy inline writer:
 
 - the hardcoded test member id and dashboard/onboarding redirects;
