@@ -30,7 +30,7 @@ Current safety boundary:
 Maintenance rule: new `api:tCpV3oqd` scheduling calls should use
 `window.xanoAuthFetch`. Keep endpoint scope explicit; do not turn this into a
 blanket credential injector. The availability-writer endpoints
-(`starter/update_availability`, `starter/set_timezone`,
+(`starter/update_availability/v3`, `starter/set_timezone`,
 `starter/clear_calendar_data`, `grants/oauth`, `grants/create_virtual_account`,
 `grants/create_virtual_calendar`, `grants/add_virtual`, `grants/delete`,
 `nylas_configurations/get_all`) are listed as exact paths for
@@ -270,35 +270,38 @@ Run its focused test with:
 node v3/scheduling-availability-writer.test.js
 ```
 
-## Calendar OAuth return (connect-success)
+## Calendar OAuth return (no separate page)
 
-`connect-success.js` handles the Nylas OAuth redirect on the `/connect-success`
-page: it reads `?code` and `?state` (state is set server-side by
-`grants/oauth/v3` to the caller's member id), verifies the state matches the
-logged-in Memberstack member, exchanges + persists the grant through
+There is no `/connect-success` page in V3. `grants/oauth/v3` redirects the
+OAuth tab straight back to the Booking-stage page with `?code&state`, and the
+availability writer handles the return during bootstrap: it strips the params
+from the URL, verifies `state` (set server-side from the caller's Bearer
+token) against the logged-in member, exchanges + persists the grant through
 `grants/add/v3` (one authenticated call; the code exchange happens in Xano),
-and returns to the Booking-stage page with `?calendar=google` so the
-availability writer finishes configuration setup. Visits carrying only booking
-params (`?confirmation`/`?reschedule`/`?cancel`) are ignored
-(`data-connect-success="not-applicable"`).
-
-The page head needs both scripts:
-
-```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/connect-success.js"></script>
-```
+and then continues the normal `?calendar` connect flow. The original tab shows
+the modal's `reload-page` step, matching the legacy UX. Booking
+confirmation/reschedule/cancel links baked into scheduler configurations also
+point at this page, where the bookings embed owns `booking_ref` handling.
 
 Xano endpoints (created 2026-07-21, group `api:tCpV3oqd`, all Bearer-required
 via `auth = "user_v3"` with token-member == `member_id` preconditions,
 memberstack_id-keyed, Memberstack key from `$env.memberstack_api_key`):
-`grants/oauth/v3` (id 1453), `grants/add/v3` (id 1454),
+`grants/oauth/v3` (id 1456), `grants/add/v3` (id 1457),
 `grants/add_virtual/v3` (id 1455). Sources backed up in
 `platform-ops/architecture/xano-scheduling-v3-endpoints-20260721/`. The legacy
 airtable_id-keyed endpoints are untouched for V2.
 
-Run its focused test with:
+Availability writes go to `starter/update_availability/v3` (id 1463), an
+UPSERT: new V3 starters have no legacy scheduling `freelancers` row
+(`new_member/v3` only writes `user_v3`), so the first save creates it, seeded
+server-side with the auth user's name/email and the writer's `in_timezone`.
+Edits update `availability` only.
 
-```sh
-node v3/connect-success.test.js
-```
+⚠ XanoScript trap found while building it: `db.edit` auto-binds request
+inputs whose names match table columns — an optional `timezone` input, when
+absent, silently wiped the stored timezone on every edit. Endpoint inputs must
+avoid column names (hence `in_timezone`).
+
+⚠ The OAuth `redirect_uri` in endpoints 1456/1457 is pinned to the published
+slug `/starter-dashboard---availability-stage`. If the page rename ships with
+a new slug, update both endpoints in the same change.

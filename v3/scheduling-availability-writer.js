@@ -311,11 +311,15 @@
 
   async function updateAvail() {
     const memberId = await writeMemberId()
-    const updated = await xanoPost('/starter/update_availability', {
+    // The /v3 endpoint UPSERTS: new V3 starters have no legacy scheduling row,
+    // so the first save creates it (seeded server-side from the auth user).
+    // in_timezone is only used on that create; edits never touch the column.
+    const updated = await xanoPost('/starter/update_availability/v3', {
       member_id: memberId,
       availability: availability,
+      in_timezone: timezone || '',
     })
-    if (!updated) throw new Error('starter/update_availability returned no record')
+    if (!updated) throw new Error('starter/update_availability/v3 returned no record')
     window.STARTER_AVAILABILITY = availability
     writeAvailabilityCache()
     return updated
@@ -432,8 +436,9 @@
     const requestConfig = {}
     if (isUpdate && configId) requestConfig.config_id = configId
 
-    // Staging-gated module: the OAuth/booking round trip returns to this site.
-    const redirectURL = window.location.origin + '/connect-success'
+    // Booking confirmation/reschedule/cancel links land back on this page —
+    // its bookings embed owns booking_ref handling. No separate landing page.
+    const redirectURL = window.location.origin + window.location.pathname
 
     const payload = Object.assign({}, requestConfig, {
       grant_id: grantId,
@@ -1051,7 +1056,47 @@
       renderTimezone()
 
       const urlParams = new URLSearchParams(window.location.search)
-      const connectedCalendar = urlParams.get('calendar') || null
+      let connectedCalendar = urlParams.get('calendar') || null
+
+      // OAuth return lands directly on this page (?code&state) — no separate
+      // connect-success page. grants/add/v3 exchanges the code and persists
+      // the grant server-side; `state` was set by grants/oauth/v3 from the
+      // caller's Bearer token and must match the logged-in member.
+      const oauthCode = urlParams.get('code')
+      if (oauthCode) {
+        const oauthState = urlParams.get('state')
+        urlParams.delete('code')
+        urlParams.delete('state')
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname + '?' + urlParams.toString(),
+        )
+        try {
+          const memberId = await writeMemberId()
+          if (oauthState && oauthState !== memberId) {
+            throw new Error('OAuth state does not match the logged-in member')
+          }
+          const grant = await xanoPost('/grants/add/v3', {
+            code: oauthCode,
+            member_id: memberId,
+          })
+          if (!(grant && grant.grant_id)) {
+            throw new Error('grants/add/v3 returned no grant')
+          }
+          grantId = grant.grant_id
+          grantEmail = grant.email || null
+          grantCalendarId = grant.calendar_id || null
+          connectedCalendar = connectedCalendar || 'google'
+          emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
+        } catch (error) {
+          console.warn('[scheduling-writer] OAuth grant save failed:', error && error.message)
+          emit('starterSchedulingWriteError', {
+            action: 'oauth-connect',
+            message: (error && error.message) || 'OAuth grant save failed',
+          })
+        }
+      }
 
       if (grantId) {
         configs = (await getConfigs(grantId)) || []

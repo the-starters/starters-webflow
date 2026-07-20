@@ -22,15 +22,16 @@
     { path: '/api:tCpV3oqd/starter/get_by_memberstack', prefix: false },
     // Availability-writer endpoints (v3/scheduling-availability-writer.js).
     // Keep this an explicit endpoint list — not an /api:tCpV3oqd/ prefix.
-    { path: '/api:tCpV3oqd/starter/update_availability', prefix: false },
+    { path: '/api:tCpV3oqd/starter/update_availability/v3', prefix: false },
     { path: '/api:tCpV3oqd/starter/set_timezone', prefix: false },
     { path: '/api:tCpV3oqd/starter/clear_calendar_data', prefix: false },
     { path: '/api:tCpV3oqd/grants/oauth/v3', prefix: false },
     { path: '/api:tCpV3oqd/grants/create_virtual_account', prefix: false },
     { path: '/api:tCpV3oqd/grants/create_virtual_calendar', prefix: false },
     { path: '/api:tCpV3oqd/grants/add_virtual/v3', prefix: false },
-    // grants/add/v3 is called by v3/connect-success.js after the OAuth return;
-    // it exchanges the code and persists the grant server-side in one call.
+    // grants/add/v3 is called by the availability writer when the OAuth
+    // return (?code&state) lands back on the Booking-stage page; it exchanges
+    // the code and persists the grant server-side in one call.
     { path: '/api:tCpV3oqd/grants/add/v3', prefix: false },
     { path: '/api:tCpV3oqd/grants/delete', prefix: false },
     { path: '/api:tCpV3oqd/nylas_configurations/get_all', prefix: false },

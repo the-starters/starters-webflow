@@ -231,7 +231,7 @@ test('legacy wrapper falls back only when initial token acquisition fails', asyn
 
 test('availability-writer endpoints are authenticated', async () => {
   const WRITER_PATHS = [
-    '/api:tCpV3oqd/starter/update_availability',
+    '/api:tCpV3oqd/starter/update_availability/v3',
     '/api:tCpV3oqd/starter/set_timezone',
     '/api:tCpV3oqd/starter/clear_calendar_data',
     '/api:tCpV3oqd/grants/oauth/v3',
