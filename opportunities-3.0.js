@@ -418,8 +418,16 @@
           selected.push(value)
           query = ''
           input.value = ''
-          render()
-          input.focus()
+          if (selected.length >= MAX_CATEGORY_SELECTIONS) {
+            // Max reached: auto-collapse the dropdown instead of keeping it open.
+            focused = false
+            list.style.display = 'none'
+            render()
+            input.blur()
+          } else {
+            render()
+            input.focus()
+          }
         })
         list.appendChild(option)
         return option
