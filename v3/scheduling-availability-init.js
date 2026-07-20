@@ -2,7 +2,10 @@
   'use strict'
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const STARTER_ENDPOINT =
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter/get'
   const CACHE_PREFIX = 'starter-scheduling-availability:'
+  const CACHE_TTL_MS = 5 * 60 * 1000
   const STATUS_ATTRIBUTE = 'data-scheduling-availability-init'
 
   if (window.location.hostname !== STAGING_HOST) return
@@ -46,7 +49,17 @@
 
   function readCachedAvailability(memberId) {
     try {
-      return normalizeAvailability(window.localStorage.getItem(cacheKey(memberId)))
+      const cached = JSON.parse(window.localStorage.getItem(cacheKey(memberId)))
+      const cacheAge = cached && Date.now() - cached.cachedAt
+      if (
+        !cached ||
+        typeof cached.cachedAt !== 'number' ||
+        cacheAge < 0 ||
+        cacheAge > CACHE_TTL_MS
+      ) {
+        return null
+      }
+      return normalizeAvailability(cached.availability)
     } catch (error) {
       return null
     }
@@ -54,10 +67,46 @@
 
   function writeCachedAvailability(memberId, availability) {
     try {
-      window.localStorage.setItem(cacheKey(memberId), JSON.stringify(availability))
+      window.localStorage.setItem(
+        cacheKey(memberId),
+        JSON.stringify({ cachedAt: Date.now(), availability }),
+      )
     } catch (error) {
       console.warn('[scheduling-availability] cache unavailable:', error && error.message)
     }
+  }
+
+  async function readStarter(memberId) {
+    if (typeof window.getStarterByMemberId === 'function') {
+      return window.getStarterByMemberId(memberId)
+    }
+    if (typeof window.getXanoAuthToken !== 'function') {
+      throw new Error('Scheduling auth reader not available')
+    }
+
+    const token = await window.getXanoAuthToken()
+    const response = await window.fetch(
+      STARTER_ENDPOINT + '?member_id=' + encodeURIComponent(memberId),
+      { headers: { Authorization: 'Bearer ' + token } },
+    )
+    if (response.status === 404) return null
+
+    const data = await response.json().catch(function () {
+      throw new Error('Starter reader returned invalid JSON')
+    })
+    if (!response.ok) throw new Error('Starter reader failed (' + response.status + ')')
+
+    let starter = data
+    if (starter && Object.prototype.hasOwnProperty.call(starter, 'starter')) {
+      starter = starter.starter
+    } else if (starter && Object.prototype.hasOwnProperty.call(starter, 'data')) {
+      starter = starter.data
+    }
+    if (Array.isArray(starter)) starter = starter[0] || null
+    if (starter !== null && (typeof starter !== 'object' || Array.isArray(starter))) {
+      throw new Error('Starter reader returned invalid data')
+    }
+    return starter
   }
 
   async function currentMember() {
@@ -80,13 +129,12 @@
     const cached = readCachedAvailability(member.id)
     if (cached) return { availability: cached, source: 'cache' }
 
-    if (typeof window.getStarterByMemberId === 'function') {
-      const starter = await window.getStarterByMemberId(member.id)
-      const availability = normalizeAvailability(starter && starter.availability)
-      if (availability) {
-        writeCachedAvailability(member.id, availability)
-        return { availability, source: 'starter' }
-      }
+    const starter = await readStarter(member.id)
+    if (starter && starter.availability != null) {
+      const availability = normalizeAvailability(starter.availability)
+      if (!availability) throw new Error('Starter availability is invalid')
+      writeCachedAvailability(member.id, availability)
+      return { availability, source: 'starter' }
     }
 
     // New V3 starters do not necessarily have a legacy scheduling row yet.
@@ -133,6 +181,16 @@
     return 'init'
   }
 
+  function renderError() {
+    const initControl = document.querySelector('[init-availability]')
+    const updateControl = document.querySelector('[update-availability]')
+    if (initControl) initControl.style.display = 'none'
+    if (updateControl) updateControl.style.display = 'none'
+    document.querySelectorAll('[availability-step]').forEach(function (step) {
+      step.style.display = 'none'
+    })
+  }
+
   async function initialize() {
     if (!document.querySelector('[init-availability], [update-availability]')) {
       setStatus('not-applicable')
@@ -153,13 +211,16 @@
       )
       return state
     } catch (error) {
-      // The page must never strand a logged-in starter with both controls hidden.
-      const fallback = { items: {}, manager: null }
-      window.STARTER_AVAILABILITY = fallback
-      const state = renderState(fallback)
+      window.STARTER_AVAILABILITY = null
+      renderError()
       setStatus('error')
       console.warn('[scheduling-availability] initialization failed:', error && error.message)
-      return state
+      window.dispatchEvent(
+        new CustomEvent('starterSchedulingAvailabilityError', {
+          detail: { message: (error && error.message) || 'Initialization failed' },
+        }),
+      )
+      return null
     }
   }
 

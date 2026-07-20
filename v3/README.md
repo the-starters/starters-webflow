@@ -62,10 +62,14 @@ saved scheduling availability and reveals exactly one:
 - `[init-availability]` for first-time setup;
 - `[update-availability]` for an existing saved schedule.
 
-It is staging-hostname-only, uses a member-scoped local cache, accepts the
+It is staging-hostname-only, uses a five-minute member-scoped local cache, accepts the
 legacy scheduling availability shape (`{ items, manager }`), and treats a V3
 starter without a legacy scheduling row as a first-time setup instead of
 leaving both controls hidden. It also selects the correct initial modal step.
+The initializer reads the authenticated starter row through `getXanoAuthToken`
+from `scheduling-auth.js`; failed or malformed reads keep both actions hidden,
+set the document status to `error`, and can be retried with
+`window.StarterSchedulingAvailability.initialize()`.
 
 This module intentionally owns initialization and visibility only. The legacy
 V2 form/configuration writer is not copied wholesale: it contains unrelated

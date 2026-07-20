@@ -69,6 +69,8 @@ function loadInitializer(options = {}) {
       },
     },
     getStarterByMemberId: options.getStarterByMemberId,
+    getXanoAuthToken: options.getXanoAuthToken,
+    fetch: options.fetch,
     dispatchEvent(event) {
       events.push(event)
     },
@@ -131,12 +133,49 @@ test('shows Manage availability when the starter has saved availability', async 
   assert.equal(result.events[0].detail.source, 'starter')
 })
 
+test('reads the authenticated starter when no page reader is installed', async () => {
+  const availability = { items: { general: {} }, manager: 'platform' }
+  let request
+  const result = loadInitializer({
+    getXanoAuthToken: async () => 'xano-token',
+    fetch: async (url, init) => {
+      request = { url, init }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ availability }] }),
+      }
+    },
+  })
+  await settle()
+
+  assert.match(request.url, /\/api:KZf7nFnk\/starter\/get\?member_id=member-a$/)
+  assert.equal(request.init.headers.Authorization, 'Bearer xano-token')
+  assert.equal(result.update.style.display, 'flex')
+  assert.equal(result.events[0].detail.source, 'starter')
+})
+
+test('treats an authenticated missing starter row as first-time setup', async () => {
+  const result = loadInitializer({
+    getXanoAuthToken: async () => 'xano-token',
+    fetch: async () => ({ status: 404 }),
+  })
+  await settle()
+
+  assert.equal(result.init.style.display, 'flex')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'init')
+})
+
 test('uses member-scoped cached availability before the legacy endpoint', async () => {
   let calls = 0
   const availability = { items: { general: {} }, manager: 'platform' }
   const result = loadInitializer({
     storage: {
-      'starter-scheduling-availability:member-a': JSON.stringify(availability),
+      'starter-scheduling-availability:member-a': JSON.stringify({
+        cachedAt: Date.now(),
+        availability,
+      }),
     },
     getStarterByMemberId: async () => {
       calls += 1
@@ -150,7 +189,28 @@ test('uses member-scoped cached availability before the legacy endpoint', async 
   assert.equal(result.events[0].detail.source, 'cache')
 })
 
-test('invalid data and read failures fall back to a visible setup control', async () => {
+test('revalidates expired member-scoped availability', async () => {
+  let calls = 0
+  const result = loadInitializer({
+    storage: {
+      'starter-scheduling-availability:member-a': JSON.stringify({
+        cachedAt: Date.now() - 6 * 60 * 1000,
+        availability: { items: { stale: {} }, manager: 'platform' },
+      }),
+    },
+    getStarterByMemberId: async () => {
+      calls += 1
+      return null
+    },
+  })
+  await settle()
+
+  assert.equal(calls, 1)
+  assert.equal(result.init.style.display, 'flex')
+  assert.equal(result.events[0].detail.source, 'default')
+})
+
+test('read failures keep availability actions hidden in an error state', async () => {
   const result = loadInitializer({
     storage: { 'starter-scheduling-availability:member-a': 'not-json' },
     getStarterByMemberId: async () => {
@@ -159,7 +219,22 @@ test('invalid data and read failures fall back to a visible setup control', asyn
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'flex')
+  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.steps[0].style.display, 'none')
+  assert.equal(result.steps[1].style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+  assert.equal(result.events[0].type, 'starterSchedulingAvailabilityError')
+  assert.equal(result.window.STARTER_AVAILABILITY, null)
+})
+
+test('rejects malformed saved availability instead of treating it as absent', async () => {
+  const result = loadInitializer({
+    getStarterByMemberId: async () => ({ availability: { items: [] } }),
+  })
+  await settle()
+
+  assert.equal(result.init.style.display, 'none')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
 })
