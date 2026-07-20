@@ -1956,6 +1956,12 @@
       else btn.textContent = txt
     }
     const origLabel = btn ? (btn.value !== undefined && btn.tagName === 'INPUT' ? btn.value : btn.textContent) : ''
+    // Design-system submit buttons carry the authored loading contract
+    // (data-opp-element="loading-button" with a loading-spinner + loading-hide).
+    // When present, drive that contract (spinner shows, label/icon hide) instead
+    // of writing "Submitting…" into the empty cover <button>, which rendered as
+    // stray text over the styled button. Plain full-page inputs fall back to text.
+    const loadingWrap = btn && btn.closest('[data-opp-element="loading-button"]')
     let submitting = false
 
     // capture phase + stopPropagation => Webflow's own (bubble) submit handler never runs,
@@ -1971,11 +1977,12 @@
         const validationMessage = validateOpportunityPayload(payload)
         if (validationMessage) return say(validationMessage)
         submitting = true
-        if (btn) {
+        if (loadingWrap) setOpportunityActionPending(btn, true)
+        else if (btn) {
           btn.disabled = true
           btn.style.opacity = '0.6'
+          setBtn('Submitting…')
         }
-        setBtn('Submitting…')
         say('Submitting…')
         try {
           await API.brandOppCreate(payload)
@@ -1985,11 +1992,12 @@
           console.error('[opp30:create]', err)
           say((err && err.data && err.data.message) || 'Something went wrong. Please try again.')
           submitting = false
-          if (btn) {
+          if (loadingWrap) setOpportunityActionPending(btn, false)
+          else if (btn) {
             btn.disabled = false
             btn.style.opacity = ''
+            setBtn(origLabel)
           }
-          setBtn(origLabel)
         }
       },
       true,
