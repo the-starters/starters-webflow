@@ -329,7 +329,23 @@
   /* Timezone                                                            */
   /* ------------------------------------------------------------------ */
 
-  async function resolveTimezone() {
+  // One authenticated read of the scheduling row per bootstrap. Grant state
+  // comes from here (server truth): the Memberstack custom-field mirror is
+  // not writable for Test-Data members (the admin PATCH uses the live key),
+  // so relying on it left sandbox members grant-less in the writer.
+  async function readStarterRecord() {
+    try {
+      const starter = await xanoPost('/starter/get_by_memberstack', {
+        member_id: await writeMemberId(),
+      })
+      return starter && typeof starter === 'object' && !Array.isArray(starter) ? starter : null
+    } catch (error) {
+      console.warn('[scheduling-writer] starter read failed:', error && error.message)
+      return null
+    }
+  }
+
+  async function resolveTimezone(starterRecord) {
     try {
       const cached = window.localStorage.getItem(TIMEZONE_CACHE_PREFIX + sessionMemberId)
       if (cached) return cached
@@ -339,9 +355,7 @@
 
     let resolved = null
     try {
-      const starter = await xanoPost('/starter/get_by_memberstack', {
-        member_id: await writeMemberId(),
-      })
+      const starter = starterRecord
       if (starter && typeof starter.timezone === 'string' && starter.timezone.trim() !== '') {
         resolved = starter.timezone
       }
@@ -743,6 +757,9 @@
           setLoader(false, step)
         }
       } else {
+        // Deliberate fix vs legacy: a grant-less save used to leave the user
+        // stranded on the form with no feedback even though it succeeded.
+        switchStep('default')
         setLoader(false, step)
       }
     } catch (error) {
@@ -1032,9 +1049,12 @@
       }
 
       initialState = Object.keys(availability.items).length === 0
-      grantId = memberFields['nylas-grant-id'] || null
-      grantEmail = memberFields['nylas-grant-email'] || null
-      grantCalendarId = memberFields['nylas-calendar-id'] || null
+      const starterRecord = await readStarterRecord()
+      grantId = (starterRecord && starterRecord.nylas_grant_id) || memberFields['nylas-grant-id'] || null
+      grantEmail =
+        (starterRecord && starterRecord.nylas_grant_email) || memberFields['nylas-grant-email'] || null
+      grantCalendarId =
+        (starterRecord && starterRecord.nylas_calendar_id) || memberFields['nylas-calendar-id'] || null
 
       form.addEventListener('submit', function (e) {
         e.preventDefault()
@@ -1052,7 +1072,7 @@
         }
       }
 
-      timezone = await resolveTimezone()
+      timezone = await resolveTimezone(starterRecord)
       renderTimezone()
 
       const urlParams = new URLSearchParams(window.location.search)

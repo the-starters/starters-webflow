@@ -280,13 +280,12 @@ function buildDom(options) {
   return { root, steps, form, fields, buttons, managers, list, popupClose }
 }
 
+// Deliberately WITHOUT nylas-* custom fields: the Memberstack mirror is not
+// writable for Test-Data members, so the writer must source grant state from
+// the scheduling row (get_by_memberstack) instead.
 const MEMBER_A = () => ({
   id: 'member-a',
   customFields: {
-    'nylas-grant-id': 'grant-1',
-    'nylas-grant-email': 'grant@example.com',
-    'nylas-calendar-id': 'cal-1',
-    'airtable-id': 'recAIRTABLE1',
     'free-user': 'Test',
     'last-name': 'Starter',
   },
@@ -306,7 +305,14 @@ function defaultRoutes(overridesMap = {}) {
     '/starter/update_availability/v3': () => ({ status: 200, body: { id: 1 } }),
     '/starter/get_by_memberstack': () => ({
       status: 200,
-      body: { id: 1, timezone: 'Asia/Manila', availability: defaultAvailability() },
+      body: {
+        id: 1,
+        timezone: 'Asia/Manila',
+        availability: defaultAvailability(),
+        nylas_grant_id: 'grant-1',
+        nylas_grant_email: 'grant@example.com',
+        nylas_calendar_id: 'cal-1',
+      },
     }),
     '/starter/set_timezone': () => ({ status: 200, body: { timezone: 'Asia/Manila' } }),
     '/starter/clear_calendar_data': () => ({ status: 200, body: { id: 1 } }),
@@ -969,6 +975,52 @@ test('closing the modal resets a saved schedule back to the default step', async
 
   assert.equal(result.dom.steps.default.style.display, 'block')
   assert.equal(result.dom.steps['pre-redirect'].style.display, 'none')
+})
+
+test('falls back to Memberstack grant fields when the row has none', async () => {
+  const member = MEMBER_A()
+  member.customFields['nylas-grant-id'] = 'ms-grant-2'
+  const result = loadWriter({
+    member,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack': () => ({
+        status: 200,
+        body: { id: 1, timezone: 'Asia/Manila', availability: defaultAvailability() },
+      }),
+    },
+  })
+  await settle()
+
+  const configsCall = result.calls.find((c) => c.path === '/nylas_configurations/get_all')
+  assert.deepEqual(configsCall.body, { grant_id: 'ms-grant-2' })
+})
+
+test('a grant-less save still lands back on the default step', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack': () => ({
+        status: 200,
+        body: { id: 1, timezone: 'Asia/Manila', availability: defaultAvailability() },
+      }),
+    },
+  })
+  await settle()
+
+  result.dom.fields.days[0].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
+  assert.equal(update.body.member_id, 'member-a')
+  assert.equal(
+    result.calls.filter((c) => c.path.startsWith('/scheduler/configurations/')).length,
+    0,
+  )
+  assert.equal(result.dom.steps.default.style.display, 'block')
 })
 
 test('resolves and persists the timezone through authenticated endpoints', async () => {
