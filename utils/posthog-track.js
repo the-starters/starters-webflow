@@ -59,6 +59,77 @@
     )
   }
 
+  // Sitewide form tracking: delegated `submit` listener fires `form_submitted`
+  // for EVERY form (native Webflow or custom), and for native Webflow forms a
+  // per-submit observer watches the `.w-form` wrapper for Webflow's post-submit
+  // reveal of `.w-form-done` / `.w-form-fail`, firing `form_succeeded` /
+  // `form_failed`. No per-form wiring, and forms added later are covered
+  // automatically. Custom bridge forms (no `.w-form-done/-fail`) emit only
+  // `form_submitted` here; their own page scripts own success/failure events.
+  function wireFormCapture() {
+    if (window.__startersFormsWired) return
+    window.__startersFormsWired = true
+
+    const nameOf = (form) =>
+      form.getAttribute('data-name') ||
+      form.getAttribute('name') ||
+      form.id ||
+      form.getAttribute('aria-label') ||
+      'unnamed'
+
+    const meta = (form) => ({ form_name: nameOf(form), form_id: form.id || null, path: location.pathname })
+
+    const isVisible = (el) => {
+      if (!el) return false
+      const cs = getComputedStyle(el)
+      return cs.display !== 'none' && cs.visibility !== 'hidden' && el.offsetParent !== null
+    }
+
+    function watchResult(form) {
+      // Only native Webflow forms have a `.w-form` wrapper with its own
+      // done/fail siblings. Without it (custom / bridge forms), do NOT fall back
+      // to a broader ancestor — that would match ANOTHER form's `.w-form-fail`
+      // and misfire. Those forms own their own result events.
+      const wrap = form.closest('.w-form')
+      if (!wrap) return
+      const done = wrap.querySelector('.w-form-done')
+      const fail = wrap.querySelector('.w-form-fail')
+      if (!done && !fail) return
+      let settled = false
+      const finish = (name) => {
+        if (settled) return
+        settled = true
+        try { obs.disconnect() } catch (e) {}
+        clearTimeout(timer)
+        track(name, meta(form))
+      }
+      const check = () => {
+        if (isVisible(fail)) finish('form_failed')
+        else if (isVisible(done)) finish('form_succeeded')
+      }
+      const obs = new MutationObserver(check)
+      obs.observe(wrap, { attributes: true, attributeFilter: ['style', 'class'], subtree: true })
+      const timer = setTimeout(() => { try { obs.disconnect() } catch (e) {} }, 20000)
+      check() // in case Webflow resolved before the observer attached
+    }
+
+    document.addEventListener(
+      'submit',
+      (e) => {
+        const form = e.target
+        if (!form || form.tagName !== 'FORM') return
+        try {
+          track('form_submitted', meta(form))
+          watchResult(form)
+        } catch (err) {
+          /* analytics must never break the page */
+        }
+      },
+      true,
+    )
+  }
+
   window.StartersTrack = window.StartersTrack || { track }
   wireErrorCapture()
+  wireFormCapture()
 })()
