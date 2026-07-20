@@ -67,10 +67,12 @@ availability, accepts the legacy scheduling availability shape
 (`{ items, manager? }`), and treats a V3 starter without a legacy scheduling row
 as a first-time setup instead of leaving both controls hidden. It also selects
 the correct initial modal step.
-The initializer requires the page-provided
-`window.getStarterByMemberId(memberId)` scheduling reader. The canonical profile
-reader is not a fallback because its `Availability` field is the workload range,
-not the legacy scheduling object. Failed or malformed reads, or a Memberstack
+The initializer reads `/api:tCpV3oqd/starter/get_by_memberstack` through
+`window.xanoAuthFetch`, safely treating a JSON `null` response as a first-time
+V3 starter. It falls back to the page-provided
+`window.getStarterByMemberId(memberId)` only when the auth helper is unavailable.
+The canonical profile reader is not used because its `Availability` field is the
+workload range, not the legacy scheduling object. Failed or malformed reads, or a Memberstack
 member change or logout during the read, keep both actions hidden and set the
 document status to `error`; when the live Memberstack client is available, its
 logged-out result is authoritative over stale `memberReady` data. Initialization

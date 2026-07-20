@@ -6,6 +6,7 @@ const vm = require('node:vm')
 const source = fs.readFileSync(require.resolve('./scheduling-auth.js'), 'utf8')
 const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const SCHEDULING_URL = `${XANO_ORIGIN}/api:tCpV3oqd/scheduler/configurations/update`
+const LEGACY_STARTER_URL = `${XANO_ORIGIN}/api:tCpV3oqd/starter/get_by_memberstack`
 
 function response(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -123,6 +124,37 @@ test('401 retry preserves a body-bearing Request', async () => {
 
   assert.equal(result.status, 200)
   assert.deepEqual(schedulingBodies, ['{"slot":1}', '{"slot":1}'])
+  assert.equal(tradeCount, 2)
+})
+
+test('authenticated legacy starter reads preserve POST body and retry once', async () => {
+  const starterBodies = []
+  const authHeaders = []
+  let tradeCount = 0
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      tradeCount += 1
+      return response({ authToken: `xano-${tradeCount}` })
+    }
+    starterBodies.push(await request.text())
+    authHeaders.push(request.headers.get('Authorization'))
+    return response(null, starterBodies.length === 1 ? 401 : 200)
+  }
+  const { window } = loadBridge(nativeFetch)
+  const request = new Request(LEGACY_STARTER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ member_id: 'member-a' }),
+  })
+
+  const result = await window.xanoAuthFetch(request)
+
+  assert.equal(result.status, 200)
+  assert.deepEqual(starterBodies, [
+    '{"member_id":"member-a"}',
+    '{"member_id":"member-a"}',
+  ])
+  assert.deepEqual(authHeaders, ['Bearer xano-1', 'Bearer xano-2'])
   assert.equal(tradeCount, 2)
 })
 

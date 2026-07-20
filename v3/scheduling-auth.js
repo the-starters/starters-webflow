@@ -19,6 +19,7 @@
   const AUTHENTICATED_PATHS = [
     '/api:tCpV3oqd/scheduler/configurations/',
     '/api:tCpV3oqd/calendars/get_availabilities',
+    '/api:tCpV3oqd/starter/get_by_memberstack',
   ]
 
   const originalFetch = legacyBridgeInstalled

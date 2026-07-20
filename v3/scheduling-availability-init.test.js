@@ -69,6 +69,7 @@ function loadInitializer(options = {}) {
       },
     },
     getStarterByMemberId: options.getStarterByMemberId,
+    xanoAuthFetch: options.xanoAuthFetch,
     $memberstackDom: options.memberstack,
     dispatchEvent(event) {
       events.push(event)
@@ -103,7 +104,13 @@ test('does not install outside V3 Webflow staging', () => {
 })
 
 test('shows Connect Calendar for a new V3 starter without a legacy row', async () => {
-  const result = loadInitializer({ getStarterByMemberId: async () => null })
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    }),
+  })
   await settle()
 
   assert.equal(result.init.style.display, 'flex')
@@ -120,7 +127,11 @@ test('shows Manage availability when the starter has saved availability', async 
     manager: 'platform',
   }
   const result = loadInitializer({
-    getStarterByMemberId: async () => ({ availability }),
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ availability }),
+    }),
   })
   await settle()
 
@@ -140,6 +151,28 @@ test('keeps actions hidden when the page scheduling reader is missing', async ()
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
   assert.equal(result.events[0].type, 'starterSchedulingAvailabilityError')
+})
+
+test('uses the authenticated legacy reader without calling the broken page helper', async () => {
+  let request
+  let pageReaderCalls = 0
+  const result = loadInitializer({
+    xanoAuthFetch: async (url, init) => {
+      request = { url, init }
+      return { ok: true, status: 200, json: async () => null }
+    },
+    getStarterByMemberId: async () => {
+      pageReaderCalls += 1
+      return null
+    },
+  })
+  await settle()
+
+  assert.match(request.url, /\/api:tCpV3oqd\/starter\/get_by_memberstack$/)
+  assert.equal(request.init.method, 'POST')
+  assert.deepEqual(JSON.parse(request.init.body), { member_id: 'member-a' })
+  assert.equal(pageReaderCalls, 0)
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'init')
 })
 
 test('rejects a member switch while scheduling availability is loading', async () => {
