@@ -12,6 +12,9 @@
  *   2. We trade it at  api:g1vmSLWh/auth/trade-token/v3  for a Xano auth token.
  *   3. That Xano token authorizes the opportunities calls at  api:opp30/...
  *      ($auth.id -> user_v3 -> brands_v3.memberstack_id | freelancers_v3.memberstack_id)
+ *   4. On the Webflow V3 staging hostname only, the same cached token is injected
+ *      into unauthenticated Scheduling calls at  api:tCpV3oqd/...; a 401 retrades
+ *      and retries once, while already-authenticated calls pass through unchanged.
  *
  * The Xano `user_v3` table must already contain a row whose
  * memberstack_member_id matches the logged-in member, or trade-token 404s.
