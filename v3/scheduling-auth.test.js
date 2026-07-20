@@ -158,6 +158,22 @@ test('authenticated legacy starter reads preserve POST body and retry once', asy
   assert.equal(tradeCount, 2)
 })
 
+test('does not authenticate lookalike legacy starter paths', async () => {
+  let tradeCount = 0
+  let receivedRequest
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) tradeCount += 1
+    receivedRequest = request
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(`${LEGACY_STARTER_URL}_debug`)
+
+  assert.equal(tradeCount, 0)
+  assert.equal(receivedRequest.headers.has('Authorization'), false)
+})
+
 test('network failures are not replayed without authorization', async () => {
   let schedulingCalls = 0
   const nativeFetch = async (request) => {

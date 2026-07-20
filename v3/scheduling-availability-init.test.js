@@ -175,6 +175,51 @@ test('uses the authenticated legacy reader without calling the broken page helpe
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'init')
 })
 
+test('rejects a 404 instead of treating it as confirmed first-time setup', async () => {
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: false,
+      status: 404,
+      json: async () => ({ message: 'not found' }),
+    }),
+  })
+  await settle()
+
+  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+})
+
+test('rejects a legacy starter response without availability', async () => {
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 123 }),
+    }),
+  })
+  await settle()
+
+  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+})
+
+test('rejects null availability on an existing legacy starter', async () => {
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ availability: null }),
+    }),
+  })
+  await settle()
+
+  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+})
+
 test('rejects a member switch while scheduling availability is loading', async () => {
   let activeMember = { id: 'member-a' }
   let resolveStarter

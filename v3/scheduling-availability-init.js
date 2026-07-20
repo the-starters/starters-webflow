@@ -83,7 +83,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ member_id: memberId }),
       })
-      if (response.status === 404) return null
       const starter = await response.json().catch(function () {
         throw new Error('Legacy scheduling reader returned invalid JSON')
       })
@@ -91,7 +90,11 @@
         throw new Error('Legacy scheduling reader failed (' + response.status + ')')
       }
       if (starter === null) return null
-      if (typeof starter !== 'object' || Array.isArray(starter)) {
+      if (
+        typeof starter !== 'object' ||
+        Array.isArray(starter) ||
+        !Object.prototype.hasOwnProperty.call(starter, 'availability')
+      ) {
         throw new Error('Legacy scheduling reader returned invalid data')
       }
       return starter
@@ -130,16 +133,16 @@
       error.code = 'MEMBER_SCOPE_CHANGED'
       throw error
     }
-    if (starter && starter.availability != null) {
-      const availability = normalizeAvailability(starter.availability)
-      if (!availability) throw new Error('Starter availability is invalid')
-      writeCachedAvailability(member.id, availability)
-      return { availability, source: 'starter' }
+    if (starter === null) {
+      // New V3 starters do not necessarily have a legacy scheduling row yet.
+      // Treat that as a first-time setup state instead of leaving both controls hidden.
+      return { availability: { items: {}, manager: null }, source: 'default' }
     }
 
-    // New V3 starters do not necessarily have a legacy scheduling row yet.
-    // Treat that as a first-time setup state instead of leaving both controls hidden.
-    return { availability: { items: {}, manager: null }, source: 'default' }
+    const availability = normalizeAvailability(starter.availability)
+    if (!availability) throw new Error('Starter availability is invalid')
+    writeCachedAvailability(member.id, availability)
+    return { availability, source: 'starter' }
   }
 
   function showOnly(active, inactive) {

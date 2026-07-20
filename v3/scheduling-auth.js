@@ -17,9 +17,9 @@
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const TRADE_TOKEN_PATH = '/api:g1vmSLWh/auth/trade-token/v3'
   const AUTHENTICATED_PATHS = [
-    '/api:tCpV3oqd/scheduler/configurations/',
-    '/api:tCpV3oqd/calendars/get_availabilities',
-    '/api:tCpV3oqd/starter/get_by_memberstack',
+    { path: '/api:tCpV3oqd/scheduler/configurations/', prefix: true },
+    { path: '/api:tCpV3oqd/calendars/get_availabilities', prefix: true },
+    { path: '/api:tCpV3oqd/starter/get_by_memberstack', prefix: false },
   ]
 
   const originalFetch = legacyBridgeInstalled
@@ -42,8 +42,10 @@
     try {
       const url = new URL(rawUrl, window.location.href)
       if (url.origin !== XANO_ORIGIN) return null
-      return AUTHENTICATED_PATHS.some(function (path) {
-        return url.pathname.startsWith(path)
+      return AUTHENTICATED_PATHS.some(function (authenticatedPath) {
+        return authenticatedPath.prefix
+          ? url.pathname.startsWith(authenticatedPath.path)
+          : url.pathname === authenticatedPath.path
       })
         ? url
         : null
