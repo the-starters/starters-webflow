@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         const data = await response.json().catch(() => null);
         if (!response.ok) {
+            // Failure counterpart to the success path. These forms submit via button click
+            // (not a native WF submit), so the sitewide posthog-track.js form hook can't see them.
+            if (window.StartersTrack) window.StartersTrack.track('bridge_error', { path, status: response.status });
             throw new Error(data?.message || `Request failed: ${response.status}`);
         }
         return data;

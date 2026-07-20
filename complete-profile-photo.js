@@ -163,6 +163,13 @@
         log('uploaded', data)
       } catch (err) {
         log('upload error', err)
+        // Photo upload is a click-driven fetch (no native WF submit), so the sitewide
+        // form hook in posthog-track.js can't see it — track the failure here.
+        if (window.StartersTrack)
+          window.StartersTrack.track('bridge_error', {
+            path: 'build_profile/starter/profile_image',
+            status: (err && err.status) || 0,
+          })
         setStatus(
           err && err.status === 401
             ? 'Please log in again to upload a photo'

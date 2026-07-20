@@ -18,6 +18,10 @@ document.addEventListener('DOMContentLoaded', function () {
         })
         const data = await response.json().catch(() => null)
         if (!response.ok) {
+            // Failure counterpart to the success events below. These forms submit via
+            // button click (not a native WF submit), so the sitewide form hook in
+            // posthog-track.js never sees them — track the failure here instead.
+            if (window.StartersTrack) window.StartersTrack.track('bridge_error', { path, status: response.status })
             throw new Error(data?.message || `Request failed: ${response.status}`)
         }
         // Funnel events (platform-ops/architecture/posthog-funnel-events-plan.md):
