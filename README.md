@@ -41,6 +41,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.min.js`
 - `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds
 - `v3/scheduling-auth.js` — staging-only availability and scheduling authentication bridge
+- `v3/scheduling-availability-init.js` — staging-only booking-stage availability control initializer
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`
 - `opportunities---create.js`
@@ -114,6 +115,24 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 ```
+
+### Booking-stage availability controls
+
+On the same staging hostname, `v3/scheduling-availability-init.js` uses the page's
+existing `getStarterByMemberId(memberId)` scheduling reader to reveal
+`[init-availability]` for a first-time setup or `[update-availability]` for a saved
+legacy schedule, and selects the corresponding `[availability-step]`. Load it after
+the auth bridge on the renamed
+`Starter Dashboard - Booking stage` page; it does not write scheduling data or run on
+the custom domains.
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-auth.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-availability-init.js"></script>
+```
+
+See `v3/README.md` for the full markup, status, event, cache, and public-helper
+contracts.
 
 ## Opportunities 3.0 Starter Matching
 

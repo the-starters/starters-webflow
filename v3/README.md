@@ -51,3 +51,69 @@ Run the focused test with:
 ```sh
 node v3/scheduling-auth.test.js
 ```
+
+## Booking-stage availability initializer
+
+`scheduling-availability-init.js` restores the V2 visibility contract used by
+the renamed `Starter Dashboard - Booking stage` page. Published CSS hides both
+Calendar Settings controls; this initializer resolves the logged-in member's
+saved scheduling availability and reveals exactly one:
+
+- `[init-availability]` for first-time setup;
+- `[update-availability]` for an existing saved schedule.
+
+It is staging-hostname-only, uses a five-minute member-scoped local cache for saved
+availability, accepts the legacy scheduling availability shape
+(`{ items, manager? }`), and treats a V3 starter without a legacy scheduling row
+as a first-time setup instead of leaving both controls hidden. It also selects
+the correct initial modal step.
+The initializer requires the page-provided
+`window.getStarterByMemberId(memberId)` scheduling reader. The canonical profile
+reader is not a fallback because its `Availability` field is the workload range,
+not the legacy scheduling object. Failed or malformed reads, or a Memberstack
+member change or logout during the read, keep both actions hidden and set the
+document status to `error`; when the live Memberstack client is available, its
+logged-out result is authoritative over stale `memberReady` data. Initialization
+can be retried with
+`window.StarterSchedulingAvailability.initialize()`.
+
+Webflow markup contract:
+
+- The first-time and saved-schedule controls use `[init-availability]` and
+  `[update-availability]`, respectively.
+- Modal panels use `availability-step="setup-form"` for first-time setup and
+  `availability-step="default"` for an existing schedule.
+- Published CSS should keep both controls hidden until initialization completes.
+
+Runtime contract:
+
+- `data-scheduling-availability-init` on the document root reports `loading`,
+  `init`, `update`, `error`, `not-applicable`, or `missing-controls`.
+- `window.STARTER_AVAILABILITY` contains the normalized availability after a
+  successful read and is `null` after an error.
+- `starterSchedulingAvailabilityReady` carries `{ memberId, source, state }`;
+  `source` is `cache`, `starter`, or `default`, and `state` is `init`, `update`,
+  or `null` when neither control exists.
+- `starterSchedulingAvailabilityError` carries `{ message }` after a failed read.
+- `window.StarterSchedulingAvailability` exposes `initialize()` for retries,
+  `normalizeAvailability(value)` for the legacy object or JSON-string shape,
+  and `renderState(availability)` for repainting the controls and initial step.
+
+This module intentionally owns initialization and visibility only. The legacy
+V2 form/configuration writer is not copied wholesale: it contains unrelated
+dashboard behavior and unsafe historical browser integrations. Port the
+remaining modal actions separately against an approved durable V3 scheduling
+state endpoint.
+
+Webflow staging loader:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-auth.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-availability-init.js"></script>
+```
+
+Run its focused test with:
+
+```sh
+node v3/scheduling-availability-init.test.js
+```
