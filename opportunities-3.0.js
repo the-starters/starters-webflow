@@ -705,24 +705,50 @@
   const pendingElementSnapshots = new WeakMap()
   const approvedCloseFlowAdvances = new WeakSet()
 
+  // Upgrade a confirmation control into the loading-button contract and give it
+  // a spinner when the Designer authored none: mark it loading-button, seed
+  // data-opp-loading, then (if it has no spinner of its own) clone one from the
+  // first spinnerSources selector that resolves. Idempotent — the spinner guard
+  // keeps repeat calls (modal-open, loadingControlFor) from stacking spinners.
+  function upgradeConfirmLoadingButton(confirm, ...spinnerSources) {
+    if (!confirm) return
+    if (!confirm.hasAttribute('data-opp-element'))
+      confirm.setAttribute('data-opp-element', 'loading-button')
+    if (!confirm.hasAttribute('data-opp-loading')) confirm.setAttribute('data-opp-loading', 'false')
+    if ($('[data-opp-element="loading-spinner"]', confirm)) return
+    for (const selector of spinnerSources) {
+      const source = $(selector)
+      if (source) {
+        confirm.appendChild(source.cloneNode(true))
+        return
+      }
+    }
+  }
+
   function prepareOpportunityLoadingControls() {
     $$('[data-opp-element="loading-button"]').forEach((control) => {
       if (!control.hasAttribute('data-opp-loading'))
         control.setAttribute('data-opp-loading', 'false')
     })
 
-    const confirm = $('[data-close-opp="confirm-button"]')
-    if (!confirm) return
-    if (!confirm.hasAttribute('data-opp-element'))
-      confirm.setAttribute('data-opp-element', 'loading-button')
-    if (!confirm.hasAttribute('data-opp-loading')) confirm.setAttribute('data-opp-loading', 'false')
+    // CLOSE confirm is a plain <div> with no authored spinner — synthesize one
+    // from the close trigger's spinner.
+    upgradeConfirmLoadingButton(
+      $('[data-close-opp="confirm-button"]'),
+      '[data-modal-trigger="close-opportunity"] [data-opp-element="loading-spinner"]',
+    )
 
-    if (!$('[data-opp-element="loading-spinner"]', confirm)) {
-      const source = $(
-        '[data-modal-trigger="close-opportunity"] [data-opp-element="loading-spinner"]',
-      )
-      if (source) confirm.appendChild(source.cloneNode(true))
-    }
+    // REOPEN confirm gets the same guarantee: spin whether or not the Designer
+    // authored loading markup on it. Prefer the reopen trigger's own spinner,
+    // then fall back to the close trigger's (the known-good source). On the
+    // detail page [data-opp-submit="reopen"] is the reopen trigger itself
+    // (prepareOpportunityStatusControls stamps it), which already carries a
+    // spinner — the guard above skips synthesis there, so no double spinner.
+    upgradeConfirmLoadingButton(
+      $('[data-opp-submit="reopen"]'),
+      '[data-modal-trigger="reopen-opportunity"] [data-opp-element="loading-spinner"]',
+      '[data-modal-trigger="close-opportunity"] [data-opp-element="loading-spinner"]',
+    )
   }
 
   function loadingControlFor(btn) {
