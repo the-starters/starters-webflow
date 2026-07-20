@@ -262,6 +262,8 @@ function buildDom(options) {
   root.appendChild(new El('div', { 'change-manager-link': '', 'data-type': 'platform' }))
   root.appendChild(new El('div', { 'change-manager-link': '', 'data-type': 'calendar' }))
   root.appendChild(new El('div', { 'bookings-wrapper': '' }))
+  const popupClose = new El('div', { 'availability-popup-close': '' })
+  root.appendChild(popupClose)
   root.appendChild(new El('div', { 'config-initial-element': '' }))
   root.appendChild(new El('div', { 'config-initial-element': 'general' }))
   root.appendChild(new El('div', { 'config-initial-element': 'setup-form' }))
@@ -275,7 +277,7 @@ function buildDom(options) {
   const list = new El('div', { 'availability-list': '' })
   root.appendChild(list)
 
-  return { root, steps, form, fields, buttons, managers, list }
+  return { root, steps, form, fields, buttons, managers, list, popupClose }
 }
 
 const MEMBER_A = () => ({
@@ -932,6 +934,41 @@ test('returning from the calendar OAuth round trip records the calendar manager'
   )
   assert.equal(result.historyCalls.length, 1)
   assert.equal(result.dom.steps.default.style.display, 'block')
+})
+
+test('a save without a chosen manager routes to the how-to-manage step', async () => {
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({ availability, storage: TZ_CACHED })
+  await settle()
+
+  result.dom.fields.days[0].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
+  assert.equal(update.body.member_id, 'member-a')
+  assert.equal(result.dom.steps['how-to-manage'].style.display, 'block')
+  assert.equal(
+    result.calls.filter((c) => c.path.startsWith('/scheduler/configurations/')).length,
+    0,
+  )
+})
+
+test('closing the modal resets a saved schedule back to the default step', async () => {
+  const result = loadWriter({ storage: TZ_CACHED })
+  await settle()
+
+  result.clickAction(result.dom.buttons.preRedirect)
+  assert.equal(result.dom.steps['pre-redirect'].style.display, 'block')
+  result.dom.popupClose.click()
+  await settle()
+  result.flushTimers(50)
+
+  assert.equal(result.dom.steps.default.style.display, 'block')
+  assert.equal(result.dom.steps['pre-redirect'].style.display, 'none')
 })
 
 test('resolves and persists the timezone through authenticated endpoints', async () => {
