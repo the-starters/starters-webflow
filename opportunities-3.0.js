@@ -179,25 +179,13 @@
     const schedulingPath = '/api:tCpV3oqd/'
     const originalFetch = window.fetch.bind(window)
 
-    function isSchedulingRequest(input) {
-      const rawUrl =
-        typeof input === 'string'
-          ? input
-          : input && (typeof input.url === 'string' ? input.url : input.href)
-      if (!rawUrl) return false
+    function isSchedulingRequest(request) {
       try {
-        const url = new URL(rawUrl, location.href)
+        const url = new URL(request.url)
         return url.origin === schedulingOrigin && url.pathname.startsWith(schedulingPath)
       } catch (error) {
         return false
       }
-    }
-
-    function hasAuthorizationHeader(input, init) {
-      const headers =
-        init && init.headers !== undefined ? init.headers : input && input.headers
-      if (!headers) return false
-      return new Headers(headers).has('Authorization')
     }
 
     function withAuthorization(request, token) {
@@ -207,7 +195,8 @@
     }
 
     window.fetch = async function (input, init) {
-      if (!isSchedulingRequest(input) || hasAuthorizationHeader(input, init)) {
+      const request = new Request(input, init)
+      if (!isSchedulingRequest(request) || request.headers.has('Authorization')) {
         return originalFetch(input, init)
       }
 
@@ -215,22 +204,32 @@
       let token
       try {
         token = await ensureXanoToken(generation)
+        assertMemberScopeGeneration(generation)
       } catch (error) {
+        assertMemberScopeGeneration(generation)
         log('scheduling auth skipped:', error && error.message)
-        return originalFetch(input, init)
+        const response = await originalFetch(input, init)
+        assertMemberScopeGeneration(generation)
+        return response
       }
 
-      const request = new Request(input, init)
       let response = await originalFetch(withAuthorization(request, token))
+      assertMemberScopeGeneration(generation)
       if (response.status === 401) {
         _xanoToken = null
         try {
           token = await ensureXanoToken(generation)
-          response = await originalFetch(withAuthorization(request, token))
+          assertMemberScopeGeneration(generation)
         } catch (error) {
+          assertMemberScopeGeneration(generation)
           log('scheduling auth retry failed:', error && error.message)
+          return response
         }
+        assertMemberScopeGeneration(generation)
+        response = await originalFetch(withAuthorization(request, token))
+        assertMemberScopeGeneration(generation)
       }
+      assertMemberScopeGeneration(generation)
       return response
     }
 

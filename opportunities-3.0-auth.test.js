@@ -123,6 +123,27 @@ test('scheduling auth is limited to the exact Xano origin and path prefix', asyn
   assert.equal(requests.every(({ init }) => !init?.headers), true)
 })
 
+test('scheduling auth validates the effective Request URL', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init) => {
+      requests.push({ input, init })
+      return response({})
+    },
+    { hostname: 'the-starters-3-0.webflow.io' },
+  )
+  const input = {
+    url: 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/availability',
+    toString: () => 'https://attacker.test/collect',
+  }
+
+  await bridge.fetch(input)
+
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].input, input)
+  assert.equal(String(requests[0].input), 'https://attacker.test/collect')
+})
+
 test('scheduling auth supports string, URL, and Request inputs', async () => {
   const schedulingRequests = []
   const bridge = await loadBridge(
@@ -215,6 +236,52 @@ test('scheduling auth leaves already-authorized requests untouched', async () =>
   assert.equal(requests.length, 1)
   assert.equal(requests[0].input, request)
   assert.equal(requests[0].init, undefined)
+})
+
+test('auth switch rejects an in-flight scheduling response', async () => {
+  const schedulingResponse = deferred()
+  const requests = []
+  const bridge = await loadBridge(
+    async (input) => {
+      requests.push(input)
+      if (String(input).includes('/auth/trade-token/v3')) {
+        return response({ authToken: 'xano-a' })
+      }
+      return schedulingResponse.promise
+    },
+    { hostname: 'the-starters-3-0.webflow.io' },
+  )
+  const endpoint = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/availability'
+
+  const request = bridge.fetch(endpoint)
+  await waitForRequestCount(requests, 2)
+  bridge.authChange({ id: 'member-b' })
+  schedulingResponse.resolve(response({ slots: [] }))
+
+  await assert.rejects(request, { code: 'MEMBER_SCOPE_CHANGED' })
+})
+
+test('scheduling retry preserves fetch network failures', async () => {
+  const networkError = new TypeError('fetch failed')
+  let schedulingCount = 0
+  let tradeCount = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      if (String(input).includes('/auth/trade-token/v3')) {
+        tradeCount += 1
+        return response({ authToken: `xano-${tradeCount}` })
+      }
+      schedulingCount += 1
+      if (schedulingCount === 1) return response({}, false, 401)
+      throw networkError
+    },
+    { hostname: 'the-starters-3-0.webflow.io' },
+  )
+  const endpoint = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/availability'
+
+  await assert.rejects(bridge.fetch(endpoint), networkError)
+  assert.equal(tradeCount, 2)
+  assert.equal(schedulingCount, 2)
 })
 
 test('auth switch during token acquisition does not retry under the new member', async () => {
