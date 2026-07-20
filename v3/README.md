@@ -71,8 +71,10 @@ The initializer requires the page-provided
 `window.getStarterByMemberId(memberId)` scheduling reader. The canonical profile
 reader is not a fallback because its `Availability` field is the workload range,
 not the legacy scheduling object. Failed or malformed reads, or a Memberstack
-member change during the read, keep both actions hidden, set the document status
-to `error`, and can be retried with
+member change or logout during the read, keep both actions hidden and set the
+document status to `error`; when the live Memberstack client is available, its
+logged-out result is authoritative over stale `memberReady` data. Initialization
+can be retried with
 `window.StarterSchedulingAvailability.initialize()`.
 
 Webflow markup contract:
