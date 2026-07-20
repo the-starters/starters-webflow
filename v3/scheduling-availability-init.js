@@ -87,6 +87,7 @@
       const result = await memberstack.getCurrentMember()
       const member = result && result.data
       if (member && member.id) return member
+      throw new Error('No logged-in member')
     }
 
     if (window.memberReady && typeof window.memberReady.then === 'function') {

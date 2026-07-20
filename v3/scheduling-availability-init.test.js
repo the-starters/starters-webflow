@@ -166,6 +166,30 @@ test('rejects a member switch while scheduling availability is loading', async (
   assert.equal(result.window.STARTER_AVAILABILITY, null)
 })
 
+test('rejects logout while scheduling availability is loading', async () => {
+  let activeMember = { id: 'member-a' }
+  let resolveStarter
+  const starter = new Promise((resolve) => {
+    resolveStarter = resolve
+  })
+  const result = loadInitializer({
+    memberstack: {
+      getCurrentMember: async () => ({ data: activeMember }),
+    },
+    getStarterByMemberId: async () => starter,
+  })
+  await settle()
+
+  activeMember = null
+  resolveStarter({ availability: { items: { general: {} }, manager: 'platform' } })
+  await settle()
+
+  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+  assert.equal(result.window.STARTER_AVAILABILITY, null)
+})
+
 test('uses member-scoped cached availability before the legacy endpoint', async () => {
   let calls = 0
   const availability = { items: { general: {} }, manager: 'platform' }
