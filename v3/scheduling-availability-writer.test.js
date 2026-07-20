@@ -327,6 +327,10 @@ function defaultRoutes(overridesMap = {}) {
       body: { response: { result: { data: { id: 'vgrant-1', email: 'virtual@example.com' } } } },
     }),
     '/grants/add_virtual/v3': () => ({ status: 200, body: { id: 5 } }),
+    '/grants/add/v3': () => ({
+      status: 200,
+      body: { grant_id: 'grant-9', email: 'g@example.com', calendar_id: 'g@example.com' },
+    }),
     '/grants/create_virtual_calendar': () => ({
       status: 200,
       body: { response: { result: { data: { id: 'vcal-1' } } } },
@@ -856,6 +860,52 @@ test('removing an override returns its days to the general schedule', async () =
     result.calls.filter((c) => c.path === '/scheduler/configurations/update').length,
     2,
   )
+})
+
+test('an OAuth code on this page exchanges the grant and finishes the connect flow', async () => {
+  const member = MEMBER_A()
+  delete member.customFields['nylas-grant-id']
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    member,
+    availability,
+    search: '?code=abc123&state=member-a',
+    storage: TZ_CACHED,
+    routes: {
+      // A freshly connected grant has no Nylas configurations yet.
+      '/nylas_configurations/get_all': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  const add = result.calls.find((c) => c.path === '/grants/add/v3')
+  assert.deepEqual(add.body, { code: 'abc123', member_id: 'member-a' })
+  assert.ok(result.historyCalls.length >= 1, 'code/state stripped from the URL')
+
+  const update = result.calls.find((c) => c.path === '/starter/update_availability')
+  assert.equal(update.body.availability.manager, 'calendar')
+  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create')
+  assert.equal(creates.length, 1)
+  assert.equal(creates[0].body.grant_id, 'grant-9')
+  assert.equal(result.dom.steps.default.style.display, 'block')
+  assert.equal(result.status(), 'ready')
+})
+
+test('an OAuth state for a different member aborts the exchange without writing', async () => {
+  const result = loadWriter({
+    search: '?code=abc123&state=member-b',
+    storage: TZ_CACHED,
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.ok(
+    result.events.some(
+      (e) => e.type === 'starterSchedulingWriteError' && e.detail.action === 'oauth-connect',
+    ),
+  )
+  assert.equal(result.status(), 'ready')
 })
 
 test('returning from the calendar OAuth round trip records the calendar manager', async () => {
