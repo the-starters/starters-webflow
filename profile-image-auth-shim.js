@@ -21,9 +21,18 @@
  * complete-profile-photo.js v1.18.0) and every other URL pass through
  * untouched, so the shim is safe to load on any page.
  *
- * ⏳ Interim bridge: remove once the wizard's own uploadImage() adopts the
- * new contract (see product-workflows/freelancer-profiles/photo-migration/
- * build-profile-wizard-AUTH-PATCH-20260714.md).
+ * 2026-07-20 (Phase-2 writer cutover): ALSO injects the Authorization header
+ * into the profile-update family (build_profile/starter/update,
+ * edit_profile/update/*, starter/get, starter/set_also_worked_with,
+ * edit_profile/starter/get_also_worked_with) so the endpoints can be
+ * auth-gated server-side without waiting on the inline page code. Header-only
+ * injection (body/method untouched), fail-open when there is no Memberstack
+ * session, one automatic retry on 401 (stale cached token).
+ *
+ * ⏳ Interim bridge: remove once the pages' own code adopts the contract
+ * (photo: photo-migration/build-profile-wizard-AUTH-PATCH-20260714.md;
+ * updates: product-workflows/freelancer-profiles/
+ * profile-update-AUTH-HANDOFF-20260720.md).
  */
 ;(function () {
   'use strict'
@@ -37,6 +46,14 @@
   }
 
   const ENDPOINT_PATH = '/api:KZf7nFnk/build_profile/starter/profile_image'
+  // Profile-update family: inject the Bearer header only (no body rework).
+  const AUTH_INJECT_PATHS = [
+    '/api:KZf7nFnk/build_profile/starter/update',
+    '/api:KZf7nFnk/edit_profile/update/',
+    '/api:KZf7nFnk/starter/get',
+    '/api:KZf7nFnk/starter/set_also_worked_with',
+    '/api:KZf7nFnk/edit_profile/starter/get_also_worked_with',
+  ]
   const XANO_AUTH_URL =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh/auth/trade-token/v3'
   const MAX_DIMENSION = 800 // px, longest side after resize
@@ -119,11 +136,63 @@
     return Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')
   }
 
+  /* ==================== AUTH-ONLY INJECTION ======================= */
+  function matchesInjectPath(url) {
+    for (let i = 0; i < AUTH_INJECT_PATHS.length; i++) {
+      if (url.indexOf(AUTH_INJECT_PATHS[i]) !== -1) return true
+    }
+    return false
+  }
+
+  function withAuthHeader(init, token) {
+    const next = Object.assign({}, init)
+    const headers = new Headers((init && init.headers) || undefined)
+    headers.set('Authorization', 'Bearer ' + token)
+    next.headers = headers
+    return next
+  }
+
+  async function injectAuth(input, init, originalFetch, url) {
+    let token
+    try {
+      token = await ensureXanoToken(originalFetch)
+    } catch (err) {
+      // fail-open: no session / trade failure -> original request unchanged
+      // (gated endpoints answer 401, exactly what an unauthenticated call deserves)
+      log('auth inject skipped for', url, '-', err && err.message)
+      return originalFetch(input, init)
+    }
+    let res = await originalFetch(input, withAuthHeader(init, token))
+    if (res.status === 401) {
+      // stale cached token — retrade once and retry
+      _xanoToken = null
+      try {
+        token = await ensureXanoToken(originalFetch)
+        res = await originalFetch(input, withAuthHeader(init, token))
+      } catch (err) {
+        log('retrade after 401 failed -', err && err.message)
+      }
+    }
+    return res
+  }
+
   /* ========================== INSTALL ============================= */
   const originalFetch = window.fetch.bind(window)
 
   window.fetch = function (input, init) {
     const url = requestUrl(input)
+
+    // Profile-update family: add the Bearer header, touch nothing else.
+    // Only for plain string-URL calls (all three pages use fetch(url, opts));
+    // Request-object inputs pass through untouched.
+    if (
+      typeof input === 'string' &&
+      matchesInjectPath(url) &&
+      !hasAuthHeader(input, init)
+    ) {
+      return injectAuth(input, init, originalFetch, url)
+    }
+
     if (
       url.indexOf(ENDPOINT_PATH) === -1 ||
       requestMethod(input, init) !== 'POST' ||
