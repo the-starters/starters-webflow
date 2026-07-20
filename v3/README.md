@@ -62,14 +62,38 @@ saved scheduling availability and reveals exactly one:
 - `[init-availability]` for first-time setup;
 - `[update-availability]` for an existing saved schedule.
 
-It is staging-hostname-only, uses a five-minute member-scoped local cache, accepts the
-legacy scheduling availability shape (`{ items, manager }`), and treats a V3
-starter without a legacy scheduling row as a first-time setup instead of
-leaving both controls hidden. It also selects the correct initial modal step.
-The initializer reads the authenticated starter row through `getXanoAuthToken`
-from `scheduling-auth.js`; failed or malformed reads keep both actions hidden,
-set the document status to `error`, and can be retried with
+It is staging-hostname-only, uses a five-minute member-scoped local cache for saved
+availability, accepts the legacy scheduling availability shape
+(`{ items, manager? }`), and treats a V3 starter without a legacy scheduling row
+as a first-time setup instead of leaving both controls hidden. It also selects
+the correct initial modal step.
+The initializer prefers a page-provided `window.getStarterByMemberId(memberId)`
+reader; otherwise it reads the starter directly using `getXanoAuthToken` from
+`scheduling-auth.js`. Failed or malformed reads keep both actions hidden, set
+the document status to `error`, and can be retried with
 `window.StarterSchedulingAvailability.initialize()`.
+
+Webflow markup contract:
+
+- The first-time and saved-schedule controls use `[init-availability]` and
+  `[update-availability]`, respectively.
+- Modal panels use `availability-step="setup-form"` for first-time setup and
+  `availability-step="default"` for an existing schedule.
+- Published CSS should keep both controls hidden until initialization completes.
+
+Runtime contract:
+
+- `data-scheduling-availability-init` on the document root reports `loading`,
+  `init`, `update`, `error`, `not-applicable`, or `missing-controls`.
+- `window.STARTER_AVAILABILITY` contains the normalized availability after a
+  successful read and is `null` after an error.
+- `starterSchedulingAvailabilityReady` carries `{ memberId, source, state }`;
+  `source` is `cache`, `starter`, or `default`, and `state` is `init`, `update`,
+  or `null` when neither control exists.
+- `starterSchedulingAvailabilityError` carries `{ message }` after a failed read.
+- `window.StarterSchedulingAvailability` exposes `initialize()` for retries,
+  `normalizeAvailability(value)` for the legacy object or JSON-string shape,
+  and `renderState(availability)` for repainting the controls and initial step.
 
 This module intentionally owns initialization and visibility only. The legacy
 V2 form/configuration writer is not copied wholesale: it contains unrelated
