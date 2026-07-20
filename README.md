@@ -39,7 +39,7 @@ Do not discard local changes unless the user explicitly asks.
 
 - `quiz-results.js`
 - `quiz-results.min.js`
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds plus the staging-only scheduling auth bridge
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`
 - `opportunities---create.js`
@@ -86,6 +86,23 @@ preserved; generated links prefer `url_path`, then `webflow_slug`, and finally t
 Xano ID. Existing `/opportunities/<id>` URLs remain supported as the
 backwards-compatible fallback, including detail pages that have not yet added
 `data-opp-page-id`. V2 opportunity scripts and query-parameter URLs are unchanged.
+
+## Opportunities 3.0 Staging Scheduling Authentication
+
+On `the-starters-3-0.webflow.io` only, the script also authenticates plain `fetch()`
+requests from the in-progress availability embed to
+`https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/`. It reuses the member-scoped token
+cache used by the Opportunities API, adds `Authorization: Bearer <token>` without
+changing the effective request method, body, or other options, and supports string,
+`URL`, and `Request` inputs. Requests that already provide `Authorization`, other Xano
+API groups, other origins, `thestarters.com`, and `www.thestarters.com` pass through
+unchanged.
+
+A scheduling `401` clears the cached token, trades the current Memberstack JWT once,
+and retries the same request once. Token-trade failures preserve the original response
+or fall back to the original unauthenticated request; network failures remain fetch
+rejections. A Memberstack account change invalidates both token acquisition and
+in-flight scheduling responses with `MEMBER_SCOPE_CHANGED`.
 
 ## Opportunities 3.0 Starter Matching
 
