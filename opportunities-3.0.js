@@ -163,6 +163,77 @@
     return token
   }
 
+  /* ================== SCHEDULING AUTH BRIDGE ==================== */
+  // The in-progress V3 availability embed still calls the legacy Scheduling
+  // group with plain fetch(). Authenticate those calls transparently on the
+  // Webflow staging hostname so locked endpoints work during the build without
+  // publishing or changing either V3 custom domain. Calls that already carry
+  // Authorization pass through untouched, which makes this bridge compatible
+  // with the native xanoFetch helper Che IT is adopting.
+  function installSchedulingAuthBridge() {
+    if (location.hostname !== 'the-starters-3-0.webflow.io') return
+    if (window.__tsSchedulingAuthBridge) return
+    window.__tsSchedulingAuthBridge = true
+
+    const schedulingPath = '/api:tCpV3oqd/'
+    const originalFetch = window.fetch.bind(window)
+
+    function hasAuthorizationHeader(input, init) {
+      const headers = (init && init.headers) || (input && input.headers)
+      if (!headers) return false
+      if (typeof headers.has === 'function') return headers.has('Authorization')
+      if (Array.isArray(headers)) {
+        return headers.some((pair) => String(pair[0]).toLowerCase() === 'authorization')
+      }
+      return Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')
+    }
+
+    function withAuthorization(init, token) {
+      const next = Object.assign({}, init)
+      const headers = new Headers((init && init.headers) || undefined)
+      headers.set('Authorization', `Bearer ${token}`)
+      next.headers = headers
+      return next
+    }
+
+    window.fetch = async function (input, init) {
+      const url = typeof input === 'string' ? input : input && input.url
+      if (
+        typeof input !== 'string' ||
+        !url ||
+        !url.includes(schedulingPath) ||
+        hasAuthorizationHeader(input, init)
+      ) {
+        return originalFetch(input, init)
+      }
+
+      const generation = _memberScopeGeneration
+      let token
+      try {
+        token = await ensureXanoToken(generation)
+      } catch (error) {
+        log('scheduling auth skipped:', error && error.message)
+        return originalFetch(input, init)
+      }
+
+      let response = await originalFetch(input, withAuthorization(init, token))
+      if (response.status === 401) {
+        _xanoToken = null
+        try {
+          token = await ensureXanoToken(generation)
+          response = await originalFetch(input, withAuthorization(init, token))
+        } catch (error) {
+          log('scheduling auth retry failed:', error && error.message)
+        }
+      }
+      return response
+    }
+
+    log('scheduling auth bridge installed for V3 staging')
+  }
+
+  installSchedulingAuthBridge()
+
   // Funnel events (see platform-ops/architecture/posthog-funnel-events-plan.md).
   // Fired from call() so an event only exists when the Xano write succeeded.
   const track = (name, props) =>
