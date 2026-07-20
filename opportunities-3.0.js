@@ -176,11 +176,14 @@
   function installSchedulingAuthBridge() {
     if (location.hostname !== 'the-starters-3-0.webflow.io') return
     if (window.__tsSchedulingAuthBridge) return
-    window.__tsSchedulingAuthBridge = true
 
     const schedulingOrigin = 'https://x08a-5ko8-jj1r.n7c.xano.io'
     const schedulingPath = '/api:tCpV3oqd/'
     const originalFetch = window.fetch.bind(window)
+
+    window.__tsSchedulingAuthBridgeOwner = 'opportunities-3.0'
+    window.__tsSchedulingAuthOriginalFetch = originalFetch
+    window.__tsSchedulingAuthBridge = true
 
     function isSchedulingRequest(request) {
       try {

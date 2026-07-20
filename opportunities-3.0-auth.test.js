@@ -102,7 +102,7 @@ async function loadBridge(fetch, { hostname = 'example.test' } = {}) {
   for (const listener of documentListeners.get('DOMContentLoaded') || []) listener()
   await Promise.resolve()
   assert.equal(typeof authChange, 'function')
-  return { API: window.Opp30.API, authChange, fetch: window.fetch, trackCalls }
+  return { API: window.Opp30.API, authChange, fetch: window.fetch, trackCalls, window }
 }
 
 test('scheduling auth is limited to the exact Xano origin and path prefix', async () => {
@@ -121,6 +121,8 @@ test('scheduling auth is limited to the exact Xano origin and path prefix', asyn
   assert.equal(requests.length, 2)
   assert.equal(requests.some(({ input }) => String(input).includes('trade-token')), false)
   assert.equal(requests.every(({ init }) => !init?.headers), true)
+  assert.equal(bridge.window.__tsSchedulingAuthBridgeOwner, 'opportunities-3.0')
+  assert.equal(typeof bridge.window.__tsSchedulingAuthOriginalFetch, 'function')
 })
 
 test('scheduling auth validates the effective Request URL', async () => {

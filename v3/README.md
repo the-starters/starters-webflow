@@ -11,10 +11,13 @@ Current safety boundary:
 - Runs only on `the-starters-3-0.webflow.io`.
 - Does not change V2 or either V3 custom domain.
 - Caches the Xano token and retries once after a `401`.
+- Invalidates cached and in-flight authentication when the Memberstack session changes.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code.
 - Transparently wraps the two scheduling path families while legacy inline
   Webflow callers are migrated.
+- Installs synchronously and takes ownership from the legacy bridge in
+  `opportunities-3.0.js` regardless of script order.
 
 Maintenance rule: new `api:tCpV3oqd` scheduling calls should use
 `window.xanoAuthFetch`. Keep endpoint scope explicit; do not turn this into a
