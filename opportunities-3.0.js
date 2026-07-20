@@ -175,35 +175,39 @@
     if (window.__tsSchedulingAuthBridge) return
     window.__tsSchedulingAuthBridge = true
 
+    const schedulingOrigin = 'https://x08a-5ko8-jj1r.n7c.xano.io'
     const schedulingPath = '/api:tCpV3oqd/'
     const originalFetch = window.fetch.bind(window)
 
-    function hasAuthorizationHeader(input, init) {
-      const headers = (init && init.headers) || (input && input.headers)
-      if (!headers) return false
-      if (typeof headers.has === 'function') return headers.has('Authorization')
-      if (Array.isArray(headers)) {
-        return headers.some((pair) => String(pair[0]).toLowerCase() === 'authorization')
+    function isSchedulingRequest(input) {
+      const rawUrl =
+        typeof input === 'string'
+          ? input
+          : input && (typeof input.url === 'string' ? input.url : input.href)
+      if (!rawUrl) return false
+      try {
+        const url = new URL(rawUrl, location.href)
+        return url.origin === schedulingOrigin && url.pathname.startsWith(schedulingPath)
+      } catch (error) {
+        return false
       }
-      return Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')
     }
 
-    function withAuthorization(init, token) {
-      const next = Object.assign({}, init)
-      const headers = new Headers((init && init.headers) || undefined)
+    function hasAuthorizationHeader(input, init) {
+      const headers =
+        init && init.headers !== undefined ? init.headers : input && input.headers
+      if (!headers) return false
+      return new Headers(headers).has('Authorization')
+    }
+
+    function withAuthorization(request, token) {
+      const headers = new Headers(request.headers)
       headers.set('Authorization', `Bearer ${token}`)
-      next.headers = headers
-      return next
+      return new Request(request.clone(), { headers })
     }
 
     window.fetch = async function (input, init) {
-      const url = typeof input === 'string' ? input : input && input.url
-      if (
-        typeof input !== 'string' ||
-        !url ||
-        !url.includes(schedulingPath) ||
-        hasAuthorizationHeader(input, init)
-      ) {
+      if (!isSchedulingRequest(input) || hasAuthorizationHeader(input, init)) {
         return originalFetch(input, init)
       }
 
@@ -216,12 +220,13 @@
         return originalFetch(input, init)
       }
 
-      let response = await originalFetch(input, withAuthorization(init, token))
+      const request = new Request(input, init)
+      let response = await originalFetch(withAuthorization(request, token))
       if (response.status === 401) {
         _xanoToken = null
         try {
           token = await ensureXanoToken(generation)
-          response = await originalFetch(input, withAuthorization(init, token))
+          response = await originalFetch(withAuthorization(request, token))
         } catch (error) {
           log('scheduling auth retry failed:', error && error.message)
         }
