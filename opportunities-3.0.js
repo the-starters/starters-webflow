@@ -1018,6 +1018,23 @@
     else if (isRecord(opportunity.data)) opportunity = opportunity.data
     if (opportunity.status == null) opportunity = { ...opportunity, status: fallbackStatus }
     paintOpportunityDetail(opportunity)
+    // List page (/opportunities-brands-view): the cards are wf-xano-rendered and
+    // their status pills + Close/Reopen swap are driven by per-card wf-xano-if,
+    // NOT the document-scoped data-opp-bind/data-opp-status contracts that
+    // paintOpportunityDetail touches. So a close/reopen from a LIST card would
+    // otherwise leave the card stale ("Active + Close Opportunity") until a
+    // manual reload, and a second click hits the backend's only-active/closed
+    // guard. Re-fetch the brand feed so the mutated card repaints in place from
+    // fresh Xano state (same pattern the apply/cancel/edit flows already use).
+    // Detail pages carry no brand/opportunities/list feed, so this is a no-op
+    // there and their in-place paintOpportunityDetail repaint is unaffected.
+    if (hasWfXanoBrandFeed() && window.WfXano && typeof window.WfXano.refresh === 'function') {
+      try {
+        window.WfXano.refresh()
+      } catch (e) {
+        /* non-fatal: reload-time CMS mirror still corrects the card */
+      }
+    }
   }
 
   /* ===================== PAGE CONTROLLERS ======================== */
