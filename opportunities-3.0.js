@@ -1986,8 +1986,39 @@
         say('Submitting…')
         try {
           await API.brandOppCreate(payload)
-          say('Submitted! Your opportunity is now live.')
-          location.href = '/opportunities-brands-view'
+          // Show the modal's native success screen ("<Job Name> is pending for
+          // review") with the just-entered title bound in, instead of a full-page
+          // redirect. Redirect only when the success markup is absent (e.g. the
+          // standalone create page).
+          const wrap = form.closest('.w-form') || form.parentElement
+          const done =
+            wrap && (wrap.querySelector('.create-opportunities_success') || wrap.querySelector('.w-form-done'))
+          if (done) {
+            // Reuse the existing data-opp-bind grammar, scoped to the success
+            // block so it never touches card/detail [data-opp-bind="title"].
+            bind(done, 'title', payload.title || '')
+            // Fallback for the un-attributed "[Job Name]" placeholder span.
+            if (!$('[data-opp-bind="title"]', done)) {
+              const ph = [...done.querySelectorAll('span')].find((s) => s.textContent.trim() === '[Job Name]')
+              if (ph) ph.textContent = payload.title || ''
+            }
+            form.style.display = 'none'
+            done.style.display = 'block'
+            say('')
+            // Reset the submit state so a follow-up create (after the modal is
+            // reopened and rewound to the form) works, and clear the spinner.
+            submitting = false
+            if (loadingWrap) setOpportunityActionPending(btn, false)
+            // Bring the new opportunity into the wf-xano brand feed behind the modal.
+            try {
+              if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
+            } catch (e) {
+              /* non-fatal */
+            }
+          } else {
+            say('Submitted! Your opportunity is now live.')
+            location.href = '/opportunities-brands-view'
+          }
         } catch (err) {
           console.error('[opp30:create]', err)
           say((err && err.data && err.data.message) || 'Something went wrong. Please try again.')
@@ -2112,7 +2143,11 @@
     // Apply/edit-application AND edit-opportunity modals: rewind the success
     // screen (w-form-done) back to the form step, mirroring the form-flow reset
     // above, so a reopened modal never strands the brand on "pending for review".
-    if (modal && modal.matches && modal.matches(SUCCESS_SCREEN_MODALS)) {
+    if (
+      modal &&
+      modal.matches &&
+      modal.matches(SUCCESS_SCREEN_MODALS + ', [data-modal-target="post-opportunity"]')
+    ) {
       const form = modal.querySelector('.expert-application_form') || modal.querySelector('form')
       const done = modal.querySelector('.w-form-done')
       if (form) form.style.display = ''
