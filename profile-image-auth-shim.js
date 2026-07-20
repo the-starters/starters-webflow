@@ -162,6 +162,16 @@
       })
       if (res.status === 401) _xanoToken = null // stale token — retrade next time
       log('upload response', res.status)
+      // Inline edit-profile uploader is a click-driven fetch (not a native WF
+      // submit), so the sitewide posthog-track.js form hook can't see it —
+      // track the failure here, matching the bridge_error event used elsewhere.
+      if (!res.ok && window.StartersTrack) {
+        window.StartersTrack.track('bridge_error', {
+          path: 'build_profile/starter/profile_image',
+          status: res.status,
+          via: 'edit-profile-shim',
+        })
+      }
       return res
     })()
   }
