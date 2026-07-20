@@ -14,15 +14,16 @@ Current safety boundary:
 
 - Runs only on `the-starters-3-0.webflow.io`.
 - Does not change V2 or either V3 custom domain.
-- Authenticates only paths beginning with `/api:tCpV3oqd/scheduler/configurations/`
-  or `/api:tCpV3oqd/calendars/get_availabilities` on the configured Xano origin.
+- Authenticates paths beginning with `/api:tCpV3oqd/scheduler/configurations/` or
+  `/api:tCpV3oqd/calendars/get_availabilities`, plus the exact
+  `/api:tCpV3oqd/starter/get_by_memberstack` path, on the configured Xano origin.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code.
-- Transparently wraps the two scheduling path families while legacy inline
-  Webflow callers are migrated.
+- Transparently wraps the two scheduling path families and exact legacy starter
+  endpoint while legacy inline Webflow callers are migrated.
 - Installs synchronously and takes ownership from the legacy bridge in
   `opportunities-3.0.js` regardless of script order.
 
@@ -33,9 +34,9 @@ blanket credential injector.
 Public helpers:
 
 - `window.xanoAuthFetch(input, init)` accepts the same inputs as `fetch`, adds
-  Bearer authentication for the two scoped path families, and rejects if initial
-  token acquisition fails. Calls outside that scope and calls with an existing
-  `Authorization` header pass through unchanged.
+  Bearer authentication for the scoped scheduling paths and exact legacy starter
+  endpoint, and rejects if initial token acquisition fails. Calls outside that scope
+  and calls with an existing `Authorization` header pass through unchanged.
 - `window.getXanoAuthToken({ forceRefresh: true })` returns the cached,
   member-scoped token or explicitly replaces it. The options argument is
   optional.
@@ -67,13 +68,15 @@ availability, accepts the legacy scheduling availability shape
 (`{ items, manager? }`), and treats a V3 starter without a legacy scheduling row
 as a first-time setup instead of leaving both controls hidden. It also selects
 the correct initial modal step.
-The initializer requires the page-provided
-`window.getStarterByMemberId(memberId)` scheduling reader. The canonical profile
-reader is not a fallback because its `Availability` field is the workload range,
-not the legacy scheduling object. Failed or malformed reads, or a Memberstack
-member change or logout during the read, keep both actions hidden and set the
-document status to `error`; when the live Memberstack client is available, its
-logged-out result is authoritative over stale `memberReady` data. Initialization
+The initializer reads `/api:tCpV3oqd/starter/get_by_memberstack` through
+`window.xanoAuthFetch`, safely treating a JSON `null` response as a first-time
+V3 starter. It falls back to the page-provided
+`window.getStarterByMemberId(memberId)` only when the auth helper is unavailable.
+The canonical profile reader is not used because its `Availability` field is the
+workload range, not the legacy scheduling object. Failed or malformed reads, or a
+Memberstack member change or logout during the read, keep both actions hidden and
+set the document status to `error`; when the live Memberstack client is available,
+its logged-out result is authoritative over stale `memberReady` data. Initialization
 can be retried with
 `window.StarterSchedulingAvailability.initialize()`.
 

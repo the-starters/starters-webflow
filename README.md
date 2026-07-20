@@ -94,8 +94,9 @@ backwards-compatible fallback, including detail pages that have not yet added
 On `the-starters-3-0.webflow.io` only, `v3/scheduling-auth.js` authenticates plain
 `fetch()` requests whose Xano path starts with
 `/api:tCpV3oqd/scheduler/configurations/` or
-`/api:tCpV3oqd/calendars/get_availabilities`. It maintains a member-scoped token cache,
-adds `Authorization: Bearer <token>` without
+`/api:tCpV3oqd/calendars/get_availabilities`, plus the exact
+`/api:tCpV3oqd/starter/get_by_memberstack` path. It maintains a member-scoped token
+cache, adds `Authorization: Bearer <token>` without
 changing the effective request method, body, or other options, and supports string,
 `URL`, and `Request` inputs. Requests that already provide `Authorization`, other Xano
 API groups, other origins, `thestarters.com`, and `www.thestarters.com` pass through
@@ -118,11 +119,14 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 
 ### Booking-stage availability controls
 
-On the same staging hostname, `v3/scheduling-availability-init.js` uses the page's
-existing `getStarterByMemberId(memberId)` scheduling reader to reveal
-`[init-availability]` for a first-time setup or `[update-availability]` for a saved
-legacy schedule, and selects the corresponding `[availability-step]`. Load it after
-the auth bridge on the renamed
+On the same staging hostname, `v3/scheduling-availability-init.js` reads the legacy
+starter endpoint through `window.xanoAuthFetch`, preserving the authenticated request
+and retry protections. A successful JSON `null` confirms first-time setup; a saved
+legacy schedule reveals `[update-availability]`, while failed or malformed responses
+leave both controls hidden. The page's `getStarterByMemberId(memberId)` helper is used
+only when the auth helper is unavailable. The initializer selects the corresponding
+`[availability-step]` and retains its five-minute member-scoped saved-availability
+cache and member revalidation. Load it after the auth bridge on the renamed
 `Starter Dashboard - Booking stage` page; it does not write scheduling data or run on
 the custom domains.
 
