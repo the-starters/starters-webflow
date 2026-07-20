@@ -51,3 +51,37 @@ Run the focused test with:
 ```sh
 node v3/scheduling-auth.test.js
 ```
+
+## Booking-stage availability initializer
+
+`scheduling-availability-init.js` restores the V2 visibility contract used by
+the renamed `Starter Dashboard - Booking stage` page. Published CSS hides both
+Calendar Settings controls; this initializer resolves the logged-in member's
+saved scheduling availability and reveals exactly one:
+
+- `[init-availability]` for first-time setup;
+- `[update-availability]` for an existing saved schedule.
+
+It is staging-hostname-only, uses a member-scoped local cache, accepts the
+legacy scheduling availability shape (`{ items, manager }`), and treats a V3
+starter without a legacy scheduling row as a first-time setup instead of
+leaving both controls hidden. It also selects the correct initial modal step.
+
+This module intentionally owns initialization and visibility only. The legacy
+V2 form/configuration writer is not copied wholesale: it contains unrelated
+dashboard behavior and unsafe historical browser integrations. Port the
+remaining modal actions separately against an approved durable V3 scheduling
+state endpoint.
+
+Webflow staging loader:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-auth.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-availability-init.js"></script>
+```
+
+Run its focused test with:
+
+```sh
+node v3/scheduling-availability-init.test.js
+```
