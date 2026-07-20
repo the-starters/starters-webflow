@@ -128,9 +128,10 @@ Temporary staging QA override (`?test_member_id=`):
   server ownership checks — `xanoAuthFetch` still authenticates as the
   logged-in tester — and it is never used for profile or scheduling writes.
   A tester who needs to submit changes must log in as that member.
-- Values that are missing, malformed, or not in `TEST_MEMBER_ALLOWLIST` are
-  ignored with a concise console warning (the supplied value is not echoed),
-  and the authenticated member is used as before.
+- Malformed values and values not in `TEST_MEMBER_ALLOWLIST` are ignored with a
+  concise console warning (the supplied value is not echoed), and the
+  authenticated member is used as before. A missing parameter silently keeps
+  the default authenticated-member behavior.
 - While active, the document root carries `data-scheduling-test-member="true"`
   and the ready event reports `source: "query-test"`.
 - Cached availability stays member-scoped: the override ID gets its own

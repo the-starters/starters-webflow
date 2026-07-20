@@ -380,6 +380,23 @@ test('reads an allowlisted test member on the Webflow staging hostname', async (
   assert.equal(result.attributes.get('data-scheduling-test-member'), 'true')
 })
 
+test('fails closed when an override cannot use the authenticated reader', async () => {
+  let fallbackCalls = 0
+  const result = loadInitializer({
+    search: `?test_member_id=${ALLOWED_TEST_MEMBER}`,
+    getStarterByMemberId: async () => {
+      fallbackCalls += 1
+      return { availability: { items: { qa: {} }, manager: null } }
+    },
+  })
+  await settle()
+
+  assert.equal(fallbackCalls, 0)
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+  assert.equal(result.attributes.has('data-scheduling-test-member'), false)
+  assert.equal(result.events[0].type, 'starterSchedulingAvailabilityError')
+})
+
 test('missing test_member_id keeps the authenticated-member behavior', async () => {
   let request
   const result = loadInitializer({

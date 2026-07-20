@@ -241,6 +241,9 @@
     try {
       const member = await currentMember()
       const testMemberId = resolveTestMemberOverride()
+      if (testMemberId && typeof window.xanoAuthFetch !== 'function') {
+        throw new Error('Authenticated staging test-member reader not available')
+      }
       // The override only changes which member's availability is read and
       // which UI state renders; the session anchor stays the authenticated
       // member, and xanoAuthFetch keeps authenticating as that member.
