@@ -12,9 +12,9 @@
  *   2. We trade it at  api:g1vmSLWh/auth/trade-token/v3  for a Xano auth token.
  *   3. That Xano token authorizes the opportunities calls at  api:opp30/...
  *      ($auth.id -> user_v3 -> brands_v3.memberstack_id | freelancers_v3.memberstack_id)
- *   4. On the Webflow V3 staging hostname only, the same cached token is injected
- *      into unauthenticated Scheduling calls at  api:tCpV3oqd/...; a 401 retrades
- *      and retries once, while already-authenticated calls pass through unchanged.
+ *   4. On the Webflow V3 staging hostname only, a compatibility bridge can inject
+ *      the same cached token into unauthenticated Scheduling calls at
+ *      api:tCpV3oqd/...; v3/scheduling-auth.js takes ownership when loaded.
  *
  * The Xano `user_v3` table must already contain a row whose
  * memberstack_member_id matches the logged-in member, or trade-token 404s.
@@ -167,12 +167,11 @@
   }
 
   /* ================== SCHEDULING AUTH BRIDGE ==================== */
-  // The in-progress V3 availability embed still calls the legacy Scheduling
-  // group with plain fetch(). Authenticate those calls transparently on the
-  // Webflow staging hostname so locked endpoints work during the build without
-  // publishing or changing either V3 custom domain. Calls that already carry
-  // Authorization pass through untouched, which makes this bridge compatible
-  // with the native xanoFetch helper Che IT is adopting.
+  // Compatibility fallback for pages that have not loaded v3/scheduling-auth.js:
+  // the in-progress V3 availability embed still calls the legacy Scheduling group
+  // with plain fetch(). The shared bridge supersedes this wrapper in either script
+  // order and owns the narrower production endpoint allowlist. Calls that already
+  // carry Authorization pass through untouched.
   function installSchedulingAuthBridge() {
     if (location.hostname !== 'the-starters-3-0.webflow.io') return
     if (window.__tsSchedulingAuthBridge) return
