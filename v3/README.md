@@ -30,7 +30,7 @@ Current safety boundary:
 Maintenance rule: new `api:tCpV3oqd` scheduling calls should use
 `window.xanoAuthFetch`. Keep endpoint scope explicit; do not turn this into a
 blanket credential injector. The availability-writer endpoints
-(`starter/update_availability`, `starter/set_timezone`,
+(`starter/update_availability/v3`, `starter/set_timezone`,
 `starter/clear_calendar_data`, `grants/oauth`, `grants/create_virtual_account`,
 `grants/create_virtual_calendar`, `grants/add_virtual`, `grants/delete`,
 `nylas_configurations/get_all`) are listed as exact paths for
@@ -290,6 +290,17 @@ memberstack_id-keyed, Memberstack key from `$env.memberstack_api_key`):
 `grants/add_virtual/v3` (id 1455). Sources backed up in
 `platform-ops/architecture/xano-scheduling-v3-endpoints-20260721/`. The legacy
 airtable_id-keyed endpoints are untouched for V2.
+
+Availability writes go to `starter/update_availability/v3` (id 1463), an
+UPSERT: new V3 starters have no legacy scheduling `freelancers` row
+(`new_member/v3` only writes `user_v3`), so the first save creates it, seeded
+server-side with the auth user's name/email and the writer's `in_timezone`.
+Edits update `availability` only.
+
+⚠ XanoScript trap found while building it: `db.edit` auto-binds request
+inputs whose names match table columns — an optional `timezone` input, when
+absent, silently wiped the stored timezone on every edit. Endpoint inputs must
+avoid column names (hence `in_timezone`).
 
 ⚠ The OAuth `redirect_uri` in endpoints 1456/1457 is pinned to the published
 slug `/starter-dashboard---availability-stage`. If the page rename ships with

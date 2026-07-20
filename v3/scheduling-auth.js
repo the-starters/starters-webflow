@@ -22,7 +22,7 @@
     { path: '/api:tCpV3oqd/starter/get_by_memberstack', prefix: false },
     // Availability-writer endpoints (v3/scheduling-availability-writer.js).
     // Keep this an explicit endpoint list — not an /api:tCpV3oqd/ prefix.
-    { path: '/api:tCpV3oqd/starter/update_availability', prefix: false },
+    { path: '/api:tCpV3oqd/starter/update_availability/v3', prefix: false },
     { path: '/api:tCpV3oqd/starter/set_timezone', prefix: false },
     { path: '/api:tCpV3oqd/starter/clear_calendar_data', prefix: false },
     { path: '/api:tCpV3oqd/grants/oauth/v3', prefix: false },

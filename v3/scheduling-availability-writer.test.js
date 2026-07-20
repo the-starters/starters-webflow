@@ -301,7 +301,7 @@ function defaultAvailability() {
 
 function defaultRoutes(overridesMap = {}) {
   const routes = {
-    '/starter/update_availability': () => ({ status: 200, body: { id: 1 } }),
+    '/starter/update_availability/v3': () => ({ status: 200, body: { id: 1 } }),
     '/starter/get_by_memberstack': () => ({
       status: 200,
       body: { id: 1, timezone: 'Asia/Manila', availability: defaultAvailability() },
@@ -575,8 +575,9 @@ test('form submit writes the authenticated member id and reaches the success ste
   result.clickAction(result.dom.buttons.submit)
   await settle()
 
-  const update = result.calls.find((c) => c.path === '/starter/update_availability')
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.member_id, 'member-a')
+  assert.equal(update.body.in_timezone, 'Asia/Manila')
   assert.deepEqual(update.body.availability.items.general.days, [1])
   assert.equal(update.body.availability.items.general.start, '10:00')
 
@@ -604,7 +605,7 @@ test('shows and hides the step loader around a submit', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,
     routes: {
-      '/starter/update_availability': () => {
+      '/starter/update_availability/v3': () => {
         releaseUpdate({ ok: true })
         return { status: 200, body: { id: 1 } }
       },
@@ -647,7 +648,7 @@ test('refuses to write when the member session changed after bootstrap', async (
   await settle()
 
   assert.equal(
-    result.calls.filter((c) => c.path === '/starter/update_availability').length,
+    result.calls.filter((c) => c.path === '/starter/update_availability/v3').length,
     0,
   )
   assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
@@ -664,7 +665,7 @@ test('choosing own-calendar clears grant data and lands on success-calendar', as
 
   const clear = result.calls.find((c) => c.path === '/starter/clear_calendar_data')
   assert.deepEqual(clear.body, { member_id: 'member-a' })
-  const update = result.calls.find((c) => c.path === '/starter/update_availability')
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, null)
   assert.equal(result.dom.steps['success-calendar'].style.display, 'block')
 })
@@ -713,7 +714,7 @@ test('choosing platform creates the virtual calendar chain and configs', async (
   assert.match(creates[0].body.in_config_name, /^Free Consultation Call/)
   for (const create of creates) assert.equal(create.body.grant_id, 'vgrant-1')
 
-  const update = result.calls.find((c) => c.path === '/starter/update_availability')
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, 'platform')
   assert.equal(result.dom.steps.success.style.display, 'block')
 })
@@ -735,7 +736,7 @@ test('platform setup failure shows config-request-error and writes nothing', asy
   await settle()
 
   assert.equal(
-    result.calls.filter((c) => c.path === '/starter/update_availability').length,
+    result.calls.filter((c) => c.path === '/starter/update_availability/v3').length,
     0,
   )
   assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
@@ -757,7 +758,7 @@ test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virt
   const calendarIndex = paths.indexOf('/grants/create_virtual_calendar')
   assert.ok(accountIndex > -1 && calendarIndex > accountIndex)
 
-  const update = result.calls.find((c) => c.path === '/starter/update_availability')
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.member_id, 'member-a')
   assert.equal(update.body.availability.manager, 'platform')
   assert.equal(result.dom.steps['success-disconnect'].style.display, 'block')
@@ -853,7 +854,7 @@ test('removing an override returns its days to the general schedule', async () =
   result.clickAction(removeBtn)
   await settle()
 
-  const update = result.calls.find((c) => c.path === '/starter/update_availability')
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.deepEqual(update.body.availability.items.general.days, [1, 2, 3])
   assert.equal(update.body.availability.items['ov-1'], undefined)
   assert.equal(
@@ -883,7 +884,7 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
   assert.deepEqual(add.body, { code: 'abc123', member_id: 'member-a' })
   assert.ok(result.historyCalls.length >= 1, 'code/state stripped from the URL')
 
-  const update = result.calls.find((c) => c.path === '/starter/update_availability')
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, 'calendar')
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create')
   assert.equal(creates.length, 1)
@@ -921,7 +922,7 @@ test('returning from the calendar OAuth round trip records the calendar manager'
   })
   await settle()
 
-  const update = result.calls.find((c) => c.path === '/starter/update_availability')
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.member_id, 'member-a')
   assert.equal(update.body.availability.manager, 'calendar')
   // Rate-less starter: only the free config is created on the OAuth return.

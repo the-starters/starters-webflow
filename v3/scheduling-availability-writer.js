@@ -311,11 +311,15 @@
 
   async function updateAvail() {
     const memberId = await writeMemberId()
-    const updated = await xanoPost('/starter/update_availability', {
+    // The /v3 endpoint UPSERTS: new V3 starters have no legacy scheduling row,
+    // so the first save creates it (seeded server-side from the auth user).
+    // in_timezone is only used on that create; edits never touch the column.
+    const updated = await xanoPost('/starter/update_availability/v3', {
       member_id: memberId,
       availability: availability,
+      in_timezone: timezone || '',
     })
-    if (!updated) throw new Error('starter/update_availability returned no record')
+    if (!updated) throw new Error('starter/update_availability/v3 returned no record')
     window.STARTER_AVAILABILITY = availability
     writeAvailabilityCache()
     return updated
