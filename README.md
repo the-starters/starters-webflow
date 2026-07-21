@@ -254,21 +254,59 @@ valued attributes (Webflow does not reliably preserve empty custom attributes):
 ```html
 <div data-opp-element="loading-button" data-opp-loading="false">
   <span data-opp-element="loading-label">Reopen opportunity</span>
+  <span data-opp-element="loading-hide">Optional helper or icon</span>
   <span data-opp-element="loading-spinner">...</span>
 </div>
 ```
 
-Style the label and spinner from the wrapper's `data-opp-loading="false|true"`
-value. While the lifecycle request is pending, `opportunities-3.0.js` sets the
-value to `true`, adds `is-wf-xano-mutating`, marks the control busy and disabled
-for assistive technology, disables any nested native control, and suppresses
+Style the label and spinner from the loading-button wrapper's
+`data-opp-loading="false|true"` value. This stable-layout CSS keeps the spinner
+centered without changing the button's dimensions:
+
+```css
+[data-opp-element='loading-button'] {
+  position: relative;
+}
+
+[data-opp-element='loading-button'] [data-opp-element='loading-spinner'] {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  visibility: hidden;
+  opacity: 0;
+}
+
+[data-opp-element='loading-button'][data-opp-loading='true'] {
+  cursor: wait;
+}
+
+[data-opp-element='loading-button'][data-opp-loading='true']
+  [data-opp-element='loading-spinner'] {
+  visibility: visible;
+  opacity: 1;
+}
+
+[data-opp-element='loading-button'][data-opp-loading='true']
+  [data-opp-element='loading-label'],
+[data-opp-element='loading-button'][data-opp-loading='true']
+  [data-opp-element='loading-hide'] {
+  visibility: hidden;
+}
+```
+
+While the lifecycle request is pending, `opportunities-3.0.js` sets the value to
+`true`, adds `is-wf-xano-mutating`, marks the control busy and disabled for
+assistive technology, disables any nested native control, and suppresses
 duplicate writes. The original state is restored after an error or a successful
 no-reload Close/Reopen repaint.
 
-Hiding the label is opt-in. Only text explicitly authored with
-`data-opp-element="loading-label"` should be hidden by loading CSS. Untagged
-button text remains visible while the spinner runs; the script does not add the
-label attribute automatically.
+Hiding authored content is opt-in. Use
+`data-opp-element="loading-label"` for the button label or
+`data-opp-element="loading-hide"` for any other child that should become
+invisible while loading. Both use `visibility: hidden` to preserve the button's
+dimensions. Untagged button content remains visible while the spinner runs; the
+script does not add either attribute automatically.
 
 The Close form-flow confirmation remains identified by
 `data-close-opp="confirm-button"`. The script upgrades it to a loading button and,
