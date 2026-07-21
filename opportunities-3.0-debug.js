@@ -140,10 +140,17 @@
       const matchRefs = refs.filter((ref) => starterSet.has(ref))
       const categoryMatch = matchRefs.length > 0
       const applied = opportunity.applied === true
-      let visibilityReason = 'Not in matching or applied results'
-      if (categoryMatch && applied) visibilityReason = 'Category match + applied'
-      else if (categoryMatch) visibilityReason = 'Category match'
-      else if (applied) visibilityReason = 'Applied history; no current category match'
+      const noCategories = refs.length === 0
+      // Main feed model (2026-07-16): ladder-up category match ONLY. starterSet is
+      // eff_cats (roles/subcats laddered up to categories). Opps with no categories
+      // are hidden (fail-closed); applied-but-unmatched opps live in the Applied tab,
+      // not the main feed.
+      let visibilityReason
+      if (noCategories) visibilityReason = 'Hidden: opportunity has no categories (fail-closed)'
+      else if (categoryMatch && applied) visibilityReason = 'Shown: ladder-up category match (applied)'
+      else if (categoryMatch) visibilityReason = 'Shown: ladder-up category match'
+      else if (applied) visibilityReason = 'Applied tab only; no current category match (not in main feed)'
+      else visibilityReason = 'Not shown: no ladder-up category match'
 
       return {
         id: String(opportunity.id || opportunity.opportunity_id || opportunity.objectID || ''),
@@ -231,7 +238,9 @@
     ])
     const data = summarizeOpportunityMatching(
       active.rows,
-      bridge.contextValue(matchContext, 'category_refs'),
+      // Ladder-up: prefer eff_cats from the endpoint (roles/subcats resolved up to
+      // categories); fall back to the raw profile category_refs if absent.
+      (matched && matched.eff_cats) || bridge.contextValue(matchContext, 'category_refs'),
       {
         totalActive: active.itemsTotal,
         activeComplete: active.complete,
