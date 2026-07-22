@@ -67,27 +67,41 @@ Webflow markup contract:
   `<div id="ts-stripe-connect-data" data-memberstack-id="{{ memberstack-id }}" data-xano-id="{{ xano-id }}" style="display:none"></div>`.
   `data-memberstack-id` is used **only** for the client-side ownership check and
   is never sent to Xano.
-- Hover cards `[no-connection="paid"]` containing
-  `<a hover-cta stripe-connect-url href="#">Connect Stripe</a>` and
-  `[no-connection="free"]` containing
-  `<a starter-dashboard-url href="#">Connect Calendar</a>`, same attributes as
-  V2. Site CSS keeps `[stripe-connect-url]`, `[stripe-dashboard-url]`, and
-  `[hover-cta][starter-dashboard-url]` hidden by default; the module reveals the
-  active one with `display:flex`.
+- The module supports **two markup shapes** and drives both on every run:
+  - **Legacy discrete anchors** (as in V2): hover cards `[no-connection="paid"]`
+    containing `<a hover-cta stripe-connect-url href="#">Connect Stripe</a>` and
+    `[no-connection="free"]` containing
+    `<a starter-dashboard-url href="#">Connect Calendar</a>`. Site CSS keeps
+    `[stripe-connect-url]`, `[stripe-dashboard-url]`, and
+    `[hover-cta][starter-dashboard-url]` hidden by default; the module reveals
+    the active one with `display:flex`.
+  - **Component mode** (the current 3.0 hire template): the CTAs are shared
+    component instances, not discrete attribute-tagged anchors. The wrapper is
+    the `service-card_tooltip` block of the "Service Card - Tooltip" component;
+    its `no-connection` value is bound to a per-instance "Connect Type" prop
+    (`paid` / `free`), and the CTA inside is a shared Button instance rendered
+    as an `<a>` whose Link prop defaults to `"#"`. For these the module sets
+    **only** the first `<a>` descendant's `href` — it never adds the
+    `stripe-connect-url`/`stripe-dashboard-url` attributes and never touches
+    display. Component visibility is owned by the **Service Card State** prop,
+    not by this script. Wrappers without an anchor are skipped; nothing throws.
 
 Runtime contract:
 
 - Synchronously sets `window.starter_dashboard_url = '/starter-dashboard'` (the
   3.0 dashboard is a single static page, not V2's per-member CMS page) and, on
-  `DOMContentLoaded`, points every `[starter-dashboard-url]` control at it. Sets
-  `window.stripe_charges = false` as a safe default **only if it is undefined**;
-  after a successful owner fetch it becomes `response.charges_enabled`.
+  `DOMContentLoaded`, points every `[starter-dashboard-url]` control at it **and**
+  wires the first `<a>` inside every `[no-connection="free"]` wrapper to it
+  (unconditionally, for any visitor). Sets `window.stripe_charges = false` as a
+  safe default **only if it is undefined**; after a successful owner fetch it
+  becomes `response.charges_enabled`.
 - Owner path: `POST /api:tCpV3oqd/stripe/connect_links` (empty JSON body, Bearer
   added by `xanoAuthFetch`). Response
   `{ charges_enabled, connect_url, dashboard_url }`. If `charges_enabled` →
-  leave every CTA hidden; else if `dashboard_url` → reveal + wire
-  `[stripe-dashboard-url]`; else if `connect_url` → reveal + wire
-  `[stripe-connect-url]`.
+  leave every CTA hidden. Otherwise, besides the legacy `[stripe-dashboard-url]`
+  / `[stripe-connect-url]` reveal, the module wires the first `<a>` inside every
+  `[no-connection="paid"]` wrapper to `dashboard_url` if non-empty, else
+  `connect_url`.
 - `window.tsStripeConnectReady` is a Promise resolving to the endpoint response
   (or `null` on any failure); `window.tsStripeConnect.run()` re-runs the flow.
 
