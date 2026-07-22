@@ -94,25 +94,6 @@
     })
   }
 
-  // Component-mode wiring. On the 3.0 hire template the CTAs are no longer
-  // discrete `[stripe-connect-url]`/`[stripe-dashboard-url]` anchors — they are
-  // shared component instances. The wrapper is the `service-card_tooltip` block
-  // of the "Service Card - Tooltip" component; its `no-connection` value is
-  // bound to a per-instance "Connect Type" prop, and the CTA inside is a shared
-  // Button component instance rendered as an `<a>` whose Link prop defaults to
-  // "#". We only set that anchor's href — visibility is owned by the Service
-  // Card State prop, not by us, so we never touch display or add the legacy
-  // hide-me attributes. For every matching wrapper, wire its first `<a>`
-  // descendant to `href`; skip wrappers that have no anchor; never throw.
-  function wireComponentAnchors(selector, href) {
-    if (!href) return
-    qsa(selector).forEach(function (wrapper) {
-      var anchor = wrapper.querySelector('a')
-      if (!anchor) return
-      anchor.href = href
-    })
-  }
-
   function onReady(callback) {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', callback)
@@ -136,10 +117,6 @@
     qsa('[starter-dashboard-url]').forEach(function (item) {
       item.href = window.starter_dashboard_url
     })
-    // Component-mode counterpart: the "Connect Calendar" CTA now lives inside a
-    // `[no-connection="free"]` tooltip wrapper as a shared Button instance.
-    // Wire its anchor to the same static dashboard, unconditionally.
-    wireComponentAnchors('[no-connection="free"]', window.starter_dashboard_url)
   })
 
   function readData() {
@@ -202,14 +179,6 @@
       } else if (payload && payload.connect_url) {
         reveal('[stripe-connect-url]', payload.connect_url)
       }
-      // Component-mode counterpart for the paid "Connect Stripe" tooltip: the
-      // CTA is a shared Button instance inside a `[no-connection="paid"]`
-      // wrapper, not a discrete legacy anchor. Prefer the dashboard link (an
-      // account exists but is not yet charging), else the connect/onboarding
-      // link. We only set the anchor href — the component owns its visibility.
-      var componentHref =
-        (payload && payload.dashboard_url) || (payload && payload.connect_url) || null
-      wireComponentAnchors('[no-connection="paid"]', componentHref)
     })
   }
 
