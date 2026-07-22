@@ -16,7 +16,8 @@ Current safety boundary:
 - Does not change V2 or either V3 custom domain.
 - Authenticates paths beginning with `/api:tCpV3oqd/scheduler/configurations/` or
   `/api:tCpV3oqd/calendars/get_availabilities`, plus the exact
-  `/api:tCpV3oqd/starter/get_by_memberstack` path, on the configured Xano origin.
+  `/api:tCpV3oqd/starter/get_by_memberstack` and
+  `/api:tCpV3oqd/stripe/connect_links` paths, on the configured Xano origin.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
@@ -34,7 +35,8 @@ blanket credential injector. The availability-writer endpoints
 `starter/clear_calendar_data`, `grants/oauth`, `grants/create_virtual_account`,
 `grants/create_virtual_calendar`, `grants/add_virtual`, `grants/delete`,
 `nylas_configurations/get_all`) are listed as exact paths for
-`scheduling-availability-writer.js`.
+`scheduling-availability-writer.js`. The exact path
+`stripe/connect_links` is listed for `stripe-connect.js`.
 
 Public helpers:
 
@@ -313,3 +315,82 @@ avoid column names (hence `in_timezone`).
 ⚠ The OAuth `redirect_uri` in endpoints 1456/1457 is pinned to the published
 slug `/starter-dashboard---availability-stage`. If the page rename ships with
 a new slug, update both endpoints in the same change.
+
+## Stripe Connect CTAs (secured)
+
+`stripe-connect.js` is the V3 replacement for the legacy V2 inline embed that
+wired the "Connect Stripe" / "Connect Calendar" CTAs on the freelancer profile
+(hire) template.
+
+Security rationale: the V2 embed shipped a live Make webhook URL and a
+pre-minted, member-id-bearing Stripe Connect link directly in the public page
+HTML for every freelancer, so any viewer could read another member's onboarding
+link out of the source. This module puts **no** Stripe links or webhook URLs in
+the page. It fetches them on demand from an authenticated Xano endpoint, and
+only when the logged-in member IS the profile owner. The server resolves the
+starter from the Bearer session (`$auth`); the client sends no ids. It loads
+after `scheduling-auth.js`:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/stripe-connect.js"></script>
+```
+
+Safety boundary:
+
+- Staging-hostname-only (`the-starters-3-0.webflow.io`), same as the other
+  modules.
+- Non-owners (and logged-out visitors) never trigger a Stripe-link fetch: the
+  module compares the live Memberstack `member.id` against
+  `#ts-stripe-connect-data[data-memberstack-id]` before calling Xano.
+- Any failure — not logged in, non-owner, missing `xanoAuthFetch`, network or
+  parse error, or a `404` while the endpoint is still unbuilt — is a graceful
+  no-op: defaults are left in place, nothing throws to the production console,
+  and `window.tsStripeConnectReady` resolves `null`.
+- Dev-only diagnostics are gated to staging hosts (`*.webflow.io`,
+  `localhost`/`127.0.0.1`, `*.trycloudflare.com`) with a
+  `window.STRIPE_CONNECT_DEBUG = true/false` override (also honored via a
+  `localStorage` `STRIPE_CONNECT_DEBUG` key); silent in production.
+
+Webflow markup contract:
+
+- Hidden data element (CMS-bound):
+  `<div id="ts-stripe-connect-data" data-memberstack-id="{{ memberstack-id }}" data-xano-id="{{ xano-id }}" style="display:none"></div>`.
+  `data-memberstack-id` is used **only** for the client-side ownership check and
+  is never sent to Xano.
+- Hover cards `[no-connection="paid"]` containing
+  `<a hover-cta stripe-connect-url href="#">Connect Stripe</a>` and
+  `[no-connection="free"]` containing
+  `<a starter-dashboard-url href="#">Connect Calendar</a>`, same attributes as
+  V2. Site CSS keeps `[stripe-connect-url]`, `[stripe-dashboard-url]`, and
+  `[hover-cta][starter-dashboard-url]` hidden by default; the module reveals the
+  active one with `display:flex`.
+
+Runtime contract:
+
+- Synchronously sets `window.starter_dashboard_url = '/starter-dashboard'` (the
+  3.0 dashboard is a single static page, not V2's per-member CMS page) and, on
+  `DOMContentLoaded`, points every `[starter-dashboard-url]` control at it. Sets
+  `window.stripe_charges = false` as a safe default **only if it is undefined**,
+  so page code that reads the global synchronously has a value; after a
+  successful owner fetch it becomes `response.charges_enabled`.
+- Owner path: `POST /api:tCpV3oqd/stripe/connect_links` (empty JSON body, Bearer
+  added by `xanoAuthFetch`). Response
+  `{ charges_enabled, connect_url, dashboard_url }`. If `charges_enabled` →
+  leave every CTA hidden; else if `dashboard_url` → reveal + wire
+  `[stripe-dashboard-url]`; else if `connect_url` → reveal + wire
+  `[stripe-connect-url]`.
+- `window.tsStripeConnectReady` is a Promise resolving to the endpoint response
+  (or `null` on any failure) so other page code can await it instead of racing
+  the `stripe_charges` global.
+- `window.tsStripeConnect.run()` re-runs the flow.
+
+The Xano endpoint does not exist yet. The paste-ready builder spec is in
+[`stripe-connect-xano-spec.md`](./stripe-connect-xano-spec.md). Until it ships,
+the module fails closed (404 → no-op) and the CTAs stay hidden.
+
+Run its focused test with:
+
+```sh
+node v3/stripe-connect.test.js
+```
