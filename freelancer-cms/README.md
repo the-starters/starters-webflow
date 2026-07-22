@@ -76,32 +76,43 @@ Webflow markup contract:
     `[hover-cta][starter-dashboard-url]` hidden by default; the module reveals
     the active one with `display:flex`.
   - **Component mode** (the current 3.0 hire template): the CTAs are shared
-    component instances, not discrete attribute-tagged anchors. The wrapper is
-    the `service-card_tooltip` block of the "Service Card - Tooltip" component;
-    its `no-connection` value is bound to a per-instance "Connect Type" prop
-    (`paid` / `free`), and the CTA inside is a shared Button instance rendered
-    as an `<a>` whose Link prop defaults to `"#"`. For these the module sets
-    **only** the first `<a>` descendant's `href` — it never adds the
+    design-system component instances, not discrete attribute-tagged anchors.
+    The wrapper is the `service-card_tooltip` block of the "Service Card -
+    Tooltip" component; its `no-connection` value is bound to a per-instance
+    "Connect Type" prop (`paid` / `free`). The module resolves the CTA inside as
+    the first `a` **or** `button.clickable_btn` (falling back to the first
+    `button`), because the 3.0 Button component renders a **native `<button>`,
+    not an `<a>`** — verified on staging, its markup is
+    `<div class="button_main-wrap">…<button class="clickable_btn"></button>…</div>`
+    with no anchor anywhere in the card. Wiring:
+    - an `<a>` CTA gets its `href` set (legacy behavior);
+    - a `<button>` CTA gets a click listener that runs
+      `window.location.assign(url)`, the `.button_main-wrap` gets
+      `cursor:pointer`, the listener is bound at most once, and the target URL
+      is stored on the element's `dataset` (read at click time) so a later run
+      that swaps connect ↔ dashboard navigates to the latest URL.
+
+    In both cases the module sets **only** the CTA target — it never adds the
     `stripe-connect-url`/`stripe-dashboard-url` attributes and never touches
     display. Component visibility is owned by the **Service Card State** prop,
-    not by this script. Wrappers without an anchor are skipped; nothing throws.
+    not by this script. Wrappers with no CTA are skipped; nothing throws.
 
 Runtime contract:
 
 - Synchronously sets `window.starter_dashboard_url = '/starter-dashboard'` (the
   3.0 dashboard is a single static page, not V2's per-member CMS page) and, on
   `DOMContentLoaded`, points every `[starter-dashboard-url]` control at it **and**
-  wires the first `<a>` inside every `[no-connection="free"]` wrapper to it
-  (unconditionally, for any visitor). Sets `window.stripe_charges = false` as a
+  wires the CTA (anchor or button) inside every `[no-connection="free"]` wrapper
+  to it (unconditionally, for any visitor). Sets `window.stripe_charges = false` as a
   safe default **only if it is undefined**; after a successful owner fetch it
   becomes `response.charges_enabled`.
 - Owner path: `POST /api:tCpV3oqd/stripe/connect_links` (empty JSON body, Bearer
   added by `xanoAuthFetch`). Response
   `{ charges_enabled, connect_url, dashboard_url }`. If `charges_enabled` →
   leave every CTA hidden. Otherwise, besides the legacy `[stripe-dashboard-url]`
-  / `[stripe-connect-url]` reveal, the module wires the first `<a>` inside every
-  `[no-connection="paid"]` wrapper to `dashboard_url` if non-empty, else
-  `connect_url`.
+  / `[stripe-connect-url]` reveal, the module wires the CTA (anchor or button)
+  inside every `[no-connection="paid"]` wrapper to `dashboard_url` if non-empty,
+  else `connect_url`.
 - `window.tsStripeConnectReady` is a Promise resolving to the endpoint response
   (or `null` on any failure); `window.tsStripeConnect.run()` re-runs the flow.
 
