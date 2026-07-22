@@ -117,12 +117,22 @@
   // account exists), so the click handler must always use the LATEST URL. We
   // store it on the element's dataset and read it at click time instead of
   // closing over it, and guard against binding the listener more than once.
-  function wireComponentCtas(selector, url) {
+  //
+  // Optional `label`: when the paid CTA is a resume-onboarding prompt
+  // (setup_state "incomplete"), the caller passes a replacement label. The
+  // label node is `.button_main-text` inside the button component's
+  // `.button_main-wrap`; we change its text only when both the label and node
+  // exist, and leave the Designer's default label untouched otherwise.
+  function wireComponentCtas(selector, url, label) {
     if (!url) return
     qsa(selector).forEach(function (wrapper) {
       var cta =
         wrapper.querySelector('a, button.clickable_btn') || wrapper.querySelector('button')
       if (!cta) return
+      if (label) {
+        var labelNode = wrapper.querySelector('.button_main-text')
+        if (labelNode) labelNode.textContent = label
+      }
       if (cta.tagName === 'A') {
         cta.href = url
         return
@@ -234,9 +244,20 @@
       // wrapper, not a discrete legacy anchor. Prefer the dashboard link (an
       // account exists but is not yet charging), else the connect/onboarding
       // link. We only point the CTA at the URL — the component owns visibility.
+      //
+      // Paid CTA has three states via `setup_state`:
+      //   "not_connected" -> onboarding link, default "Connect Stripe" label;
+      //   "incomplete"    -> account exists but charges_enabled false; the
+      //                      server returns a fresh account_onboarding link to
+      //                      resume, and we relabel the CTA "Complete Setup";
+      //   "complete"      -> charges_enabled true; handled above (CTA stays
+      //                      hidden). A missing setup_state keeps the default
+      //                      label, i.e. exactly the prior behavior.
       var componentUrl =
         (payload && payload.dashboard_url) || (payload && payload.connect_url) || null
-      wireComponentCtas('[no-connection="paid"]', componentUrl)
+      var componentLabel =
+        payload && payload.setup_state === 'incomplete' ? 'Complete Setup' : null
+      wireComponentCtas('[no-connection="paid"]', componentUrl, componentLabel)
     })
   }
 

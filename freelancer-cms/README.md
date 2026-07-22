@@ -108,11 +108,24 @@ Runtime contract:
   becomes `response.charges_enabled`.
 - Owner path: `POST /api:tCpV3oqd/stripe/connect_links` (empty JSON body, Bearer
   added by `xanoAuthFetch`). Response
-  `{ charges_enabled, connect_url, dashboard_url }`. If `charges_enabled` →
-  leave every CTA hidden. Otherwise, besides the legacy `[stripe-dashboard-url]`
-  / `[stripe-connect-url]` reveal, the module wires the CTA (anchor or button)
-  inside every `[no-connection="paid"]` wrapper to `dashboard_url` if non-empty,
-  else `connect_url`.
+  `{ charges_enabled, setup_state, connect_url, dashboard_url }`. If
+  `charges_enabled` → leave every CTA hidden. Otherwise, besides the legacy
+  `[stripe-dashboard-url]` / `[stripe-connect-url]` reveal, the module wires the
+  CTA (anchor or button) inside every `[no-connection="paid"]` wrapper to
+  `dashboard_url` if non-empty, else `connect_url`.
+- **Paid CTA has three states via `setup_state`** (`"not_connected"` |
+  `"incomplete"` | `"complete"`):
+  - `"not_connected"` → onboarding `connect_url`; default Designer label
+    ("Connect Stripe") is left untouched.
+  - `"incomplete"` → a Stripe account exists but `charges_enabled` is false; the
+    server returns a fresh `account_onboarding` (resume) link as `connect_url`
+    and the module **relabels the CTA "Complete Setup"** by setting the
+    `.button_main-text` node inside the wrapper's `.button_main-wrap`. The label
+    is changed only when that node exists; the Designer default is left as-is
+    otherwise.
+  - `"complete"` → `charges_enabled` true; the CTA stays hidden.
+  - **A missing `setup_state` reproduces the prior two-state behavior exactly**
+    (no relabel) — the field is backward compatible.
 - `window.tsStripeConnectReady` is a Promise resolving to the endpoint response
   (or `null` on any failure); `window.tsStripeConnect.run()` re-runs the flow.
 

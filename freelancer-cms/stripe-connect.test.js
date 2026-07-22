@@ -43,16 +43,24 @@ function fakeButton(className) {
   }
 }
 
+// A label node (.button_main-text) inside the button component. Starts with the
+// Designer's default text so tests can assert it is left untouched.
+function fakeLabel(text) {
+  return { textContent: text == null ? 'Connect Stripe' : text }
+}
+
 // A component-mode tooltip wrapper (service-card_tooltip block). Options:
-//   anchor   - a legacy <a> CTA (fakeElement), or omitted
-//   button   - a native <button> CTA (fakeButton), or omitted
-//   mainWrap - the .button_main-wrap element (fakeElement), or omitted
+//   anchor    - a legacy <a> CTA (fakeElement), or omitted
+//   button    - a native <button> CTA (fakeButton), or omitted
+//   mainWrap  - the .button_main-wrap element (fakeElement), or omitted
+//   labelNode - the .button_main-text node (fakeLabel), or omitted
 // Supports the exact selectors the module queries.
 function fakeWrapper(opts) {
   opts = opts || {}
   const anchor = opts.anchor || null
   const button = opts.button || null
   const mainWrap = opts.mainWrap || null
+  const labelNode = opts.labelNode || null
   return {
     tagName: 'DIV',
     _attrs: {},
@@ -74,6 +82,7 @@ function fakeWrapper(opts) {
       if (selector === 'a') return anchor
       if (selector === 'button') return button
       if (selector === '.button_main-wrap') return mainWrap
+      if (selector === '.button_main-text') return labelNode
       return null
     },
   }
@@ -633,4 +642,123 @@ test('button CTA: a later run updates the URL the handler navigates to', async (
     'https://connect.stripe.com/setup/abc',
     'https://dashboard.stripe.com/login/xyz',
   ])
+})
+
+/* -------------------------------------------------------------------------- */
+/* Paid CTA setup_state: three states via response.setup_state.                 */
+/*   not_connected -> onboarding link, default label                            */
+/*   incomplete    -> resume link, label relabelled "Complete Setup"            */
+/*   complete      -> charges_enabled true, CTA hidden (covered above)          */
+/* -------------------------------------------------------------------------- */
+
+test('setup_state incomplete: relabels the CTA and wires the resume link', async () => {
+  const button = fakeButton('clickable_btn')
+  const labelNode = fakeLabel('Connect Stripe')
+  const paidWrapper = fakeWrapper({ button, labelNode })
+  const { window, assigns } = loadModule({
+    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
+    elements: { '[no-connection="paid"]': [paidWrapper] },
+    xanoResponder: () =>
+      response({
+        charges_enabled: false,
+        setup_state: 'incomplete',
+        connect_url: 'https://connect.stripe.com/setup/resume',
+        dashboard_url: null,
+      }),
+  })
+
+  await window.tsStripeConnectReady
+
+  assert.equal(labelNode.textContent, 'Complete Setup')
+  assert.equal(button.dataset.tsConnectUrl, 'https://connect.stripe.com/setup/resume')
+  button.click()
+  assert.deepEqual(assigns, ['https://connect.stripe.com/setup/resume'])
+})
+
+test('setup_state incomplete: relabels an anchor CTA too', async () => {
+  const anchor = fakeElement()
+  const labelNode = fakeLabel('Connect Stripe')
+  const paidWrapper = fakeWrapper({ anchor, labelNode })
+  const { window } = loadModule({
+    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
+    elements: { '[no-connection="paid"]': [paidWrapper] },
+    xanoResponder: () =>
+      response({
+        charges_enabled: false,
+        setup_state: 'incomplete',
+        connect_url: 'https://connect.stripe.com/setup/resume',
+        dashboard_url: null,
+      }),
+  })
+
+  await window.tsStripeConnectReady
+
+  assert.equal(labelNode.textContent, 'Complete Setup')
+  assert.equal(anchor.href, 'https://connect.stripe.com/setup/resume')
+})
+
+test('setup_state not_connected: leaves the default label untouched', async () => {
+  const button = fakeButton('clickable_btn')
+  const labelNode = fakeLabel('Connect Stripe')
+  const paidWrapper = fakeWrapper({ button, labelNode })
+  const { window } = loadModule({
+    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
+    elements: { '[no-connection="paid"]': [paidWrapper] },
+    xanoResponder: () =>
+      response({
+        charges_enabled: false,
+        setup_state: 'not_connected',
+        connect_url: 'https://connect.stripe.com/setup/new',
+        dashboard_url: null,
+      }),
+  })
+
+  await window.tsStripeConnectReady
+
+  assert.equal(labelNode.textContent, 'Connect Stripe')
+  assert.equal(button.dataset.tsConnectUrl, 'https://connect.stripe.com/setup/new')
+})
+
+test('missing setup_state: behavior is unchanged (no relabel)', async () => {
+  const button = fakeButton('clickable_btn')
+  const labelNode = fakeLabel('Connect Stripe')
+  const paidWrapper = fakeWrapper({ button, labelNode })
+  const { window } = loadModule({
+    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
+    elements: { '[no-connection="paid"]': [paidWrapper] },
+    xanoResponder: () =>
+      response({
+        charges_enabled: false,
+        connect_url: 'https://connect.stripe.com/setup/abc',
+        dashboard_url: null,
+      }),
+  })
+
+  await window.tsStripeConnectReady
+
+  assert.equal(labelNode.textContent, 'Connect Stripe')
+  assert.equal(button.dataset.tsConnectUrl, 'https://connect.stripe.com/setup/abc')
+})
+
+test('setup_state incomplete: no label node present does not throw', async () => {
+  const button = fakeButton('clickable_btn')
+  const paidWrapper = fakeWrapper({ button }) // no labelNode
+  const { window, assigns } = loadModule({
+    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
+    elements: { '[no-connection="paid"]': [paidWrapper] },
+    xanoResponder: () =>
+      response({
+        charges_enabled: false,
+        setup_state: 'incomplete',
+        connect_url: 'https://connect.stripe.com/setup/resume',
+        dashboard_url: null,
+      }),
+  })
+
+  const result = await window.tsStripeConnectReady
+
+  // Resolves normally; the link is still wired.
+  assert.equal(result.setup_state, 'incomplete')
+  button.click()
+  assert.deepEqual(assigns, ['https://connect.stripe.com/setup/resume'])
 })
