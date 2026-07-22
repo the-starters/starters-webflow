@@ -1,7 +1,7 @@
 # Xano endpoint spec — `POST /api:tCpV3oqd/stripe/connect_links`
 
 Paste-ready brief for the Xano AI builder. This endpoint backs
-`v3/stripe-connect.js`. Until it exists the browser module fails closed (404 →
+`freelancer-cms/stripe-connect.js`. Until it exists the browser module fails closed (404 →
 no-op), so building it is what turns the CTAs on.
 
 ## What it must do

@@ -35,7 +35,7 @@
     { path: '/api:tCpV3oqd/grants/add/v3', prefix: false },
     { path: '/api:tCpV3oqd/grants/delete', prefix: false },
     { path: '/api:tCpV3oqd/nylas_configurations/get_all', prefix: false },
-    // Stripe Connect links for the profile owner (v3/stripe-connect.js). The
+    // Stripe Connect links for the profile owner (freelancer-cms/stripe-connect.js). The
     // server resolves the starter from $auth; the client sends no ids.
     { path: '/api:tCpV3oqd/stripe/connect_links', prefix: false },
   ]
