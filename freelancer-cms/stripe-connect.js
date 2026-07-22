@@ -96,47 +96,20 @@
 
   // Component-mode wiring. On the 3.0 hire template the CTAs are no longer
   // discrete `[stripe-connect-url]`/`[stripe-dashboard-url]` anchors — they are
-  // shared design-system component instances inside the `service-card_tooltip`
-  // block of the "Service Card - Tooltip" component (its `no-connection` value
-  // is bound to a per-instance "Connect Type" prop). Visibility is owned by the
-  // Service Card State prop, not by us: we only point the CTA at `url` and never
-  // touch display or add the legacy hide-me attributes.
-  //
-  // The 3.0 Button component does NOT render an `<a>`. It renders a native
-  // `<button class="clickable_btn">` (verified on the live staging page — there
-  // is no anchor anywhere inside the card):
-  //   <div class="button_main-wrap" data-opp-element="loading-button">
-  //     <div class="clickable_wrap"><button class="clickable_btn"></button></div>
-  //     <div class="button_main-element">…<div class="button_main-text">…</div>…</div>
-  //   </div>
-  // So we resolve the CTA as the first `a` OR `button.clickable_btn` (falling
-  // back to the first `button`). An anchor gets its href set (legacy behavior);
-  // a button gets a navigation click handler.
-  //
-  // The wired URL can change between calls (e.g. connect -> dashboard once the
-  // account exists), so the click handler must always use the LATEST URL. We
-  // store it on the element's dataset and read it at click time instead of
-  // closing over it, and guard against binding the listener more than once.
-  function wireComponentCtas(selector, url) {
-    if (!url) return
+  // shared component instances. The wrapper is the `service-card_tooltip` block
+  // of the "Service Card - Tooltip" component; its `no-connection` value is
+  // bound to a per-instance "Connect Type" prop, and the CTA inside is a shared
+  // Button component instance rendered as an `<a>` whose Link prop defaults to
+  // "#". We only set that anchor's href — visibility is owned by the Service
+  // Card State prop, not by us, so we never touch display or add the legacy
+  // hide-me attributes. For every matching wrapper, wire its first `<a>`
+  // descendant to `href`; skip wrappers that have no anchor; never throw.
+  function wireComponentAnchors(selector, href) {
+    if (!href) return
     qsa(selector).forEach(function (wrapper) {
-      var cta =
-        wrapper.querySelector('a, button.clickable_btn') || wrapper.querySelector('button')
-      if (!cta) return
-      if (cta.tagName === 'A') {
-        cta.href = url
-        return
-      }
-      // Native button CTA: navigate on click, always to the latest URL.
-      cta.dataset.tsConnectUrl = url
-      var mainWrap = wrapper.querySelector('.button_main-wrap')
-      if (mainWrap) mainWrap.style.cursor = 'pointer'
-      if (cta.dataset.tsConnectBound === 'true') return
-      cta.dataset.tsConnectBound = 'true'
-      cta.addEventListener('click', function () {
-        var target = cta.dataset.tsConnectUrl
-        if (target) window.location.assign(target)
-      })
+      var anchor = wrapper.querySelector('a')
+      if (!anchor) return
+      anchor.href = href
     })
   }
 
@@ -165,8 +138,8 @@
     })
     // Component-mode counterpart: the "Connect Calendar" CTA now lives inside a
     // `[no-connection="free"]` tooltip wrapper as a shared Button instance.
-    // Wire its CTA to the same static dashboard, unconditionally.
-    wireComponentCtas('[no-connection="free"]', window.starter_dashboard_url)
+    // Wire its anchor to the same static dashboard, unconditionally.
+    wireComponentAnchors('[no-connection="free"]', window.starter_dashboard_url)
   })
 
   function readData() {
@@ -233,10 +206,10 @@
       // CTA is a shared Button instance inside a `[no-connection="paid"]`
       // wrapper, not a discrete legacy anchor. Prefer the dashboard link (an
       // account exists but is not yet charging), else the connect/onboarding
-      // link. We only point the CTA at the URL — the component owns visibility.
-      var componentUrl =
+      // link. We only set the anchor href — the component owns its visibility.
+      var componentHref =
         (payload && payload.dashboard_url) || (payload && payload.connect_url) || null
-      wireComponentCtas('[no-connection="paid"]', componentUrl)
+      wireComponentAnchors('[no-connection="paid"]', componentHref)
     })
   }
 

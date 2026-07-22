@@ -10,10 +10,8 @@ const OWNER_ID = 'mem_owner'
 
 function fakeElement(attrs) {
   return {
-    tagName: 'A',
     _attrs: attrs || {},
     style: {},
-    dataset: {},
     href: '',
     getAttribute(name) {
       return this._attrs[name] != null ? this._attrs[name] : null
@@ -24,39 +22,14 @@ function fakeElement(attrs) {
   }
 }
 
-// The 3.0 Button design-system instance renders a native <button
-// class="clickable_btn"> (no anchor). Model it with a click dispatcher so tests
-// can trigger navigation.
-function fakeButton(className) {
-  const listeners = {}
+// A component-mode tooltip wrapper (service-card_tooltip block). Its first `<a>`
+// descendant is the shared Button instance the module wires; `anchor` may be
+// null to model a wrapper the Designer left without a CTA anchor.
+function fakeWrapper(anchor) {
   return {
-    tagName: 'BUTTON',
-    className: className == null ? 'clickable_btn' : className,
-    style: {},
-    dataset: {},
-    addEventListener(type, callback) {
-      ;(listeners[type] = listeners[type] || []).push(callback)
-    },
-    click() {
-      ;(listeners.click || []).forEach((fn) => fn())
-    },
-  }
-}
-
-// A component-mode tooltip wrapper (service-card_tooltip block). Options:
-//   anchor   - a legacy <a> CTA (fakeElement), or omitted
-//   button   - a native <button> CTA (fakeButton), or omitted
-//   mainWrap - the .button_main-wrap element (fakeElement), or omitted
-// Supports the exact selectors the module queries.
-function fakeWrapper(opts) {
-  opts = opts || {}
-  const anchor = opts.anchor || null
-  const button = opts.button || null
-  const mainWrap = opts.mainWrap || null
-  return {
-    tagName: 'DIV',
     _attrs: {},
     style: {},
+    _anchor: anchor || null,
     getAttribute(name) {
       return this._attrs[name] != null ? this._attrs[name] : null
     },
@@ -64,17 +37,7 @@ function fakeWrapper(opts) {
       this._attrs[name] = value
     },
     querySelector(selector) {
-      if (selector === 'a, button.clickable_btn') {
-        if (anchor) return anchor
-        if (button && String(button.className).split(/\s+/).includes('clickable_btn')) {
-          return button
-        }
-        return null
-      }
-      if (selector === 'a') return anchor
-      if (selector === 'button') return button
-      if (selector === '.button_main-wrap') return mainWrap
-      return null
+      return selector === 'a' ? this._anchor : null
     },
   }
 }
@@ -116,12 +79,8 @@ function response(data, status = 200) {
 function loadModule(options = {}) {
   const doc = fakeDocument(options)
   const fetchCalls = []
-  const assigns = []
   const window = {
-    location: {
-      hostname: options.hostname || 'the-starters-3-0.webflow.io',
-      assign: (url) => assigns.push(url),
-    },
+    location: { hostname: options.hostname || 'the-starters-3-0.webflow.io' },
     setTimeout: (fn) => setTimeout(fn, 0),
     console: { warn() {}, info() {}, error() {} },
   }
@@ -153,7 +112,7 @@ function loadModule(options = {}) {
     JSON,
   })
 
-  return { window, document: doc, fetchCalls, assigns }
+  return { window, document: doc, fetchCalls }
 }
 
 test('does not install outside V3 Webflow staging', () => {
@@ -374,7 +333,7 @@ test('missing xanoAuthFetch helper is a graceful no-op', async () => {
 
 test('component mode: owner + connect_url wires [no-connection="paid"] anchor', async () => {
   const paidAnchor = fakeElement()
-  const paidWrapper = fakeWrapper({ anchor: paidAnchor })
+  const paidWrapper = fakeWrapper(paidAnchor)
   const { window, fetchCalls } = loadModule({
     byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
     elements: { '[no-connection="paid"]': [paidWrapper] },
@@ -399,7 +358,7 @@ test('component mode: owner + connect_url wires [no-connection="paid"] anchor', 
 
 test('component mode: owner + dashboard_url wins over connect_url on paid anchor', async () => {
   const paidAnchor = fakeElement()
-  const paidWrapper = fakeWrapper({ anchor: paidAnchor })
+  const paidWrapper = fakeWrapper(paidAnchor)
   const { window } = loadModule({
     byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
     elements: { '[no-connection="paid"]': [paidWrapper] },
@@ -418,7 +377,7 @@ test('component mode: owner + dashboard_url wins over connect_url on paid anchor
 
 test('component mode: charges_enabled leaves the paid anchor untouched', async () => {
   const paidAnchor = fakeElement()
-  const paidWrapper = fakeWrapper({ anchor: paidAnchor })
+  const paidWrapper = fakeWrapper(paidAnchor)
   const { window } = loadModule({
     byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
     elements: { '[no-connection="paid"]': [paidWrapper] },
@@ -437,7 +396,7 @@ test('component mode: charges_enabled leaves the paid anchor untouched', async (
 })
 
 test('component mode: paid wrapper without an anchor does not throw', async () => {
-  const emptyWrapper = fakeWrapper({})
+  const emptyWrapper = fakeWrapper(null)
   const { window } = loadModule({
     byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
     elements: { '[no-connection="paid"]': [emptyWrapper] },
@@ -457,7 +416,7 @@ test('component mode: paid wrapper without an anchor does not throw', async () =
 
 test('component mode: wires [no-connection="free"] anchor on DOMContentLoaded', async () => {
   const freeAnchor = fakeElement()
-  const freeWrapper = fakeWrapper({ anchor: freeAnchor })
+  const freeWrapper = fakeWrapper(freeAnchor)
   const { window, document, fetchCalls } = loadModule({
     readyState: 'loading',
     elements: { '[no-connection="free"]': [freeWrapper] },
@@ -473,7 +432,7 @@ test('component mode: wires [no-connection="free"] anchor on DOMContentLoaded', 
 })
 
 test('component mode: free wrapper without an anchor does not throw', async () => {
-  const emptyWrapper = fakeWrapper({})
+  const emptyWrapper = fakeWrapper(null)
   const { window, document } = loadModule({
     readyState: 'loading',
     elements: { '[no-connection="free"]': [emptyWrapper] },
@@ -484,153 +443,4 @@ test('component mode: free wrapper without an anchor does not throw', async () =
   assert.doesNotThrow(() => document.fire('DOMContentLoaded'))
   const result = await window.tsStripeConnectReady
   assert.equal(result, null)
-})
-
-/* -------------------------------------------------------------------------- */
-/* Component mode, button CTA: the 3.0 Button renders <button class=            */
-/* "clickable_btn">, not an <a>. The module navigates on click.                 */
-/* -------------------------------------------------------------------------- */
-
-test('button CTA: owner + connect_url navigates on click (paid)', async () => {
-  const button = fakeButton('clickable_btn')
-  const mainWrap = fakeElement()
-  const paidWrapper = fakeWrapper({ button, mainWrap })
-  const { window, assigns } = loadModule({
-    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
-    elements: { '[no-connection="paid"]': [paidWrapper] },
-    xanoResponder: () =>
-      response({
-        charges_enabled: false,
-        connect_url: 'https://connect.stripe.com/setup/abc',
-        dashboard_url: null,
-      }),
-  })
-
-  await window.tsStripeConnectReady
-
-  // Latest URL stored on the element; cursor hint applied to .button_main-wrap.
-  assert.equal(button.dataset.tsConnectUrl, 'https://connect.stripe.com/setup/abc')
-  assert.equal(button.dataset.tsConnectBound, 'true')
-  assert.equal(mainWrap.style.cursor, 'pointer')
-  assert.deepEqual(assigns, [])
-
-  button.click()
-  assert.deepEqual(assigns, ['https://connect.stripe.com/setup/abc'])
-})
-
-test('button CTA: owner + dashboard_url wins and navigates on click (paid)', async () => {
-  const button = fakeButton('clickable_btn')
-  const paidWrapper = fakeWrapper({ button })
-  const { window, assigns } = loadModule({
-    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
-    elements: { '[no-connection="paid"]': [paidWrapper] },
-    xanoResponder: () =>
-      response({
-        charges_enabled: false,
-        connect_url: 'https://connect.stripe.com/setup/ignored',
-        dashboard_url: 'https://dashboard.stripe.com/login/xyz',
-      }),
-  })
-
-  await window.tsStripeConnectReady
-  button.click()
-
-  assert.deepEqual(assigns, ['https://dashboard.stripe.com/login/xyz'])
-})
-
-test('button CTA: falls back to a plain <button> when not .clickable_btn', async () => {
-  const button = fakeButton('') // no clickable_btn class
-  const paidWrapper = fakeWrapper({ button })
-  const { window, assigns } = loadModule({
-    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
-    elements: { '[no-connection="paid"]': [paidWrapper] },
-    xanoResponder: () =>
-      response({
-        charges_enabled: false,
-        connect_url: 'https://connect.stripe.com/setup/abc',
-        dashboard_url: null,
-      }),
-  })
-
-  await window.tsStripeConnectReady
-  button.click()
-
-  assert.deepEqual(assigns, ['https://connect.stripe.com/setup/abc'])
-})
-
-test('button CTA: free wrapper navigates to the static dashboard on click', async () => {
-  const button = fakeButton('clickable_btn')
-  const freeWrapper = fakeWrapper({ button })
-  const { window, document, assigns, fetchCalls } = loadModule({
-    readyState: 'loading',
-    elements: { '[no-connection="free"]': [freeWrapper] },
-    memberstack: { getCurrentMember: async () => ({ data: null }) },
-  })
-
-  document.fire('DOMContentLoaded')
-  await window.tsStripeConnectReady
-  button.click()
-
-  assert.equal(fetchCalls.length, 0)
-  assert.equal(button.dataset.tsConnectUrl, '/starter-dashboard')
-  assert.deepEqual(assigns, ['/starter-dashboard'])
-})
-
-test('button CTA: click listener is bound only once (double-bind guard)', async () => {
-  const button = fakeButton('clickable_btn')
-  const paidWrapper = fakeWrapper({ button })
-  const { window, assigns } = loadModule({
-    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
-    elements: { '[no-connection="paid"]': [paidWrapper] },
-    xanoResponder: () =>
-      response({
-        charges_enabled: false,
-        connect_url: 'https://connect.stripe.com/setup/abc',
-        dashboard_url: null,
-      }),
-  })
-
-  await window.tsStripeConnectReady
-  // Re-run the flow: the URL is refreshed but the listener must not re-bind.
-  await window.tsStripeConnect.run()
-  button.click()
-
-  // A single click yields a single navigation (one listener, not two).
-  assert.deepEqual(assigns, ['https://connect.stripe.com/setup/abc'])
-})
-
-test('button CTA: a later run updates the URL the handler navigates to', async () => {
-  const button = fakeButton('clickable_btn')
-  const paidWrapper = fakeWrapper({ button })
-  let call = 0
-  const { window, assigns } = loadModule({
-    byId: { 'ts-stripe-connect-data': fakeElement({ 'data-memberstack-id': OWNER_ID }) },
-    elements: { '[no-connection="paid"]': [paidWrapper] },
-    xanoResponder: () => {
-      call += 1
-      return call === 1
-        ? response({
-            charges_enabled: false,
-            connect_url: 'https://connect.stripe.com/setup/abc',
-            dashboard_url: null,
-          })
-        : response({
-            charges_enabled: false,
-            connect_url: null,
-            dashboard_url: 'https://dashboard.stripe.com/login/xyz',
-          })
-    },
-  })
-
-  await window.tsStripeConnectReady
-  button.click()
-  assert.deepEqual(assigns, ['https://connect.stripe.com/setup/abc'])
-
-  // Second run swaps connect -> dashboard; the same handler must use the latest.
-  await window.tsStripeConnect.run()
-  button.click()
-  assert.deepEqual(assigns, [
-    'https://connect.stripe.com/setup/abc',
-    'https://dashboard.stripe.com/login/xyz',
-  ])
 })
