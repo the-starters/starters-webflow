@@ -42,6 +42,7 @@ Do not discard local changes unless the user explicitly asks.
 - `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds
 - `v3/scheduling-auth.js` — staging-only availability and scheduling authentication bridge
 - `v3/scheduling-availability-init.js` — staging-only booking-stage availability control initializer
+- `freelancer-cms/stripe-connect.js` — staging-only secured Stripe Connect / Connect Calendar CTAs for the freelancer profile (owner-only, no public links)
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`
 - `opportunities---create.js`

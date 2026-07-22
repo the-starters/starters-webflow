@@ -16,7 +16,8 @@ Current safety boundary:
 - Does not change V2 or either V3 custom domain.
 - Authenticates paths beginning with `/api:tCpV3oqd/scheduler/configurations/` or
   `/api:tCpV3oqd/calendars/get_availabilities`, plus the exact
-  `/api:tCpV3oqd/starter/get_by_memberstack` path, on the configured Xano origin.
+  `/api:tCpV3oqd/starter/get_by_memberstack` and
+  `/api:tCpV3oqd/stripe/connect_links` paths, on the configured Xano origin.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
@@ -34,7 +35,8 @@ blanket credential injector. The availability-writer endpoints
 `starter/clear_calendar_data`, `grants/oauth`, `grants/create_virtual_account`,
 `grants/create_virtual_calendar`, `grants/add_virtual`, `grants/delete`,
 `nylas_configurations/get_all`) are listed as exact paths for
-`scheduling-availability-writer.js`.
+`scheduling-availability-writer.js`. The exact path
+`stripe/connect_links` is listed for `freelancer-cms/stripe-connect.js`.
 
 Public helpers:
 
@@ -313,3 +315,13 @@ avoid column names (hence `in_timezone`).
 ⚠ The OAuth `redirect_uri` in endpoints 1456/1457 is pinned to the published
 slug `/starter-dashboard---availability-stage`. If the page rename ships with
 a new slug, update both endpoints in the same change.
+
+## Stripe Connect CTAs (secured) — moved
+
+The secured Stripe Connect / Connect Calendar CTA module now lives in
+[`freelancer-cms/stripe-connect.js`](../freelancer-cms/README.md) (with its test
+and the Xano builder spec). Only the `scheduling-auth.js` allowlist entry for the
+exact `/api:tCpV3oqd/stripe/connect_links` path stays here — see the "Scheduling
+auth" section above. The module itself, its markup/runtime contract, and the
+`stripe-connect-xano-spec.md` builder brief are documented in
+`freelancer-cms/README.md`.

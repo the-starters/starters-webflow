@@ -260,6 +260,25 @@ test('availability-writer endpoints are authenticated', async () => {
   for (const header of authHeaders) assert.equal(header, 'Bearer xano-a')
 })
 
+test('stripe connect_links endpoint is authenticated', async () => {
+  const authHeaders = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-a' })
+    }
+    authHeaders.push(request.headers.get('Authorization'))
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(`${XANO_ORIGIN}/api:tCpV3oqd/stripe/connect_links`, {
+    method: 'POST',
+    body: '{}',
+  })
+
+  assert.deepEqual(authHeaders, ['Bearer xano-a'])
+})
+
 test('writer endpoint list does not blanket-authenticate the scheduling group', async () => {
   let tradeCount = 0
   let receivedRequest
