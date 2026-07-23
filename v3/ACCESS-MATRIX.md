@@ -28,7 +28,10 @@ consistent.
 ## Route-level access
 
 `auth-route.js` uses this table only when restoring a same-origin `next`
-destination after login. A disallowed destination falls back to the role default.
+destination after login. A disallowed destination falls back to the role
+default. `route-guard.js` enforces direct access for every route below except
+`/quiz-results` and `/all-starters`, which remain unguarded pending confirmation
+that they are authenticated-only rather than pre-signup funnel pages.
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
@@ -65,8 +68,9 @@ separate owner:
 
 - Define the exact role/state for a paid Brand whose subscription is cancelled;
   do not infer it from a display name.
-- Confirm whether the sheet's logged-out redirects to `/` should become
-  `/login?next=...` on every protected page or remain page-specific.
+- Confirm whether `/quiz-results` and `/all-starters` are authenticated-only.
+  Until then, the route guard leaves both unlisted and does not force logged-out
+  visitors to `/login`.
 - Verify Webflow Memberstack gated groups and Xano authorization independently;
   a `Backlog` row in the product sheet is desired behavior, not proof that it is
   live.

@@ -13,10 +13,12 @@
  *     error state instead of silently redirecting home,
  *   - do nothing on a page it does not recognise (public/unlisted route).
  *
- * The plan-ID → role map and the page → allowed-roles table are the same stable
- * matrix used by v3/auth-route.js and documented in v3/ACCESS-MATRIX.md. This
- * guard is a routing/UX boundary only; Memberstack gated content and Xano
- * endpoint authorization remain separate, independently-enforced layers.
+ * The plan-ID → role map and guarded page roles derive from the stable access
+ * matrix used by v3/auth-route.js and documented in v3/ACCESS-MATRIX.md.
+ * /quiz-results and /all-starters remain deliberately unguarded pending product
+ * confirmation. This guard is a routing/UX boundary only; Memberstack gated
+ * content and Xano endpoint authorization remain separate, independently
+ * enforced layers.
  */
 ;(function () {
   'use strict'
