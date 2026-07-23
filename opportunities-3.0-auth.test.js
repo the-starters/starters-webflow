@@ -25,10 +25,14 @@ async function waitForRequestCount(requests, count) {
   assert.equal(requests.length, count)
 }
 
-async function loadBridge(fetch, { hostname = 'example.test' } = {}) {
+async function loadBridge(
+  fetch,
+  { hostname = 'example.test', member = null, routeGuard = false } = {},
+) {
   const documentListeners = new Map()
   let authChange
   const attributes = new Map()
+  if (routeGuard) attributes.set('data-route-guard', 'checking')
   const documentElement = {
     appendChild() {},
     getAttribute: (name) => attributes.get(name) || null,
@@ -53,7 +57,7 @@ async function loadBridge(fetch, { hostname = 'example.test' } = {}) {
   const trackCalls = []
   const window = {
     $memberstackDom: {
-      getCurrentMember: async () => ({ data: null }),
+      getCurrentMember: async () => ({ data: member }),
       getMemberCookie: async () => 'memberstack-a',
       onAuthChange(listener) {
         authChange = listener
@@ -69,6 +73,12 @@ async function loadBridge(fetch, { hostname = 'example.test' } = {}) {
   }
   window.fetch = fetch
   window.window = window
+  const location = {
+    href: `https://${hostname}/all-modals`,
+    hostname,
+    pathname: '/all-modals',
+    search: '',
+  }
   const context = vm.createContext({
     CustomEvent: class CustomEvent {
       constructor(type, options) {
@@ -90,19 +100,23 @@ async function loadBridge(fetch, { hostname = 'example.test' } = {}) {
     document,
     fetch: (...args) => window.fetch(...args),
     history: { replaceState() {} },
-    location: {
-      href: `https://${hostname}/all-modals`,
-      hostname,
-      pathname: '/all-modals',
-      search: '',
-    },
+    location,
     window,
   })
   vm.runInContext(source, context)
   for (const listener of documentListeners.get('DOMContentLoaded') || []) listener()
   await Promise.resolve()
   assert.equal(typeof authChange, 'function')
-  return { API: window.Opp30.API, authChange, fetch: window.fetch, trackCalls, window }
+  return {
+    API: window.Opp30.API,
+    authChange,
+    attributes,
+    documentElement,
+    fetch: window.fetch,
+    location,
+    trackCalls,
+    window,
+  }
 }
 
 test('builds a login URL that preserves the current V3 path and query', async () => {
@@ -112,6 +126,133 @@ test('builds a login URL that preserves the current V3 path and query', async ()
     bridge.window.Opp30.loginPathWithNext(),
     '/login?next=%2Fall-modals',
   )
+})
+
+const talentMember = {
+  id: 'm-talent',
+  customFields: {},
+  planConnections: [{ active: true, planId: 'pln_dorxata-test-free-plan-dvcg0k8o' }],
+}
+const paidBrandMember = {
+  id: 'm-brand',
+  customFields: {},
+  planConnections: [{ active: true, planId: 'pln_new-paid-plan-463h04ph' }],
+}
+const freeBrandMember = {
+  id: 'm-free',
+  customFields: {},
+  planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
+}
+
+test('routeGuardActive reflects the html[data-route-guard] stamp', async () => {
+  const off = await loadBridge(async () => response({}))
+  assert.equal(off.window.Opp30.routeGuardActive(), false)
+
+  const on = await loadBridge(async () => response({}), { routeGuard: true })
+  assert.equal(on.window.Opp30.routeGuardActive(), true)
+})
+
+test('with the guard active, gateOrRedirect returns a matching member without a custom-field check or redirect', async () => {
+  // Member has NO legacy dashboard custom-fields — legacy path would redirect.
+  const bridge = await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    routeGuard: true,
+  })
+
+  const result = await bridge.window.Opp30.gateOrRedirect('brand')
+  assert.equal(result, paidBrandMember)
+  assert.equal(bridge.location.href, 'https://example.test/all-modals') // unchanged
+})
+
+test('with the guard active, gateOrRedirect blocks a wrong-role member without redirecting', async () => {
+  const bridge = await loadBridge(async () => response({}), {
+    member: talentMember,
+    routeGuard: true,
+  })
+
+  const result = await bridge.window.Opp30.gateOrRedirect('brand')
+  assert.equal(result, null)
+  assert.equal(bridge.location.href, 'https://example.test/all-modals') // unchanged
+})
+
+test('with the guard active, a logged-out visitor returns null and the guard (not opp30) redirects', async () => {
+  const bridge = await loadBridge(async () => response({}), {
+    member: null,
+    routeGuard: true,
+  })
+
+  const result = await bridge.window.Opp30.gateOrRedirect('brand')
+  assert.equal(result, null)
+  assert.equal(bridge.location.href, 'https://example.test/all-modals') // opp30 did NOT redirect
+})
+
+test('without the guard, gateOrRedirect keeps the legacy custom-field redirect', async () => {
+  const bridge = await loadBridge(async () => response({}), {
+    member: talentMember, // no brands-dashboard-url custom field
+    routeGuard: false,
+  })
+
+  const result = await bridge.window.Opp30.gateOrRedirect('brand')
+  assert.equal(result, null)
+  // freelancer-dashboard-url also absent -> falls back to '/'
+  assert.equal(bridge.location.href, '/')
+})
+
+test('without the guard, a logged-out visitor is still sent to login by opp30', async () => {
+  const bridge = await loadBridge(async () => response({}), {
+    member: null,
+    routeGuard: false,
+  })
+
+  const result = await bridge.window.Opp30.gateOrRedirect('brand')
+  assert.equal(result, null)
+  assert.equal(bridge.location.href, '/login?next=%2Fall-modals')
+})
+
+test('with the guard active, gateByPlan resolves talent/paid-brand and bails on free-brand without redirect', async () => {
+  const talent = await loadBridge(async () => response({}), {
+    member: talentMember,
+    routeGuard: true,
+  })
+  const talentGate = await talent.window.Opp30.gateByPlan()
+  assert.equal(talentGate.member, talentMember)
+  assert.equal(talentGate.role, 'talent')
+  assert.equal(talent.location.href, 'https://example.test/all-modals')
+
+  const free = await loadBridge(async () => response({}), {
+    member: freeBrandMember,
+    routeGuard: true,
+  })
+  assert.equal(await free.window.Opp30.gateByPlan(), null)
+  assert.equal(free.location.href, 'https://example.test/all-modals') // guard owns the redirect
+})
+
+test('without the guard, gateByPlan keeps the legacy free-brand redirect', async () => {
+  const bridge = await loadBridge(async () => response({}), {
+    member: freeBrandMember,
+    routeGuard: false,
+  })
+
+  assert.equal(await bridge.window.Opp30.gateByPlan(), null)
+  assert.equal(bridge.location.href, '/quiz-results')
+})
+
+test('gateByPlan resolves paid brand under both guard states', async () => {
+  const guarded = await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    routeGuard: true,
+  })
+  const guardedGate = await guarded.window.Opp30.gateByPlan()
+  assert.equal(guardedGate.member, paidBrandMember)
+  assert.equal(guardedGate.role, 'brand-paid')
+
+  const legacy = await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    routeGuard: false,
+  })
+  const legacyGate = await legacy.window.Opp30.gateByPlan()
+  assert.equal(legacyGate.member, paidBrandMember)
+  assert.equal(legacyGate.role, 'brand-paid')
 })
 
 test('scheduling auth is limited to the exact Xano origin and path prefix', async () => {

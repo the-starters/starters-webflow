@@ -54,18 +54,18 @@ authenticated-only in V3 beta.
 
 ## Webflow install
 
-1. Load `v3/route-guard.js` once, in Head Code, on each **authenticated** page
-   above. Load it before `opportunities-3.0.js` so the guard's redirect wins the
-   race before the page controller binds.
+1. Load `v3/route-guard.js` once sitewide in Site Settings Head Code, before
+   `opportunities-3.0.js`. This includes opportunity pages: opp30 detects the
+   guard through `html[data-route-guard]` and defers its access decisions to it.
 2. Do not install it on V2.
 3. Give guarded pages an error block keyed by `html[data-route-guard-error]`
    (same visible pattern as `/auth-route`). Optionally pre-hide protected
    content until `html[data-route-guard="allowed"]` to avoid a cross-role flash.
 
-### Recommended first install scope
+### Recommended install scope
 
-Start with the pages whose direct-access failure was reproduced in the P1 audit,
-plus their symmetric role pages, then extend:
+Install the guard sitewide so it boots before page controllers and is present on
+every route in its page table:
 
 - `/brand-dashboard`, `/opportunities-brands-view`, `/opportunities---create`
 - `/starter-dashboard`, `/starter-edit-profile`, `/opportunities-freelancer-view`
@@ -73,9 +73,13 @@ plus their symmetric role pages, then extend:
 - `/messages`
 - `/opportunities/<slug>` collection-template pages
 
-This is the full set the guard's page table covers. `/quiz-results` and
-`/all-starters` are deliberately outside that table (see the note above the
-guarded-pages table); revisit only after confirming they are authenticated-only.
+With the guard sitewide, opp30 does not double-guard opportunity pages: it uses
+the guard's presence to defer access redirects and validates the same plan-ID
+role only before starting role-specific rendering or requests.
+
+`/quiz-results` and `/all-starters` are deliberately outside the guard's page
+table (see the note above the guarded-pages table); revisit only after confirming
+they are authenticated-only.
 
 ## Relationship to other layers
 
@@ -86,14 +90,17 @@ The guard is a routing/UX boundary only. It does not replace:
   server-side against the authenticated member and role.
 - **List/render gating** — e.g. Free Brand blurred results on `/all-starters`.
 
-`opportunities-3.0.js` keeps its own per-flow checks; the guard runs first and
-denies cross-role access before that controller matters. Both derive roles from
-the same stable plan IDs, so they agree.
+`opportunities-3.0.js` defers access redirects to the sitewide guard. Before
+starting role-specific work, it verifies the member against the same stable plan
+IDs and otherwise bails without redirecting.
 
 ## Diagnostics
 
 - `window.StartersV3RouteGuard` exposes `activePlanIds`, `memberRole`,
   `pageRolesFor`, `isGuardedPath`, and `redirectTargetFor` for console checks.
+- `window.Opp30` exposes `routeGuardActive`, `gateOrRedirect`, `gateByPlan`, and
+  `memberPlanRole` for verifying the opportunity controller's handoff and
+  legacy fallback.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
   (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
 - A resolved allow dispatches `starters:v3-route-guard-allowed`.

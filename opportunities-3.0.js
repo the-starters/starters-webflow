@@ -957,8 +957,29 @@
   }
 
   /**
-   * Require the expected legacy custom-field role. Logged-out visitors retain
-   * their current path and query through the V3 login router.
+   * True when the sitewide route guard (v3/route-guard.js) is present and owns
+   * access on this page. The guard stamps `html[data-route-guard]` the moment it
+   * boots (before this controller runs, since it loads first in Head Code). When
+   * it is active, opp30 stops making its own access redirects — the guard is the
+   * single access authority, using the stable plan-ID matrix — and only fetches
+   * the member to scope its data. When it is absent (guard not yet installed),
+   * the legacy per-page redirects below stay in place so behavior is unchanged.
+   * Real security is enforced server-side in Xano regardless.
+   * @returns {boolean}
+   */
+  function routeGuardActive() {
+    try {
+      return document.documentElement.getAttribute('data-route-guard') != null
+    } catch (e) {
+      return false
+    }
+  }
+
+  /**
+   * Resolve the current member for a page. When the route guard is active,
+   * require the matching plan-ID role but leave redirects to the guard. When
+   * the guard is absent, the legacy custom-field check and redirects apply as a
+   * fallback.
    * @param {'brand'|'freelancer'} expect
    * @returns {Promise<object|null>}
    */
@@ -968,10 +989,15 @@
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      location.href = loginPathWithNext()
+      if (!routeGuardActive()) location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
+    if (routeGuardActive()) {
+      const role = memberPlanRole(member)
+      const expectedRole = expect === 'brand' ? 'brand-paid' : 'talent'
+      return role === expectedRole ? member : null
+    }
     const cf = member.customFields || {}
     if (expect === 'freelancer' && !cf['freelancer-dashboard-url']) {
       location.href = cf['brands-dashboard-url'] ? '/opportunities-brands-view' : '/'
@@ -1000,20 +1026,29 @@
   }
 
   /** Plan-based gate for pages shared by talent AND paying brands
-   *  (/opportunities/<slug>). Redirects: logged-out -> /login?next=..., free brand ->
-   *  BRAND_FREE_REDIRECT, unmapped plans -> /. Resolves {member, role} otherwise. */
+   *  (/opportunities/<slug>). When the route guard is active it has already
+   *  enforced access, so this only resolves {member, role} for the two roles
+   *  allowed here (talent, brand-paid) and bails quietly otherwise. When the
+   *  guard is absent, the legacy fallback redirects apply: logged-out ->
+   *  /login?next=..., free brand -> BRAND_FREE_REDIRECT, unmapped plans -> /. */
   async function gateByPlan() {
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      location.href = loginPathWithNext()
+      if (!routeGuardActive()) location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
     const role = memberPlanRole(member)
     log('gateByPlan role:', role)
+    if (routeGuardActive()) {
+      // Guard already enforced page access. Reveal content only for the roles
+      // valid on this page; bail quietly for anything else (the guard is mid-
+      // redirect or showing its error state).
+      return role === 'talent' || role === 'brand-paid' ? { member, role } : null
+    }
     if (role === 'brand-free') {
       location.href = BRAND_FREE_REDIRECT
       return null
@@ -2964,6 +2999,10 @@
     ensureXanoToken,
     diagnoseFreelancerFeed,
     loginPathWithNext,
+    routeGuardActive,
+    gateOrRedirect,
+    gateByPlan,
+    memberPlanRole,
     paintOpportunityDetail,
     opportunityPath,
     pageOppId,
