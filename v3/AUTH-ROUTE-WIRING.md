@@ -35,8 +35,8 @@ removed. Invalid or disallowed destinations fall back to the role default.
 
 | Role | Allowed `next` pathnames |
 | --- | --- |
-| Talent | `/starter-dashboard`, `/build-profile/full-profile`, `/starter-edit-profile`, `/messages` |
-| Brand paid | `/brand-dashboard`, `/opportunities-brands-view`, `/messages` |
+| Talent | `/starter-dashboard`, `/build-profile/full-profile`, `/starter-edit-profile`, `/messages`, `/opportunities/<slug>` |
+| Brand paid | `/brand-dashboard`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
 | Brand free | `/quiz-results`, `/messages` |
 
 An unauthenticated visitor to `/auth-route` returns to `/login`, preserving a
