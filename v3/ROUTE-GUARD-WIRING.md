@@ -21,7 +21,8 @@ On an approved V3 host, for a page it recognises:
 | Page not in the matrix | Do nothing (no Memberstack lookup) |
 
 Role defaults (identical to `auth-route.js`): Talent → `/starter-dashboard`,
-Brand paid → `/brand-dashboard`, Brand free → `/quiz-results`.
+Brand paid → `/brand-dashboard`, Brand free → `/quiz` (or `/quiz-results` once
+the quiz is completed — see brand-free routing below).
 
 ## Guarded pages
 

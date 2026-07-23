@@ -112,28 +112,41 @@ test('a wrong-role member is sent to its own default, never the other role page'
   // Symmetric protection for the Talent-only pages:
   assert.equal(api.redirectTargetFor(BRAND_PAID, '/starter-dashboard'), '/brand-dashboard')
   assert.equal(api.redirectTargetFor(BRAND_PAID, '/opportunities-freelancer-view'), '/brand-dashboard')
-  assert.equal(api.redirectTargetFor(BRAND_FREE, '/brand-dashboard'), '/quiz-results')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/brand-dashboard'), '/quiz')
+})
+
+test('free Brand redirect target is /quiz until the quiz is completed, then /quiz-results', () => {
+  const { api } = loadGuard()
+  const doneFreeBrand = {
+    id: 'm-free-done',
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    customFields: { 'starter-quiz': '{"status":"ready"}' },
+  }
+  assert.equal(api.hasCompletedQuiz(BRAND_FREE), false)
+  assert.equal(api.hasCompletedQuiz(doneFreeBrand), true)
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/brand-dashboard'), '/quiz')
+  assert.equal(api.redirectTargetFor(doneFreeBrand, '/brand-dashboard'), '/quiz-results')
 })
 
 test('Messages is allowed for Talent and paid Brand but not free Brand', () => {
   const { api } = loadGuard()
   assert.equal(api.redirectTargetFor(TALENT, '/messages'), '')
   assert.equal(api.redirectTargetFor(BRAND_PAID, '/messages'), '')
-  assert.equal(api.redirectTargetFor(BRAND_FREE, '/messages'), '/quiz-results')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/messages'), '/quiz')
 })
 
 test('opportunity detail pages are shared by Talent and paid Brand only', () => {
   const { api } = loadGuard()
   assert.equal(api.redirectTargetFor(TALENT, '/opportunities/product-designer'), '')
   assert.equal(api.redirectTargetFor(BRAND_PAID, '/opportunities/product-designer'), '')
-  assert.equal(api.redirectTargetFor(BRAND_FREE, '/opportunities/product-designer'), '/quiz-results')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/opportunities/product-designer'), '/quiz')
 })
 
 test('opportunity creation is paid-Brand only', () => {
   const { api } = loadGuard()
   assert.equal(api.redirectTargetFor(BRAND_PAID, '/opportunities---create'), '')
   assert.equal(api.redirectTargetFor(TALENT, '/opportunities---create'), '/starter-dashboard')
-  assert.equal(api.redirectTargetFor(BRAND_FREE, '/opportunities---create'), '/quiz-results')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/opportunities---create'), '/quiz')
 })
 
 test('build-profile onboarding pages are Talent only', () => {

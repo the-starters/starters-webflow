@@ -49,6 +49,13 @@ that they are authenticated-only rather than pre-signup funnel pages.
 | `/build-profile/full-profile` | Default `/quiz-results` | Default `/brand-dashboard` | Allow | Talent onboarding |
 | `/build-profile/consult` | Default `/quiz-results` | Default `/brand-dashboard` | Allow | Talent onboarding |
 
+> **Free Brand default (updated 2026-07-23):** the "Default `/quiz-results`" in
+> the Brand-free column is conditional — a Brand-free member goes to `/quiz`
+> until they complete the quiz, then `/quiz-results`. Completion is the Memberstack
+> `starter-quiz` custom field (the same signal the `/quiz-results` page reads).
+> `auth-route.js`, `route-guard.js`, and `opportunities-3.0.js` all apply this via
+> a shared `brandFreeHome(member)` / `hasCompletedQuiz(member)` helper.
+
 ## Enforcement layers
 
 The route allowlist is not the security boundary by itself. Each concern has a

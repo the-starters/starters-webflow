@@ -207,6 +207,21 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
   await runRoute({ pathname: '/opportunities/456' })
 })
 
+test('brandFreeHome routes to /quiz until the quiz is completed, then /quiz-results', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { Opp30 } = bridge.window
+  assert.equal(Opp30.hasCompletedQuiz(freeBrandMember), false)
+  assert.equal(Opp30.brandFreeHome(freeBrandMember), '/quiz')
+  const done = {
+    ...freeBrandMember,
+    customFields: { 'starter-quiz': '{"status":"ready"}' },
+  }
+  assert.equal(Opp30.hasCompletedQuiz(done), true)
+  assert.equal(Opp30.brandFreeHome(done), '/quiz-results')
+  // Empty custom field is not "completed".
+  assert.equal(Opp30.hasCompletedQuiz({ customFields: { 'starter-quiz': '' } }), false)
+})
+
 test('routeGuardActive reflects the html[data-route-guard] stamp', async () => {
   const off = await loadBridge(async () => response({}))
   assert.equal(off.window.Opp30.routeGuardActive(), false)
@@ -290,9 +305,19 @@ test('with the guard active, gateByPlan resolves talent/paid-brand and bails on 
   assert.equal(free.location.href, 'https://example.test/all-modals') // guard owns the redirect
 })
 
-test('without the guard, gateByPlan keeps the legacy free-brand redirect', async () => {
+test('without the guard, gateByPlan sends an un-completed free brand to /quiz', async () => {
   const bridge = await loadBridge(async () => response({}), {
     member: freeBrandMember,
+    routeGuard: false,
+  })
+
+  assert.equal(await bridge.window.Opp30.gateByPlan(), null)
+  assert.equal(bridge.location.href, '/quiz')
+})
+
+test('without the guard, gateByPlan sends a completed free brand to /quiz-results', async () => {
+  const bridge = await loadBridge(async () => response({}), {
+    member: { ...freeBrandMember, customFields: { 'starter-quiz': '{"status":"ready"}' } },
     routeGuard: false,
   })
 
