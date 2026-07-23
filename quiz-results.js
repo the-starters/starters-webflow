@@ -4720,9 +4720,19 @@
     async function redirectLoggedOutWithoutResults() {
         try {
             const memberstack = await waitForMemberstack()
-            if (!memberstack) return
-            const member = await getCurrentMemberData(memberstack)
-            if (!member || !member.id) {
+            if (!memberstack || typeof memberstack.getCurrentMember !== 'function') return
+
+            const response = await memberstack.getCurrentMember()
+            const hasMemberData =
+                response &&
+                typeof response === 'object' &&
+                Object.prototype.hasOwnProperty.call(response, 'data')
+            const member = hasMemberData ? response.data : undefined
+            const isLoggedOut =
+                hasMemberData &&
+                (member == null || (typeof member === 'object' && !Array.isArray(member) && !member.id))
+
+            if (isLoggedOut) {
                 logQuizFlow('logged-out visitor with no quiz data; redirecting to /quiz')
                 window.location.replace('/quiz')
             }
