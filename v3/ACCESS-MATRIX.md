@@ -64,6 +64,14 @@ separate owner:
 | Mutations and private records | Xano authorization using authenticated member and role | Must be enforced server-side |
 | Paid-then-cancelled behavior | Memberstack subscription lifecycle + application role resolution | Decision required |
 
+`Allow` on `/opportunities/<slug>` is the route guard's role-level decision, not
+brand ownership authorization. After a paid brand enters either that route or the
+legacy `/opportunities-details---brand-view?opp=<id>` route, `opportunities-3.0.js`
+uses the owner-scoped applicant-list probe. A `403` or `404` redirects the brand to
+`/opportunities-brands-view`. Other failures do not redirect: the slug route leaves
+owner-only UI hidden, while the legacy route surfaces the error as before. Xano
+enforces the underlying ownership boundary.
+
 ## Open decisions
 
 - Define the exact role/state for a paid Brand whose subscription is cancelled;

@@ -976,6 +976,24 @@
   }
 
   /**
+   * A brand opening an opportunity it does not own gets a 403/404 from the
+   * owner-scoped applicants probe (server-side check). Product decision
+   * 2026-07-23 (Kaeser): redirect such a brand to its opportunities feed rather
+   * than showing a view-only detail page. Only ownership-denied statuses trigger
+   * the redirect — transient/5xx/network errors are left to the caller so a real
+   * owner is never bounced on a blip. Returns true if it redirected.
+   * @param {any} err
+   * @returns {boolean}
+   */
+  function redirectForeignBrandToFeed(err) {
+    if (err && (err.status === 403 || err.status === 404)) {
+      location.href = '/opportunities-brands-view'
+      return true
+    }
+    return false
+  }
+
+  /**
    * Resolve the current member for a page. When the route guard is active,
    * require the matching plan-ID role but leave redirects to the guard. When
    * the guard is absent, the legacy custom-field check and redirects apply as a
@@ -1252,7 +1270,14 @@
     setActiveOpp(oppId)
     track('opportunity_viewed', { opportunity_id: oppId, viewer_role: 'brand' })
     const showArchived = false
-    const res = await API.brandAppList(oppId, showArchived)
+    let res
+    try {
+      res = await API.brandAppList(oppId, showArchived)
+    } catch (err) {
+      // Foreign brand -> redirect to its opportunities feed; other errors surface as before.
+      if (redirectForeignBrandToFeed(err)) return
+      throw err
+    }
     renderList('applicants', res.items, (card, a) => {
       card.setAttribute('data-app-id', a.id)
       bind(card, 'message', a.message)
@@ -2109,10 +2134,15 @@
       prefillEditOpportunity(oppId)
     } catch (err) {
       document.documentElement.setAttribute('data-opp-brand-owner', 'false')
+      // Foreign brand (403/404): redirect to its opportunities feed rather than
+      // leaving it on a view-only page (product decision 2026-07-23).
+      if (redirectForeignBrandToFeed(err)) return
+      // Transient/other error: keep the owner-only UI hidden (don't bounce a
+      // real owner on a network blip), same as before.
       $$('[data-opp-owner-only]').forEach((el) => {
         el.style.display = 'none'
       })
-      log('brand does not own this opportunity — owner-only UI hidden')
+      log('brand ownership probe failed — owner-only UI hidden')
       return
     }
     if ($('[wf-xano-element="wrapper"][wf-xano-source*="brand/applications/list"]')) return
@@ -3000,6 +3030,7 @@
     diagnoseFreelancerFeed,
     loginPathWithNext,
     routeGuardActive,
+    redirectForeignBrandToFeed,
     gateOrRedirect,
     gateByPlan,
     memberPlanRole,

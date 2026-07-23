@@ -91,6 +91,17 @@ Xano ID. Existing `/opportunities/<id>` URLs remain supported as the
 backwards-compatible fallback, including detail pages that have not yet added
 `data-opp-page-id`. V2 opportunity scripts and query-parameter URLs are unchanged.
 
+For a paid brand, opportunity detail remains owner-scoped after the role-level route
+guard succeeds. Both `/opportunities/<slug>` and the legacy
+`/opportunities-details---brand-view?opp=<id>` entry point probe the authenticated
+brand's applicant list. A `403` or `404` redirects a non-owner to
+`/opportunities-brands-view`; server, transient, and network failures do not redirect
+and therefore cannot bounce the actual owner during an outage. Xano remains the
+authorization boundary.
+
+For console checks, `window.Opp30.redirectForeignBrandToFeed(error)` applies that
+status policy and returns whether it redirected.
+
 ## V3 Staging Scheduling Authentication
 
 On `the-starters-3-0.webflow.io` only, `v3/scheduling-auth.js` authenticates plain
