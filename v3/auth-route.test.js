@@ -163,6 +163,37 @@ test('preserves only same-origin destinations allowed for the member role', () =
   )
 })
 
+test('preserves the V3 Talent routes defined by the access matrix', () => {
+  const { api } = loadRouter()
+  const talent = {
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+
+  for (const pathname of [
+    '/build-profile/select-profile',
+    '/build-profile/full-profile',
+    '/build-profile/consult',
+    '/opportunities-freelancer-view',
+  ]) {
+    assert.equal(api.destinationFor(talent, pathname), pathname)
+  }
+})
+
+test('allows Brand tiers into All Starters but keeps Messages paid-only', () => {
+  const { api } = loadRouter()
+  const paidBrand = {
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }
+  const freeBrand = {
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+  }
+
+  assert.equal(api.destinationFor(paidBrand, '/all-starters'), '/all-starters')
+  assert.equal(api.destinationFor(freeBrand, '/all-starters'), '/all-starters')
+  assert.equal(api.destinationFor(paidBrand, '/messages'), '/messages')
+  assert.equal(api.destinationFor(freeBrand, '/messages'), '/quiz-results')
+})
+
 test('allows opportunity details only for Talent and paid Brand', () => {
   const { api } = loadRouter()
   const talent = {
