@@ -15,6 +15,21 @@ The V3 opportunity and Messages guards send logged-out visitors to
 `/login?next=<encoded current path and query>` so the router can restore an
 allowed destination after login.
 
+## Protected-route guard
+
+`route-guard.js` enforces the access matrix when a member opens a guarded V3
+page directly. Logged-out visitors go to `/login` with the current path and
+query preserved in `next`; a member with the wrong role goes to that member's
+own default page. An authenticated member with no mapped active plan remains on
+the page with an explicit error state.
+
+Install the guard only on the protected pages listed in
+[ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md), which also documents its DOM
+states, events, diagnostics, exclusions, and release gate. It is a routing/UX
+layer and does not replace Memberstack visibility rules or Xano authorization.
+`/quiz-results` and `/all-starters` are intentionally unguarded pending product
+confirmation that they are not pre-signup funnel pages.
+
 ## Scheduling auth
 
 `scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and

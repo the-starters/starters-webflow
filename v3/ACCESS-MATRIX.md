@@ -19,12 +19,19 @@ application roles and identifies which layer must enforce each rule.
 | `pln_dorxata-test-free-plan-dvcg0k8o` | `talent` | Freelancer / Starter |
 
 Use stable plan IDs for access decisions. Display names are descriptive only.
-Unknown active plan IDs fail closed as unmapped configuration.
+Unknown active plan IDs fail closed as unmapped configuration only when a
+member has no active mapped plan. A member with at least one known active plan
+is authorized under the highest known role even when other active plan IDs are
+unmapped. This matches `auth-route.js`, keeping login routing and page guarding
+consistent.
 
 ## Route-level access
 
 `auth-route.js` uses this table only when restoring a same-origin `next`
-destination after login. A disallowed destination falls back to the role default.
+destination after login. A disallowed destination falls back to the role
+default. `route-guard.js` enforces direct access for every route below except
+`/quiz-results` and `/all-starters`, which remain unguarded pending confirmation
+that they are authenticated-only rather than pre-signup funnel pages.
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
@@ -50,6 +57,7 @@ separate owner:
 | Concern | Enforcement owner | Status |
 | --- | --- | --- |
 | Post-login destination and cross-role redirects | `v3/auth-route.js` | Implemented for the routes above |
+| Direct protected-page access (deep links, typed URLs) | `v3/route-guard.js` | Implemented; install per [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md); staging matrix pending |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
 | Free Brand blurred/limited All Starters results | Page/list rendering and data response | Not enforced by the router |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |
@@ -60,8 +68,9 @@ separate owner:
 
 - Define the exact role/state for a paid Brand whose subscription is cancelled;
   do not infer it from a display name.
-- Confirm whether the sheet's logged-out redirects to `/` should become
-  `/login?next=...` on every protected page or remain page-specific.
+- Confirm whether `/quiz-results` and `/all-starters` are authenticated-only.
+  Until then, the route guard leaves both unlisted and does not force logged-out
+  visitors to `/login`.
 - Verify Webflow Memberstack gated groups and Xano authorization independently;
   a `Backlog` row in the product sheet is desired behavior, not proof that it is
   live.
