@@ -144,6 +144,29 @@ const freeBrandMember = {
   planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
 }
 
+test('redirectForeignBrandToFeed redirects only on ownership-denied statuses', async () => {
+  const denied404 = await loadBridge(async () => response({}))
+  assert.equal(denied404.window.Opp30.redirectForeignBrandToFeed({ status: 404 }), true)
+  assert.equal(denied404.location.href, '/opportunities-brands-view')
+
+  const denied403 = await loadBridge(async () => response({}))
+  assert.equal(denied403.window.Opp30.redirectForeignBrandToFeed({ status: 403 }), true)
+  assert.equal(denied403.location.href, '/opportunities-brands-view')
+
+  // Transient / server / network errors must NOT bounce the (possibly real) owner.
+  const server = await loadBridge(async () => response({}))
+  assert.equal(server.window.Opp30.redirectForeignBrandToFeed({ status: 500 }), false)
+  assert.equal(server.location.href, 'https://example.test/all-modals')
+
+  const network = await loadBridge(async () => response({}))
+  assert.equal(network.window.Opp30.redirectForeignBrandToFeed(new Error('fetch failed')), false)
+  assert.equal(network.location.href, 'https://example.test/all-modals')
+
+  const nullish = await loadBridge(async () => response({}))
+  assert.equal(nullish.window.Opp30.redirectForeignBrandToFeed(null), false)
+  assert.equal(nullish.location.href, 'https://example.test/all-modals')
+})
+
 test('routeGuardActive reflects the html[data-route-guard] stamp', async () => {
   const off = await loadBridge(async () => response({}))
   assert.equal(off.window.Opp30.routeGuardActive(), false)
