@@ -4710,6 +4710,28 @@
     }
 
     /**
+     * When the results page has no quiz data to show, a logged-out visitor has
+     * nothing here — send them to the quiz to generate results (product decision
+     * 2026-07-24). Only redirects when Memberstack positively reports no member;
+     * if Memberstack is unavailable we stay put rather than bounce. A pre-signup
+     * funnel visitor is never affected because they arrive with a pending quiz in
+     * sessionStorage (so initResultsPage never reaches the no-data branch).
+     */
+    async function redirectLoggedOutWithoutResults() {
+        try {
+            const memberstack = await waitForMemberstack()
+            if (!memberstack) return
+            const member = await getCurrentMemberData(memberstack)
+            if (!member || !member.id) {
+                logQuizFlow('logged-out visitor with no quiz data; redirecting to /quiz')
+                window.location.replace('/quiz')
+            }
+        } catch (error) {
+            logQuizFlow('logged-out redirect check failed; staying on page', { error })
+        }
+    }
+
+    /**
      * Loads a saved quiz payload from Memberstack.
      *
      * @returns {Promise<object | null>} Saved quiz payload, or null.
@@ -4989,6 +5011,7 @@
 
         if (!pendingQuiz) {
             logQuizFlow('no pending quiz found; results page has nothing to save')
+            await redirectLoggedOutWithoutResults()
             return
         }
 
