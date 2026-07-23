@@ -156,6 +156,13 @@ Load `opportunities-3.0.js` on `/opportunities-freelancer-view` and
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0.js"></script>
 ```
 
+On V3, load `v3/route-guard.js` sitewide before this script. When the guard's
+`html[data-route-guard]` stamp is present, Opportunities 3.0 uses stable plan
+IDs to scope role-specific work but leaves all access redirects to the guard.
+Until the guard is installed, its legacy Memberstack custom-field redirects
+remain as a backward-compatible fallback. See
+[`v3/ROUTE-GUARD-WIRING.md`](v3/ROUTE-GUARD-WIRING.md) for installation details.
+
 The starter feed's All tab reads the authenticated
 `starter/profile/match-context` response and applies its positive `category_refs`
 values to Algolia. Results stay hidden while filter changes are in flight, and

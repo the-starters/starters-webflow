@@ -98,6 +98,9 @@ IDs and otherwise bails without redirecting.
 
 - `window.StartersV3RouteGuard` exposes `activePlanIds`, `memberRole`,
   `pageRolesFor`, `isGuardedPath`, and `redirectTargetFor` for console checks.
+- `window.Opp30` exposes `routeGuardActive`, `gateOrRedirect`, `gateByPlan`, and
+  `memberPlanRole` for verifying the opportunity controller's handoff and
+  legacy fallback.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
   (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
 - A resolved allow dispatches `starters:v3-route-guard-allowed`.
