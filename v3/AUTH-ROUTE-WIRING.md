@@ -47,11 +47,11 @@ V3 logged-out guards construct the login URL from the current path and query:
 
 ```js
 const next = window.location.pathname + window.location.search
-window.location.replace('/login?next=' + encodeURIComponent(next))
+const loginPath = '/login?next=' + encodeURIComponent(next)
 ```
 
 The shared opportunity controller, opportunity-create page, and Messages
-controller use this contract. V2 guards keep their existing login and
+controller navigate to that URL. V2 guards keep their existing login and
 onboarding behavior.
 
 ## Error and diagnostic contract

@@ -2,8 +2,9 @@
  * Messages 3.0 — TalkJS inbox bootstrap.
  *
  * Self-contained page controller for /messages. It waits for Memberstack,
- * redirects logged-out visitors, loads TalkJS, syncs the current member's
- * public profile, and mounts the 3.0-themed inbox into #talkjs-container.
+ * redirects logged-out visitors through the V3 login router while preserving
+ * the current path and query, loads TalkJS, syncs the current member's public
+ * profile, and mounts the 3.0-themed inbox into #talkjs-container.
  */
 ;(function () {
   'use strict'
@@ -51,6 +52,10 @@
     })
   }
 
+  /**
+   * Build the V3 login URL with the current path and query as `next`.
+   * @returns {string}
+   */
   function loginPathWithNext() {
     const next = window.location.pathname + window.location.search
     return LOGIN_PATH + '?next=' + encodeURIComponent(next)
