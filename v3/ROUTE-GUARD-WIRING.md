@@ -71,6 +71,7 @@ plus their symmetric role pages, then extend:
 - `/starter-dashboard`, `/starter-edit-profile`, `/opportunities-freelancer-view`
 - `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`
 - `/messages`
+- `/opportunities/<slug>` collection-template pages
 
 This is the full set the guard's page table covers. `/quiz-results` and
 `/all-starters` are deliberately outside that table (see the note above the

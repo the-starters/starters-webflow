@@ -87,6 +87,7 @@
       })
   }
 
+  // Mixed mapped/unmapped plans use the highest mapped role, matching auth-route.js.
   function memberRole(member) {
     var roles = activePlanIds(member)
       .map(function (planId) {

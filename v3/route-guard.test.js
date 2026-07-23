@@ -160,6 +160,16 @@ test('paid Brand precedence when a member holds several mapped active plans', ()
   assert.equal(api.redirectTargetFor(multi, '/starter-dashboard'), '/brand-dashboard')
 })
 
+test('a mapped plan still determines the role when another active plan is unmapped', () => {
+  const { api } = loadGuard()
+  const mixed = {
+    id: 'm-mixed',
+    planConnections: [plan('pln_unknown'), plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+  assert.equal(api.memberRole(mixed), 'talent')
+  assert.equal(api.redirectTargetFor(mixed, '/starter-dashboard'), '')
+})
+
 test('an unmapped plan yields null on a guarded page and empty on an unguarded one', () => {
   const { api } = loadGuard()
   assert.equal(api.redirectTargetFor(UNMAPPED, '/brand-dashboard'), null)

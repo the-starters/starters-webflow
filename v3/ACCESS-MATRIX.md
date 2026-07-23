@@ -19,7 +19,11 @@ application roles and identifies which layer must enforce each rule.
 | `pln_dorxata-test-free-plan-dvcg0k8o` | `talent` | Freelancer / Starter |
 
 Use stable plan IDs for access decisions. Display names are descriptive only.
-Unknown active plan IDs fail closed as unmapped configuration.
+Unknown active plan IDs fail closed as unmapped configuration only when a
+member has no active mapped plan. A member with at least one known active plan
+is authorized under the highest known role even when other active plan IDs are
+unmapped. This matches `auth-route.js`, keeping login routing and page guarding
+consistent.
 
 ## Route-level access
 
