@@ -111,19 +111,39 @@
     return ROLE_DEFAULTS[role]
   }
 
+  function readStoredDestination() {
+    try {
+      return window.sessionStorage.getItem(NEXT_STORAGE_KEY)
+    } catch (error) {
+      return null
+    }
+  }
+
+  function storeRequestedDestination(destination) {
+    try {
+      window.sessionStorage.setItem(NEXT_STORAGE_KEY, destination)
+    } catch (error) {}
+  }
+
+  function clearRequestedDestination() {
+    try {
+      window.sessionStorage.removeItem(NEXT_STORAGE_KEY)
+    } catch (error) {}
+  }
+
   function requestedDestination() {
     var queryValue = new URLSearchParams(window.location.search).get('next')
     var queryDestination = localPath(queryValue)
     if (queryDestination) {
-      window.sessionStorage.setItem(NEXT_STORAGE_KEY, queryDestination)
+      storeRequestedDestination(queryDestination)
       return queryDestination
     }
-    return localPath(window.sessionStorage.getItem(NEXT_STORAGE_KEY))
+    return localPath(readStoredDestination())
   }
 
   function consumeRequestedDestination() {
     var destination = requestedDestination()
-    window.sessionStorage.removeItem(NEXT_STORAGE_KEY)
+    clearRequestedDestination()
     return destination
   }
 

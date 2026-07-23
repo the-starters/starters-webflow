@@ -26,6 +26,22 @@ function loadRouter(options = {}) {
       location.replaced = value
     },
   }
+  const sessionStorage = {
+    getItem(key) {
+      if (options.storageFailure === 'get') throw new DOMException('', 'SecurityError')
+      return storage.get(key) || null
+    },
+    removeItem(key) {
+      if (options.storageFailure === 'remove') {
+        throw new DOMException('', 'SecurityError')
+      }
+      storage.delete(key)
+    },
+    setItem(key, value) {
+      if (options.storageFailure === 'set') throw new DOMException('', 'SecurityError')
+      storage.set(key, value)
+    },
+  }
   const window = {
     CustomEvent: class CustomEvent {
       constructor(name, init) {
@@ -37,17 +53,7 @@ function loadRouter(options = {}) {
     URLSearchParams,
     dispatchEvent() {},
     location,
-    sessionStorage: {
-      getItem(key) {
-        return storage.get(key) || null
-      },
-      removeItem(key) {
-        storage.delete(key)
-      },
-      setItem(key, value) {
-        storage.set(key, value)
-      },
-    },
+    sessionStorage,
     setInterval,
     clearInterval,
   }
@@ -173,6 +179,26 @@ test('V3 login form overrides shared Memberstack redirects with auth route', () 
   assert.equal(storage.get('thestarters:v3-auth-next'), '/messages')
 })
 
+test('login form redirect is configured when session storage writes fail', () => {
+  const { attributes, storage } = loadRouter({
+    pathname: '/login',
+    search: '?next=%2Fmessages',
+    storageFailure: 'set',
+  })
+
+  assert.equal(attributes['data-ms-redirect'], '/auth-route')
+  assert.equal(storage.has('thestarters:v3-auth-next'), false)
+})
+
+test('login form redirect is configured when session storage reads fail', () => {
+  const { attributes } = loadRouter({
+    pathname: '/login',
+    storageFailure: 'get',
+  })
+
+  assert.equal(attributes['data-ms-redirect'], '/auth-route')
+})
+
 test('does not change login forms on an unapproved hostname', () => {
   const { attributes } = loadRouter({
     hostname: 'attacker.example',
@@ -185,6 +211,20 @@ test('does not change login forms on an unapproved hostname', () => {
 test('auth route sends a paid Brand to the confirmed V3 Brand dashboard', async () => {
   const { location } = loadRouter({
     pathname: '/auth-route',
+    member: {
+      id: 'member-brand',
+      planConnections: [plan('pln_dorxata-test-brand-plan-777r02pa')],
+    },
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(location.replaced, '/brand-dashboard')
+})
+
+test('auth route uses role default when session storage removal fails', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    storageFailure: 'remove',
     member: {
       id: 'member-brand',
       planConnections: [plan('pln_dorxata-test-brand-plan-777r02pa')],
