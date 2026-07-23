@@ -155,7 +155,8 @@
     }
     const { data: member } = await ms.getCurrentMember()
     if (!member || !member.id) {
-      location.href = '/login'
+      const next = location.pathname + location.search
+      location.href = '/login?next=' + encodeURIComponent(next)
       return false
     }
     return true

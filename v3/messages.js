@@ -51,6 +51,11 @@
     })
   }
 
+  function loginPathWithNext() {
+    const next = window.location.pathname + window.location.search
+    return LOGIN_PATH + '?next=' + encodeURIComponent(next)
+  }
+
   function installTalkJsLoader() {
     if (window.Talk && window.Talk.ready) return
 
@@ -148,7 +153,7 @@
     const response = await memberstack.getCurrentMember()
     const member = response && response.data
     if (!member || !member.id) {
-      window.location.replace(LOGIN_PATH)
+      window.location.replace(loginPathWithNext())
       return
     }
 

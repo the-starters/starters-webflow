@@ -946,13 +946,18 @@
     memberstack.onAuthChange((member) => resetMemberScopedCaches(member?.id || null))
   }
 
+  function loginPathWithNext() {
+    const next = location.pathname + location.search
+    return '/login?next=' + encodeURIComponent(next)
+  }
+
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      location.href = '/login'
+      location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
@@ -984,7 +989,7 @@
   }
 
   /** Plan-based gate for pages shared by talent AND paying brands
-   *  (/opportunities/<slug>). Redirects: logged-out -> /login, free brand ->
+   *  (/opportunities/<slug>). Redirects: logged-out -> /login?next=..., free brand ->
    *  BRAND_FREE_REDIRECT, unmapped plans -> /. Resolves {member, role} otherwise. */
   async function gateByPlan() {
     const memberstack = await waitForMemberstackDom()
@@ -992,7 +997,7 @@
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      location.href = '/login'
+      location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
@@ -2947,6 +2952,7 @@
     API,
     ensureXanoToken,
     diagnoseFreelancerFeed,
+    loginPathWithNext,
     paintOpportunityDetail,
     opportunityPath,
     pageOppId,

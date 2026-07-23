@@ -8,6 +8,10 @@ the shared Memberstack plan redirects used by V2. Install it only on the V3
 both custom domains; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
 plan mappings, allowed destinations, error contract, and release gate.
 
+The V3 opportunity and Messages guards send logged-out visitors to
+`/login?next=<encoded current path and query>` so the router can restore an
+allowed destination after login.
+
 ## Scheduling auth
 
 `scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and
