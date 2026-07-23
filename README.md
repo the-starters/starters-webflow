@@ -37,7 +37,7 @@ Do not discard local changes unless the user explicitly asks.
 
 ## Current Scripts
 
-- `quiz-results.js`
+- `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`
 - `quiz-results.min.js`
 - `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds
 - `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations
