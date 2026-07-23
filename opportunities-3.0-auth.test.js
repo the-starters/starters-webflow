@@ -105,6 +105,15 @@ async function loadBridge(fetch, { hostname = 'example.test' } = {}) {
   return { API: window.Opp30.API, authChange, fetch: window.fetch, trackCalls, window }
 }
 
+test('builds a login URL that preserves the current V3 path and query', async () => {
+  const bridge = await loadBridge(async () => response({}))
+
+  assert.equal(
+    bridge.window.Opp30.loginPathWithNext(),
+    '/login?next=%2Fall-modals',
+  )
+})
+
 test('scheduling auth is limited to the exact Xano origin and path prefix', async () => {
   const requests = []
   const bridge = await loadBridge(

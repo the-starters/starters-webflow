@@ -1,5 +1,17 @@
 # V3 browser scripts
 
+## Login router
+
+`auth-route.js` owns post-login and post-signup routing for V3 without changing
+the shared Memberstack plan redirects used by V2. Install it only on the V3
+`/login` and `/auth-route` pages. It runs on the V3 Webflow staging hostname and
+both custom domains; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
+plan mappings, allowed destinations, error contract, and release gate.
+
+The V3 opportunity and Messages guards send logged-out visitors to
+`/login?next=<encoded current path and query>` so the router can restore an
+allowed destination after login.
+
 ## Scheduling auth
 
 `scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and

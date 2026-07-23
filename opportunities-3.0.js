@@ -946,13 +946,29 @@
     memberstack.onAuthChange((member) => resetMemberScopedCaches(member?.id || null))
   }
 
+  /**
+   * Build the V3 login URL while preserving the current path and query for the
+   * role-scoped post-login router.
+   * @returns {string}
+   */
+  function loginPathWithNext() {
+    const next = location.pathname + location.search
+    return '/login?next=' + encodeURIComponent(next)
+  }
+
+  /**
+   * Require the expected legacy custom-field role. Logged-out visitors retain
+   * their current path and query through the V3 login router.
+   * @param {'brand'|'freelancer'} expect
+   * @returns {Promise<object|null>}
+   */
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      location.href = '/login'
+      location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
@@ -984,7 +1000,7 @@
   }
 
   /** Plan-based gate for pages shared by talent AND paying brands
-   *  (/opportunities/<slug>). Redirects: logged-out -> /login, free brand ->
+   *  (/opportunities/<slug>). Redirects: logged-out -> /login?next=..., free brand ->
    *  BRAND_FREE_REDIRECT, unmapped plans -> /. Resolves {member, role} otherwise. */
   async function gateByPlan() {
     const memberstack = await waitForMemberstackDom()
@@ -992,7 +1008,7 @@
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      location.href = '/login'
+      location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
@@ -2947,6 +2963,7 @@
     API,
     ensureXanoToken,
     diagnoseFreelancerFeed,
+    loginPathWithNext,
     paintOpportunityDetail,
     opportunityPath,
     pageOppId,

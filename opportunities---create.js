@@ -144,7 +144,9 @@
   }
 
   /**
-   * Lightweight auth presence check. Brand-type identity is enforced server-side.
+   * Lightweight auth presence check. Logged-out visitors retain the current path
+   * and query through the V3 login router. Brand-type identity is enforced
+   * server-side.
    * @returns {Promise<boolean>}
    */
   const ensureMember = async () => {
@@ -155,7 +157,8 @@
     }
     const { data: member } = await ms.getCurrentMember()
     if (!member || !member.id) {
-      location.href = '/login'
+      const next = location.pathname + location.search
+      location.href = '/login?next=' + encodeURIComponent(next)
       return false
     }
     return true
