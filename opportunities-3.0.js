@@ -976,11 +976,10 @@
   }
 
   /**
-   * Resolve the current member for a page. When the route guard is active it has
-   * already enforced role access, so this only fetches the member (for data
-   * scoping) and returns it; a logged-out visitor returns null and the guard
-   * performs the redirect. When the guard is absent, the legacy custom-field
-   * check and redirects apply as a fallback.
+   * Resolve the current member for a page. When the route guard is active,
+   * require the matching plan-ID role but leave redirects to the guard. When
+   * the guard is absent, the legacy custom-field check and redirects apply as a
+   * fallback.
    * @param {'brand'|'freelancer'} expect
    * @returns {Promise<object|null>}
    */
@@ -994,8 +993,11 @@
       return null
     }
     resetMemberScopedCaches(member.id)
-    // Route guard owns cross-role access; skip the legacy custom-field check.
-    if (routeGuardActive()) return member
+    if (routeGuardActive()) {
+      const role = memberPlanRole(member)
+      const expectedRole = expect === 'brand' ? 'brand-paid' : 'talent'
+      return role === expectedRole ? member : null
+    }
     const cf = member.customFields || {}
     if (expect === 'freelancer' && !cf['freelancer-dashboard-url']) {
       location.href = cf['brands-dashboard-url'] ? '/opportunities-brands-view' : '/'

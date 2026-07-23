@@ -54,42 +54,28 @@ authenticated-only in V3 beta.
 
 ## Webflow install
 
-1. Load `v3/route-guard.js` once, in Head Code, on each page in the
-   **recommended install scope** below (not blanket sitewide — see that section).
-   If a page also runs a controller with its own guard, load route-guard first so
-   its redirect wins the race; the recommended scope avoids that overlap anyway.
+1. Load `v3/route-guard.js` once sitewide in Site Settings Head Code, before
+   `opportunities-3.0.js`. This includes opportunity pages: opp30 detects the
+   guard through `html[data-route-guard]` and defers its access decisions to it.
 2. Do not install it on V2.
 3. Give guarded pages an error block keyed by `html[data-route-guard-error]`
    (same visible pattern as `/auth-route`). Optionally pre-hide protected
    content until `html[data-route-guard="allowed"]` to avoid a cross-role flash.
 
-### Recommended install scope — avoid double-guarding
+### Recommended install scope
 
-The guard's page table lists every page the matrix protects, but several of those
-pages **already redirect** via `opportunities-3.0.js` / `messages.js`. Installing
-the guard there too would double-direct (two scripts firing redirects with
-different logic). Install the guard **only where nothing else guards the page**:
+Install the guard sitewide so it boots before page controllers and is present on
+every route in its page table:
 
-Install here (no existing guard — these are the real gaps, incl. the reproduced
-`/brand-dashboard` failure):
-
-- `/brand-dashboard` — reproduced P1 hole; nothing guards it today
-- `/starter-edit-profile`
+- `/brand-dashboard`, `/opportunities-brands-view`, `/opportunities---create`
+- `/starter-dashboard`, `/starter-edit-profile`, `/opportunities-freelancer-view`
 - `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`
-  (confirm no dedicated build-profile guard first)
-- `/messages` — optional; `messages.js` already redirects logged-out, so add the
-  guard here only to enforce the Free-Brand block `messages.js` does not do
+- `/messages`
+- `/opportunities/<slug>` collection-template pages
 
-Do **not** install here — `opportunities-3.0.js` already redirects by role:
-
-- `/opportunities-brands-view`, `/opportunities-freelancer-view`,
-  `/opportunities/<slug>`, `/opportunities---create` (opp30 gates each)
-- `/starter-dashboard` (opp30 `gateOrRedirect('freelancer')`)
-
-Note: opp30's guards on those pages use legacy dashboard custom-fields (the
-anti-pattern the P1 audit flagged). The clean end-state is this guard as the
-single plan-ID front-guard with opp30 dropping its own redirects — a separate
-refactor, not required to close the P0 direct-access hole.
+With the guard sitewide, opp30 does not double-guard opportunity pages: it uses
+the guard's presence to defer access redirects and validates the same plan-ID
+role only before starting role-specific rendering or requests.
 
 `/quiz-results` and `/all-starters` are deliberately outside the guard's page
 table (see the note above the guarded-pages table); revisit only after confirming
@@ -104,9 +90,9 @@ The guard is a routing/UX boundary only. It does not replace:
   server-side against the authenticated member and role.
 - **List/render gating** — e.g. Free Brand blurred results on `/all-starters`.
 
-`opportunities-3.0.js` keeps its own per-flow checks; the guard runs first and
-denies cross-role access before that controller matters. Both derive roles from
-the same stable plan IDs, so they agree.
+`opportunities-3.0.js` defers access redirects to the sitewide guard. Before
+starting role-specific work, it verifies the member against the same stable plan
+IDs and otherwise bails without redirecting.
 
 ## Diagnostics
 

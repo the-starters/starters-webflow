@@ -152,15 +152,26 @@ test('routeGuardActive reflects the html[data-route-guard] stamp', async () => {
   assert.equal(on.window.Opp30.routeGuardActive(), true)
 })
 
-test('with the guard active, gateOrRedirect returns the member without a custom-field check or redirect', async () => {
+test('with the guard active, gateOrRedirect returns a matching member without a custom-field check or redirect', async () => {
   // Member has NO legacy dashboard custom-fields — legacy path would redirect.
+  const bridge = await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    routeGuard: true,
+  })
+
+  const result = await bridge.window.Opp30.gateOrRedirect('brand')
+  assert.equal(result, paidBrandMember)
+  assert.equal(bridge.location.href, 'https://example.test/all-modals') // unchanged
+})
+
+test('with the guard active, gateOrRedirect blocks a wrong-role member without redirecting', async () => {
   const bridge = await loadBridge(async () => response({}), {
     member: talentMember,
     routeGuard: true,
   })
 
   const result = await bridge.window.Opp30.gateOrRedirect('brand')
-  assert.equal(result, talentMember)
+  assert.equal(result, null)
   assert.equal(bridge.location.href, 'https://example.test/all-modals') // unchanged
 })
 
