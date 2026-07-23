@@ -50,6 +50,7 @@ separate owner:
 | Concern | Enforcement owner | Status |
 | --- | --- | --- |
 | Post-login destination and cross-role redirects | `v3/auth-route.js` | Implemented for the routes above |
+| Direct protected-page access (deep links, typed URLs) | `v3/route-guard.js` | Implemented; install per [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md); staging matrix pending |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
 | Free Brand blurred/limited All Starters results | Page/list rendering and data response | Not enforced by the router |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |
