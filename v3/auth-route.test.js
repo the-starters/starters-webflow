@@ -1,0 +1,209 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const test = require('node:test')
+const vm = require('node:vm')
+
+const source = fs.readFileSync(require.resolve('./auth-route.js'), 'utf8')
+
+function plan(planId) {
+  return { active: true, planId }
+}
+
+function loadRouter(options = {}) {
+  const attributes = {}
+  const form = {
+    setAttribute(name, value) {
+      attributes[name] = value
+    },
+  }
+  const storage = new Map()
+  const location = {
+    hostname: options.hostname || 'the-starters-3-0.webflow.io',
+    origin: `https://${options.hostname || 'the-starters-3-0.webflow.io'}`,
+    pathname: options.pathname || '/test',
+    search: options.search || '',
+    replace(value) {
+      location.replaced = value
+    },
+  }
+  const window = {
+    CustomEvent: class CustomEvent {
+      constructor(name, init) {
+        this.name = name
+        this.detail = init.detail
+      }
+    },
+    URL,
+    URLSearchParams,
+    dispatchEvent() {},
+    location,
+    sessionStorage: {
+      getItem(key) {
+        return storage.get(key) || null
+      },
+      removeItem(key) {
+        storage.delete(key)
+      },
+      setItem(key, value) {
+        storage.set(key, value)
+      },
+    },
+    setInterval,
+    clearInterval,
+  }
+  if (options.member) {
+    window.$memberstackDom = {
+      getCurrentMember: async () => ({ data: options.member }),
+    }
+  }
+  const document = {
+    documentElement: {
+      setAttribute(name, value) {
+        attributes[name] = value
+      },
+    },
+    querySelectorAll() {
+      return [form]
+    },
+  }
+
+  vm.runInNewContext(source, {
+    console: { error() {} },
+    CustomEvent: window.CustomEvent,
+    URL,
+    URLSearchParams,
+    document,
+    window,
+  })
+
+  return { api: window.StartersV3AuthRouter, attributes, location, storage, window }
+}
+
+test('maps stable active plan IDs to application roles', () => {
+  const { api } = loadRouter()
+
+  assert.equal(
+    api.memberRole({
+      planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+    }),
+    'talent',
+  )
+  assert.equal(
+    api.memberRole({
+      planConnections: [plan('pln_dorxata-test-brand-plan-777r02pa')],
+    }),
+    'brand-paid',
+  )
+})
+
+test('paid Brand wins when a member has more than one mapped active plan', () => {
+  const { api } = loadRouter()
+  const member = {
+    planConnections: [
+      plan('pln_dorxata-test-free-plan-dvcg0k8o'),
+      plan('pln_new-paid-plan-463h04ph'),
+    ],
+  }
+
+  assert.equal(api.memberRole(member), 'brand-paid')
+  assert.equal(api.destinationFor(member), '/brand-dashboard')
+})
+
+test('uses role defaults for Talent, paid Brand, and free Brand', () => {
+  const { api } = loadRouter()
+
+  assert.equal(
+    api.destinationFor({
+      planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+    }),
+    '/starter-dashboard',
+  )
+  assert.equal(
+    api.destinationFor({
+      planConnections: [plan('pln_new-paid-plan-463h04ph')],
+    }),
+    '/brand-dashboard',
+  )
+  assert.equal(
+    api.destinationFor({ planConnections: [plan('pln_free-plan-f6kn0dxz')] }),
+    '/quiz-results',
+  )
+})
+
+test('preserves only same-origin destinations allowed for the member role', () => {
+  const { api } = loadRouter()
+  const talent = {
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+
+  assert.equal(
+    api.destinationFor(talent, '/starter-edit-profile?from=beta'),
+    '/starter-edit-profile?from=beta',
+  )
+  assert.equal(
+    api.destinationFor(talent, '/brand-dashboard'),
+    '/starter-dashboard',
+  )
+  assert.equal(
+    api.destinationFor(talent, 'https://evil.example/steal'),
+    '/starter-dashboard',
+  )
+  assert.equal(
+    api.destinationFor(talent, '//evil.example/steal'),
+    '/starter-dashboard',
+  )
+})
+
+test('returns no destination for an unmapped plan', () => {
+  const { api } = loadRouter()
+
+  assert.equal(
+    api.destinationFor({ planConnections: [plan('pln_unknown')] }),
+    null,
+  )
+})
+
+test('V3 login form overrides shared Memberstack redirects with auth route', () => {
+  const { attributes, storage } = loadRouter({
+    pathname: '/login',
+    search: '?next=%2Fmessages',
+  })
+
+  assert.equal(attributes['data-ms-redirect'], '/auth-route')
+  assert.equal(storage.get('thestarters:v3-auth-next'), '/messages')
+})
+
+test('does not change login forms on an unapproved hostname', () => {
+  const { attributes } = loadRouter({
+    hostname: 'attacker.example',
+    pathname: '/login',
+  })
+
+  assert.equal(attributes['data-ms-redirect'], undefined)
+})
+
+test('auth route sends a paid Brand to the confirmed V3 Brand dashboard', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-brand',
+      planConnections: [plan('pln_dorxata-test-brand-plan-777r02pa')],
+    },
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(location.replaced, '/brand-dashboard')
+})
+
+test('auth route surfaces unmapped plans instead of silently routing home', async () => {
+  const { attributes } = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-unknown',
+      planConnections: [plan('pln_unknown')],
+    },
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(attributes['data-auth-route-error'], 'unmapped-plan')
+})
