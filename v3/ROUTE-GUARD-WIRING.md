@@ -53,12 +53,13 @@ The guard's Brand paid allowance is role-level only. On both
 redirects a foreign brand to `/opportunities-brands-view`; transient, server, and
 network errors do not redirect. Xano remains responsible for ownership enforcement.
 
-**Intentionally not guarded (decision 2026-07-23):** `/quiz`, `/quiz-results`,
-and `/all-starters`. `/quiz` is the funnel entry. The other ACCESS-MATRIX rows
-describe logged-in redirect defaults, not that logged-out access must be
-blocked, and either may be a pre-signup funnel page. They are excluded from the
-guard's page table so a site-wide install cannot force an unexpected login. Add
-the latter two only after confirming both are authenticated-only in V3 beta.
+**Intentionally not guarded:** `/quiz`, `/quiz-results`, and `/all-starters`.
+`/quiz` is the funnel entry. `/quiz-results` has page-specific handling instead:
+when no test, pending, or saved quiz data exists, `quiz-results.js` redirects to
+`/quiz` only after Memberstack positively reports that the visitor is logged
+out. It stays put if Memberstack is unavailable or errors, and pending
+pre-signup quizzes and test-mode previews never reach this branch. `/all-starters`
+remains excluded until its authenticated-only status is confirmed.
 
 ## Webflow install
 
@@ -86,8 +87,10 @@ the guard's presence to defer access redirects and validates the same plan-ID
 role only before starting role-specific rendering or requests.
 
 `/quiz`, `/quiz-results`, and `/all-starters` are deliberately outside the
-guard's page table (see the note above the guarded-pages table); revisit the
-latter two only after confirming they are authenticated-only.
+guard's page table (see the note above the guarded-pages table). Revisit
+`/all-starters` after confirming whether it is authenticated-only;
+`/quiz-results` keeps its page-controller redirect separate from the sitewide
+guard.
 
 ## Relationship to other layers
 

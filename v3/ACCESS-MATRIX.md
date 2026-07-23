@@ -3,7 +3,7 @@
 Status: Planned behavior, implementation tracked per enforcement layer
 
 Product source: Google Sheet `Site Gating` and `Redirects based on user level`
-tabs, reviewed 2026-07-23.
+tabs, reviewed 2026-07-24.
 
 This file is the versioned implementation map for V3. The product sheet describes
 the intended experience; this document translates its account labels into stable
@@ -30,9 +30,10 @@ consistent.
 `auth-route.js` uses this table only when restoring a same-origin `next`
 destination after login. A disallowed destination falls back to the role
 default. `route-guard.js` enforces direct access for every route below except
-`/quiz`, `/quiz-results`, and `/all-starters`, which remain unguarded because
-the quiz entry is a funnel page and the other two await confirmation that they
-are authenticated-only rather than pre-signup funnel pages.
+`/quiz`, `/quiz-results`, and `/all-starters`, which remain outside the sitewide
+guard. The quiz entry is a funnel page; the results-page controller handles its
+logged-out, no-results case without disrupting pre-signup quiz data; and
+`/all-starters` still awaits confirmation that it is authenticated-only.
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
@@ -50,6 +51,14 @@ are authenticated-only rather than pre-signup funnel pages.
 | `/build-profile/select-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
 | `/build-profile/full-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
 | `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
+
+> **Logged-out Quiz Results (updated 2026-07-24):** `/quiz-results` remains
+> outside `route-guard.js`, but `quiz-results.js` redirects a logged-out visitor
+> to `/quiz` when there is no test payload, pending quiz in `sessionStorage`, or
+> saved Memberstack quiz to display. It redirects only after Memberstack
+> positively reports no current member; if Memberstack is unavailable or errors,
+> the visitor stays on the page. Pre-signup visitors with a pending quiz and
+> test-mode previews are unaffected.
 
 > **Free Brand default (updated 2026-07-23):** "Default quiz home" in the
 > Brand-free column is conditional — a Brand-free member goes to `/quiz`
@@ -86,10 +95,10 @@ enforces the underlying ownership boundary.
 
 - Define the exact role/state for a paid Brand whose subscription is cancelled;
   do not infer it from a display name.
-- Confirm whether `/quiz-results` and `/all-starters` are authenticated-only.
-  Until then, the route guard leaves both unlisted and does not force logged-out
-  visitors to `/login`. `/quiz` also remains unlisted because it is the quiz
-  funnel entry.
+- Confirm whether `/all-starters` is authenticated-only. Until then, the route
+  guard leaves it unlisted and does not force logged-out visitors to `/login`.
+  `/quiz` remains unlisted because it is the quiz funnel entry, and
+  `/quiz-results` uses the page-controller behavior documented above.
 - Verify Webflow Memberstack gated groups and Xano authorization independently;
   a `Backlog` row in the product sheet is desired behavior, not proof that it is
   live.
