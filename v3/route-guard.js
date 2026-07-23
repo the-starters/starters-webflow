@@ -43,11 +43,26 @@
   }
 
   // Where each role is sent when it is not allowed on the requested page.
-  // Identical to ROLE_DEFAULTS in v3/auth-route.js.
+  // Identical to ROLE_DEFAULTS in v3/auth-route.js. brand-free is decided at
+  // runtime by quiz completion (see brandFreeHome); the map value is the
+  // not-yet-completed fallback.
   var ROLE_DEFAULTS = {
     talent: '/starter-dashboard',
     'brand-paid': '/brand-dashboard',
-    'brand-free': '/quiz-results',
+    'brand-free': '/quiz',
+  }
+
+  // A brand-free member's home is /quiz-results once the quiz is completed,
+  // else /quiz. Same durable signal the /quiz-results page reads: the
+  // Memberstack `starter-quiz` custom field (on the member object, no extra
+  // call). Identical to brandFreeHome in v3/auth-route.js.
+  function hasCompletedQuiz(member) {
+    var cf = (member && member.customFields) || {}
+    var value = cf['starter-quiz']
+    return typeof value === 'string' ? value.trim() !== '' : !!value
+  }
+  function brandFreeHome(member) {
+    return hasCompletedQuiz(member) ? '/quiz-results' : '/quiz'
   }
 
   // Page view-access, derived from v3/ACCESS-MATRIX.md. A role listed here may
@@ -128,7 +143,9 @@
     var role = memberRole(member)
     if (!role) return null // authenticated but no mapped active plan
     if (allowed.indexOf(role) !== -1) return '' // allowed on this page
-    return ROLE_DEFAULTS[role] // wrong role -> own default, never the other role's page
+    // wrong role -> own default, never the other role's page
+    if (role === 'brand-free') return brandFreeHome(member)
+    return ROLE_DEFAULTS[role]
   }
 
   function loginPathWithNext() {
@@ -209,6 +226,8 @@
   var api = {
     activePlanIds: activePlanIds,
     memberRole: memberRole,
+    hasCompletedQuiz: hasCompletedQuiz,
+    brandFreeHome: brandFreeHome,
     pageRolesFor: pageRolesFor,
     isGuardedPath: isGuardedPath,
     redirectTargetFor: redirectTargetFor,

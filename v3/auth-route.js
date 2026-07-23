@@ -28,10 +28,29 @@
     'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
   }
 
+  // brand-free's home is decided at runtime by quiz completion — see
+  // brandFreeHome(). The map value is the fallback for callers that pass no
+  // member (kept as /quiz for the not-yet-completed default).
   var ROLE_DEFAULTS = {
     talent: '/starter-dashboard',
     'brand-paid': '/brand-dashboard',
-    'brand-free': '/quiz-results',
+    'brand-free': '/quiz',
+  }
+  var QUIZ_PATH = '/quiz'
+  var QUIZ_RESULTS_PATH = '/quiz-results'
+
+  // A brand-free member goes to /quiz-results only once they have completed the
+  // quiz, otherwise to /quiz. Completion is the same durable signal the
+  // /quiz-results page itself reads: the Memberstack `starter-quiz` custom field
+  // (written alongside the member-JSON quiz payload on completion). Available on
+  // the member object, so no extra Memberstack call is needed.
+  function hasCompletedQuiz(member) {
+    var cf = (member && member.customFields) || {}
+    var value = cf['starter-quiz']
+    return typeof value === 'string' ? value.trim() !== '' : !!value
+  }
+  function brandFreeHome(member) {
+    return hasCompletedQuiz(member) ? QUIZ_RESULTS_PATH : QUIZ_PATH
   }
 
   var ROLE_DESTINATIONS = {
@@ -50,7 +69,7 @@
       '/opportunities-brands-view',
       '/messages',
     ]),
-    'brand-free': new Set(['/all-starters', '/quiz-results']),
+    'brand-free': new Set(['/all-starters', '/quiz', '/quiz-results']),
   }
   var ROLE_DESTINATION_PREFIXES = {
     talent: ['/opportunities/'],
@@ -123,6 +142,7 @@
       return requested
     }
 
+    if (role === 'brand-free') return brandFreeHome(member)
     return ROLE_DEFAULTS[role]
   }
 
@@ -246,6 +266,8 @@
   var api = {
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
+    hasCompletedQuiz: hasCompletedQuiz,
+    brandFreeHome: brandFreeHome,
     localPath: localPath,
     memberRole: memberRole,
   }

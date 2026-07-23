@@ -117,8 +117,18 @@
     'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid', // test brand plan (4 members)
   }
   // Non-paying brands are not allowed on role-gated dual pages; send them to the
-  // free-brand home (same destination the quiz funnel uses for free members).
-  const BRAND_FREE_REDIRECT = '/quiz-results'
+  // free-brand home. That home is /quiz-results only once the quiz is completed,
+  // otherwise /quiz — the same durable signal the /quiz-results page reads (the
+  // Memberstack `starter-quiz` custom field, present on the member object).
+  // Mirrors brandFreeHome in v3/auth-route.js and v3/route-guard.js.
+  function hasCompletedQuiz(member) {
+    const cf = (member && member.customFields) || {}
+    const value = cf['starter-quiz']
+    return typeof value === 'string' ? value.trim() !== '' : !!value
+  }
+  function brandFreeHome(member) {
+    return hasCompletedQuiz(member) ? '/quiz-results' : '/quiz'
+  }
 
   /* ========================= AUTH BRIDGE ========================== */
   let _xanoToken = null
@@ -1048,7 +1058,8 @@
    *  enforced access, so this only resolves {member, role} for the two roles
    *  allowed here (talent, brand-paid) and bails quietly otherwise. When the
    *  guard is absent, the legacy fallback redirects apply: logged-out ->
-   *  /login?next=..., free brand -> BRAND_FREE_REDIRECT, unmapped plans -> /. */
+   *  /login?next=..., free brand -> brandFreeHome (/quiz or /quiz-results),
+   *  unmapped plans -> /. */
   async function gateByPlan() {
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
@@ -1068,7 +1079,7 @@
       return role === 'talent' || role === 'brand-paid' ? { member, role } : null
     }
     if (role === 'brand-free') {
-      location.href = BRAND_FREE_REDIRECT
+      location.href = brandFreeHome(member)
       return null
     }
     if (!role) {
@@ -3031,6 +3042,8 @@
     loginPathWithNext,
     routeGuardActive,
     redirectForeignBrandToFeed,
+    hasCompletedQuiz,
+    brandFreeHome,
     gateOrRedirect,
     gateByPlan,
     memberPlanRole,

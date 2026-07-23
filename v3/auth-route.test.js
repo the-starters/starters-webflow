@@ -133,10 +133,33 @@ test('uses role defaults for Talent, paid Brand, and free Brand', () => {
     }),
     '/brand-dashboard',
   )
+  // Free Brand with no completed quiz -> /quiz.
   assert.equal(
     api.destinationFor({ planConnections: [plan('pln_free-plan-f6kn0dxz')] }),
-    '/quiz-results',
+    '/quiz',
   )
+})
+
+test('free Brand routes to /quiz until the quiz is completed, then /quiz-results', () => {
+  const { api } = loadRouter()
+  const notDone = { planConnections: [plan('pln_free-plan-f6kn0dxz')] }
+  const done = {
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    customFields: { 'starter-quiz': '{"status":"ready"}' },
+  }
+
+  assert.equal(api.hasCompletedQuiz(notDone), false)
+  assert.equal(api.hasCompletedQuiz(done), true)
+  assert.equal(api.destinationFor(notDone), '/quiz')
+  assert.equal(api.destinationFor(done), '/quiz-results')
+  // An empty custom field is not "completed".
+  assert.equal(
+    api.hasCompletedQuiz({ customFields: { 'starter-quiz': '   ' } }),
+    false,
+  )
+  // A requested /quiz or /quiz-results still survives for free Brand.
+  assert.equal(api.destinationFor(notDone, '/quiz-results'), '/quiz-results')
+  assert.equal(api.destinationFor(done, '/quiz'), '/quiz')
 })
 
 test('preserves only same-origin destinations allowed for the member role', () => {
@@ -191,7 +214,7 @@ test('allows Brand tiers into All Starters but keeps Messages paid-only', () => 
   assert.equal(api.destinationFor(paidBrand, '/all-starters'), '/all-starters')
   assert.equal(api.destinationFor(freeBrand, '/all-starters'), '/all-starters')
   assert.equal(api.destinationFor(paidBrand, '/messages'), '/messages')
-  assert.equal(api.destinationFor(freeBrand, '/messages'), '/quiz-results')
+  assert.equal(api.destinationFor(freeBrand, '/messages'), '/quiz')
 })
 
 test('allows opportunity details only for Talent and paid Brand', () => {
@@ -216,7 +239,7 @@ test('allows opportunity details only for Talent and paid Brand', () => {
   )
   assert.equal(
     api.destinationFor(freeBrand, '/opportunities/product-designer'),
-    '/quiz-results',
+    '/quiz',
   )
   assert.equal(
     api.destinationFor(talent, '/opportunities/'),
@@ -250,7 +273,7 @@ test('allows opportunity creation only for paid Brand', () => {
   )
   assert.equal(
     api.destinationFor(freeBrand, '/opportunities---create'),
-    '/quiz-results',
+    '/quiz',
   )
 })
 
