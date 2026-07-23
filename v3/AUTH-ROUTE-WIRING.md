@@ -22,7 +22,7 @@ Memberstack plan redirects unchanged so V2 retains its existing behavior.
 | `pln_dorxata-test-free-plan-dvcg0k8o` | Talent | `/starter-dashboard` |
 | `pln_new-paid-plan-463h04ph` | Brand paid | `/brand-dashboard` |
 | `pln_dorxata-test-brand-plan-777r02pa` | Test Brand / Brand paid | `/brand-dashboard` |
-| `pln_free-plan-f6kn0dxz` | Brand free | `/quiz` (→ `/quiz-results` once the quiz is completed) |
+| `pln_free-plan-f6kn0dxz` | Brand free | `/quiz` (→ `/quiz-results` once the Memberstack `starter-quiz` custom field is non-empty) |
 | Unmapped or inactive | Unmapped | Remain on `/auth-route` with `data-auth-route-error="unmapped-plan"` |
 
 When multiple active mapped plans exist, the precedence is Brand paid, Brand
@@ -72,7 +72,7 @@ routing cannot continue:
 Each error also dispatches `starters:v3-auth-route-error` on `window` with
 `detail.code`. For browser-console diagnostics, the script exposes
 `window.StartersV3AuthRouter` with `activePlanIds`, `memberRole`, `localPath`,
-and `destinationFor`.
+`destinationFor`, `hasCompletedQuiz`, and `brandFreeHome`.
 
 ## Release Gate
 

@@ -53,12 +53,12 @@ The guard's Brand paid allowance is role-level only. On both
 redirects a foreign brand to `/opportunities-brands-view`; transient, server, and
 network errors do not redirect. Xano remains responsible for ownership enforcement.
 
-**Intentionally not guarded (decision 2026-07-23):** `/quiz-results` and
-`/all-starters`. Their ACCESS-MATRIX rows describe logged-in redirect defaults,
-not that logged-out access must be blocked, and either may be a pre-signup funnel
-page. They are excluded from the guard's page table so a site-wide install cannot
-force an unexpected login. Add them back only after confirming both are
-authenticated-only in V3 beta.
+**Intentionally not guarded (decision 2026-07-23):** `/quiz`, `/quiz-results`,
+and `/all-starters`. `/quiz` is the funnel entry. The other ACCESS-MATRIX rows
+describe logged-in redirect defaults, not that logged-out access must be
+blocked, and either may be a pre-signup funnel page. They are excluded from the
+guard's page table so a site-wide install cannot force an unexpected login. Add
+the latter two only after confirming both are authenticated-only in V3 beta.
 
 ## Webflow install
 
@@ -85,9 +85,9 @@ With the guard sitewide, opp30 does not double-guard opportunity pages: it uses
 the guard's presence to defer access redirects and validates the same plan-ID
 role only before starting role-specific rendering or requests.
 
-`/quiz-results` and `/all-starters` are deliberately outside the guard's page
-table (see the note above the guarded-pages table); revisit only after confirming
-they are authenticated-only.
+`/quiz`, `/quiz-results`, and `/all-starters` are deliberately outside the
+guard's page table (see the note above the guarded-pages table); revisit the
+latter two only after confirming they are authenticated-only.
 
 ## Relationship to other layers
 
@@ -105,10 +105,12 @@ IDs and otherwise bails without redirecting.
 ## Diagnostics
 
 - `window.StartersV3RouteGuard` exposes `activePlanIds`, `memberRole`,
-  `pageRolesFor`, `isGuardedPath`, and `redirectTargetFor` for console checks.
+  `hasCompletedQuiz`, `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and
+  `redirectTargetFor` for console checks.
 - `window.Opp30` exposes `routeGuardActive`, `gateOrRedirect`, `gateByPlan`,
-  `memberPlanRole`, and `redirectForeignBrandToFeed` for verifying the opportunity
-  controller's handoff, legacy fallback, and ownership-denied redirect policy.
+  `memberPlanRole`, `hasCompletedQuiz`, `brandFreeHome`, and
+  `redirectForeignBrandToFeed` for verifying the opportunity controller's
+  handoff, legacy fallback, and ownership-denied redirect policy.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
   (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
 - A resolved allow dispatches `starters:v3-route-guard-allowed`.

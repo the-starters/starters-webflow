@@ -30,29 +30,32 @@ consistent.
 `auth-route.js` uses this table only when restoring a same-origin `next`
 destination after login. A disallowed destination falls back to the role
 default. `route-guard.js` enforces direct access for every route below except
-`/quiz-results` and `/all-starters`, which remain unguarded pending confirmation
-that they are authenticated-only rather than pre-signup funnel pages.
+`/quiz`, `/quiz-results`, and `/all-starters`, which remain unguarded because
+the quiz entry is a funnel page and the other two await confirmation that they
+are authenticated-only rather than pre-signup funnel pages.
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
-| `/quiz-results` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default |
+| `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default until quiz completion |
+| `/quiz-results` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion |
 | `/all-starters` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return |
-| `/brand-dashboard` | Default `/quiz-results` | Allow | Default `/starter-dashboard` | Paid Brand only |
-| `/messages` | Default `/quiz-results` | Allow | Allow | Free Brand is not allowed |
-| `/opportunities-brands-view` | Default `/quiz-results` | Allow | Default `/starter-dashboard` | Paid Brand only |
-| `/opportunities-freelancer-view` | Default `/quiz-results` | Default `/brand-dashboard` | Allow | Talent only |
-| `/opportunities/<slug>` | Default `/quiz-results` | Allow | Allow | Free Brand is not allowed |
-| `/opportunities---create` | Default `/quiz-results` | Allow | Default `/starter-dashboard` | Paid Brand only |
-| `/starter-dashboard` | Default `/quiz-results` | Default `/brand-dashboard` | Allow | Talent only |
-| `/starter-edit-profile` | Default `/quiz-results` | Default `/brand-dashboard` | Allow | Talent only |
-| `/build-profile/select-profile` | Default `/quiz-results` | Default `/brand-dashboard` | Allow | Talent onboarding |
-| `/build-profile/full-profile` | Default `/quiz-results` | Default `/brand-dashboard` | Allow | Talent onboarding |
-| `/build-profile/consult` | Default `/quiz-results` | Default `/brand-dashboard` | Allow | Talent onboarding |
+| `/brand-dashboard` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
+| `/messages` | Default quiz home | Allow | Allow | Free Brand is not allowed |
+| `/opportunities-brands-view` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
+| `/opportunities-freelancer-view` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
+| `/opportunities/<slug>` | Default quiz home | Allow | Allow | Free Brand is not allowed |
+| `/opportunities---create` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
+| `/starter-dashboard` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
+| `/starter-edit-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
+| `/build-profile/select-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
+| `/build-profile/full-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
+| `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
 
-> **Free Brand default (updated 2026-07-23):** the "Default `/quiz-results`" in
-> the Brand-free column is conditional — a Brand-free member goes to `/quiz`
+> **Free Brand default (updated 2026-07-23):** "Default quiz home" in the
+> Brand-free column is conditional — a Brand-free member goes to `/quiz`
 > until they complete the quiz, then `/quiz-results`. Completion is the Memberstack
-> `starter-quiz` custom field (the same signal the `/quiz-results` page reads).
+> `starter-quiz` custom field (the same signal the `/quiz-results` page reads);
+> a missing, empty, or whitespace-only value is not complete.
 > `auth-route.js`, `route-guard.js`, and `opportunities-3.0.js` all apply this via
 > a shared `brandFreeHome(member)` / `hasCompletedQuiz(member)` helper.
 
@@ -85,7 +88,8 @@ enforces the underlying ownership boundary.
   do not infer it from a display name.
 - Confirm whether `/quiz-results` and `/all-starters` are authenticated-only.
   Until then, the route guard leaves both unlisted and does not force logged-out
-  visitors to `/login`.
+  visitors to `/login`. `/quiz` also remains unlisted because it is the quiz
+  funnel entry.
 - Verify Webflow Memberstack gated groups and Xano authorization independently;
   a `Backlog` row in the product sheet is desired behavior, not proof that it is
   live.

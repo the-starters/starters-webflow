@@ -21,7 +21,9 @@ allowed destination after login.
 page directly. Logged-out visitors go to `/login` with the current path and
 query preserved in `next`; a member with the wrong role goes to that member's
 own default page. An authenticated member with no mapped active plan remains on
-the page with an explicit error state.
+the page with an explicit error state. A free Brand's default is `/quiz` until
+the Memberstack `starter-quiz` custom field records completion, then
+`/quiz-results`.
 
 Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
@@ -30,8 +32,9 @@ its legacy per-page redirects only as a fallback when the guard is absent.
 [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md) documents the DOM states, events,
 diagnostics, exclusions, and release gate. The guard is a routing/UX layer and
 does not replace Memberstack visibility rules or Xano authorization.
-`/quiz-results` and `/all-starters` are intentionally unguarded by the route
-table pending product confirmation that they are not pre-signup funnel pages.
+`/quiz`, `/quiz-results`, and `/all-starters` are intentionally unguarded by
+the route table; `/quiz` is the funnel entry, while the latter two await product
+confirmation that they are not pre-signup funnel pages.
 
 ## Scheduling auth
 
