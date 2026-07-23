@@ -27,7 +27,13 @@ async function waitForRequestCount(requests, count) {
 
 async function loadBridge(
   fetch,
-  { hostname = 'example.test', member = null, routeGuard = false } = {},
+  {
+    hostname = 'example.test',
+    member = null,
+    pathname = '/all-modals',
+    routeGuard = false,
+    search = '',
+  } = {},
 ) {
   const documentListeners = new Map()
   let authChange
@@ -74,10 +80,10 @@ async function loadBridge(
   window.fetch = fetch
   window.window = window
   const location = {
-    href: `https://${hostname}/all-modals`,
+    href: `https://${hostname}${pathname}${search}`,
     hostname,
-    pathname: '/all-modals',
-    search: '',
+    pathname,
+    search,
   }
   const context = vm.createContext({
     CustomEvent: class CustomEvent {
@@ -165,6 +171,40 @@ test('redirectForeignBrandToFeed redirects only on ownership-denied statuses', a
   const nullish = await loadBridge(async () => response({}))
   assert.equal(nullish.window.Opp30.redirectForeignBrandToFeed(null), false)
   assert.equal(nullish.location.href, 'https://example.test/all-modals')
+})
+
+test('both brand detail routes redirect a foreign brand after the owner-scoped probe returns 404', async () => {
+  const member = {
+    ...paidBrandMember,
+    customFields: { 'brands-dashboard-url': '/brand-dashboard' },
+  }
+  const runRoute = async ({ pathname, search = '' }) => {
+    const requests = []
+    const bridge = await loadBridge(
+      async (input) => {
+        const url = String(input)
+        requests.push(url)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+        if (url.includes('/brand/applications/list')) {
+          return response({ message: 'Not found' }, false, 404)
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      },
+      { member, pathname, search },
+    )
+    await waitForRequestCount(requests, 2)
+    for (let attempt = 0; attempt < 20 && bridge.location.href !== '/opportunities-brands-view'; attempt += 1) {
+      await new Promise(setImmediate)
+    }
+    assert.equal(bridge.location.href, '/opportunities-brands-view')
+    assert.match(requests[1], /\/brand\/applications\/list$/)
+  }
+
+  await runRoute({
+    pathname: '/opportunities-details---brand-view',
+    search: '?opp=456',
+  })
+  await runRoute({ pathname: '/opportunities/456' })
 })
 
 test('routeGuardActive reflects the html[data-route-guard] stamp', async () => {

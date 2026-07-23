@@ -45,6 +45,13 @@ view it; any other authenticated role is redirected to its default.
 `/opportunities/<slug>` matches a single non-empty path segment only, so nested
 paths such as `/opportunities/<slug>/apply` are not treated as detail pages.
 
+The guard's Brand paid allowance is role-level only. On both
+`/opportunities/<slug>` and the legacy
+`/opportunities-details---brand-view?opp=<id>` entry point,
+`opportunities-3.0.js` probes the owner-scoped applicant list. A `403` or `404`
+redirects a foreign brand to `/opportunities-brands-view`; transient, server, and
+network errors do not redirect. Xano remains responsible for ownership enforcement.
+
 **Intentionally not guarded (decision 2026-07-23):** `/quiz-results` and
 `/all-starters`. Their ACCESS-MATRIX rows describe logged-in redirect defaults,
 not that logged-out access must be blocked, and either may be a pre-signup funnel
@@ -98,9 +105,9 @@ IDs and otherwise bails without redirecting.
 
 - `window.StartersV3RouteGuard` exposes `activePlanIds`, `memberRole`,
   `pageRolesFor`, `isGuardedPath`, and `redirectTargetFor` for console checks.
-- `window.Opp30` exposes `routeGuardActive`, `gateOrRedirect`, `gateByPlan`, and
-  `memberPlanRole` for verifying the opportunity controller's handoff and
-  legacy fallback.
+- `window.Opp30` exposes `routeGuardActive`, `gateOrRedirect`, `gateByPlan`,
+  `memberPlanRole`, and `redirectForeignBrandToFeed` for verifying the opportunity
+  controller's handoff, legacy fallback, and ownership-denied redirect policy.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
   (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
 - A resolved allow dispatches `starters:v3-route-guard-allowed`.
