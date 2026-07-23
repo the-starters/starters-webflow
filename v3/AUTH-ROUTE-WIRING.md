@@ -35,9 +35,13 @@ removed. Invalid or disallowed destinations fall back to the role default.
 
 | Role | Allowed `next` pathnames |
 | --- | --- |
-| Talent | `/starter-dashboard`, `/build-profile/full-profile`, `/starter-edit-profile`, `/messages`, `/opportunities/<slug>` |
-| Brand paid | `/brand-dashboard`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
-| Brand free | `/quiz-results`, `/messages` |
+| Talent | `/starter-dashboard`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities-freelancer-view`, `/opportunities/<slug>` |
+| Brand paid | `/all-starters`, `/brand-dashboard`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
+| Brand free | `/all-starters`, `/quiz-results` |
+
+The allowlist is derived from [ACCESS-MATRIX.md](ACCESS-MATRIX.md). It governs
+post-authentication routing only. Memberstack gated content and Xano endpoint
+authorization remain separate enforcement layers.
 
 An unauthenticated visitor to `/auth-route` returns to `/login`, preserving a
 valid `next` value. The value is held in session storage only until the routing

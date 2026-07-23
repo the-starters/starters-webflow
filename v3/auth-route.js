@@ -37,16 +37,20 @@
   var ROLE_DESTINATIONS = {
     talent: new Set([
       '/starter-dashboard',
+      '/build-profile/select-profile',
       '/build-profile/full-profile',
+      '/build-profile/consult',
       '/starter-edit-profile',
       '/messages',
+      '/opportunities-freelancer-view',
     ]),
     'brand-paid': new Set([
+      '/all-starters',
       '/brand-dashboard',
       '/opportunities-brands-view',
       '/messages',
     ]),
-    'brand-free': new Set(['/quiz-results', '/messages']),
+    'brand-free': new Set(['/all-starters', '/quiz-results']),
   }
   var ROLE_DESTINATION_PREFIXES = {
     talent: ['/opportunities/'],
