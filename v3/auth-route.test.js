@@ -17,6 +17,9 @@ function loadRouter(options = {}) {
     },
   }
   const storage = new Map()
+  if (options.storedDestination) {
+    storage.set('thestarters:v3-auth-next', options.storedDestination)
+  }
   const location = {
     hostname: options.hostname || 'the-starters-3-0.webflow.io',
     origin: `https://${options.hostname || 'the-starters-3-0.webflow.io'}`,
@@ -160,6 +163,66 @@ test('preserves only same-origin destinations allowed for the member role', () =
   )
 })
 
+test('allows opportunity details only for Talent and paid Brand', () => {
+  const { api } = loadRouter()
+  const talent = {
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+  const paidBrand = {
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }
+  const freeBrand = {
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+  }
+
+  assert.equal(
+    api.destinationFor(talent, '/opportunities/product-designer?source=saved'),
+    '/opportunities/product-designer?source=saved',
+  )
+  assert.equal(
+    api.destinationFor(paidBrand, '/opportunities/product-designer'),
+    '/opportunities/product-designer',
+  )
+  assert.equal(
+    api.destinationFor(freeBrand, '/opportunities/product-designer'),
+    '/quiz-results',
+  )
+  assert.equal(
+    api.destinationFor(talent, '/opportunities/'),
+    '/starter-dashboard',
+  )
+  assert.equal(
+    api.destinationFor(talent, '/opportunities/product-designer/apply'),
+    '/starter-dashboard',
+  )
+})
+
+test('allows opportunity creation only for paid Brand', () => {
+  const { api } = loadRouter()
+  const talent = {
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+  const paidBrand = {
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }
+  const freeBrand = {
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+  }
+
+  assert.equal(
+    api.destinationFor(paidBrand, '/opportunities---create?from=dashboard'),
+    '/opportunities---create?from=dashboard',
+  )
+  assert.equal(
+    api.destinationFor(talent, '/opportunities---create'),
+    '/starter-dashboard',
+  )
+  assert.equal(
+    api.destinationFor(freeBrand, '/opportunities---create'),
+    '/quiz-results',
+  )
+})
+
 test('returns no destination for an unmapped plan', () => {
   const { api } = loadRouter()
 
@@ -199,6 +262,25 @@ test('login form redirect is configured when session storage reads fail', () => 
   assert.equal(attributes['data-ms-redirect'], '/auth-route')
 })
 
+test('fresh login clears an abandoned stored destination', () => {
+  const { storage } = loadRouter({
+    pathname: '/login',
+    storedDestination: '/messages',
+  })
+
+  assert.equal(storage.has('thestarters:v3-auth-next'), false)
+})
+
+test('login with an invalid next clears an abandoned stored destination', () => {
+  const { storage } = loadRouter({
+    pathname: '/login',
+    search: '?next=https%3A%2F%2Fevil.example%2Fsteal',
+    storedDestination: '/messages',
+  })
+
+  assert.equal(storage.has('thestarters:v3-auth-next'), false)
+})
+
 test('does not change login forms on an unapproved hostname', () => {
   const { attributes } = loadRouter({
     hostname: 'attacker.example',
@@ -219,6 +301,23 @@ test('auth route sends a paid Brand to the confirmed V3 Brand dashboard', async 
 
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(location.replaced, '/brand-dashboard')
+})
+
+test('auth route preserves the stored destination from login', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/opportunities/product-designer?source=login',
+    member: {
+      id: 'member-talent',
+      planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+    },
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(
+    location.replaced,
+    '/opportunities/product-designer?source=login',
+  )
 })
 
 test('auth route uses role default when session storage removal fails', async () => {

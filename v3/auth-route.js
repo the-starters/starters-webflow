@@ -48,6 +48,13 @@
     ]),
     'brand-free': new Set(['/quiz-results', '/messages']),
   }
+  var ROLE_DESTINATION_PREFIXES = {
+    talent: ['/opportunities/'],
+    'brand-paid': ['/opportunities/'],
+    'brand-free': [],
+  }
+
+  ROLE_DESTINATIONS['brand-paid'].add('/opportunities---create')
 
   function activePlanIds(member) {
     return (member && member.planConnections ? member.planConnections : [])
@@ -100,11 +107,15 @@
 
     var requested = localPath(requestedDestination)
     var requestedPathname = pathnameOf(requested)
-    if (
-      requested &&
+    var matchesRoleDestination =
       requestedPathname &&
-      ROLE_DESTINATIONS[role].has(requestedPathname)
-    ) {
+      (ROLE_DESTINATIONS[role].has(requestedPathname) ||
+        ROLE_DESTINATION_PREFIXES[role].some(function (prefix) {
+          if (!requestedPathname.startsWith(prefix)) return false
+          var suffix = requestedPathname.slice(prefix.length)
+          return suffix.length > 0 && !suffix.includes('/')
+        }))
+    if (requested && matchesRoleDestination) {
       return requested
     }
 
@@ -148,7 +159,13 @@
   }
 
   function configureLoginForms() {
-    requestedDestination()
+    var queryValue = new URLSearchParams(window.location.search).get('next')
+    var queryDestination = localPath(queryValue)
+    if (queryDestination) {
+      storeRequestedDestination(queryDestination)
+    } else {
+      clearRequestedDestination()
+    }
 
     document
       .querySelectorAll('[data-ms-form="login"], [data-ms-form="signup"]')
