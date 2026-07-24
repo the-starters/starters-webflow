@@ -16,6 +16,8 @@ never need a code release. Jira: INITIATIVE-125.
   without an error.
 - Passes step selectors to driver.js instead of captured element nodes, letting
   each step resolve against the live DOM after Webflow or `wf-xano` hydration.
+  An optional highlight target can redirect a page-scoped step to another
+  element, including an element inside a shared Webflow component.
 - Persists seen-state per member in Memberstack member JSON
   (`json.tours[tourId]`), so a successful write suppresses that tour for the
   member across devices.
@@ -36,7 +38,8 @@ never need a code release. Jira: INITIATIVE-125.
 
 ## Designer attributes
 
-Set on the element each step should highlight:
+Set on the element that defines each step. By default that element is also
+highlighted; `data-tour-target` can override the highlight:
 
 | Attribute | Required | Example | Meaning |
 | --- | --- | --- | --- |
@@ -45,6 +48,7 @@ Set on the element each step should highlight:
 | `data-tour-text` | no | `Track applications here.` | Popover body. |
 | `data-tour-side` | no | `bottom` | driver.js popover side (`top`/`right`/`bottom`/`left`). |
 | `data-tour-align` | no | `start` | driver.js popover align (`start`/`center`/`end`). |
+| `data-tour-target` | no | `.post-opportunity` or `text:Post Opportunity` | Highlight a different element. A CSS selector uses its first match. `text:<label>` prefers the smallest visible `a`, `button`, or `[role="button"]` whose trimmed text exactly matches, then the smallest visible `span`, `div`, or `p`. If the selector is invalid, has no match, or no visible exact-text match exists, the step's tagged element is highlighted instead. |
 | `data-tour-roles` | no | `talent` | Comma list; the tour auto-starts only for these roles (`talent`, `brand-paid`, `brand-free`). Put it on any one step; lists on multiple steps are merged. |
 | `data-tour-once` | no | `false` | On any step: replay the tour every visit (default is show-once). |
 
@@ -128,9 +132,11 @@ are ignored.
 ## Diagnostics
 
 - `window.StartersV3OnboardingTour` exposes `activePlanIds`, `memberRole`,
-  `parseTours`, `buildDriverSteps`, `autoStartTarget`, `loadDriver`, and
-  `startTour` for console debugging, plus `replayRequestFromQuery` for parsing
-  the query-string replay contract. `startTour` returns `null` when another
+  `parseTours`, `resolveStepElement`, `buildDriverSteps`, `autoStartTarget`,
+  `loadDriver`, and `startTour` for console debugging, plus
+  `replayRequestFromQuery` for parsing the query-string replay contract.
+  `resolveStepElement` returns the configured CSS selector or matched element,
+  falling back to the step selector. `startTour` returns `null` when another
   start is in flight or a driver popover is already open.
 - `starters:v3-tour-started` fires on `window` with `{ tourId }` when a tour
   starts (hook for PostHog capture).
@@ -149,6 +155,8 @@ are ignored.
   `Alt+Shift+T` replays the first tour. While the tour is open, confirm another
   replay is ignored; dismiss it with the close button, then confirm
   `Alt+Shift+T` starts it again. Confirm the popover title matches the page
-  heading font at weight 500 and the description matches the body font.
+  heading font at weight 500 and the description matches the body font. For a
+  step with `data-tour-target`, confirm the override highlights its target and
+  an unmatched target falls back to the tagged step element.
 - Standard exposure scan: no Airtable/Make URLs or PAT patterns (this module
   calls only jsDelivr and Memberstack).

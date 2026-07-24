@@ -104,7 +104,8 @@
   // ---------------------------------------------------------------------
 
   // Collects [data-tour-step] elements under root into per-tour definitions:
-  // { id, steps: [{ selector, order, title, text, side, align }], roles, once }.
+  // { id, steps: [{ selector, target, order, title, text, side, align }],
+  //   roles, once }.
   // Steps sort by order (ties keep DOM order); malformed and duplicate values
   // are skipped with a console warning rather than breaking the page.
   function parseTours(root) {
