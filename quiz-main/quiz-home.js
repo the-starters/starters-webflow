@@ -133,6 +133,14 @@
             })
         }
 
+        function saveAndRedirect(event) {
+            event.preventDefault()
+
+            saveSelectedCategories()
+            logQuizFlow('redirecting to quiz page', { redirectUrl })
+            window.location.href = redirectUrl
+        }
+
         checkboxes.forEach((input) => {
             input.addEventListener('change', function () {
                 logQuizFlow('homepage category changed', {
@@ -144,13 +152,8 @@
             })
         })
 
-        button?.addEventListener('click', function (event) {
-            event.preventDefault()
-
-            saveSelectedCategories()
-            logQuizFlow('redirecting to quiz page', { redirectUrl })
-            window.location.href = redirectUrl
-        })
+        button?.addEventListener('click', saveAndRedirect)
+        form.addEventListener('submit', saveAndRedirect)
     }
 
     // Runs as a deferred external script: execute now if the DOM is already
