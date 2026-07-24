@@ -395,9 +395,9 @@
       return null
     }
     try {
-      return document.querySelector(step.target)
+      return document.querySelector(step.target) || resolvedTarget(step)
     } catch (error) {
-      return null
+      return resolvedTarget(step)
     }
   }
 
