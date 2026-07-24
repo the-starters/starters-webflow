@@ -11,7 +11,8 @@ never need a code release. Jira: INITIATIVE-125.
 - Auto-starts at most one tour per page load: the first tour (DOM order) whose
   role restriction matches the member and that the member has not seen.
 - Persists seen-state per member in Memberstack member JSON
-  (`json.tours[tourId]`), so a tour shows once per member across devices.
+  (`json.tours[tourId]`), so a successful write suppresses that tour for the
+  member across devices.
   Logged-out visitors on public pages fall back to `localStorage`.
 - Loads driver.js JS + CSS from jsDelivr on demand — only when the page has an
   eligible tour, nothing loads otherwise.
@@ -39,7 +40,7 @@ Optional replay trigger (e.g. a "Show me around" navbar/help link):
 
 | Attribute | Example | Meaning |
 | --- | --- | --- |
-| `data-tour-start` | `starter-dashboard` | Click starts that tour regardless of role or seen-state. |
+| `data-tour-start` | `starter-dashboard` | Click starts that tour regardless of role or seen-state. Manual starts do not change seen-state. |
 
 ⚠ Webflow's Designer strips valueless custom attributes — every attribute above
 takes a value, matching the `wf-xano-element` grammar convention.
@@ -66,6 +67,8 @@ popover (fonts/colors) can go in a small site-level CSS embed targeting
 
 - Seen-state lives in member JSON, not a custom field — no dashboard field
   setup needed. Key: `json.tours["<tourId>"] = <ISO timestamp>`.
+- The module writes seen-state after driver.js starts. If that write fails, the
+  running tour is unaffected and may auto-start again on a later visit.
 - If the member JSON read fails, the tour fails closed (does not show) rather
   than nagging members on every hiccup.
 - To reset a member's tours for testing: clear `tours` from the member's JSON
@@ -74,8 +77,9 @@ popover (fonts/colors) can go in a small site-level CSS embed targeting
 
 ## Diagnostics
 
-- `window.StartersV3OnboardingTour` exposes `parseTours`, `autoStartTarget`,
-  `startTour`, `memberRole` for console debugging.
+- `window.StartersV3OnboardingTour` exposes `activePlanIds`, `memberRole`,
+  `parseTours`, `buildDriverSteps`, `autoStartTarget`, `loadDriver`, and
+  `startTour` for console debugging.
 - `starters:v3-tour-started` fires on `window` with `{ tourId }` when a tour
   starts (hook for PostHog capture).
 - Malformed `data-tour-step` values log a `[v3-onboarding-tour]` warning and
