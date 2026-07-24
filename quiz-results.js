@@ -1378,6 +1378,36 @@
     }
 
     /**
+     * Tells the /quiz-results loading component that the results are settled so
+     * it can dismiss its overlay. Delegates to quiz-loader.js's
+     * `window.StartersQuizLoader.signalReady()` when present; otherwise applies
+     * the same producer contract inline (flag FIRST, then the document-level
+     * CustomEvent) so this works regardless of script load order. Idempotent:
+     * once the ready flag is set, later calls are no-ops.
+     *
+     * Must be called on every terminal outcome of initResultsPage that leaves
+     * the visitor ON the page — otherwise the loader would wait forever.
+     *
+     * @param {string} [reason] Short label for which outcome triggered it.
+     * @returns {void}
+     */
+    function signalQuizResultsReady(reason) {
+        logQuizFlow('signaling quiz results ready to loader', { reason })
+
+        const loader = window.StartersQuizLoader
+
+        if (loader && typeof loader.signalReady === 'function') {
+            loader.signalReady()
+            return
+        }
+
+        if (window.__starterQuizResultsReady === true) return
+
+        window.__starterQuizResultsReady = true
+        document.dispatchEvent(new CustomEvent('starterQuizResults:ready'))
+    }
+
+    /**
      * Trims string-like values before reading IDs and labels.
      *
      * @param {string | null | undefined} value Value to normalize.
@@ -5022,6 +5052,11 @@
         if (!pendingQuiz) {
             logQuizFlow('no pending quiz found; results page has nothing to save')
             await redirectLoggedOutWithoutResults()
+            // If redirectLoggedOutWithoutResults() bounced a logged-out visitor
+            // the page is unloading and this is harmless; if it stayed (logged
+            // in with no data, or Memberstack unavailable) the loader must be
+            // released so it does not hang.
+            signalQuizResultsReady('no-data')
             return
         }
 
@@ -5032,6 +5067,9 @@
             logQuizFlow('pending quiz is not ready; results save skipped', {
                 status: pendingQuiz.status,
             })
+            // Nothing renders on this path, but the visitor stays on the page,
+            // so release the loader rather than leave it waiting.
+            signalQuizResultsReady('not-ready')
             return
         }
 
@@ -5115,6 +5153,10 @@
 
         renderRecommendedFreelancers(recommendationSections)
         renderQuizStarterCount(recommendationSections)
+        // Success render has settled. This covers every remaining terminal path
+        // that keeps the visitor here: test mode, the no-save early return, and
+        // normal completion — all fall through from this point.
+        signalQuizResultsReady('rendered')
 
         if (testPendingQuiz) {
             logQuizFlow('test mode enabled; Memberstack/sessionStorage save skipped')
