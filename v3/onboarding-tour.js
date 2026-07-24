@@ -17,6 +17,13 @@
  *                                          that can't carry the attribute).
  *                                          CSS selector, or text:<label> to
  *                                          match by visible text.
+ *   data-tour-open="<css selector>"        optional; a disclosure control (e.g.
+ *                                          an avatar toggle) clicked to reveal
+ *                                          data-tour-target before highlighting,
+ *                                          and restored on leave. A step whose
+ *                                          open control is not visible (e.g.
+ *                                          collapsed into a mobile hamburger) is
+ *                                          dropped from the tour.
  *   data-tour-roles="talent"               optional, on any step; comma list of
  *                                          roles the tour auto-starts for
  *   data-tour-once="false"                 optional, on any step; disable the
@@ -104,7 +111,7 @@
   // ---------------------------------------------------------------------
 
   // Collects [data-tour-step] elements under root into per-tour definitions:
-  // { id, steps: [{ selector, target, order, title, text, side, align }],
+  // { id, steps: [{ selector, target, open, order, title, text, side, align }],
   //   roles, once }.
   // Steps sort by order (ties keep DOM order); malformed and duplicate values
   // are skipped with a console warning rather than breaking the page.
@@ -174,6 +181,12 @@
         //                                        element whose trimmed text
         //                                        equals <label>
         target: node.getAttribute('data-tour-target') || '',
+        // Optional disclosure to open before highlighting: a CSS selector for a
+        // control (e.g. an account-menu avatar toggle) that must be clicked to
+        // reveal data-tour-target. The step opens it on highlight and restores
+        // it on leave. A step whose open control is not visible (e.g. the
+        // avatar is collapsed into a mobile hamburger) is dropped from the tour.
+        open: node.getAttribute('data-tour-open') || '',
         order: order,
         title: node.getAttribute('data-tour-title') || '',
         text: node.getAttribute('data-tour-text') || '',
@@ -250,15 +263,137 @@
     }
   }
 
-  function buildDriverSteps(tour) {
-    return tour.steps.map(function (step) {
-      var popover = {}
-      if (step.title) popover.title = step.title
-      if (step.text) popover.description = step.text
-      if (step.side) popover.side = step.side
-      if (step.align) popover.align = step.align
-      return { element: resolveStepElement(step), popover: popover }
+  function isVisible(el) {
+    if (!el) return false
+    var rect = el.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }
+
+  // Toggles a Webflow-style disclosure (dropdown/menu). A synthetic .click()
+  // is ignored by Webflow's dropdown runtime, so dispatch the full mouse
+  // sequence it listens for. Returns the toggle element, or null if absent.
+  function toggleDisclosure(selector) {
+    var toggle
+    try {
+      toggle = document.querySelector(selector)
+    } catch (error) {
+      return null
+    }
+    if (!toggle) return null
+    ;['mousedown', 'mouseup', 'click'].forEach(function (type) {
+      toggle.dispatchEvent(
+        new window.MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+        }),
+      )
     })
+    return toggle
+  }
+
+  // The active driver instance, so per-step hooks can reposition the popover
+  // after a disclosure opens (its content may reveal/animate asynchronously).
+  var activeInstance = null
+
+  // The disclosure selector the tour currently has open (only one at a time),
+  // so it can be closed again when the step is left or the tour ends.
+  var openedDisclosure = null
+  function restoreOpenedDisclosure() {
+    if (!openedDisclosure) return
+    var selector = openedDisclosure
+    openedDisclosure = null
+    toggleDisclosure(selector)
+  }
+
+  // Reposition a few times so the popover follows the revealed element as the
+  // disclosure finishes opening, without depending on one exact timing.
+  function scheduleRefresh() {
+    ;[150, 350, 600].forEach(function (ms) {
+      window.setTimeout(function () {
+        try {
+          if (activeInstance && typeof activeInstance.refresh === 'function') {
+            activeInstance.refresh()
+          }
+        } catch (error) {
+          // Instance may have been destroyed between schedule and fire.
+        }
+      }, ms)
+    })
+  }
+
+  function buildDriverSteps(tour) {
+    return tour.steps
+      .map(function (step) {
+        // Drop a disclosure step whose control is not currently visible
+        // (e.g. the avatar toggle collapsed into a mobile hamburger).
+        if (step.open) {
+          var opener = null
+          try {
+            opener = document.querySelector(step.open)
+          } catch (error) {
+            opener = null
+          }
+          if (!isVisible(opener)) return null
+        }
+
+        var popover = {}
+        if (step.title) popover.title = step.title
+        if (step.text) popover.description = step.text
+        if (step.side) popover.side = step.side
+        if (step.align) popover.align = step.align
+
+        var driverStep = { element: resolveStepElement(step), popover: popover }
+
+        // Every step first restores any disclosure a previous step opened, so
+        // moving on (next or prev) closes the menu; then this step opens its
+        // own if needed. The end-of-tour watcher in startTour handles the final
+        // step's close (no later step fires to restore it).
+        driverStep.onHighlightStarted = function () {
+          restoreOpenedDisclosure()
+          if (step.open && !isVisible(requestedTarget(step))) {
+            toggleDisclosure(step.open)
+            openedDisclosure = step.open
+            driverStep.element = resolveStepElement(step)
+            scheduleRefresh()
+          }
+        }
+        return driverStep
+      })
+      .filter(Boolean)
+  }
+
+  // The live element a step points at (for visibility checks in hooks).
+  function resolvedTarget(step) {
+    var resolved = resolveStepElement(step)
+    if (typeof resolved !== 'string') return resolved
+    try {
+      return document.querySelector(resolved)
+    } catch (error) {
+      return null
+    }
+  }
+
+  function requestedTarget(step) {
+    if (!step.target) return resolvedTarget(step)
+    if (step.target.indexOf('text:') === 0) {
+      var label = step.target.slice('text:'.length).trim()
+      var visibleMatch = findElementByText(label)
+      if (visibleMatch) return visibleMatch
+      var selectors = ['a, button, [role="button"]', 'span, div, p']
+      for (var i = 0; i < selectors.length; i++) {
+        var matches = document.querySelectorAll(selectors[i])
+        for (var j = 0; j < matches.length; j++) {
+          if ((matches[j].textContent || '').trim() === label) return matches[j]
+        }
+      }
+      return null
+    }
+    try {
+      return document.querySelector(step.target)
+    } catch (error) {
+      return null
+    }
   }
 
   // The first tour (DOM order) that should auto-start for this visitor, or
@@ -460,10 +595,18 @@
     try {
       injectThemeStyle()
       var driverFactory = await loadDriver()
+      // Build once: disclosure steps whose control is hidden get dropped, so
+      // the built count (not tour.steps) decides the progress indicator.
+      var driverSteps = buildDriverSteps(tour)
+      if (!driverSteps.length) {
+        tourStartInFlight = false
+        return null
+      }
       var instance = driverFactory({
-        showProgress: tour.steps.length > 1,
-        steps: buildDriverSteps(tour),
+        showProgress: driverSteps.length > 1,
+        steps: driverSteps,
       })
+      activeInstance = instance
       instance.drive()
       // The flag only covers the async start window. Once the popover is in
       // the DOM, the DOM check above is the authoritative "running" signal —
@@ -481,6 +624,29 @@
           tourStartInFlight = false
         }
       }, 100)
+      // Once the tour ends (popover gone after having appeared), close any
+      // disclosure the last step left open. Covers Done and X-dismiss, which
+      // fire no reliable driver callback. Only armed when a step actually opens
+      // a disclosure, and self-stops if the tour never renders, so it never
+      // spins indefinitely.
+      if (
+        tour.steps.some(function (step) {
+          return step.open
+        })
+      ) {
+        var endWatchStartedAt = Date.now()
+        var appeared = false
+        var endWatch = window.setInterval(function () {
+          if (document.querySelector('.driver-popover')) {
+            appeared = true
+            return
+          }
+          if (appeared || Date.now() - endWatchStartedAt >= 15000) {
+            window.clearInterval(endWatch)
+            restoreOpenedDisclosure()
+          }
+        }, 200)
+      }
       window.dispatchEvent(
         new CustomEvent('starters:v3-tour-started', {
           detail: { tourId: tour.id },

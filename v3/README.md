@@ -41,12 +41,12 @@ it is not a pre-signup funnel page.
 
 ## All Starters favorites
 
-`all-starters-favorites.js` adds the All/Saved tabs and Starter favorite
-controls to `/all-starters` for members with an active paid-Brand Memberstack
-plan. The route itself remains outside `route-guard.js`; this module only adds
-the favorites UI for the paid-Brand plan IDs in
-[ACCESS-MATRIX.md](ACCESS-MATRIX.md), while Xano independently enforces its
-server-side plan gates.
+`all-starters-favorites.js` decorates Starter favourite controls and binds the
+Designer-built Show all/Favourites radio filter on `/all-starters` for members
+with an active paid-Brand Memberstack plan. The route itself remains outside
+`route-guard.js`; this module only enables favourites for the paid-Brand plan
+IDs in [ACCESS-MATRIX.md](ACCESS-MATRIX.md), while Xano independently enforces
+its server-side plan gates.
 
 Install it once in `/all-starters` Page Settings -> Custom Code -> Footer:
 
@@ -55,26 +55,40 @@ Install it once in `/all-starters` Page Settings -> Custom Code -> Footer:
 ```
 
 The site Head Code must load Memberstack, the shared `window.memberReady`
-helper (or `$memberstackDom`), and `wf-xano` v0.18 or newer. It must also own
-the Xano base/auth configuration. The module preserves an existing
+helper (or `$memberstackDom`), `wf-xano` v0.18 or newer, and `wf-algolia`. It
+must also own the Xano base/auth configuration. The module preserves an existing
 `window.WfXanoConfig.favoritesSource` and otherwise defaults it to
 `opp30:brand/favorites`; it waits up to about ten seconds for
-`window.WfXano.favorites` instead of injecting another `wf-xano` copy.
+`window.WfXano.favorites` and `window.WfAlgolia.setFilter` instead of injecting
+either library.
 
 Webflow markup contract:
 
-- The results section uses `.section_all-starters-body`.
-- Each Algolia card exposes `data-wf-algolia-hit-objectid` and contains an
-  `.expert-card_favorite-wrapper`; the module adds the canonical `wf-xano`
-  favorite attributes as cards render.
+- The page has separate `.section_all-starters-body` variants gated with
+  `data-ms-content="premium-brands"` and
+  `data-ms-content="!premium-brands"`. All favourite controls and view radios
+  belong inside the premium variant. The module only decorates that variant and
+  hard-hides `.expert-card_favorite-wrapper` in the non-premium variant.
+- Each premium Algolia card exposes `data-wf-algolia-hit-objectid` and contains
+  an `.expert-card_favorite-wrapper`; the module adds the canonical `wf-xano`
+  favourite attributes as cards render.
+- One Designer-owned radio group provides Show all and Favourites inputs. Mark
+  the inputs themselves or their Webflow radio-field wrappers with
+  `data-ts-favorites-view="all"` and
+  `data-ts-favorites-view="favorites"` respectively, and check Show all by
+  default. The module filters the existing Algolia grid by favourite
+  `objectID`; no second results grid is created. The grid's Designer-owned empty
+  state handles a member with no favourites.
 - The page keeps its small inline `ms-loaded` reveal snippet. Page reveal is
   deliberately independent of this CDN asset so a CDN failure cannot leave
   the page hidden.
 
 The module is production-enabled and has no hostname or reveal-class kill
-switch. It injects the favorites layout styles, including the stacking fix for
-the section's decorative layers, and supplies a heart glyph when a Designer
-favorite wrapper is empty. It does not expose a public JavaScript API.
+switch. It only injects favourite-control positioning/state styles and supplies
+a heart glyph when a Designer favourite wrapper is empty; it does not create
+tabs, radios, grids, or empty-state markup. Un-hearting a card in Favourites
+view reapplies the cached `objectID` filter immediately. The module does not
+expose a public JavaScript API.
 
 Run its focused test with:
 
@@ -88,6 +102,9 @@ node --test v3/all-starters-favorites.test.js
 placement, audience, and replay behavior are configured with Webflow custom
 attributes. A step can optionally highlight a different element by CSS selector
 or exact visible text, which supports controls inside shared Webflow components.
+It can also open a visible disclosure control before highlighting a hidden
+target, restore that disclosure on leaving the step, and omit the step when its
+opener is hidden at the current responsive breakpoint.
 It lazy-loads driver.js only for an eligible tour, stores
 show-once state in Memberstack member JSON (with `localStorage` for guests),
 waits for an in-progress route guard before auto-starting, and themes popover

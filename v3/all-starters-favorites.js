@@ -1,31 +1,47 @@
 /**
- * V3 /all-starters premium-Brand favorites (All / Saved views).
+ * V3 /all-starters premium-Brand favorites.
  *
- * Page glue for the wf-xano favorites module (wf-xano v0.18+ ships the actual
+ * Page glue for the wf-xano favorites module (wf-xano v0.18+ ships the
  * toggle/hydration engine; endpoints live in Xano api:opp30 brand/favorites/*).
- * This module:
+ * The /all-starters page has TWO `.section_all-starters-body` variants gated by
+ * Memberstack: `data-ms-content="premium-brands"` (favorites live here) and
+ * `data-ms-content="!premium-brands"` (must never show favorites UI). This
+ * module:
  *
- *   - injects the favorites UI styles (shell stacking, tab contrast, saved grid),
- *   - builds the All/Saved tab shell + Saved wf-xano wrapper for members whose
- *     active Memberstack plan maps to the brand-paid role,
- *   - decorates every Algolia expert-card favorite wrapper with the canonical
- *     wf-xano favorite attributes (and injects a ♡ visual when the Designer
- *     template ships an empty wrapper).
+ *   - decorates the favorite wrapper in every Algolia expert card inside the
+ *     PREMIUM section with the canonical wf-xano favorite attributes (and
+ *     injects a ♡ visual when a Designer template variant ships the wrapper
+ *     empty), and hard-hides favorite wrappers in the non-premium section,
+ *   - binds the Designer-built "Show all / Favourites" radio filter (marked
+ *     with data-ts-favorites-view="all|favorites") and applies it to the
+ *     existing wf-algolia grid as an objectID filter — the same proven pattern
+ *     as the applied-opportunities filter in opportunities-3.0.js. No UI is
+ *     created from JS; the control and the empty state belong to the Designer.
+ *   - keeps the filter live: while the Favourites view is active, un-hearting
+ *     a card re-applies the filter (via the wf-xano:favorite event).
  *
  * It deliberately does NOT:
- *   - load wf-xano (the site-level Head Code loads it on every page),
+ *   - create any DOM UI (tabs/grids/radios) — Designer owns all markup,
+ *   - load wf-xano or wf-algolia (site-level Head Code loads both sitewide),
  *   - re-declare xanoBase/authBase (site-level WfXanoConfig owns those; this
- *     module only defaults favoritesSource when the site config lacks it —
- *     wf-xano reads favoritesSource lazily, so a deferred assign is safe),
+ *     module only defaults favoritesSource, which wf-xano reads lazily),
  *   - own the page reveal (the page's inline `ms-loaded` snippet does that,
  *     independent of this CDN file, so a CDN outage can never blank the page),
- *   - gate by hostname (entitlement is the plan check here plus the Xano
- *     plan #4/#5 precondition server-side; Memberstack gated content stays a
- *     separate presentation layer).
+ *   - gate by hostname (entitlement = the brand-paid plan check here, the
+ *     Memberstack premium-brands gated-content wrapper as presentation, and
+ *     the Xano plan #4/#5 precondition server-side).
+ *
+ * Designer contract (all inside the data-ms-content="premium-brands" section):
+ *   - radio inputs (one group) carrying data-ts-favorites-view="all" (checked
+ *     by default) and data-ts-favorites-view="favorites" — the attribute may
+ *     sit on the input itself or on its Webflow radio-field wrapper,
+ *   - expert-card favorite wrapper (.expert-card_favorite-wrapper) in the card
+ *     template, ideally with its bookmark SVG (♡ is injected when absent).
  *
  * Install: /all-starters Page Settings -> Custom Code -> Footer, one deferred
  * jsDelivr @latest tag. History: extracted 2026-07-24 from the page's inline
- * footer (see webflow-sites/starters-3/custom-code-backups/).
+ * footer; UI injection dropped same day in favor of Designer-built controls
+ * (see webflow-sites/starters-3/custom-code-backups/).
  */
 ;(function () {
   'use strict'
@@ -40,38 +56,24 @@
     'pln_new-paid-plan-463h04ph': true,
     'pln_dorxata-test-brand-plan-777r02pa': true,
   }
-  var SECTION_SELECTOR = '.section_all-starters-body'
+  var PREMIUM_SECTION = '.section_all-starters-body[data-ms-content="premium-brands"]'
+  var NON_PREMIUM_SECTION = '.section_all-starters-body[data-ms-content="!premium-brands"]'
+  var VIEW_ATTR = 'data-ts-favorites-view'
+  var FAVORITE_TYPE = 'starter'
   var DEFAULT_FAVORITES_SOURCE = 'opp30:brand/favorites'
+  // Same sentinel as the applied-opportunities filter: an impossible objectID
+  // so "favourites view with zero favourites" shows the grid's empty state.
+  var EMPTY_SENTINEL = '__none__'
 
   var CSS = [
-    '/* The section decorative layers (.all-starters-body_floating-bg, .section_bg',
-    '   variants) paint over statically-inserted children; the shell must own a',
-    '   stacking context. */',
-    '.ts-favorites-shell { position: relative; z-index: 5; padding-top: 1.5rem; padding-bottom: 1.5rem; }',
-    '.ts-favorites-tabs { display: flex; gap: .5rem; margin-bottom: 1.5rem; border-bottom: 1px solid currentColor; }',
-    '/* Explicit color: the tabs sit on the section dark floating band where the',
-    '   inherited text color is near-black. */',
-    '.ts-favorites-tab { appearance: none; border: 0; border-bottom: 2px solid transparent; background: transparent; padding: .75rem 1rem; cursor: pointer; font: inherit; color: #fff; }',
-    '.ts-favorites-tab[aria-selected="true"] { border-bottom-color: currentColor; font-weight: 600; }',
-    '.section_all-starters-body.is-saved-view > .padding-global:not(.ts-favorites-shell) { display: none !important; }',
-    '.ts-saved-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; }',
-    '.ts-saved-card { position: relative; overflow: hidden; border: 1px solid rgba(0,0,0,.14); border-radius: .75rem; background: #fff; }',
-    '.ts-saved-card_image { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }',
-    '.ts-saved-card_body { display: grid; gap: .5rem; padding: 1rem; }',
-    '.ts-saved-card_name { color: inherit; font-size: 1.25rem; font-weight: 600; text-decoration: none; }',
-    '.ts-saved-card_meta { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }',
-    '.ts-saved-card .expert-card_favorite-wrapper { position: absolute; top: .75rem; right: .75rem; z-index: 2; }',
-    '/* Some Designer expert-card template variants ship the favorite wrapper as an',
-    '   empty full-width div; pin it to the photo corner like the saved cards. */',
-    '.section_all-starters-body .expert-card_wrapper > .expert-card_favorite-wrapper { position: absolute; top: .75rem; right: .75rem; z-index: 2; width: auto; height: auto; }',
+    '/* Favorite control sits on the card photo corner (some Designer template',
+    '   variants ship the wrapper as an empty full-width div). */',
+    PREMIUM_SECTION + ' .expert-card_wrapper > .expert-card_favorite-wrapper { position: absolute; top: .75rem; right: .75rem; z-index: 2; width: auto; height: auto; }',
+    '/* Favorites are premium-only: never show the control in the non-premium variant. */',
+    NON_PREMIUM_SECTION + ' .expert-card_favorite-wrapper { display: none !important; }',
     '[wf-xano-element="favorite"].is-wf-xano-favorited path { fill: currentColor; }',
     '[wf-xano-element="favorite"].is-wf-xano-loading { opacity: .55; cursor: wait; }',
-    '[wf-xano-element="favorite"]:focus-visible,',
-    '.ts-favorites-tab:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }',
-    '[wf-xano-element="loader"], [wf-xano-element="error"], [wf-xano-element="empty"] { padding: 2rem 0; }',
-    '.ts-saved-pagination { display: flex; align-items: center; justify-content: center; gap: .75rem; padding-top: 1.5rem; }',
-    '@media (max-width: 991px) { .ts-saved-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }',
-    '@media (max-width: 767px) { .ts-saved-grid { grid-template-columns: 1fr; } }',
+    '[wf-xano-element="favorite"]:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }',
   ].join('\n')
 
   function ensureFavoritesSource() {
@@ -107,22 +109,35 @@
     ready()
   }
 
+  // Same access pattern as opportunities-3.0.js waitForWfAlgolia.
+  function whenWfAlgoliaReady(callback) {
+    var attempts = 0
+    function ready() {
+      if (window.WfAlgolia && typeof window.WfAlgolia.setFilter === 'function') {
+        return callback(window.WfAlgolia)
+      }
+      if (++attempts < 100) window.setTimeout(ready, 100)
+      else console.warn('[all-starters-favorites] wf-algolia setFilter not available; view filter skipped')
+    }
+    ready()
+  }
+
   function decorateFavoriteControls(root) {
     var scope = root && root.querySelectorAll ? root : document
     var wrappers = []
     if (scope.matches && scope.matches('.expert-card_favorite-wrapper')) wrappers.push(scope)
     wrappers = wrappers.concat(Array.prototype.slice.call(scope.querySelectorAll('.expert-card_favorite-wrapper')))
     wrappers.forEach(function (wrapper) {
-      if (!wrapper.closest(SECTION_SELECTOR + ' [data-wf-algolia-hit-objectid]')) return
+      if (!wrapper.closest(PREMIUM_SECTION + ' [data-wf-algolia-hit-objectid]')) return
       var control = wrapper.querySelector('button.expert_favorite-button') || wrapper
       if (control.getAttribute('wf-xano-element') === 'favorite') return
       control.setAttribute('wf-xano-element', 'favorite')
-      control.setAttribute('wf-xano-favorite-type', 'starter')
+      control.setAttribute('wf-xano-favorite-type', FAVORITE_TYPE)
       control.setAttribute('wf-xano-favorite-label-add', 'Save Starter')
       control.setAttribute('wf-xano-favorite-label-remove', 'Remove saved Starter')
       var visual = control.querySelector('svg') || control.firstElementChild
       if (!visual) {
-        // Empty Designer wrapper variant: give it the same visual as saved cards.
+        // Empty Designer wrapper variant: give it a minimal visual.
         visual = document.createElement('span')
         visual.className = 'expert_favorite-button'
         visual.setAttribute('aria-hidden', 'true')
@@ -145,54 +160,66 @@
     })
   }
 
-  function savedMarkup() {
-    return '<section wf-xano-element="wrapper" wf-xano-instance="saved-starters" wf-xano-source="opp30:brand/favorites/starters/list" wf-xano-method="POST" wf-xano-auth="memberstack" wf-xano-per-page="20" wf-xano-refresh-on="favorite" wf-xano-favorite-type="starter">' +
-      '<div wf-xano-element="loader">Loading saved Starters…</div>' +
-      '<div wf-xano-element="error" role="alert">Saved Starters could not be loaded. Please try again.</div>' +
-      '<div wf-xano-element="empty"><h2>No saved Starters yet</h2><button type="button" data-open-all-starters>Browse all Starters</button></div>' +
-      '<div class="ts-saved-grid" wf-xano-element="list">' +
-        '<article class="ts-saved-card" wf-xano-element="template">' +
-          '<img class="ts-saved-card_image" wf-xano-src="profile_photo" alt="">' +
-          '<button type="button" class="expert-card_favorite-wrapper" wf-xano-element="favorite" wf-xano-favorite-type="starter" wf-xano-favorite-label-add="Save Starter" wf-xano-favorite-label-remove="Remove saved Starter"><span class="expert_favorite-button" wf-xano-element="favorite-visual" aria-hidden="true">♡</span></button>' +
-          '<div class="ts-saved-card_body"><a class="ts-saved-card_name" wf-xano-link="slug" wf-xano-link-prefix="/hire/"><span wf-xano-bind="first_name"></span></a>' +
-          '<div wf-xano-bind="professional_headline"></div><div wf-xano-bind="profile_type"></div>' +
-          '<div class="ts-saved-card_meta"><span wf-xano-bind="hourly_rate" wf-xano-prefix="$" wf-xano-suffix="/hr"></span><span wf-xano-bind="availability"></span></div></div>' +
-        '</article>' +
-      '</div>' +
-      '<div class="ts-saved-pagination"><button type="button" wf-xano-element="page-prev">Previous</button><button type="button" wf-xano-element="page-number">1</button><span wf-xano-element="page-dots">…</span><button type="button" wf-xano-element="page-next">Next</button></div>' +
-    '</section>'
+  // ---- Show all / Favourites view filter (Designer-built radios) ----
+
+  var currentView = 'all'
+
+  function viewOfMarker(marker) {
+    return marker.getAttribute(VIEW_ATTR) === 'favorites' ? 'favorites' : 'all'
   }
 
-  function buildPremiumUi(section) {
-    if (section.querySelector('.ts-favorites-shell')) return
-    injectStyles()
-    var shell = document.createElement('div')
-    shell.className = 'padding-global ts-favorites-shell'
-    shell.innerHTML = '<div class="container-large"><div class="ts-favorites-tabs" role="tablist" aria-label="Starter views"><button type="button" class="ts-favorites-tab" role="tab" aria-selected="true">All Starters</button><button type="button" class="ts-favorites-tab" role="tab" aria-selected="false">Saved</button></div><div class="ts-favorites-saved" role="tabpanel" hidden>' + savedMarkup() + '</div></div>'
-    section.insertBefore(shell, section.firstChild)
+  function applyFilter(api) {
+    whenWfAlgoliaReady(function (algolia) {
+      if (currentView === 'favorites') {
+        var ids = api.favorites.ids(FAVORITE_TYPE)
+        algolia.setFilter('objectID', ids.length ? ids : [EMPTY_SENTINEL])
+      } else {
+        algolia.setFilter('objectID', [])
+      }
+    })
+  }
 
-    var tabs = shell.querySelectorAll('[role="tab"]')
-    var savedPanel = shell.querySelector('.ts-favorites-saved')
-    function selectSaved(saved) {
-      section.classList.toggle('is-saved-view', saved)
-      tabs[0].setAttribute('aria-selected', saved ? 'false' : 'true')
-      tabs[1].setAttribute('aria-selected', saved ? 'true' : 'false')
-      savedPanel.hidden = !saved
-      if (saved) whenFavoritesReady(function (api) { api.init(savedPanel); api.favorites.refresh('starter').catch(function () {}) })
-    }
-    tabs[0].addEventListener('click', function () { selectSaved(false) })
-    tabs[1].addEventListener('click', function () { selectSaved(true) })
-    shell.querySelector('[data-open-all-starters]').addEventListener('click', function () { selectSaved(false) })
+  function applyView(view, options) {
+    currentView = view === 'favorites' ? 'favorites' : 'all'
+    whenFavoritesReady(function (api) {
+      if (currentView === 'favorites' && !(options && options.skipRefresh)) {
+        // Fresh ids on entering the view (also covers first hydration).
+        api.favorites.refresh(FAVORITE_TYPE).then(
+          function () { applyFilter(api) },
+          function () { applyFilter(api) }
+        )
+      } else {
+        applyFilter(api)
+      }
+    })
+  }
 
-    decorateFavoriteControls(section)
-    new MutationObserver(function (records) {
-      records.forEach(function (record) {
-        Array.prototype.forEach.call(record.addedNodes || [], function (node) {
-          if (node.nodeType === 1) decorateFavoriteControls(node)
-        })
-      })
-    }).observe(section, { childList: true, subtree: true })
-    whenFavoritesReady(function (api) { api.init(shell); api.favorites.init(section) })
+  function bindViewControls(section) {
+    // Delegated: survives any re-render of the section's contents.
+    document.addEventListener('change', function (event) {
+      var target = event.target
+      if (!target || !target.closest) return
+      var marker = target.closest('[' + VIEW_ATTR + ']')
+      if (!marker || !section.contains(marker)) return
+      if (target.type === 'radio' && !target.checked) return
+      applyView(viewOfMarker(marker))
+    })
+
+    // Honor the Designer's default-checked radio on load (only act when the
+    // non-default view starts checked; "all" needs no filter call).
+    var markers = section.querySelectorAll('[' + VIEW_ATTR + ']')
+    Array.prototype.forEach.call(markers, function (marker) {
+      var input = marker.matches && marker.matches('input') ? marker : marker.querySelector('input')
+      if (input && input.checked && viewOfMarker(marker) === 'favorites') applyView('favorites')
+    })
+
+    // Un-hearting while in the Favourites view removes the card immediately.
+    // wf-xano updates its ids cache before dispatching wf-xano:favorite.
+    document.addEventListener('wf-xano:favorite', function (event) {
+      var detail = (event && event.detail) || {}
+      if (detail.item_type && detail.item_type !== FAVORITE_TYPE) return
+      if (currentView === 'favorites') applyView('favorites', { skipRefresh: true })
+    })
   }
 
   function memberReady() {
@@ -208,11 +235,22 @@
   }
 
   function boot() {
-    var section = document.querySelector(SECTION_SELECTOR)
+    var section = document.querySelector(PREMIUM_SECTION)
     if (!section) return
     ensureFavoritesSource()
+    injectStyles()
     memberReady().then(function (member) {
-      if (isPremiumBrand(member)) buildPremiumUi(section)
+      if (!isPremiumBrand(member)) return
+      decorateFavoriteControls(section)
+      new MutationObserver(function (records) {
+        records.forEach(function (record) {
+          Array.prototype.forEach.call(record.addedNodes || [], function (node) {
+            if (node.nodeType === 1) decorateFavoriteControls(node)
+          })
+        })
+      }).observe(section, { childList: true, subtree: true })
+      whenFavoritesReady(function (api) { api.favorites.init(section) })
+      bindViewControls(section)
     })
   }
 

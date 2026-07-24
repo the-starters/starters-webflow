@@ -133,6 +133,11 @@ function loadModule(options = {}) {
       }
     },
   }
+  window.MouseEvent = class MouseEvent {
+    constructor(type) {
+      this.type = type
+    }
+  }
   vm.createContext(context)
   vm.runInContext(source, context)
   return { api: window.StartersV3OnboardingTour, warnings, events, run, window }
@@ -827,4 +832,167 @@ test('startTour injects the typography theme style exactly once', async () => {
     styles[0].textContent,
     /\.driver-popover \.driver-popover-description\{/,
   )
+})
+
+function discEl({ w = 100, h = 20, dispatched = [] } = {}) {
+  return {
+    _w: w,
+    _h: h,
+    dispatched,
+    getBoundingClientRect() {
+      return { width: this._w, height: this._h }
+    },
+    getElementsByTagName() {
+      return { length: 0 }
+    },
+    dispatchEvent(e) {
+      this.dispatched.push(e.type)
+      return true
+    },
+  }
+}
+
+test('parseTours reads data-tour-open onto the step', () => {
+  const { api } = loadModule()
+  const nodes = [
+    fakeElement({ 'data-tour-step': 't:1', 'data-tour-open': '.avatar' }),
+  ]
+  const tours = api.parseTours(fakeRoot(nodes))
+  assert.equal(tours[0].steps[0].open, '.avatar')
+})
+
+test('buildDriverSteps drops a disclosure step whose control is not visible', () => {
+  const { api } = loadModule({
+    cssTargets: { '.avatar': discEl({ w: 0, h: 0 }) }, // collapsed (mobile)
+  })
+  const tour = {
+    steps: [{ selector: 'S1', target: '', open: '.avatar', title: 'Edit' }],
+  }
+  assert.equal(api.buildDriverSteps(tour).length, 0)
+})
+
+test('buildDriverSteps keeps a disclosure step when its control is visible and wires hooks', () => {
+  const { api } = loadModule({
+    cssTargets: { '.avatar': discEl({ w: 37, h: 37 }) },
+  })
+  const tour = {
+    steps: [{ selector: 'S1', target: '', open: '.avatar', title: 'Edit' }],
+  }
+  const steps = api.buildDriverSteps(tour)
+  assert.equal(steps.length, 1)
+  assert.equal(typeof steps[0].onHighlightStarted, 'function')
+})
+
+test('entering a later step restores (closes) a disclosure a prior step opened', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const editHidden = discEl({ w: 0, h: 0 })
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': editHidden },
+  })
+  const tour = {
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+      { selector: 'S2', target: '', open: '', title: 'Next' },
+    ],
+  }
+  const steps = api.buildDriverSteps(tour)
+  steps[0].onHighlightStarted() // opens the avatar menu
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+  steps[1].onHighlightStarted() // moving on closes it again
+  assert.deepEqual(avatar.dispatched, [
+    'mousedown',
+    'mouseup',
+    'click',
+    'mousedown',
+    'mouseup',
+    'click',
+  ])
+})
+
+test('onHighlightStarted opens the disclosure when the target is hidden', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const editHidden = discEl({ w: 0, h: 0 }) // menu closed -> target hidden
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': editHidden },
+  })
+  const tour = {
+    steps: [{ selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' }],
+  }
+  const step = api.buildDriverSteps(tour)[0]
+  step.onHighlightStarted()
+  // full mouse sequence dispatched on the avatar toggle
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+})
+
+test('onHighlightStarted checks a text target before its visible fallback', () => {
+  const editHidden = {
+    ...discEl({ w: 0, h: 0 }),
+    textContent: 'Edit profile',
+  }
+  const fallbackVisible = discEl({ w: 100, h: 20 })
+  const avatar = discEl({ w: 37, h: 37 })
+  avatar.dispatchEvent = function (event) {
+    this.dispatched.push(event.type)
+    if (event.type === 'click') {
+      editHidden._w = 100
+      editHidden._h = 20
+    }
+    return true
+  }
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, S1: fallbackVisible },
+    textElements: [editHidden],
+  })
+  const tour = {
+    steps: [
+      {
+        selector: 'S1',
+        target: 'text:Edit profile',
+        open: '.avatar',
+        title: 'Edit',
+      },
+    ],
+  }
+  const step = api.buildDriverSteps(tour)[0]
+  assert.equal(step.element, 'S1')
+  step.onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+  assert.equal(step.element, editHidden)
+})
+
+test('onHighlightStarted does not re-open when the target is already visible', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const editVisible = discEl({ w: 155, h: 36 })
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': editVisible },
+  })
+  const tour = {
+    steps: [{ selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' }],
+  }
+  const step = api.buildDriverSteps(tour)[0]
+  step.onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, [])
+})
+
+test('startTour returns null when responsive filtering removes every step', async () => {
+  let factoryCalls = 0
+  const driver = {
+    js: {
+      driver() {
+        factoryCalls += 1
+        return { drive() {} }
+      },
+    },
+  }
+  const { api } = loadModule({
+    driver,
+    cssTargets: { '.avatar': discEl({ w: 0, h: 0 }) },
+  })
+  const tour = {
+    id: 'mobile-hidden',
+    steps: [{ selector: 'S1', target: '', open: '.avatar' }],
+  }
+  assert.equal(await api.startTour(tour), null)
+  assert.equal(factoryCalls, 0)
+  assert.equal(await api.startTour(tour), null)
 })
