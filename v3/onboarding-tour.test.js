@@ -962,6 +962,19 @@ test('onHighlightStarted checks a text target before its visible fallback', () =
   assert.equal(step.element, editHidden)
 })
 
+test('disclosure step falls back when its CSS-selector target is invalid', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar },
+    invalidSelector: '[',
+  })
+  const tour = {
+    steps: [{ selector: 'S1', target: '[', open: '.avatar', title: 'Edit' }],
+  }
+
+  assert.equal(api.buildDriverSteps(tour)[0].element, 'S1')
+})
+
 test('restoring a disclosure does not reopen it when its target is hidden', () => {
   const avatar = discEl({ w: 37, h: 37 })
   const edit = discEl({ w: 0, h: 0 })
