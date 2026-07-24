@@ -33,14 +33,17 @@ Do not discard local changes unless the user explicitly asks.
 - Do not force-push.
 - Do not overwrite remote changes with stale local files.
 - If a push is rejected, fetch and review the remote changes before trying again.
-- For Webflow footer work, prefer loading scripts from the GitHub/jsDelivr CDN at `@latest` with `defer`, so new tagged releases do not require a Webflow URL edit.
+- For Webflow browser code, put the implementation in this GitHub repo and keep Webflow thin. Load the jsDelivr asset once from Page/Site Settings -> Custom Code -> Head Code using `@latest` with `defer`, so future tagged releases do not require another Webflow edit.
+- `@latest` resolves the highest semver tag. The production release sequence is merge to `main` -> semver tag/release -> purge `@latest` -> verify the served bytes; merge + purge without a newer tag will continue serving the previous release.
+- Before adding a script here, check whether native Webflow, `wf-xano`, `wf-algolia`, or another established shared library already owns the behavior. Prefer extending the appropriate library when the capability will be reused. One-off page scripts belong here only when the behavior is genuinely page-specific or cannot fit a shared attribute contract without distorting it.
+- Browser behavior must connect to Webflow elements through custom attributes, not styling classes or generated IDs. Reuse the owning library's vocabulary; do not invent a parallel attribute dialect.
 
 ## Current Scripts
 
 - `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`
 - `quiz-results.min.js`
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds
-- `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (category-matched and applied starter feeds); defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
+- `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations; brand-free lands on `/quiz` until the Memberstack `starter-quiz` field is set (quiz completed), then `/quiz-results`
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
 - `v3/onboarding-tour.js` — attribute-driven V3 product tours with role targeting, per-member seen-state, and replay/reset controls
 - `v3/scheduling-auth.js` — staging-only availability and scheduling authentication bridge
