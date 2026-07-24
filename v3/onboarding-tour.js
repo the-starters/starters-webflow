@@ -370,11 +370,24 @@
       var instance = driverFactory({
         showProgress: tour.steps.length > 1,
         steps: buildDriverSteps(tour),
-        onDestroyed: function () {
-          tourStartInFlight = false
-        },
       })
       instance.drive()
+      // The flag only covers the async start window. Once the popover is in
+      // the DOM, the DOM check above is the authoritative "running" signal —
+      // driver 1.8's onDestroyed hook does not fire for close-button
+      // dismissals, so a callback-based release would stick and block every
+      // later replay. The timeout bound releases even if drive() rendered
+      // nothing (e.g. all step elements disappeared).
+      var releaseStartedAt = Date.now()
+      var releaseTimer = window.setInterval(function () {
+        if (
+          document.querySelector('.driver-popover') ||
+          Date.now() - releaseStartedAt >= 2000
+        ) {
+          window.clearInterval(releaseTimer)
+          tourStartInFlight = false
+        }
+      }, 100)
       window.dispatchEvent(
         new CustomEvent('starters:v3-tour-started', {
           detail: { tourId: tour.id },

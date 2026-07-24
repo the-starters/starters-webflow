@@ -80,7 +80,10 @@ function loadModule(options = {}) {
         }
       }
     },
+    // Tests toggle __popover to simulate a running/dismissed driver popover.
+    __popover: null,
     querySelector(selector) {
+      if (selector === '.driver-popover') return document.__popover
       if (selector.indexOf('[data-tour-step="') === 0) {
         return (options.nodes || [])[0] || null
       }
@@ -471,17 +474,17 @@ test('boot does not mark seen when driver startup fails', async () => {
   assert.equal(marked, false)
 })
 
-test('startTour prevents overlapping starts and unlocks when destroyed', async () => {
+test('startTour prevents overlapping starts and unlocks after dismissal', async () => {
   const starts = []
-  let onDestroyed
-  const { api } = loadModule({
+  const { api, window } = loadModule({
     driver: {
       js: {
-        driver(options) {
-          onDestroyed = options.onDestroyed
+        driver() {
           return {
             drive() {
               starts.push('started')
+              // Simulate driver rendering its popover, as in a real drive().
+              window.document.__popover = {}
             },
           }
         },
@@ -501,7 +504,15 @@ test('startTour prevents overlapping starts and unlocks when destroyed', async (
   assert.equal(overlapping, null)
   assert.deepEqual(starts, ['started'])
 
-  onDestroyed()
+  // Wait for the release poller to observe the rendered popover; the tour
+  // is running, so a new start stays blocked by the DOM check.
+  await new Promise((resolve) => setTimeout(resolve, 250))
+  assert.equal(await api.startTour(tour), null)
+  assert.deepEqual(starts, ['started'])
+
+  // Dismissal (X button, Done, Esc) removes the popover from the DOM —
+  // driver 1.8 fires no reliable callback for this — and replay works again.
+  window.document.__popover = null
   assert.ok(await api.startTour(tour))
   assert.deepEqual(starts, ['started', 'started'])
 })
