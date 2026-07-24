@@ -45,10 +45,11 @@ it is not a pre-signup funnel page.
 placement, audience, and replay behavior are configured with Webflow custom
 attributes. It lazy-loads driver.js only for an eligible tour, stores
 show-once state in Memberstack member JSON (with `localStorage` for guests),
-and waits for an in-progress route guard before auto-starting. Query-string
-start/reset controls and `Alt+Shift+T` allow support and QA to replay tours on
-staging or production without editing member JSON. It is presentation-only and
-does not grant or restrict access. See
+waits for an in-progress route guard before auto-starting, and themes popover
+titles and descriptions from the live page's heading and body fonts with
+brand-font fallbacks. Query-string start/reset controls and `Alt+Shift+T` allow
+support and QA to replay tours on staging or production without editing member
+JSON. It is presentation-only and does not grant or restrict access. See
 [ONBOARDING-TOUR-WIRING.md](ONBOARDING-TOUR-WIRING.md) for the Designer
 attributes, install snippet, persistence behavior, diagnostics, and release
 checks.
