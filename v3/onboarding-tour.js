@@ -595,14 +595,15 @@
   }
 
   async function startTour(tour) {
-    if (tourStartInFlight || document.querySelector('.driver-popover')) {
-      return null
-    }
-    tourRunToken += 1
-    var runToken = tourRunToken
+    restoreOpenedDisclosure()
     if (endWatchInterval !== null) {
       window.clearInterval(endWatchInterval)
       endWatchInterval = null
+    }
+    tourRunToken += 1
+    var runToken = tourRunToken
+    if (tourStartInFlight || document.querySelector('.driver-popover')) {
+      return null
     }
     tourStartInFlight = true
     try {
