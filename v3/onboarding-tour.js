@@ -255,36 +255,76 @@
   }
 
   var driverLoadPromise = null
+  var driverLoadFailed = false
   function loadDriver() {
     var existing = currentDriverFactory()
-    if (existing) return Promise.resolve(existing)
+    if (existing && !driverLoadFailed) return Promise.resolve(existing)
     if (driverLoadPromise) return driverLoadPromise
 
-    driverLoadPromise = new Promise(function (resolve, reject) {
+    var loadAttempt = new Promise(function (resolve, reject) {
       var link = document.createElement('link')
       link.rel = 'stylesheet'
       link.href = DRIVER_CSS_URL
-      document.head.appendChild(link)
 
       var script = document.createElement('script')
       script.src = DRIVER_JS_URL
       script.defer = true
 
+      var cssLoaded = false
+      var scriptLoaded = false
+      var settled = false
+
+      function remove(element) {
+        if (element.parentNode) element.parentNode.removeChild(element)
+      }
+
+      function fail(error) {
+        if (settled) return
+        settled = true
+        driverLoadFailed = true
+        window.clearTimeout(timer)
+        remove(link)
+        remove(script)
+        reject(error)
+      }
+
+      function finish() {
+        if (settled || !cssLoaded || !scriptLoaded) return
+        var factory = currentDriverFactory()
+        if (!factory) {
+          fail(new Error('driver.js loaded but factory missing'))
+          return
+        }
+        settled = true
+        driverLoadFailed = false
+        window.clearTimeout(timer)
+        resolve(factory)
+      }
+
       var timer = window.setTimeout(function () {
-        reject(new Error('driver.js load timed out'))
+        fail(new Error('driver.js assets load timed out'))
       }, DRIVER_LOAD_TIMEOUT_MS)
 
+      link.onload = function () {
+        cssLoaded = true
+        finish()
+      }
+      link.onerror = function () {
+        fail(new Error('driver.js stylesheet failed to load'))
+      }
       script.onload = function () {
-        window.clearTimeout(timer)
-        var factory = currentDriverFactory()
-        if (factory) resolve(factory)
-        else reject(new Error('driver.js loaded but factory missing'))
+        scriptLoaded = true
+        finish()
       }
       script.onerror = function () {
-        window.clearTimeout(timer)
-        reject(new Error('driver.js failed to load'))
+        fail(new Error('driver.js script failed to load'))
       }
+      document.head.appendChild(link)
       document.head.appendChild(script)
+    })
+    driverLoadPromise = loadAttempt.catch(function (error) {
+      driverLoadPromise = null
+      throw error
     })
     return driverLoadPromise
   }
@@ -413,6 +453,7 @@
     parseTours: parseTours,
     buildDriverSteps: buildDriverSteps,
     autoStartTarget: autoStartTarget,
+    loadDriver: loadDriver,
     startTour: startTour,
   }
 

@@ -45,8 +45,25 @@ function loadModule(options = {}) {
       events.push(event)
     },
   }
+  const head = {
+    children: [],
+    appendChild(element) {
+      element.parentNode = head
+      head.children.push(element)
+      if (options.onAssetAppend) options.onAssetAppend(element, head)
+    },
+    removeChild(element) {
+      const index = head.children.indexOf(element)
+      if (index !== -1) head.children.splice(index, 1)
+      element.parentNode = null
+    },
+  }
   const document = {
     readyState: 'loading',
+    head,
+    createElement(tagName) {
+      return { tagName: tagName.toUpperCase(), parentNode: null }
+    },
     addEventListener(type, listener) {
       if (type === 'DOMContentLoaded') run = listener
     },
@@ -86,7 +103,7 @@ function loadModule(options = {}) {
   }
   vm.createContext(context)
   vm.runInContext(source, context)
-  return { api: window.StartersV3OnboardingTour, warnings, events, run }
+  return { api: window.StartersV3OnboardingTour, warnings, events, run, window }
 }
 
 // Objects created inside the vm context have foreign prototypes, which
@@ -392,4 +409,52 @@ test('boot does not mark seen when driver startup fails', async () => {
 
   await run()
   assert.equal(marked, false)
+})
+
+test('loadDriver waits for both script and stylesheet', async () => {
+  const appended = []
+  const { api } = loadModule({
+    onAssetAppend(element) {
+      appended.push(element)
+    },
+  })
+
+  let resolved = false
+  const loading = api.loadDriver().then(() => {
+    resolved = true
+  })
+  const link = appended.find((element) => element.tagName === 'LINK')
+  const script = appended.find((element) => element.tagName === 'SCRIPT')
+
+  script.onload()
+  await Promise.resolve()
+  assert.equal(resolved, false)
+
+  link.onload()
+  await assert.rejects(loading, /factory missing/)
+})
+
+test('loadDriver rejects CSS failure and retries after a failed attempt', async () => {
+  const appended = []
+  const { api, window } = loadModule({
+    onAssetAppend(element) {
+      appended.push(element)
+    },
+  })
+
+  const first = api.loadDriver()
+  const firstLink = appended.find((element) => element.tagName === 'LINK')
+  firstLink.onerror()
+  await assert.rejects(first, /stylesheet failed/)
+
+  const second = api.loadDriver()
+  const secondAssets = appended.slice(2)
+  const secondLink = secondAssets.find((element) => element.tagName === 'LINK')
+  const secondScript = secondAssets.find((element) => element.tagName === 'SCRIPT')
+  assert.ok(secondLink)
+  assert.ok(secondScript)
+  window.driver = { js: { driver() {} } }
+  secondLink.onload()
+  secondScript.onload()
+  assert.equal(await second, window.driver.js.driver)
 })
