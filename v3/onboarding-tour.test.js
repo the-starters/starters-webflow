@@ -996,3 +996,49 @@ test('startTour returns null when responsive filtering removes every step', asyn
   assert.equal(factoryCalls, 0)
   assert.equal(await api.startTour(tour), null)
 })
+
+test('boot does not mark seen when disclosure filtering removes every step', async () => {
+  const calls = []
+  const { api, run } = loadModule({
+    memberstack: {
+      getCurrentMember: async () => ({ data: null }),
+    },
+    driver: {
+      js: {
+        driver() {
+          calls.push('created')
+          return {
+            drive() {
+              calls.push('started')
+            },
+          }
+        },
+      },
+    },
+    localStorage: {
+      getItem() {
+        return null
+      },
+      setItem() {
+        calls.push('marked')
+      },
+    },
+    nodes: [
+      fakeElement({
+        'data-tour-step': 'welcome:1',
+        'data-tour-open': '.avatar',
+      }),
+    ],
+    cssTargets: { '.avatar': discEl({ w: 0, h: 0 }) },
+  })
+  await run()
+  assert.deepEqual(calls, [])
+  assert.equal(
+    await api.startTour({
+      id: 'welcome',
+      steps: [{ selector: 'S1', target: '', open: '.avatar' }],
+    }),
+    null,
+  )
+  assert.deepEqual(calls, [])
+})
