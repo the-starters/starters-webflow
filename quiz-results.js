@@ -15,6 +15,7 @@
 ;(() => {
     const starterQuizResultsControllerFlag = 'starterQuizResultsController'
     const starterQuizResultsDebugEnabled = true
+    const debugStorageKey = 'starterQuizDebug'
     const pendingQuizStorageKey = 'starterQuizPending'
     const learnContentSectionSelector = '.section_results-learn'
     const learnContentResultsSelector =
@@ -38,8 +39,37 @@
         'swiper-slide-fully-visible',
     ]
 
+    /**
+     * Checks whether starter quiz debug logging is enabled.
+     *
+     * @returns {boolean} True when flow logs should be printed.
+     */
+    function isDebugLoggingEnabled() {
+        if (!starterQuizResultsDebugEnabled) return false
+
+        const debugParam = new URLSearchParams(window.location.search).get(
+            debugStorageKey,
+        )
+        const normalizedDebugParam = (debugParam || '').toLowerCase()
+
+        if (['1', 'true', 'yes'].includes(normalizedDebugParam)) {
+            sessionStorage.setItem(debugStorageKey, 'true')
+            return true
+        }
+
+        if (['0', 'false', 'no'].includes(normalizedDebugParam)) {
+            sessionStorage.removeItem(debugStorageKey)
+            return false
+        }
+
+        return (
+            sessionStorage.getItem(debugStorageKey) === 'true' ||
+            localStorage.getItem(debugStorageKey) === 'true'
+        )
+    }
+
     if (window[starterQuizResultsControllerFlag]) {
-        if (starterQuizResultsDebugEnabled) {
+        if (isDebugLoggingEnabled()) {
             console.log('[Starter Quiz Funnel]', '[results]', 'duplicate script skipped', {
                 scriptFlag: starterQuizResultsControllerFlag,
             })
@@ -489,7 +519,7 @@
             try {
                 card = wfAlgolia.cloneAndPopulate(template, hit)
             } catch (error) {
-                if (starterQuizResultsDebugEnabled) {
+                if (isDebugLoggingEnabled()) {
                     console.warn(
                         '[Starter Quiz Funnel]',
                         '[results]',
@@ -710,7 +740,7 @@
             normalizeLearnContentSlides(source + '-round-robin')
             refreshLearnContentSwiper(resultsElement)
 
-            if (starterQuizResultsDebugEnabled) {
+            if (isDebugLoggingEnabled()) {
                 console.log(
                     '[Starter Quiz Funnel]',
                     '[results]',
@@ -731,7 +761,7 @@
 
             return true
         } catch (error) {
-            if (starterQuizResultsDebugEnabled) {
+            if (isDebugLoggingEnabled()) {
                 console.warn(
                     '[Starter Quiz Funnel]',
                     '[results]',
@@ -832,7 +862,7 @@
             swiper.scrollbar?.updateSize?.()
             return true
         } catch (error) {
-            if (starterQuizResultsDebugEnabled) {
+            if (isDebugLoggingEnabled()) {
                 console.warn(
                     '[Starter Quiz Funnel]',
                     '[results]',
@@ -997,7 +1027,7 @@
         refreshLearnContentSwiper(resultsElement, source)
 
         if (didChange) {
-            if (starterQuizResultsDebugEnabled) {
+            if (isDebugLoggingEnabled()) {
                 console.log(
                     '[Starter Quiz Funnel]',
                     '[results]',
@@ -1080,7 +1110,7 @@
         const wfAlgolia = await waitForWfAlgoliaRuntime()
 
         if (!wfAlgolia) {
-            if (starterQuizResultsDebugEnabled) {
+            if (isDebugLoggingEnabled()) {
                 console.warn(
                     '[Starter Quiz Funnel]',
                     '[results]',
@@ -1131,7 +1161,7 @@
             }),
         )
 
-        if (starterQuizResultsDebugEnabled) {
+        if (isDebugLoggingEnabled()) {
             console.log(
                 '[Starter Quiz Funnel]',
                 '[results]',
@@ -1159,7 +1189,6 @@
     document.addEventListener(
     'DOMContentLoaded',
     function starterQuizResultsController() {
-    const debugStorageKey = 'starterQuizDebug'
     const debugLogPrefix = '[Starter Quiz Funnel]'
     const algoliaDefaultAppId = 'PKVW6M9OPZ'
     const algoliaDefaultIndexName = 'Freelancers3.0-dev'
@@ -1328,35 +1357,6 @@
         'subcategory',
     ]
     const maxDisplayedSubcategories = 3
-
-    /**
-     * Checks whether starter quiz debug logging is enabled.
-     *
-     * @returns {boolean} True when flow logs should be printed.
-     */
-    function isDebugLoggingEnabled() {
-        if (!starterQuizResultsDebugEnabled) return false
-
-        const debugParam = new URLSearchParams(window.location.search).get(
-            debugStorageKey,
-        )
-        const normalizedDebugParam = (debugParam || '').toLowerCase()
-
-        if (['1', 'true', 'yes'].includes(normalizedDebugParam)) {
-            sessionStorage.setItem(debugStorageKey, 'true')
-            return true
-        }
-
-        if (['0', 'false', 'no'].includes(normalizedDebugParam)) {
-            sessionStorage.removeItem(debugStorageKey)
-            return false
-        }
-
-        return (
-            sessionStorage.getItem(debugStorageKey) === 'true' ||
-            localStorage.getItem(debugStorageKey) === 'true'
-        )
-    }
 
     /**
      * Prints a namespaced debug log for the starter quiz funnel.

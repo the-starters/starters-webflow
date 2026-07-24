@@ -15,20 +15,7 @@
 ;(() => {
     const starterQuizHomeControllerFlag = 'starterQuizHomeController'
     const starterQuizHomeDebugEnabled = true
-
-    if (window[starterQuizHomeControllerFlag]) {
-        if (starterQuizHomeDebugEnabled) {
-            console.log('[Starter Quiz Funnel]', '[home]', 'duplicate script skipped', {
-                scriptFlag: starterQuizHomeControllerFlag,
-            })
-        }
-        return
-    }
-
-    window[starterQuizHomeControllerFlag] = true
-
     const debugStorageKey = 'starterQuizDebug'
-    const debugLogPrefix = '[Starter Quiz Funnel]'
 
     /**
      * Checks whether starter quiz debug logging is enabled.
@@ -58,6 +45,19 @@
             localStorage.getItem(debugStorageKey) === 'true'
         )
     }
+
+    if (window[starterQuizHomeControllerFlag]) {
+        if (isDebugLoggingEnabled()) {
+            console.log('[Starter Quiz Funnel]', '[home]', 'duplicate script skipped', {
+                scriptFlag: starterQuizHomeControllerFlag,
+            })
+        }
+        return
+    }
+
+    window[starterQuizHomeControllerFlag] = true
+
+    const debugLogPrefix = '[Starter Quiz Funnel]'
 
     /**
      * Prints a namespaced debug log for the starter quiz funnel.
