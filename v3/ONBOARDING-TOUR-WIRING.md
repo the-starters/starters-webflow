@@ -10,6 +10,11 @@ never need a code release. Jira: INITIATIVE-125.
 - Scans the page for `data-tour-step` elements and groups them into tours.
 - Auto-starts at most one tour per page load: the first tour (DOM order) whose
   role restriction matches the member and that the member has not seen.
+- Waits until `window.load` plus a one-second layout-settle delay before an
+  automatic start. It then confirms the first step still exists, so pages whose
+  hydration removes the tour markup skip the tour without an error.
+- Passes step selectors to driver.js instead of captured element nodes, letting
+  each step resolve against the live DOM after Webflow or `wf-xano` hydration.
 - Persists seen-state per member in Memberstack member JSON
   (`json.tours[tourId]`), so a successful write suppresses that tour for the
   member across devices.
@@ -28,7 +33,7 @@ Set on the element each step should highlight:
 
 | Attribute | Required | Example | Meaning |
 | --- | --- | --- | --- |
-| `data-tour-step` | yes | `starter-dashboard:1` | `<tourId>:<order>`. Order is any integer; ties keep Designer order. |
+| `data-tour-step` | yes | `starter-dashboard:1` | A page-unique `<tourId>:<order>` value. Order is any integer; ties with distinct values (for example, `1` and `01`) keep Designer order. Duplicate values are ignored. |
 | `data-tour-title` | no | `Your dashboard` | Popover title. |
 | `data-tour-text` | no | `Track applications here.` | Popover body. |
 | `data-tour-side` | no | `bottom` | driver.js popover side (`top`/`right`/`bottom`/`left`). |
@@ -40,7 +45,7 @@ Optional replay trigger (e.g. a "Show me around" navbar/help link):
 
 | Attribute | Example | Meaning |
 | --- | --- | --- |
-| `data-tour-start` | `starter-dashboard` | Click starts that tour regardless of role or seen-state. Manual starts do not change seen-state. |
+| `data-tour-start` | `starter-dashboard` | Click starts that tour immediately, without the automatic-start settle delay, regardless of role or seen-state. Manual starts do not change seen-state. |
 
 ⚠ Webflow's Designer strips valueless custom attributes — every attribute above
 takes a value, matching the `wf-xano-element` grammar convention.
@@ -82,8 +87,8 @@ popover (fonts/colors) can go in a small site-level CSS embed targeting
   `startTour` for console debugging.
 - `starters:v3-tour-started` fires on `window` with `{ tourId }` when a tour
   starts (hook for PostHog capture).
-- Malformed `data-tour-step` values log a `[v3-onboarding-tour]` warning and
-  are skipped.
+- Malformed or duplicate `data-tour-step` values log a
+  `[v3-onboarding-tour]` warning and are skipped.
 
 ## Release gate
 

@@ -91,9 +91,9 @@
   // ---------------------------------------------------------------------
 
   // Collects [data-tour-step] elements under root into per-tour definitions:
-  // { id, steps: [{ element, order, title, text, side, align }], roles, once }.
-  // Steps sort by order (ties keep DOM order); malformed values are skipped
-  // with a console warning rather than breaking the page.
+  // { id, steps: [{ selector, order, title, text, side, align }], roles, once }.
+  // Steps sort by order (ties keep DOM order); malformed and duplicate values
+  // are skipped with a console warning rather than breaking the page.
   function parseTours(root) {
     var nodes = root.querySelectorAll('[data-tour-step]')
     var tours = Object.create(null)
