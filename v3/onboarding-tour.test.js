@@ -45,6 +45,8 @@ function loadModule(options = {}) {
       events.push(event)
     },
     addEventListener() {},
+    location: { search: options.search || '' },
+    URLSearchParams,
   }
   const head = {
     children: [],
@@ -469,6 +471,41 @@ test('boot does not mark seen when driver startup fails', async () => {
   assert.equal(marked, false)
 })
 
+test('startTour prevents overlapping starts and unlocks when destroyed', async () => {
+  const starts = []
+  let onDestroyed
+  const { api } = loadModule({
+    driver: {
+      js: {
+        driver(options) {
+          onDestroyed = options.onDestroyed
+          return {
+            drive() {
+              starts.push('started')
+            },
+          }
+        },
+      },
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [{ selector: '[data-tour-step="welcome:1"]' }],
+  }
+
+  const [first, overlapping] = await Promise.all([
+    api.startTour(tour),
+    api.startTour(tour),
+  ])
+  assert.ok(first)
+  assert.equal(overlapping, null)
+  assert.deepEqual(starts, ['started'])
+
+  onDestroyed()
+  assert.ok(await api.startTour(tour))
+  assert.deepEqual(starts, ['started', 'started'])
+})
+
 test('loadDriver waits for both script and stylesheet', async () => {
   const appended = []
   const { api } = loadModule({
@@ -515,4 +552,130 @@ test('loadDriver rejects CSS failure and retries after a failed attempt', async 
   secondLink.onload()
   secondScript.onload()
   assert.equal(await second, window.driver.js.driver)
+})
+
+test('replayRequestFromQuery parses start, reset, and empty values', () => {
+  const { api } = loadModule()
+  assert.deepEqual(plain(api.replayRequestFromQuery('?tour=starter-dashboard')), {
+    startTourId: 'starter-dashboard',
+    reset: false,
+  })
+  assert.deepEqual(plain(api.replayRequestFromQuery('?tour=reset')), {
+    startTourId: null,
+    reset: true,
+  })
+  assert.deepEqual(plain(api.replayRequestFromQuery('?other=1')), {
+    startTourId: null,
+    reset: false,
+  })
+  assert.deepEqual(plain(api.replayRequestFromQuery('')), {
+    startTourId: null,
+    reset: false,
+  })
+})
+
+test('?tour=<id> starts the tour without marking it seen, even when already seen', async () => {
+  const calls = []
+  const memberstack = {
+    getCurrentMember: async () => ({
+      data: { id: 'member-1', planConnections: [] },
+    }),
+    getMemberJSON: async () => ({ tours: { welcome: 'date' } }),
+    updateMemberJSON: async () => {
+      calls.push('marked')
+    },
+  }
+  const driver = {
+    js: {
+      driver() {
+        return {
+          drive() {
+            calls.push('started')
+          },
+        }
+      },
+    },
+  }
+  const { run } = loadModule({
+    memberstack,
+    driver,
+    search: '?tour=welcome',
+    nodes: [fakeElement({ 'data-tour-step': 'welcome:1' })],
+  })
+  await run()
+  assert.deepEqual(calls, ['started'])
+})
+
+test('?tour=reset clears seen state so auto-start runs again', async () => {
+  const calls = []
+  let json = { starterQuiz: { result: 'x' }, tours: { welcome: 'date' } }
+  const memberstack = {
+    getCurrentMember: async () => ({
+      data: { id: 'member-1', planConnections: [] },
+    }),
+    getMemberJSON: async () => JSON.parse(JSON.stringify(json)),
+    updateMemberJSON: async (value) => {
+      json = value.json
+      calls.push('update')
+    },
+  }
+  const driver = {
+    js: {
+      driver() {
+        return {
+          drive() {
+            calls.push('started')
+          },
+        }
+      },
+    },
+  }
+  const { run } = loadModule({
+    memberstack,
+    driver,
+    search: '?tour=reset',
+    localStorage: {
+      getItem: () => null,
+      setItem() {},
+      removeItem() {
+        calls.push('guest-cleared')
+      },
+    },
+    nodes: [fakeElement({ 'data-tour-step': 'welcome:1' })],
+  })
+  await run()
+  // reset write, guest clear, tour start, then the normal mark-seen write
+  assert.deepEqual(calls, ['update', 'guest-cleared', 'started', 'update'])
+  assert.deepEqual(plain(json.starterQuiz), { result: 'x' })
+  assert.equal(Object.keys(json.tours).length, 1)
+})
+
+test('unknown ?tour id warns and does not start anything', async () => {
+  let started = false
+  const { run, warnings } = loadModule({
+    memberstack: {
+      getCurrentMember: async () => ({
+        data: { id: 'member-1', planConnections: [] },
+      }),
+      getMemberJSON: async () => ({}),
+      updateMemberJSON: async () => {},
+    },
+    driver: {
+      js: {
+        driver: () => ({
+          drive() {
+            started = true
+          },
+        }),
+      },
+    },
+    search: '?tour=nope',
+    nodes: [fakeElement({ 'data-tour-step': 'welcome:1' })],
+  })
+  await run()
+  assert.equal(started, false)
+  assert.equal(
+    warnings.some((w) => w.includes('No steps found for requested tour')),
+    true,
+  )
 })

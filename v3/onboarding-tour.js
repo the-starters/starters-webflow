@@ -18,6 +18,13 @@
  *   data-tour-start="starter-dashboard"    optional, on any element; click
  *                                          replays the tour regardless of state
  *
+ * Replay controls (staging and prod; tours are presentation-only):
+ *   ?tour=<tourId>   starts that tour on demand, bypassing roles and
+ *                    seen-state; never marks it seen
+ *   ?tour=reset      clears the visitor's seen-state (member JSON tours key,
+ *                    or guest localStorage) so auto-start runs again
+ *   Alt+Shift+T      replays the page's first tour (ignored while typing)
+ *
  * Behavior:
  *   - At most one tour auto-starts per page load (first eligible in DOM order).
  *   - A tour with data-tour-roles only auto-starts for a member whose stable
@@ -279,6 +286,7 @@
 
   var driverLoadPromise = null
   var driverLoadFailed = false
+  var tourStartInFlight = false
   function loadDriver() {
     var existing = currentDriverFactory()
     if (existing && !driverLoadFailed) return Promise.resolve(existing)
@@ -353,18 +361,30 @@
   }
 
   async function startTour(tour) {
-    var driverFactory = await loadDriver()
-    var instance = driverFactory({
-      showProgress: tour.steps.length > 1,
-      steps: buildDriverSteps(tour),
-    })
-    instance.drive()
-    window.dispatchEvent(
-      new CustomEvent('starters:v3-tour-started', {
-        detail: { tourId: tour.id },
-      }),
-    )
-    return instance
+    if (tourStartInFlight || document.querySelector('.driver-popover')) {
+      return null
+    }
+    tourStartInFlight = true
+    try {
+      var driverFactory = await loadDriver()
+      var instance = driverFactory({
+        showProgress: tour.steps.length > 1,
+        steps: buildDriverSteps(tour),
+        onDestroyed: function () {
+          tourStartInFlight = false
+        },
+      })
+      instance.drive()
+      window.dispatchEvent(
+        new CustomEvent('starters:v3-tour-started', {
+          detail: { tourId: tour.id },
+        }),
+      )
+      return instance
+    } catch (error) {
+      tourStartInFlight = false
+      throw error
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -421,10 +441,94 @@
     }
   }
 
+  function findTour(tours, tourId) {
+    return (
+      tours.filter(function (candidate) {
+        return candidate.id === tourId
+      })[0] || null
+    )
+  }
+
+  // Replay controls from the URL: ?tour=<tourId> starts that tour on demand
+  // (bypasses roles and seen-state, never marks seen); ?tour=reset clears the
+  // visitor's seen-state so the page's normal auto-start runs again. Works on
+  // staging and prod alike; harmless because tours are presentation-only.
+  function replayRequestFromQuery(search) {
+    var value = ''
+    try {
+      value = new window.URLSearchParams(search).get('tour') || ''
+    } catch (error) {
+      value = ''
+    }
+    value = value.trim()
+    if (!value) return { startTourId: null, reset: false }
+    if (value === 'reset') return { startTourId: null, reset: true }
+    return { startTourId: value, reset: false }
+  }
+
+  async function clearSeen(memberstack, member) {
+    if (member && member.id) {
+      try {
+        var response = await memberstack.getMemberJSON()
+        var json = memberJson(response)
+        if (json && json.tours) {
+          delete json.tours
+          await memberstack.updateMemberJSON({ json: json })
+        }
+      } catch (error) {
+        console.warn('[v3-onboarding-tour] Could not reset tour state', error)
+      }
+    }
+    try {
+      window.localStorage.removeItem(GUEST_STORAGE_KEY)
+    } catch (error) {
+      // Blocked storage: nothing to clear.
+    }
+  }
+
+  // Alt+Shift+T replays the page's first tour (support/QA affordance, works
+  // on prod too). e.code keeps it keyboard-layout independent, and inputs
+  // are excluded so typing never triggers it.
+  function wireKeyboardShortcut(tours) {
+    window.addEventListener('keydown', function (event) {
+      if (!event.altKey || !event.shiftKey || event.code !== 'KeyT') return
+      if (event.repeat) return
+      var target = event.target || {}
+      var tag = (target.tagName || '').toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || target.isContentEditable) {
+        return
+      }
+      event.preventDefault()
+      startTour(tours[0]).catch(function (error) {
+        console.error('[v3-onboarding-tour] Shortcut tour failed', error)
+      })
+    })
+  }
+
+  // Let post-load hydration (dashboard hero, wf-xano tiles) settle before
+  // highlighting, so the first paint of the tour lands on final layout.
+  function waitForSettle() {
+    return new Promise(function (resolve) {
+      if (document.readyState === 'complete') {
+        window.setTimeout(resolve, SETTLE_DELAY_MS)
+        return
+      }
+      window.addEventListener(
+        'load',
+        function () {
+          window.setTimeout(resolve, SETTLE_DELAY_MS)
+        },
+        { once: true },
+      )
+    })
+  }
+
   async function boot() {
     var tours = parseTours(document)
     if (!tours.length) return
     wireManualTriggers(tours)
+    wireKeyboardShortcut(tours)
+    var replay = replayRequestFromQuery(window.location.search)
 
     // Wait for the route guard where present, so a redirecting page never
     // flashes a tour. 'allowed' is set synchronously before this microtask
@@ -450,6 +554,23 @@
     }
     var role = memberRole(member)
 
+    if (replay.reset) await clearSeen(memberstack, member)
+
+    if (replay.startTourId) {
+      var requested = findTour(tours, replay.startTourId)
+      if (!requested) {
+        console.warn(
+          '[v3-onboarding-tour] No steps found for requested tour:',
+          replay.startTourId,
+        )
+        return
+      }
+      await waitForSettle()
+      if (!document.querySelector(requested.steps[0].selector)) return
+      await startTour(requested)
+      return
+    }
+
     var seenIds
     if (member && member.id) {
       seenIds = await memberSeenIds(memberstack)
@@ -463,26 +584,12 @@
     var target = autoStartTarget(tours, role, seenIds)
     if (!target) return
 
-    // Let post-load hydration (dashboard hero, wf-xano tiles) settle before
-    // highlighting, so the first paint of the tour lands on final layout.
-    await new Promise(function (resolve) {
-      if (document.readyState === 'complete') {
-        window.setTimeout(resolve, SETTLE_DELAY_MS)
-        return
-      }
-      window.addEventListener(
-        'load',
-        function () {
-          window.setTimeout(resolve, SETTLE_DELAY_MS)
-        },
-        { once: true },
-      )
-    })
+    await waitForSettle()
     // Hydration may have removed the tour's markup entirely; re-check.
     if (!document.querySelector(target.steps[0].selector)) return
 
-    await startTour(target)
-    if (target.once) {
+    var instance = await startTour(target)
+    if (instance && target.once) {
       if (member && member.id) await memberMarkSeen(memberstack, target.id)
       else guestMarkSeen(target.id)
     }
@@ -494,6 +601,7 @@
     parseTours: parseTours,
     buildDriverSteps: buildDriverSteps,
     autoStartTarget: autoStartTarget,
+    replayRequestFromQuery: replayRequestFromQuery,
     loadDriver: loadDriver,
     startTour: startTour,
   }

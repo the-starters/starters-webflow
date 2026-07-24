@@ -42,7 +42,7 @@ Do not discard local changes unless the user explicitly asks.
 - `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder, including category-matched and applied starter feeds
 - `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
-- `v3/onboarding-tour.js` — attribute-driven V3 product tours with role targeting and per-member seen-state
+- `v3/onboarding-tour.js` — attribute-driven V3 product tours with role targeting, per-member seen-state, and replay/reset controls
 - `v3/scheduling-auth.js` — staging-only availability and scheduling authentication bridge
 - `v3/scheduling-availability-init.js` — staging-only booking-stage availability control initializer
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
