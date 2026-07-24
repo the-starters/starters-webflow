@@ -64,7 +64,9 @@ These presentation-only controls work on staging and production:
   textarea, or contenteditable element.
 
 Only one tour can start at a time. Query-string, keyboard, and click replays do
-not grant access or change route protection.
+not grant access or change route protection. An open `.driver-popover` is the
+running-tour signal; after dismissal removes it, any replay control can start
+the tour again without relying on a driver.js destruction callback.
 
 ⚠ Webflow's Designer strips valueless custom attributes — every attribute above
 takes a value, matching the `wf-xano-element` grammar convention.
@@ -122,6 +124,8 @@ popover (fonts/colors) can go in a small site-level CSS embed targeting
   (authenticate the site password gate via `.wf_auth` first); confirm the tour
   shows once, and not again after reload. Verify `?tour=<tourId>` replays
   without changing seen-state, `?tour=reset` restores normal auto-start, and
-  `Alt+Shift+T` replays the first tour.
+  `Alt+Shift+T` replays the first tour. While the tour is open, confirm another
+  replay is ignored; dismiss it with the close button, then confirm
+  `Alt+Shift+T` starts it again.
 - Standard exposure scan: no Airtable/Make URLs or PAT patterns (this module
   calls only jsDelivr and Memberstack).
