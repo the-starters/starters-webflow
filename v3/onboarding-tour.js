@@ -178,7 +178,10 @@
 
   // Escapes a value for use inside a double-quoted CSS attribute selector.
   function cssAttrEscape(value) {
-    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+    return value.replace(/[\0-\x1f\x7f"\\]/g, function (character) {
+      if (character === '"' || character === '\\') return '\\' + character
+      return '\\' + character.charCodeAt(0).toString(16) + ' '
+    })
   }
 
   function buildDriverSteps(tour) {

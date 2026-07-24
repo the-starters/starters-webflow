@@ -265,9 +265,26 @@ test('buildDriverSteps omits empty popover fields and passes selectors', () => {
 
 test('parseTours builds an escaped selector per step', () => {
   const { api } = loadModule()
-  const nodes = [fakeElement({ 'data-tour-step': 'my"tour:1' })]
+  const nodes = [
+    fakeElement({ 'data-tour-step': 'my"tour:1' }),
+    fakeElement({ 'data-tour-step': 'line\nbreak:2' }),
+    fakeElement({ 'data-tour-step': 'form\fbreak:3' }),
+    fakeElement({ 'data-tour-step': 'delete\u007fbreak:4' }),
+  ]
   const tours = api.parseTours(fakeRoot(nodes))
   assert.equal(tours[0].steps[0].selector, '[data-tour-step="my\\"tour:1"]')
+  assert.equal(
+    tours[1].steps[0].selector,
+    '[data-tour-step="line\\a break:2"]',
+  )
+  assert.equal(
+    tours[2].steps[0].selector,
+    '[data-tour-step="form\\c break:3"]',
+  )
+  assert.equal(
+    tours[3].steps[0].selector,
+    '[data-tour-step="delete\\7f break:4"]',
+  )
 })
 
 test('autoStartTarget respects roles, seen state, and DOM order', () => {
