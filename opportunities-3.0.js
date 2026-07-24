@@ -710,10 +710,16 @@
   }
 
   // Application UI state (mirrors plan Phase 4). a = application row, o = opportunity.
+  // archived_by_brand is intentionally NOT a state here: brand-side archiving is
+  // private bookkeeping (it only moves the applicant between the brand's All/
+  // Archived tabs) and must stay invisible to the talent. Treating it as a state
+  // left an archived applicant's detail page with no Withdraw/Edit CTAs and no
+  // state block to render (the template has no data-opp-state="archived"), so the
+  // card showed with zero actions. Falling through keeps the application editable/
+  // withdrawable and still yields 'closed'/'edited' correctly when those apply.
   function appState(o, a) {
     if (!a) return 'not-applied'
     if (a.canceled_at) return 'canceled'
-    if (a.archived_by_brand) return 'archived'
     if (o && o.closed_at) return 'closed'
     if (o && a.seen_opportunity_revision != null && o.revision_number > a.seen_opportunity_revision)
       return 'edited'
