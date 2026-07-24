@@ -346,6 +346,11 @@ form-flow steps, so author the confirmation title with
 `data-opp-state="not-applied"`. A successful withdrawal shows the success title;
 opening the modal again resets its titles to the confirmation state.
 
+Brand-side application archiving is private bookkeeping and does not add an
+`archived` talent UI state. An archived application still paints as `applied` or
+`edited`, so Withdraw and Edit Application remain available; if its opportunity is
+closed, `closed` takes precedence and hides those actions as usual.
+
 ## utils/wf-validate.js
 
 Attribute-driven form validation, same grammar family as wf-xano / Finsweet Attributes.
