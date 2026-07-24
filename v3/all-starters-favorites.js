@@ -22,6 +22,10 @@
  *     created from JS; the control and the empty state belong to the Designer.
  *   - keeps the filter live: while the Favourites view is active, un-hearting
  *     a card re-applies the filter (via the wf-xano:favorite event).
+ *   - pre-warms hydration at script-eval time (member lookup + favorites ids
+ *     fetch), overlapping the Memberstack/Xano round-trips with page boot so
+ *     favorites usually paint before the browse loader reveals the first render
+ *     instead of popping in 1-3s later on cold loads.
  *
  * It deliberately does NOT:
  *   - create any DOM UI (tabs/grids/radios) — Designer owns all markup,
@@ -249,12 +253,21 @@
     )
   }
 
+  // Invoked once at eval (see the pre-warm block below) and reused by boot(),
+  // so the Memberstack round-trip overlaps engine/page boot instead of
+  // starting only after DOMContentLoaded.
+  var memberPromise = memberReady()
+
   function boot() {
     var section = document.querySelector(PREMIUM_SECTION)
     if (!section) return
     ensureFavoritesSource()
     injectStyles()
-    memberReady().then(function (member) {
+    // The eval-time lookup can race a late/async Memberstack; retry at boot so
+    // decoration never silently skips if memberPromise resolved null too early.
+    memberPromise.then(function (member) {
+      return member || memberReady()
+    }).then(function (member) {
       if (!isPremiumBrand(member)) return
       decorateFavoriteControls(section)
       new MutationObserver(function (records) {
@@ -267,6 +280,27 @@
       whenFavoritesReady(function (api) { api.favorites.init(section) })
       bindViewControls(section)
     })
+  }
+
+  // Pre-warm hydration at eval (the file loads deferred, so the DOM is parsed):
+  // kick the favorites ids fetch as early as possible so paint un-hides the
+  // decorated-hidden controls before the browse loader reveals the first render,
+  // instead of after the DOMContentLoaded -> memberReady -> decorate -> poll
+  // chain (1-3s on cold loads). refresh(type) stores its in-flight promise in
+  // wf-xano's _favoriteLoads[type], so boot()'s later favorites.init reuses it —
+  // no duplicate fetch. Guarded end-to-end so it can never break the page.
+  try {
+    if (document.querySelector(PREMIUM_SECTION)) {
+      ensureFavoritesSource()
+      memberPromise.then(function (member) {
+        if (!isPremiumBrand(member)) return
+        whenFavoritesReady(function (api) {
+          api.favorites.refresh(FAVORITE_TYPE).catch(function () {})
+        })
+      }).catch(function () {})
+    }
+  } catch (e) {
+    /* never break the page */
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)
