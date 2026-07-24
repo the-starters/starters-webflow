@@ -486,6 +486,8 @@
   var driverLoadPromise = null
   var driverLoadFailed = false
   var tourStartInFlight = false
+  var tourRunToken = 0
+  var endWatchInterval = null
   function loadDriver() {
     var existing = currentDriverFactory()
     if (existing && !driverLoadFailed) return Promise.resolve(existing)
@@ -596,6 +598,12 @@
     if (tourStartInFlight || document.querySelector('.driver-popover')) {
       return null
     }
+    tourRunToken += 1
+    var runToken = tourRunToken
+    if (endWatchInterval !== null) {
+      window.clearInterval(endWatchInterval)
+      endWatchInterval = null
+    }
     tourStartInFlight = true
     try {
       injectThemeStyle()
@@ -648,9 +656,15 @@
           }
           if (appeared || Date.now() - endWatchStartedAt >= 15000) {
             window.clearInterval(endWatch)
-            restoreOpenedDisclosure()
+            if (endWatchInterval === endWatch) {
+              endWatchInterval = null
+            }
+            if (tourRunToken === runToken) {
+              restoreOpenedDisclosure()
+            }
           }
         }, 200)
+        endWatchInterval = endWatch
       }
       window.dispatchEvent(
         new CustomEvent('starters:v3-tour-started', {

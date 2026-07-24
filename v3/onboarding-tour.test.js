@@ -29,10 +29,10 @@ function loadModule(options = {}) {
   const events = []
   let run
   const window = {
-    setInterval,
-    clearInterval,
-    setTimeout,
-    clearTimeout,
+    setInterval: options.setInterval || setInterval,
+    clearInterval: options.clearInterval || clearInterval,
+    setTimeout: options.setTimeout || setTimeout,
+    clearTimeout: options.clearTimeout || clearTimeout,
     $memberstackDom: options.memberstack,
     driver: options.driver,
     localStorage: options.localStorage || {
@@ -1058,6 +1058,51 @@ test('startTour returns null when responsive filtering removes every step', asyn
   assert.equal(await api.startTour(tour), null)
   assert.equal(factoryCalls, 0)
   assert.equal(await api.startTour(tour), null)
+})
+
+test('a stale end watcher does not close a newer tour disclosure', async () => {
+  const intervals = []
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  const { api, window } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+    driver: {
+      js: {
+        driver() {
+          return { drive() {}, refresh() {} }
+        },
+      },
+    },
+    setInterval(callback, delay) {
+      const interval = { callback, delay, cleared: false }
+      intervals.push(interval)
+      return interval
+    },
+    clearInterval(interval) {
+      interval.cleared = true
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+    ],
+  }
+
+  await api.startTour(tour)
+  const staleWatcher = intervals.find((interval) => interval.delay === 200)
+  window.document.__popover = {}
+  intervals.find((interval) => interval.delay === 100).callback()
+  window.document.__popover = null
+
+  await api.startTour(tour)
+  api.buildDriverSteps(tour)[0].onHighlightStarted()
+  edit._w = 155
+  edit._h = 36
+  staleWatcher.callback()
+
+  assert.equal(staleWatcher.cleared, true)
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
 })
 
 test('boot does not mark seen when disclosure filtering removes every step', async () => {
