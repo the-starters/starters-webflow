@@ -3,6 +3,11 @@
   (function () {
     'use strict';
 
+    // The page embeds this file twice; without a guard every listener below
+    // binds twice (doubling layout passes). Bind once per page.
+    if (window.__expertCardLayoutInit) return;
+    window.__expertCardLayoutInit = true;
+
     var touchUiMql = window.matchMedia('(hover: none)');
     var jobsOpenClass = 'expert-card_item--jobs-open';
     var companyEqualizeRunId = 0;
@@ -27,9 +32,43 @@
       });
     }
 
+    // Companion embeds (e.g. expert-card-browse-loader.js) wait on this to know
+    // a layout pass has fully settled before revealing content. Never throws.
+    function dispatchRelayoutDone() {
+      try {
+        window.dispatchEvent(new CustomEvent('expert-cards:relayout:done'));
+      } catch (e) {
+        /* never break the page */
+      }
+    }
+
+    // Run fn after two rAFs OR a timeout, whichever fires first, exactly once.
+    // Hidden/occluded tabs suspend rAF entirely, so the timeout guarantees the
+    // layout pass still completes there (scrollHeight forces sync layout on
+    // demand, so measurements are valid on the timeout path too).
+    function afterFramesOrTimeout(fn, ms) {
+      var ran = false;
+      function run() {
+        if (ran) return;
+        ran = true;
+        fn();
+      }
+      try {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(run);
+        });
+      } catch (e) {
+        /* rAF unavailable — the timeout below still runs fn */
+      }
+      setTimeout(run, ms);
+    }
+
     function equalizeExpertCardCompanyLists() {
       var lists = document.querySelectorAll('.expert-card_company-list');
-      if (!lists.length) return;
+      if (!lists.length) {
+        dispatchRelayoutDone();
+        return;
+      }
 
       var runId = ++companyEqualizeRunId;
 
@@ -38,24 +77,27 @@
         el.style.maxHeight = '';
       });
 
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          if (runId !== companyEqualizeRunId) return;
+      afterFramesOrTimeout(function () {
+        if (runId !== companyEqualizeRunId) return;
 
-          var maxH = 0;
-          lists.forEach(function (el) {
-            maxH = Math.max(maxH, el.scrollHeight);
-          });
-
-          if (maxH <= 0) return;
-
-          var px = Math.ceil(maxH) + 'px';
-          lists.forEach(function (el) {
-            el.style.minHeight = px;
-            el.style.maxHeight = px;
-          });
+        var maxH = 0;
+        lists.forEach(function (el) {
+          maxH = Math.max(maxH, el.scrollHeight);
         });
-      });
+
+        if (maxH <= 0) {
+          dispatchRelayoutDone();
+          return;
+        }
+
+        var px = Math.ceil(maxH) + 'px';
+        lists.forEach(function (el) {
+          el.style.minHeight = px;
+          el.style.maxHeight = px;
+        });
+
+        dispatchRelayoutDone();
+      }, 80);
     }
 
     function runExpertCardLayout() {
