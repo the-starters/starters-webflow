@@ -286,6 +286,7 @@
 
   var driverLoadPromise = null
   var driverLoadFailed = false
+  var tourStartInFlight = false
   function loadDriver() {
     var existing = currentDriverFactory()
     if (existing && !driverLoadFailed) return Promise.resolve(existing)
@@ -360,18 +361,30 @@
   }
 
   async function startTour(tour) {
-    var driverFactory = await loadDriver()
-    var instance = driverFactory({
-      showProgress: tour.steps.length > 1,
-      steps: buildDriverSteps(tour),
-    })
-    instance.drive()
-    window.dispatchEvent(
-      new CustomEvent('starters:v3-tour-started', {
-        detail: { tourId: tour.id },
-      }),
-    )
-    return instance
+    if (tourStartInFlight || document.querySelector('.driver-popover')) {
+      return null
+    }
+    tourStartInFlight = true
+    try {
+      var driverFactory = await loadDriver()
+      var instance = driverFactory({
+        showProgress: tour.steps.length > 1,
+        steps: buildDriverSteps(tour),
+        onDestroyed: function () {
+          tourStartInFlight = false
+        },
+      })
+      instance.drive()
+      window.dispatchEvent(
+        new CustomEvent('starters:v3-tour-started', {
+          detail: { tourId: tour.id },
+        }),
+      )
+      return instance
+    } catch (error) {
+      tourStartInFlight = false
+      throw error
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -479,6 +492,7 @@
   function wireKeyboardShortcut(tours) {
     window.addEventListener('keydown', function (event) {
       if (!event.altKey || !event.shiftKey || event.code !== 'KeyT') return
+      if (event.repeat) return
       var target = event.target || {}
       var tag = (target.tagName || '').toLowerCase()
       if (tag === 'input' || tag === 'textarea' || target.isContentEditable) {
@@ -574,8 +588,8 @@
     // Hydration may have removed the tour's markup entirely; re-check.
     if (!document.querySelector(target.steps[0].selector)) return
 
-    await startTour(target)
-    if (target.once) {
+    var instance = await startTour(target)
+    if (instance && target.once) {
       if (member && member.id) await memberMarkSeen(memberstack, target.id)
       else guestMarkSeen(target.id)
     }

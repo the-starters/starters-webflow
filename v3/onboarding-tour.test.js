@@ -471,6 +471,41 @@ test('boot does not mark seen when driver startup fails', async () => {
   assert.equal(marked, false)
 })
 
+test('startTour prevents overlapping starts and unlocks when destroyed', async () => {
+  const starts = []
+  let onDestroyed
+  const { api } = loadModule({
+    driver: {
+      js: {
+        driver(options) {
+          onDestroyed = options.onDestroyed
+          return {
+            drive() {
+              starts.push('started')
+            },
+          }
+        },
+      },
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [{ selector: '[data-tour-step="welcome:1"]' }],
+  }
+
+  const [first, overlapping] = await Promise.all([
+    api.startTour(tour),
+    api.startTour(tour),
+  ])
+  assert.ok(first)
+  assert.equal(overlapping, null)
+  assert.deepEqual(starts, ['started'])
+
+  onDestroyed()
+  assert.ok(await api.startTour(tour))
+  assert.deepEqual(starts, ['started', 'started'])
+})
+
 test('loadDriver waits for both script and stylesheet', async () => {
   const appended = []
   const { api } = loadModule({
