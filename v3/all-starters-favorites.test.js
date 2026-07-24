@@ -5,35 +5,23 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./all-starters-favorites.js'), 'utf8')
 
-function fakeClassList() {
-  const classes = new Set()
-  return {
-    toggle(name, force) {
-      if (force === undefined) force = !classes.has(name)
-      if (force) classes.add(name)
-      else classes.delete(name)
-      return force
-    },
-    contains(name) {
-      return classes.has(name)
-    },
-  }
-}
+// vm-realm objects have a foreign Object.prototype; normalize before deep-equal.
+const plain = (value) => JSON.parse(JSON.stringify(value))
 
-// Minimal element stub: enough surface for buildPremiumUi/decorate paths.
+const PREMIUM_SECTION = '.section_all-starters-body[data-ms-content="premium-brands"]'
+
+// Minimal element stub: enough surface for the decorate/filter paths.
 function fakeElement(overrides = {}) {
   const attributes = {}
   const el = {
     tagName: overrides.tagName || 'DIV',
+    nodeType: 1,
     children: [],
     className: '',
     textContent: '',
-    innerHTML: '',
     hidden: false,
     parentNode: null,
-    classList: fakeClassList(),
     firstElementChild: null,
-    firstChild: null,
     listeners: {},
     setAttribute(name, value) {
       attributes[name] = String(value)
@@ -47,13 +35,11 @@ function fakeElement(overrides = {}) {
       if (!el.firstElementChild) el.firstElementChild = child
       return child
     },
-    insertBefore(child) {
-      child.parentNode = el
-      el.children.unshift(child)
-      return child
-    },
     addEventListener(type, listener) {
       el.listeners[type] = listener
+    },
+    contains() {
+      return true
     },
     querySelector() {
       return null
@@ -74,19 +60,21 @@ function fakeElement(overrides = {}) {
 
 function loadModule(options = {}) {
   const warnings = []
+  const docListeners = {}
   let bootListener = null
   const head = fakeElement({ tagName: 'HEAD' })
   const documentStub = {
-    readyState: options.readyState || 'loading',
+    readyState: 'loading',
     head,
     createElement(tagName) {
       return fakeElement({ tagName: tagName.toUpperCase() })
     },
     addEventListener(type, listener) {
       if (type === 'DOMContentLoaded') bootListener = listener
+      else docListeners[type] = listener
     },
     querySelector(selector) {
-      if (selector === '.section_all-starters-body') return options.section || null
+      if (selector === PREMIUM_SECTION) return options.section || null
       return null
     },
     querySelectorAll() {
@@ -97,6 +85,8 @@ function loadModule(options = {}) {
     setTimeout,
     clearTimeout,
     WfXanoConfig: options.config,
+    WfXano: options.wfXano,
+    WfAlgolia: options.wfAlgolia,
     memberReady: options.memberReady,
     $memberstackDom: options.memberstack,
     MutationObserver:
@@ -121,6 +111,7 @@ function loadModule(options = {}) {
   return {
     window: windowStub,
     document: documentStub,
+    docListeners,
     warnings,
     boot: () => {
       documentStub.readyState = 'complete'
@@ -131,9 +122,34 @@ function loadModule(options = {}) {
 
 function premiumMember() {
   return {
-    planConnections: [
-      { planId: 'pln_new-paid-plan-463h04ph', active: true },
-    ],
+    planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }],
+  }
+}
+
+function fakeWfXano(ids = []) {
+  const calls = { refresh: 0, init: 0 }
+  return {
+    calls,
+    favorites: {
+      ids: () => ids.slice(),
+      refresh: () => {
+        calls.refresh += 1
+        return Promise.resolve()
+      },
+      init: () => {
+        calls.init += 1
+      },
+    },
+  }
+}
+
+function fakeWfAlgolia() {
+  const filters = []
+  return {
+    filters,
+    setFilter(field, values) {
+      filters.push([field, values])
+    },
   }
 }
 
@@ -142,7 +158,7 @@ test('boot guard: module refuses to run twice', () => {
   assert.equal(mod.window.__startersV3AllStartersFavoritesBooted, true)
 })
 
-test('no all-starters section: config untouched, nothing built', async () => {
+test('no premium section: config untouched, nothing built', async () => {
   const mod = loadModule({ section: null, memberReady: Promise.resolve(premiumMember()) })
   mod.boot()
   await Promise.resolve()
@@ -151,10 +167,9 @@ test('no all-starters section: config untouched, nothing built', async () => {
 })
 
 test('favoritesSource defaults only when the site config lacks it', async () => {
-  const section = fakeElement()
   const existing = { xanoBase: 'https://x.example', favoritesSource: 'opp30:custom' }
   const mod = loadModule({
-    section,
+    section: fakeElement(),
     config: existing,
     memberReady: Promise.resolve(null),
   })
@@ -173,7 +188,20 @@ test('favoritesSource defaults only when the site config lacks it', async () => 
   assert.equal(mod2.window.WfXanoConfig.favoritesSource, 'opp30:brand/favorites')
 })
 
-test('non-premium member: no shell, no styles injected', async () => {
+test('styles inject when the premium section exists (incl. non-premium hard hide)', async () => {
+  const mod = loadModule({
+    section: fakeElement(),
+    memberReady: Promise.resolve(null),
+  })
+  mod.boot()
+  await Promise.resolve()
+  assert.equal(mod.document.head.children.length, 1)
+  const css = mod.document.head.children[0].textContent
+  assert.match(css, /data-ms-content="!premium-brands"\] \.expert-card_favorite-wrapper \{ display: none !important/)
+  assert.match(css, /data-ms-content="premium-brands"\] \.expert-card_wrapper > \.expert-card_favorite-wrapper \{ position: absolute/)
+})
+
+test('non-premium member: no decoration, no listeners bound', async () => {
   const section = fakeElement()
   const mod = loadModule({
     section,
@@ -183,122 +211,138 @@ test('non-premium member: no shell, no styles injected', async () => {
   })
   mod.boot()
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(section.children.length, 0)
-  assert.equal(mod.document.head.children.length, 0)
+  assert.equal(mod.docListeners.change, undefined)
+  assert.equal(mod.docListeners['wf-xano:favorite'], undefined)
 })
 
-test('premium member: shell inserted into section and styles injected once', async () => {
-  let mutationCallback
-  const tabs = [fakeElement({ tagName: 'BUTTON' }), fakeElement({ tagName: 'BUTTON' })]
-  const savedPanel = fakeElement()
-  const openAll = fakeElement({ tagName: 'BUTTON' })
-  const section = fakeElement({
-    querySelector() {
-      return null // no existing shell
-    },
-    querySelectorAll() {
-      return [] // no favorite wrappers to decorate in this stub
-    },
-  })
+test('premium member: decorates, observes, inits favorites, binds controls', async () => {
+  let observed = null
+  const section = fakeElement()
+  const wfXano = fakeWfXano()
   const mod = loadModule({
     section,
+    wfXano,
     memberReady: Promise.resolve(premiumMember()),
     MutationObserver: function (callback) {
-      mutationCallback = callback
-      return { observe() {} }
+      return {
+        observe(target, opts) {
+          observed = { target, opts, callback }
+        },
+      }
     },
   })
-  // The shell element created by the module needs query surfaces for tabs/panel.
-  const realCreate = mod.document.createElement
-  mod.document.createElement = (tagName) => {
-    const el = realCreate(tagName)
-    if (tagName === 'div') {
-      el.querySelectorAll = (sel) => (sel === '[role="tab"]' ? tabs : [])
-      el.querySelector = (sel) => {
-        if (sel === '.ts-favorites-saved') return savedPanel
-        if (sel === '[data-open-all-starters]') return openAll
-        return null
-      }
-    }
-    return el
-  }
   mod.boot()
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(section.children.length, 1)
-  assert.equal(section.children[0].className, 'padding-global ts-favorites-shell')
-  assert.equal(mod.document.head.children.length, 1)
-  assert.match(mod.document.head.children[0].textContent, /z-index: 5/)
-  assert.match(mod.document.head.children[0].textContent, /color: #fff/)
-  // Saved tab wiring exists
-  assert.equal(typeof tabs[1].listeners.click, 'function')
-
-  let documentScans = 0
-  let elementScans = 0
-  mod.document.querySelectorAll = () => {
-    documentScans += 1
-    return []
-  }
-  mutationCallback([{
-    addedNodes: [
-      { nodeType: 3 },
-      fakeElement({
-        nodeType: 1,
-        querySelectorAll() {
-          elementScans += 1
-          return []
-        },
-      }),
-    ],
-  }])
-  assert.equal(documentScans, 0)
-  assert.equal(elementScans, 1)
+  assert.equal(observed.target, section)
+  assert.deepEqual(plain(observed.opts), { childList: true, subtree: true })
+  assert.equal(wfXano.calls.init, 1)
+  assert.equal(typeof mod.docListeners.change, 'function')
+  assert.equal(typeof mod.docListeners['wf-xano:favorite'], 'function')
 })
 
-test('premium member via $memberstackDom fallback when window.memberReady is absent', async () => {
-  const section = fakeElement({
-    querySelector() {
-      return null
-    },
-    querySelectorAll() {
-      return []
-    },
-  })
-  const tabs = [fakeElement({ tagName: 'BUTTON' }), fakeElement({ tagName: 'BUTTON' })]
+test('switching to Favourites refreshes ids and filters the grid by objectID', async () => {
+  const section = fakeElement()
+  const wfXano = fakeWfXano(['314', '425'])
+  const wfAlgolia = fakeWfAlgolia()
   const mod = loadModule({
     section,
-    memberstack: {
-      getCurrentMember: async () => ({ data: premiumMember() }),
-    },
+    wfXano,
+    wfAlgolia,
+    memberReady: Promise.resolve(premiumMember()),
   })
-  const realCreate = mod.document.createElement
-  mod.document.createElement = (tagName) => {
-    const el = realCreate(tagName)
-    if (tagName === 'div') {
-      el.querySelectorAll = (sel) => (sel === '[role="tab"]' ? tabs : [])
-      el.querySelector = (sel) => {
-        if (sel === '.ts-favorites-saved') return fakeElement()
-        if (sel === '[data-open-all-starters]') return fakeElement({ tagName: 'BUTTON' })
-        return null
-      }
-    }
-    return el
-  }
   mod.boot()
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(section.children.length, 1)
+
+  const marker = fakeElement()
+  marker.setAttribute('data-ts-favorites-view', 'favorites')
+  const input = fakeElement({
+    tagName: 'INPUT',
+    type: 'radio',
+    checked: true,
+    closest: () => marker,
+  })
+  mod.docListeners.change({ target: input })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(wfXano.calls.refresh, 1)
+  assert.deepEqual(plain(wfAlgolia.filters.at(-1)), ['objectID', ['314', '425']])
+
+  // Back to Show all clears the filter without another refresh.
+  marker.setAttribute('data-ts-favorites-view', 'all')
+  mod.docListeners.change({ target: input })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(wfXano.calls.refresh, 1)
+  assert.deepEqual(plain(wfAlgolia.filters.at(-1)), ['objectID', []])
 })
 
-test('empty Designer wrapper gets the ♡ visual with favorite-visual marker', () => {
-  const mod = loadModule({ section: fakeElement(), readyState: 'complete' })
-  // Exercise decorate via a MutationObserver callback captured from buildPremiumUi
-  // is heavy in this stub; instead validate through the savedMarkup contract:
-  // the module's source must carry the fallback branch and marker attribute.
-  assert.match(source, /textContent = '♡'/)
-  assert.match(source, /favorite-visual/)
-  assert.match(source, /wf-xano-favorite-type', 'starter'/)
+test('zero favourites filters to the __none__ sentinel (grid empty state)', async () => {
+  const section = fakeElement()
+  const wfXano = fakeWfXano([])
+  const wfAlgolia = fakeWfAlgolia()
+  const mod = loadModule({
+    section,
+    wfXano,
+    wfAlgolia,
+    memberReady: Promise.resolve(premiumMember()),
+  })
+  mod.boot()
+  await new Promise((resolve) => setImmediate(resolve))
+  const marker = fakeElement()
+  marker.setAttribute('data-ts-favorites-view', 'favorites')
+  const input = fakeElement({ tagName: 'INPUT', type: 'radio', checked: true, closest: () => marker })
+  mod.docListeners.change({ target: input })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(plain(wfAlgolia.filters.at(-1)), ['objectID', ['__none__']])
 })
 
-test('module never injects a wf-xano script tag (site head owns loading)', () => {
+test('un-hearting while in Favourites view re-applies the filter without a refetch', async () => {
+  const section = fakeElement()
+  const ids = ['314', '425']
+  const wfXano = fakeWfXano(ids)
+  const wfAlgolia = fakeWfAlgolia()
+  const mod = loadModule({
+    section,
+    wfXano,
+    wfAlgolia,
+    memberReady: Promise.resolve(premiumMember()),
+  })
+  mod.boot()
+  await new Promise((resolve) => setImmediate(resolve))
+  const marker = fakeElement()
+  marker.setAttribute('data-ts-favorites-view', 'favorites')
+  const input = fakeElement({ tagName: 'INPUT', type: 'radio', checked: true, closest: () => marker })
+  mod.docListeners.change({ target: input })
+  await new Promise((resolve) => setImmediate(resolve))
+  const refreshesAfterSwitch = wfXano.calls.refresh
+
+  ids.pop() // wf-xano updates its cache before dispatching the event
+  mod.docListeners['wf-xano:favorite']({ detail: { item_type: 'starter', item_id: '425', favorited: false } })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(wfXano.calls.refresh, refreshesAfterSwitch)
+  assert.deepEqual(plain(wfAlgolia.filters.at(-1)), ['objectID', ['314']])
+})
+
+test('favorite events for other item types are ignored', async () => {
+  const section = fakeElement()
+  const wfXano = fakeWfXano(['314'])
+  const wfAlgolia = fakeWfAlgolia()
+  const mod = loadModule({
+    section,
+    wfXano,
+    wfAlgolia,
+    memberReady: Promise.resolve(premiumMember()),
+  })
+  mod.boot()
+  await new Promise((resolve) => setImmediate(resolve))
+  const before = wfAlgolia.filters.length
+  mod.docListeners['wf-xano:favorite']({ detail: { item_type: 'opportunity', item_id: '9', favorited: false } })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(wfAlgolia.filters.length, before)
+})
+
+test('module never creates UI or injects library scripts', () => {
   assert.doesNotMatch(source, /createElement\('script'\)/)
-  assert.doesNotMatch(source, /cdn\.jsdelivr\.net\/gh\/the-starters\/wf-xano/)
+  assert.doesNotMatch(source, /innerHTML/)
+  assert.doesNotMatch(source, /insertBefore/)
+  assert.doesNotMatch(source, /ts-favorites-shell|ts-favorites-tab|savedMarkup/)
+  assert.doesNotMatch(source, /cdn\.jsdelivr\.net\/gh\/the-starters\/(wf-xano|wf-algolia)/)
 })
