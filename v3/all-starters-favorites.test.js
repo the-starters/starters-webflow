@@ -153,6 +153,18 @@ function fakeWfAlgolia() {
   }
 }
 
+// A decoratable favorite wrapper: matches the wrapper selector, sits inside a
+// premium hit (closest returns truthy), and has no inner button/svg so the
+// wrapper itself becomes the control. fakeWfXano's init does NOT paint (never
+// sets hidden=false), so after decoration the control stays hidden — modelling
+// "no paint has run yet".
+function favoriteWrapper() {
+  const wrapper = fakeElement({ tagName: 'DIV' })
+  wrapper.matches = (selector) => selector === '.expert-card_favorite-wrapper'
+  wrapper.closest = () => ({})
+  return wrapper
+}
+
 test('boot guard: module refuses to run twice', () => {
   const mod = loadModule()
   assert.equal(mod.window.__startersV3AllStartersFavoritesBooted, true)
@@ -199,6 +211,10 @@ test('styles inject when the premium section exists (incl. non-premium hard hide
   const css = mod.document.head.children[0].textContent
   assert.match(css, /data-ms-content="!premium-brands"\] \.expert-card_favorite-wrapper \{ display: none !important/)
   assert.match(css, /data-ms-content="premium-brands"\] \.expert-card_wrapper > \.expert-card_favorite-wrapper \{ position: absolute/)
+  // Global [hidden] override: Webflow's class display:flex beats the UA [hidden]
+  // rule, so both our decorate-hidden state and wf-xano's auth-fail hide need
+  // this to actually hide anything.
+  assert.match(css, /\.expert_favorite-button\[hidden\], \.expert-card_favorite-wrapper\[hidden\] \{ display: none !important; \}/)
 })
 
 test('non-premium member: no decoration, no listeners bound', async () => {
@@ -238,6 +254,52 @@ test('premium member: decorates, observes, inits favorites, binds controls', asy
   assert.equal(wfXano.calls.init, 1)
   assert.equal(typeof mod.docListeners.change, 'function')
   assert.equal(typeof mod.docListeners['wf-xano:favorite'], 'function')
+})
+
+test('decorated control is hidden until wf-xano paints it (show-when-ready)', async () => {
+  const wrapper = favoriteWrapper()
+  const section = fakeElement()
+  section.querySelectorAll = (selector) =>
+    selector === '.expert-card_favorite-wrapper' ? [wrapper] : []
+  const wfXano = fakeWfXano()
+  const mod = loadModule({
+    section,
+    wfXano,
+    memberReady: Promise.resolve(premiumMember()),
+  })
+  mod.boot()
+  await new Promise((resolve) => setImmediate(resolve))
+  // Decorated (attribute stamped) but hidden, since the fake init never paints.
+  assert.equal(wrapper.getAttribute('wf-xano-element'), 'favorite')
+  assert.equal(wrapper.hidden, true)
+})
+
+test('a second decorate pass does not re-hide an already-decorated control', async () => {
+  const wrapper = favoriteWrapper()
+  const section = fakeElement()
+  section.querySelectorAll = (selector) =>
+    selector === '.expert-card_favorite-wrapper' ? [wrapper] : []
+  const wfXano = fakeWfXano()
+  let observerCallback = null
+  const mod = loadModule({
+    section,
+    wfXano,
+    memberReady: Promise.resolve(premiumMember()),
+    MutationObserver: function (callback) {
+      observerCallback = callback
+      return { observe() {} }
+    },
+  })
+  mod.boot()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(wrapper.hidden, true)
+  assert.equal(wrapper.getAttribute('wf-xano-element'), 'favorite')
+
+  // Simulate wf-xano's paint revealing the control, then a re-render that
+  // re-decorates the same node via the observer: it must NOT re-hide it.
+  wrapper.hidden = false
+  observerCallback([{ addedNodes: [wrapper] }])
+  assert.equal(wrapper.hidden, false)
 })
 
 test('switching to Favourites refreshes ids and filters the grid by objectID', async () => {
