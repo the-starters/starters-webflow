@@ -11,8 +11,9 @@ never need a code release. Jira: INITIATIVE-125.
 - Auto-starts at most one tour per page load: the first tour (DOM order) whose
   role restriction matches the member and that the member has not seen.
 - Waits until `window.load` plus a one-second layout-settle delay before an
-  automatic start. It then confirms the first step still exists, so pages whose
-  hydration removes the tour markup skip the tour without an error.
+  automatic or query-string start. It then confirms the first step still
+  exists, so pages whose hydration removes the tour markup skip the tour
+  without an error.
 - Passes step selectors to driver.js instead of captured element nodes, letting
   each step resolve against the live DOM after Webflow or `wf-xano` hydration.
 - Persists seen-state per member in Memberstack member JSON
@@ -47,6 +48,24 @@ Optional replay trigger (e.g. a "Show me around" navbar/help link):
 | --- | --- | --- |
 | `data-tour-start` | `starter-dashboard` | Click starts that tour immediately, without the automatic-start settle delay, regardless of role or seen-state. Manual starts do not change seen-state. |
 
+## Replay and reset controls
+
+These presentation-only controls work on staging and production:
+
+- `?tour=<tourId>` starts that page's named tour after the normal layout-settle
+  delay, bypassing role restrictions and seen-state. It never marks the tour
+  seen. An unknown ID logs a warning and does nothing.
+- `?tour=reset` deletes the member JSON `tours` key while preserving all other
+  member JSON, clears the guest tours `localStorage` key, and then continues
+  through normal auto-start behavior. A show-once tour that starts successfully
+  is marked seen again.
+- `Alt+Shift+T` replays the first tour in page DOM order. The shortcut uses the
+  physical `T` key and is ignored for repeats and while focus is in an input,
+  textarea, or contenteditable element.
+
+Only one tour can start at a time. Query-string, keyboard, and click replays do
+not grant access or change route protection.
+
 ⚠ Webflow's Designer strips valueless custom attributes — every attribute above
 takes a value, matching the `wf-xano-element` grammar convention.
 
@@ -78,15 +97,17 @@ popover (fonts/colors) can go in a small site-level CSS embed targeting
   running tour is unaffected and may auto-start again on a later visit.
 - If the member JSON read fails, the tour fails closed (does not show) rather
   than nagging members on every hiccup.
-- To reset a member's tours for testing: clear `tours` from the member's JSON
-  in the Memberstack dashboard, or use a `data-tour-start` trigger which
-  ignores seen-state.
+- To reset tours for testing, load the page with `?tour=reset`. To replay
+  without changing seen-state, use `?tour=<tourId>`, `Alt+Shift+T`, or a
+  `data-tour-start` trigger.
 
 ## Diagnostics
 
 - `window.StartersV3OnboardingTour` exposes `activePlanIds`, `memberRole`,
   `parseTours`, `buildDriverSteps`, `autoStartTarget`, `loadDriver`, and
-  `startTour` for console debugging.
+  `startTour` for console debugging, plus `replayRequestFromQuery` for parsing
+  the query-string replay contract. `startTour` returns `null` when another
+  start is in flight or a driver popover is already open.
 - `starters:v3-tour-started` fires on `window` with `{ tourId }` when a tour
   starts (hook for PostHog capture).
 - Malformed or duplicate `data-tour-step` values log a
@@ -99,6 +120,8 @@ popover (fonts/colors) can go in a small site-level CSS embed targeting
   jsDelivr purge, verify served asset).
 - Browser-verify on staging with the V3 Test Mode Talent account
   (authenticate the site password gate via `.wf_auth` first); confirm the tour
-  shows once, and not again after reload.
+  shows once, and not again after reload. Verify `?tour=<tourId>` replays
+  without changing seen-state, `?tour=reset` restores normal auto-start, and
+  `Alt+Shift+T` replays the first tour.
 - Standard exposure scan: no Airtable/Make URLs or PAT patterns (this module
   calls only jsDelivr and Memberstack).
