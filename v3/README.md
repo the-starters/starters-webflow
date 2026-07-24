@@ -39,6 +39,18 @@ logged-out visitor to `/quiz`; pending pre-signup quizzes and Memberstack
 failures do not redirect. `/all-starters` still awaits product confirmation that
 it is not a pre-signup funnel page.
 
+## Onboarding tours
+
+`onboarding-tour.js` renders page-scoped product tours whose steps, copy,
+placement, audience, and replay behavior are configured with Webflow custom
+attributes. It lazy-loads driver.js only for an eligible tour, stores
+show-once state in Memberstack member JSON (with `localStorage` for guests),
+and waits for an in-progress route guard before auto-starting. It is
+presentation-only and does not grant or restrict access. See
+[ONBOARDING-TOUR-WIRING.md](ONBOARDING-TOUR-WIRING.md) for the Designer
+attributes, install snippet, persistence behavior, diagnostics, and release
+checks.
+
 ## Scheduling auth
 
 `scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and
