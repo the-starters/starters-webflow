@@ -18,10 +18,10 @@ never need a code release. Jira: INITIATIVE-125.
   each step resolve against the live DOM after Webflow or `wf-xano` hydration.
   An optional highlight target can redirect a page-scoped step to another
   element, including an element inside a shared Webflow component.
-- Can open a visible disclosure control before highlighting a target inside it,
-  then closes that disclosure when the step is left or the tour ends. A
-  disclosure step is omitted when its opener is hidden at the current
-  responsive breakpoint.
+- Can open a visible disclosure control before highlighting an element inside
+  it, then close that disclosure when navigating away or ending the tour.
+  Disclosure steps are omitted when their control is hidden, so desktop-only
+  controls do not leave broken mobile steps or inflate the progress count.
 - Persists seen-state per member in Memberstack member JSON
   (`json.tours[tourId]`), so a successful write suppresses that tour for the
   member across devices.
@@ -53,7 +53,7 @@ highlighted; `data-tour-target` can override the highlight:
 | `data-tour-side` | no | `bottom` | driver.js popover side (`top`/`right`/`bottom`/`left`). |
 | `data-tour-align` | no | `start` | driver.js popover align (`start`/`center`/`end`). |
 | `data-tour-target` | no | `.post-opportunity` or `text:Post Opportunity` | Highlight a different element. A CSS selector uses its first match. `text:<label>` prefers the smallest visible `a`, `button`, or `[role="button"]` whose trimmed text exactly matches, then the smallest visible `span`, `div`, or `p`. If the selector is invalid, has no match, or no visible exact-text match exists, the step's tagged element is highlighted instead. |
-| `data-tour-open` | no | `.account-menu-toggle` | CSS selector for a disclosure control to open before highlighting `data-tour-target`. The opener must be visible; otherwise the step is omitted (for example, when a desktop avatar is collapsed into a mobile menu). The module dispatches the Webflow-compatible mouse sequence, refreshes the popover while the disclosure settles, and restores the disclosure when leaving the step or ending the tour. |
+| `data-tour-open` | no | `.navbar_profile-dropdown .w-dropdown-toggle` | CSS selector for a disclosure control to open before highlighting `data-tour-target`. The opener must be visible; otherwise the step is omitted from the tour and its progress count. The module dispatches the Webflow-compatible mouse sequence, refreshes the popover while the disclosure settles, and restores the disclosure when leaving the step or ending the tour. If every step is omitted, the tour does not start or update seen-state. |
 | `data-tour-roles` | no | `talent` | Comma list; the tour auto-starts only for these roles (`talent`, `brand-paid`, `brand-free`). Put it on any one step; lists on multiple steps are merged. |
 | `data-tour-once` | no | `false` | On any step: replay the tour every visit (default is show-once). |
 
@@ -169,7 +169,8 @@ are ignored.
   step with `data-tour-target`, confirm the override highlights its target and
   an unmatched target falls back to the tagged step element. For a step with
   `data-tour-open`, confirm the disclosure opens before its target is
-  highlighted, closes on next/previous/dismissal, and is omitted when its
-  opener is hidden at the current breakpoint.
+  highlighted, closes on next/previous navigation and tour dismissal, and does
+  not reopen if it was already dismissed. At a breakpoint where the disclosure
+  control is hidden, confirm the step is omitted and the progress count adjusts.
 - Standard exposure scan: no Airtable/Make URLs or PAT patterns (this module
   calls only jsDelivr and Memberstack).

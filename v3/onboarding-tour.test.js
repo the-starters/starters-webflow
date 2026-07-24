@@ -29,10 +29,10 @@ function loadModule(options = {}) {
   const events = []
   let run
   const window = {
-    setInterval,
-    clearInterval,
-    setTimeout,
-    clearTimeout,
+    setInterval: options.setInterval || setInterval,
+    clearInterval: options.clearInterval || clearInterval,
+    setTimeout: options.setTimeout || setTimeout,
+    clearTimeout: options.clearTimeout || clearTimeout,
     $memberstackDom: options.memberstack,
     driver: options.driver,
     localStorage: options.localStorage || {
@@ -626,6 +626,63 @@ test('startTour prevents overlapping starts and unlocks after dismissal', async 
   assert.deepEqual(starts, ['started', 'started'])
 })
 
+test('rejected overlapping start preserves active disclosure cleanup', async () => {
+  const intervals = []
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  const { api, window } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+    driver: {
+      js: {
+        driver() {
+          return {
+            drive() {
+              window.document.__popover = {}
+            },
+            refresh() {},
+          }
+        },
+      },
+    },
+    setInterval(callback, delay) {
+      const interval = { callback, delay, cleared: false }
+      intervals.push(interval)
+      return interval
+    },
+    clearInterval(interval) {
+      interval.cleared = true
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+    ],
+  }
+
+  await api.startTour(tour)
+  api.buildDriverSteps(tour)[0].onHighlightStarted()
+  edit._w = 155
+  edit._h = 36
+  const endWatcher = intervals.find((interval) => interval.delay === 200)
+  endWatcher.callback()
+
+  assert.equal(await api.startTour(tour), null)
+  assert.equal(endWatcher.cleared, false)
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+
+  window.document.__popover = null
+  endWatcher.callback()
+  assert.deepEqual(avatar.dispatched, [
+    'mousedown',
+    'mouseup',
+    'click',
+    'mousedown',
+    'mouseup',
+    'click',
+  ])
+})
+
 test('loadDriver waits for both script and stylesheet', async () => {
   const appended = []
   const { api } = loadModule({
@@ -898,6 +955,8 @@ test('entering a later step restores (closes) a disclosure a prior step opened',
   const steps = api.buildDriverSteps(tour)
   steps[0].onHighlightStarted() // opens the avatar menu
   assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+  editHidden._w = 155
+  editHidden._h = 36
   steps[1].onHighlightStarted() // moving on closes it again
   assert.deepEqual(avatar.dispatched, [
     'mousedown',
@@ -960,6 +1019,90 @@ test('onHighlightStarted checks a text target before its visible fallback', () =
   assert.equal(step.element, editHidden)
 })
 
+test('disclosure step falls back when its CSS-selector target is invalid', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar },
+    invalidSelector: '[',
+  })
+  const tour = {
+    steps: [{ selector: 'S1', target: '[', open: '.avatar', title: 'Edit' }],
+  }
+
+  assert.equal(api.buildDriverSteps(tour)[0].element, 'S1')
+})
+
+test('invalid disclosure target does not open or leave a disclosure open', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const carrier = discEl({ w: 100, h: 20 })
+  const { api } = loadModule({
+    nodes: [carrier],
+    cssTargets: { '.avatar': avatar },
+    invalidSelector: '[',
+  })
+  const steps = api.buildDriverSteps({
+    steps: [
+      {
+        selector: '[data-tour-step="t:1"]',
+        target: '[',
+        open: '.avatar',
+        title: 'Edit',
+      },
+      {
+        selector: '[data-tour-step="t:2"]',
+        target: '',
+        open: '',
+        title: 'Next',
+      },
+    ],
+  })
+
+  steps[0].onHighlightStarted()
+  steps[1].onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, [])
+})
+
+test('unmatched disclosure target falls back and does not open', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const carrier = discEl({ w: 100, h: 20 })
+  const { api } = loadModule({
+    nodes: [carrier],
+    cssTargets: { '.avatar': avatar },
+  })
+  const step = api.buildDriverSteps({
+    steps: [
+      {
+        selector: '[data-tour-step="t:1"]',
+        target: '.missing',
+        open: '.avatar',
+        title: 'Edit',
+      },
+    ],
+  })[0]
+
+  assert.equal(step.element, '[data-tour-step="t:1"]')
+  step.onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, [])
+})
+
+test('restoring a disclosure does not reopen it when its target is hidden', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+  })
+  const steps = api.buildDriverSteps({
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+      { selector: 'S2', target: '', open: '', title: 'Next' },
+    ],
+  })
+
+  steps[0].onHighlightStarted()
+  steps[1].onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+})
+
 test('onHighlightStarted does not re-open when the target is already visible', () => {
   const avatar = discEl({ w: 37, h: 37 })
   const editVisible = discEl({ w: 155, h: 36 })
@@ -995,4 +1138,144 @@ test('startTour returns null when responsive filtering removes every step', asyn
   assert.equal(await api.startTour(tour), null)
   assert.equal(factoryCalls, 0)
   assert.equal(await api.startTour(tour), null)
+})
+
+test('a stale end watcher does not close a newer tour disclosure', async () => {
+  const intervals = []
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  const { api, window } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+    driver: {
+      js: {
+        driver() {
+          return { drive() {}, refresh() {} }
+        },
+      },
+    },
+    setInterval(callback, delay) {
+      const interval = { callback, delay, cleared: false }
+      intervals.push(interval)
+      return interval
+    },
+    clearInterval(interval) {
+      interval.cleared = true
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+    ],
+  }
+
+  await api.startTour(tour)
+  const staleWatcher = intervals.find((interval) => interval.delay === 200)
+  window.document.__popover = {}
+  intervals.find((interval) => interval.delay === 100).callback()
+  window.document.__popover = null
+
+  await api.startTour(tour)
+  api.buildDriverSteps(tour)[0].onHighlightStarted()
+  edit._w = 155
+  edit._h = 36
+  staleWatcher.callback()
+
+  assert.equal(staleWatcher.cleared, true)
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+})
+
+test('starting a new tour restores a prior opened disclosure', async () => {
+  const intervals = []
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  const { api, window } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+    driver: {
+      js: {
+        driver() {
+          return { drive() {}, refresh() {} }
+        },
+      },
+    },
+    setInterval(callback, delay) {
+      const interval = { callback, delay, cleared: false }
+      intervals.push(interval)
+      return interval
+    },
+    clearInterval(interval) {
+      interval.cleared = true
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+    ],
+  }
+
+  await api.startTour(tour)
+  api.buildDriverSteps(tour)[0].onHighlightStarted()
+  edit._w = 155
+  edit._h = 36
+  window.document.__popover = {}
+  intervals.find((interval) => interval.delay === 100).callback()
+  window.document.__popover = null
+
+  await api.startTour(tour)
+
+  assert.deepEqual(avatar.dispatched, [
+    'mousedown',
+    'mouseup',
+    'click',
+    'mousedown',
+    'mouseup',
+    'click',
+  ])
+})
+
+test('boot does not mark seen when disclosure filtering removes every step', async () => {
+  const calls = []
+  const { api, run } = loadModule({
+    memberstack: {
+      getCurrentMember: async () => ({ data: null }),
+    },
+    driver: {
+      js: {
+        driver() {
+          calls.push('created')
+          return {
+            drive() {
+              calls.push('started')
+            },
+          }
+        },
+      },
+    },
+    localStorage: {
+      getItem() {
+        return null
+      },
+      setItem() {
+        calls.push('marked')
+      },
+    },
+    nodes: [
+      fakeElement({
+        'data-tour-step': 'welcome:1',
+        'data-tour-open': '.avatar',
+      }),
+    ],
+    cssTargets: { '.avatar': discEl({ w: 0, h: 0 }) },
+  })
+  await run()
+  assert.deepEqual(calls, [])
+  assert.equal(
+    await api.startTour({
+      id: 'welcome',
+      steps: [{ selector: 'S1', target: '', open: '.avatar' }],
+    }),
+    null,
+  )
+  assert.deepEqual(calls, [])
 })

@@ -296,14 +296,16 @@
   // after a disclosure opens (its content may reveal/animate asynchronously).
   var activeInstance = null
 
-  // The disclosure selector the tour currently has open (only one at a time),
-  // so it can be closed again when the step is left or the tour ends.
+  // The disclosure the tour currently has open (only one at a time), so it can
+  // be closed again when the step is left or the tour ends.
   var openedDisclosure = null
   function restoreOpenedDisclosure() {
     if (!openedDisclosure) return
-    var selector = openedDisclosure
+    var disclosure = openedDisclosure
     openedDisclosure = null
-    toggleDisclosure(selector)
+    if (isVisible(disclosure.target)) {
+      toggleDisclosure(disclosure.selector)
+    }
   }
 
   // Reposition a few times so the popover follows the revealed element as the
@@ -353,8 +355,11 @@
           restoreOpenedDisclosure()
           if (step.open && !isVisible(requestedTarget(step))) {
             toggleDisclosure(step.open)
-            openedDisclosure = step.open
             driverStep.element = resolveStepElement(step)
+            openedDisclosure = {
+              selector: step.open,
+              target: requestedTarget(step),
+            }
             scheduleRefresh()
           }
         }
@@ -390,9 +395,9 @@
       return null
     }
     try {
-      return document.querySelector(step.target)
+      return document.querySelector(step.target) || resolvedTarget(step)
     } catch (error) {
-      return null
+      return resolvedTarget(step)
     }
   }
 
@@ -481,6 +486,8 @@
   var driverLoadPromise = null
   var driverLoadFailed = false
   var tourStartInFlight = false
+  var tourRunToken = 0
+  var endWatchInterval = null
   function loadDriver() {
     var existing = currentDriverFactory()
     if (existing && !driverLoadFailed) return Promise.resolve(existing)
@@ -592,6 +599,13 @@
       return null
     }
     tourStartInFlight = true
+    restoreOpenedDisclosure()
+    if (endWatchInterval !== null) {
+      window.clearInterval(endWatchInterval)
+      endWatchInterval = null
+    }
+    tourRunToken += 1
+    var runToken = tourRunToken
     try {
       injectThemeStyle()
       var driverFactory = await loadDriver()
@@ -643,9 +657,15 @@
           }
           if (appeared || Date.now() - endWatchStartedAt >= 15000) {
             window.clearInterval(endWatch)
-            restoreOpenedDisclosure()
+            if (endWatchInterval === endWatch) {
+              endWatchInterval = null
+            }
+            if (tourRunToken === runToken) {
+              restoreOpenedDisclosure()
+            }
           }
         }, 200)
+        endWatchInterval = endWatch
       }
       window.dispatchEvent(
         new CustomEvent('starters:v3-tour-started', {
