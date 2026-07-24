@@ -137,6 +137,8 @@
     // into the form from Memberstack member JSON (retake prefill).
     let hasRestoredSavedQuiz = false
 
+    let userTouchedQuiz = false
+
     /**
      * Category checkboxes rendered in the quiz page form.
      *
@@ -178,6 +180,19 @@
      * @type {HTMLInputElement[]}
      */
     const subcategoryInputs = subcategoryItems.map(getCheckboxInput).filter(Boolean)
+
+    function markQuizTouchedByUser(event) {
+        const input = event.target
+        const isQuizInput =
+            categoryInputs.includes(input) || subcategoryInputs.includes(input)
+
+        if (event.isTrusted && isQuizInput) {
+            userTouchedQuiz = true
+        }
+    }
+
+    categoriesForm.addEventListener('change', markQuizTouchedByUser, true)
+    subcategoriesForm.addEventListener('change', markQuizTouchedByUser, true)
 
     logQuizFlow('initialized', {
         categoryCount: categoryInputs.length,
@@ -422,6 +437,11 @@
 
         if (!savedCategoryIds.size && !savedSubcategoryIds.size) {
             logQuizFlow('saved quiz present but empty; nothing to restore')
+            return false
+        }
+
+        if (userTouchedQuiz) {
+            logQuizFlow('saved-quiz restore skipped; user already edited')
             return false
         }
 
