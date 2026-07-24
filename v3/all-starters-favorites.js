@@ -11,7 +11,10 @@
  *   - decorates the favorite wrapper in every Algolia expert card inside the
  *     PREMIUM section with the canonical wf-xano favorite attributes (and
  *     injects a ♡ visual when a Designer template variant ships the wrapper
- *     empty), and hard-hides favorite wrappers in the non-premium section,
+ *     empty); each control is decorated HIDDEN and is revealed by wf-xano's
+ *     own paint (setFavoriteControl un-hides it) once favorites hydrate, so a
+ *     slow or auth-failed ids fetch no longer flashes then hides the bookmark.
+ *     Also hard-hides favorite wrappers in the non-premium section,
  *   - binds the Designer-built "Show all / Favourites" radio filter (marked
  *     with data-ts-favorites-view="all|favorites") and applies it to the
  *     existing wf-algolia grid as an objectID filter — the same proven pattern
@@ -71,6 +74,11 @@
     PREMIUM_SECTION + ' .expert-card_wrapper > .expert-card_favorite-wrapper { position: absolute; top: .75rem; right: .75rem; z-index: 2; width: auto; height: auto; }',
     '/* Favorites are premium-only: never show the control in the non-premium variant. */',
     NON_PREMIUM_SECTION + ' .expert-card_favorite-wrapper { display: none !important; }',
+    '/* Webflow class CSS sets display:flex on these, which beats the UA [hidden]',
+    '   rule — without this, neither our decorate-hidden state nor wf-xano',
+    '   auth-fail hide actually hides anything. Global on purpose (repairs the',
+    '   wf-xano hide anywhere) and only applies when hidden is intentionally set. */',
+    '.expert_favorite-button[hidden], .expert-card_favorite-wrapper[hidden] { display: none !important; }',
     '[wf-xano-element="favorite"].is-wf-xano-favorited path { fill: currentColor; }',
     '[wf-xano-element="favorite"].is-wf-xano-loading { opacity: .55; cursor: wait; }',
     '[wf-xano-element="favorite"]:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }',
@@ -131,6 +139,13 @@
       if (!wrapper.closest(PREMIUM_SECTION + ' [data-wf-algolia-hit-objectid]')) return
       var control = wrapper.querySelector('button.expert_favorite-button') || wrapper
       if (control.getAttribute('wf-xano-element') === 'favorite') return
+      // Show-when-ready, not hide-when-failed: start the control hidden so
+      // wf-xano's paint (setFavoriteControl -> el.hidden = false) reveals it as
+      // soon as this type's favorites ids are in memory. Cached ids un-hide in
+      // the same tick (no flash); a slow first fetch reveals it when ready; an
+      // auth-failed session never reveals it (previously the Designer template
+      // shipped it visible, so it flashed and vanished a round-trip later).
+      control.hidden = true
       control.setAttribute('wf-xano-element', 'favorite')
       control.setAttribute('wf-xano-favorite-type', FAVORITE_TYPE)
       control.setAttribute('wf-xano-favorite-label-add', 'Save Starter')
