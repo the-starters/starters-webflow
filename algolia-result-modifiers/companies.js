@@ -1,6 +1,12 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/companies
 
-  document.addEventListener('DOMContentLoaded', () => {
+  (function () {
+    // The page embeds this file twice; guard so a duplicate never wires a
+    // second observer/relayout dispatch. Bind once.
+    if (window.__startersCompaniesModifierInit) return;
+    window.__startersCompaniesModifierInit = true;
+
+    function init() {
     const FIELD = 'also-worked-with'; // company list field
     let relayoutTimer;
 
@@ -39,4 +45,9 @@
       new MutationObserver(run).observe(container, { childList: true, subtree: true });
     }
     run();
-  });
+    }
+
+    // Also CDN-loadable: a copy injected after DOMContentLoaded still boots.
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+    else init();
+  })();
