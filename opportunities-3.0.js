@@ -2374,6 +2374,13 @@
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
     if (flowId && ff && ff.list && ff.list[flowId]) ff.reset(flowId)
+    // The withdraw modal's nav header lives OUTSIDE the form-flow steps (the
+    // shared modal_nav bar), so the flow reset above can't rewind it. Its two
+    // title variants follow the data-opp-state contract (like the close
+    // modal's data-opp-status twins): repaint to 'applied' on every open so a
+    // reopen after a same-page withdraw never strands the success title.
+    if (modal && modal.matches && modal.matches('[data-modal-target="cancel-application"]'))
+      paintState(modal, 'applied')
     // Apply/edit-application AND edit-opportunity modals: rewind the success
     // screen (w-form-done) back to the form step, mirroring the form-flow reset
     // above, so a reopened modal never strands the brand on "pending for review".

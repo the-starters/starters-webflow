@@ -339,6 +339,13 @@ when necessary, clones the spinner authored inside the page-level
 `data-modal-trigger="close-opportunity"` control. The form-flow advances only after
 the Close request succeeds; an error leaves the confirmation step open and usable.
 
+The Withdraw Application modal remains identified by
+`data-modal-target="cancel-application"`. Its shared nav header sits outside the
+form-flow steps, so author the confirmation title with
+`data-opp-state="applied edited"` and the success title with
+`data-opp-state="not-applied"`. A successful withdrawal shows the success title;
+opening the modal again resets its titles to the confirmation state.
+
 ## utils/wf-validate.js
 
 Attribute-driven form validation, same grammar family as wf-xano / Finsweet Attributes.
