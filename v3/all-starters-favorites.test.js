@@ -302,6 +302,52 @@ test('a second decorate pass does not re-hide an already-decorated control', asy
   assert.equal(wrapper.hidden, false)
 })
 
+test('pre-warm: premium member triggers a favorites refresh at eval (no DOMContentLoaded)', async () => {
+  const wfXano = fakeWfXano()
+  const mod = loadModule({
+    section: fakeElement(),
+    wfXano,
+    memberReady: Promise.resolve(premiumMember()),
+  })
+  // Deliberately do NOT call mod.boot(): the pre-warm runs at script eval.
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(wfXano.calls.refresh, 1)
+  assert.equal(mod.window.WfXanoConfig.favoritesSource, 'opp30:brand/favorites')
+})
+
+test('pre-warm: non-premium member does not trigger a favorites refresh', async () => {
+  const wfXano = fakeWfXano()
+  const mod = loadModule({
+    section: fakeElement(),
+    wfXano,
+    memberReady: Promise.resolve({
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    }),
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(wfXano.calls.refresh, 0)
+})
+
+test('null member at eval, Memberstack ready by boot: decoration still runs', async () => {
+  const wrapper = favoriteWrapper()
+  const section = fakeElement()
+  section.querySelectorAll = (selector) =>
+    selector === '.expert-card_favorite-wrapper' ? [wrapper] : []
+  const wfXano = fakeWfXano()
+  // Eval-time: no window.memberReady and no $memberstackDom, so the cached
+  // memberPromise resolves null (simulating a late/async Memberstack tag).
+  const mod = loadModule({ section, wfXano })
+  // Memberstack becomes available only by DOMContentLoaded/boot time.
+  mod.window.$memberstackDom = {
+    getCurrentMember: () => Promise.resolve({ data: premiumMember() }),
+  }
+  mod.boot()
+  await new Promise((resolve) => setImmediate(resolve))
+  // boot()'s retry re-resolves the member and decoration runs for the premium.
+  assert.equal(wrapper.getAttribute('wf-xano-element'), 'favorite')
+  assert.equal(wrapper.hidden, true)
+})
+
 test('switching to Favourites refreshes ids and filters the grid by objectID', async () => {
   const section = fakeElement()
   const wfXano = fakeWfXano(['314', '425'])
@@ -314,6 +360,9 @@ test('switching to Favourites refreshes ids and filters the grid by objectID', a
   })
   mod.boot()
   await new Promise((resolve) => setImmediate(resolve))
+  // Baseline includes the eval-time pre-warm refresh (premium member); assert
+  // the view switch's refresh relative to it so the count stays intent-focused.
+  const refreshBaseline = wfXano.calls.refresh
 
   const marker = fakeElement()
   marker.setAttribute('data-ts-favorites-view', 'favorites')
@@ -325,14 +374,14 @@ test('switching to Favourites refreshes ids and filters the grid by objectID', a
   })
   mod.docListeners.change({ target: input })
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(wfXano.calls.refresh, 1)
+  assert.equal(wfXano.calls.refresh, refreshBaseline + 1)
   assert.deepEqual(plain(wfAlgolia.filters.at(-1)), ['objectID', ['314', '425']])
 
   // Back to Show all clears the filter without another refresh.
   marker.setAttribute('data-ts-favorites-view', 'all')
   mod.docListeners.change({ target: input })
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(wfXano.calls.refresh, 1)
+  assert.equal(wfXano.calls.refresh, refreshBaseline + 1)
   assert.deepEqual(plain(wfAlgolia.filters.at(-1)), ['objectID', []])
 })
 
