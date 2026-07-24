@@ -60,6 +60,13 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 > the visitor stays on the page. Pre-signup visitors with a pending quiz and
 > test-mode previews are unaffected.
 
+> **Quiz entry controller (updated 2026-07-24):** `/quiz` remains outside
+> `route-guard.js`, but `quiz-main/quiz-redirect.js` redirects an active
+> production paid Brand to `/brand-dashboard` and a completed active production
+> free Brand to `/quiz-results`. `?retake=true` (also `1` or `yes`) bypasses
+> this page-level redirect. Unknown, test, Talent, inactive, and incomplete
+> free-plan members are deliberately unaffected.
+
 > **Free Brand default (updated 2026-07-23):** "Default quiz home" in the
 > Brand-free column is conditional — a Brand-free member goes to `/quiz`
 > until they complete the quiz, then `/quiz-results`. Completion is the Memberstack
@@ -98,7 +105,8 @@ enforces the underlying ownership boundary.
 - Confirm whether `/all-starters` is authenticated-only. Until then, the route
   guard leaves it unlisted and does not force logged-out visitors to `/login`.
   `/quiz` remains unlisted because it is the quiz funnel entry, and
-  `/quiz-results` uses the page-controller behavior documented above.
+  its member redirects are owned by the page controller documented above;
+  `/quiz-results` likewise uses its page-controller behavior.
 - Verify Webflow Memberstack gated groups and Xano authorization independently;
   a `Backlog` row in the product sheet is desired behavior, not proof that it is
   live.

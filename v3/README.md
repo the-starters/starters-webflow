@@ -33,7 +33,11 @@ its legacy per-page redirects only as a fallback when the guard is absent.
 diagnostics, exclusions, and release gate. The guard is a routing/UX layer and
 does not replace Memberstack visibility rules or Xano authorization.
 `/quiz`, `/quiz-results`, and `/all-starters` are intentionally unguarded by
-the route table. `/quiz` is the funnel entry. When `/quiz-results` has no test,
+the route table. `/quiz` is the funnel entry, where
+`quiz-main/quiz-redirect.js` sends a paid Brand to `/brand-dashboard` and a
+completed free Brand to `/quiz-results`; a recognised member can stay by using
+the `?retake=true` escape hatch. See `quiz-main/README.md` for its production
+plan scope and page-controller wiring. When `/quiz-results` has no test,
 pending, or saved quiz data, its page controller returns a positively identified
 logged-out visitor to `/quiz`; pending pre-signup quizzes and Memberstack
 failures do not redirect. `/all-starters` still awaits product confirmation that
