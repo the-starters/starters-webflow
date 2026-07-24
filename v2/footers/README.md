@@ -7,7 +7,7 @@ Source-of-truth for the **live, secure** V2 Webflow page footer logic. Two artif
 
 The `.js` is extracted verbatim from the `.html` (multi-block pages are concatenated in original order — they already shared one classic-script scope, so behaviour is identical). **Edit the `.html` source, then re-extract the `.js`** so the two never drift, or pick the `.js` as sole source once a page is fully migrated to CDN.
 
-## CDN script tags (paste into Webflow Page Settings → Footer, replacing the inline block)
+## CDN script tags (place in Webflow Page Settings -> Head Code, replacing the inline block)
 
 | Page | Tag |
 | --- | --- |
@@ -24,7 +24,7 @@ External libraries (Memberstack, Quill, Algolia, etc.) are **not** in these file
 
 ### `/freelancer-start-project` — extra Slater tag
 
-This page's footer needs **two** tags: the CDN tag above **plus** a separate inline Slater loader (`freelancer-start-project-slater.html`). The Slater loader pulls `assets.slater.app/slater/4960/9022.js` (~15KB of contract-form field logic edited in the Slater.app project 4960, not in this repo). It is deliberately **not** bundled into `freelancer-start-project.js`. Paste order: CDN tag first, Slater tag second.
+This page still has a documented legacy exception: the deferred CDN tag above **plus** a separate inline Slater loader (`freelancer-start-project-slater.html`). The Slater loader pulls `assets.slater.app/slater/4960/9022.js` (~15KB of contract-form field logic edited in the Slater.app project 4960, not in this repo). It is deliberately **not** bundled into `freelancer-start-project.js`. Keep their relative load order intact during migration: CDN tag first, Slater tag second.
 
 **`freelancer-start-project-contract.js`** is a GitHub-managed, readable mirror of that Slater contract logic (captured verbatim from the Slater build for version control / review). It is **not loaded live** — the page still loads the Slater copy via the loader above, so behavior is unchanged. To eventually take the code off Slater: serve this file from jsDelivr, swap the Slater loader for a `<script defer src=…freelancer-start-project-contract.js>` tag, and **staging-test first** (the mirror is Slater build `v=815454`; prod runs `v=339605` — same functions, different build). A related-but-stale earlier migration also exists at repo root as `v2/contract.js`; leave it untouched.
 
