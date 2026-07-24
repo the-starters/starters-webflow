@@ -133,6 +133,12 @@
     // user is retaking the quiz and should skip the final signup slide.
     let memberIsLoggedIn = false
 
+    // True once a returning member's previously saved answers have been merged
+    // into the form from Memberstack member JSON (retake prefill).
+    let hasRestoredSavedQuiz = false
+
+    let userTouchedQuiz = false
+
     /**
      * Category checkboxes rendered in the quiz page form.
      *
@@ -174,6 +180,19 @@
      * @type {HTMLInputElement[]}
      */
     const subcategoryInputs = subcategoryItems.map(getCheckboxInput).filter(Boolean)
+
+    function markQuizTouchedByUser(event) {
+        const input = event.target
+        const isQuizInput =
+            categoryInputs.includes(input) || subcategoryInputs.includes(input)
+
+        if (event.isTrusted && isQuizInput) {
+            userTouchedQuiz = true
+        }
+    }
+
+    categoriesForm.addEventListener('change', markQuizTouchedByUser, true)
+    subcategoriesForm.addEventListener('change', markQuizTouchedByUser, true)
 
     logQuizFlow('initialized', {
         categoryCount: categoryInputs.length,
@@ -252,27 +271,32 @@
     }
 
     /**
-     * Switches the start heading copy based on whether homepage buckets exist.
+     * Switches the start heading copy based on whether either prefill exists.
      *
      * @returns {void}
      */
     function syncStartHeading() {
         if (!startHeading) return
 
-        const hasHomepageSelection = getSavedBuckets().length > 0
+        // Show the "pre-filled" heading when either source seeded the quiz:
+        // the homepage bucket selection or a returning member's saved answers.
+        const hasPrefill = getSavedBuckets().length > 0 || hasRestoredSavedQuiz
 
-        logQuizFlow('synced start heading state', { hasHomepageSelection })
+        logQuizFlow('synced start heading state', {
+            hasPrefill,
+            hasRestoredSavedQuiz,
+        })
 
         startHeading
             .querySelectorAll('[data-start-default]')
             .forEach((element) => {
-                element.style.display = hasHomepageSelection ? 'none' : ''
+                element.style.display = hasPrefill ? 'none' : ''
             })
 
         startHeading
             .querySelectorAll('[data-start-filled]')
             .forEach((element) => {
-                element.style.display = hasHomepageSelection ? 'block' : 'none'
+                element.style.display = hasPrefill ? 'block' : 'none'
             })
     }
 
@@ -355,6 +379,114 @@
             restoredCategoryIds: Array.from(categoriesToCheck),
             selectedCategoryIds: getSelectedCategoryIds(),
         })
+    }
+
+    /**
+     * Merges a returning member's previously saved answers into the form.
+     *
+     * Source: Memberstack member JSON `starterQuiz` (categoryIds +
+     * subcategoryIds), written by quiz-results.js after a completed quiz. This
+     * is data-driven, not gated on `?retake=true`: any logged-in member who
+     * lands on /quiz with a saved quiz has it restored. It only ever checks
+     * boxes, so it unions with the homepage-bucket selection (restoreCategories-
+     * FromStorage) rather than replacing it. A member with no saved quiz
+     * restores nothing, leaving the homepage-bucket / blank flow intact.
+     *
+     * @returns {Promise<boolean>} True when saved answers were merged in.
+     */
+    async function restoreQuizFromMemberJson() {
+        const memberstack = await waitForMemberstack()
+        if (!memberstack || typeof memberstack.getMemberJSON !== 'function') {
+            return false
+        }
+
+        let savedQuiz = null
+        try {
+            const response = await memberstack.getMemberJSON()
+            const json =
+                response && response.data && typeof response.data === 'object'
+                    ? response.data
+                    : response || {}
+            savedQuiz =
+                json && typeof json.starterQuiz === 'object'
+                    ? json.starterQuiz
+                    : null
+        } catch (error) {
+            logQuizFlow('could not read saved quiz from member JSON', { error })
+            return false
+        }
+
+        if (!savedQuiz) {
+            logQuizFlow('no saved quiz in member JSON to restore')
+            return false
+        }
+
+        const savedCategoryIds = new Set(
+            (Array.isArray(savedQuiz.categoryIds) ? savedQuiz.categoryIds : [])
+                .map(normalize)
+                .filter(Boolean),
+        )
+        const savedSubcategoryIds = new Set(
+            (Array.isArray(savedQuiz.subcategoryIds)
+                ? savedQuiz.subcategoryIds
+                : []
+            )
+                .map(normalize)
+                .filter(Boolean),
+        )
+
+        if (!savedCategoryIds.size && !savedSubcategoryIds.size) {
+            logQuizFlow('saved quiz present but empty; nothing to restore')
+            return false
+        }
+
+        if (userTouchedQuiz) {
+            logQuizFlow('saved-quiz restore skipped; user already edited')
+            return false
+        }
+
+        let restoredInputCount = 0
+
+        categoryInputs.forEach((input) => {
+            if (savedCategoryIds.has(normalize(input.id))) {
+                setWebflowCheckboxState(input, true)
+                restoredInputCount += 1
+            }
+        })
+
+        subcategoryInputs.forEach((input) => {
+            const id =
+                normalize(input.id) ||
+                normalize(input.value) ||
+                normalize(getCheckboxLabel(input))
+
+            if (id && savedSubcategoryIds.has(id)) {
+                setWebflowCheckboxState(input, true)
+                restoredInputCount += 1
+            }
+        })
+
+        if (!restoredInputCount) {
+            logQuizFlow('saved quiz had no matching inputs; nothing restored')
+            return false
+        }
+
+        hasRestoredSavedQuiz = true
+
+        categoriesForm.dispatchEvent(new Event('change', { bubbles: true }))
+        if (subcategoriesForm) {
+            subcategoriesForm.dispatchEvent(
+                new Event('change', { bubbles: true }),
+            )
+        }
+
+        logQuizFlow('merged saved answers from member JSON (retake prefill)', {
+            restoredCategoryIds: Array.from(savedCategoryIds),
+            restoredSubcategoryIds: Array.from(savedSubcategoryIds),
+            selectedCategoryIds: getSelectedCategoryIds(),
+        })
+
+        return true
     }
 
     /**
@@ -932,7 +1064,21 @@
         setQuizStep('categories')
     })
 
-    continueButton?.addEventListener('click', function () {
+    tabNextWrap?.addEventListener(
+        'click',
+        function (event) {
+            if (event.isTrusted) {
+                userTouchedQuiz = true
+            }
+        },
+        true,
+    )
+
+    continueButton?.addEventListener('click', function (event) {
+        if (event.isTrusted) {
+            userTouchedQuiz = true
+        }
+
         logQuizFlow('continue button clicked', {
             currentStep,
             activeCategoryIndex,
@@ -1028,6 +1174,22 @@
     } else {
         logQuizFlow('tab-driven quiz detected; existing tab controller owns UI')
     }
+
+    // Merge a returning member's saved answers on top of any homepage-bucket
+    // selection (retake prefill). Async: unions in once Memberstack resolves.
+    restoreQuizFromMemberJson().then(function (restored) {
+        if (!restored) return
+
+        syncStartHeading()
+        clearSubcategoriesForUnselectedCategories()
+        selectedCategoryIds = getSelectedCategoryIds()
+
+        if (selectedCategoryIds.length) {
+            syncSubcategoriesForActiveCategory()
+        }
+
+        saveDraftQuiz()
+    })
 
     window.addEventListener('pageshow', function () {
         logQuizFlow('pageshow restore started')

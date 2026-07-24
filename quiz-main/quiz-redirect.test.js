@@ -77,3 +77,12 @@ test('keeps paid-plan redirect and retake escape hatch', async () => {
         undefined,
     )
 })
+
+test('treats Test Brand plan as paid (route-guard parity)', async () => {
+    const testBrand = member('pln_dorxata-test-brand-plan-777r02pa')
+    assert.equal(await run({ member: testBrand }), '/brand-dashboard')
+    assert.equal(
+        await run({ member: testBrand, search: '?retake=true' }),
+        undefined,
+    )
+})

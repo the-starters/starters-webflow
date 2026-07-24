@@ -4,7 +4,13 @@
     var PAID_REDIRECT_PATH = '/brand-dashboard'
     var FREE_REDIRECT_PATH = '/quiz-results'
 
-    var PAID_PLAN_ID = 'pln_new-paid-plan-463h04ph'
+    // Brand-paid plan IDs, aligned with v3/route-guard.js PLAN_ROLES: the live
+    // paid plan plus the Test Brand plan (premium group), so staging test-mode
+    // brands exercise the same paid -> /brand-dashboard redirect as production.
+    var PAID_PLAN_IDS = [
+        'pln_new-paid-plan-463h04ph',
+        'pln_dorxata-test-brand-plan-777r02pa',
+    ]
     var FREE_PLAN_ID = 'pln_free-plan-f6kn0dxz'
 
     var MEMBERSTACK_POLL_MS = 100
@@ -72,7 +78,7 @@
         var plans =
             member && member.planConnections ? member.planConnections : []
         return plans.some(function (plan) {
-            return plan.planId === PAID_PLAN_ID && isActivePlan(plan)
+            return PAID_PLAN_IDS.indexOf(plan.planId) !== -1 && isActivePlan(plan)
         })
     }
 
