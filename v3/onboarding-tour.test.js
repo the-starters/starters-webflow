@@ -714,7 +714,13 @@ test('startTour injects the typography theme style exactly once', async () => {
   await api.startTour(tour)
   const styles = appended.filter((element) => element.tagName === 'STYLE')
   assert.equal(styles.length, 1)
-  assert.match(styles[0].textContent, /driver-popover-title/)
+  assert.match(
+    styles[0].textContent,
+    /\.driver-popover \.driver-popover-title\{/,
+  )
   assert.match(styles[0].textContent, /serif/)
-  assert.match(styles[0].textContent, /driver-popover-description/)
+  assert.match(
+    styles[0].textContent,
+    /\.driver-popover \.driver-popover-description\{/,
+  )
 })

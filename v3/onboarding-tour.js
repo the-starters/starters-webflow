@@ -370,10 +370,10 @@
     themeInjected = true
     var style = document.createElement('style')
     style.textContent =
-      '.driver-popover-title{' +
+      '.driver-popover .driver-popover-title{' +
       'font-family:var(--starters-tour-title-font,Baskervville,Georgia,serif);' +
       'font-weight:500;}' +
-      '.driver-popover-description{' +
+      '.driver-popover .driver-popover-description{' +
       'font-family:var(--starters-tour-text-font,"Inter Variable",Tahoma,sans-serif);}'
     document.head.appendChild(style)
     try {
