@@ -24,17 +24,37 @@ function fakeRoot(nodes) {
   }
 }
 
-function loadModule() {
+function loadModule(options = {}) {
   const warnings = []
+  const events = []
+  let run
   const window = {
     setInterval,
     clearInterval,
     setTimeout,
     clearTimeout,
+    $memberstackDom: options.memberstack,
+    driver: options.driver,
+    localStorage: options.localStorage || {
+      getItem() {
+        return null
+      },
+      setItem() {},
+    },
+    dispatchEvent(event) {
+      events.push(event)
+    },
   }
   const document = {
     readyState: 'loading',
-    addEventListener() {},
+    addEventListener(type, listener) {
+      if (type === 'DOMContentLoaded') run = listener
+    },
+    querySelectorAll(selector) {
+      if (selector === '[data-tour-step]') return options.nodes || []
+      if (selector === '[data-tour-start]') return []
+      throw new Error(`Unexpected selector: ${selector}`)
+    },
     documentElement: {
       getAttribute() {
         return null
@@ -57,10 +77,16 @@ function loadModule() {
     Object,
     Array,
     Error,
+    CustomEvent: class CustomEvent {
+      constructor(type, init) {
+        this.type = type
+        this.detail = init && init.detail
+      }
+    },
   }
   vm.createContext(context)
   vm.runInContext(source, context)
-  return { api: window.StartersV3OnboardingTour, warnings }
+  return { api: window.StartersV3OnboardingTour, warnings, events, run }
 }
 
 // Objects created inside the vm context have foreign prototypes, which
@@ -121,6 +147,21 @@ test('parseTours allows colons in the tour id', () => {
   const tours = api.parseTours(fakeRoot(nodes))
   assert.equal(tours[0].id, 'brand:feed')
   assert.equal(tours[0].steps[0].order, 3)
+})
+
+test('parseTours safely accepts object prototype property names as tour ids', () => {
+  const { api } = loadModule()
+  const nodes = [
+    fakeElement({ 'data-tour-step': '__proto__:1' }),
+    fakeElement({ 'data-tour-step': 'constructor:1' }),
+  ]
+  const tours = api.parseTours(fakeRoot(nodes))
+  assert.deepEqual(
+    plain(tours.map((tour) => tour.id)),
+    ['__proto__', 'constructor'],
+  )
+  assert.equal(tours[0].steps.length, 1)
+  assert.equal(tours[1].steps.length, 1)
 })
 
 test('parseTours skips malformed steps with a warning', () => {
@@ -226,4 +267,129 @@ test('memberRole maps stable plan IDs and prefers the highest mapped role', () =
     null,
   )
   assert.equal(api.memberRole(null), null)
+})
+
+test('member seen state supports direct JSON and wrapped response shapes', async () => {
+  for (const response of [
+    { tours: { welcome: 'date' } },
+    { data: { tours: { welcome: 'date' } } },
+  ]) {
+    let started = false
+    const { run } = loadModule({
+      memberstack: {
+        getCurrentMember: async () => ({
+          data: { id: 'member-1', planConnections: [] },
+        }),
+        getMemberJSON: async () => response,
+      },
+      driver: {
+        js: {
+          driver: () => ({
+            drive() {
+              started = true
+            },
+          }),
+        },
+      },
+      nodes: [fakeElement({ 'data-tour-step': 'welcome:1' })],
+    })
+    await run()
+    assert.equal(started, false)
+  }
+})
+
+test('memberMarkSeen merges shared JSON and safely persists special tour ids', async () => {
+  let update
+  const memberstack = {
+    getCurrentMember: async () => ({
+      data: { id: 'member-1', planConnections: [] },
+    }),
+    getMemberJSON: async () => ({
+      starterQuiz: { result: 'talent' },
+      tours: { existing: 'date' },
+    }),
+    updateMemberJSON: async (value) => {
+      update = value
+    },
+  }
+  const { run } = loadModule({
+    memberstack,
+    driver: {
+      js: {
+        driver: () => ({ drive() {} }),
+      },
+    },
+    nodes: [fakeElement({ 'data-tour-step': '__proto__:1' })],
+  })
+
+  await run()
+
+  assert.deepEqual(plain(update.json.starterQuiz), { result: 'talent' })
+  assert.equal(update.json.tours.existing, 'date')
+  assert.equal(Object.keys(update.json.tours).includes('__proto__'), true)
+})
+
+test('boot marks a show-once tour only after driver starts successfully', async () => {
+  const calls = []
+  const memberstack = {
+    getCurrentMember: async () => ({
+      data: { id: 'member-1', planConnections: [] },
+    }),
+    getMemberJSON: async () => ({}),
+    updateMemberJSON: async () => {
+      calls.push('marked')
+    },
+  }
+  const driver = {
+    js: {
+      driver() {
+        return {
+          drive() {
+            calls.push('started')
+          },
+        }
+      },
+    },
+  }
+  const { run } = loadModule({
+    memberstack,
+    driver,
+    nodes: [fakeElement({ 'data-tour-step': 'welcome:1' })],
+  })
+
+  await run()
+
+  assert.deepEqual(calls, ['started', 'marked'])
+})
+
+test('boot does not mark seen when driver startup fails', async () => {
+  let marked = false
+  const memberstack = {
+    getCurrentMember: async () => ({
+      data: { id: 'member-1', planConnections: [] },
+    }),
+    getMemberJSON: async () => ({}),
+    updateMemberJSON: async () => {
+      marked = true
+    },
+  }
+  const driver = {
+    js: {
+      driver() {
+        return {
+          drive() {
+            throw new Error('driver failed')
+          },
+        }
+      },
+    },
+  }
+  const { run } = loadModule({
+    memberstack,
+    driver,
+    nodes: [fakeElement({ 'data-tour-step': 'welcome:1' })],
+  })
+
+  await run()
+  assert.equal(marked, false)
 })

@@ -94,7 +94,7 @@
   // with a console warning rather than breaking the page.
   function parseTours(root) {
     var nodes = root.querySelectorAll('[data-tour-step]')
-    var tours = {}
+    var tours = Object.create(null)
     var orderOfAppearance = []
 
     for (var i = 0; i < nodes.length; i++) {
@@ -210,10 +210,17 @@
     }
   }
 
+  function memberJson(response) {
+    if (response && response.data && typeof response.data === 'object') {
+      return response.data
+    }
+    return response && typeof response === 'object' ? response : {}
+  }
+
   async function memberSeenIds(memberstack) {
     try {
       var response = await memberstack.getMemberJSON()
-      var json = response && response.data
+      var json = memberJson(response)
       return json && json.tours ? Object.keys(json.tours) : []
     } catch (error) {
       console.warn('[v3-onboarding-tour] Could not read member JSON', error)
@@ -224,9 +231,15 @@
   async function memberMarkSeen(memberstack, tourId) {
     try {
       var response = await memberstack.getMemberJSON()
-      var json = (response && response.data) || {}
-      if (!json.tours) json.tours = {}
-      json.tours[tourId] = new Date().toISOString()
+      var json = memberJson(response)
+      var tours = Object.create(null)
+      if (json.tours && typeof json.tours === 'object') {
+        Object.keys(json.tours).forEach(function (id) {
+          tours[id] = json.tours[id]
+        })
+      }
+      tours[tourId] = new Date().toISOString()
+      json.tours = tours
       await memberstack.updateMemberJSON({ json: json })
     } catch (error) {
       console.warn('[v3-onboarding-tour] Could not persist tour state', error)
@@ -387,12 +400,11 @@
     var target = autoStartTarget(tours, role, seenIds)
     if (!target) return
 
-    // Mark before starting so a mid-tour refresh or crash never replays it.
+    await startTour(target)
     if (target.once) {
       if (member && member.id) await memberMarkSeen(memberstack, target.id)
       else guestMarkSeen(target.id)
     }
-    await startTour(target)
   }
 
   window.StartersV3OnboardingTour = {
@@ -405,7 +417,7 @@
   }
 
   function run() {
-    boot().catch(function (error) {
+    return boot().catch(function (error) {
       console.error('[v3-onboarding-tour] Boot failed', error)
     })
   }
