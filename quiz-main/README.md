@@ -1,5 +1,16 @@
 # Starter quiz page controllers
 
+Load the homepage category controller once on the home page with `defer`:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-home.js"></script>
+```
+
+It owns `#wf-form-home-quiz`, saves the IDs of its selected checkboxes to
+`sessionStorage.quizSelectedCategories` whenever they change or the form is
+submitted, then redirects submissions to `/quiz`. The controller can initialize
+before or after the DOM has been parsed and ignores duplicate script loads.
+
 Load both controllers on `/quiz` with `defer`, after the site Memberstack
 bootstrap:
 
@@ -91,7 +102,8 @@ attributes must match after trimming. Saved subcategory IDs match the checkbox
 Append `?starterQuizDebug=1` (also `true` or `yes`) to enable namespaced console
 logs for the session. Use `?starterQuizDebug=0` (also `false` or `no`) to clear
 the session flag. A `localStorage.starterQuizDebug` value of `"true"` also
-enables logging.
+enables logging. Logging defaults off across the homepage, `/quiz`, and
+`/quiz-results` controllers.
 
 Run the focused redirect tests with:
 
