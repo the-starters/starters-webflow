@@ -975,6 +975,36 @@ test('disclosure step falls back when its CSS-selector target is invalid', () =>
   assert.equal(api.buildDriverSteps(tour)[0].element, 'S1')
 })
 
+test('invalid disclosure target does not open or leave a disclosure open', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const carrier = discEl({ w: 100, h: 20 })
+  const { api } = loadModule({
+    nodes: [carrier],
+    cssTargets: { '.avatar': avatar },
+    invalidSelector: '[',
+  })
+  const steps = api.buildDriverSteps({
+    steps: [
+      {
+        selector: '[data-tour-step="t:1"]',
+        target: '[',
+        open: '.avatar',
+        title: 'Edit',
+      },
+      {
+        selector: '[data-tour-step="t:2"]',
+        target: '',
+        open: '',
+        title: 'Next',
+      },
+    ],
+  })
+
+  steps[0].onHighlightStarted()
+  steps[1].onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, [])
+})
+
 test('restoring a disclosure does not reopen it when its target is hidden', () => {
   const avatar = discEl({ w: 37, h: 37 })
   const edit = discEl({ w: 0, h: 0 })
