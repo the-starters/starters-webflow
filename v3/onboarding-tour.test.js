@@ -1005,6 +1005,29 @@ test('invalid disclosure target does not open or leave a disclosure open', () =>
   assert.deepEqual(avatar.dispatched, [])
 })
 
+test('unmatched disclosure target falls back and does not open', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const carrier = discEl({ w: 100, h: 20 })
+  const { api } = loadModule({
+    nodes: [carrier],
+    cssTargets: { '.avatar': avatar },
+  })
+  const step = api.buildDriverSteps({
+    steps: [
+      {
+        selector: '[data-tour-step="t:1"]',
+        target: '.missing',
+        open: '.avatar',
+        title: 'Edit',
+      },
+    ],
+  })[0]
+
+  assert.equal(step.element, '[data-tour-step="t:1"]')
+  step.onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, [])
+})
+
 test('restoring a disclosure does not reopen it when its target is hidden', () => {
   const avatar = discEl({ w: 37, h: 37 })
   const edit = discEl({ w: 0, h: 0 })
