@@ -22,6 +22,12 @@ never need a code release. Jira: INITIATIVE-125.
   Logged-out visitors on public pages fall back to `localStorage`.
 - Loads driver.js JS + CSS from jsDelivr on demand — only when the page has an
   eligible tour, nothing loads otherwise.
+- Applies the site's typography to driver.js popovers on the first tour start:
+  the title uses the first `h1`, `h2`, or `.heading-style-h1` computed font at
+  weight 500, and the description uses the body's computed font. If computed
+  styles are unavailable, the title falls back to
+  `Baskervville, Georgia, serif` and the description to
+  `"Inter Variable", Tahoma, sans-serif`.
 - On pages guarded by `v3/route-guard.js`, waits for the
   `starters:v3-route-guard-allowed` signal so a redirecting page never flashes
   a tour.
@@ -87,9 +93,11 @@ it: `@main` on `the-starters-3-0.webflow.io`, pinned tag on prod. Do not
 install sitewide; the script is cheap but tours are page-scoped.
 
 driver.js itself needs no separate embed — the module injects the pinned
-JS/CSS from jsDelivr only when a tour is about to run. Theme overrides for the
-popover (fonts/colors) can go in a small site-level CSS embed targeting
-`.driver-popover`.
+JS/CSS from jsDelivr only when a tour is about to run. The module injects its
+typography theme once, on the first start, and sets
+`--starters-tour-title-font` and `--starters-tour-text-font` on the document
+root from the live page. Site-level CSS can override those properties or
+target `.driver-popover` for other theme changes such as colors.
 
 ## Replay / reset controls (since v1.47, staging and prod)
 
@@ -140,6 +148,7 @@ are ignored.
   without changing seen-state, `?tour=reset` restores normal auto-start, and
   `Alt+Shift+T` replays the first tour. While the tour is open, confirm another
   replay is ignored; dismiss it with the close button, then confirm
-  `Alt+Shift+T` starts it again.
+  `Alt+Shift+T` starts it again. Confirm the popover title matches the page
+  heading font at weight 500 and the description matches the body font.
 - Standard exposure scan: no Airtable/Make URLs or PAT patterns (this module
   calls only jsDelivr and Memberstack).

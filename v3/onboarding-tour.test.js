@@ -690,3 +690,37 @@ test('unknown ?tour id warns and does not start anything', async () => {
     true,
   )
 })
+
+test('startTour injects the typography theme style exactly once', async () => {
+  const appended = []
+  const { api, window } = loadModule({
+    driver: {
+      js: {
+        driver: () => ({
+          drive() {},
+        }),
+      },
+    },
+    onAssetAppend(element) {
+      appended.push(element)
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [{ selector: '[data-tour-step="welcome:1"]' }],
+  }
+  await api.startTour(tour)
+  window.document.__popover = null
+  await api.startTour(tour)
+  const styles = appended.filter((element) => element.tagName === 'STYLE')
+  assert.equal(styles.length, 1)
+  assert.match(
+    styles[0].textContent,
+    /\.driver-popover \.driver-popover-title\{/,
+  )
+  assert.match(styles[0].textContent, /serif/)
+  assert.match(
+    styles[0].textContent,
+    /\.driver-popover \.driver-popover-description\{/,
+  )
+})

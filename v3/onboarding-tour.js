@@ -360,12 +360,46 @@
     return driverLoadPromise
   }
 
+  // Themes the popover with the site's own typography: serif headings and
+  // sans body copy. Fonts are read from the live page (first heading / body)
+  // so a site-wide font change follows automatically; the fallbacks are the
+  // brand stacks in use at ship time.
+  var themeInjected = false
+  function injectThemeStyle() {
+    if (themeInjected) return
+    themeInjected = true
+    var style = document.createElement('style')
+    style.textContent =
+      '.driver-popover .driver-popover-title{' +
+      'font-family:var(--starters-tour-title-font,Baskervville,Georgia,serif);' +
+      'font-weight:500;}' +
+      '.driver-popover .driver-popover-description{' +
+      'font-family:var(--starters-tour-text-font,"Inter Variable",Tahoma,sans-serif);}'
+    document.head.appendChild(style)
+    try {
+      var heading = document.querySelector('h1, h2, .heading-style-h1')
+      if (heading) {
+        document.documentElement.style.setProperty(
+          '--starters-tour-title-font',
+          window.getComputedStyle(heading).fontFamily,
+        )
+      }
+      document.documentElement.style.setProperty(
+        '--starters-tour-text-font',
+        window.getComputedStyle(document.body).fontFamily,
+      )
+    } catch (error) {
+      // Computed styles unavailable: the fallback stacks in the CSS apply.
+    }
+  }
+
   async function startTour(tour) {
     if (tourStartInFlight || document.querySelector('.driver-popover')) {
       return null
     }
     tourStartInFlight = true
     try {
+      injectThemeStyle()
       var driverFactory = await loadDriver()
       var instance = driverFactory({
         showProgress: tour.steps.length > 1,
