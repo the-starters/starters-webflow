@@ -132,7 +132,7 @@ function loadModule(options = {}) {
 function premiumMember() {
   return {
     planConnections: [
-      { planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' },
+      { planId: 'pln_new-paid-plan-463h04ph', active: true },
     ],
   }
 }
@@ -188,6 +188,7 @@ test('non-premium member: no shell, no styles injected', async () => {
 })
 
 test('premium member: shell inserted into section and styles injected once', async () => {
+  let mutationCallback
   const tabs = [fakeElement({ tagName: 'BUTTON' }), fakeElement({ tagName: 'BUTTON' })]
   const savedPanel = fakeElement()
   const openAll = fakeElement({ tagName: 'BUTTON' })
@@ -202,6 +203,10 @@ test('premium member: shell inserted into section and styles injected once', asy
   const mod = loadModule({
     section,
     memberReady: Promise.resolve(premiumMember()),
+    MutationObserver: function (callback) {
+      mutationCallback = callback
+      return { observe() {} }
+    },
   })
   // The shell element created by the module needs query surfaces for tabs/panel.
   const realCreate = mod.document.createElement
@@ -226,6 +231,27 @@ test('premium member: shell inserted into section and styles injected once', asy
   assert.match(mod.document.head.children[0].textContent, /color: #fff/)
   // Saved tab wiring exists
   assert.equal(typeof tabs[1].listeners.click, 'function')
+
+  let documentScans = 0
+  let elementScans = 0
+  mod.document.querySelectorAll = () => {
+    documentScans += 1
+    return []
+  }
+  mutationCallback([{
+    addedNodes: [
+      { nodeType: 3 },
+      fakeElement({
+        nodeType: 1,
+        querySelectorAll() {
+          elementScans += 1
+          return []
+        },
+      }),
+    ],
+  }])
+  assert.equal(documentScans, 0)
+  assert.equal(elementScans, 1)
 })
 
 test('premium member via $memberstackDom fallback when window.memberReady is absent', async () => {

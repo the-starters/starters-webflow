@@ -90,7 +90,8 @@
 
   function isPremiumBrand(member) {
     return !!(member && (member.planConnections || []).some(function (connection) {
-      return PREMIUM_PLAN_IDS[connection.planId] && connection.status === 'ACTIVE'
+      return PREMIUM_PLAN_IDS[connection.planId] &&
+        (connection.active === true || connection.status === 'ACTIVE')
     }))
   }
 
@@ -186,7 +187,9 @@
     decorateFavoriteControls(section)
     new MutationObserver(function (records) {
       records.forEach(function (record) {
-        Array.prototype.forEach.call(record.addedNodes || [], decorateFavoriteControls)
+        Array.prototype.forEach.call(record.addedNodes || [], function (node) {
+          if (node.nodeType === 1) decorateFavoriteControls(node)
+        })
       })
     }).observe(section, { childList: true, subtree: true })
     whenFavoritesReady(function (api) { api.init(shell); api.favorites.init(section) })
