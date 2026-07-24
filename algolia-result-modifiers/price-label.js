@@ -1,6 +1,11 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/price-label
 
   (function () {
+    // The page embeds this file twice; guard so a duplicate never wires a
+    // second WfAlgolia listener/observer. Bind once.
+    if (window.__startersPriceLabelInit) return;
+    window.__startersPriceLabelInit = true;
+
     const start = Date.now();
 
     const apply = () => {
