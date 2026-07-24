@@ -1064,7 +1064,21 @@
         setQuizStep('categories')
     })
 
-    continueButton?.addEventListener('click', function () {
+    tabNextWrap?.addEventListener(
+        'click',
+        function (event) {
+            if (event.isTrusted) {
+                userTouchedQuiz = true
+            }
+        },
+        true,
+    )
+
+    continueButton?.addEventListener('click', function (event) {
+        if (event.isTrusted) {
+            userTouchedQuiz = true
+        }
+
         logQuizFlow('continue button clicked', {
             currentStep,
             activeCategoryIndex,
@@ -1169,17 +1183,12 @@
         syncStartHeading()
         clearSubcategoriesForUnselectedCategories()
         selectedCategoryIds = getSelectedCategoryIds()
-        activeCategoryIndex = 0
 
         if (selectedCategoryIds.length) {
             syncSubcategoriesForActiveCategory()
         }
 
         saveDraftQuiz()
-
-        if (!isTabDrivenQuiz) {
-            setQuizStepInstant('categories')
-        }
     })
 
     window.addEventListener('pageshow', function () {
