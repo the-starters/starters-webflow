@@ -44,6 +44,7 @@ function loadModule(options = {}) {
     dispatchEvent(event) {
       events.push(event)
     },
+    addEventListener() {},
   }
   const head = {
     children: [],
@@ -59,13 +60,29 @@ function loadModule(options = {}) {
     },
   }
   const document = {
+    // 'complete' so boot's hydration settle-delay takes the setTimeout path
+    // instead of waiting for a window 'load' event the stub never fires.
+    // Module load still registers run via DOMContentLoaded below because
+    // addEventListener is only consulted when readyState is 'loading' at
+    // eval time — so keep capturing the boot callback explicitly.
     readyState: 'loading',
     head,
     createElement(tagName) {
       return { tagName: tagName.toUpperCase(), parentNode: null }
     },
     addEventListener(type, listener) {
-      if (type === 'DOMContentLoaded') run = listener
+      if (type === 'DOMContentLoaded') {
+        run = () => {
+          document.readyState = 'complete'
+          return listener()
+        }
+      }
+    },
+    querySelector(selector) {
+      if (selector.indexOf('[data-tour-step="') === 0) {
+        return (options.nodes || [])[0] || null
+      }
+      return null
     },
     querySelectorAll(selector) {
       if (selector === '[data-tour-step]') return options.nodes || []
@@ -149,13 +166,28 @@ test('parseTours keeps DOM order for equal step orders', () => {
   const { api } = loadModule()
   const nodes = [
     fakeElement({ 'data-tour-step': 't:1', 'data-tour-title': 'a' }),
-    fakeElement({ 'data-tour-step': 't:1', 'data-tour-title': 'b' }),
+    fakeElement({ 'data-tour-step': 't:01', 'data-tour-title': 'b' }),
   ]
   const tours = api.parseTours(fakeRoot(nodes))
   assert.deepEqual(
     plain(tours[0].steps.map((step) => step.title)),
     ['a', 'b'],
   )
+})
+
+test('parseTours skips duplicate step values with a warning', () => {
+  const { api, warnings } = loadModule()
+  const nodes = [
+    fakeElement({ 'data-tour-step': 't:1', 'data-tour-title': 'first' }),
+    fakeElement({ 'data-tour-step': 't:1', 'data-tour-title': 'duplicate' }),
+  ]
+  const tours = api.parseTours(fakeRoot(nodes))
+  assert.deepEqual(
+    plain(tours[0].steps.map((step) => step.title)),
+    ['first'],
+  )
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /Ignoring duplicate data-tour-step: t:1/)
 })
 
 test('parseTours allows colons in the tour id', () => {
@@ -210,13 +242,13 @@ test('parseTours merges roles across steps and honors data-tour-once', () => {
   assert.equal(tours[0].once, false)
 })
 
-test('buildDriverSteps omits empty popover fields', () => {
+test('buildDriverSteps omits empty popover fields and passes selectors', () => {
   const { api } = loadModule()
-  const element = fakeElement({})
+  const selector = '[data-tour-step="t:1"]'
   const tour = {
     steps: [
-      { element, order: 1, title: 'Hi', text: '', side: '', align: '' },
-      { element, order: 2, title: '', text: 'Body', side: 'top', align: 'end' },
+      { selector, order: 1, title: 'Hi', text: '', side: '', align: '' },
+      { selector, order: 2, title: '', text: 'Body', side: 'top', align: 'end' },
     ],
   }
   const steps = api.buildDriverSteps(tour)
@@ -226,7 +258,33 @@ test('buildDriverSteps omits empty popover fields', () => {
     side: 'top',
     align: 'end',
   })
-  assert.equal(steps[0].element, element)
+  // A selector string, not a node: hydration on V3 pages can detach nodes
+  // captured at parse time, and driver.js re-resolves selectors per step.
+  assert.equal(steps[0].element, selector)
+})
+
+test('parseTours builds an escaped selector per step', () => {
+  const { api } = loadModule()
+  const nodes = [
+    fakeElement({ 'data-tour-step': 'my"tour:1' }),
+    fakeElement({ 'data-tour-step': 'line\nbreak:2' }),
+    fakeElement({ 'data-tour-step': 'form\fbreak:3' }),
+    fakeElement({ 'data-tour-step': 'delete\u007fbreak:4' }),
+  ]
+  const tours = api.parseTours(fakeRoot(nodes))
+  assert.equal(tours[0].steps[0].selector, '[data-tour-step="my\\"tour:1"]')
+  assert.equal(
+    tours[1].steps[0].selector,
+    '[data-tour-step="line\\a break:2"]',
+  )
+  assert.equal(
+    tours[2].steps[0].selector,
+    '[data-tour-step="form\\c break:3"]',
+  )
+  assert.equal(
+    tours[3].steps[0].selector,
+    '[data-tour-step="delete\\7f break:4"]',
+  )
 })
 
 test('autoStartTarget respects roles, seen state, and DOM order', () => {

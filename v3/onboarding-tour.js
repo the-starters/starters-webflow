@@ -5,7 +5,8 @@
  * Steps are authored in the Webflow Designer, so copy changes need no code
  * release:
  *
- *   data-tour-step="starter-dashboard:1"   required; "<tourId>:<order>"
+ *   data-tour-step="starter-dashboard:1"   required; unique "<tourId>:<order>"
+ *                                          value per page
  *   data-tour-title="Your dashboard"       popover title
  *   data-tour-text="Track your ..."        popover body
  *   data-tour-side="bottom"                optional driver.js popover side
@@ -48,6 +49,7 @@
     'https://cdn.jsdelivr.net/npm/driver.js@' + DRIVER_VERSION + '/dist/driver.css'
   var DRIVER_LOAD_TIMEOUT_MS = 15000
   var MEMBERSTACK_TIMEOUT_MS = 10000
+  var SETTLE_DELAY_MS = 1000
   var GUEST_STORAGE_KEY = 'thestarters:v3-tours-seen'
 
   // Identical to v3/route-guard.js, v3/auth-route.js and opportunities-3.0.js
@@ -89,12 +91,13 @@
   // ---------------------------------------------------------------------
 
   // Collects [data-tour-step] elements under root into per-tour definitions:
-  // { id, steps: [{ element, order, title, text, side, align }], roles, once }.
-  // Steps sort by order (ties keep DOM order); malformed values are skipped
-  // with a console warning rather than breaking the page.
+  // { id, steps: [{ selector, order, title, text, side, align }], roles, once }.
+  // Steps sort by order (ties keep DOM order); malformed and duplicate values
+  // are skipped with a console warning rather than breaking the page.
   function parseTours(root) {
     var nodes = root.querySelectorAll('[data-tour-step]')
     var tours = Object.create(null)
+    var seenStepValues = Object.create(null)
     var orderOfAppearance = []
 
     for (var i = 0; i < nodes.length; i++) {
@@ -111,6 +114,14 @@
         )
         continue
       }
+      if (Object.prototype.hasOwnProperty.call(seenStepValues, raw)) {
+        console.warn(
+          '[v3-onboarding-tour] Ignoring duplicate data-tour-step:',
+          raw,
+        )
+        continue
+      }
+      seenStepValues[raw] = true
 
       var tour = tours[tourId]
       if (!tour) {
@@ -135,7 +146,11 @@
       if (node.getAttribute('data-tour-once') === 'false') tour.once = false
 
       tour.steps.push({
-        element: node,
+        // A selector, not the node: V3 pages hydrate after DOMContentLoaded
+        // (dashboard hero, tiles), which can detach the nodes captured here.
+        // driver.js re-resolves selector strings at each step, so the tour
+        // always highlights the live element.
+        selector: '[data-tour-step="' + cssAttrEscape(raw) + '"]',
         order: order,
         title: node.getAttribute('data-tour-title') || '',
         text: node.getAttribute('data-tour-text') || '',
@@ -161,6 +176,14 @@
     return orderOfAppearance
   }
 
+  // Escapes a value for use inside a double-quoted CSS attribute selector.
+  function cssAttrEscape(value) {
+    return value.replace(/[\0-\x1f\x7f"\\]/g, function (character) {
+      if (character === '"' || character === '\\') return '\\' + character
+      return '\\' + character.charCodeAt(0).toString(16) + ' '
+    })
+  }
+
   function buildDriverSteps(tour) {
     return tour.steps.map(function (step) {
       var popover = {}
@@ -168,7 +191,7 @@
       if (step.text) popover.description = step.text
       if (step.side) popover.side = step.side
       if (step.align) popover.align = step.align
-      return { element: step.element, popover: popover }
+      return { element: step.selector, popover: popover }
     })
   }
 
@@ -439,6 +462,24 @@
 
     var target = autoStartTarget(tours, role, seenIds)
     if (!target) return
+
+    // Let post-load hydration (dashboard hero, wf-xano tiles) settle before
+    // highlighting, so the first paint of the tour lands on final layout.
+    await new Promise(function (resolve) {
+      if (document.readyState === 'complete') {
+        window.setTimeout(resolve, SETTLE_DELAY_MS)
+        return
+      }
+      window.addEventListener(
+        'load',
+        function () {
+          window.setTimeout(resolve, SETTLE_DELAY_MS)
+        },
+        { once: true },
+      )
+    })
+    // Hydration may have removed the tour's markup entirely; re-check.
+    if (!document.querySelector(target.steps[0].selector)) return
 
     await startTour(target)
     if (target.once) {
