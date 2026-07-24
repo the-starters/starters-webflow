@@ -5,7 +5,8 @@
  * Steps are authored in the Webflow Designer, so copy changes need no code
  * release:
  *
- *   data-tour-step="starter-dashboard:1"   required; "<tourId>:<order>"
+ *   data-tour-step="starter-dashboard:1"   required; unique "<tourId>:<order>"
+ *                                          value per page
  *   data-tour-title="Your dashboard"       popover title
  *   data-tour-text="Track your ..."        popover body
  *   data-tour-side="bottom"                optional driver.js popover side
@@ -96,6 +97,7 @@
   function parseTours(root) {
     var nodes = root.querySelectorAll('[data-tour-step]')
     var tours = Object.create(null)
+    var seenStepValues = Object.create(null)
     var orderOfAppearance = []
 
     for (var i = 0; i < nodes.length; i++) {
@@ -112,6 +114,14 @@
         )
         continue
       }
+      if (Object.prototype.hasOwnProperty.call(seenStepValues, raw)) {
+        console.warn(
+          '[v3-onboarding-tour] Ignoring duplicate data-tour-step:',
+          raw,
+        )
+        continue
+      }
+      seenStepValues[raw] = true
 
       var tour = tours[tourId]
       if (!tour) {

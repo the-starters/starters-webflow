@@ -166,13 +166,28 @@ test('parseTours keeps DOM order for equal step orders', () => {
   const { api } = loadModule()
   const nodes = [
     fakeElement({ 'data-tour-step': 't:1', 'data-tour-title': 'a' }),
-    fakeElement({ 'data-tour-step': 't:1', 'data-tour-title': 'b' }),
+    fakeElement({ 'data-tour-step': 't:01', 'data-tour-title': 'b' }),
   ]
   const tours = api.parseTours(fakeRoot(nodes))
   assert.deepEqual(
     plain(tours[0].steps.map((step) => step.title)),
     ['a', 'b'],
   )
+})
+
+test('parseTours skips duplicate step values with a warning', () => {
+  const { api, warnings } = loadModule()
+  const nodes = [
+    fakeElement({ 'data-tour-step': 't:1', 'data-tour-title': 'first' }),
+    fakeElement({ 'data-tour-step': 't:1', 'data-tour-title': 'duplicate' }),
+  ]
+  const tours = api.parseTours(fakeRoot(nodes))
+  assert.deepEqual(
+    plain(tours[0].steps.map((step) => step.title)),
+    ['first'],
+  )
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /Ignoring duplicate data-tour-step: t:1/)
 })
 
 test('parseTours allows colons in the tour id', () => {
