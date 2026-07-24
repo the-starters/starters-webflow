@@ -898,6 +898,8 @@ test('entering a later step restores (closes) a disclosure a prior step opened',
   const steps = api.buildDriverSteps(tour)
   steps[0].onHighlightStarted() // opens the avatar menu
   assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+  editHidden._w = 155
+  editHidden._h = 36
   steps[1].onHighlightStarted() // moving on closes it again
   assert.deepEqual(avatar.dispatched, [
     'mousedown',
@@ -958,6 +960,24 @@ test('onHighlightStarted checks a text target before its visible fallback', () =
   step.onHighlightStarted()
   assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
   assert.equal(step.element, editHidden)
+})
+
+test('restoring a disclosure does not reopen it when its target is hidden', () => {
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+  })
+  const steps = api.buildDriverSteps({
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+      { selector: 'S2', target: '', open: '', title: 'Next' },
+    ],
+  })
+
+  steps[0].onHighlightStarted()
+  steps[1].onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
 })
 
 test('onHighlightStarted does not re-open when the target is already visible', () => {

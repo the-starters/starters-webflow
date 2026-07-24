@@ -296,14 +296,16 @@
   // after a disclosure opens (its content may reveal/animate asynchronously).
   var activeInstance = null
 
-  // The disclosure selector the tour currently has open (only one at a time),
-  // so it can be closed again when the step is left or the tour ends.
+  // The disclosure the tour currently has open (only one at a time), so it can
+  // be closed again when the step is left or the tour ends.
   var openedDisclosure = null
   function restoreOpenedDisclosure() {
     if (!openedDisclosure) return
-    var selector = openedDisclosure
+    var disclosure = openedDisclosure
     openedDisclosure = null
-    toggleDisclosure(selector)
+    if (isVisible(disclosure.target)) {
+      toggleDisclosure(disclosure.selector)
+    }
   }
 
   // Reposition a few times so the popover follows the revealed element as the
@@ -353,8 +355,11 @@
           restoreOpenedDisclosure()
           if (step.open && !isVisible(requestedTarget(step))) {
             toggleDisclosure(step.open)
-            openedDisclosure = step.open
             driverStep.element = resolveStepElement(step)
+            openedDisclosure = {
+              selector: step.open,
+              target: requestedTarget(step),
+            }
             scheduleRefresh()
           }
         }
