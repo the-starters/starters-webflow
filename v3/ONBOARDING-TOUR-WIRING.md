@@ -91,6 +91,20 @@ JS/CSS from jsDelivr only when a tour is about to run. Theme overrides for the
 popover (fonts/colors) can go in a small site-level CSS embed targeting
 `.driver-popover`.
 
+## Replay / reset controls (since v1.47, staging and prod)
+
+Tours are presentation-only, so these are safe to expose everywhere:
+
+| Control | Effect |
+| --- | --- |
+| `?tour=<tourId>` | Starts that tour on demand. Bypasses roles and seen-state, never marks it seen. Unknown ids warn in the console and do nothing. |
+| `?tour=reset` | Clears the visitor's seen-state (member JSON `tours` key or guest localStorage), then the normal auto-start runs and re-marks. |
+| `Alt+Shift+T` | Replays the page's first tour. Layout-independent (`e.code`), ignored while typing in inputs. |
+| `data-tour-start="<tourId>"` | Click trigger on any element (e.g. a "Show me around" help link). Never marks seen. |
+
+Only one tour can run at a time; replay requests while a tour is on screen
+are ignored.
+
 ## Memberstack notes
 
 - Seen-state lives in member JSON, not a custom field — no dashboard field
