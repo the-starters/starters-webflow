@@ -53,7 +53,9 @@ takes a value, matching the `wf-xano-element` grammar convention.
 ## Webflow install
 
 Page Settings → Custom Code → Head Code on each page that has a tour
-(current scope: `/starter-dashboard`):
+(current scope: `/starter-dashboard` — 5-step Talent tour; `/brand-dashboard`
+— 4-step brand-paid tour; both installed headlessly 2026-07-24 via
+`data_scripts_tool set_page_freeform_code`):
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/onboarding-tour.js"></script>
