@@ -9,10 +9,16 @@
  * ~380ms later the result-modifier embeds rewrite text and expert-card.js
  * equalizes heights — a visible reflow. This embed hides that churn: while a
  * browse transition is in flight it SHOWS the designer-authored loader and
- * hides the results list with `visibility: hidden` (visibility, NOT display —
- * the layout space is kept, and it never fights the engine's own display
- * writes). When the transition settles (cards rendered AND heights equalized),
- * the loader hides and the list reappears in its final layout.
+ * masks the results list with `visibility: hidden` + `opacity: 0` +
+ * `pointer-events: none` (NOT display — the layout space is kept, and it never
+ * fights the engine's own display writes). The opacity is load-bearing:
+ * visibility alone can be punched through by a descendant carrying an explicit
+ * inline `visibility: visible` (e.g. interaction-written styles on the favorite
+ * wrapper), which left bookmarks floating over the emptied grid mid-mask
+ * (reproduced live). Ancestor opacity composites the whole subtree and cannot
+ * be overridden by descendants; pointer-events blocks interaction with the
+ * invisible cards. When the transition settles (cards rendered AND heights
+ * equalized), the loader hides and the list reappears in its final layout.
  *
  * Unlike explore-search-list-loader.js (which sniffs network traffic), this
  * embed hooks the engine directly: cache-served browse queries produce zero
@@ -126,7 +132,12 @@
 
   function hideList() {
     try {
+      // opacity composites the whole subtree (a descendant cannot override it,
+      // unlike visibility); pointer-events blocks interaction with the masked
+      // cards. See the header note for the descendant-punch-through bug.
       listEl.style.visibility = 'hidden';
+      listEl.style.opacity = '0';
+      listEl.style.pointerEvents = 'none';
     } catch (e) {
       /* never break the page */
     }
@@ -135,6 +146,8 @@
   function showList() {
     try {
       listEl.style.visibility = '';
+      listEl.style.opacity = '';
+      listEl.style.pointerEvents = '';
     } catch (e) {
       /* never break the page */
     }
