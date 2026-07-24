@@ -214,7 +214,7 @@
       var el = all[i]
       if ((el.textContent || '').trim() !== label) continue
       var rect = el.getBoundingClientRect()
-      if (rect.width === 0 && rect.height === 0) continue // hidden
+      if (rect.width === 0 || rect.height === 0) continue // hidden
       var size = el.getElementsByTagName('*').length
       if (size < bestSize) {
         best = el
@@ -242,7 +242,11 @@
       var el = findElementByText(step.target.slice('text:'.length).trim())
       return el || step.selector
     }
-    return step.target
+    try {
+      return document.querySelector(step.target) ? step.target : step.selector
+    } catch (error) {
+      return step.selector
+    }
   }
 
   function buildDriverSteps(tour) {

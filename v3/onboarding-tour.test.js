@@ -87,6 +87,10 @@ function loadModule(options = {}) {
       if (selector.indexOf('[data-tour-step="') === 0) {
         return (options.nodes || [])[0] || null
       }
+      if (options.invalidSelector === selector) {
+        throw new Error(`Invalid selector: ${selector}`)
+      }
+      if (options.cssTargets) return options.cssTargets[selector] || null
       return null
     },
     querySelectorAll(selector) {
@@ -287,12 +291,25 @@ test('resolveStepElement returns the step selector when no target is set', () =>
   assert.equal(api.resolveStepElement({ selector: 'S', target: '' }), 'S')
 })
 
-test('resolveStepElement passes a CSS-selector target through', () => {
-  const { api } = loadModule()
+test('resolveStepElement returns a matching CSS-selector target', () => {
+  const { api } = loadModule({ cssTargets: { '.post-btn': {} } })
   assert.equal(
     api.resolveStepElement({ selector: 'S', target: '.post-btn' }),
     '.post-btn',
   )
+})
+
+test('resolveStepElement falls back when a CSS-selector target has no match', () => {
+  const { api } = loadModule()
+  assert.equal(
+    api.resolveStepElement({ selector: 'S', target: '.missing' }),
+    'S',
+  )
+})
+
+test('resolveStepElement falls back when a CSS-selector target is invalid', () => {
+  const { api } = loadModule({ invalidSelector: '[' })
+  assert.equal(api.resolveStepElement({ selector: 'S', target: '[' }), 'S')
 })
 
 test('resolveStepElement text: match prefers an interactive element over a nested leaf', () => {
@@ -329,6 +346,26 @@ test('resolveStepElement falls back to the selector when text has no match', () 
     getElementsByTagName: () => ({ length: 0 }),
   }
   const { api } = loadModule({ textElements: [hidden] })
+  assert.equal(
+    api.resolveStepElement({ selector: 'S', target: 'text:Post Opportunity' }),
+    'S',
+  )
+})
+
+test('resolveStepElement skips text matches with one zero dimension', () => {
+  const zeroWidth = {
+    textContent: 'Post Opportunity',
+    getBoundingClientRect: () => ({ width: 0, height: 20 }),
+    getElementsByTagName: () => ({ length: 0 }),
+  }
+  const zeroHeight = {
+    textContent: 'Post Opportunity',
+    getBoundingClientRect: () => ({ width: 100, height: 0 }),
+    getElementsByTagName: () => ({ length: 0 }),
+  }
+  const { api } = loadModule({
+    interactiveTextElements: [zeroWidth, zeroHeight],
+  })
   assert.equal(
     api.resolveStepElement({ selector: 'S', target: 'text:Post Opportunity' }),
     'S',
