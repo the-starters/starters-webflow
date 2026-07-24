@@ -60,11 +60,13 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 > the visitor stays on the page. Pre-signup visitors with a pending quiz and
 > test-mode previews are unaffected.
 
-> **Quiz entry controller (updated 2026-07-24):** `/quiz` remains outside
+> **Quiz entry controller (updated 2026-07-25):** `/quiz` remains outside
 > `route-guard.js`, but `quiz-main/quiz-redirect.js` redirects an active
-> production paid Brand to `/brand-dashboard` and a completed active production
-> free Brand to `/quiz-results`. `?retake=true` (also `1` or `yes`) bypasses
-> this page-level redirect. Unknown, test, Talent, inactive, and incomplete
+> paid Brand—including the Test Brand plan—to `/brand-dashboard` and a
+> completed active production free Brand to `/quiz-results`. `?retake=true`
+> (also `1` or `yes`) bypasses this page-level redirect. Once on `/quiz`, a
+> logged-in member's saved `starterQuiz` answers are combined with any
+> homepage-bucket selections. Unknown, Talent, inactive, and incomplete
 > free-plan members are deliberately unaffected.
 
 > **Free Brand default (updated 2026-07-23):** "Default quiz home" in the

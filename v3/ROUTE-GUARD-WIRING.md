@@ -55,9 +55,11 @@ network errors do not redirect. Xano remains responsible for ownership enforceme
 
 **Intentionally not guarded:** `/quiz`, `/quiz-results`, and `/all-starters`.
 `/quiz` is the funnel entry. Its `quiz-main/quiz-redirect.js` page controller
-sends an active production paid Brand to `/brand-dashboard` and a completed
+sends an active live or Test paid Brand to `/brand-dashboard` and a completed
 active production free Brand to `/quiz-results`, with `?retake=true` as the
-intentional escape hatch; unknown/test/Talent plans are unaffected.
+intentional escape hatch; unknown/Talent plans are unaffected. On entry,
+`quiz-main.js` combines the logged-in member's saved quiz answers with any
+homepage-bucket selections.
 `/quiz-results` has page-specific handling instead:
 when no test, pending, or saved quiz data exists, `quiz-results.js` redirects to
 `/quiz` only after Memberstack positively reports that the visitor is logged

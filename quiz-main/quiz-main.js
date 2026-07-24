@@ -271,7 +271,7 @@
     }
 
     /**
-     * Switches the start heading copy based on whether homepage buckets exist.
+     * Switches the start heading copy based on whether either prefill exists.
      *
      * @returns {void}
      */

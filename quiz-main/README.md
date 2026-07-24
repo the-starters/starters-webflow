@@ -11,18 +11,19 @@ bootstrap:
 ## Entry redirect
 
 `quiz-redirect.js` waits up to ten seconds for `$memberstackDom` and handles
-members with active production Brand plans:
+members with active Brand plans:
 
 | Member state | `/quiz` behavior |
 | --- | --- |
-| Paid Brand (`pln_new-paid-plan-463h04ph`) | Replace with `/brand-dashboard` |
+| Paid Brand (`pln_new-paid-plan-463h04ph`) or Test Brand (`pln_dorxata-test-brand-plan-777r02pa`) | Replace with `/brand-dashboard` |
 | Free Brand (`pln_free-plan-f6kn0dxz`) with a non-empty `starter-quiz` custom field | Replace with `/quiz-results` |
-| Incomplete free Brand, logged-out visitor, or unknown/test/Talent plan | Stay on `/quiz` |
+| Incomplete free Brand, logged-out visitor, or unknown/Talent plan | Stay on `/quiz` |
 
 Add `?retake=true`, `?retake=1`, or `?retake=yes` to keep an otherwise redirected
 member on the quiz. Retake links must use one of these values. The controller
-also re-evaluates after Memberstack auth changes. It deliberately recognises
-only the two production plan IDs above.
+also re-evaluates after Memberstack auth changes. Its paid plan IDs match the
+Brand-paid roles in `v3/route-guard.js`, including the Test Brand plan used for
+staging verification.
 
 ## Main controller
 
@@ -33,8 +34,11 @@ step layout and the tab-driven layout. It:
   `quiz-home.js`;
 - maps those buckets to category checkbox IDs through the hidden
   `[data-quiz-bucket]` CMS list and restores the matching category selections;
+- asynchronously reads a logged-in member's saved `starterQuiz` object from
+  Memberstack member JSON and restores its matching category and subcategory
+  IDs;
 - switches the start-heading copy between `[data-start-default]` and
-  `[data-start-filled]`;
+  `[data-start-filled]` when either source pre-fills the form;
 - saves `sessionStorage.starterQuizPending` as answers change (`draft`) and
   before signup or results navigation (`ready`); and
 - sends a logged-in retaker directly from the final quiz step to
@@ -43,6 +47,13 @@ step layout and the tab-driven layout. It:
 The pending payload contains `categories`, `subcategories`, an optional
 `resultSlug`, `status`, `updatedAt`, and `completedAt`. `quiz-results.js` owns
 consuming it.
+
+Saved Memberstack answers are restored whenever a logged-in member with a
+non-empty `starterQuiz` object reaches `/quiz`; `?retake=true` controls only the
+entry redirect. The restore checks matching boxes without clearing existing
+selections, so its `categoryIds` and `subcategoryIds` are combined with any
+homepage-bucket categories. If the member edits or advances the quiz before
+Memberstack returns, the delayed restore is skipped.
 
 ### Webflow markup contract
 
@@ -72,7 +83,8 @@ Optional integrations:
 
 The script updates both native checkbox state and Webflow's custom checked
 class. Category IDs in the forms, bucket mappings, and subcategory parent
-attributes must match after trimming.
+attributes must match after trimming. Saved subcategory IDs match the checkbox
+`id`, then its `value`, then its visible label.
 
 ## Diagnostics
 
