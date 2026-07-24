@@ -351,9 +351,10 @@
         // step's close (no later step fires to restore it).
         driverStep.onHighlightStarted = function () {
           restoreOpenedDisclosure()
-          if (step.open && !isVisible(resolvedTarget(step))) {
+          if (step.open && !isVisible(requestedTarget(step))) {
             toggleDisclosure(step.open)
             openedDisclosure = step.open
+            driverStep.element = resolveStepElement(step)
             scheduleRefresh()
           }
         }
@@ -368,6 +369,28 @@
     if (typeof resolved !== 'string') return resolved
     try {
       return document.querySelector(resolved)
+    } catch (error) {
+      return null
+    }
+  }
+
+  function requestedTarget(step) {
+    if (!step.target) return resolvedTarget(step)
+    if (step.target.indexOf('text:') === 0) {
+      var label = step.target.slice('text:'.length).trim()
+      var visibleMatch = findElementByText(label)
+      if (visibleMatch) return visibleMatch
+      var selectors = ['a, button, [role="button"]', 'span, div, p']
+      for (var i = 0; i < selectors.length; i++) {
+        var matches = document.querySelectorAll(selectors[i])
+        for (var j = 0; j < matches.length; j++) {
+          if ((matches[j].textContent || '').trim() === label) return matches[j]
+        }
+      }
+      return null
+    }
+    try {
+      return document.querySelector(step.target)
     } catch (error) {
       return null
     }
@@ -575,6 +598,10 @@
       // Build once: disclosure steps whose control is hidden get dropped, so
       // the built count (not tour.steps) decides the progress indicator.
       var driverSteps = buildDriverSteps(tour)
+      if (!driverSteps.length) {
+        tourStartInFlight = false
+        return null
+      }
       var instance = driverFactory({
         showProgress: driverSteps.length > 1,
         steps: driverSteps,

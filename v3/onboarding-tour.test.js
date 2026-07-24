@@ -924,6 +924,42 @@ test('onHighlightStarted opens the disclosure when the target is hidden', () => 
   assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
 })
 
+test('onHighlightStarted checks a text target before its visible fallback', () => {
+  const editHidden = {
+    ...discEl({ w: 0, h: 0 }),
+    textContent: 'Edit profile',
+  }
+  const fallbackVisible = discEl({ w: 100, h: 20 })
+  const avatar = discEl({ w: 37, h: 37 })
+  avatar.dispatchEvent = function (event) {
+    this.dispatched.push(event.type)
+    if (event.type === 'click') {
+      editHidden._w = 100
+      editHidden._h = 20
+    }
+    return true
+  }
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, S1: fallbackVisible },
+    textElements: [editHidden],
+  })
+  const tour = {
+    steps: [
+      {
+        selector: 'S1',
+        target: 'text:Edit profile',
+        open: '.avatar',
+        title: 'Edit',
+      },
+    ],
+  }
+  const step = api.buildDriverSteps(tour)[0]
+  assert.equal(step.element, 'S1')
+  step.onHighlightStarted()
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+  assert.equal(step.element, editHidden)
+})
+
 test('onHighlightStarted does not re-open when the target is already visible', () => {
   const avatar = discEl({ w: 37, h: 37 })
   const editVisible = discEl({ w: 155, h: 36 })
@@ -936,4 +972,27 @@ test('onHighlightStarted does not re-open when the target is already visible', (
   const step = api.buildDriverSteps(tour)[0]
   step.onHighlightStarted()
   assert.deepEqual(avatar.dispatched, [])
+})
+
+test('startTour returns null when responsive filtering removes every step', async () => {
+  let factoryCalls = 0
+  const driver = {
+    js: {
+      driver() {
+        factoryCalls += 1
+        return { drive() {} }
+      },
+    },
+  }
+  const { api } = loadModule({
+    driver,
+    cssTargets: { '.avatar': discEl({ w: 0, h: 0 }) },
+  })
+  const tour = {
+    id: 'mobile-hidden',
+    steps: [{ selector: 'S1', target: '', open: '.avatar' }],
+  }
+  assert.equal(await api.startTour(tour), null)
+  assert.equal(factoryCalls, 0)
+  assert.equal(await api.startTour(tour), null)
 })
