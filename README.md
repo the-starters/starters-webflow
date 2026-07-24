@@ -40,6 +40,8 @@ Do not discard local changes unless the user explicitly asks.
 
 ## Current Scripts
 
+- `quiz-main/quiz-main.js` — `/quiz` controller; restores homepage bucket selections, persists draft/ready answers for results, and skips signup for logged-in retakers (see `quiz-main/README.md`)
+- `quiz-main/quiz-redirect.js` — `/quiz` member redirect; sends paid Brands to `/brand-dashboard` and completed free Brands to `/quiz-results`, unless the URL opts into a retake
 - `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — exposes `window.StartersQuizLoader.signalReady()`, the "results ready" producer signal (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`) that dismisses the `/quiz-results` loading component

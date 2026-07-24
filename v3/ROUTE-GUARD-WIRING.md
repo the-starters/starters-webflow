@@ -54,7 +54,11 @@ redirects a foreign brand to `/opportunities-brands-view`; transient, server, an
 network errors do not redirect. Xano remains responsible for ownership enforcement.
 
 **Intentionally not guarded:** `/quiz`, `/quiz-results`, and `/all-starters`.
-`/quiz` is the funnel entry. `/quiz-results` has page-specific handling instead:
+`/quiz` is the funnel entry. Its `quiz-main/quiz-redirect.js` page controller
+sends an active production paid Brand to `/brand-dashboard` and a completed
+active production free Brand to `/quiz-results`, with `?retake=true` as the
+intentional escape hatch; unknown/test/Talent plans are unaffected.
+`/quiz-results` has page-specific handling instead:
 when no test, pending, or saved quiz data exists, `quiz-results.js` redirects to
 `/quiz` only after Memberstack positively reports that the visitor is logged
 out. It stays put if Memberstack is unavailable or errors, and pending
@@ -89,7 +93,7 @@ role only before starting role-specific rendering or requests.
 `/quiz`, `/quiz-results`, and `/all-starters` are deliberately outside the
 guard's page table (see the note above the guarded-pages table). Revisit
 `/all-starters` after confirming whether it is authenticated-only;
-`/quiz-results` keeps its page-controller redirect separate from the sitewide
+both quiz pages keep their page-controller redirects separate from the sitewide
 guard.
 
 ## Relationship to other layers
