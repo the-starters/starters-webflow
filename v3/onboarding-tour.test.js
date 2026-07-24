@@ -87,11 +87,21 @@ function loadModule(options = {}) {
       if (selector.indexOf('[data-tour-step="') === 0) {
         return (options.nodes || [])[0] || null
       }
+      if (options.invalidSelector === selector) {
+        throw new Error(`Invalid selector: ${selector}`)
+      }
+      if (options.cssTargets) return options.cssTargets[selector] || null
       return null
     },
     querySelectorAll(selector) {
       if (selector === '[data-tour-step]') return options.nodes || []
       if (selector === '[data-tour-start]') return []
+      if (selector === 'a, button, [role="button"]') {
+        return options.interactiveTextElements || options.textElements || []
+      }
+      if (selector === 'span, div, p') {
+        return options.nonInteractiveTextElements || []
+      }
       throw new Error(`Unexpected selector: ${selector}`)
     },
     documentElement: {
@@ -266,6 +276,100 @@ test('buildDriverSteps omits empty popover fields and passes selectors', () => {
   // A selector string, not a node: hydration on V3 pages can detach nodes
   // captured at parse time, and driver.js re-resolves selectors per step.
   assert.equal(steps[0].element, selector)
+})
+
+function textEl(text, descendants = 0) {
+  return {
+    textContent: text,
+    getBoundingClientRect: () => ({ width: 100, height: 20 }),
+    getElementsByTagName: () => ({ length: descendants }),
+  }
+}
+
+test('resolveStepElement returns the step selector when no target is set', () => {
+  const { api } = loadModule()
+  assert.equal(api.resolveStepElement({ selector: 'S', target: '' }), 'S')
+})
+
+test('resolveStepElement returns a matching CSS-selector target', () => {
+  const { api } = loadModule({ cssTargets: { '.post-btn': {} } })
+  assert.equal(
+    api.resolveStepElement({ selector: 'S', target: '.post-btn' }),
+    '.post-btn',
+  )
+})
+
+test('resolveStepElement falls back when a CSS-selector target has no match', () => {
+  const { api } = loadModule()
+  assert.equal(
+    api.resolveStepElement({ selector: 'S', target: '.missing' }),
+    'S',
+  )
+})
+
+test('resolveStepElement falls back when a CSS-selector target is invalid', () => {
+  const { api } = loadModule({ invalidSelector: '[' })
+  assert.equal(api.resolveStepElement({ selector: 'S', target: '[' }), 'S')
+})
+
+test('resolveStepElement text: match prefers an interactive element over a nested leaf', () => {
+  const anchor = textEl('Post Opportunity', 1)
+  const span = textEl('Post Opportunity', 0)
+  const { api } = loadModule({
+    interactiveTextElements: [anchor],
+    nonInteractiveTextElements: [span],
+  })
+  const resolved = api.resolveStepElement({
+    selector: 'S',
+    target: 'text:Post Opportunity',
+  })
+  assert.equal(resolved, anchor)
+})
+
+test('resolveStepElement text: match uses the smallest non-interactive fallback', () => {
+  const wrapper = textEl('Post Opportunity', 5)
+  const span = textEl('Post Opportunity', 0)
+  const { api } = loadModule({
+    nonInteractiveTextElements: [wrapper, span],
+  })
+  const resolved = api.resolveStepElement({
+    selector: 'S',
+    target: 'text:Post Opportunity',
+  })
+  assert.equal(resolved, span)
+})
+
+test('resolveStepElement falls back to the selector when text has no match', () => {
+  const hidden = {
+    textContent: 'Post Opportunity',
+    getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    getElementsByTagName: () => ({ length: 0 }),
+  }
+  const { api } = loadModule({ textElements: [hidden] })
+  assert.equal(
+    api.resolveStepElement({ selector: 'S', target: 'text:Post Opportunity' }),
+    'S',
+  )
+})
+
+test('resolveStepElement skips text matches with one zero dimension', () => {
+  const zeroWidth = {
+    textContent: 'Post Opportunity',
+    getBoundingClientRect: () => ({ width: 0, height: 20 }),
+    getElementsByTagName: () => ({ length: 0 }),
+  }
+  const zeroHeight = {
+    textContent: 'Post Opportunity',
+    getBoundingClientRect: () => ({ width: 100, height: 0 }),
+    getElementsByTagName: () => ({ length: 0 }),
+  }
+  const { api } = loadModule({
+    interactiveTextElements: [zeroWidth, zeroHeight],
+  })
+  assert.equal(
+    api.resolveStepElement({ selector: 'S', target: 'text:Post Opportunity' }),
+    'S',
+  )
 })
 
 test('parseTours builds an escaped selector per step', () => {

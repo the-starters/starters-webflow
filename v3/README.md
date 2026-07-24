@@ -86,7 +86,9 @@ node --test v3/all-starters-favorites.test.js
 
 `onboarding-tour.js` renders page-scoped product tours whose steps, copy,
 placement, audience, and replay behavior are configured with Webflow custom
-attributes. It lazy-loads driver.js only for an eligible tour, stores
+attributes. A step can optionally highlight a different element by CSS selector
+or exact visible text, which supports controls inside shared Webflow components.
+It lazy-loads driver.js only for an eligible tour, stores
 show-once state in Memberstack member JSON (with `localStorage` for guests),
 waits for an in-progress route guard before auto-starting, and themes popover
 titles and descriptions from the live page's heading and body fonts with

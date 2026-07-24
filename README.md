@@ -45,7 +45,7 @@ Do not discard local changes unless the user explicitly asks.
 - `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (category-matched and applied starter feeds); defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
 - `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations; brand-free lands on `/quiz` until the Memberstack `starter-quiz` field is set (quiz completed), then `/quiz-results`
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
-- `v3/onboarding-tour.js` — attribute-driven V3 product tours with role targeting, per-member seen-state, and replay/reset controls
+- `v3/onboarding-tour.js` — attribute-driven V3 product tours with highlight overrides, role targeting, per-member seen-state, and replay/reset controls
 - `v3/all-starters-favorites.js` — paid-Brand All/Saved favorites UI for `/all-starters`, backed by the sitewide `wf-xano` loader
 - `v3/scheduling-auth.js` — staging-only availability and scheduling authentication bridge
 - `v3/scheduling-availability-init.js` — staging-only booking-stage availability control initializer
