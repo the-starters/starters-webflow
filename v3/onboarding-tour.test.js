@@ -92,8 +92,12 @@ function loadModule(options = {}) {
     querySelectorAll(selector) {
       if (selector === '[data-tour-step]') return options.nodes || []
       if (selector === '[data-tour-start]') return []
-      // resolveStepElement's text search over common tags
-      if (selector.indexOf('button') !== -1) return options.textElements || []
+      if (selector === 'a, button, [role="button"]') {
+        return options.interactiveTextElements || options.textElements || []
+      }
+      if (selector === 'span, div, p') {
+        return options.nonInteractiveTextElements || []
+      }
       throw new Error(`Unexpected selector: ${selector}`)
     },
     documentElement: {
@@ -291,15 +295,31 @@ test('resolveStepElement passes a CSS-selector target through', () => {
   )
 })
 
-test('resolveStepElement text: match picks the smallest visible element', () => {
-  const wrapper = textEl('Post Opportunity', 5)
-  const button = textEl('Post Opportunity', 0)
-  const { api } = loadModule({ textElements: [wrapper, button] })
+test('resolveStepElement text: match prefers an interactive element over a nested leaf', () => {
+  const anchor = textEl('Post Opportunity', 1)
+  const span = textEl('Post Opportunity', 0)
+  const { api } = loadModule({
+    interactiveTextElements: [anchor],
+    nonInteractiveTextElements: [span],
+  })
   const resolved = api.resolveStepElement({
     selector: 'S',
     target: 'text:Post Opportunity',
   })
-  assert.equal(resolved, button)
+  assert.equal(resolved, anchor)
+})
+
+test('resolveStepElement text: match uses the smallest non-interactive fallback', () => {
+  const wrapper = textEl('Post Opportunity', 5)
+  const span = textEl('Post Opportunity', 0)
+  const { api } = loadModule({
+    nonInteractiveTextElements: [wrapper, span],
+  })
+  const resolved = api.resolveStepElement({
+    selector: 'S',
+    target: 'text:Post Opportunity',
+  })
+  assert.equal(resolved, span)
 })
 
 test('resolveStepElement falls back to the selector when text has no match', () => {

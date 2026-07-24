@@ -206,11 +206,8 @@
     })
   }
 
-  // Finds the smallest visible element whose trimmed text equals label.
-  // "Smallest" = fewest descendants, so we prefer the actual control over a
-  // wrapper that merely contains the label.
-  function findElementByText(label) {
-    var all = document.querySelectorAll('a, button, [role="button"], span, div, p')
+  function findSmallestVisibleTextMatch(selector, label) {
+    var all = document.querySelectorAll(selector)
     var best = null
     var bestSize = Infinity
     for (var i = 0; i < all.length; i++) {
@@ -225,6 +222,15 @@
       }
     }
     return best
+  }
+
+  // Finds the smallest visible interactive element whose trimmed text equals
+  // label, falling back to non-interactive text containers when needed.
+  function findElementByText(label) {
+    return (
+      findSmallestVisibleTextMatch('a, button, [role="button"]', label) ||
+      findSmallestVisibleTextMatch('span, div, p', label)
+    )
   }
 
   // Resolves a step's highlight to a selector string or a live Element.
