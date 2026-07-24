@@ -1,0 +1,15 @@
+
+  .tippy-box[data-theme~="quiz-continue-tooltip"] {
+    background-color: #fff;
+    color: #000;
+    z-index: 99999;
+  }
+
+  .tippy-box[data-theme~="quiz-continue-tooltip"] .tippy-content {
+    padding: 0.5rem 0.75rem;
+    color: #000;
+  }
+
+  [data-quiz-continue-tooltip] {
+    cursor: not-allowed;
+  }
