@@ -92,6 +92,8 @@ function loadModule(options = {}) {
     querySelectorAll(selector) {
       if (selector === '[data-tour-step]') return options.nodes || []
       if (selector === '[data-tour-start]') return []
+      // resolveStepElement's text search over common tags
+      if (selector.indexOf('button') !== -1) return options.textElements || []
       throw new Error(`Unexpected selector: ${selector}`)
     },
     documentElement: {
@@ -266,6 +268,51 @@ test('buildDriverSteps omits empty popover fields and passes selectors', () => {
   // A selector string, not a node: hydration on V3 pages can detach nodes
   // captured at parse time, and driver.js re-resolves selectors per step.
   assert.equal(steps[0].element, selector)
+})
+
+function textEl(text, descendants = 0) {
+  return {
+    textContent: text,
+    getBoundingClientRect: () => ({ width: 100, height: 20 }),
+    getElementsByTagName: () => ({ length: descendants }),
+  }
+}
+
+test('resolveStepElement returns the step selector when no target is set', () => {
+  const { api } = loadModule()
+  assert.equal(api.resolveStepElement({ selector: 'S', target: '' }), 'S')
+})
+
+test('resolveStepElement passes a CSS-selector target through', () => {
+  const { api } = loadModule()
+  assert.equal(
+    api.resolveStepElement({ selector: 'S', target: '.post-btn' }),
+    '.post-btn',
+  )
+})
+
+test('resolveStepElement text: match picks the smallest visible element', () => {
+  const wrapper = textEl('Post Opportunity', 5)
+  const button = textEl('Post Opportunity', 0)
+  const { api } = loadModule({ textElements: [wrapper, button] })
+  const resolved = api.resolveStepElement({
+    selector: 'S',
+    target: 'text:Post Opportunity',
+  })
+  assert.equal(resolved, button)
+})
+
+test('resolveStepElement falls back to the selector when text has no match', () => {
+  const hidden = {
+    textContent: 'Post Opportunity',
+    getBoundingClientRect: () => ({ width: 0, height: 0 }),
+    getElementsByTagName: () => ({ length: 0 }),
+  }
+  const { api } = loadModule({ textElements: [hidden] })
+  assert.equal(
+    api.resolveStepElement({ selector: 'S', target: 'text:Post Opportunity' }),
+    'S',
+  )
 })
 
 test('parseTours builds an escaped selector per step', () => {

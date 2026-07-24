@@ -11,6 +11,12 @@
  *   data-tour-text="Track your ..."        popover body
  *   data-tour-side="bottom"                optional driver.js popover side
  *   data-tour-align="start"                optional driver.js popover align
+ *   data-tour-target="<css>|text:<label>"  optional; highlight a DIFFERENT
+ *                                          element than the tagged one (e.g. a
+ *                                          button inside a shared component
+ *                                          that can't carry the attribute).
+ *                                          CSS selector, or text:<label> to
+ *                                          match by visible text.
  *   data-tour-roles="talent"               optional, on any step; comma list of
  *                                          roles the tour auto-starts for
  *   data-tour-once="false"                 optional, on any step; disable the
@@ -158,6 +164,15 @@
         // driver.js re-resolves selector strings at each step, so the tour
         // always highlights the live element.
         selector: '[data-tour-step="' + cssAttrEscape(raw) + '"]',
+        // Optional highlight override. Lets a step tagged on a page-scoped
+        // element point driver.js at a different element that can't carry the
+        // attribute itself (e.g. a button inside a shared component, where
+        // custom attributes are Designer-only). Two forms:
+        //   data-tour-target="<css selector>"   highlight that selector
+        //   data-tour-target="text:<label>"     highlight the smallest visible
+        //                                        element whose trimmed text
+        //                                        equals <label>
+        target: node.getAttribute('data-tour-target') || '',
         order: order,
         title: node.getAttribute('data-tour-title') || '',
         text: node.getAttribute('data-tour-text') || '',
@@ -191,6 +206,39 @@
     })
   }
 
+  // Finds the smallest visible element whose trimmed text equals label.
+  // "Smallest" = fewest descendants, so we prefer the actual control over a
+  // wrapper that merely contains the label.
+  function findElementByText(label) {
+    var all = document.querySelectorAll('a, button, [role="button"], span, div, p')
+    var best = null
+    var bestSize = Infinity
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i]
+      if ((el.textContent || '').trim() !== label) continue
+      var rect = el.getBoundingClientRect()
+      if (rect.width === 0 && rect.height === 0) continue // hidden
+      var size = el.getElementsByTagName('*').length
+      if (size < bestSize) {
+        best = el
+        bestSize = size
+      }
+    }
+    return best
+  }
+
+  // Resolves a step's highlight to a selector string or a live Element.
+  // driver.js accepts either. Falls back to the step's own selector when a
+  // target is set but cannot be resolved, so the tour never breaks.
+  function resolveStepElement(step) {
+    if (!step.target) return step.selector
+    if (step.target.indexOf('text:') === 0) {
+      var el = findElementByText(step.target.slice('text:'.length).trim())
+      return el || step.selector
+    }
+    return step.target
+  }
+
   function buildDriverSteps(tour) {
     return tour.steps.map(function (step) {
       var popover = {}
@@ -198,7 +246,7 @@
       if (step.text) popover.description = step.text
       if (step.side) popover.side = step.side
       if (step.align) popover.align = step.align
-      return { element: step.selector, popover: popover }
+      return { element: resolveStepElement(step), popover: popover }
     })
   }
 
@@ -647,6 +695,7 @@
     memberRole: memberRole,
     parseTours: parseTours,
     buildDriverSteps: buildDriverSteps,
+    resolveStepElement: resolveStepElement,
     autoStartTarget: autoStartTarget,
     replayRequestFromQuery: replayRequestFromQuery,
     loadDriver: loadDriver,
