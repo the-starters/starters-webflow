@@ -445,9 +445,12 @@
             return false
         }
 
+        let restoredInputCount = 0
+
         categoryInputs.forEach((input) => {
             if (savedCategoryIds.has(normalize(input.id))) {
                 setWebflowCheckboxState(input, true)
+                restoredInputCount += 1
             }
         })
 
@@ -459,8 +462,14 @@
 
             if (id && savedSubcategoryIds.has(id)) {
                 setWebflowCheckboxState(input, true)
+                restoredInputCount += 1
             }
         })
+
+        if (!restoredInputCount) {
+            logQuizFlow('saved quiz had no matching inputs; nothing restored')
+            return false
+        }
 
         hasRestoredSavedQuiz = true
 
