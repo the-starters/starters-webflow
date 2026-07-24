@@ -39,6 +39,49 @@ logged-out visitor to `/quiz`; pending pre-signup quizzes and Memberstack
 failures do not redirect. `/all-starters` still awaits product confirmation that
 it is not a pre-signup funnel page.
 
+## All Starters favorites
+
+`all-starters-favorites.js` adds the All/Saved tabs and Starter favorite
+controls to `/all-starters` for members with an active paid-Brand Memberstack
+plan. The route itself remains outside `route-guard.js`; this module only adds
+the favorites UI for the paid-Brand plan IDs in
+[ACCESS-MATRIX.md](ACCESS-MATRIX.md), while Xano independently enforces its
+server-side plan gates.
+
+Install it once in `/all-starters` Page Settings -> Custom Code -> Footer:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/all-starters-favorites.js"></script>
+```
+
+The site Head Code must load Memberstack, the shared `window.memberReady`
+helper (or `$memberstackDom`), and `wf-xano` v0.18 or newer. It must also own
+the Xano base/auth configuration. The module preserves an existing
+`window.WfXanoConfig.favoritesSource` and otherwise defaults it to
+`opp30:brand/favorites`; it waits up to about ten seconds for
+`window.WfXano.favorites` instead of injecting another `wf-xano` copy.
+
+Webflow markup contract:
+
+- The results section uses `.section_all-starters-body`.
+- Each Algolia card exposes `data-wf-algolia-hit-objectid` and contains an
+  `.expert-card_favorite-wrapper`; the module adds the canonical `wf-xano`
+  favorite attributes as cards render.
+- The page keeps its small inline `ms-loaded` reveal snippet. Page reveal is
+  deliberately independent of this CDN asset so a CDN failure cannot leave
+  the page hidden.
+
+The module is production-enabled and has no hostname or reveal-class kill
+switch. It injects the favorites layout styles, including the stacking fix for
+the section's decorative layers, and supplies a heart glyph when a Designer
+favorite wrapper is empty. It does not expose a public JavaScript API.
+
+Run its focused test with:
+
+```sh
+node --test v3/all-starters-favorites.test.js
+```
+
 ## Onboarding tours
 
 `onboarding-tour.js` renders page-scoped product tours whose steps, copy,
