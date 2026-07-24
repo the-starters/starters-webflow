@@ -1,41 +1,57 @@
 /**
- * Starter Quiz loading component — "results ready" producer signal.
+ * Starter Quiz loading component — head-time gate + "results ready" producer.
  *
- * The /quiz-results page shows a loading component (a Webflow DevLink React
- * component) while quiz-results.js resolves the quiz payload and renders the
- * recommendation sections. That component needs to know when the results are
- * settled so it can dismiss the overlay.
+ * This script loads SYNCHRONOUSLY in the /quiz-results page head (registered,
+ * no defer). It does two jobs:
  *
- * The handshake (producer = this side / quiz-results.js, consumer = the React
- * component) is deliberately tiny and race-proof, because the component may
- * mount EITHER before OR after the results finish:
+ * JOB 1 — Skip-on-refresh paint gate (runs at parse time, before <body>).
+ *   The loading component is a Webflow DevLink React component. At publish
+ *   time DevLink PRE-RENDERS its current scene into a `<code-island
+ *   data-hydrate="true">` host (declarative shadow DOM), so on a refresh that
+ *   should NOT replay the loader, the pre-rendered scene would still be painted
+ *   from HTML paint until React hydration takes over. To guarantee ZERO frames
+ *   of the loader on such a refresh, we make the skip decision synchronously in
+ *   the head — before the body exists — and, when skipping, inject a <style>
+ *   that hides the loader host until React hydrates and removes it for real.
  *
- *   1. Producer sets `window.__starterQuizResultsReady = true` FIRST.
- *   2. Producer then dispatches `document`-level CustomEvent
- *      `starterQuizResults:ready`.
+ *   The gate DUPLICATES the component's own sessionStorage skip rule BY DESIGN.
+ *   The component remains the authority AFTER hydration; this gate only governs
+ *   the pre-hydration paint window the component cannot reach in time. The two
+ *   rules must stay in sync — see computeQuizRunId() / the consumer contract.
  *
- *   - A component that mounts LATE reads the flag synchronously at mount and
- *     dismisses immediately (it missed the event, but the flag is durable).
- *   - A component that is ALREADY mounted hears the event and dismisses then.
+ * JOB 2 — "results ready" producer signal (unchanged from v1).
+ *   quiz-results.js calls window.StartersQuizLoader.signalReady() when the
+ *   results are settled. The handshake with the React consumer is tiny and
+ *   race-proof because the component may mount before OR after results finish:
+ *     1. Producer sets `window.__starterQuizResultsReady = true` FIRST.
+ *     2. Producer then dispatches `document`-level CustomEvent
+ *        `starterQuizResults:ready`.
+ *   A late-mounting component reads the durable flag synchronously; an already
+ *   mounted one hears the event. Flag-before-dispatch means a late consumer is
+ *   never stuck waiting for an event that already fired. signalReady() is
+ *   idempotent.
  *
- * Order matters: flag-before-dispatch guarantees a late consumer never gets
- * stuck waiting for an event that already fired. `signalReady()` is idempotent,
- * so it is safe to call from several terminal code paths / more than once.
- *
- * This module only EXPOSES the signal (`window.StartersQuizLoader.signalReady`).
- * quiz-results.js decides WHEN to call it (on every outcome that leaves the
- * visitor on the page). If quiz-results.js loads before this file, it falls
- * back to applying the same flag-then-dispatch contract inline, so the loader
- * script is a convenience, never a hard dependency.
- *
- * sessionStorage keys `starterQuizPending` / `starterQuizLoaderPlayed` are owned
- * by other quiz code and are intentionally NOT touched here.
+ * sessionStorage keys `starterQuizPending` / `starterQuizLoaderPlayed` are
+ * owned by other quiz code; this script only READS them, never writes.
  */
 ;(() => {
     const controllerFlag = 'startersQuizLoaderController'
     const readyFlag = '__starterQuizResultsReady'
     const readyEventName = 'starterQuizResults:ready'
     const debugLogPrefix = '[Starter Quiz Funnel]'
+
+    const pendingStorageKey = 'starterQuizPending'
+    const loaderPlayedStorageKey = 'starterQuizLoaderPlayed'
+    const skipGateStyleId = 'starters-quiz-loader-skip-gate'
+
+    // Loader host selector CONTRACT (verified live on staging): DevLink renders
+    // the loading component into a `<code-island>` host whose `data-props` JSON
+    // attribute lists the component's prop names. `statusStep1` is a stable,
+    // loader-specific prop name, so this substring match targets the loader host
+    // without catching other code-islands on the page. If that prop is renamed
+    // in the component, THIS SELECTOR MUST CHANGE TOO (and vice versa) — a
+    // rename on either side silently breaks the skip-on-refresh paint gate.
+    const loaderHostSelector = 'code-island[data-props*="statusStep1"]'
 
     // --- Staging-only diagnostics -------------------------------------------
     // Dev logs help while wiring the loader but must NEVER reach the production
@@ -71,6 +87,77 @@
     }
 
     window[controllerFlag] = true
+
+    /**
+     * Computes the quiz "run id" using EXACTLY the consumer component's rule:
+     * String(parsed(starterQuizPending).updatedAt) when parseable and non-empty,
+     * otherwise the literal "no-pending". Read-only; an unparseable payload is a
+     * normal case (falls through to "no-pending"), not an error.
+     *
+     * @returns {string} The current run id.
+     */
+    function computeQuizRunId() {
+        const rawPending = sessionStorage.getItem(pendingStorageKey)
+
+        if (rawPending) {
+            try {
+                const parsed = JSON.parse(rawPending)
+                const updatedAt = parsed && parsed.updatedAt
+                const normalized = String(updatedAt == null ? '' : updatedAt)
+                if (normalized) return normalized
+            } catch (error) {
+                // Unparseable pending payload → shared default below.
+            }
+        }
+
+        return 'no-pending'
+    }
+
+    /**
+     * Synchronous skip-on-refresh paint gate. Runs at parse time (document.head
+     * exists, document.body does not — no DOMContentLoaded dependency). When the
+     * run should skip the loader, injects a <style> hiding the DevLink loader
+     * host so the pre-rendered scene never paints before hydration. Any failure
+     * means NO gate: the loader simply plays, the same graceful degradation as
+     * before this gate existed.
+     *
+     * @returns {void}
+     */
+    function applySkipPaintGate() {
+        try {
+            const runId = computeQuizRunId()
+            const played = sessionStorage.getItem(loaderPlayedStorageKey)
+            const shouldSkip = played === runId
+
+            if (!shouldSkip) {
+                log('skip-gate: play loader (marker != run id)', {
+                    runId,
+                    played,
+                })
+                return
+            }
+
+            if (document.getElementById(skipGateStyleId)) {
+                log('skip-gate: already injected', { runId })
+                return
+            }
+
+            const style = document.createElement('style')
+            style.id = skipGateStyleId
+            style.textContent = loaderHostSelector + '{display:none !important}'
+            document.head.appendChild(style)
+
+            log('skip-gate: hiding loader host (skip-on-refresh)', {
+                runId,
+                selector: loaderHostSelector,
+            })
+        } catch (error) {
+            log('skip-gate: errored; loader will play', { error })
+        }
+    }
+
+    // Run the paint gate immediately, synchronously, at head-parse time.
+    applySkipPaintGate()
 
     /**
      * Announces that the quiz results are settled so the loading component can
