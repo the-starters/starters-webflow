@@ -90,12 +90,24 @@
 
     /**
      * @param {object | null | undefined} member
+     * @returns {boolean}
+     */
+    var hasCompletedQuiz = function (member) {
+        var customFields = (member && member.customFields) || {}
+        var value = customFields['starter-quiz']
+        return typeof value === 'string' ? value.trim() !== '' : Boolean(value)
+    }
+
+    /**
+     * @param {object | null | undefined} member
      * @returns {string | null}
      */
     var getRedirectPath = function (member) {
         if (!isLoggedInMember(member)) return null
         if (hasActivePaidPlan(member)) return PAID_REDIRECT_PATH
-        if (hasActiveFreePlan(member)) return FREE_REDIRECT_PATH
+        if (hasActiveFreePlan(member) && hasCompletedQuiz(member)) {
+            return FREE_REDIRECT_PATH
+        }
         return null
     }
 
