@@ -40,9 +40,10 @@ Do not discard local changes unless the user explicitly asks.
 
 ## Current Scripts
 
+- `quiz-main/quiz-home.js` — homepage hero controller; saves selected category bucket IDs to `sessionStorage.quizSelectedCategories` and redirects to `/quiz` (see `quiz-main/README.md`)
 - `quiz-main/quiz-main.js` — `/quiz` controller; combines homepage bucket selections with saved Memberstack answers, persists draft/ready answers for results, and skips signup for logged-in retakers (see `quiz-main/README.md`)
 - `quiz-main/quiz-redirect.js` — `/quiz` member redirect; sends live or Test paid Brands to `/brand-dashboard` and completed free Brands to `/quiz-results`, unless the URL opts into a retake
-- `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`
+- `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`, and diagnostics are opt-in through `starterQuizDebug`
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
 - `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (category-matched and applied starter feeds); defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`

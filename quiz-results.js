@@ -10,7 +10,9 @@
  * - Saves compact quiz state to the logged-in Memberstack member JSON.
  * - Saves a short status/result summary to the starter-quiz Memberstack custom field.
  *
- * Set starterQuizResultsDebugEnabled to false to disable this file's logs.
+ * Debug logging is OFF by default; opt in per session with ?starterQuizDebug=true
+ * (or starterQuizDebug in session/localStorage). Set
+ * starterQuizResultsDebugEnabled to false to hard-disable this file's logs.
  */
 ;(() => {
     const starterQuizResultsControllerFlag = 'starterQuizResultsController'
