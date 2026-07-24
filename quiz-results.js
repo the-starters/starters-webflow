@@ -1353,7 +1353,6 @@
         }
 
         return (
-            starterQuizResultsDebugEnabled ||
             sessionStorage.getItem(debugStorageKey) === 'true' ||
             localStorage.getItem(debugStorageKey) === 'true'
         )
