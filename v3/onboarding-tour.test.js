@@ -44,6 +44,7 @@ function loadModule(options = {}) {
     dispatchEvent(event) {
       events.push(event)
     },
+    addEventListener() {},
   }
   const head = {
     children: [],
@@ -59,13 +60,29 @@ function loadModule(options = {}) {
     },
   }
   const document = {
+    // 'complete' so boot's hydration settle-delay takes the setTimeout path
+    // instead of waiting for a window 'load' event the stub never fires.
+    // Module load still registers run via DOMContentLoaded below because
+    // addEventListener is only consulted when readyState is 'loading' at
+    // eval time — so keep capturing the boot callback explicitly.
     readyState: 'loading',
     head,
     createElement(tagName) {
       return { tagName: tagName.toUpperCase(), parentNode: null }
     },
     addEventListener(type, listener) {
-      if (type === 'DOMContentLoaded') run = listener
+      if (type === 'DOMContentLoaded') {
+        run = () => {
+          document.readyState = 'complete'
+          return listener()
+        }
+      }
+    },
+    querySelector(selector) {
+      if (selector.indexOf('[data-tour-step="') === 0) {
+        return (options.nodes || [])[0] || null
+      }
+      return null
     },
     querySelectorAll(selector) {
       if (selector === '[data-tour-step]') return options.nodes || []
@@ -210,13 +227,13 @@ test('parseTours merges roles across steps and honors data-tour-once', () => {
   assert.equal(tours[0].once, false)
 })
 
-test('buildDriverSteps omits empty popover fields', () => {
+test('buildDriverSteps omits empty popover fields and passes selectors', () => {
   const { api } = loadModule()
-  const element = fakeElement({})
+  const selector = '[data-tour-step="t:1"]'
   const tour = {
     steps: [
-      { element, order: 1, title: 'Hi', text: '', side: '', align: '' },
-      { element, order: 2, title: '', text: 'Body', side: 'top', align: 'end' },
+      { selector, order: 1, title: 'Hi', text: '', side: '', align: '' },
+      { selector, order: 2, title: '', text: 'Body', side: 'top', align: 'end' },
     ],
   }
   const steps = api.buildDriverSteps(tour)
@@ -226,7 +243,16 @@ test('buildDriverSteps omits empty popover fields', () => {
     side: 'top',
     align: 'end',
   })
-  assert.equal(steps[0].element, element)
+  // A selector string, not a node: hydration on V3 pages can detach nodes
+  // captured at parse time, and driver.js re-resolves selectors per step.
+  assert.equal(steps[0].element, selector)
+})
+
+test('parseTours builds an escaped selector per step', () => {
+  const { api } = loadModule()
+  const nodes = [fakeElement({ 'data-tour-step': 'my"tour:1' })]
+  const tours = api.parseTours(fakeRoot(nodes))
+  assert.equal(tours[0].steps[0].selector, '[data-tour-step="my\\"tour:1"]')
 })
 
 test('autoStartTarget respects roles, seen state, and DOM order', () => {

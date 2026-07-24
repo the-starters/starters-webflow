@@ -48,6 +48,7 @@
     'https://cdn.jsdelivr.net/npm/driver.js@' + DRIVER_VERSION + '/dist/driver.css'
   var DRIVER_LOAD_TIMEOUT_MS = 15000
   var MEMBERSTACK_TIMEOUT_MS = 10000
+  var SETTLE_DELAY_MS = 1000
   var GUEST_STORAGE_KEY = 'thestarters:v3-tours-seen'
 
   // Identical to v3/route-guard.js, v3/auth-route.js and opportunities-3.0.js
@@ -135,7 +136,11 @@
       if (node.getAttribute('data-tour-once') === 'false') tour.once = false
 
       tour.steps.push({
-        element: node,
+        // A selector, not the node: V3 pages hydrate after DOMContentLoaded
+        // (dashboard hero, tiles), which can detach the nodes captured here.
+        // driver.js re-resolves selector strings at each step, so the tour
+        // always highlights the live element.
+        selector: '[data-tour-step="' + cssAttrEscape(raw) + '"]',
         order: order,
         title: node.getAttribute('data-tour-title') || '',
         text: node.getAttribute('data-tour-text') || '',
@@ -161,6 +166,11 @@
     return orderOfAppearance
   }
 
+  // Escapes a value for use inside a double-quoted CSS attribute selector.
+  function cssAttrEscape(value) {
+    return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  }
+
   function buildDriverSteps(tour) {
     return tour.steps.map(function (step) {
       var popover = {}
@@ -168,7 +178,7 @@
       if (step.text) popover.description = step.text
       if (step.side) popover.side = step.side
       if (step.align) popover.align = step.align
-      return { element: step.element, popover: popover }
+      return { element: step.selector, popover: popover }
     })
   }
 
@@ -439,6 +449,24 @@
 
     var target = autoStartTarget(tours, role, seenIds)
     if (!target) return
+
+    // Let post-load hydration (dashboard hero, wf-xano tiles) settle before
+    // highlighting, so the first paint of the tour lands on final layout.
+    await new Promise(function (resolve) {
+      if (document.readyState === 'complete') {
+        window.setTimeout(resolve, SETTLE_DELAY_MS)
+        return
+      }
+      window.addEventListener(
+        'load',
+        function () {
+          window.setTimeout(resolve, SETTLE_DELAY_MS)
+        },
+        { once: true },
+      )
+    })
+    // Hydration may have removed the tour's markup entirely; re-check.
+    if (!document.querySelector(target.steps[0].selector)) return
 
     await startTour(target)
     if (target.once) {
