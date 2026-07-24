@@ -626,6 +626,63 @@ test('startTour prevents overlapping starts and unlocks after dismissal', async 
   assert.deepEqual(starts, ['started', 'started'])
 })
 
+test('rejected overlapping start preserves active disclosure cleanup', async () => {
+  const intervals = []
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  const { api, window } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+    driver: {
+      js: {
+        driver() {
+          return {
+            drive() {
+              window.document.__popover = {}
+            },
+            refresh() {},
+          }
+        },
+      },
+    },
+    setInterval(callback, delay) {
+      const interval = { callback, delay, cleared: false }
+      intervals.push(interval)
+      return interval
+    },
+    clearInterval(interval) {
+      interval.cleared = true
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+    ],
+  }
+
+  await api.startTour(tour)
+  api.buildDriverSteps(tour)[0].onHighlightStarted()
+  edit._w = 155
+  edit._h = 36
+  const endWatcher = intervals.find((interval) => interval.delay === 200)
+  endWatcher.callback()
+
+  assert.equal(await api.startTour(tour), null)
+  assert.equal(endWatcher.cleared, false)
+  assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+
+  window.document.__popover = null
+  endWatcher.callback()
+  assert.deepEqual(avatar.dispatched, [
+    'mousedown',
+    'mouseup',
+    'click',
+    'mousedown',
+    'mouseup',
+    'click',
+  ])
+})
+
 test('loadDriver waits for both script and stylesheet', async () => {
   const appended = []
   const { api } = loadModule({

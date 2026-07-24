@@ -595,6 +595,10 @@
   }
 
   async function startTour(tour) {
+    if (tourStartInFlight || document.querySelector('.driver-popover')) {
+      return null
+    }
+    tourStartInFlight = true
     restoreOpenedDisclosure()
     if (endWatchInterval !== null) {
       window.clearInterval(endWatchInterval)
@@ -602,10 +606,6 @@
     }
     tourRunToken += 1
     var runToken = tourRunToken
-    if (tourStartInFlight || document.querySelector('.driver-popover')) {
-      return null
-    }
-    tourStartInFlight = true
     try {
       injectThemeStyle()
       var driverFactory = await loadDriver()
