@@ -198,29 +198,6 @@
   }
 
   /* ===================== REQUEST INSPECTION ======================= */
-  function requestUrl(input) {
-    if (typeof input === 'string') return input
-    if (isRequestInput(input)) return input.url
-    if (isUrlInput(input)) return URL.prototype.toString.call(input)
-    return null
-  }
-
-  function requestMethod(input, init) {
-    if (init && init.method) return String(init.method).toUpperCase()
-    if (isRequestInput(input)) return input.method.toUpperCase()
-    return 'GET'
-  }
-
-  function hasAuthHeader(input, init) {
-    const headers =
-      init && init.headers !== undefined
-        ? init.headers
-        : isRequestInput(input)
-          ? input.headers
-          : null
-    return headers ? new Headers(headers).has('Authorization') : false
-  }
-
   /* ==================== AUTH-ONLY INJECTION ======================= */
   function xanoPathname(url) {
     try {
@@ -283,20 +260,44 @@
     return typeof Request !== 'undefined' && input instanceof Request
   }
 
-  function isUrlInput(input) {
+  function canonicalUrlInput(input) {
     if (typeof URL === 'undefined' || !input || typeof input !== 'object') {
-      return false
+      return null
     }
     try {
-      URL.prototype.toString.call(input)
-      return true
+      return URL.prototype.toString.call(input)
     } catch {
-      return false
+      return null
     }
   }
 
-  function replayableRequest(input, init) {
-    return new Request(input.clone(), init)
+  function effectiveFetch(input, init) {
+    if (isRequestInput(input)) {
+      const request = new Request(Request.prototype.clone.call(input), init)
+      return {
+        input: request,
+        init: undefined,
+        request: request,
+        url: request.url,
+        method: request.method.toUpperCase(),
+        hasAuth: request.headers.has('Authorization'),
+      }
+    }
+    if (typeof input !== 'string') {
+      const canonicalUrl = canonicalUrlInput(input)
+      if (canonicalUrl !== null) input = canonicalUrl
+    }
+    return {
+      input: input,
+      init: init,
+      request: null,
+      url: typeof input === 'string' ? input : null,
+      method:
+        init && init.method ? String(init.method).toUpperCase() : 'GET',
+      hasAuth:
+        !!(init && init.headers !== undefined) &&
+        new Headers(init.headers).has('Authorization'),
+    }
   }
 
   function authenticatedRequest(request, token) {
@@ -305,20 +306,25 @@
     return new Request(request.clone(), { headers: headers })
   }
 
-  async function injectAuth(input, init, originalFetch, url) {
-    const request = isRequestInput(input) ? replayableRequest(input, init) : null
+  async function injectAuth(effective, originalFetch) {
+    const request = effective.request
     let token
     try {
       token = await ensureXanoToken(originalFetch)
     } catch (err) {
       // fail-open: no session / trade failure -> original request unchanged
       // (gated endpoints answer 401, exactly what an unauthenticated call deserves)
-      log('auth inject skipped for', url, '-', err && err.message)
-      return request ? originalFetch(request.clone()) : originalFetch(input, init)
+      log('auth inject skipped for', effective.url, '-', err && err.message)
+      return request
+        ? originalFetch(request.clone())
+        : originalFetch(effective.input, effective.init)
     }
     let res = request
       ? await originalFetch(authenticatedRequest(request, token))
-      : await originalFetch(input, withAuthHeader(init, token))
+      : await originalFetch(
+          effective.input,
+          withAuthHeader(effective.init, token),
+        )
     if (res.status === 401) {
       // stale cached token — retrade once and retry
       invalidateXanoToken(token)
@@ -326,7 +332,10 @@
         token = await ensureXanoToken(originalFetch)
         res = request
           ? await originalFetch(authenticatedRequest(request, token))
-          : await originalFetch(input, withAuthHeader(init, token))
+          : await originalFetch(
+              effective.input,
+              withAuthHeader(effective.init, token),
+            )
       } catch (err) {
         log('retrade after 401 failed -', err && err.message)
       }
@@ -338,8 +347,9 @@
   const originalFetch = window.fetch.bind(window)
 
   window.fetch = function (input, init) {
-    const url = requestUrl(input)
-    const method = requestMethod(input, init)
+    const effective = effectiveFetch(input, init)
+    const url = effective.url
+    const method = effective.method
 
     if (blockedStagingMutation(url, method)) {
       return readOnlyResponse(url)
@@ -353,18 +363,18 @@
       method !== 'GET' &&
       method !== 'HEAD'
     ) {
-      if (hasAuthHeader(input, init)) {
-        return originalFetch(input, init)
+      if (effective.hasAuth) {
+        return originalFetch(effective.input, effective.init)
       }
-      return injectAuth(input, init, originalFetch, url)
+      return injectAuth(effective, originalFetch)
     }
 
     if (
       !matchesXanoPath(url, [ENDPOINT_PATH]) ||
       method !== 'POST' ||
-      hasAuthHeader(input, init)
+      effective.hasAuth
     ) {
-      return originalFetch(input, init)
+      return originalFetch(effective.input, effective.init)
     }
 
     return (async () => {

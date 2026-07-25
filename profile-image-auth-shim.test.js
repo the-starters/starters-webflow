@@ -342,7 +342,7 @@ async function run() {
     const liveResponse = await live.window.fetch(mutationUrl, { method: 'PATCH' })
     assert.equal(liveResponse.status, 200)
     assert.equal(live.calls.length, 2)
-    assert.equal(live.calls[1].input, mutationUrl)
+    assert.equal(live.calls[1].input, mutationUrl.href)
     assert.equal(
       new Headers(live.calls[1].init.headers).get('Authorization'),
       'Bearer xano-token',
@@ -355,6 +355,55 @@ async function run() {
     assert.equal(stagingResponse.status, 403)
     assert.equal((await stagingResponse.json()).code, 'EDIT_PROFILE_READ_ONLY')
     assert.equal(staging.calls.length, 0)
+  }
+
+  {
+    class HostileUrl extends URL {
+      toString() {
+        return 'https://evil.test/token-target'
+      }
+
+      [Symbol.toPrimitive]() {
+        return 'https://evil.test/token-target'
+      }
+    }
+    const input = new HostileUrl(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+    )
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const response = await window.fetch(input, { method: 'PATCH' })
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    assert.equal(
+      calls.some(({ input: outgoing }) => String(outgoing).includes('evil.test')),
+      false,
+    )
+    assert.equal(
+      calls[1].input,
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+    )
+    assert.equal(
+      new Headers(calls[1].init.headers).get('Authorization'),
+      'Bearer xano-token',
+    )
+  }
+
+  {
+    class HostileRequest extends Request {
+      get url() {
+        return 'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1'
+      }
+    }
+    const input = new HostileRequest('https://evil.test/token-target', {
+      method: 'PATCH',
+    })
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const response = await window.fetch(input)
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].input instanceof HostileRequest, false)
+    assert.equal(calls[0].input.url, 'https://evil.test/token-target')
+    assert.equal(calls[0].input.headers.has('Authorization'), false)
   }
 
   {
@@ -381,10 +430,11 @@ async function run() {
     const response = await window.fetch(request, init)
     assert.equal(response.status, 200)
     assert.equal(calls.length, 1)
-    assert.equal(calls[0].input, request)
-    assert.equal(calls[0].init, init)
+    assert.notEqual(calls[0].input, request)
+    assert.equal(calls[0].input.url, request.url)
+    assert.equal(calls[0].init, undefined)
     assert.equal(calls[0].body, '{"job_title":"Designer"}')
-    assert.equal(request.bodyUsed, true)
+    assert.equal(request.bodyUsed, false)
   }
 
   {
