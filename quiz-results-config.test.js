@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const test = require('node:test')
+const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./quiz-results.js'), 'utf8')
 
@@ -17,6 +18,21 @@ function getAlgoliaConfigSource() {
     return source.slice(start, end)
 }
 
+function getAlgoliaConfig(document, window = {}) {
+    return vm.runInNewContext(
+        [
+            "const algoliaDefaultAppId = 'default-app-id'",
+            "const algoliaDefaultIndexName = 'Freelancers3.0-dev'",
+            'function normalize(value) {',
+            "    return String(value || '').trim()",
+            '}',
+            getAlgoliaConfigSource(),
+            'getAlgoliaSearchConfig()',
+        ].join('\n'),
+        { document, window },
+    )
+}
+
 test('freelancer recommendations ignore unrelated WF-Algolia wrappers', () => {
     const configSource = getAlgoliaConfigSource()
 
@@ -29,14 +45,37 @@ test('freelancer recommendations ignore unrelated WF-Algolia wrappers', () => {
     )
 })
 
-test('supports a dedicated quiz-results index override without an app-id override', () => {
-    const configSource = getAlgoliaConfigSource()
+test('uses an index-only override after an earlier credentials element', () => {
+    const credentialsSelector =
+        '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]'
+    const indexSelector =
+        '[data-starter-quiz-algolia-index-name], [data-algolia-index-name]'
+    const config = getAlgoliaConfig({
+        querySelector(selector) {
+            if (selector === credentialsSelector) {
+                return {
+                    dataset: {
+                        starterQuizAlgoliaAppId: 'configured-app-id',
+                        starterQuizAlgoliaSearchKey: 'configured-search-key',
+                    },
+                }
+            }
 
-    assert.match(configSource, /\[data-starter-quiz-algolia-index-name\]/)
-    assert.match(configSource, /\[data-algolia-index-name\]/)
-    assert.match(
-        configSource,
-        /explicitElement\?\.dataset\.starterQuizAlgoliaIndexName/,
-    )
-    assert.match(configSource, /explicitElement\?\.dataset\.algoliaIndexName/)
+            if (selector === indexSelector) {
+                return {
+                    dataset: {
+                        starterQuizAlgoliaIndexName: 'configured-index-name',
+                    },
+                }
+            }
+
+            return null
+        },
+    })
+
+    assert.deepEqual({ ...config }, {
+        appId: 'configured-app-id',
+        searchKey: 'configured-search-key',
+        indexName: 'configured-index-name',
+    })
 })

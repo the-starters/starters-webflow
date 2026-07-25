@@ -2739,13 +2739,11 @@
      */
     function getAlgoliaSearchConfig() {
         const windowConfig = window.starterQuizAlgoliaConfig || {}
-        const explicitElement = document.querySelector(
-            [
-                '[data-starter-quiz-algolia-app-id]',
-                '[data-algolia-app-id]',
-                '[data-starter-quiz-algolia-index-name]',
-                '[data-algolia-index-name]',
-            ].join(', '),
+        const explicitCredentialsElement = document.querySelector(
+            '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
+        )
+        const explicitIndexElement = document.querySelector(
+            '[data-starter-quiz-algolia-index-name], [data-algolia-index-name]',
         )
         const wfAlgoliaScript = document.querySelector(
             'script[data-app-id][data-search-key]',
@@ -2754,19 +2752,21 @@
         return {
             appId:
                 normalize(windowConfig.appId) ||
-                normalize(explicitElement?.dataset.starterQuizAlgoliaAppId) ||
-                normalize(explicitElement?.dataset.algoliaAppId) ||
+                normalize(explicitCredentialsElement?.dataset.starterQuizAlgoliaAppId) ||
+                normalize(explicitCredentialsElement?.dataset.algoliaAppId) ||
                 normalize(wfAlgoliaScript?.getAttribute('data-app-id')) ||
                 algoliaDefaultAppId,
             searchKey:
                 normalize(windowConfig.searchKey) ||
-                normalize(explicitElement?.dataset.starterQuizAlgoliaSearchKey) ||
-                normalize(explicitElement?.dataset.algoliaSearchKey) ||
+                normalize(
+                    explicitCredentialsElement?.dataset.starterQuizAlgoliaSearchKey,
+                ) ||
+                normalize(explicitCredentialsElement?.dataset.algoliaSearchKey) ||
                 normalize(wfAlgoliaScript?.getAttribute('data-search-key')),
             indexName:
                 normalize(windowConfig.indexName) ||
-                normalize(explicitElement?.dataset.starterQuizAlgoliaIndexName) ||
-                normalize(explicitElement?.dataset.algoliaIndexName) ||
+                normalize(explicitIndexElement?.dataset.starterQuizAlgoliaIndexName) ||
+                normalize(explicitIndexElement?.dataset.algoliaIndexName) ||
                 normalize(wfAlgoliaScript?.getAttribute('data-index-name')) ||
                 normalize(wfAlgoliaScript?.getAttribute('data-index')) ||
                 algoliaDefaultIndexName,
