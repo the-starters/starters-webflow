@@ -274,6 +274,67 @@ async function run() {
   }
 
   {
+    const hostileInput = {
+      url: 'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+      method: 'PATCH',
+      headers: { 'X-Hostile': 'value' },
+      clone() {
+        throw new Error('must not clone request-like objects')
+      },
+      toString() {
+        return 'https://evil.test/token-target'
+      },
+    }
+    const init = { headers: { 'X-Init-Header': 'init-value' } }
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const response = await window.fetch(hostileInput, init)
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].input, hostileInput)
+    assert.equal(calls[0].init, init)
+    assert.equal(init.headers.Authorization, undefined)
+  }
+
+  {
+    const calls = []
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        calls.push({ input, init })
+        if (String(input).includes('/auth/trade-token/v3')) {
+          return new Response(JSON.stringify({ authToken: 'replacement-token' }), {
+            status: 200,
+          })
+        }
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const request = new Request(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer request-token',
+          'Content-Type': 'application/json',
+        },
+        body: '{"job_title":"Designer"}',
+      },
+    )
+    const response = await window.fetch(request, {
+      headers: { 'X-Init-Header': 'init-value' },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    const outgoing = calls[1].input
+    assert.equal(calls[1].init, undefined)
+    assert.equal(outgoing.headers.get('Authorization'), 'Bearer replacement-token')
+    assert.equal(outgoing.headers.get('Content-Type'), 'application/json')
+    assert.equal(outgoing.headers.get('X-Init-Header'), 'init-value')
+    assert.equal(await outgoing.text(), '{"job_title":"Designer"}')
+    assert.equal(request.bodyUsed, false)
+  }
+
+  {
     const hostileUrls = [
       'https://evil.test/api:SYL06lUR/companies',
       'https://x08a-5ko8-jj1r.n7c.xano.io.evil.test/api:PmBJV0AG/Create_portfolio',

@@ -200,39 +200,24 @@
   /* ===================== REQUEST INSPECTION ======================= */
   function requestUrl(input) {
     if (typeof input === 'string') return input
-    if (input && typeof input.url === 'string') return input.url // Request
-    return String(input)
+    if (isRequestInput(input)) return input.url
+    return null
   }
 
   function requestMethod(input, init) {
     if (init && init.method) return String(init.method).toUpperCase()
-    if (input && typeof input.method === 'string') return input.method.toUpperCase()
+    if (isRequestInput(input)) return input.method.toUpperCase()
     return 'GET'
   }
 
   function hasAuthHeader(input, init) {
-    const sources = [
-      init && init.headers,
-      input && input.headers,
-    ]
-    for (let i = 0; i < sources.length; i++) {
-      const headers = sources[i]
-      if (!headers) continue
-      if (typeof headers.has === 'function' && headers.has('Authorization')) return true
-      if (
-        Array.isArray(headers) &&
-        headers.some((pair) => String(pair[0]).toLowerCase() === 'authorization')
-      ) {
-        return true
-      }
-      if (
-        !Array.isArray(headers) &&
-        Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')
-      ) {
-        return true
-      }
-    }
-    return false
+    const headers =
+      init && init.headers !== undefined
+        ? init.headers
+        : isRequestInput(input)
+          ? input.headers
+          : null
+    return headers ? new Headers(headers).has('Authorization') : false
   }
 
   /* ==================== AUTH-ONLY INJECTION ======================= */
@@ -294,7 +279,7 @@
   }
 
   function isRequestInput(input) {
-    return input && typeof input.clone === 'function' && input.headers
+    return typeof Request !== 'undefined' && input instanceof Request
   }
 
   function replayableRequest(input, init) {
@@ -357,10 +342,13 @@
     if (
       matchesXanoPath(url, AUTH_INJECT_PATHS) &&
       method !== 'GET' &&
-      method !== 'HEAD' &&
-      !hasAuthHeader(input, init)
+      method !== 'HEAD'
     ) {
-      return injectAuth(input, init, originalFetch, url)
+      const request = isRequestInput(input) ? replayableRequest(input, init) : null
+      if (hasAuthHeader(input, init)) {
+        return request ? originalFetch(request) : originalFetch(input, init)
+      }
+      return injectAuth(request || input, request ? undefined : init, originalFetch, url)
     }
 
     if (
