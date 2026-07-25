@@ -22,9 +22,12 @@ function createStorage(initial = {}) {
   }
 }
 
-function loadShim({ hostname, pathname = '/starter-edit-profile' }) {
+function loadShim({
+  hostname,
+  pathname = '/starter-edit-profile',
+  localStorage = createStorage({ editSubmit: 'stale-value' }),
+}) {
   const calls = []
-  const localStorage = createStorage({ editSubmit: 'stale-value' })
   const window = {
     location: { hostname, pathname },
     localStorage,
@@ -53,6 +56,22 @@ async function run() {
     const { window, localStorage } = loadShim({ hostname: 'thestarters.com' })
     assert.equal(window.__TS_EDIT_PROFILE_MODE__, 'live-write')
     assert.equal(localStorage.getItem('editSubmit'), 'true')
+  }
+
+  {
+    const localStorage = {
+      setItem() {
+        throw new DOMException('Storage unavailable', 'SecurityError')
+      },
+    }
+    const { window, calls } = loadShim({
+      hostname: 'thestarters.com',
+      localStorage,
+    })
+    assert.equal(window.__TS_EDIT_PROFILE_MODE__, 'live-write')
+    const response = await window.fetch('https://example.com/read')
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 1)
   }
 
   {
@@ -87,6 +106,26 @@ async function run() {
     )
     assert.equal(readResponse.status, 200)
     assert.equal(calls.length, 1)
+  }
+
+  {
+    const localStorage = {
+      removeItem() {
+        throw new DOMException('Storage unavailable', 'SecurityError')
+      },
+    }
+    const { window, calls } = loadShim({
+      hostname: 'the-starters-3-0.webflow.io',
+      localStorage,
+    })
+    assert.equal(window.__TS_EDIT_PROFILE_MODE__, 'read-only')
+    const response = await window.fetch(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+      { method: 'POST' },
+    )
+    assert.equal(response.status, 403)
+    assert.equal((await response.json()).code, 'EDIT_PROFILE_READ_ONLY')
+    assert.equal(calls.length, 0)
   }
 
   {

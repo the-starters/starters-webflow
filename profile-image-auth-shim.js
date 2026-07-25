@@ -93,10 +93,16 @@
 
   if (isEditProfilePage) {
     window.__TS_EDIT_PROFILE_MODE__ = isLiveEditHost ? 'live-write' : 'read-only'
-    if (isLiveEditHost) {
-      window.localStorage.setItem('editSubmit', 'true')
-    } else {
-      window.localStorage.removeItem('editSubmit')
+    try {
+      if (isLiveEditHost) {
+        window.localStorage.setItem('editSubmit', 'true')
+      } else {
+        window.localStorage.removeItem('editSubmit')
+      }
+    } catch {
+      log('editSubmit compatibility storage unavailable')
+    }
+    if (!isLiveEditHost) {
       log('read-only mode on non-Live host', hostname || '(empty hostname)')
     }
   }
