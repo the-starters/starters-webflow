@@ -335,6 +335,36 @@ async function run() {
   }
 
   {
+    const calls = []
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        calls.push({ input, init, body: await input.text() })
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const request = new Request(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer existing-token',
+          'Content-Type': 'application/json',
+        },
+        body: '{"job_title":"Designer"}',
+      },
+    )
+    const init = { signal: new AbortController().signal }
+    const response = await window.fetch(request, init)
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].input, request)
+    assert.equal(calls[0].init, init)
+    assert.equal(calls[0].body, '{"job_title":"Designer"}')
+    assert.equal(request.bodyUsed, true)
+  }
+
+  {
     const hostileUrls = [
       'https://evil.test/api:SYL06lUR/companies',
       'https://x08a-5ko8-jj1r.n7c.xano.io.evil.test/api:PmBJV0AG/Create_portfolio',

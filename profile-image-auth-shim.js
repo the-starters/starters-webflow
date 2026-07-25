@@ -344,11 +344,10 @@
       method !== 'GET' &&
       method !== 'HEAD'
     ) {
-      const request = isRequestInput(input) ? replayableRequest(input, init) : null
       if (hasAuthHeader(input, init)) {
-        return request ? originalFetch(request) : originalFetch(input, init)
+        return originalFetch(input, init)
       }
-      return injectAuth(request || input, request ? undefined : init, originalFetch, url)
+      return injectAuth(input, init, originalFetch, url)
     }
 
     if (
