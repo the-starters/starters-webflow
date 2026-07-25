@@ -2729,19 +2729,27 @@
      * - window.starterQuizAlgoliaConfig = { appId, searchKey, indexName }
      * - an element with data-starter-quiz-algolia-* attributes
      * - the existing wf-algolia script[data-app-id][data-search-key]
-     * - a WF-Algolia browse/search wrapper with wf-algolia-index
+     *
+     * Deliberately does not use an arbitrary [wf-algolia-index] element. The
+     * quiz-results page also has a LearnContent carousel, so treating the first
+     * global WF-Algolia wrapper as the freelancer index routes recommendation
+     * searches to LearnContent and produces zero Starter cards.
      *
      * @returns {{appId: string, searchKey: string, indexName: string}} Algolia config.
      */
     function getAlgoliaSearchConfig() {
         const windowConfig = window.starterQuizAlgoliaConfig || {}
         const explicitElement = document.querySelector(
-            '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
+            [
+                '[data-starter-quiz-algolia-app-id]',
+                '[data-algolia-app-id]',
+                '[data-starter-quiz-algolia-index-name]',
+                '[data-algolia-index-name]',
+            ].join(', '),
         )
         const wfAlgoliaScript = document.querySelector(
             'script[data-app-id][data-search-key]',
         )
-        const wfAlgoliaIndexElement = document.querySelector('[wf-algolia-index]')
 
         return {
             appId:
@@ -2761,7 +2769,6 @@
                 normalize(explicitElement?.dataset.algoliaIndexName) ||
                 normalize(wfAlgoliaScript?.getAttribute('data-index-name')) ||
                 normalize(wfAlgoliaScript?.getAttribute('data-index')) ||
-                normalize(wfAlgoliaIndexElement?.getAttribute('wf-algolia-index')) ||
                 algoliaDefaultIndexName,
         }
     }
