@@ -2727,8 +2727,11 @@
      *
      * Supported sources, in priority order:
      * - window.starterQuizAlgoliaConfig = { appId, searchKey, indexName }
-     * - an element with data-starter-quiz-algolia-* attributes
+     * - dedicated elements with data-starter-quiz-algolia-* attributes
      * - the existing wf-algolia script[data-app-id][data-search-key]
+     *
+     * Each setting resolves independently, so credentials and the index may
+     * be supplied by separate dedicated elements.
      *
      * Deliberately does not use an arbitrary [wf-algolia-index] element. The
      * quiz-results page also has a LearnContent carousel, so treating the first
