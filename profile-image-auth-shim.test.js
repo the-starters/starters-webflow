@@ -43,10 +43,12 @@ function loadShim({
   pathname = '/starter-edit-profile',
   localStorage = createStorage({ editSubmit: 'stale-value' }),
   memberstackToken = 'memberstack-token',
+  origin = `https://${hostname}`,
+  fetchImpl,
 }) {
   const calls = []
   const window = {
-    location: { hostname, pathname },
+    location: { hostname, pathname, origin },
     localStorage,
     $memberstackDom: {
       async getMemberCookie() {
@@ -55,6 +57,7 @@ function loadShim({
     },
     fetch: async (input, init) => {
       calls.push({ input, init })
+      if (fetchImpl) return fetchImpl(input, init)
       if (String(input).includes('/auth/trade-token/v3')) {
         return new Response(JSON.stringify({ authToken: 'xano-token' }), {
           status: 200,
@@ -200,6 +203,148 @@ async function run() {
     for (const { init } of mutationCalls) {
       assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer xano-token')
     }
+  }
+
+  {
+    const hostileUrls = [
+      'https://evil.test/api:SYL06lUR/companies',
+      'https://x08a-5ko8-jj1r.n7c.xano.io.evil.test/api:PmBJV0AG/Create_portfolio',
+      'https://x08a-5ko8-jj1r.n7c.xano.io@evil.test/api:PmBJV0AG/Delete_portfolio',
+      'https://evil.test/collect?next=/api:PmBJV0AG/Update_portfolio',
+      'https://evil.test/api:KZf7nFnk/build_profile/starter/profile_image',
+    ]
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    for (const url of hostileUrls) {
+      const response = await window.fetch(url, { method: 'POST' })
+      assert.equal(response.status, 200)
+    }
+    assert.equal(calls.length, hostileUrls.length)
+    for (const { init } of calls) {
+      assert.equal(new Headers(init.headers).has('Authorization'), false)
+    }
+  }
+
+  {
+    const { window, calls } = loadShim({
+      hostname: 'x08a-5ko8-jj1r.n7c.xano.io',
+      origin: 'https://x08a-5ko8-jj1r.n7c.xano.io',
+      pathname: '/hosted-page',
+    })
+    const response = await window.fetch('/api:SYL06lUR/companies', {
+      method: 'POST',
+    })
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    assert.equal(
+      new Headers(calls[1].init.headers).get('Authorization'),
+      'Bearer xano-token',
+    )
+  }
+
+  {
+    let releaseTrade
+    const tradeGate = new Promise((resolve) => {
+      releaseTrade = resolve
+    })
+    let resolveTradeStarted
+    const tradeStarted = new Promise((resolve) => {
+      resolveTradeStarted = resolve
+    })
+    let tradeCount = 0
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          tradeCount += 1
+          resolveTradeStarted()
+          await tradeGate
+          return new Response(JSON.stringify({ authToken: 'shared-token' }), {
+            status: 200,
+          })
+        }
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const requests = [
+      window.fetch(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+        { method: 'POST' },
+      ),
+      window.fetch(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:PmBJV0AG/Create_portfolio',
+        { method: 'POST' },
+      ),
+    ]
+    await tradeStarted
+    assert.equal(tradeCount, 1)
+    releaseTrade()
+    await Promise.all(requests)
+    assert.equal(tradeCount, 1)
+  }
+
+  {
+    let tradeCount = 0
+    let staleMutationCount = 0
+    let resolveBothStale
+    const bothStale = new Promise((resolve) => {
+      resolveBothStale = resolve
+    })
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          tradeCount += 1
+          const authToken = tradeCount === 1 ? 'stale-token' : 'fresh-token'
+          return new Response(JSON.stringify({ authToken }), { status: 200 })
+        }
+        const token = new Headers(init && init.headers).get('Authorization')
+        if (token === 'Bearer stale-token') {
+          staleMutationCount += 1
+          if (staleMutationCount === 2) resolveBothStale()
+          await bothStale
+          return new Response('{}', { status: 401 })
+        }
+        return new Response('{}', { status: 200 })
+      },
+    })
+    await Promise.all([
+      window.fetch(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+        { method: 'POST' },
+      ),
+      window.fetch(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:PmBJV0AG/Create_portfolio',
+        { method: 'POST' },
+      ),
+    ])
+    assert.equal(staleMutationCount, 2)
+    assert.equal(tradeCount, 2)
+  }
+
+  {
+    let tradeCount = 0
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          tradeCount += 1
+          if (tradeCount === 1) return new Response('{}', { status: 500 })
+          return new Response(JSON.stringify({ authToken: 'recovered-token' }), {
+            status: 200,
+          })
+        }
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const endpoint =
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies'
+    await Promise.all([
+      window.fetch(endpoint, { method: 'POST' }),
+      window.fetch(endpoint, { method: 'POST' }),
+    ])
+    assert.equal(tradeCount, 1)
+    await window.fetch(endpoint, { method: 'POST' })
+    assert.equal(tradeCount, 2)
   }
 
   {
