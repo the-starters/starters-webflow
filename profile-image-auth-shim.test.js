@@ -76,6 +76,7 @@ function loadShim({
     Response,
     FormData,
     Blob,
+    Request,
     URL,
     JSON,
     Promise,
@@ -208,38 +209,68 @@ async function run() {
   }
 
   {
-    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
-    const requestCases = [
-      new Request(
-        'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ job_title: 'Temporary QA Edited' }),
+    const attempts = []
+    let tradeCount = 0
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          tradeCount += 1
+          return new Response(
+            JSON.stringify({
+              authToken: tradeCount === 1 ? 'stale-token' : 'fresh-token',
+            }),
+            { status: 200 },
+          )
+        }
+        attempts.push({
+          body: await input.text(),
+          headers: new Headers(input.headers),
+          method: input.method,
+        })
+        return new Response('{}', { status: attempts.length === 1 ? 401 : 200 })
+      },
+    })
+    const request = new Request(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Request-Header': 'request-value',
         },
-      ),
+        body: JSON.stringify({ job_title: 'Temporary QA Edited' }),
+      },
+    )
+    const response = await window.fetch(request, {
+      headers: { 'X-Init-Header': 'init-value' },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(tradeCount, 2)
+    assert.equal(request.bodyUsed, false)
+    assert.equal(attempts.length, 2)
+    for (const [index, attempt] of attempts.entries()) {
+      assert.equal(attempt.method, 'PATCH')
+      assert.equal(attempt.body, '{"job_title":"Temporary QA Edited"}')
+      assert.equal(attempt.headers.get('Content-Type'), 'application/json')
+      assert.equal(attempt.headers.get('X-Request-Header'), 'request-value')
+      assert.equal(attempt.headers.get('X-Init-Header'), 'init-value')
+      assert.equal(
+        attempt.headers.get('Authorization'),
+        index === 0 ? 'Bearer stale-token' : 'Bearer fresh-token',
+      )
+    }
+    const deleteResponse = await window.fetch(
       new Request(
         'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
         { method: 'DELETE' },
       ),
-    ]
-    for (const request of requestCases) {
-      const response = await window.fetch(request)
-      assert.equal(response.status, 200)
-    }
-    const tradeCalls = calls.filter(({ input }) =>
-      String(input).includes('/auth/trade-token/v3'),
     )
-    assert.equal(tradeCalls.length, 1)
-    const mutationCalls = calls.filter(
-      ({ input }) => !String(input).includes('/auth/trade-token/v3'),
-    )
-    assert.equal(mutationCalls.length, requestCases.length)
-    assert.equal(mutationCalls[0].input.method, 'PATCH')
-    assert.equal(mutationCalls[1].input.method, 'DELETE')
-    for (const { init } of mutationCalls) {
-      assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer xano-token')
-    }
+    assert.equal(deleteResponse.status, 200)
+    assert.equal(attempts.length, 3)
+    assert.equal(attempts[2].method, 'DELETE')
+    assert.equal(attempts[2].body, '')
+    assert.equal(attempts[2].headers.get('Authorization'), 'Bearer fresh-token')
   }
 
   {

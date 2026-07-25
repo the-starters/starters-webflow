@@ -211,13 +211,28 @@
   }
 
   function hasAuthHeader(input, init) {
-    const headers = (init && init.headers) || (input && input.headers)
-    if (!headers) return false
-    if (typeof headers.has === 'function') return headers.has('Authorization')
-    if (Array.isArray(headers)) {
-      return headers.some((pair) => String(pair[0]).toLowerCase() === 'authorization')
+    const sources = [
+      init && init.headers,
+      input && input.headers,
+    ]
+    for (let i = 0; i < sources.length; i++) {
+      const headers = sources[i]
+      if (!headers) continue
+      if (typeof headers.has === 'function' && headers.has('Authorization')) return true
+      if (
+        Array.isArray(headers) &&
+        headers.some((pair) => String(pair[0]).toLowerCase() === 'authorization')
+      ) {
+        return true
+      }
+      if (
+        !Array.isArray(headers) &&
+        Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')
+      ) {
+        return true
+      }
     }
-    return Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')
+    return false
   }
 
   /* ==================== AUTH-ONLY INJECTION ======================= */
@@ -278,7 +293,26 @@
     return next
   }
 
+  function isRequestInput(input) {
+    return input && typeof input.clone === 'function' && input.headers
+  }
+
+  function replayableRequest(input, init) {
+    const headers = new Headers(input.headers)
+    if (init && init.headers) {
+      new Headers(init.headers).forEach((value, key) => headers.set(key, value))
+    }
+    return new Request(input.clone(), Object.assign({}, init, { headers: headers }))
+  }
+
+  function authenticatedRequest(request, token) {
+    const headers = new Headers(request.headers)
+    headers.set('Authorization', 'Bearer ' + token)
+    return new Request(request.clone(), { headers: headers })
+  }
+
   async function injectAuth(input, init, originalFetch, url) {
+    const request = isRequestInput(input) ? replayableRequest(input, init) : null
     let token
     try {
       token = await ensureXanoToken(originalFetch)
@@ -286,15 +320,19 @@
       // fail-open: no session / trade failure -> original request unchanged
       // (gated endpoints answer 401, exactly what an unauthenticated call deserves)
       log('auth inject skipped for', url, '-', err && err.message)
-      return originalFetch(input, init)
+      return request ? originalFetch(request.clone()) : originalFetch(input, init)
     }
-    let res = await originalFetch(input, withAuthHeader(init, token))
+    let res = request
+      ? await originalFetch(authenticatedRequest(request, token))
+      : await originalFetch(input, withAuthHeader(init, token))
     if (res.status === 401) {
       // stale cached token — retrade once and retry
       invalidateXanoToken(token)
       try {
         token = await ensureXanoToken(originalFetch)
-        res = await originalFetch(input, withAuthHeader(init, token))
+        res = request
+          ? await originalFetch(authenticatedRequest(request, token))
+          : await originalFetch(input, withAuthHeader(init, token))
       } catch (err) {
         log('retrade after 401 failed -', err && err.message)
       }
@@ -316,8 +354,6 @@
     // Profile/child-record family: add the Bearer header, touch nothing else.
     // Supports both fetch(url, opts) and fetch(Request). The latter is used by
     // the inline work-history update/delete handlers on starter-edit-profile.
-    // injectAuth adds an init-level header, so the Request method/body remain
-    // untouched by the Fetch API.
     if (
       matchesXanoPath(url, AUTH_INJECT_PATHS) &&
       method !== 'GET' &&
