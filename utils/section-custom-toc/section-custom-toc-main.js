@@ -18,7 +18,7 @@
  *
  * Recommended:
  * - `[data-toc-element="list"]` — inner flex container holding the links, at any
- *   depth inside the wrapper. Required for the CSS centering opt-in (see toc.css
+ *   depth inside the wrapper. Required for the CSS centering opt-in (see section-custom-toc-main.css
  *   and `data-toc-align` below). If absent, the wrapper is treated as the list and
  *   centering is unavailable.
  *
@@ -56,7 +56,7 @@
  *   click-scroll landing is unaffected, sections still land right under the bars.
  * - `data-toc-align="center"` on the wrapper — centers the links while they fit
  *   the bar, falling back to a left-aligned scroller once they overflow. Pure CSS
- *   (see toc.css). Default (no attribute) is left-aligned, matching the
+ *   (see section-custom-toc-main.css). Default (no attribute) is left-aligned, matching the
  *   filter-tabs embed.
  *
  * Written by JS:
