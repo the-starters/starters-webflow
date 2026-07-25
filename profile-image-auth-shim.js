@@ -28,11 +28,12 @@
  * 2026-07-25 (child-record auth): extends the same header-only bridge to
  * Companies and Portfolio mutations used by `/starter-edit-profile`. Request
  * bodies, methods, and other options stay untouched. Non-GET/HEAD,
- * unauthenticated string-URL and Request-object calls to exact paths on the
- * Xano origin qualify; other origins pass through. Concurrent calls share one
- * token trade, the token is cached for the page, injection fails open when
- * there is no Memberstack session (the server returns 401), and a stale token
- * is invalidated and retraded once.
+ * unauthenticated string-URL, URL-object, and Request-object calls to scoped
+ * paths on the Xano origin qualify, including Companies record paths; other
+ * origins pass through. Concurrent calls share one token trade, the token is
+ * cached for the page, injection fails open when there is no Memberstack
+ * session (the server returns 401), and a stale token is invalidated and
+ * retraded once.
  *
  * 2026-07-25 (V3 production profile editing): `/starter-edit-profile` is
  * writable only on the two Live Memberstack hosts. The Webflow staging host
@@ -197,7 +198,6 @@
     return blob
   }
 
-  /* ===================== REQUEST INSPECTION ======================= */
   /* ==================== AUTH-ONLY INJECTION ======================= */
   function xanoPathname(url) {
     try {
@@ -395,8 +395,9 @@
     }
 
     // Profile/child-record family: add the Bearer header, touch nothing else.
-    // Supports both fetch(url, opts) and fetch(Request). The latter is used by
-    // the inline work-history update/delete handlers on starter-edit-profile.
+    // Supports fetch(string, opts), fetch(URL, opts), and fetch(Request). The
+    // latter is used by the inline work-history update/delete handlers on
+    // starter-edit-profile.
     if (
       matchesXanoPath(url, AUTH_INJECT_PATHS) &&
       method !== 'GET' &&
