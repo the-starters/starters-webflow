@@ -401,8 +401,8 @@ async function run() {
     const response = await window.fetch(input)
     assert.equal(response.status, 200)
     assert.equal(calls.length, 1)
-    assert.equal(calls[0].input instanceof HostileRequest, false)
-    assert.equal(calls[0].input.url, 'https://evil.test/token-target')
+    assert.equal(calls[0].input, input)
+    assert.equal(calls[0].init, undefined)
     assert.equal(calls[0].input.headers.has('Authorization'), false)
   }
 
@@ -430,11 +430,62 @@ async function run() {
     const response = await window.fetch(request, init)
     assert.equal(response.status, 200)
     assert.equal(calls.length, 1)
-    assert.notEqual(calls[0].input, request)
-    assert.equal(calls[0].input.url, request.url)
-    assert.equal(calls[0].init, undefined)
+    assert.equal(calls[0].input, request)
+    assert.equal(calls[0].init, init)
     assert.equal(calls[0].body, '{"job_title":"Designer"}')
-    assert.equal(request.bodyUsed, false)
+    assert.equal(request.bodyUsed, true)
+  }
+
+  {
+    const calls = []
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        calls.push({ input, init })
+        if (input.body) await input.text()
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const cases = [
+      {
+        request: new Request('https://example.com/unrelated', {
+          method: 'PATCH',
+          body: 'unrelated-body',
+        }),
+        init: { headers: { 'X-Pass-Through': 'unrelated' } },
+      },
+      {
+        request: new Request(
+          'https://x08a-5ko8-jj1r.n7c.xano.io/api:unmatched/path',
+          { method: 'PATCH', body: 'unmatched-body' },
+        ),
+        init: { signal: new AbortController().signal },
+      },
+      {
+        request: new Request(
+          'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+        ),
+        init: { cache: 'no-store' },
+      },
+      {
+        request: new Request(
+          'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+          { method: 'HEAD' },
+        ),
+        init: { redirect: 'manual' },
+      },
+    ]
+    for (const testCase of cases) {
+      const response = await window.fetch(testCase.request, testCase.init)
+      assert.equal(response.status, 200)
+    }
+    assert.equal(calls.length, cases.length)
+    for (const [index, call] of calls.entries()) {
+      assert.equal(call.input, cases[index].request)
+      assert.equal(call.init, cases[index].init)
+    }
+    assert.equal(cases[0].request.bodyUsed, true)
+    assert.equal(cases[1].request.bodyUsed, true)
   }
 
   {

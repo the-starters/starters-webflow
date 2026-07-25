@@ -271,32 +271,71 @@
     }
   }
 
-  function effectiveFetch(input, init) {
-    if (isRequestInput(input)) {
-      const request = new Request(Request.prototype.clone.call(input), init)
-      return {
-        input: request,
-        init: undefined,
-        request: request,
-        url: request.url,
-        method: request.method.toUpperCase(),
-        hasAuth: request.headers.has('Authorization'),
-      }
+  function requestProperty(input, property) {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        Request.prototype,
+        property,
+      )
+      return descriptor.get.call(input)
+    } catch {
+      return null
     }
+  }
+
+  function inspectFetch(input, init) {
+    const requestInput = isRequestInput(input)
+    let url = requestInput ? requestProperty(input, 'url') : null
     if (typeof input !== 'string') {
       const canonicalUrl = canonicalUrlInput(input)
-      if (canonicalUrl !== null) input = canonicalUrl
+      if (canonicalUrl !== null) {
+        input = canonicalUrl
+        url = canonicalUrl
+      }
     }
     return {
       input: input,
       init: init,
-      request: null,
-      url: typeof input === 'string' ? input : null,
+      requestInput: requestInput,
+      url: url || (typeof input === 'string' ? input : null),
       method:
-        init && init.method ? String(init.method).toUpperCase() : 'GET',
-      hasAuth:
-        !!(init && init.headers !== undefined) &&
-        new Headers(init.headers).has('Authorization'),
+        init && init.method
+          ? String(init.method).toUpperCase()
+          : requestInput
+            ? String(requestProperty(input, 'method')).toUpperCase()
+            : 'GET',
+    }
+  }
+
+  function hasAuthHeader(inspected) {
+    if (inspected.init && inspected.init.headers !== undefined) {
+      return new Headers(inspected.init.headers).has('Authorization')
+    }
+    if (!inspected.requestInput) return false
+    const headers = requestProperty(inspected.input, 'headers')
+    return headers
+      ? Headers.prototype.has.call(headers, 'Authorization')
+      : false
+  }
+
+  function materializeRequest(inspected) {
+    if (!inspected.requestInput) {
+      return {
+        input: inspected.input,
+        init: inspected.init,
+        request: null,
+        url: inspected.url,
+      }
+    }
+    const request = new Request(
+      Request.prototype.clone.call(inspected.input),
+      inspected.init,
+    )
+    return {
+      input: request,
+      init: undefined,
+      request: request,
+      url: request.url,
     }
   }
 
@@ -347,9 +386,9 @@
   const originalFetch = window.fetch.bind(window)
 
   window.fetch = function (input, init) {
-    const effective = effectiveFetch(input, init)
-    const url = effective.url
-    const method = effective.method
+    const inspected = inspectFetch(input, init)
+    const url = inspected.url
+    const method = inspected.method
 
     if (blockedStagingMutation(url, method)) {
       return readOnlyResponse(url)
@@ -363,18 +402,18 @@
       method !== 'GET' &&
       method !== 'HEAD'
     ) {
-      if (effective.hasAuth) {
-        return originalFetch(effective.input, effective.init)
+      if (hasAuthHeader(inspected)) {
+        return originalFetch(inspected.input, inspected.init)
       }
-      return injectAuth(effective, originalFetch)
+      return injectAuth(materializeRequest(inspected), originalFetch)
     }
 
     if (
       !matchesXanoPath(url, [ENDPOINT_PATH]) ||
       method !== 'POST' ||
-      effective.hasAuth
+      hasAuthHeader(inspected)
     ) {
-      return originalFetch(effective.input, effective.init)
+      return originalFetch(inspected.input, inspected.init)
     }
 
     return (async () => {
