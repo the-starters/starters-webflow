@@ -43,7 +43,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-main/quiz-home.js` — homepage hero controller; saves selected category bucket IDs to `sessionStorage.quizSelectedCategories` and redirects to `/quiz` (see `quiz-main/README.md`)
 - `quiz-main/quiz-main.js` — `/quiz` controller; combines homepage bucket selections with saved Memberstack answers, persists draft/ready answers for results, and skips signup for logged-in retakers (see `quiz-main/README.md`)
 - `quiz-main/quiz-redirect.js` — `/quiz` member redirect; sends live or Test paid Brands to `/brand-dashboard` and completed free Brands to `/quiz-results`, unless the URL opts into a retake
-- `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`, and diagnostics are opt-in through `starterQuizDebug`
+- `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`, diagnostics are opt-in through `starterQuizDebug`, and freelancer recommendations use the `Freelancers3.0-dev` Algolia index by default
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
 - `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (category-matched and applied starter feeds); defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
@@ -85,6 +85,19 @@ Do not discard local changes unless the user explicitly asks.
 - `navbar-embeds/navbar-explore/navbar-explore.js` — desktop explore mega-menu flyout column positioning (bails <=991px)
 - `navbar-embeds/navbar-explore/navbar-explore-mobile.js` — mobile explore menu stacked-column navigation with a fixed back button
 - `navbar-embeds/navbar-explore/view-all.js` — "view all" button routes to `/subcategories/<slug>` derived from the item's `wf-algolia-value`
+
+## Quiz-results freelancer recommendations
+
+`quiz-results.js` resolves the freelancer-recommendation Algolia settings per
+value, in this priority order: `window.starterQuizAlgoliaConfig`, dedicated
+`data-starter-quiz-algolia-*` (or legacy `data-algolia-*`) attributes, then the
+existing `script[data-app-id][data-search-key]`. The app ID and search key may
+be on a different element from the index name. When no index is configured, it
+uses `Freelancers3.0-dev`.
+
+Do not use a general `[wf-algolia-index]` wrapper to configure these searches.
+The page's LearnContent carousel owns its own wrapper and index; using that
+wrapper for freelancer recommendations can return no Starter cards.
 
 ## Opportunities 3.0 URL Identity
 
