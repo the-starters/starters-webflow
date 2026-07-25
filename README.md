@@ -70,6 +70,8 @@ Do not discard local changes unless the user explicitly asks.
 - `explore-search/explore-search-recent-searches.js` — the user's recent searches as chips, persisted in localStorage, recorded via `explore-search:commit`
 - `explore-search/explore-search-default-results.js` — keeps results visible on an empty query and fills each federated section with its index's default ranking
 - `explore-search/explore-search-hide-empty.js` — hides `[starters-algolia-hide]` wrappers while all their Algolia sections are empty
+- `global-embeds/section-custom-toc/toc.js` — attribute-driven auto-scrolling section TOC: scroll-spy links (`data-toc-id` ↔ `data-toc-section`), skip-when-visible bar auto-scroll, automatic per-breakpoint navbar offset (`data-toc-navbar` / `.w-nav`, opt-out `data-toc-ignore-navbar`), offset-corrected deep links
+- `global-embeds/section-custom-toc/toc.css` — structural companion (hidden-scrollbar overflow bar, left-aligned list, `data-toc-align="center"` opt-in centering)
 - `explore-search/explore-search-list-loader.js` — shows a loader and masks list jank during result transitions (arms on first user interaction; force-hides the loader at init)
 - `global-embeds/expert-card/expert-card-browse-loader.js` — masks wf-algolia browse-list jank on `/all-starters` behind the designer loader; hooks the engine's loader show/hide and `results`/`error` events, waits for `expert-cards:relayout:done`, force-hides the loader at init
 - `explore-search/explore-search.css` — search-brilliance page styles (filter checkboxes/radios, result grids, selected-filter reveal, loader)
