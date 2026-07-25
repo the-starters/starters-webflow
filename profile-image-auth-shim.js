@@ -201,6 +201,7 @@
   function requestUrl(input) {
     if (typeof input === 'string') return input
     if (isRequestInput(input)) return input.url
+    if (isUrlInput(input)) return URL.prototype.toString.call(input)
     return null
   }
 
@@ -282,12 +283,20 @@
     return typeof Request !== 'undefined' && input instanceof Request
   }
 
-  function replayableRequest(input, init) {
-    const headers = new Headers(input.headers)
-    if (init && init.headers) {
-      new Headers(init.headers).forEach((value, key) => headers.set(key, value))
+  function isUrlInput(input) {
+    if (typeof URL === 'undefined' || !input || typeof input !== 'object') {
+      return false
     }
-    return new Request(input.clone(), Object.assign({}, init, { headers: headers }))
+    try {
+      URL.prototype.toString.call(input)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  function replayableRequest(input, init) {
+    return new Request(input.clone(), init)
   }
 
   function authenticatedRequest(request, token) {

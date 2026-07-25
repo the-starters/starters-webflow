@@ -252,8 +252,8 @@ async function run() {
     for (const [index, attempt] of attempts.entries()) {
       assert.equal(attempt.method, 'PATCH')
       assert.equal(attempt.body, '{"job_title":"Temporary QA Edited"}')
-      assert.equal(attempt.headers.get('Content-Type'), 'application/json')
-      assert.equal(attempt.headers.get('X-Request-Header'), 'request-value')
+      assert.equal(attempt.headers.has('Content-Type'), false)
+      assert.equal(attempt.headers.has('X-Request-Header'), false)
       assert.equal(attempt.headers.get('X-Init-Header'), 'init-value')
       assert.equal(
         attempt.headers.get('Authorization'),
@@ -328,10 +328,33 @@ async function run() {
     const outgoing = calls[1].input
     assert.equal(calls[1].init, undefined)
     assert.equal(outgoing.headers.get('Authorization'), 'Bearer replacement-token')
-    assert.equal(outgoing.headers.get('Content-Type'), 'application/json')
+    assert.equal(outgoing.headers.has('Content-Type'), false)
     assert.equal(outgoing.headers.get('X-Init-Header'), 'init-value')
     assert.equal(await outgoing.text(), '{"job_title":"Designer"}')
     assert.equal(request.bodyUsed, false)
+  }
+
+  {
+    const live = loadShim({ hostname: 'thestarters.com' })
+    const mutationUrl = new URL(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+    )
+    const liveResponse = await live.window.fetch(mutationUrl, { method: 'PATCH' })
+    assert.equal(liveResponse.status, 200)
+    assert.equal(live.calls.length, 2)
+    assert.equal(live.calls[1].input, mutationUrl)
+    assert.equal(
+      new Headers(live.calls[1].init.headers).get('Authorization'),
+      'Bearer xano-token',
+    )
+
+    const staging = loadShim({ hostname: 'the-starters-3-0.webflow.io' })
+    const stagingResponse = await staging.window.fetch(mutationUrl, {
+      method: 'PATCH',
+    })
+    assert.equal(stagingResponse.status, 403)
+    assert.equal((await stagingResponse.json()).code, 'EDIT_PROFILE_READ_ONLY')
+    assert.equal(staging.calls.length, 0)
   }
 
   {
