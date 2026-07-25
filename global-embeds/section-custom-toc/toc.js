@@ -24,22 +24,36 @@
  *
  * Navbar (measured automatically — no per-breakpoint config):
  * - `data-toc-navbar` on the site's navbar — recommended. Its height is added to
- *   the offset so sections never land underneath it. With nothing tagged, the
- *   script falls back to Webflow's own `.w-nav`.
+ *   the offset so sections never land underneath it. Tag as MANY bars as stack at
+ *   the top of the page and their heights ADD UP: a profile header sitting under
+ *   the site navbar is a second bar, and both must clear. With nothing tagged, the
+ *   script falls back to Webflow's own `.w-nav` (a single element).
  * - Height AND position are re-measured on every scroll pass, so a navbar that is
  *   `fixed` on desktop but `static` on mobile, or hidden at some breakpoint, is
- *   handled for free — a navbar only counts while it is `fixed`/`sticky` right
- *   now, and a hidden one measures 0.
- * - `data-toc-ignore-navbar` on a wrapper — leaves the navbar out of that bar's
+ *   handled for free — each tagged bar is judged on its own and only counts while
+ *   it is `fixed`/`sticky` right now, and a hidden one measures 0.
+ * - `data-toc-ignore-navbar` on a wrapper — leaves every navbar out of that bar's
  *   offset (pages with no navbar, or where it must not count). Present with any
- *   value means ON; only `="false"` turns it off. A wrapper that IS the navbar, or
- *   sits inside it, skips the navbar automatically (no double-counting).
+ *   value means ON; only `="false"` turns it off. A wrapper that IS a tagged bar
+ *   always skips it (its own height is already counted). A wrapper that sits INSIDE
+ *   a tagged bar skips it only while the wrapper is itself sticky/fixed — that is the
+ *   double-count. A static TOC strip inside a sticky bar (the profile pages: the
+ *   strip is an inner div of the sticky profile header) counts that bar in full,
+ *   because nothing else measures it.
  *
  * Optional:
  * - `data-toc-offset="<px>"` on the wrapper — EXTRA offset on top of the navbar,
  *   not a replacement for it. Default `0`. Used for both the click-scroll landing
  *   position and the scroll-spy line. The wrapper's own height is also added
  *   automatically when the wrapper itself is `position: sticky` or `fixed`.
+ * - `data-toc-spy-zone="<0..0.8>"` on the wrapper — how far DOWN the free viewport
+ *   the scroll-spy line sits, as a fraction of the space left below the chrome.
+ *   Default `0.3`: a section takes the highlight once its top reaches 30% into the
+ *   viewport, not the instant it slips under the bars. That is what makes a section
+ *   filling the screen read as active while a hero still sitting above it does not.
+ *   `0` puts the line right under the chrome (the old behavior). Values outside
+ *   `0`–`0.8`, and anything unparseable, fall back to the default. SPY LINE ONLY —
+ *   click-scroll landing is unaffected, sections still land right under the bars.
  * - `data-toc-align="center"` on the wrapper — centers the links while they fit
  *   the bar, falling back to a left-aligned scroller once they overflow. Pure CSS
  *   (see toc.css). Default (no attribute) is left-aligned, matching the
@@ -50,6 +64,14 @@
  *   others — never set to `"false"`). Style it in Webflow.
  *
  * Behavior notes:
+ * - No link is active above the first section: while the top of every section is
+ *   still below the spy line — a hero filling the screen with the first section
+ *   underneath it — the bar shows no highlight, which is the honest answer. The
+ *   highlight appears as soon as a section's top reaches the line, which sits 30%
+ *   into the free viewport by default (`data-toc-spy-zone`), so a section that fills
+ *   the screen reads as active well before it is scrolled past. Sections hidden by
+ *   other scripts (a `display: none` REVIEWS panel emptied by hide-empty-sections)
+ *   are ignored throughout and can never take the highlight.
  * - The bar only scrolls when the active link is NOT already fully visible inside
  *   it (2px slack). An overflowing bar therefore starts wherever it rests and stays
  *   put while the active link is on screen, then animates the link to center once it
@@ -66,7 +88,8 @@
  *
  * Multiple bars on one page:
  * Every wrapper computes its own spy line — `data-toc-offset` plus the navbar plus
- * its own height when it is itself sticky/fixed. That is by design (a sticky bar and
+ * its own height when it is itself sticky/fixed, then `data-toc-spy-zone` of whatever
+ * viewport is left below that. That is by design (a sticky bar and
  * an in-flow bar sit in different contexts), but it means two bars tracking the SAME
  * sections only highlight in lockstep if their EFFECTIVE offsets match. The shared
  * navbar contribution is identical for both, so only the parts that differ need
@@ -102,6 +125,19 @@
   const SPY_BUFFER = 2
 
   /**
+   * @type {number} Default `data-toc-spy-zone`: the fraction of the viewport left
+   * below the chrome that the spy line drops into. 0 would put the line hard against
+   * the bars, where a section only counts once it is already slipping out of sight.
+   */
+  const DEFAULT_SPY_ZONE = 0.3
+
+  /**
+   * @type {number} Upper bound for `data-toc-spy-zone`. Past this the line reaches
+   * the bottom of the screen and sections stop activating in any sensible order.
+   */
+  const MAX_SPY_ZONE = 0.8
+
+  /**
    * @type {number} Slack (px) when deciding whether the active link already shows
    * inside the bar. Matches SCROLL_INTO_VIEW_SLACK in the filter-tabs embed.
    */
@@ -130,11 +166,13 @@
   const NAVBAR_FALLBACK_SELECTOR = ".w-nav"
 
   /**
-   * @type {HTMLElement|null} The page's navbar, resolved at scan time and re-resolved
-   * on every refresh(). Only the element is cached — never its height or position,
-   * both of which are read live so per-breakpoint navbars need zero config.
+   * @type {Array<HTMLElement>} The page's navbars, resolved at scan time and
+   * re-resolved on every refresh(). Only the elements are cached — never their
+   * heights or positions, both of which are read live so per-breakpoint navbars need
+   * zero config. A list, because stacked sticky chrome is normal: a profile header
+   * under the site navbar is two bars, and the offset owes both.
    */
-  let navbar = null
+  let navbars = []
 
   // --- dev-only diagnostics ---------------------------------------------------
   // Silent in production. Emits only on staging/local hosts or when the site
@@ -179,39 +217,128 @@
     return String(value).trim().toLowerCase() !== "false"
   }
 
-  /** Re-resolves the page navbar. Explicit tag wins; Webflow's `.w-nav` is fallback. */
+  /**
+   * Re-resolves the page navbars. Every explicitly tagged bar counts, so stacked
+   * chrome can be marked bar by bar; Webflow's `.w-nav` is the single-element
+   * fallback used only when nothing is tagged at all.
+   */
   const resolveNavbar = () => {
-    navbar =
-      document.querySelector(NAVBAR_SELECTOR) ||
-      document.querySelector(NAVBAR_FALLBACK_SELECTOR) ||
-      null
+    const tagged = Array.from(document.querySelectorAll(NAVBAR_SELECTOR))
+    if (tagged.length) {
+      navbars = tagged
+      return
+    }
+    const fallback = document.querySelector(NAVBAR_FALLBACK_SELECTOR)
+    navbars = fallback ? [fallback] : []
   }
 
   /**
-   * The navbar's live height, or 0 when it should not count. Position AND height are
-   * read at call time, never cached: a Webflow navbar can be `fixed` on desktop and
-   * `static` on mobile, and a hidden one has `offsetHeight` 0, so both breakpoint
-   * cases fall out for free.
-   * @param {HTMLElement} wrapper The bar asking — it may opt out or be the navbar.
+   * The combined live height of the navbars that currently count, or 0 when none do.
+   * Position AND height are read at call time, never cached: a Webflow navbar can be
+   * `fixed` on desktop and `static` on mobile, and a hidden one has `offsetHeight` 0,
+   * so both breakpoint cases fall out for free. Each bar is judged on its own, which
+   * is what makes a single tagged navbar behave exactly as it always has.
+   *
+   * Two exclusions, and the second is narrower than it looks. A bar that IS the
+   * wrapper never counts — the sticky-self rule in getOffset() already measures it. A
+   * bar that merely CONTAINS the wrapper is skipped only while the wrapper is itself
+   * sticky/fixed, because that is the only case where the sticky-self rule already
+   * covers the same chrome. A STATIC wrapper inside a sticky bar contributes nothing
+   * of its own, so that bar's full height is real covering chrome and counts: on the
+   * profile pages the TOC strip is a static inner div inside the sticky profile
+   * header, and its 51px must be cleared like any other bar's.
+   * @param {HTMLElement} wrapper The bar asking — it may opt out or be a navbar.
    * @returns {number}
    */
   const getNavbarHeight = (wrapper) => {
-    if (!navbar) return 0
+    if (!navbars.length) return 0
     if (isAttrEnabled(wrapper.getAttribute("data-toc-ignore-navbar"))) return 0
 
-    // A bar that IS the navbar, or lives inside it, is already accounted for by the
-    // sticky-self height below — counting the navbar too would double up.
-    if (navbar === wrapper) return 0
-    if (typeof navbar.contains === "function" && navbar.contains(wrapper)) return 0
-
-    let position = ""
+    // Read once per call, not per bar: it decides whether an ancestor bar would be
+    // double-counted by the wrapper's own sticky height.
+    let wrapperPosition = ""
     try {
-      position = getComputedStyle(navbar).position
+      wrapperPosition = getComputedStyle(wrapper).position
     } catch (error) {
-      position = ""
+      wrapperPosition = ""
     }
-    if (position !== "fixed" && position !== "sticky") return 0
-    return navbar.offsetHeight || 0
+    const wrapperIsStuck = wrapperPosition === "sticky" || wrapperPosition === "fixed"
+
+    let total = 0
+    for (let i = 0; i < navbars.length; i += 1) {
+      const bar = navbars[i]
+      if (!bar) continue
+
+      // A bar that IS this wrapper is already accounted for by the sticky-self height
+      // in getOffset(); so is an ancestor bar, but ONLY while the wrapper is sticky or
+      // fixed. Around a static wrapper the ancestor is uncounted covering chrome.
+      if (bar === wrapper) continue
+      if (wrapperIsStuck && typeof bar.contains === "function" && bar.contains(wrapper)) continue
+
+      let position = ""
+      try {
+        position = getComputedStyle(bar).position
+      } catch (error) {
+        position = ""
+      }
+      if (position !== "fixed" && position !== "sticky") continue
+      total += bar.offsetHeight || 0
+    }
+    return total
+  }
+
+  /**
+   * Whether anything INSIDE an element generates a box. Stops at the first hit, and
+   * recurses through children that generate no box themselves so nested wrappers
+   * resolve.
+   * @param {Element} element
+   * @returns {boolean}
+   */
+  const hasRenderedDescendant = (element) => {
+    const children = element ? element.children : null
+    if (!children) return false
+    for (let i = 0; i < children.length; i += 1) {
+      const child = children[i]
+      try {
+        if (child.getClientRects().length) return true
+      } catch (error) {
+        /* no-op */
+      }
+      if (hasRenderedDescendant(child)) return true
+    }
+    return false
+  }
+
+  /**
+   * Whether an element currently renders. A section hidden with `display: none` —
+   * which is exactly what the hide-empty-sections embed does to an empty REVIEWS
+   * panel — measures `getBoundingClientRect().top === 0`, so it would sit at the spy
+   * line on every pass and steal the active state from the visible section above it.
+   * The spy therefore only ever measures sections that are actually on the page.
+   *
+   * `display: contents` is the exception: Webflow's `display-contents` class makes an
+   * element generate no box of its own while its children render normally, so it
+   * counts as rendered when anything inside it does (same rule as isHidden() in
+   * v3/hide-empty-sections.js).
+   * @param {HTMLElement|null} element
+   * @returns {boolean}
+   */
+  const isRendered = (element) => {
+    if (!element || typeof element.getClientRects !== "function") return false
+    try {
+      if (element.getClientRects().length) return true
+    } catch (error) {
+      return false
+    }
+
+    let display = ""
+    try {
+      display = getComputedStyle(element).display
+    } catch (error) {
+      display = ""
+    }
+    if (display !== "contents") return false
+    return hasRenderedDescendant(element)
   }
 
   /** Whether the visitor asked for reduced motion (checked per scroll, not cached). */
@@ -302,10 +429,12 @@
     let warnedEmpty = false
 
     /**
-     * Vertical offset for the spy line and click-scroll landing position, summed from
-     * three parts:
+     * The chrome offset: how much fixed furniture covers the top of the page. It is
+     * where a clicked section LANDS, and the starting point the spy line is measured
+     * down from (see getSpyLine — the spy zone is deliberately not part of this, so
+     * moving the line never moves the landing position). Summed from three parts:
      *   1. `data-toc-offset` — extra manual offset, on top of the navbar.
-     *   2. the navbar's height, when it is fixed/sticky right now (see
+     *   2. the combined height of the navbars that are fixed/sticky right now (see
      *      getNavbarHeight; skipped via `data-toc-ignore-navbar`).
      *   3. the wrapper's own height, when the wrapper is itself sticky/fixed — it
      *      would otherwise cover the section it just scrolled to.
@@ -325,6 +454,36 @@
       }
       if (position === "sticky" || position === "fixed") offset += wrapper.offsetHeight || 0
       return offset
+    }
+
+    /**
+     * `data-toc-spy-zone` for this bar: the fraction of the free viewport the spy
+     * line drops into. Anything unparseable or outside 0–MAX_SPY_ZONE falls back to
+     * DEFAULT_SPY_ZONE, the same fail-safe bias the rest of the file uses for
+     * misconfigured attributes.
+     * @returns {number}
+     */
+    const getSpyZone = () => {
+      const zone = parseFloat(wrapper.getAttribute("data-toc-spy-zone"))
+      if (!isFinite(zone) || zone < 0 || zone > MAX_SPY_ZONE) return DEFAULT_SPY_ZONE
+      return zone
+    }
+
+    /**
+     * Where the scroll spy reads the page: the chrome offset, plus a slice of the
+     * viewport that is still free below it. A line hard against the bars only calls a
+     * section active once it is already sliding away, which is why a screen-filling
+     * OVERVIEW read as inactive; a line 30% down the free space activates it while it
+     * genuinely owns the screen, and still leaves a hero above it inactive.
+     *
+     * Measured live (viewport height changes on rotate/resize), and used ONLY by the
+     * spy — clicks and hash landings keep using getOffset() alone.
+     * @returns {number}
+     */
+    const getSpyLine = () => {
+      const offset = getOffset()
+      const viewport = window.innerHeight || 0
+      return offset + SPY_BUFFER + getSpyZone() * Math.max(0, viewport - offset)
     }
 
     /** Re-reads links and re-resolves their sections. Safe to call repeatedly. */
@@ -352,13 +511,17 @@
       }
     }
 
-    /** Index of the section that sits lowest in the document (the final one). */
+    /**
+     * Index of the section that sits lowest in the document (the final one).
+     * Hidden sections are skipped, so "last" means the last VISIBLE section — the
+     * right answer for the page-bottom case, which is the only caller.
+     */
     const getLastSectionIndex = () => {
       let best = -1
       let bestTop = -Infinity
       for (let i = 0; i < sections.length; i += 1) {
         const section = sections[i]
-        if (!section) continue
+        if (!isRendered(section)) continue
         const top = section.getBoundingClientRect().top
         if (top >= bestTop) {
           bestTop = top
@@ -370,12 +533,21 @@
 
     /**
      * Which link should be active right now.
-     * The last section whose top has crossed the spy line (viewport top + offset).
-     * Returns -1 above the first section. Compared by measured position rather
-     * than author order, so links may be listed out of document order.
+     * The last section whose top has crossed the spy line (see getSpyLine — the
+     * chrome offset plus a slice of the free viewport). Compared by measured
+     * position rather than author order, so links may be listed out of document
+     * order.
+     *
+     * Returns -1 above the first section, i.e. while every section top is still
+     * below the line: with a hero on screen and the first section beneath it, no
+     * link is active, and that is the intended reading.
      *
      * Page-bottom special case: a short final section can never reach the spy
      * line, so at max scroll the last section always wins.
+     *
+     * Hidden sections take no part: a `display: none` section measures a top of 0,
+     * which clears the spy line from the very first pixel, so it would hold the
+     * active state at page top for ever (see isRendered).
      * @returns {number}
      */
     const computeActiveIndex = () => {
@@ -385,12 +557,12 @@
         if (last !== -1) return last
       }
 
-      const line = getOffset() + SPY_BUFFER
+      const line = getSpyLine()
       let best = -1
       let bestTop = -Infinity
       for (let i = 0; i < sections.length; i += 1) {
         const section = sections[i]
-        if (!section) continue
+        if (!isRendered(section)) continue
         const top = section.getBoundingClientRect().top
         if (top <= line && top >= bestTop) {
           bestTop = top
