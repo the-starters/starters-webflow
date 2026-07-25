@@ -12,6 +12,8 @@ const mutationCases = [
   ['/api:KZf7nFnk/starter/set_also_worked_with', 'POST'],
   ['/api:KZf7nFnk/build_profile/starter/profile_image', 'POST'],
   ['/api:SYL06lUR/companies', 'POST'],
+  ['/api:SYL06lUR/companies/1', 'PATCH'],
+  ['/api:SYL06lUR/companies/1', 'DELETE'],
   ['/api:PmBJV0AG/Create_portfolio', 'POST'],
   ['/api:PmBJV0AG/Update_portfolio', 'PATCH'],
   ['/api:PmBJV0AG/Delete_portfolio', 'DELETE'],
@@ -74,6 +76,7 @@ function loadShim({
     Response,
     FormData,
     Blob,
+    Request,
     URL,
     JSON,
     Promise,
@@ -203,6 +206,286 @@ async function run() {
     for (const { init } of mutationCalls) {
       assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer xano-token')
     }
+  }
+
+  {
+    const attempts = []
+    let tradeCount = 0
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          tradeCount += 1
+          return new Response(
+            JSON.stringify({
+              authToken: tradeCount === 1 ? 'stale-token' : 'fresh-token',
+            }),
+            { status: 200 },
+          )
+        }
+        attempts.push({
+          body: await input.text(),
+          headers: new Headers(input.headers),
+          method: input.method,
+        })
+        return new Response('{}', { status: attempts.length === 1 ? 401 : 200 })
+      },
+    })
+    const request = new Request(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Request-Header': 'request-value',
+        },
+        body: JSON.stringify({ job_title: 'Temporary QA Edited' }),
+      },
+    )
+    const response = await window.fetch(request, {
+      headers: { 'X-Init-Header': 'init-value' },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(tradeCount, 2)
+    assert.equal(request.bodyUsed, false)
+    assert.equal(attempts.length, 2)
+    for (const [index, attempt] of attempts.entries()) {
+      assert.equal(attempt.method, 'PATCH')
+      assert.equal(attempt.body, '{"job_title":"Temporary QA Edited"}')
+      assert.equal(attempt.headers.has('Content-Type'), false)
+      assert.equal(attempt.headers.has('X-Request-Header'), false)
+      assert.equal(attempt.headers.get('X-Init-Header'), 'init-value')
+      assert.equal(
+        attempt.headers.get('Authorization'),
+        index === 0 ? 'Bearer stale-token' : 'Bearer fresh-token',
+      )
+    }
+    const deleteResponse = await window.fetch(
+      new Request(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+        { method: 'DELETE' },
+      ),
+    )
+    assert.equal(deleteResponse.status, 200)
+    assert.equal(attempts.length, 3)
+    assert.equal(attempts[2].method, 'DELETE')
+    assert.equal(attempts[2].body, '')
+    assert.equal(attempts[2].headers.get('Authorization'), 'Bearer fresh-token')
+  }
+
+  {
+    const hostileInput = {
+      url: 'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+      method: 'PATCH',
+      headers: { 'X-Hostile': 'value' },
+      clone() {
+        throw new Error('must not clone request-like objects')
+      },
+      toString() {
+        return 'https://evil.test/token-target'
+      },
+    }
+    const init = { headers: { 'X-Init-Header': 'init-value' } }
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const response = await window.fetch(hostileInput, init)
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].input, hostileInput)
+    assert.equal(calls[0].init, init)
+    assert.equal(init.headers.Authorization, undefined)
+  }
+
+  {
+    const calls = []
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        calls.push({ input, init })
+        if (String(input).includes('/auth/trade-token/v3')) {
+          return new Response(JSON.stringify({ authToken: 'replacement-token' }), {
+            status: 200,
+          })
+        }
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const request = new Request(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer request-token',
+          'Content-Type': 'application/json',
+        },
+        body: '{"job_title":"Designer"}',
+      },
+    )
+    const response = await window.fetch(request, {
+      headers: { 'X-Init-Header': 'init-value' },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    const outgoing = calls[1].input
+    assert.equal(calls[1].init, undefined)
+    assert.equal(outgoing.headers.get('Authorization'), 'Bearer replacement-token')
+    assert.equal(outgoing.headers.has('Content-Type'), false)
+    assert.equal(outgoing.headers.get('X-Init-Header'), 'init-value')
+    assert.equal(await outgoing.text(), '{"job_title":"Designer"}')
+    assert.equal(request.bodyUsed, false)
+  }
+
+  {
+    const live = loadShim({ hostname: 'thestarters.com' })
+    const mutationUrl = new URL(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+    )
+    const liveResponse = await live.window.fetch(mutationUrl, { method: 'PATCH' })
+    assert.equal(liveResponse.status, 200)
+    assert.equal(live.calls.length, 2)
+    assert.equal(live.calls[1].input, mutationUrl.href)
+    assert.equal(
+      new Headers(live.calls[1].init.headers).get('Authorization'),
+      'Bearer xano-token',
+    )
+
+    const staging = loadShim({ hostname: 'the-starters-3-0.webflow.io' })
+    const stagingResponse = await staging.window.fetch(mutationUrl, {
+      method: 'PATCH',
+    })
+    assert.equal(stagingResponse.status, 403)
+    assert.equal((await stagingResponse.json()).code, 'EDIT_PROFILE_READ_ONLY')
+    assert.equal(staging.calls.length, 0)
+  }
+
+  {
+    class HostileUrl extends URL {
+      toString() {
+        return 'https://evil.test/token-target'
+      }
+
+      [Symbol.toPrimitive]() {
+        return 'https://evil.test/token-target'
+      }
+    }
+    const input = new HostileUrl(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+    )
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const response = await window.fetch(input, { method: 'PATCH' })
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 2)
+    assert.equal(
+      calls.some(({ input: outgoing }) => String(outgoing).includes('evil.test')),
+      false,
+    )
+    assert.equal(
+      calls[1].input,
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+    )
+    assert.equal(
+      new Headers(calls[1].init.headers).get('Authorization'),
+      'Bearer xano-token',
+    )
+  }
+
+  {
+    class HostileRequest extends Request {
+      get url() {
+        return 'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1'
+      }
+    }
+    const input = new HostileRequest('https://evil.test/token-target', {
+      method: 'PATCH',
+    })
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const response = await window.fetch(input)
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].input, input)
+    assert.equal(calls[0].init, undefined)
+    assert.equal(calls[0].input.headers.has('Authorization'), false)
+  }
+
+  {
+    const calls = []
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        calls.push({ input, init, body: await input.text() })
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const request = new Request(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer existing-token',
+          'Content-Type': 'application/json',
+        },
+        body: '{"job_title":"Designer"}',
+      },
+    )
+    const init = { signal: new AbortController().signal }
+    const response = await window.fetch(request, init)
+    assert.equal(response.status, 200)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].input, request)
+    assert.equal(calls[0].init, init)
+    assert.equal(calls[0].body, '{"job_title":"Designer"}')
+    assert.equal(request.bodyUsed, true)
+  }
+
+  {
+    const calls = []
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        calls.push({ input, init })
+        if (input.body) await input.text()
+        return new Response('{}', { status: 200 })
+      },
+    })
+    const cases = [
+      {
+        request: new Request('https://example.com/unrelated', {
+          method: 'PATCH',
+          body: 'unrelated-body',
+        }),
+        init: { headers: { 'X-Pass-Through': 'unrelated' } },
+      },
+      {
+        request: new Request(
+          'https://x08a-5ko8-jj1r.n7c.xano.io/api:unmatched/path',
+          { method: 'PATCH', body: 'unmatched-body' },
+        ),
+        init: { signal: new AbortController().signal },
+      },
+      {
+        request: new Request(
+          'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+        ),
+        init: { cache: 'no-store' },
+      },
+      {
+        request: new Request(
+          'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+          { method: 'HEAD' },
+        ),
+        init: { redirect: 'manual' },
+      },
+    ]
+    for (const testCase of cases) {
+      const response = await window.fetch(testCase.request, testCase.init)
+      assert.equal(response.status, 200)
+    }
+    assert.equal(calls.length, cases.length)
+    for (const [index, call] of calls.entries()) {
+      assert.equal(call.input, cases[index].request)
+      assert.equal(call.init, cases[index].init)
+    }
+    assert.equal(cases[0].request.bodyUsed, true)
+    assert.equal(cases[1].request.bodyUsed, true)
   }
 
   {

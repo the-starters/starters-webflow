@@ -27,12 +27,13 @@
  *
  * 2026-07-25 (child-record auth): extends the same header-only bridge to
  * Companies and Portfolio mutations used by `/starter-edit-profile`. Request
- * bodies, methods, and other options stay untouched. Only non-GET/HEAD,
- * unauthenticated string-URL calls to exact paths on the Xano origin qualify;
- * Request objects and other origins pass through. Concurrent calls share one
- * token trade, the token is cached for the page, injection fails open when
- * there is no Memberstack session (the server returns 401), and a stale token
- * is invalidated and retraded once.
+ * bodies, methods, and other options stay untouched. Non-GET/HEAD,
+ * unauthenticated string-URL, URL-object, and Request-object calls to scoped
+ * paths on the Xano origin qualify, including Companies record paths; other
+ * origins pass through. Concurrent calls share one token trade, the token is
+ * cached for the page, injection fails open when there is no Memberstack
+ * session (the server returns 401), and a stale token is invalidated and
+ * retraded once.
  *
  * 2026-07-25 (V3 production profile editing): `/starter-edit-profile` is
  * writable only on the two Live Memberstack hosts. The Webflow staging host
@@ -65,6 +66,7 @@
     '/api:KZf7nFnk/starter/set_also_worked_with',
     '/api:KZf7nFnk/build_profile/starter/profile_image',
     '/api:SYL06lUR/companies',
+    '/api:SYL06lUR/companies/',
     '/api:PmBJV0AG/Create_portfolio',
     '/api:PmBJV0AG/Update_portfolio',
     '/api:PmBJV0AG/Delete_portfolio',
@@ -83,6 +85,7 @@
     '/api:KZf7nFnk/starter/set_also_worked_with',
     '/api:KZf7nFnk/edit_profile/starter/get_also_worked_with',
     '/api:SYL06lUR/companies',
+    '/api:SYL06lUR/companies/',
     '/api:PmBJV0AG/Create_portfolio',
     '/api:PmBJV0AG/Update_portfolio',
     '/api:PmBJV0AG/Delete_portfolio',
@@ -195,29 +198,6 @@
     return blob
   }
 
-  /* ===================== REQUEST INSPECTION ======================= */
-  function requestUrl(input) {
-    if (typeof input === 'string') return input
-    if (input && typeof input.url === 'string') return input.url // Request
-    return String(input)
-  }
-
-  function requestMethod(input, init) {
-    if (init && init.method) return String(init.method).toUpperCase()
-    if (input && typeof input.method === 'string') return input.method.toUpperCase()
-    return 'GET'
-  }
-
-  function hasAuthHeader(input, init) {
-    const headers = (init && init.headers) || (input && input.headers)
-    if (!headers) return false
-    if (typeof headers.has === 'function') return headers.has('Authorization')
-    if (Array.isArray(headers)) {
-      return headers.some((pair) => String(pair[0]).toLowerCase() === 'authorization')
-    }
-    return Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')
-  }
-
   /* ==================== AUTH-ONLY INJECTION ======================= */
   function xanoPathname(url) {
     try {
@@ -276,23 +256,125 @@
     return next
   }
 
-  async function injectAuth(input, init, originalFetch, url) {
+  function isRequestInput(input) {
+    return typeof Request !== 'undefined' && input instanceof Request
+  }
+
+  function canonicalUrlInput(input) {
+    if (typeof URL === 'undefined' || !input || typeof input !== 'object') {
+      return null
+    }
+    try {
+      return URL.prototype.toString.call(input)
+    } catch {
+      return null
+    }
+  }
+
+  function requestProperty(input, property) {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(
+        Request.prototype,
+        property,
+      )
+      return descriptor.get.call(input)
+    } catch {
+      return null
+    }
+  }
+
+  function inspectFetch(input, init) {
+    const requestInput = isRequestInput(input)
+    let url = requestInput ? requestProperty(input, 'url') : null
+    if (typeof input !== 'string') {
+      const canonicalUrl = canonicalUrlInput(input)
+      if (canonicalUrl !== null) {
+        input = canonicalUrl
+        url = canonicalUrl
+      }
+    }
+    return {
+      input: input,
+      init: init,
+      requestInput: requestInput,
+      url: url || (typeof input === 'string' ? input : null),
+      method:
+        init && init.method
+          ? String(init.method).toUpperCase()
+          : requestInput
+            ? String(requestProperty(input, 'method')).toUpperCase()
+            : 'GET',
+    }
+  }
+
+  function hasAuthHeader(inspected) {
+    if (inspected.init && inspected.init.headers !== undefined) {
+      return new Headers(inspected.init.headers).has('Authorization')
+    }
+    if (!inspected.requestInput) return false
+    const headers = requestProperty(inspected.input, 'headers')
+    return headers
+      ? Headers.prototype.has.call(headers, 'Authorization')
+      : false
+  }
+
+  function materializeRequest(inspected) {
+    if (!inspected.requestInput) {
+      return {
+        input: inspected.input,
+        init: inspected.init,
+        request: null,
+        url: inspected.url,
+      }
+    }
+    const request = new Request(
+      Request.prototype.clone.call(inspected.input),
+      inspected.init,
+    )
+    return {
+      input: request,
+      init: undefined,
+      request: request,
+      url: request.url,
+    }
+  }
+
+  function authenticatedRequest(request, token) {
+    const headers = new Headers(request.headers)
+    headers.set('Authorization', 'Bearer ' + token)
+    return new Request(request.clone(), { headers: headers })
+  }
+
+  async function injectAuth(effective, originalFetch) {
+    const request = effective.request
     let token
     try {
       token = await ensureXanoToken(originalFetch)
     } catch (err) {
       // fail-open: no session / trade failure -> original request unchanged
       // (gated endpoints answer 401, exactly what an unauthenticated call deserves)
-      log('auth inject skipped for', url, '-', err && err.message)
-      return originalFetch(input, init)
+      log('auth inject skipped for', effective.url, '-', err && err.message)
+      return request
+        ? originalFetch(request.clone())
+        : originalFetch(effective.input, effective.init)
     }
-    let res = await originalFetch(input, withAuthHeader(init, token))
+    let res = request
+      ? await originalFetch(authenticatedRequest(request, token))
+      : await originalFetch(
+          effective.input,
+          withAuthHeader(effective.init, token),
+        )
     if (res.status === 401) {
       // stale cached token — retrade once and retry
       invalidateXanoToken(token)
       try {
         token = await ensureXanoToken(originalFetch)
-        res = await originalFetch(input, withAuthHeader(init, token))
+        res = request
+          ? await originalFetch(authenticatedRequest(request, token))
+          : await originalFetch(
+              effective.input,
+              withAuthHeader(effective.init, token),
+            )
       } catch (err) {
         log('retrade after 401 failed -', err && err.message)
       }
@@ -304,32 +386,35 @@
   const originalFetch = window.fetch.bind(window)
 
   window.fetch = function (input, init) {
-    const url = requestUrl(input)
-    const method = requestMethod(input, init)
+    const inspected = inspectFetch(input, init)
+    const url = inspected.url
+    const method = inspected.method
 
     if (blockedStagingMutation(url, method)) {
       return readOnlyResponse(url)
     }
 
     // Profile/child-record family: add the Bearer header, touch nothing else.
-    // Only for plain string-URL calls (all three pages use fetch(url, opts));
-    // Request-object inputs pass through untouched.
+    // Supports fetch(string, opts), fetch(URL, opts), and fetch(Request). The
+    // latter is used by the inline work-history update/delete handlers on
+    // starter-edit-profile.
     if (
-      typeof input === 'string' &&
       matchesXanoPath(url, AUTH_INJECT_PATHS) &&
       method !== 'GET' &&
-      method !== 'HEAD' &&
-      !hasAuthHeader(input, init)
+      method !== 'HEAD'
     ) {
-      return injectAuth(input, init, originalFetch, url)
+      if (hasAuthHeader(inspected)) {
+        return originalFetch(inspected.input, inspected.init)
+      }
+      return injectAuth(materializeRequest(inspected), originalFetch)
     }
 
     if (
       !matchesXanoPath(url, [ENDPOINT_PATH]) ||
       method !== 'POST' ||
-      hasAuthHeader(input, init)
+      hasAuthHeader(inspected)
     ) {
-      return originalFetch(input, init)
+      return originalFetch(inspected.input, inspected.init)
     }
 
     return (async () => {
