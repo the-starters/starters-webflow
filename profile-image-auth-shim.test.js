@@ -7,6 +7,22 @@ const source = fs.readFileSync(
   'utf8',
 )
 
+const mutationCases = [
+  ['/api:KZf7nFnk/edit_profile/update/member', 'PATCH'],
+  ['/api:KZf7nFnk/starter/set_also_worked_with', 'POST'],
+  ['/api:KZf7nFnk/build_profile/starter/profile_image', 'POST'],
+  ['/api:SYL06lUR/companies', 'POST'],
+  ['/api:PmBJV0AG/Create_portfolio', 'POST'],
+  ['/api:PmBJV0AG/Update_portfolio', 'PATCH'],
+  ['/api:PmBJV0AG/Delete_portfolio', 'DELETE'],
+  ['/api:PmBJV0AG/upload-image', 'POST'],
+  ['/api:PmBJV0AG/Add_portfolio_image', 'POST'],
+  ['/api:PmBJV0AG/upload-video', 'POST'],
+  ['/api:PmBJV0AG/Add_portfolio_video', 'POST'],
+  ['/api:PmBJV0AG/Delete_portfolio_image', 'DELETE'],
+  ['/api:PmBJV0AG/Delete_portfolio_video', 'DELETE'],
+]
+
 function createStorage(initial = {}) {
   const values = new Map(Object.entries(initial))
   return {
@@ -81,21 +97,11 @@ async function run() {
     assert.equal(window.__TS_EDIT_PROFILE_MODE__, 'read-only')
     assert.equal(localStorage.getItem('editSubmit'), null)
 
-    for (const [url, method] of [
-      [
-        'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/edit_profile/update/member',
-        'PATCH',
-      ],
-      [
-        'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
-        'POST',
-      ],
-      [
-        'https://x08a-5ko8-jj1r.n7c.xano.io/api:PmBJV0AG/Create_portfolio',
-        'POST',
-      ],
-    ]) {
-      const response = await window.fetch(url, { method })
+    for (const [path, method] of mutationCases) {
+      const response = await window.fetch(
+        `https://x08a-5ko8-jj1r.n7c.xano.io${path}`,
+        { method, headers: { Authorization: 'Bearer existing-token' } },
+      )
       assert.equal(response.status, 403)
       assert.equal((await response.json()).code, 'EDIT_PROFILE_READ_ONLY')
     }
@@ -106,6 +112,23 @@ async function run() {
     )
     assert.equal(readResponse.status, 200)
     assert.equal(calls.length, 1)
+
+    const headResponse = await window.fetch(
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+      { method: 'HEAD' },
+    )
+    assert.equal(headResponse.status, 200)
+    assert.equal(calls.length, 2)
+
+    const requestResponse = await window.fetch(
+      new Request(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:PmBJV0AG/Delete_portfolio',
+        { method: 'DELETE' },
+      ),
+    )
+    assert.equal(requestResponse.status, 403)
+    assert.equal((await requestResponse.json()).code, 'EDIT_PROFILE_READ_ONLY')
+    assert.equal(calls.length, 2)
   }
 
   {
@@ -130,6 +153,41 @@ async function run() {
 
   {
     const { window, calls } = loadShim({ hostname: 'www.thestarters.com' })
+    for (const [path, method] of mutationCases) {
+      const response = await window.fetch(
+        `https://x08a-5ko8-jj1r.n7c.xano.io${path}`,
+        { method, headers: { Authorization: 'Bearer existing-token' } },
+      )
+      assert.equal(response.status, 200)
+    }
+    assert.equal(calls.length, mutationCases.length)
+  }
+
+  {
+    for (const hostname of [
+      'notthestarters.com',
+      'beta.thestarters.com',
+      'www.thestarters.com.example.org',
+      'thestarters.com.evil.test',
+    ]) {
+      const { window, localStorage, calls } = loadShim({ hostname })
+      assert.equal(window.__TS_EDIT_PROFILE_MODE__, 'read-only')
+      assert.equal(localStorage.getItem('editSubmit'), null)
+      const response = await window.fetch(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
+        { method: 'POST' },
+      )
+      assert.equal(response.status, 403)
+      assert.equal(calls.length, 0)
+    }
+  }
+
+  {
+    const { window, localStorage, calls } = loadShim({
+      hostname: 'THESTARTERS.COM',
+    })
+    assert.equal(window.__TS_EDIT_PROFILE_MODE__, 'live-write')
+    assert.equal(localStorage.getItem('editSubmit'), 'true')
     const response = await window.fetch(
       'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
       { method: 'POST' },

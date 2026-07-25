@@ -102,6 +102,40 @@ Run its focused test with:
 node --test v3/all-starters-favorites.test.js
 ```
 
+## Starter profile editing
+
+`../profile-image-auth-shim.js` is the interim auth and image-upload bridge for
+the V3 build-profile and edit-profile pages. On `/starter-edit-profile` (including
+nested paths), it derives the write mode from an exact, case-insensitive hostname
+allowlist:
+
+| Host | Mode | `localStorage.editSubmit` |
+| --- | --- | --- |
+| `thestarters.com`, `www.thestarters.com` | `live-write` | Set to `true` |
+| Webflow staging and every other hostname | `read-only` | Removed |
+
+The mode is also exposed as `window.__TS_EDIT_PROFILE_MODE__`. Failure to access
+local storage is logged but does not weaken the network gate.
+
+In read-only mode, the shim preserves `GET` and `HEAD` requests but rejects known
+non-read requests for the profile update, also-worked-with, profile-image,
+Companies, and Portfolio mutation families before they leave the browser. The
+synthetic response is HTTP `403` JSON with
+`code: "EDIT_PROFILE_READ_ONLY"`. This protects the production Xano, Webflow CMS,
+and Algolia projections shared by the staging site. The exact Live hosts pass
+those requests through. Other pages, including the V2 site, retain their existing
+behavior.
+
+Keep the existing inline `editSubmit` contract while this shim is installed; the
+shim owns its value. This browser gate is an environment safety control, not a
+replacement for authenticated, owner-scoped Xano authorization.
+
+Run its focused test with:
+
+```sh
+node profile-image-auth-shim.test.js
+```
+
 ## Onboarding tours
 
 `onboarding-tour.js` renders page-scoped product tours whose steps, copy,

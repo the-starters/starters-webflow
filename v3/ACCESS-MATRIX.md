@@ -89,6 +89,7 @@ separate owner:
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
 | Free Brand blurred/limited All Starters results | Page/list rendering and data response | Not enforced by the router |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |
+| `/starter-edit-profile` environment write mode | `profile-image-auth-shim.js` exact Live-host allowlist | Implemented; non-Live hosts block known mutations and preserve reads |
 | Mutations and private records | Xano authorization using authenticated member and role | Must be enforced server-side |
 | Paid-then-cancelled behavior | Memberstack subscription lifecycle + application role resolution | Decision required |
 
