@@ -4,6 +4,12 @@
         const modalSystem = ((window.lumos ??= {}).modal ??= {
             list: {}, open(id) { this.list[id]?.open?.(); }, closeAll() { Object.values(this.list).forEach((m) => { if (m.el?.open) m.close?.(); }); },
         });
+        // Reference-counted so overlapping lockers (modals, nav menu) never release each other's lock.
+        const scrollLock = ((window.lumos ??= {}).scrollLock ??= {
+            count: 0,
+            lock() { if (++this.count === 1) { typeof lenis !== "undefined" && lenis.stop ? lenis.stop() : (document.body.style.overflow = "hidden"); } },
+            unlock() { if (this.count > 0 && --this.count === 0) { typeof lenis !== "undefined" && lenis.start ? lenis.start() : (document.body.style.overflow = ""); } },
+        });
         function createModals() {
             document.querySelectorAll(".modal_dialog").forEach(function (modal) {
                 if (modal.dataset.scriptInitialized) return;
@@ -12,6 +18,8 @@
                 const modalId = modal.getAttribute("data-modal-target");
                 const variant = modal.getAttribute("data-wf--modal--variant");
                 let lastFocusedElement;
+                let isOpen = false;
+                let closeTimer = null;
     
                 if (typeof gsap !== "undefined") {
                     gsap.context(() => {
@@ -31,22 +39,35 @@
                     }, modal);
                 }
     
+                function clearCloseTimer() {
+                    if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+                }
+                // Idempotent: the reverse tween and the fallback timeout both race to call this.
                 function resetModal() {
-                    typeof lenis !== "undefined" && lenis.start ? lenis.start() : (document.body.style.overflow = "");
+                    clearCloseTimer();
+                    if (!isOpen) return;
+                    isOpen = false;
+                    scrollLock.unlock();
                     modal.close();
                     if (lastFocusedElement) lastFocusedElement.focus();
                     window.dispatchEvent(new CustomEvent("modal-close", { detail: { modal } }));
                 }
                 function openModal() {
-                    typeof lenis !== "undefined" && lenis.stop ? lenis.stop() : (document.body.style.overflow = "hidden");
+                    clearCloseTimer();
+                    if (!isOpen) { isOpen = true; scrollLock.lock(); }
                     lastFocusedElement = document.activeElement;
-                    modal.showModal();
+                    if (!modal.open) modal.showModal();
                     if (typeof gsap !== "undefined") modal.tl.play();
                     modal.querySelectorAll("[data-modal-scroll]").forEach((el) => (el.scrollTop = 0));
                     window.dispatchEvent(new CustomEvent("modal-open", { detail: { modal } }));
                 }
+                // The reverse tween is cosmetic only; the timeout guarantees the close even if it stalls or is killed.
                 function closeModal() {
-                    typeof gsap !== "undefined" ? modal.tl.reverse() : resetModal();
+                    if (!isOpen) return;
+                    if (typeof gsap === "undefined" || !modal.tl) return resetModal();
+                    if (closeTimer) return;
+                    modal.tl.reverse();
+                    closeTimer = setTimeout(resetModal, modal.tl.duration() * 1000 + 200);
                 }
     
                 if (new URLSearchParams(location.search).get("modal-id") === modalId) openModal(), history.replaceState({}, "", ((u) => (u.searchParams.delete("modal-id"), u))(new URL(location.href)));

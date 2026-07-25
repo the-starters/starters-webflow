@@ -77,7 +77,7 @@ Do not discard local changes unless the user explicitly asks.
 - `navbar-embeds/account-dropdown.css` — mobile profile dropdown open/close transitions with independent open/close durations
 - `navbar-embeds/transparent-nav-bg.css` — fills the transparent navbar background while the mobile menu is open (`[data-nav-menu-open]`)
 - `navbar-embeds/transparent-nav-bg.js` — fades in the `.nav_bg` layer on scroll for transparent navbar variants
-- `navbar-embeds/nav-menu.js` — mobile menu button (`#menu-btn`) toggles body scroll lock
+- `navbar-embeds/nav-menu.js` — mobile menu button (`#menu-btn`) toggles body scroll lock via the shared reference-counted `window.lumos.scrollLock` (also used by `global-embeds/modal/modal.js`, so an open modal and an open nav menu no longer release each other's lock)
 - `navbar-embeds/memberstack/free-paid-anon.js` — Memberstack navbar gating for free/paid/anonymous states (`data-gate`, `data-hide-if-both`), reveals via `.ms-nav-ready`
 - `navbar-embeds/memberstack/ms-code-field-link.js` — turns `[ms-code-field-link]` elements into external links from a Memberstack member custom field
 - `navbar-embeds/navbar-explore/explore-menu.css` — explore mega-menu base styles (hidden by default, chevron rotation, Designer preview)
