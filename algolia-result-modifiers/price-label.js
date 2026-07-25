@@ -33,13 +33,18 @@
     };
 
     const init = () => {
-      window.WfAlgolia.on('response', () => requestAnimationFrame(apply));
+      window.WfAlgolia.on('results', () => requestAnimationFrame(apply));
 
-      // Re-run whenever the results list mutates (covers async cloning / load-more)
+      // Re-run whenever the results list mutates (covers async cloning / load-more).
+      // Browse-first precedence (matches roles.js): the navbar search overlay's
+      // [wf-algolia-element="results"] precedes the browse grid in DOM order, so
+      // observing results-first watched the overlay and missed browse re-renders
+      // — apply() only ran when the overlay coincidentally mutated, leaving both
+      // price labels visible after a filter/sort.
       const observer = new MutationObserver(() => requestAnimationFrame(apply));
       const target =
-        document.querySelector('[wf-algolia-element="results"]') ||
         document.querySelector('[wf-algolia-element="browse"]') ||
+        document.querySelector('[wf-algolia-element="results"]') ||
         document.querySelector('.expert-card_item')?.parentElement ||
         document.body;
       observer.observe(target, { childList: true, subtree: true });

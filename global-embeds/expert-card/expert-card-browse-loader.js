@@ -61,12 +61,23 @@
  *   (e.g. fonts.ready during the initial load) would otherwise settle the
  *   session before cards render. The engine's double-fire, or a new engine
  *   loader-show during the wait, restarts the session rather than ending early.
+ * - Bounded image wait: after the layout settles, freshly revealed cards may
+ *   still have loading="lazy" photos that finish 1-1.5s later and visibly pop
+ *   in. So the settle-wait also waits for any not-yet-complete <img> in the list
+ *   to load/error, raced against a 1200ms timeout, before ending the session.
+ *   Each wait is stamped with a settle-attempt counter (bumped on session
+ *   begin/restart/end) so a stale image wait completing after a restart can
+ *   never end a newer session. The 6s ceiling still bounds everything.
+ * - Reveal fade: because the mask already zeroes opacity, showList adds an
+ *   `opacity 180ms ease` transition before clearing the mask (a free fade-in)
+ *   and clears the transition ~250ms later; hideList clears the transition
+ *   first so re-masking is always instant.
  * - Session end: only when BOTH the settle-wait completed AND the minimum
  *   display time elapsed — hide the loader, restore the list. "error" ends the
- *   session after min display without waiting for relayout:done. A 6s failsafe
- *   ceiling force-ends unconditionally. Every path is wrapped in try/catch and
- *   restores the list — it can never stay hidden (success, error, timeout,
- *   exception alike).
+ *   session after min display without waiting for relayout:done or images. A 6s
+ *   failsafe ceiling force-ends unconditionally. Every path is wrapped in
+ *   try/catch and restores the list — it can never stay hidden (success, error,
+ *   timeout, exception alike).
  * - The initial page-load query also shows the loader via the engine, which is
  *   desirable (it masks initial-load tweaking too). No arming logic is needed:
  *   the "results"/"error" events and the loader show/hide are emitted ONLY by
@@ -90,6 +101,7 @@
   var DEFAULT_MIN_MS = 200;
   var SETTLE_TIMEOUT_MS = 600; // relayout:done may never come (no expert-card.js)
   var SESSION_CEILING_MS = 6000; // hard failsafe: never mask longer than this
+  var IMAGE_WAIT_MS = 1200; // bounded wait for freshly revealed lazy card imgs
   var POLL_INTERVAL_MS = 100;
   var POLL_MAX_MS = 10000;
 
@@ -132,6 +144,9 @@
 
   function hideList() {
     try {
+      // Masking must be INSTANT — clear any leftover reveal transition first so
+      // the opacity 1->0 does not animate.
+      listEl.style.transition = '';
       // opacity composites the whole subtree (a descendant cannot override it,
       // unlike visibility); pointer-events blocks interaction with the masked
       // cards. See the header note for the descendant-punch-through bug.
@@ -145,9 +160,20 @@
 
   function showList() {
     try {
+      // Reveal is a fade for free: the mask already set opacity:0, so add an
+      // opacity transition BEFORE clearing the mask, then clear the transition
+      // ~250ms later (after it finishes) so it never affects the next mask.
+      listEl.style.transition = 'opacity 180ms ease';
       listEl.style.visibility = '';
       listEl.style.opacity = '';
       listEl.style.pointerEvents = '';
+      setTimeout(function () {
+        try {
+          listEl.style.transition = '';
+        } catch (e) {
+          /* never break the page */
+        }
+      }, 250);
     } catch (e) {
       /* never break the page */
     }
@@ -185,6 +211,7 @@
   var settleTimer = null;
   var settleRafScheduled = false;
   var settleArmed = false; // set only after the session's first "results"
+  var settleAttempt = 0; // bumped on begin/restart/end; stamps each settle wait
   var ceilingTimer = null;
 
   function clearSettleTimer() {
@@ -221,6 +248,48 @@
     setTimeout(run, ms);
   }
 
+  // Resolve `done` once, when every image in `imgs` has load/error-fired OR the
+  // timeout elapses — whichever comes first. Never throws; a hung/broken image
+  // can only delay up to `ms`. `imgs` is a plain array of not-yet-complete imgs.
+  function waitForImages(imgs, ms, done) {
+    var finished = false;
+    function finish() {
+      if (finished) return;
+      finished = true;
+      try {
+        done();
+      } catch (e) {
+        /* never break the page */
+      }
+    }
+    try {
+      if (!imgs || !imgs.length) {
+        finish();
+        return;
+      }
+      var remaining = imgs.length;
+      function onOne() {
+        remaining--;
+        if (remaining <= 0) finish();
+      }
+      imgs.forEach(function (img) {
+        try {
+          if (img.complete) {
+            onOne(); // finished between the pending-scan and now
+            return;
+          }
+          img.addEventListener('load', onOne, { once: true });
+          img.addEventListener('error', onOne, { once: true });
+        } catch (e) {
+          onOne(); // attach failed — count it so we never hang
+        }
+      });
+      setTimeout(finish, ms);
+    } catch (e) {
+      finish();
+    }
+  }
+
   /* END: only when BOTH the settle-wait completed AND min display elapsed. */
   function tryEndSession() {
     try {
@@ -246,6 +315,7 @@
       settleDone = false;
       settleRafScheduled = false;
       settleArmed = false;
+      settleAttempt++; // invalidate any in-flight settle/image wait
       clearSettleTimer();
       clearCeiling();
       hideLoader();
@@ -264,6 +334,7 @@
       settleDone = false;
       settleRafScheduled = false;
       settleArmed = false;
+      settleAttempt++; // new session owns a fresh settle attempt
       shownAt = Date.now();
       hideList();
       clearCeiling();
@@ -278,14 +349,31 @@
 
   /* SETTLE: wait for expert-cards:relayout:done (or timeout), then two rAFs
      raced against a short timeout — hidden tabs suspend rAF — to let the height
-     writes paint, then mark the settle-wait complete. */
+     writes paint, then a bounded wait for freshly revealed lazy card images
+     (so photos don't pop in 1-1.5s after the reveal), then mark the settle-wait
+     complete. Each wait is stamped with the current settleAttempt; a restart
+     (new results/loader-show) or an end bumps it, so a stale wait completing
+     later can never end a newer session. */
   function markSettled() {
     if (settleRafScheduled) return;
     settleRafScheduled = true;
+    var attempt = settleAttempt; // this settle attempt owns the wait
     afterFramesOrTimeout(function () {
-      if (!sessionActive) return;
-      settleDone = true;
-      tryEndSession();
+      if (!sessionActive || attempt !== settleAttempt) return;
+      var pending = [];
+      try {
+        var imgs = listEl.querySelectorAll('img');
+        for (var i = 0; i < imgs.length; i++) {
+          if (!imgs[i].complete) pending.push(imgs[i]);
+        }
+      } catch (e) {
+        /* never break the page */
+      }
+      waitForImages(pending, IMAGE_WAIT_MS, function () {
+        if (!sessionActive || attempt !== settleAttempt) return;
+        settleDone = true;
+        tryEndSession();
+      });
     }, 150);
   }
 
@@ -307,6 +395,7 @@
       settleArmed = true;
       settleDone = false;
       settleRafScheduled = false;
+      settleAttempt++; // restart: stale settle/image waits must not end us
       clearSettleTimer();
       settleTimer = setTimeout(function () {
         settleTimer = null;

@@ -72,13 +72,17 @@
 
       var runId = ++companyEqualizeRunId;
 
-      lists.forEach(function (el) {
-        el.style.minHeight = '';
-        el.style.maxHeight = '';
-      });
-
       afterFramesOrTimeout(function () {
         if (runId !== companyEqualizeRunId) return;
+
+        // Atomicity: clear + measure + apply MUST share one synchronous task so
+        // paint never observes the cleared (collapsed) heights. If the clear ran
+        // in an earlier task, the browser would paint 1-2 frames of collapsed
+        // lists — the visible "tweak for no reason" on visible relayouts (resize).
+        lists.forEach(function (el) {
+          el.style.minHeight = '';
+          el.style.maxHeight = '';
+        });
 
         var maxH = 0;
         lists.forEach(function (el) {
