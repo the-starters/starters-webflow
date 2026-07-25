@@ -45,6 +45,55 @@ logged-out visitor to `/quiz`; pending pre-signup quizzes and Memberstack
 failures do not redirect. `/all-starters` still awaits product confirmation that
 it is not a pre-signup funnel page.
 
+## Signup redirect marker
+
+`starters-ms-redirect.js` lets a signup modal redirect back to the page it was
+opened from, which Webflow's native form Redirect URL cannot do because that
+field is one static value per form and cannot bind to a CMS item or a component
+prop. The page carries the target on a hidden marker element, and the module
+copies it onto every `form[data-ms-form="signup"]` as both `redirect` and
+`data-redirect` before Memberstack's `initSignupForms()` reads the attribute.
+`redirect` is the attribute Memberstack reads at submit time, so it also covers
+keyboard-only submits that the click-armed `data-ms-redirect` override misses.
+
+Install it in the footer of any page that hosts the signup modal (or sitewide):
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starters-ms-redirect.js"></script>
+```
+
+Webflow markup contract — one hidden marker per page, CMS-bindable on a
+collection template so every item redirects to itself:
+
+```html
+<div hidden starters-ms-redirect="/hire/some-slug?modal-id=signup-modal"></div>
+```
+
+The value is used verbatim, so `?modal-id=signup-modal` survives the redirect and
+the site's `modal.js` reopens the modal on the reloaded page. A
+`starters-ms-redirect` attribute on the form itself overrides the page marker and
+belongs to that form alone — it is never used as the page default for a second
+signup form. A form that already has a non-empty `redirect` value is left
+untouched, so Designer-set Redirect URLs still win.
+
+Accepted values are root-relative same-origin paths. A value must start with `/`,
+must not start with `//` or `/\` (both protocol-relative, so both leave the
+site), and must contain no ASCII control characters — the URL parser strips tab,
+LF and CR before parsing, so `/<tab>/evil.example` would otherwise resolve to
+`https://evil.example/`. Anything else is ignored, with a warning on staging
+hosts only (`*.webflow.io`, localhost, `127.0.0.1`, `*.trycloudflare.com`, or
+`window.STARTERS_DEBUG === true`). Signup forms injected after
+`DOMContentLoaded` are out of scope — call `window.StartersMsRedirect.apply()`
+after injecting one. The behaviour is demonstrated end to end, including the
+attribute-versus-Memberstack race timing, in
+`local-demos/signup-modal-memberstack/redirect-script.html`.
+
+Run its focused test with:
+
+```sh
+node --test v3/starters-ms-redirect.test.js
+```
+
 ## All Starters favorites
 
 `all-starters-favorites.js` decorates Starter favourite controls and binds the
