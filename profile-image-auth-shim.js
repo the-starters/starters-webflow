@@ -27,9 +27,12 @@
  *
  * 2026-07-25 (child-record auth): extends the same header-only bridge to
  * Companies and Portfolio mutations used by `/starter-edit-profile`. Request
- * bodies and methods stay untouched. Injection fails open when there is no
- * Memberstack session (the server returns 401) and retries once on a stale
- * cached Xano token.
+ * bodies, methods, and other options stay untouched. Only non-GET/HEAD,
+ * unauthenticated string-URL calls to exact paths on the Xano origin qualify;
+ * Request objects and other origins pass through. Concurrent calls share one
+ * token trade, the token is cached for the page, injection fails open when
+ * there is no Memberstack session (the server returns 401), and a stale token
+ * is invalidated and retraded once.
  *
  * 2026-07-25 (V3 production profile editing): `/starter-edit-profile` is
  * writable only on the two Live Memberstack hosts. The Webflow staging host
