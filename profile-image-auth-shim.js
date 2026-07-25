@@ -22,12 +22,14 @@
  * untouched, so the shim is safe to load on any page.
  *
  * 2026-07-20 (Phase-2 writer cutover): ALSO injects the Authorization header
- * into the profile-update family (build_profile/starter/update,
- * edit_profile/update/*, starter/get, starter/set_also_worked_with,
- * edit_profile/starter/get_also_worked_with) so the endpoints can be
- * auth-gated server-side without waiting on the inline page code. Header-only
- * injection (body/method untouched), fail-open when there is no Memberstack
- * session, one automatic retry on 401 (stale cached token).
+ * into the profile-update family so those endpoints can be auth-gated
+ * server-side without waiting on the inline page code.
+ *
+ * 2026-07-25 (child-record auth): extends the same header-only bridge to
+ * Companies and Portfolio mutations used by `/starter-edit-profile`. Request
+ * bodies and methods stay untouched. Injection fails open when there is no
+ * Memberstack session (the server returns 401) and retries once on a stale
+ * cached Xano token.
  *
  * 2026-07-25 (V3 production profile editing): `/starter-edit-profile` is
  * writable only on the two Live Memberstack hosts. The Webflow staging host
@@ -70,13 +72,23 @@
     '/api:PmBJV0AG/Delete_portfolio_image',
     '/api:PmBJV0AG/Delete_portfolio_video',
   ]
-  // Profile-update family: inject the Bearer header only (no body rework).
+  // Profile and owned child-record family: Bearer header only (no body rework).
   const AUTH_INJECT_PATHS = [
     '/api:KZf7nFnk/build_profile/starter/update',
     '/api:KZf7nFnk/edit_profile/update/',
     '/api:KZf7nFnk/starter/get',
     '/api:KZf7nFnk/starter/set_also_worked_with',
     '/api:KZf7nFnk/edit_profile/starter/get_also_worked_with',
+    '/api:SYL06lUR/companies',
+    '/api:PmBJV0AG/Create_portfolio',
+    '/api:PmBJV0AG/Update_portfolio',
+    '/api:PmBJV0AG/Delete_portfolio',
+    '/api:PmBJV0AG/upload-image',
+    '/api:PmBJV0AG/Add_portfolio_image',
+    '/api:PmBJV0AG/upload-video',
+    '/api:PmBJV0AG/Add_portfolio_video',
+    '/api:PmBJV0AG/Delete_portfolio_image',
+    '/api:PmBJV0AG/Delete_portfolio_video',
   ]
   const XANO_AUTH_URL =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh/auth/trade-token/v3'
@@ -267,12 +279,14 @@
       return readOnlyResponse(url)
     }
 
-    // Profile-update family: add the Bearer header, touch nothing else.
+    // Profile/child-record family: add the Bearer header, touch nothing else.
     // Only for plain string-URL calls (all three pages use fetch(url, opts));
     // Request-object inputs pass through untouched.
     if (
       typeof input === 'string' &&
       matchesInjectPath(url) &&
+      method !== 'GET' &&
+      method !== 'HEAD' &&
       !hasAuthHeader(input, init)
     ) {
       return injectAuth(input, init, originalFetch, url)

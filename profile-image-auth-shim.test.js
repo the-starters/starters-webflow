@@ -42,13 +42,25 @@ function loadShim({
   hostname,
   pathname = '/starter-edit-profile',
   localStorage = createStorage({ editSubmit: 'stale-value' }),
+  memberstackToken = 'memberstack-token',
 }) {
   const calls = []
   const window = {
     location: { hostname, pathname },
     localStorage,
+    $memberstackDom: {
+      async getMemberCookie() {
+        return memberstackToken
+      },
+    },
     fetch: async (input, init) => {
       calls.push({ input, init })
+      if (String(input).includes('/auth/trade-token/v3')) {
+        return new Response(JSON.stringify({ authToken: 'xano-token' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
       return new Response('{}', { status: 200 })
     },
   }
@@ -164,6 +176,33 @@ async function run() {
   }
 
   {
+    const authInjectionCases = mutationCases.filter(
+      ([path]) =>
+        path.includes('/api:SYL06lUR/companies') ||
+        path.includes('/api:PmBJV0AG/'),
+    )
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    for (const [path, method] of authInjectionCases) {
+      const response = await window.fetch(
+        `https://x08a-5ko8-jj1r.n7c.xano.io${path}`,
+        { method },
+      )
+      assert.equal(response.status, 200)
+    }
+    const tradeCalls = calls.filter(({ input }) =>
+      String(input).includes('/auth/trade-token/v3'),
+    )
+    assert.equal(tradeCalls.length, 1)
+    const mutationCalls = calls.filter(
+      ({ input }) => !String(input).includes('/auth/trade-token/v3'),
+    )
+    assert.equal(mutationCalls.length, authInjectionCases.length)
+    for (const { init } of mutationCalls) {
+      assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer xano-token')
+    }
+  }
+
+  {
     for (const hostname of [
       'notthestarters.com',
       'beta.thestarters.com',
@@ -193,7 +232,11 @@ async function run() {
       { method: 'POST' },
     )
     assert.equal(response.status, 200)
-    assert.equal(calls.length, 1)
+    assert.equal(calls.length, 2)
+    assert.equal(
+      new Headers(calls[1].init.headers).get('Authorization'),
+      'Bearer xano-token',
+    )
   }
 
   {
@@ -208,7 +251,11 @@ async function run() {
       { method: 'POST' },
     )
     assert.equal(response.status, 200)
-    assert.equal(calls.length, 1)
+    assert.equal(calls.length, 2)
+    assert.equal(
+      new Headers(calls[1].init.headers).get('Authorization'),
+      'Bearer xano-token',
+    )
   }
 }
 
