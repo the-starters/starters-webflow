@@ -319,7 +319,7 @@
    * `display: contents` is the exception: Webflow's `display-contents` class makes an
    * element generate no box of its own while its children render normally, so it
    * counts as rendered when anything inside it does (same rule as isHidden() in
-   * v3/hide-empty-sections.js).
+   * utils/hide-empty-sections.js).
    * @param {HTMLElement|null} element
    * @returns {boolean}
    */
