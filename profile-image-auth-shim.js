@@ -29,6 +29,13 @@
  * injection (body/method untouched), fail-open when there is no Memberstack
  * session, one automatic retry on 401 (stale cached token).
  *
+ * 2026-07-25 (V3 production profile editing): `/starter-edit-profile` is
+ * writable only on the two Live Memberstack hosts. The Webflow staging host
+ * shares the production Xano/Webflow/Algolia backends, so the shim keeps that
+ * page read-only by rejecting its mutation requests before they leave the
+ * browser. The existing inline form uses the `editSubmit` localStorage flag;
+ * this shim now owns that compatibility flag from the hostname allowlist.
+ *
  * ⏳ Interim bridge: remove once the pages' own code adopts the contract
  * (photo: photo-migration/build-profile-wizard-AUTH-PATCH-20260714.md;
  * updates: product-workflows/freelancer-profiles/
@@ -46,6 +53,23 @@
   }
 
   const ENDPOINT_PATH = '/api:KZf7nFnk/build_profile/starter/profile_image'
+  const EDIT_PROFILE_PATH = '/starter-edit-profile'
+  const LIVE_EDIT_HOSTS = ['thestarters.com', 'www.thestarters.com']
+  const EDIT_PROFILE_MUTATION_PATHS = [
+    '/api:KZf7nFnk/edit_profile/update/',
+    '/api:KZf7nFnk/starter/set_also_worked_with',
+    '/api:KZf7nFnk/build_profile/starter/profile_image',
+    '/api:SYL06lUR/companies',
+    '/api:PmBJV0AG/Create_portfolio',
+    '/api:PmBJV0AG/Update_portfolio',
+    '/api:PmBJV0AG/Delete_portfolio',
+    '/api:PmBJV0AG/upload-image',
+    '/api:PmBJV0AG/Add_portfolio_image',
+    '/api:PmBJV0AG/upload-video',
+    '/api:PmBJV0AG/Add_portfolio_video',
+    '/api:PmBJV0AG/Delete_portfolio_image',
+    '/api:PmBJV0AG/Delete_portfolio_video',
+  ]
   // Profile-update family: inject the Bearer header only (no body rework).
   const AUTH_INJECT_PATHS = [
     '/api:KZf7nFnk/build_profile/starter/update',
@@ -59,6 +83,29 @@
   const MAX_DIMENSION = 800 // px, longest side after resize
   const JPEG_QUALITY = 0.8
   const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 // server precondition
+
+  /* ===================== DOMAIN WRITE MODE ======================= */
+  const hostname = String(window.location.hostname || '').toLowerCase()
+  const pathname = String(window.location.pathname || '')
+  const isEditProfilePage =
+    pathname === EDIT_PROFILE_PATH || pathname.indexOf(EDIT_PROFILE_PATH + '/') === 0
+  const isLiveEditHost = LIVE_EDIT_HOSTS.indexOf(hostname) !== -1
+
+  if (isEditProfilePage) {
+    window.__TS_EDIT_PROFILE_MODE__ = isLiveEditHost ? 'live-write' : 'read-only'
+    try {
+      if (isLiveEditHost) {
+        window.localStorage.setItem('editSubmit', 'true')
+      } else {
+        window.localStorage.removeItem('editSubmit')
+      }
+    } catch {
+      log('editSubmit compatibility storage unavailable')
+    }
+    if (!isLiveEditHost) {
+      log('read-only mode on non-Live host', hostname || '(empty hostname)')
+    }
+  }
 
   /* ========================= AUTH BRIDGE ========================== */
   let _xanoToken = null
@@ -144,6 +191,39 @@
     return false
   }
 
+  function matchesEditProfileMutation(url) {
+    for (let i = 0; i < EDIT_PROFILE_MUTATION_PATHS.length; i++) {
+      if (url.indexOf(EDIT_PROFILE_MUTATION_PATHS[i]) !== -1) return true
+    }
+    return false
+  }
+
+  function blockedStagingMutation(url, method) {
+    return (
+      isEditProfilePage &&
+      !isLiveEditHost &&
+      method !== 'GET' &&
+      method !== 'HEAD' &&
+      matchesEditProfileMutation(url)
+    )
+  }
+
+  function readOnlyResponse(url) {
+    log('blocked profile mutation in read-only mode', url)
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          message: 'Profile editing is disabled on this non-production domain.',
+          code: 'EDIT_PROFILE_READ_ONLY',
+        }),
+        {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    )
+  }
+
   function withAuthHeader(init, token) {
     const next = Object.assign({}, init)
     const headers = new Headers((init && init.headers) || undefined)
@@ -181,6 +261,11 @@
 
   window.fetch = function (input, init) {
     const url = requestUrl(input)
+    const method = requestMethod(input, init)
+
+    if (blockedStagingMutation(url, method)) {
+      return readOnlyResponse(url)
+    }
 
     // Profile-update family: add the Bearer header, touch nothing else.
     // Only for plain string-URL calls (all three pages use fetch(url, opts));
@@ -195,7 +280,7 @@
 
     if (
       url.indexOf(ENDPOINT_PATH) === -1 ||
-      requestMethod(input, init) !== 'POST' ||
+      method !== 'POST' ||
       hasAuthHeader(input, init)
     ) {
       return originalFetch(input, init)

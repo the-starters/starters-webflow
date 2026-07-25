@@ -51,6 +51,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
 - `v3/onboarding-tour.js` — attribute-driven V3 product tours with highlight and disclosure overrides, role targeting, per-member seen-state, and replay/reset controls
 - `v3/all-starters-favorites.js` — paid-Brand favourites controls and Designer-built All/Favourites filtering for `/all-starters`, backed by sitewide `wf-xano` and `wf-algolia`
+- `profile-image-auth-shim.js` — interim V3 profile auth/image bridge; enables `/starter-edit-profile` writes only on the exact Live hosts and blocks known edit mutations on non-Live hosts
 - `v3/scheduling-auth.js` — staging-only availability and scheduling authentication bridge
 - `v3/scheduling-availability-init.js` — staging-only booking-stage availability control initializer
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
