@@ -1,0 +1,68 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/section-custom-toc */
+
+/* Structural only. Visual design (colors, spacing, type, active styling) belongs
+   in Webflow classes — everything here is the minimum needed to make the bar
+   scroll, center, and not clip. */
+
+/* The bar itself: a horizontal scroller with no visible scrollbar.
+   overflow-y is pinned to hidden so a stray vertical scrollbar can never appear
+   in a single-row bar (note: any non-visible overflow clips vertically, so keep
+   active indicators inside the bar's box). */
+[data-toc-element='wrapper'] {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+[data-toc-element='wrapper']::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}
+
+/* Default: a LEFT-ALIGNED strip, matching the filter-tabs embed's UX.
+   `width: max-content` shrink-wraps the list to its links — required by the
+   centering opt-in below, and harmless here. */
+[data-toc-element='list'] {
+  display: flex;
+  width: max-content;
+  min-width: max-content;
+}
+
+/* Opt-in centering, per page: put `data-toc-align="center"` on the wrapper.
+   `margin-inline: auto` splits the leftover space in the bar, which only exists
+   because the list is shrink-wrapped by `width: max-content` above — a
+   block-level list would fill the wrapper's content box and both auto margins
+   would resolve to 0 (`min-width` alone only sets a floor, it never shrinks the
+   box). Once the links exceed the bar, max-content is wider than the wrapper, the
+   auto margins collapse to 0, and the bar falls back to a left-aligned scroller
+   with nothing clipped.
+   Do NOT swap this for `justify-content: center` on the wrapper — that clips the
+   left edge when the links overflow. No JS resize logic needed. */
+[data-toc-element='wrapper'][data-toc-align='center'] [data-toc-element='list'] {
+  margin-inline: auto;
+}
+
+[data-toc-element='link'] {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+/* Default active state — deliberately minimal (single specificity, inherits
+   color) so any Webflow class can override it. Real styling goes in Webflow. */
+[data-toc-active='true'] {
+  /* text-decoration: underline; */
+  /* text-decoration-color: currentColor; */
+  /* text-underline-offset: 0.25em; */
+  background-color: var(--_colors---fill--primary);
+}
+
+/* JS already passes behavior:'auto' when reduced motion is requested; this covers
+   any smooth scrolling inherited from site-wide CSS. */
+@media (prefers-reduced-motion: reduce) {
+  [data-toc-element='wrapper'] {
+    scroll-behavior: auto;
+  }
+}
