@@ -22,12 +22,17 @@
  * untouched, so the shim is safe to load on any page.
  *
  * 2026-07-20 (Phase-2 writer cutover): ALSO injects the Authorization header
- * into the profile-update family (build_profile/starter/update,
- * edit_profile/update/*, starter/get, starter/set_also_worked_with,
- * edit_profile/starter/get_also_worked_with) so the endpoints can be
- * auth-gated server-side without waiting on the inline page code. Header-only
- * injection (body/method untouched), fail-open when there is no Memberstack
- * session, one automatic retry on 401 (stale cached token).
+ * into the profile-update family so those endpoints can be auth-gated
+ * server-side without waiting on the inline page code.
+ *
+ * 2026-07-25 (child-record auth): extends the same header-only bridge to
+ * Companies and Portfolio mutations used by `/starter-edit-profile`. Request
+ * bodies, methods, and other options stay untouched. Only non-GET/HEAD,
+ * unauthenticated string-URL calls to exact paths on the Xano origin qualify;
+ * Request objects and other origins pass through. Concurrent calls share one
+ * token trade, the token is cached for the page, injection fails open when
+ * there is no Memberstack session (the server returns 401), and a stale token
+ * is invalidated and retraded once.
  *
  * 2026-07-25 (V3 production profile editing): `/starter-edit-profile` is
  * writable only on the two Live Memberstack hosts. The Webflow staging host
@@ -70,16 +75,27 @@
     '/api:PmBJV0AG/Delete_portfolio_image',
     '/api:PmBJV0AG/Delete_portfolio_video',
   ]
-  // Profile-update family: inject the Bearer header only (no body rework).
+  // Profile and owned child-record family: Bearer header only (no body rework).
   const AUTH_INJECT_PATHS = [
     '/api:KZf7nFnk/build_profile/starter/update',
     '/api:KZf7nFnk/edit_profile/update/',
     '/api:KZf7nFnk/starter/get',
     '/api:KZf7nFnk/starter/set_also_worked_with',
     '/api:KZf7nFnk/edit_profile/starter/get_also_worked_with',
+    '/api:SYL06lUR/companies',
+    '/api:PmBJV0AG/Create_portfolio',
+    '/api:PmBJV0AG/Update_portfolio',
+    '/api:PmBJV0AG/Delete_portfolio',
+    '/api:PmBJV0AG/upload-image',
+    '/api:PmBJV0AG/Add_portfolio_image',
+    '/api:PmBJV0AG/upload-video',
+    '/api:PmBJV0AG/Add_portfolio_video',
+    '/api:PmBJV0AG/Delete_portfolio_image',
+    '/api:PmBJV0AG/Delete_portfolio_video',
   ]
   const XANO_AUTH_URL =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh/auth/trade-token/v3'
+  const XANO_ORIGIN = new URL(XANO_AUTH_URL).origin
   const MAX_DIMENSION = 800 // px, longest side after resize
   const JPEG_QUALITY = 0.8
   const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 // server precondition
@@ -109,23 +125,42 @@
 
   /* ========================= AUTH BRIDGE ========================== */
   let _xanoToken = null
+  let _xanoTokenPromise = null
 
   async function ensureXanoToken(fetchFn) {
     if (_xanoToken) return _xanoToken
-    const ms = window.$memberstackDom
-    if (!ms) throw new Error('Memberstack not available')
-    const msToken = await ms.getMemberCookie()
-    if (!msToken) throw new Error('No Memberstack session (member not logged in)')
-    const res = await fetchFn(
-      `${XANO_AUTH_URL}?token=${encodeURIComponent(msToken)}`,
-    )
-    const data = await res.json().catch(() => null)
-    if (!res.ok) {
-      throw Object.assign(new Error('trade-token failed'), { status: res.status, data })
+    if (_xanoTokenPromise) return _xanoTokenPromise
+
+    const tradePromise = (async () => {
+      const ms = window.$memberstackDom
+      if (!ms) throw new Error('Memberstack not available')
+      const msToken = await ms.getMemberCookie()
+      if (!msToken) throw new Error('No Memberstack session (member not logged in)')
+      const res = await fetchFn(
+        `${XANO_AUTH_URL}?token=${encodeURIComponent(msToken)}`,
+      )
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        throw Object.assign(new Error('trade-token failed'), { status: res.status, data })
+      }
+      _xanoToken =
+        typeof data === 'string' ? data : data && (data.authToken || data.token)
+      if (!_xanoToken) throw new Error('trade-token returned no token')
+      return _xanoToken
+    })()
+    _xanoTokenPromise = tradePromise
+
+    try {
+      return await tradePromise
+    } finally {
+      if (_xanoTokenPromise === tradePromise) _xanoTokenPromise = null
     }
-    _xanoToken = typeof data === 'string' ? data : data && (data.authToken || data.token)
-    if (!_xanoToken) throw new Error('trade-token returned no token')
-    return _xanoToken
+  }
+
+  function invalidateXanoToken(token) {
+    if (_xanoToken !== token) return
+    _xanoToken = null
+    _xanoTokenPromise = null
   }
 
   /* ========================== RESIZE ============================== */
@@ -184,16 +219,25 @@
   }
 
   /* ==================== AUTH-ONLY INJECTION ======================= */
-  function matchesInjectPath(url) {
-    for (let i = 0; i < AUTH_INJECT_PATHS.length; i++) {
-      if (url.indexOf(AUTH_INJECT_PATHS[i]) !== -1) return true
+  function xanoPathname(url) {
+    try {
+      const parsed = new URL(url, window.location.origin)
+      return parsed.origin === XANO_ORIGIN ? parsed.pathname : null
+    } catch {
+      return null
     }
-    return false
   }
 
-  function matchesEditProfileMutation(url) {
-    for (let i = 0; i < EDIT_PROFILE_MUTATION_PATHS.length; i++) {
-      if (url.indexOf(EDIT_PROFILE_MUTATION_PATHS[i]) !== -1) return true
+  function matchesXanoPath(url, paths) {
+    const pathname = xanoPathname(url)
+    if (!pathname) return false
+    for (let i = 0; i < paths.length; i++) {
+      if (
+        pathname === paths[i] ||
+        (paths[i].endsWith('/') && pathname.indexOf(paths[i]) === 0)
+      ) {
+        return true
+      }
     }
     return false
   }
@@ -204,7 +248,7 @@
       !isLiveEditHost &&
       method !== 'GET' &&
       method !== 'HEAD' &&
-      matchesEditProfileMutation(url)
+      matchesXanoPath(url, EDIT_PROFILE_MUTATION_PATHS)
     )
   }
 
@@ -245,7 +289,7 @@
     let res = await originalFetch(input, withAuthHeader(init, token))
     if (res.status === 401) {
       // stale cached token — retrade once and retry
-      _xanoToken = null
+      invalidateXanoToken(token)
       try {
         token = await ensureXanoToken(originalFetch)
         res = await originalFetch(input, withAuthHeader(init, token))
@@ -267,19 +311,21 @@
       return readOnlyResponse(url)
     }
 
-    // Profile-update family: add the Bearer header, touch nothing else.
+    // Profile/child-record family: add the Bearer header, touch nothing else.
     // Only for plain string-URL calls (all three pages use fetch(url, opts));
     // Request-object inputs pass through untouched.
     if (
       typeof input === 'string' &&
-      matchesInjectPath(url) &&
+      matchesXanoPath(url, AUTH_INJECT_PATHS) &&
+      method !== 'GET' &&
+      method !== 'HEAD' &&
       !hasAuthHeader(input, init)
     ) {
       return injectAuth(input, init, originalFetch, url)
     }
 
     if (
-      url.indexOf(ENDPOINT_PATH) === -1 ||
+      !matchesXanoPath(url, [ENDPOINT_PATH]) ||
       method !== 'POST' ||
       hasAuthHeader(input, init)
     ) {
@@ -314,7 +360,7 @@
         headers: { Authorization: `Bearer ${token}` },
         body: outgoing,
       })
-      if (res.status === 401) _xanoToken = null // stale token — retrade next time
+      if (res.status === 401) invalidateXanoToken(token)
       log('upload response', res.status)
       // Inline edit-profile uploader is a click-driven fetch (not a native WF
       // submit), so the sitewide posthog-track.js form hook can't see it —

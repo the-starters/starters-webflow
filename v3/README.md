@@ -123,8 +123,24 @@ Companies, and Portfolio mutation families before they leave the browser. The
 synthetic response is HTTP `403` JSON with
 `code: "EDIT_PROFILE_READ_ONLY"`. This protects the production Xano, Webflow CMS,
 and Algolia projections shared by the staging site. The exact Live hosts pass
-those requests through. Other pages, including the V2 site, retain their existing
-behavior.
+those requests to the authentication bridge.
+
+For unauthenticated string-URL mutations in the profile-update,
+also-worked-with, Companies, and Portfolio families, the bridge trades the
+current Memberstack JWT for a Xano `user_v3` token and adds only the
+`Authorization: Bearer <token>` header. The child-record scope is the exact
+Companies endpoint plus the create, update, delete, image upload/add/delete, and
+video upload/add/delete Portfolio endpoints used by the page. The bridge
+preserves the request method, body, and other options, shares one in-flight token
+trade across concurrent requests, caches the token for the page, and on a `401`
+invalidates that token and retries the mutation once after a fresh trade.
+
+The profile-image endpoint retains its separate image resize and request cleanup
+behavior described by the shim. A missing Memberstack session or failed initial
+trade leaves a header-only request unchanged so Xano owns the unauthenticated
+response. Requests that already carry authorization, `GET`/`HEAD` calls,
+`Request`-object inputs, non-Xano origins, and unmatched paths pass through
+untouched. Other pages, including the V2 site, retain their existing behavior.
 
 Keep the existing inline `editSubmit` contract while this shim is installed; the
 shim owns its value. This browser gate is an environment safety control, not a
