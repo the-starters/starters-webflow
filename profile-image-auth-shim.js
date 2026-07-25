@@ -27,9 +27,9 @@
  *
  * 2026-07-25 (child-record auth): extends the same header-only bridge to
  * Companies and Portfolio mutations used by `/starter-edit-profile`. Request
- * bodies, methods, and other options stay untouched. Only non-GET/HEAD,
- * unauthenticated string-URL calls to exact paths on the Xano origin qualify;
- * Request objects and other origins pass through. Concurrent calls share one
+ * bodies, methods, and other options stay untouched. Non-GET/HEAD,
+ * unauthenticated string-URL and Request-object calls to exact paths on the
+ * Xano origin qualify; other origins pass through. Concurrent calls share one
  * token trade, the token is cached for the page, injection fails open when
  * there is no Memberstack session (the server returns 401), and a stale token
  * is invalidated and retraded once.
@@ -65,6 +65,7 @@
     '/api:KZf7nFnk/starter/set_also_worked_with',
     '/api:KZf7nFnk/build_profile/starter/profile_image',
     '/api:SYL06lUR/companies',
+    '/api:SYL06lUR/companies/',
     '/api:PmBJV0AG/Create_portfolio',
     '/api:PmBJV0AG/Update_portfolio',
     '/api:PmBJV0AG/Delete_portfolio',
@@ -83,6 +84,7 @@
     '/api:KZf7nFnk/starter/set_also_worked_with',
     '/api:KZf7nFnk/edit_profile/starter/get_also_worked_with',
     '/api:SYL06lUR/companies',
+    '/api:SYL06lUR/companies/',
     '/api:PmBJV0AG/Create_portfolio',
     '/api:PmBJV0AG/Update_portfolio',
     '/api:PmBJV0AG/Delete_portfolio',
@@ -312,10 +314,11 @@
     }
 
     // Profile/child-record family: add the Bearer header, touch nothing else.
-    // Only for plain string-URL calls (all three pages use fetch(url, opts));
-    // Request-object inputs pass through untouched.
+    // Supports both fetch(url, opts) and fetch(Request). The latter is used by
+    // the inline work-history update/delete handlers on starter-edit-profile.
+    // injectAuth adds an init-level header, so the Request method/body remain
+    // untouched by the Fetch API.
     if (
-      typeof input === 'string' &&
       matchesXanoPath(url, AUTH_INJECT_PATHS) &&
       method !== 'GET' &&
       method !== 'HEAD' &&

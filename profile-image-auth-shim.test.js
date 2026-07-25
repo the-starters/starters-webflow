@@ -12,6 +12,8 @@ const mutationCases = [
   ['/api:KZf7nFnk/starter/set_also_worked_with', 'POST'],
   ['/api:KZf7nFnk/build_profile/starter/profile_image', 'POST'],
   ['/api:SYL06lUR/companies', 'POST'],
+  ['/api:SYL06lUR/companies/1', 'PATCH'],
+  ['/api:SYL06lUR/companies/1', 'DELETE'],
   ['/api:PmBJV0AG/Create_portfolio', 'POST'],
   ['/api:PmBJV0AG/Update_portfolio', 'PATCH'],
   ['/api:PmBJV0AG/Delete_portfolio', 'DELETE'],
@@ -200,6 +202,41 @@ async function run() {
       ({ input }) => !String(input).includes('/auth/trade-token/v3'),
     )
     assert.equal(mutationCalls.length, authInjectionCases.length)
+    for (const { init } of mutationCalls) {
+      assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer xano-token')
+    }
+  }
+
+  {
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    const requestCases = [
+      new Request(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_title: 'Temporary QA Edited' }),
+        },
+      ),
+      new Request(
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies/1',
+        { method: 'DELETE' },
+      ),
+    ]
+    for (const request of requestCases) {
+      const response = await window.fetch(request)
+      assert.equal(response.status, 200)
+    }
+    const tradeCalls = calls.filter(({ input }) =>
+      String(input).includes('/auth/trade-token/v3'),
+    )
+    assert.equal(tradeCalls.length, 1)
+    const mutationCalls = calls.filter(
+      ({ input }) => !String(input).includes('/auth/trade-token/v3'),
+    )
+    assert.equal(mutationCalls.length, requestCases.length)
+    assert.equal(mutationCalls[0].input.method, 'PATCH')
+    assert.equal(mutationCalls[1].input.method, 'DELETE')
     for (const { init } of mutationCalls) {
       assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer xano-token')
     }
