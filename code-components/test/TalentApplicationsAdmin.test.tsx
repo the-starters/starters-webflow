@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { TalentApplicationsAdmin } from '../src/TalentApplicationsAdmin'
 
@@ -65,4 +65,105 @@ it('reviews an application through an allowed transition', async () => {
       next_status: 'under_review',
     })
   })
+})
+
+it('keeps the newest filter result when requests resolve out of order', async () => {
+  let resolveReview: ((response: Response) => void) | undefined
+  let reviewRequested = false
+  const reviewResponse = new Promise<Response>((resolve) => {
+    resolveReview = resolve
+  })
+  vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      const status = JSON.parse(String(init?.body)).status
+      if (status === 'under_review') {
+        reviewRequested = true
+        return reviewResponse
+      }
+      if (status === 'approved') {
+        return jsonResponse({
+          items: [{
+            id: 2,
+            applicant_name: 'Newest Result',
+            status: 'approved',
+            created_at: 1,
+          }],
+        })
+      }
+      return jsonResponse({ items: [] })
+    }
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  await screen.findByText('No applications match this view.')
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'under_review' } })
+  await waitFor(() => expect(reviewRequested).toBe(true))
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'approved' } })
+  expect(await screen.findByText('Newest Result')).toBeInTheDocument()
+
+  await act(async () => {
+    resolveReview?.(jsonResponse({
+      items: [{
+        id: 1,
+        applicant_name: 'Stale Result',
+        status: 'under_review',
+        created_at: 1,
+      }],
+    }))
+    await reviewResponse
+  })
+
+  expect(screen.getByText('Newest Result')).toBeInTheDocument()
+  expect(screen.queryByText('Stale Result')).not.toBeInTheDocument()
+})
+
+it('reports a synchronization error after a successful transition', async () => {
+  let detailCalls = 0
+  vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Sample Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      detailCalls += 1
+      if (detailCalls > 1) return jsonResponse({ message: 'Readback failed' }, 500)
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Sample Applicant',
+          status: 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) {
+      return jsonResponse({ id: 12, status: 'under_review' })
+    }
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Sample Applicant'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Under review' }))
+
+  expect(await screen.findByText(
+    'Application updated, but the latest data could not be reloaded. Refresh before continuing.',
+  )).toBeInTheDocument()
+  expect(screen.queryByText(/Unable to update the application/i)).not.toBeInTheDocument()
 })

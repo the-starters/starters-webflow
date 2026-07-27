@@ -94,18 +94,30 @@ export function TalentApplicationsAdmin({
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState('')
+  const refreshRequest = React.useRef(0)
+  const detailRequest = React.useRef(0)
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (): Promise<boolean> => {
+    const request = ++refreshRequest.current
     setLoading(true)
     setError('')
     try {
       await api.session()
       const page = await api.list(filter === 'all' ? undefined : filter)
-      setApplications(Array.isArray(page.items) ? page.items : [])
+      if (request === refreshRequest.current) {
+        setApplications(Array.isArray(page.items) ? page.items : [])
+      }
+      return true
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Unable to load applications.')
+      if (request === refreshRequest.current) {
+        setError(nextError instanceof Error ? nextError.message : 'Unable to load applications.')
+        return false
+      }
+      return true
     } finally {
-      setLoading(false)
+      if (request === refreshRequest.current) {
+        setLoading(false)
+      }
     }
   }, [api, filter])
 
@@ -114,14 +126,18 @@ export function TalentApplicationsAdmin({
   }, [refresh])
 
   async function openApplication(application: Application) {
+    const request = ++detailRequest.current
     setError('')
     try {
       const detail = await api.detail(application.id)
+      if (request !== detailRequest.current) return
       setSelected(detail)
       setNotes(detail.application.review_notes || '')
       setInterviewUrl(detail.application.interview_url || '')
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : 'Unable to load the application.')
+      if (request === detailRequest.current) {
+        setError(nextError instanceof Error ? nextError.message : 'Unable to load the application.')
+      }
     }
   }
 
@@ -129,18 +145,47 @@ export function TalentApplicationsAdmin({
     if (!selected || saving) return
     setSaving(true)
     setError('')
+    const applicationId = selected.application.id
+    const detailSyncRequest = ++detailRequest.current
     try {
       await api.transition(selected.application, nextStatus, notes, interviewUrl)
-      const detail = await api.detail(selected.application.id)
-      setSelected(detail)
-      setNotes(detail.application.review_notes || '')
-      setInterviewUrl(detail.application.interview_url || '')
-      await refresh()
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : 'Unable to update the application.')
-    } finally {
       setSaving(false)
+      return
     }
+
+    setSelected((current) => current && current.application.id === applicationId
+      ? {
+          ...current,
+          application: {
+            ...current.application,
+            status: nextStatus,
+            review_notes: notes.trim(),
+            interview_url: interviewUrl.trim(),
+          },
+        }
+      : current)
+
+    const [detailResult, listSynced] = await Promise.all([
+      detailSyncRequest === detailRequest.current
+        ? api.detail(applicationId).then(
+            (detail) => ({ detail }),
+            () => null,
+          )
+        : Promise.resolve(null),
+      refresh(),
+    ])
+    const detailSynced = detailResult !== null || detailSyncRequest !== detailRequest.current
+    if (detailResult && detailSyncRequest === detailRequest.current) {
+      setSelected(detailResult.detail)
+      setNotes(detailResult.detail.application.review_notes || '')
+      setInterviewUrl(detailResult.detail.application.interview_url || '')
+    }
+    if (!detailSynced || !listSynced) {
+      setError('Application updated, but the latest data could not be reloaded. Refresh before continuing.')
+    }
+    setSaving(false)
   }
 
   const visible = applications.filter((application) => {
@@ -188,7 +233,10 @@ export function TalentApplicationsAdmin({
     return (
       <section className={styles.shell} aria-label={`${title}: ${application.applicant_name}`}>
         <div className={styles.detailTopbar}>
-          <Button variant="ghost" onClick={() => setSelected(null)}>
+          <Button variant="ghost" onClick={() => {
+            detailRequest.current += 1
+            setSelected(null)
+          }}>
             <ArrowLeft size={16} /> All applications
           </Button>
           <StatusBadge status={application.status} />

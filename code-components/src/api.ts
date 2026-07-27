@@ -49,6 +49,9 @@ export interface PagedApplications {
   curPage?: number
 }
 
+const APPLICATIONS_PER_PAGE = 100
+const MAX_APPLICATION_PAGES = 1000
+
 interface MemberstackDom {
   getMemberCookie(): Promise<string | null> | string | null
 }
@@ -75,6 +78,7 @@ function responseMessage(data: unknown, status: number): string {
 
 export class TalentAdminApi {
   private token: string | null = null
+  private memberstackToken: string | null = null
 
   constructor(
     private readonly environment: Environment,
@@ -82,14 +86,22 @@ export class TalentAdminApi {
   ) {}
 
   private async xanoToken(forceRefresh = false): Promise<string> {
-    if (!forceRefresh && this.token) return this.token
     const memberstack = window.$memberstackDom
     if (!memberstack?.getMemberCookie) {
+      this.token = null
+      this.memberstackToken = null
       throw new Error('Memberstack is not available on this page.')
     }
 
     const memberstackToken = await memberstack.getMemberCookie()
-    if (!memberstackToken) throw new Error('Please log in to open the admin dashboard.')
+    if (!memberstackToken) {
+      this.token = null
+      this.memberstackToken = null
+      throw new Error('Please log in to open the admin dashboard.')
+    }
+    if (!forceRefresh && this.token && memberstackToken === this.memberstackToken) {
+      return this.token
+    }
 
     const response = await this.fetcher(
       `${TRADE_TOKEN_URL}?token=${encodeURIComponent(memberstackToken)}`,
@@ -109,6 +121,7 @@ export class TalentAdminApi {
       throw new Error('Xano did not return an auth token.')
     }
     this.token = token
+    this.memberstackToken = memberstackToken
     return token
   }
 
@@ -141,11 +154,50 @@ export class TalentAdminApi {
     return this.request('admin/session')
   }
 
-  list(status?: ApplicationStatus): Promise<PagedApplications> {
+  private listPage(status: ApplicationStatus | undefined, page: number): Promise<PagedApplications> {
     return this.request('admin/applications/list', {
       method: 'POST',
-      body: JSON.stringify({ status: status || null, page: 1, per_page: 100 }),
+      body: JSON.stringify({
+        status: status || null,
+        page,
+        per_page: APPLICATIONS_PER_PAGE,
+      }),
     })
+  }
+
+  async list(status?: ApplicationStatus): Promise<PagedApplications> {
+    const items: Application[] = []
+    const seenIds = new Set<number>()
+    let itemsTotal: number | undefined
+
+    for (let page = 1; page <= MAX_APPLICATION_PAGES; page += 1) {
+      const response = await this.listPage(status, page)
+      const pageItems = Array.isArray(response.items) ? response.items : []
+      if (typeof response.itemsTotal === 'number' && response.itemsTotal >= 0) {
+        itemsTotal = response.itemsTotal
+      }
+
+      const previousCount = items.length
+      for (const application of pageItems) {
+        if (!seenIds.has(application.id)) {
+          seenIds.add(application.id)
+          items.push(application)
+        }
+      }
+
+      if (
+        pageItems.length === 0 ||
+        (itemsTotal !== undefined && items.length >= itemsTotal) ||
+        (itemsTotal === undefined && pageItems.length < APPLICATIONS_PER_PAGE)
+      ) {
+        return { items, itemsTotal: itemsTotal ?? items.length, curPage: page }
+      }
+      if (items.length === previousCount) {
+        throw new Error('Xano pagination did not advance while loading applications.')
+      }
+    }
+
+    throw new Error('The application queue is too large to load safely.')
   }
 
   detail(applicationId: number): Promise<ApplicationDetail> {

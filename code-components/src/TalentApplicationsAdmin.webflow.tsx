@@ -11,11 +11,6 @@ export default declareComponent(TalentApplicationsAdmin, {
       name: 'Title',
       defaultValue: 'Talent applications',
     }),
-    environment: props.Variant({
-      name: 'Xano environment',
-      options: ['Staging', 'Live'],
-      defaultValue: 'Staging',
-    }),
     loginUrl: props.Text({
       name: 'Login URL',
       defaultValue: '/login?next=/admin/talent-applications',
