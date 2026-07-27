@@ -6,7 +6,7 @@ Load the homepage category controller once on the home page with `defer`:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-home.js"></script>
 ```
 
-It owns `#wf-form-home-quiz`, saves the IDs of its selected checkboxes to
+It owns `[data-quiz-form="home"]`, saves the IDs of its selected checkboxes to
 `sessionStorage.quizSelectedCategories` whenever they change or the form is
 submitted, then redirects submissions to `/quiz`. The controller can initialize
 before or after the DOM has been parsed and ignores duplicate script loads.
@@ -68,11 +68,19 @@ Memberstack returns, the delayed restore is skipped.
 
 ### Webflow markup contract
 
+Publish these custom attributes in Webflow before releasing scripts that use
+this contract. Keep the existing Webflow form names and IDs during the rollout;
+the scripts no longer use them, but removing them is a separate cleanup.
+
 Required elements:
 
+- stable form roles that are independent of Webflow-generated form names and IDs:
+  `[data-quiz-form="home"]` on the single homepage quiz form,
+  `[data-quiz-form="categories"]` on the single main category form,
+  `[data-quiz-form="subcategories"]` on every subcategory form, and
+  `[data-quiz-form="signup"]` on the single final signup form;
 - category and subcategory steps marked with `[data-main-is-categories]` and
   `[data-main-is-subcategories]`;
-- `#wf-form-Categories` and `#wf-form-Subcategories`;
 - navigation under `[data-tab-wrapper]` using `[data-tab="previous|next"]`, or
   wrappers marked `[data-step-back]` and `[data-step-next]`.
 
@@ -88,7 +96,7 @@ Optional integrations:
   `data-tab-content="ways"` and the signup slide
   `data-tab-content="signup"`.
 - Non-tab subcategory items use `[data-category="<category id>"]`.
-- `#Signup-Form` and `[data-ms-auth-provider]` triggers cause the ready payload
+- `[data-quiz-form="signup"]` and `[data-ms-auth-provider]` triggers cause the ready payload
   to be saved before authentication.
 - `[data-quiz-result-slug="<slug>"]` supplies an already-calculated result slug.
 
@@ -105,8 +113,9 @@ the session flag. A `localStorage.starterQuizDebug` value of `"true"` also
 enables logging. Logging defaults off across the homepage, `/quiz`, and
 `/quiz-results` controllers.
 
-Run the focused redirect tests with:
+Run the focused quiz tests, including the form-selector contract regression,
+with:
 
 ```sh
-node --test quiz-main/quiz-redirect.test.js
+node --test quiz-main/*.test.js
 ```

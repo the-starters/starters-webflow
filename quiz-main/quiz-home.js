@@ -84,7 +84,7 @@
      * @returns {void}
      */
     function starterQuizHomeController() {
-        const form = document.querySelector('#wf-form-home-quiz')
+        const form = document.querySelector('[data-quiz-form="home"]')
         if (!form) {
             logQuizFlow('form not found; script stopped')
             return

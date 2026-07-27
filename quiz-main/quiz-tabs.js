@@ -11,6 +11,10 @@
  * - `[data-tab-component='panel-list']` with `[data-tab-component='panel']` items
  * - `[data-tab='previous']` and `[data-tab='next']` nav wrappers
  *
+ * Quiz gating markup (when those steps exist):
+ * - `[data-quiz-form="categories"]` on the main category form
+ * - `[data-quiz-form="subcategories"]` on every subcategory form
+ *
  * Optional attributes on `[data-tab-wrapper]`:
  * - `data-loop-controls="True"` — wrap from last tab back to first
  * - `data-slide-tabs="True"` — slide animation instead of fade
@@ -190,7 +194,7 @@ document.addEventListener("DOMContentLoaded", function () {
       const panel = getSubcategoryPanelForButton(button)
       if (!panel) return true
 
-      const form = panel.querySelector('[data-name="Subcategories"], form.new_quiz-form-wrapper')
+      const form = panel.querySelector('[data-quiz-form="subcategories"]')
       if (!form) return false
 
       return Boolean(
@@ -201,7 +205,7 @@ document.addEventListener("DOMContentLoaded", function () {
       )
     }
 
-    const categoryForm = tabWrap.querySelector("#wf-form-Categories")
+    const categoryForm = tabWrap.querySelector('[data-quiz-form="categories"]')
 
     /**
      * Returns whether no category checkboxes are selected on the needs step.
@@ -491,7 +495,7 @@ document.addEventListener("DOMContentLoaded", function () {
       updateNavState(visibleIndex >= 0 ? visibleIndex : 0, activeButton)
     })
 
-    tabWrap.querySelectorAll('[data-name="Subcategories"], form.new_quiz-form-wrapper').forEach((form) => {
+    tabWrap.querySelectorAll('[data-quiz-form="subcategories"]').forEach((form) => {
       form.addEventListener("change", () => {
         const visibleIndex = visibleButtonItems.indexOf(activeButton)
         updateNavState(visibleIndex >= 0 ? visibleIndex : 0, activeButton)
@@ -545,7 +549,9 @@ document.addEventListener("DOMContentLoaded", function () {
       },
     }
 
-    const hasCategoryForm = Boolean(tabWrap.querySelector("#wf-form-Categories"))
+    const hasCategoryForm = Boolean(
+      tabWrap.querySelector('[data-quiz-form="categories"]')
+    )
     if (hasCategoryForm) {
       activeButton = buttonItems[0]
       const initIndex = visibleButtonItems.indexOf(activeButton)

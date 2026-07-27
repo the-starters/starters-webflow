@@ -7,7 +7,7 @@
  * least one category is selected.
  *
  * Required markup (inside each `[data-tab-wrapper]`):
- * - Form: `#wf-form-Categories`
+ * - Form: `[data-quiz-form="categories"]`
  * - Checkboxes: `[data-category-value]`
  * - Tab buttons: `[data-category-link]` (value must match a checkbox)
  * - Tab panels: `[data-tab-category-link]` (value must match a checkbox)
@@ -20,7 +20,7 @@
  */
 document.addEventListener("DOMContentLoaded", function () {
   document.querySelectorAll("[data-tab-wrapper]").forEach((tabWrap) => {
-    const form = tabWrap.querySelector("#wf-form-Categories")
+    const form = tabWrap.querySelector('[data-quiz-form="categories"]')
     if (!form) return
 
     const previousWrap = tabWrap.querySelector("[data-tab='previous']")
