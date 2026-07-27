@@ -97,10 +97,12 @@ export function TalentApplicationsAdmin({
   const [error, setError] = React.useState('')
   const refreshRequest = React.useRef(0)
   const detailRequest = React.useRef(0)
+  const transitionRequest = React.useRef(0)
 
   const clearPrivateState = React.useCallback((invalidateRefresh = true) => {
     if (invalidateRefresh) refreshRequest.current += 1
     detailRequest.current += 1
+    transitionRequest.current += 1
     setApplications([])
     setSelected(null)
     setNotes('')
@@ -163,51 +165,62 @@ export function TalentApplicationsAdmin({
 
   async function transition(nextStatus: ApplicationStatus) {
     if (!selected || saving) return
+    const request = ++transitionRequest.current
     setSaving(true)
     setError('')
     const applicationId = selected.application.id
     const detailSyncRequest = ++detailRequest.current
     try {
-      await api.transition(selected.application, nextStatus, notes, interviewUrl)
-    } catch (nextError) {
-      if (detailSyncRequest !== detailRequest.current) return
-      if (isTalentAdminAuthError(nextError)) clearPrivateState()
-      setError(nextError instanceof Error ? nextError.message : 'Unable to update the application.')
-      setSaving(false)
-      return
-    }
+      try {
+        await api.transition(selected.application, nextStatus, notes, interviewUrl)
+      } catch (nextError) {
+        if (detailSyncRequest !== detailRequest.current) return
+        if (isTalentAdminAuthError(nextError)) clearPrivateState()
+        setError(nextError instanceof Error ? nextError.message : 'Unable to update the application.')
+        return
+      }
 
-    setSelected((current) => current && current.application.id === applicationId
-      ? {
-          ...current,
-          application: {
-            ...current.application,
-            status: nextStatus,
-            review_notes: notes.trim(),
-            interview_url: interviewUrl.trim(),
-          },
-        }
-      : current)
+      setSelected((current) => current && current.application.id === applicationId
+        ? {
+            ...current,
+            application: {
+              ...current.application,
+              status: nextStatus,
+              review_notes: notes.trim(),
+              interview_url: interviewUrl.trim(),
+            },
+          }
+        : current)
 
-    const [detailResult, listSynced] = await Promise.all([
-      detailSyncRequest === detailRequest.current
-        ? api.detail(applicationId).then(
-            (detail) => ({ detail }),
-            () => null,
-          )
-        : Promise.resolve(null),
-      refresh(),
-    ])
-    const detailSynced = detailResult !== null || detailSyncRequest !== detailRequest.current
-    if (detailResult && detailSyncRequest === detailRequest.current) {
-      setSelected(detailResult.detail)
-      setNotes(detailResult.detail.application.review_notes || '')
-      setInterviewUrl(detailResult.detail.application.interview_url || '')
+      const [detailResult, listSynced] = await Promise.all([
+        detailSyncRequest === detailRequest.current
+          ? api.detail(applicationId).then(
+              (detail) => ({ status: 'fulfilled' as const, detail }),
+              (error: unknown) => ({ status: 'rejected' as const, error }),
+            )
+          : Promise.resolve({ status: 'skipped' as const }),
+        refresh(),
+      ])
+      if (
+        detailResult.status === 'rejected' &&
+        isTalentAdminAuthError(detailResult.error)
+      ) {
+        clearPrivateState()
+        setError(detailResult.error.message)
+        return
+      }
+      const detailSynced = detailResult.status !== 'rejected'
+      if (detailResult.status === 'fulfilled' && detailSyncRequest === detailRequest.current) {
+        setSelected(detailResult.detail)
+        setNotes(detailResult.detail.application.review_notes || '')
+        setInterviewUrl(detailResult.detail.application.interview_url || '')
+      }
+      if (!detailSynced || !listSynced) {
+        setError('Application updated, but the latest data could not be reloaded. Refresh before continuing.')
+      }
+    } finally {
+      if (request === transitionRequest.current) setSaving(false)
     }
-    if (!detailSynced || !listSynced) {
-      setError('Application updated, but the latest data could not be reloaded. Refresh before continuing.')
-    }
-    setSaving(false)
   }
 
   const visible = applications.filter((application) => {

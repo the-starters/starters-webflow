@@ -83,7 +83,7 @@ function memberSessionChangedError(): TalentAdminAuthError {
   return new TalentAdminAuthError('Member session changed while loading the admin dashboard.')
 }
 
-export function isTalentAdminAuthError(error: unknown): boolean {
+export function isTalentAdminAuthError(error: unknown): error is TalentAdminAuthError {
   return error instanceof TalentAdminAuthError
 }
 

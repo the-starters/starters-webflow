@@ -168,6 +168,108 @@ it('reports a synchronization error after a successful transition', async () => 
   expect(screen.queryByText(/Unable to update the application/i)).not.toBeInTheDocument()
 })
 
+it('clears private state when transition detail readback loses authorization', async () => {
+  let detailCalls = 0
+  vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Private Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      detailCalls += 1
+      if (detailCalls > 1) return jsonResponse({ message: 'Unauthorized' }, 401)
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Private Applicant',
+          motivation: 'Private motivation',
+          review_notes: 'Private internal note',
+          status: 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) {
+      return jsonResponse({ id: 12, status: 'under_review' })
+    }
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Private Applicant'))
+  expect(await screen.findByDisplayValue('Private internal note')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Under review' }))
+
+  expect(await screen.findByText('Admin login required')).toBeInTheDocument()
+  expect(screen.queryByText('Private Applicant')).not.toBeInTheDocument()
+  expect(screen.queryByText('Private motivation')).not.toBeInTheDocument()
+  expect(screen.queryByDisplayValue('Private internal note')).not.toBeInTheDocument()
+})
+
+it('cleans up saving state when a stale transition fails', async () => {
+  let resolveTransition: ((response: Response) => void) | undefined
+  const transitionResponse = new Promise<Response>((resolve) => {
+    resolveTransition = resolve
+  })
+  vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Sample Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Sample Applicant',
+          motivation: 'Private motivation',
+          status: 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) return transitionResponse
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Sample Applicant'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Under review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'All applications' }))
+  fireEvent.click(await screen.findByText('Sample Applicant'))
+  expect(await screen.findByText('Private motivation')).toBeInTheDocument()
+
+  await act(async () => {
+    resolveTransition?.(jsonResponse({ message: 'Transition failed' }, 500))
+    await transitionResponse
+  })
+
+  await waitFor(() => {
+    expect(screen.getByRole('button', { name: 'Under review' })).toBeEnabled()
+  })
+})
+
 it('clears applicant data immediately when Memberstack authentication changes', async () => {
   let memberstackToken: string | null = 'member-jwt'
   let authChange: ((member: unknown) => void) | undefined
