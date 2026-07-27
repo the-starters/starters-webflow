@@ -226,7 +226,7 @@ it('preserves the login prompt when transition queue refresh loses authorization
       sessionCalls += 1
       return sessionCalls === 1
         ? jsonResponse({ role: 'admin' })
-        : jsonResponse({ message: 'Unauthorized' }, 403)
+        : jsonResponse({ message: 'Forbidden' }, 403)
     }
     if (url.endsWith('/admin/applications/list')) {
       return jsonResponse({
@@ -264,7 +264,9 @@ it('preserves the login prompt when transition queue refresh loses authorization
   fireEvent.click(screen.getByRole('button', { name: 'Under review' }))
 
   expect(await screen.findByText('Admin login required')).toBeInTheDocument()
-  expect(screen.getByText('Unauthorized')).toBeInTheDocument()
+  expect(screen.getByText('Forbidden')).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Log in' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument()
   expect(screen.queryByText(/latest data could not be reloaded/i)).not.toBeInTheDocument()
   expect(screen.queryByText('Private Applicant')).not.toBeInTheDocument()
 })

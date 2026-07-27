@@ -60,6 +60,11 @@ const NEXT: Partial<Record<ApplicationStatus, ApplicationStatus[]>> = {
 
 type RefreshResult = 'synced' | 'failed' | 'auth-failed' | 'superseded'
 
+interface DashboardError {
+  message: string
+  authentication: boolean
+}
+
 function dateText(value?: string | number): string {
   if (!value) return '—'
   const date = new Date(value)
@@ -96,7 +101,7 @@ export function TalentApplicationsAdmin({
   const [interviewUrl, setInterviewUrl] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
-  const [error, setError] = React.useState('')
+  const [error, setError] = React.useState<DashboardError | null>(null)
   const refreshRequest = React.useRef(0)
   const detailRequest = React.useRef(0)
   const transitionRequest = React.useRef(0)
@@ -115,7 +120,7 @@ export function TalentApplicationsAdmin({
   const refresh = React.useCallback(async (): Promise<RefreshResult> => {
     const request = ++refreshRequest.current
     setLoading(true)
-    setError('')
+    setError(null)
     try {
       await api.session()
       const page = await api.list(filter === 'all' ? undefined : filter)
@@ -127,7 +132,10 @@ export function TalentApplicationsAdmin({
       if (request === refreshRequest.current) {
         const authFailed = isTalentAdminAuthError(nextError)
         if (authFailed) clearPrivateState(false)
-        setError(nextError instanceof Error ? nextError.message : 'Unable to load applications.')
+        setError({
+          message: nextError instanceof Error ? nextError.message : 'Unable to load applications.',
+          authentication: authFailed,
+        })
         return authFailed ? 'auth-failed' : 'failed'
       }
       return 'superseded'
@@ -144,14 +152,14 @@ export function TalentApplicationsAdmin({
 
   React.useEffect(() => api.subscribeAuthChanges(() => {
     clearPrivateState()
-    setError('')
+    setError(null)
     setLoading(true)
     void refresh()
   }), [api, clearPrivateState, refresh])
 
   async function openApplication(application: Application) {
     const request = ++detailRequest.current
-    setError('')
+    setError(null)
     try {
       const detail = await api.detail(application.id)
       if (request !== detailRequest.current) return
@@ -160,8 +168,12 @@ export function TalentApplicationsAdmin({
       setInterviewUrl(detail.application.interview_url || '')
     } catch (nextError) {
       if (request === detailRequest.current) {
-        if (isTalentAdminAuthError(nextError)) clearPrivateState()
-        setError(nextError instanceof Error ? nextError.message : 'Unable to load the application.')
+        const authentication = isTalentAdminAuthError(nextError)
+        if (authentication) clearPrivateState()
+        setError({
+          message: nextError instanceof Error ? nextError.message : 'Unable to load the application.',
+          authentication,
+        })
       }
     }
   }
@@ -170,7 +182,7 @@ export function TalentApplicationsAdmin({
     if (!selected || saving) return
     const request = ++transitionRequest.current
     setSaving(true)
-    setError('')
+    setError(null)
     const applicationId = selected.application.id
     const detailSyncRequest = ++detailRequest.current
     try {
@@ -178,8 +190,12 @@ export function TalentApplicationsAdmin({
         await api.transition(selected.application, nextStatus, notes, interviewUrl)
       } catch (nextError) {
         if (detailSyncRequest !== detailRequest.current) return
-        if (isTalentAdminAuthError(nextError)) clearPrivateState()
-        setError(nextError instanceof Error ? nextError.message : 'Unable to update the application.')
+        const authentication = isTalentAdminAuthError(nextError)
+        if (authentication) clearPrivateState()
+        setError({
+          message: nextError instanceof Error ? nextError.message : 'Unable to update the application.',
+          authentication,
+        })
         return
       }
 
@@ -209,7 +225,7 @@ export function TalentApplicationsAdmin({
         isTalentAdminAuthError(detailResult.error)
       ) {
         clearPrivateState()
-        setError(detailResult.error.message)
+        setError({ message: detailResult.error.message, authentication: true })
         return
       }
       if (listResult === 'auth-failed') return
@@ -220,7 +236,10 @@ export function TalentApplicationsAdmin({
         setInterviewUrl(detailResult.detail.application.interview_url || '')
       }
       if (!detailSynced || listResult === 'failed') {
-        setError('Application updated, but the latest data could not be reloaded. Refresh before continuing.')
+        setError({
+          message: 'Application updated, but the latest data could not be reloaded. Refresh before continuing.',
+          authentication: false,
+        })
       }
     } finally {
       if (request === transitionRequest.current) setSaving(false)
@@ -248,14 +267,13 @@ export function TalentApplicationsAdmin({
   )
 
   if (error && !applications.length && !selected) {
-    const loginNeeded = /log in|unauthorized/i.test(error)
     return (
       <section className={styles.shell} aria-label={title}>
         <Card className={styles.centerCard}>
           <FileSearch size={32} aria-hidden="true" />
-          <h2>{loginNeeded ? 'Admin login required' : 'Dashboard unavailable'}</h2>
-          <p>{error}</p>
-          {loginNeeded ? (
+          <h2>{error.authentication ? 'Admin login required' : 'Dashboard unavailable'}</h2>
+          <p>{error.message}</p>
+          {error.authentication ? (
             <a className={styles.linkButton} href={loginUrl}>Log in</a>
           ) : (
             <Button variant="primary" onClick={refresh}>Try again</Button>
@@ -280,7 +298,7 @@ export function TalentApplicationsAdmin({
           </Button>
           <StatusBadge status={application.status} />
         </div>
-        {error ? <div className={styles.error} role="alert">{error}</div> : null}
+        {error ? <div className={styles.error} role="alert">{error.message}</div> : null}
 
         <div className={styles.detailGrid}>
           <main>
@@ -392,7 +410,7 @@ export function TalentApplicationsAdmin({
         </Button>
       </header>
 
-      {error ? <div className={styles.error} role="alert">{error}</div> : null}
+      {error ? <div className={styles.error} role="alert">{error.message}</div> : null}
 
       <div className={styles.metrics}>
         <Card><UsersRound /><span>Total</span><strong>{counts.total}</strong></Card>
