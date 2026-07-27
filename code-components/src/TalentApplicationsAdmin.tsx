@@ -189,15 +189,17 @@ export function TalentApplicationsAdmin({
       try {
         await api.transition(selected.application, nextStatus, notes, interviewUrl)
       } catch (nextError) {
-        if (detailSyncRequest !== detailRequest.current) return
         const authentication = isTalentAdminAuthError(nextError)
         if (authentication) clearPrivateState()
+        if (detailSyncRequest !== detailRequest.current && !authentication) return
         setError({
           message: nextError instanceof Error ? nextError.message : 'Unable to update the application.',
           authentication,
         })
         return
       }
+
+      if (detailSyncRequest !== detailRequest.current) return
 
       setSelected((current) => current && current.application.id === applicationId
         ? {

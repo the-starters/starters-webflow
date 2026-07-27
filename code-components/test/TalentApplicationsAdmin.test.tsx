@@ -324,6 +324,124 @@ it('cleans up saving state when a stale transition fails', async () => {
   })
 })
 
+it('clears newly opened applicant data when a stale transition loses authorization', async () => {
+  let resolveTransition: ((response: Response) => void) | undefined
+  const transitionResponse = new Promise<Response>((resolve) => {
+    resolveTransition = resolve
+  })
+  vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Private Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Private Applicant',
+          motivation: 'Private motivation',
+          review_notes: 'Private internal note',
+          status: 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) return transitionResponse
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Private Applicant'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Under review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'All applications' }))
+  fireEvent.click(await screen.findByText('Private Applicant'))
+  expect(await screen.findByDisplayValue('Private internal note')).toBeInTheDocument()
+
+  await act(async () => {
+    resolveTransition?.(jsonResponse({ message: 'Forbidden' }, 403))
+    await transitionResponse
+  })
+
+  expect(await screen.findByText('Admin login required')).toBeInTheDocument()
+  expect(screen.queryByText('Private Applicant')).not.toBeInTheDocument()
+  expect(screen.queryByText('Private motivation')).not.toBeInTheDocument()
+  expect(screen.queryByDisplayValue('Private internal note')).not.toBeInTheDocument()
+})
+
+it('does not refresh a stale filter after a transition completes', async () => {
+  let resolveTransition: ((response: Response) => void) | undefined
+  const transitionResponse = new Promise<Response>((resolve) => {
+    resolveTransition = resolve
+  })
+  vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      const status = JSON.parse(String(init?.body)).status
+      return status === 'approved'
+        ? jsonResponse({
+            items: [{
+              id: 24,
+              applicant_name: 'Approved Applicant',
+              status: 'approved',
+              created_at: 1,
+            }],
+          })
+        : jsonResponse({
+            items: [{
+              id: 12,
+              applicant_name: 'Pending Applicant',
+              status: 'submitted',
+              created_at: 1,
+            }],
+          })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Pending Applicant',
+          status: 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) return transitionResponse
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Pending Applicant'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Under review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'All applications' }))
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'approved' } })
+  expect(await screen.findByText('Approved Applicant')).toBeInTheDocument()
+
+  await act(async () => {
+    resolveTransition?.(jsonResponse({ id: 12, status: 'under_review' }))
+    await transitionResponse
+  })
+
+  await waitFor(() => {
+    expect(screen.getByText('Approved Applicant')).toBeInTheDocument()
+    expect(screen.queryByText('Pending Applicant')).not.toBeInTheDocument()
+  })
+})
+
 it('clears applicant data immediately when Memberstack authentication changes', async () => {
   let memberstackToken: string | null = 'member-jwt'
   let authChange: ((member: unknown) => void) | undefined
