@@ -91,7 +91,7 @@
 }
 
 .search svg { position: absolute; left: 12px; color: var(--muted); }
-.search input { padding-left: 38px; }
+.shell .search input { padding-left: 38px; }
 
 .shell input, .shell select, .shell textarea {
   width: 100%;

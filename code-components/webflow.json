@@ -1,6 +1,7 @@
 {
   "siteId": "69c573f20f82bd0f3384032c",
   "library": {
+    "id": "the-starters-v3-admin",
     "name": "The Starters V3 Admin",
     "components": [
       "./src/**/*.webflow.@(js|jsx|mjs|ts|tsx)"
