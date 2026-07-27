@@ -97,8 +97,8 @@
     const categoriesForm = document.querySelector(
         '[data-quiz-form="categories"]',
     )
-    const subcategoriesForm = document.querySelector(
-        '[data-quiz-form="subcategories"]',
+    const subcategoriesForms = Array.from(
+        document.querySelectorAll('[data-quiz-form="subcategories"]'),
     )
     const bucketList = document.querySelector('[data-quiz-bucket]')
     const startHeading = document.querySelector('[data-start-heading]')
@@ -114,13 +114,13 @@
         !categoriesStep ||
         !subcategoriesStep ||
         !categoriesForm ||
-        !subcategoriesForm
+        !subcategoriesForms.length
     ) {
         logQuizFlow('required elements missing; script stopped', {
             hasCategoriesStep: Boolean(categoriesStep),
             hasSubcategoriesStep: Boolean(subcategoriesStep),
             hasCategoriesForm: Boolean(categoriesForm),
-            hasSubcategoriesForm: Boolean(subcategoriesForm),
+            subcategoriesFormCount: subcategoriesForms.length,
         })
         return
     }
@@ -165,7 +165,9 @@
                   '[data-tab-category-link] input[type="checkbox"]',
               ),
           ).map((input) => input.closest('label') || input)
-        : Array.from(subcategoriesForm.querySelectorAll('[data-category]'))
+        : subcategoriesForms.flatMap((form) =>
+              Array.from(form.querySelectorAll('[data-category]')),
+          )
 
     /**
      * Gets the checkbox input from a quiz item or input element.
@@ -197,7 +199,9 @@
     }
 
     categoriesForm.addEventListener('change', markQuizTouchedByUser, true)
-    subcategoriesForm.addEventListener('change', markQuizTouchedByUser, true)
+    subcategoriesForms.forEach((form) => {
+        form.addEventListener('change', markQuizTouchedByUser, true)
+    })
 
     logQuizFlow('initialized', {
         categoryCount: categoryInputs.length,
@@ -479,11 +483,11 @@
         hasRestoredSavedQuiz = true
 
         categoriesForm.dispatchEvent(new Event('change', { bubbles: true }))
-        if (subcategoriesForm) {
-            subcategoriesForm.dispatchEvent(
+        subcategoriesForms.forEach((form) => {
+            form.dispatchEvent(
                 new Event('change', { bubbles: true }),
             )
-        }
+        })
 
         logQuizFlow('merged saved answers from member JSON (retake prefill)', {
             restoredCategoryIds: Array.from(savedCategoryIds),

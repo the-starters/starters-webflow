@@ -6,7 +6,7 @@ Load the homepage category controller once on the home page with `defer`:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-home.js"></script>
 ```
 
-It owns `#wf-form-home-quiz`, saves the IDs of its selected checkboxes to
+It owns `[data-quiz-form="home"]`, saves the IDs of its selected checkboxes to
 `sessionStorage.quizSelectedCategories` whenever they change or the form is
 submitted, then redirects submissions to `/quiz`. The controller can initialize
 before or after the DOM has been parsed and ignores duplicate script loads.
