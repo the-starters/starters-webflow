@@ -2173,15 +2173,15 @@
   }
 
   // Standalone brand "create opportunity" PAGE (/opportunities---create).
-  // Unlike the modal, this is a full Webflow form (#email-form.create-opportunities_layout)
-  // with a native submit button and no [data-opp-submit] hook, so we bind it directly.
+  // Unlike the modal, this is a full Webflow form with a native submit button
+  // and no [data-opp-submit] hook, so we bind its stable role directly.
   async function initBrandCreatePage() {
     // Shared run-once flag with v3/opportunities---create.js — whichever loads
     // first binds the form; the other no-ops (prevents double submit).
     if (window.__opp30CreatePage) return
     window.__opp30CreatePage = true
     if (!(await gateOrRedirect('brand'))) return
-    const form = $('[data-opp-form="create"]') || $('form.create-opportunities_layout') || $('#email-form')
+    const form = $('[data-opp-form="create"]')
     if (!form) return
     log('create page form bound', form)
     const status = $('[data-opp-create-status]') // optional inline message element
@@ -2406,11 +2406,7 @@
   function wireModals() {
     // CREATE
     const createBtn = $('[data-opp-submit="create"]')
-    const createPageForm = createBtn
-      ? createBtn.closest(
-          '[data-opp-form="create"], form.create-opportunities_layout, #wf-form-Opportunity-Create-Form',
-        )
-      : null
+    const createPageForm = createBtn ? createBtn.closest('[data-opp-form="create"]') : null
     const onCreatePage = location.pathname.includes('opportunities---create')
     if (createBtn && !createPageForm && !onCreatePage)
       createBtn.addEventListener('click', async () => {
