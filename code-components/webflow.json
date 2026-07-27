@@ -1,0 +1,17 @@
+{
+  "siteId": "69c573f20f82bd0f3384032c",
+  "library": {
+    "name": "The Starters V3 Admin",
+    "components": [
+      "./src/**/*.webflow.@(js|jsx|mjs|ts|tsx)"
+    ],
+    "description": "Secure V3 talent application admin components"
+  },
+  "telemetry": {
+    "global": {
+      "allowTelemetry": true,
+      "lastPrompted": 1785160296175,
+      "version": "2.1.1"
+    }
+  }
+}
