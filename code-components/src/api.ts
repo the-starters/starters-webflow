@@ -54,7 +54,9 @@ const MAX_APPLICATION_PAGES = 1000
 
 interface MemberstackDom {
   getMemberCookie(): Promise<string | null> | string | null
-  onAuthChange?(listener: (member: unknown) => void): (() => void) | void
+  onAuthChange?(
+    listener: (member: unknown) => void,
+  ): (() => void) | { unsubscribe(): void } | void
 }
 
 declare global {
@@ -112,7 +114,12 @@ export class TalentAdminApi {
     this.authChangeCleanup?.()
     this.wiredMemberstack = memberstack
     const cleanup = memberstack.onAuthChange?.(() => this.resetSession())
-    this.authChangeCleanup = typeof cleanup === 'function' ? cleanup : null
+    this.authChangeCleanup =
+      typeof cleanup === 'function'
+        ? cleanup
+        : cleanup && typeof cleanup.unsubscribe === 'function'
+          ? () => cleanup.unsubscribe()
+          : null
   }
 
   private assertSessionGeneration(generation: number): void {
@@ -139,6 +146,11 @@ export class TalentAdminApi {
     if (memberstack) this.wireAuthChanges(memberstack)
     return () => {
       this.authChangeListeners.delete(listener)
+      if (!this.authChangeListeners.size) {
+        this.authChangeCleanup?.()
+        this.authChangeCleanup = null
+        this.wiredMemberstack = null
+      }
     }
   }
 

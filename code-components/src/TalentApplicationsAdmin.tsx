@@ -58,6 +58,8 @@ const NEXT: Partial<Record<ApplicationStatus, ApplicationStatus[]>> = {
   on_hold: ['under_review', 'interview_sent', 'approved', 'rejected'],
 }
 
+type RefreshResult = 'synced' | 'failed' | 'auth-failed' | 'superseded'
+
 function dateText(value?: string | number): string {
   if (!value) return '—'
   const date = new Date(value)
@@ -110,7 +112,7 @@ export function TalentApplicationsAdmin({
     setSaving(false)
   }, [])
 
-  const refresh = React.useCallback(async (): Promise<boolean> => {
+  const refresh = React.useCallback(async (): Promise<RefreshResult> => {
     const request = ++refreshRequest.current
     setLoading(true)
     setError('')
@@ -120,14 +122,15 @@ export function TalentApplicationsAdmin({
       if (request === refreshRequest.current) {
         setApplications(Array.isArray(page.items) ? page.items : [])
       }
-      return true
+      return 'synced'
     } catch (nextError) {
       if (request === refreshRequest.current) {
-        if (isTalentAdminAuthError(nextError)) clearPrivateState(false)
+        const authFailed = isTalentAdminAuthError(nextError)
+        if (authFailed) clearPrivateState(false)
         setError(nextError instanceof Error ? nextError.message : 'Unable to load applications.')
-        return false
+        return authFailed ? 'auth-failed' : 'failed'
       }
-      return true
+      return 'superseded'
     } finally {
       if (request === refreshRequest.current) {
         setLoading(false)
@@ -192,7 +195,7 @@ export function TalentApplicationsAdmin({
           }
         : current)
 
-      const [detailResult, listSynced] = await Promise.all([
+      const [detailResult, listResult] = await Promise.all([
         detailSyncRequest === detailRequest.current
           ? api.detail(applicationId).then(
               (detail) => ({ status: 'fulfilled' as const, detail }),
@@ -209,13 +212,14 @@ export function TalentApplicationsAdmin({
         setError(detailResult.error.message)
         return
       }
+      if (listResult === 'auth-failed') return
       const detailSynced = detailResult.status !== 'rejected'
       if (detailResult.status === 'fulfilled' && detailSyncRequest === detailRequest.current) {
         setSelected(detailResult.detail)
         setNotes(detailResult.detail.application.review_notes || '')
         setInterviewUrl(detailResult.detail.application.interview_url || '')
       }
-      if (!detailSynced || !listSynced) {
+      if (!detailSynced || listResult === 'failed') {
         setError('Application updated, but the latest data could not be reloaded. Refresh before continuing.')
       }
     } finally {

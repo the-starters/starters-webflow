@@ -96,6 +96,30 @@ describe('TalentAdminApi', () => {
     )
   })
 
+  it('unsubscribes from Memberstack auth changes after the last subscriber leaves', () => {
+    const unsubscribe = vi.fn()
+    const onAuthChange = vi.fn(() => ({ unsubscribe }))
+    window.$memberstackDom = {
+      getMemberCookie: vi.fn().mockResolvedValue('member-jwt'),
+      onAuthChange,
+    }
+    const api = new TalentAdminApi('Staging', vi.fn<typeof fetch>())
+
+    const cleanupFirst = api.subscribeAuthChanges(vi.fn())
+    const cleanupSecond = api.subscribeAuthChanges(vi.fn())
+
+    cleanupFirst()
+    expect(unsubscribe).not.toHaveBeenCalled()
+
+    cleanupSecond()
+    expect(unsubscribe).toHaveBeenCalledOnce()
+
+    const cleanupThird = api.subscribeAuthChanges(vi.fn())
+    expect(onAuthChange).toHaveBeenCalledTimes(2)
+    cleanupThird()
+    expect(unsubscribe).toHaveBeenCalledTimes(2)
+  })
+
   it('loads every page in the application queue', async () => {
     const firstPage = Array.from({ length: 100 }, (_, index) => ({
       id: index + 1,

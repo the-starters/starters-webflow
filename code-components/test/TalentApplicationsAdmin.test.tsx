@@ -217,6 +217,58 @@ it('clears private state when transition detail readback loses authorization', a
   expect(screen.queryByDisplayValue('Private internal note')).not.toBeInTheDocument()
 })
 
+it('preserves the login prompt when transition queue refresh loses authorization', async () => {
+  let sessionCalls = 0
+  vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) {
+      sessionCalls += 1
+      return sessionCalls === 1
+        ? jsonResponse({ role: 'admin' })
+        : jsonResponse({ message: 'Unauthorized' }, 403)
+    }
+    if (url.endsWith('/admin/applications/list')) {
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Private Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Private Applicant',
+          motivation: 'Private motivation',
+          review_notes: 'Private internal note',
+          status: 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) {
+      return jsonResponse({ id: 12, status: 'under_review' })
+    }
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Private Applicant'))
+  expect(await screen.findByDisplayValue('Private internal note')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Under review' }))
+
+  expect(await screen.findByText('Admin login required')).toBeInTheDocument()
+  expect(screen.getByText('Unauthorized')).toBeInTheDocument()
+  expect(screen.queryByText(/latest data could not be reloaded/i)).not.toBeInTheDocument()
+  expect(screen.queryByText('Private Applicant')).not.toBeInTheDocument()
+})
+
 it('cleans up saving state when a stale transition fails', async () => {
   let resolveTransition: ((response: Response) => void) | undefined
   const transitionResponse = new Promise<Response>((resolve) => {
