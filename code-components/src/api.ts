@@ -54,6 +54,7 @@ const MAX_APPLICATION_PAGES = 1000
 
 interface MemberstackDom {
   getMemberCookie(): Promise<string | null> | string | null
+  onAuthChange?(listener: (member: unknown) => void): (() => void) | void
 }
 
 declare global {
@@ -76,28 +77,93 @@ function responseMessage(data: unknown, status: number): string {
   return `Request failed (${status})`
 }
 
+export class TalentAdminAuthError extends Error {}
+
+function memberSessionChangedError(): TalentAdminAuthError {
+  return new TalentAdminAuthError('Member session changed while loading the admin dashboard.')
+}
+
+export function isTalentAdminAuthError(error: unknown): boolean {
+  return error instanceof TalentAdminAuthError
+}
+
 export class TalentAdminApi {
   private token: string | null = null
   private memberstackToken: string | null = null
+  private sessionGeneration = 0
+  private wiredMemberstack: MemberstackDom | null = null
+  private authChangeCleanup: (() => void) | null = null
+  private readonly authChangeListeners = new Set<() => void>()
 
   constructor(
     private readonly environment: Environment,
     private readonly fetcher: typeof fetch = window.fetch.bind(window),
   ) {}
 
-  private async xanoToken(forceRefresh = false): Promise<string> {
+  private resetSession(): void {
+    this.sessionGeneration += 1
+    this.token = null
+    this.memberstackToken = null
+    for (const listener of this.authChangeListeners) listener()
+  }
+
+  private wireAuthChanges(memberstack: MemberstackDom): void {
+    if (memberstack === this.wiredMemberstack) return
+    this.authChangeCleanup?.()
+    this.wiredMemberstack = memberstack
+    const cleanup = memberstack.onAuthChange?.(() => this.resetSession())
+    this.authChangeCleanup = typeof cleanup === 'function' ? cleanup : null
+  }
+
+  private assertSessionGeneration(generation: number): void {
+    if (generation !== this.sessionGeneration) throw memberSessionChangedError()
+  }
+
+  private async assertMemberstackSession(generation: number): Promise<void> {
+    const memberstack = window.$memberstackDom
+    if (!memberstack?.getMemberCookie) {
+      this.resetSession()
+      throw memberSessionChangedError()
+    }
+    const memberstackToken = await memberstack.getMemberCookie()
+    this.assertSessionGeneration(generation)
+    if (!memberstackToken || memberstackToken !== this.memberstackToken) {
+      this.resetSession()
+      throw memberSessionChangedError()
+    }
+  }
+
+  subscribeAuthChanges(listener: () => void): () => void {
+    this.authChangeListeners.add(listener)
+    const memberstack = window.$memberstackDom
+    if (memberstack) this.wireAuthChanges(memberstack)
+    return () => {
+      this.authChangeListeners.delete(listener)
+    }
+  }
+
+  private async xanoToken(
+    forceRefresh = false,
+    generation = this.sessionGeneration,
+  ): Promise<string> {
     const memberstack = window.$memberstackDom
     if (!memberstack?.getMemberCookie) {
       this.token = null
       this.memberstackToken = null
-      throw new Error('Memberstack is not available on this page.')
+      throw new TalentAdminAuthError('Memberstack is not available on this page.')
     }
+    this.wireAuthChanges(memberstack)
 
     const memberstackToken = await memberstack.getMemberCookie()
+    this.assertSessionGeneration(generation)
     if (!memberstackToken) {
       this.token = null
       this.memberstackToken = null
-      throw new Error('Please log in to open the admin dashboard.')
+      throw new TalentAdminAuthError('Please log in to open the admin dashboard.')
+    }
+    if (this.memberstackToken && memberstackToken !== this.memberstackToken) {
+      this.resetSession()
+      throw memberSessionChangedError()
     }
     if (!forceRefresh && this.token && memberstackToken === this.memberstackToken) {
       return this.token
@@ -107,7 +173,20 @@ export class TalentAdminApi {
       `${TRADE_TOKEN_URL}?token=${encodeURIComponent(memberstackToken)}`,
     )
     const data: unknown = await response.json().catch(() => null)
-    if (!response.ok) throw new Error(responseMessage(data, response.status))
+    this.assertSessionGeneration(generation)
+    const latestMemberstackToken = await memberstack.getMemberCookie()
+    this.assertSessionGeneration(generation)
+    if (latestMemberstackToken !== memberstackToken) {
+      this.resetSession()
+      throw memberSessionChangedError()
+    }
+    if (!response.ok) {
+      const message = responseMessage(data, response.status)
+      if (response.status === 401 || response.status === 403) {
+        throw new TalentAdminAuthError(message)
+      }
+      throw new Error(message)
+    }
 
     const token =
       typeof data === 'string'
@@ -129,8 +208,10 @@ export class TalentAdminApi {
     path: string,
     init: RequestInit = {},
     allowRetry = true,
+    generation = this.sessionGeneration,
   ): Promise<T> {
-    const token = await this.xanoToken()
+    const token = await this.xanoToken(false, generation)
+    this.assertSessionGeneration(generation)
     const headers = new Headers(init.headers)
     headers.set('Authorization', `Bearer ${token}`)
     if (init.body) headers.set('Content-Type', 'application/json')
@@ -139,14 +220,23 @@ export class TalentAdminApi {
       ...init,
       headers,
     })
+    this.assertSessionGeneration(generation)
+    await this.assertMemberstackSession(generation)
     if (response.status === 401 && allowRetry) {
       this.token = null
-      await this.xanoToken(true)
-      return this.request<T>(path, init, false)
+      await this.xanoToken(true, generation)
+      return this.request<T>(path, init, false, generation)
     }
 
     const data: unknown = await response.json().catch(() => null)
-    if (!response.ok) throw new Error(responseMessage(data, response.status))
+    this.assertSessionGeneration(generation)
+    if (!response.ok) {
+      const message = responseMessage(data, response.status)
+      if (response.status === 401 || response.status === 403) {
+        throw new TalentAdminAuthError(message)
+      }
+      throw new Error(message)
+    }
     return data as T
   }
 
@@ -154,7 +244,11 @@ export class TalentAdminApi {
     return this.request('admin/session')
   }
 
-  private listPage(status: ApplicationStatus | undefined, page: number): Promise<PagedApplications> {
+  private listPage(
+    status: ApplicationStatus | undefined,
+    page: number,
+    generation: number,
+  ): Promise<PagedApplications> {
     return this.request('admin/applications/list', {
       method: 'POST',
       body: JSON.stringify({
@@ -162,16 +256,17 @@ export class TalentAdminApi {
         page,
         per_page: APPLICATIONS_PER_PAGE,
       }),
-    })
+    }, true, generation)
   }
 
   async list(status?: ApplicationStatus): Promise<PagedApplications> {
+    const generation = this.sessionGeneration
     const items: Application[] = []
     const seenIds = new Set<number>()
     let itemsTotal: number | undefined
 
     for (let page = 1; page <= MAX_APPLICATION_PAGES; page += 1) {
-      const response = await this.listPage(status, page)
+      const response = await this.listPage(status, page, generation)
       const pageItems = Array.isArray(response.items) ? response.items : []
       if (typeof response.itemsTotal === 'number' && response.itemsTotal >= 0) {
         itemsTotal = response.itemsTotal

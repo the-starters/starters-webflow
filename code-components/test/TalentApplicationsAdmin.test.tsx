@@ -167,3 +167,90 @@ it('reports a synchronization error after a successful transition', async () => 
   )).toBeInTheDocument()
   expect(screen.queryByText(/Unable to update the application/i)).not.toBeInTheDocument()
 })
+
+it('clears applicant data immediately when Memberstack authentication changes', async () => {
+  let memberstackToken: string | null = 'member-jwt'
+  let authChange: ((member: unknown) => void) | undefined
+  window.$memberstackDom = {
+    getMemberCookie: vi.fn(async () => memberstackToken),
+    onAuthChange(listener) {
+      authChange = listener
+    },
+  }
+  vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Private Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Private Applicant',
+          motivation: 'Private motivation',
+          review_notes: 'Private internal note',
+          status: 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Private Applicant'))
+  expect(await screen.findByText('Private motivation')).toBeInTheDocument()
+  expect(screen.getByDisplayValue('Private internal note')).toBeInTheDocument()
+
+  memberstackToken = null
+  act(() => authChange?.(null))
+
+  expect(screen.queryByText('Private Applicant')).not.toBeInTheDocument()
+  expect(screen.queryByText('Private motivation')).not.toBeInTheDocument()
+  expect(screen.queryByDisplayValue('Private internal note')).not.toBeInTheDocument()
+  expect(await screen.findByText('Admin login required')).toBeInTheDocument()
+})
+
+it('clears applicant data after a definitive authentication failure', async () => {
+  let sessionCalls = 0
+  vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) {
+      sessionCalls += 1
+      return sessionCalls === 1
+        ? jsonResponse({ role: 'admin' })
+        : jsonResponse({ message: 'Unauthorized' }, 401)
+    }
+    if (url.endsWith('/admin/applications/list')) {
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Private Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  expect(await screen.findByText('Private Applicant')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+
+  expect(await screen.findByText('Admin login required')).toBeInTheDocument()
+  expect(screen.queryByText('Private Applicant')).not.toBeInTheDocument()
+})

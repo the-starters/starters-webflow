@@ -68,10 +68,15 @@ describe('TalentAdminApi', () => {
   })
 
   it('trades a new Xano token when the Memberstack session changes', async () => {
-    const getMemberCookie = vi.fn()
-      .mockResolvedValueOnce('member-one')
-      .mockResolvedValueOnce('member-two')
-    window.$memberstackDom = { getMemberCookie }
+    let memberstackToken = 'member-one'
+    let authChange: ((member: unknown) => void) | undefined
+    const getMemberCookie = vi.fn(async () => memberstackToken)
+    window.$memberstackDom = {
+      getMemberCookie,
+      onAuthChange(listener) {
+        authChange = listener
+      },
+    }
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse('xano-one'))
       .mockResolvedValueOnce(jsonResponse({ role: 'admin' }))
@@ -80,6 +85,8 @@ describe('TalentAdminApi', () => {
     const api = new TalentAdminApi('Staging', fetcher)
 
     await api.session()
+    memberstackToken = 'member-two'
+    authChange?.(null)
     await api.session()
 
     expect(fetcher.mock.calls[0][0]).toBe(`${TRADE_TOKEN_URL}?token=member-one`)
@@ -109,5 +116,77 @@ describe('TalentAdminApi', () => {
     expect(result.items).toHaveLength(101)
     expect(JSON.parse(String(fetcher.mock.calls[1][1]?.body))).toMatchObject({ page: 1 })
     expect(JSON.parse(String(fetcher.mock.calls[2][1]?.body))).toMatchObject({ page: 2 })
+  })
+
+  it('aborts pagination when the Memberstack session changes between pages', async () => {
+    let memberstackToken = 'member-one'
+    let authChange: ((member: unknown) => void) | undefined
+    window.$memberstackDom = {
+      getMemberCookie: vi.fn(async () => memberstackToken),
+      onAuthChange(listener) {
+        authChange = listener
+      },
+    }
+    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      status: 'submitted',
+      created_at: 1,
+    }))
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-one')
+      memberstackToken = 'member-two'
+      authChange?.(null)
+      return jsonResponse({ items: firstPage, itemsTotal: 101 })
+    })
+    const api = new TalentAdminApi('Staging', fetcher)
+
+    await expect(api.list()).rejects.toThrow(/session changed/i)
+
+    expect(fetcher.mock.calls.filter(([url]) =>
+      String(url).endsWith('/admin/applications/list'),
+    )).toHaveLength(1)
+  })
+
+  it('rejects a token trade completed after the Memberstack session changes', async () => {
+    let authChange: ((member: unknown) => void) | undefined
+    let resolveTrade: ((response: Response) => void) | undefined
+    const trade = new Promise<Response>((resolve) => {
+      resolveTrade = resolve
+    })
+    window.$memberstackDom = {
+      getMemberCookie: vi.fn().mockResolvedValue('member-one'),
+      onAuthChange(listener) {
+        authChange = listener
+      },
+    }
+    const fetcher = vi.fn<typeof fetch>().mockReturnValue(trade)
+    const api = new TalentAdminApi('Staging', fetcher)
+    const pending = api.list()
+
+    await vi.waitFor(() => expect(resolveTrade).toBeDefined())
+    authChange?.(null)
+    resolveTrade?.(jsonResponse('xano-one'))
+
+    await expect(pending).rejects.toThrow(/session changed/i)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a completed page when the Memberstack token changed silently', async () => {
+    let memberstackToken = 'member-one'
+    window.$memberstackDom = {
+      getMemberCookie: vi.fn(async () => memberstackToken),
+    }
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      if (String(input).includes('/auth/trade-token/v3')) return jsonResponse('xano-one')
+      memberstackToken = 'member-two'
+      return jsonResponse({
+        items: [{ id: 1, status: 'submitted', created_at: 1 }],
+        itemsTotal: 1,
+      })
+    })
+    const api = new TalentAdminApi('Staging', fetcher)
+
+    await expect(api.list()).rejects.toThrow(/session changed/i)
   })
 })

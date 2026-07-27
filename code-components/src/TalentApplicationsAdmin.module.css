@@ -1,4 +1,4 @@
-:global(*) { box-sizing: border-box; }
+.shell, .shell * { box-sizing: border-box; }
 
 .shell {
   --background: #f6f8f7;

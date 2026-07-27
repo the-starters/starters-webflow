@@ -16,6 +16,7 @@ import {
   ApplicationDetail,
   ApplicationStatus,
   Environment,
+  isTalentAdminAuthError,
   TalentAdminApi,
 } from './api'
 import { Badge, Button, Card } from './ui'
@@ -97,6 +98,16 @@ export function TalentApplicationsAdmin({
   const refreshRequest = React.useRef(0)
   const detailRequest = React.useRef(0)
 
+  const clearPrivateState = React.useCallback((invalidateRefresh = true) => {
+    if (invalidateRefresh) refreshRequest.current += 1
+    detailRequest.current += 1
+    setApplications([])
+    setSelected(null)
+    setNotes('')
+    setInterviewUrl('')
+    setSaving(false)
+  }, [])
+
   const refresh = React.useCallback(async (): Promise<boolean> => {
     const request = ++refreshRequest.current
     setLoading(true)
@@ -110,6 +121,7 @@ export function TalentApplicationsAdmin({
       return true
     } catch (nextError) {
       if (request === refreshRequest.current) {
+        if (isTalentAdminAuthError(nextError)) clearPrivateState(false)
         setError(nextError instanceof Error ? nextError.message : 'Unable to load applications.')
         return false
       }
@@ -119,11 +131,18 @@ export function TalentApplicationsAdmin({
         setLoading(false)
       }
     }
-  }, [api, filter])
+  }, [api, clearPrivateState, filter])
 
   React.useEffect(() => {
     void refresh()
   }, [refresh])
+
+  React.useEffect(() => api.subscribeAuthChanges(() => {
+    clearPrivateState()
+    setError('')
+    setLoading(true)
+    void refresh()
+  }), [api, clearPrivateState, refresh])
 
   async function openApplication(application: Application) {
     const request = ++detailRequest.current
@@ -136,6 +155,7 @@ export function TalentApplicationsAdmin({
       setInterviewUrl(detail.application.interview_url || '')
     } catch (nextError) {
       if (request === detailRequest.current) {
+        if (isTalentAdminAuthError(nextError)) clearPrivateState()
         setError(nextError instanceof Error ? nextError.message : 'Unable to load the application.')
       }
     }
@@ -150,6 +170,8 @@ export function TalentApplicationsAdmin({
     try {
       await api.transition(selected.application, nextStatus, notes, interviewUrl)
     } catch (nextError) {
+      if (detailSyncRequest !== detailRequest.current) return
+      if (isTalentAdminAuthError(nextError)) clearPrivateState()
       setError(nextError instanceof Error ? nextError.message : 'Unable to update the application.')
       setSaving(false)
       return
