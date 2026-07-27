@@ -168,6 +168,77 @@ it('reports a synchronization error after a successful transition', async () => 
   expect(screen.queryByText(/Unable to update the application/i)).not.toBeInTheDocument()
 })
 
+it('does not show a stale transition readback error on a newly opened application', async () => {
+  let detailCalls = 0
+  let resolveReadback: ((response: Response) => void) | undefined
+  const readbackResponse = new Promise<Response>((resolve) => {
+    resolveReadback = resolve
+  })
+  vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      return jsonResponse({
+        items: [
+          {
+            id: 12,
+            applicant_name: 'Transitioned Applicant',
+            status: 'submitted',
+            created_at: 1,
+          },
+          {
+            id: 24,
+            applicant_name: 'Current Applicant',
+            status: 'submitted',
+            created_at: 2,
+          },
+        ],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      detailCalls += 1
+      if (detailCalls === 2) return readbackResponse
+      const applicationId = JSON.parse(String(init?.body)).application_id
+      return jsonResponse({
+        application: {
+          id: applicationId,
+          applicant_name: applicationId === 12
+            ? 'Transitioned Applicant'
+            : 'Current Applicant',
+          motivation: applicationId === 12
+            ? 'Transitioned motivation'
+            : 'Current motivation',
+          status: 'submitted',
+          created_at: applicationId === 12 ? 1 : 2,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) {
+      return jsonResponse({ id: 12, status: 'under_review' })
+    }
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Transitioned Applicant'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Under review' }))
+  await waitFor(() => expect(detailCalls).toBe(2))
+  fireEvent.click(screen.getByRole('button', { name: 'All applications' }))
+  fireEvent.click(await screen.findByText('Current Applicant'))
+  expect(await screen.findByText('Current motivation')).toBeInTheDocument()
+
+  await act(async () => {
+    resolveReadback?.(jsonResponse({ message: 'Readback failed' }, 500))
+    await readbackResponse
+  })
+
+  expect(screen.getByText('Current motivation')).toBeInTheDocument()
+  expect(screen.queryByText(/latest data could not be reloaded/i)).not.toBeInTheDocument()
+})
+
 it('clears private state when transition detail readback loses authorization', async () => {
   let detailCalls = 0
   vi.spyOn(window, 'fetch').mockImplementation(async (input) => {

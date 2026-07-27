@@ -231,13 +231,16 @@ export function TalentApplicationsAdmin({
         return
       }
       if (listResult === 'auth-failed') return
-      const detailSynced = detailResult.status !== 'rejected'
+      const detailSyncFailed = (
+        detailResult.status === 'rejected' &&
+        detailSyncRequest === detailRequest.current
+      )
       if (detailResult.status === 'fulfilled' && detailSyncRequest === detailRequest.current) {
         setSelected(detailResult.detail)
         setNotes(detailResult.detail.application.review_notes || '')
         setInterviewUrl(detailResult.detail.application.interview_url || '')
       }
-      if (!detailSynced || listResult === 'failed') {
+      if (detailSyncFailed || listResult === 'failed') {
         setError({
           message: 'Application updated, but the latest data could not be reloaded. Refresh before continuing.',
           authentication: false,
