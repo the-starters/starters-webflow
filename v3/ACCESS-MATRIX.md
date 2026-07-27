@@ -90,6 +90,7 @@ separate owner:
 | Free Brand blurred/limited All Starters results | Page/list rendering and data response | Not enforced by the router |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |
 | `/starter-edit-profile` environment write mode | `profile-image-auth-shim.js` exact Live-host allowlist | Implemented; non-Live hosts block known mutations and preserve reads |
+| `/admin/talent-applications` staff access and private application records | Xano `admin/session` and talent-admin endpoint authorization | Staging Code Component implemented; it is outside the member-plan route matrix and has not been published to a Webflow page |
 | Mutations and private records | Xano authorization using authenticated member and role | Profile, Companies, and Portfolio mutations receive `user_v3` Bearer auth from `profile-image-auth-shim.js`; ownership must be enforced server-side |
 | Paid-then-cancelled behavior | Memberstack subscription lifecycle + application role resolution | Decision required |
 
