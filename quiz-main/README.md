@@ -70,9 +70,13 @@ Memberstack returns, the delayed restore is skipped.
 
 Required elements:
 
+- stable form roles that are independent of Webflow-generated form names and IDs:
+  `[data-quiz-form="home"]` on the homepage quiz,
+  `[data-quiz-form="categories"]` on the main category form,
+  `[data-quiz-form="subcategories"]` on every subcategory form, and
+  `[data-quiz-form="signup"]` on the final signup form;
 - category and subcategory steps marked with `[data-main-is-categories]` and
   `[data-main-is-subcategories]`;
-- `#wf-form-Categories` and `#wf-form-Subcategories`;
 - navigation under `[data-tab-wrapper]` using `[data-tab="previous|next"]`, or
   wrappers marked `[data-step-back]` and `[data-step-next]`.
 
@@ -88,7 +92,7 @@ Optional integrations:
   `data-tab-content="ways"` and the signup slide
   `data-tab-content="signup"`.
 - Non-tab subcategory items use `[data-category="<category id>"]`.
-- `#Signup-Form` and `[data-ms-auth-provider]` triggers cause the ready payload
+- `[data-quiz-form="signup"]` and `[data-ms-auth-provider]` triggers cause the ready payload
   to be saved before authentication.
 - `[data-quiz-result-slug="<slug>"]` supplies an already-calculated result slug.
 
