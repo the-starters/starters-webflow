@@ -68,13 +68,17 @@ Memberstack returns, the delayed restore is skipped.
 
 ### Webflow markup contract
 
+Publish these custom attributes in Webflow before releasing scripts that use
+this contract. Keep the existing Webflow form names and IDs during the rollout;
+the scripts no longer use them, but removing them is a separate cleanup.
+
 Required elements:
 
 - stable form roles that are independent of Webflow-generated form names and IDs:
-  `[data-quiz-form="home"]` on the homepage quiz,
-  `[data-quiz-form="categories"]` on the main category form,
+  `[data-quiz-form="home"]` on the single homepage quiz form,
+  `[data-quiz-form="categories"]` on the single main category form,
   `[data-quiz-form="subcategories"]` on every subcategory form, and
-  `[data-quiz-form="signup"]` on the final signup form;
+  `[data-quiz-form="signup"]` on the single final signup form;
 - category and subcategory steps marked with `[data-main-is-categories]` and
   `[data-main-is-subcategories]`;
 - navigation under `[data-tab-wrapper]` using `[data-tab="previous|next"]`, or
@@ -109,8 +113,9 @@ the session flag. A `localStorage.starterQuizDebug` value of `"true"` also
 enables logging. Logging defaults off across the homepage, `/quiz`, and
 `/quiz-results` controllers.
 
-Run the focused redirect tests with:
+Run the focused quiz tests, including the form-selector contract regression,
+with:
 
 ```sh
-node --test quiz-main/quiz-redirect.test.js
+node --test quiz-main/*.test.js
 ```

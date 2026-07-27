@@ -11,6 +11,10 @@
  * - `[data-tab-component='panel-list']` with `[data-tab-component='panel']` items
  * - `[data-tab='previous']` and `[data-tab='next']` nav wrappers
  *
+ * Quiz gating markup (when those steps exist):
+ * - `[data-quiz-form="categories"]` on the main category form
+ * - `[data-quiz-form="subcategories"]` on every subcategory form
+ *
  * Optional attributes on `[data-tab-wrapper]`:
  * - `data-loop-controls="True"` — wrap from last tab back to first
  * - `data-slide-tabs="True"` — slide animation instead of fade
