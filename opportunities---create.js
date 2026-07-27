@@ -54,17 +54,11 @@
   }
 
   /**
-   * Resolve the create form. Prefers the data-attribute hook (add this in Webflow);
-   * falls back to the id/class so the page keeps working until the attribute exists.
+   * Resolve the create form by its stable role.
    * @returns {HTMLFormElement | null}
    */
   const getForm = () =>
-    /** @type {HTMLFormElement | null} */ (
-      document.querySelector('[data-opp-form="create"]') ||
-      document.querySelector('#opportunities-create-form') ||
-      document.querySelector('#email-form.create-opportunities_layout') ||
-      document.querySelector('#email-form')
-    )
+    /** @type {HTMLFormElement | null} */ (document.querySelector('[data-opp-form="create"]'))
 
   /**
    * Build the Xano create payload from the form's field `name`s.
