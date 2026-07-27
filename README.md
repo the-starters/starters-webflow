@@ -46,7 +46,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`, diagnostics are opt-in through `starterQuizDebug`, and freelancer recommendations use the `Freelancers3.0-dev` Algolia index by default
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (category-matched and applied starter feeds); defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (category-matched and applied starter feeds); binds the paid-Brand create page through `[data-opp-form="create"]`, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
 - `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations; brand-free lands on `/quiz` until the Memberstack `starter-quiz` field is set (quiz completed), then `/quiz-results`
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
 - `v3/onboarding-tour.js` — attribute-driven V3 product tours with highlight and disclosure overrides, role targeting, per-member seen-state, and replay/reset controls
@@ -59,7 +59,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/scheduling-availability-init.js` — staging-only booking-stage availability control initializer
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`
-- `opportunities---create.js`
+- `opportunities---create.js` — dedicated `/opportunities---create` controller; binds the same `[data-opp-form="create"]` contract through the shared Opportunities 3.0 core
 - `starters-list/apply-button-disable.js`
 - `starters-list/range-backfill.js`
 - `utils/loader.js` — env-switch script loader (`loadEnvScript`)
@@ -131,6 +131,35 @@ authorization boundary.
 
 For console checks, `window.Opp30.redirectForeignBrandToFeed(error)` applies that
 status policy and returns whether it redirected.
+
+## Opportunities 3.0 Create Form
+
+Before releasing either opportunity controller, publish
+`data-opp-form="create"` on the one full Webflow create form rendered on each
+supported page, including `/opportunities---create` and the Brand feed's
+post-opportunity modal. Both `opportunities-3.0.js` and
+`opportunities---create.js` resolve that form only through this stable role;
+generated form IDs and styling classes are not supported selector fallbacks.
+
+The dedicated page controller shares a run-once guard with the core controller,
+so loading both scripts does not submit twice. Keep the existing load order:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities---create.js"></script>
+```
+
+The form may keep its native submit control; an optional
+`data-opp-submit="create"` control inside the form is still owned by the form's
+submit handler. The Webflow form display name, generated ID, and styling classes
+can be cleaned up independently after the stable attribute is published because
+browser behavior no longer reads them.
+
+Run the focused form-selector and create-page authentication regressions with:
+
+```sh
+node --test opportunities-form-contract.test.js opportunities-create-auth.test.js
+```
 
 ## V3 Staging Scheduling Authentication
 
