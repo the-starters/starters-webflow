@@ -63,7 +63,7 @@ Do not discard local changes unless the user explicitly asks.
 - `starters-list/apply-button-disable.js`
 - `starters-list/range-backfill.js`
 - `utils/loader.js` — env-switch script loader (`loadEnvScript`)
-- `utils/wf-validate.js` — declarative form validation (see below)
+- `utils/wf-validate.js` — declarative form validation: styled errors and success slots, live counters, soft-disabled submitters while a form is incomplete (see below)
 - `explore-search/explore-search-chip-fill.js` — chip click copies its text into the search input, fires the engine's `input` event, announces `explore-search:commit`
 - `explore-search/explore-search-tab-counts.js` — live per-index hit counts for the tab bar (intercepts the engine's own Algolia responses; zero extra operations)
 - `explore-search/explore-search-most-searched.js` — dynamic "Most Searched" chips from an Algolia Query Suggestions index, via a designer-owned template
@@ -422,8 +422,21 @@ blocks invalid submits before Webflow's handler or page controllers see them.
 </form>
 ```
 
-- Roles: `wf-validate-element="form | error | message | count | submit"`. Error/count
-  slots bind to the nearest field, or explicitly via `wf-validate-for="<input name>"`.
+- Roles: `wf-validate-element="form | error | message | success | count | submit"`.
+  Error/success/count slots bind to the nearest field, or explicitly via
+  `wf-validate-for="<input name>"`.
+- `success` is the positive twin of `error`: a Designer-authored slot (checkmark,
+  "Looks good!") shown only once its field has been touched AND is valid, so it can
+  never appear next to a visible error. The script only toggles its visibility.
+- `wf-validate-submit-disable` on the same element as `wf-validate-element="form"`
+  soft-disables every submitter while the form is incomplete: class
+  `is-wf-validate-disabled` (the styling hook), `aria-disabled="true"`, and
+  `data-theme="disabled"` (bonus wiring for data-theme button components; a
+  pre-existing value is restored on re-enable). Never the native `disabled`
+  property, so a click still hits the gate and reveals every error at once.
+  Completeness is checked silently — nothing is painted before it has been earned.
+- Resetting a form clears its validation state; counters and the submit-disable
+  state are recomputed on the next tick, since `reset` fires before values revert.
 - Invalid forms are gated on BOTH the submit event and clicks on submit buttons —
   page controllers that bind click and call the API directly (the opp30 modal
   pattern) never fire while the form is invalid. Put `wf-validate-element="submit"`

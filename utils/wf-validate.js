@@ -27,6 +27,12 @@
  *             opted-in form never blocks submission without visible feedback.
  *   message — optional child of an error element; the message text is written
  *             here instead, so the error can carry icons/decoration.
+ *   success — a Designer-styled "this one is good" slot, the positive twin of an
+ *             error. Binds the same way (nearest field or wf-validate-for).
+ *             Hidden on init; shown only once the field has been touched AND is
+ *             valid, so it never appears next to a visible error. The script
+ *             never writes into it — whatever the Designer put there (checkmark,
+ *             "Looks good!", an icon) is what shows.
  *   count   — live character counter ("1,234 / 2,500"). Binds like an error
  *             slot (nearest field or wf-validate-for). Max comes from the
  *             field's maxlength, or wf-validate-count-max on the counter
@@ -41,6 +47,26 @@
  *             are gated automatically — page controllers that bind click on
  *             the button (the opp30 modal pattern) and call the API directly
  *             never fire while the form is invalid.
+ *
+ * Settings (on the same element as wf-validate-element="form" — the <form> or
+ * its wrapper):
+ *   wf-validate-submit-disable  — bare attribute. While the form is incomplete,
+ *                                 every submitter is SOFT-disabled: it gets the
+ *                                 class is-wf-validate-disabled, aria-disabled
+ *                                 ="true", and data-theme="disabled". All three
+ *                                 are removed once the form validates (a
+ *                                 pre-existing data-theme, e.g. "primary", is
+ *                                 cached on the first overwrite and restored;
+ *                                 if there was none, the attribute is removed).
+ *                                 Never the native `disabled` property: the
+ *                                 button stays clickable and in tab order, so a
+ *                                 click while incomplete still hits the gate and
+ *                                 reveals every error at once. Submitters are
+ *                                 re-collected on each state change (native
+ *                                 submit buttons inside the form plus every
+ *                                 wf-validate-element="submit" that resolves to
+ *                                 it), so late-injected buttons are covered
+ *                                 without a MutationObserver.
  *
  * Settings (on the input/select/textarea):
  *   wf-validate-message-<rule>  — per-rule message override. Rules: required,
@@ -59,8 +85,14 @@
  *                                 validationMessage.
  *
  * State classes (Finsweet-style, style them in Webflow — no CSS shipped):
- *   is-wf-validate-invalid — on each invalid field, and on the form while it
- *                            has any invalid field.
+ *   is-wf-validate-invalid  — on each invalid field, and on the form while it
+ *                             has any invalid field.
+ *   is-wf-validate-disabled — the canonical styling hook for a soft-disabled
+ *                             submitter (opacity, cursor, pointer-events off if
+ *                             you insist). data-theme="disabled" is written
+ *                             alongside it purely as bonus wiring for projects
+ *                             whose button components already theme off
+ *                             data-theme; style the class, not the attribute.
  *
  * Behavior ("reward early, punish late"):
  *   - a field first shows its error when the user leaves it (focusout)
@@ -69,9 +101,18 @@
  *   - submit validates everything; if anything fails the submit is blocked
  *     at document capture (before Webflow's handler or page controllers like
  *     opportunities---create.js ever see it, regardless of script load
- *     order) and the first invalid field gets focus
+ *     order) and the first invalid field is focused without a scroll jump, then
+ *     scrolled to the middle of the viewport — smoothly, or instantly when the
+ *     visitor asked for prefers-reduced-motion
  *   - fields that are not rendered (display:none step/variant inputs) are
  *     skipped, so per-project-type inputs don't block submit invisibly
+ *   - resetting the form wipes the validation state with it: every group goes
+ *     back to untouched and unpainted, and the form's invalid class is dropped.
+ *     Counters and the submit-disable state are recomputed on the next tick,
+ *     because a `reset` event fires BEFORE the browser reverts the values
+ *   - submit-disable state is recomputed silently (no painting, nothing marked
+ *     touched) at bind time, on every input/change/focusout, inside every
+ *     validateAll (so both gates and the API refresh it), and after a reset
  *
  * Accessibility: error slots get role="alert"; fields get aria-invalid and
  * aria-describedby pointing at their error slot.
@@ -103,9 +144,21 @@
   }
 
   const INVALID_CLASS = 'is-wf-validate-invalid'
+  const DISABLED_CLASS = 'is-wf-validate-disabled'
   const FIELD_SELECTOR = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea'
+  const NATIVE_SUBMIT_SELECTOR = 'button[type="submit"], input[type="submit"], button:not([type])'
+  const MARKED_SUBMIT_SELECTOR = '[wf-validate-element="submit"]'
 
   let uid = 0
+
+  /**
+   * Pre-existing data-theme values, remembered the first time we overwrite one
+   * with "disabled" so re-enabling can put the original back (a designer's
+   * data-theme="primary" must survive a round-trip through the disabled state).
+   * A null entry means "had no data-theme" -> remove it on restore.
+   * @type {WeakMap<Element, string | null>}
+   */
+  const themeCache = new WeakMap()
 
   /**
    * A field is skipped when the browser wouldn't validate it (disabled,
@@ -123,6 +176,7 @@
    * @property {HTMLElement | null} error  bound error slot
    * @property {HTMLElement | null} messageEl  inner message target within the error slot
    * @property {HTMLElement | null} count  bound character-counter slot
+   * @property {HTMLElement | null} success  bound success slot (shown while touched + valid)
    * @property {number | null} countMax  counter denominator (maxlength / maxwords / wf-validate-count-max)
    * @property {boolean} countWords  counter counts words instead of characters
    * @property {boolean} touched  whether errors may be shown yet
@@ -241,14 +295,61 @@
   }
 
   /**
+   * The form a submitter belongs to: its own ancestor <form> when it has one,
+   * otherwise the first accepted form inside one of its ancestors — marked
+   * submitters legitimately sit outside the form (modal footers), so we walk up
+   * wrappers until one contains a form the caller accepts.
+   * @param {Element} el
+   * @param {(form: HTMLFormElement) => boolean} accept
+   * @returns {HTMLFormElement | null}
+   */
+  const submitterForm = (el, accept) => {
+    const inside = /** @type {HTMLFormElement | null} */ (el.closest('form'))
+    if (inside) return inside
+    let scope = el.parentElement
+    while (scope) {
+      const candidate = /** @type {HTMLFormElement | null} */ (scope.querySelector('form'))
+      if (candidate && accept(candidate)) return candidate
+      scope = scope.parentElement
+    }
+    return null
+  }
+
+  /**
+   * The group's failure message, computed with NO side effects on presentation:
+   * nothing is painted and `touched` is never mutated. Both the painting path
+   * (validateGroup) and the silent completeness check (isComplete, which drives
+   * the submit-disable state) go through here, so the rule logic exists once.
+   * @param {FieldGroup} group
+   * @param {HTMLFormElement} form
+   * @returns {string} empty string when the group is valid
+   */
+  const groupMessage = (group, form) => {
+    let msg = ''
+    group.els.forEach((el) => {
+      if (!isActive(el)) return
+      applyMatch(el, form)
+      if (!msg) msg = messageFor(el)
+    })
+    return msg
+  }
+
+  /**
    * Per-form controller: builds name-keyed field groups, binds their error
    * slots, and wires focusout/input/submit.
    */
   class FormValidator {
-    /** @param {HTMLFormElement} form */
-    constructor(form) {
+    /**
+     * @param {HTMLFormElement} form
+     * @param {Element} [root]  the opted-in element (the form, or the wrapper
+     *   that carries wf-validate-element="form"); form-level settings live here
+     */
+    constructor(form, root) {
       this.form = form
       form.noValidate = true
+
+      /** whether submitters are soft-disabled while the form is incomplete */
+      this.submitDisable = (root || form).hasAttribute('wf-validate-submit-disable')
 
       /** @type {Map<string, FieldGroup>} */
       this.groups = new Map()
@@ -257,7 +358,17 @@
         if (!name) return
         let group = this.groups.get(name)
         if (!group) {
-          group = { name, els: [], error: null, messageEl: null, count: null, countMax: null, countWords: false, touched: false }
+          group = {
+            name,
+            els: [],
+            error: null,
+            messageEl: null,
+            success: null,
+            count: null,
+            countMax: null,
+            countWords: false,
+            touched: false,
+          }
           this.groups.set(name, group)
         }
         group.els.push(/** @type {HTMLInputElement} */ (el))
@@ -267,6 +378,15 @@
         const group = this.resolveTarget(/** @type {HTMLElement} */ (error))
         if (!group) return
         this.adoptError(group, /** @type {HTMLElement} */ (error))
+      })
+
+      Array.from(form.querySelectorAll('[wf-validate-element="success"]')).forEach((success) => {
+        const group = this.resolveTarget(/** @type {HTMLElement} */ (success))
+        if (!group) return
+        group.success = /** @type {HTMLElement} */ (success)
+        // no role: a success slot is not an alert, and its content is the
+        // Designer's (we only toggle visibility)
+        group.success.style.display = 'none'
       })
 
       Array.from(form.querySelectorAll('[wf-validate-element="count"]')).forEach((count) => {
@@ -287,8 +407,13 @@
       form.addEventListener('focusout', (e) => this.onLeave(e))
       form.addEventListener('input', (e) => this.onInput(e))
       form.addEventListener('change', (e) => this.onInput(e))
+      form.addEventListener('reset', () => this.onReset())
       // submit interception happens at document capture (see below), so it
       // wins regardless of what order page controllers were bound in
+
+      // an empty required form is incomplete from the start, so paint the
+      // submitters disabled before the user touches anything
+      this.applySubmitState()
     }
 
     /**
@@ -367,19 +492,85 @@
      * @returns {boolean} whether the group is valid
      */
     validateGroup(group, show) {
-      let msg = ''
-      group.els.forEach((el) => {
-        if (!isActive(el)) return
-        applyMatch(el, this.form)
-        if (!msg) msg = messageFor(el)
-      })
+      const msg = groupMessage(group, this.form)
       if (show) group.touched = true
       if (group.touched) this.paint(group, msg)
       return !msg
     }
 
     /**
-     * Toggle classes, aria state, and the error slot for a group.
+     * Silent whole-form check: same rules as validateGroup, but it paints
+     * nothing and marks nothing touched — this is what decides whether the
+     * submitters are soft-disabled, and it runs long before the user has earned
+     * any error messages.
+     *
+     * Silent means silent to the USER, not side-effect free: the shared rule
+     * pass runs applyMatch, so wf-validate-match fields get setCustomValidity
+     * (and therefore native :invalid) from bind time onward. Style the shipped
+     * is-wf-validate-invalid class rather than :invalid to avoid pre-touch paint.
+     * @returns {boolean} whether every group currently passes
+     */
+    isComplete() {
+      let complete = true
+      this.groups.forEach((group) => {
+        if (groupMessage(group, this.form)) complete = false
+      })
+      return complete
+    }
+
+    /**
+     * Everything that can submit this form: native submit buttons inside it,
+     * plus every wf-validate-element="submit" in the document that resolves to
+     * it (those may live outside the form). Queried fresh on every call — never
+     * cached — so buttons injected after bind are handled without an observer.
+     * @returns {Element[]}
+     */
+    submitters() {
+      /** @type {Set<Element>} */
+      const found = new Set()
+      Array.from(this.form.querySelectorAll(NATIVE_SUBMIT_SELECTOR)).forEach((el) => found.add(el))
+      Array.from(document.querySelectorAll(MARKED_SUBMIT_SELECTOR)).forEach((el) => {
+        // `this.form` is accepted explicitly: at bind time it isn't in `bound` yet
+        const form = submitterForm(el, (candidate) => candidate === this.form || bound.has(candidate))
+        if (form === this.form) found.add(el)
+      })
+      return Array.from(found)
+    }
+
+    /**
+     * Soft-disable (or re-enable) the submitters. Soft on purpose: no native
+     * `disabled`, so the button keeps its click and its place in the tab order
+     * and a determined click still runs the gate that reveals every error.
+     * @returns {void}
+     */
+    applySubmitState() {
+      if (!this.submitDisable) return
+      const blocked = !this.isComplete()
+      this.submitters().forEach((el) => {
+        if (blocked) {
+          el.classList.add(DISABLED_CLASS)
+          el.setAttribute('aria-disabled', 'true')
+          if (!themeCache.has(el)) themeCache.set(el, el.getAttribute('data-theme'))
+          el.setAttribute('data-theme', 'disabled')
+          return
+        }
+        el.classList.remove(DISABLED_CLASS)
+        el.removeAttribute('aria-disabled')
+        // only touch data-theme if WE overwrote it; restore the cached value, or
+        // remove the attribute when there was nothing there before
+        if (themeCache.has(el)) {
+          const previous = themeCache.get(el)
+          if (typeof previous === 'string') el.setAttribute('data-theme', previous)
+          else el.removeAttribute('data-theme')
+          themeCache.delete(el)
+        }
+      })
+    }
+
+    /**
+     * Toggle classes, aria state, and the error/success slots for a group. The
+     * two slots are mutually exclusive by construction: success shows only for a
+     * touched, valid group — exactly when the error is hidden.
      * @param {FieldGroup} group
      * @param {string} msg  empty string when valid
      * @returns {void}
@@ -394,6 +585,7 @@
         ;(group.messageEl || group.error).textContent = msg || ''
         group.error.style.display = msg ? '' : 'none'
       }
+      if (group.success) group.success.style.display = !msg && group.touched ? '' : 'none'
     }
 
     /**
@@ -410,6 +602,7 @@
     onLeave(e) {
       const group = this.groupFor(e)
       if (group) this.validateGroup(group, true)
+      this.applySubmitState()
     }
 
     /** Live counter update always; re-validation once a group has been marked. @param {Event} e @returns {void} */
@@ -418,6 +611,26 @@
       if (!group) return
       this.updateCount(group)
       if (group.touched) this.validateGroup(group)
+      this.applySubmitState()
+    }
+
+    /**
+     * Form reset: drop the whole validation state so the user starts clean.
+     * The unpainting is synchronous, but counters and the submit-disable state
+     * must wait a tick — a `reset` event fires BEFORE the browser reverts the
+     * control values, so computing them now would read the pre-reset input.
+     * @returns {void}
+     */
+    onReset() {
+      this.groups.forEach((group) => {
+        group.touched = false
+        this.paint(group, '')
+      })
+      this.form.classList.remove(INVALID_CLASS)
+      setTimeout(() => {
+        this.groups.forEach((group) => this.updateCount(group))
+        this.applySubmitState()
+      }, 0)
     }
 
     /** @returns {boolean} whether the whole form is valid */
@@ -427,6 +640,7 @@
         if (!this.validateGroup(group, true)) valid = false
       })
       this.form.classList.toggle(INVALID_CLASS, !valid)
+      this.applySubmitState()
       return valid
     }
   }
@@ -436,7 +650,12 @@
 
   /**
    * Shared invalid-gate: validate, and on failure kill the event before any
-   * other listener sees it, then focus the first invalid field.
+   * other listener sees it, then bring the first invalid field to the user.
+   * Focus first with preventScroll (the browser's own focus scroll is instant
+   * and lands the field wherever it likes), then scroll it to the middle of the
+   * viewport ourselves — the field is usually below a long form, and centering
+   * it keeps its label and error slot in view. Instant for anyone who asked for
+   * reduced motion.
    * @param {FormValidator} validator
    * @param {Event} e
    * @returns {void}
@@ -445,8 +664,11 @@
     if (validator.validateAll()) return
     e.preventDefault()
     e.stopImmediatePropagation()
-    const firstInvalid = validator.form.querySelector('.' + INVALID_CLASS)
-    if (firstInvalid) /** @type {HTMLElement} */ (firstInvalid).focus()
+    const firstInvalid = /** @type {HTMLElement | null} */ (validator.form.querySelector('.' + INVALID_CLASS))
+    if (!firstInvalid) return
+    firstInvalid.focus({ preventScroll: true })
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    firstInvalid.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
   }
 
   /**
@@ -476,21 +698,14 @@
     (e) => {
       const origin = e.target instanceof Element ? e.target : null
       if (!origin) return
-      const marked = origin.closest('[wf-validate-element="submit"]')
-      const el =
-        marked || origin.closest('button[type="submit"], input[type="submit"], button:not([type])')
+      const marked = origin.closest(MARKED_SUBMIT_SELECTOR)
+      const el = marked || origin.closest(NATIVE_SUBMIT_SELECTOR)
       if (!el) return
-      let form = /** @type {HTMLFormElement | null} */ (el.closest('form'))
-      if (!form && marked) {
-        // marked submitters may sit outside the form (modal footers): walk up
-        // until a wrapper contains a bound form
-        let scope = marked.parentElement
-        while (scope && !form) {
-          const candidate = /** @type {HTMLFormElement | null} */ (scope.querySelector('form'))
-          if (candidate && bound.has(candidate)) form = candidate
-          scope = scope.parentElement
-        }
-      }
+      // marked submitters may sit outside the form (modal footers), so those get
+      // the walk-up resolution; native buttons are always inside theirs
+      const form = marked
+        ? submitterForm(marked, (candidate) => bound.has(candidate))
+        : /** @type {HTMLFormElement | null} */ (el.closest('form'))
       const validator = form && bound.get(form)
       if (validator) gateEvent(validator, e)
     },
@@ -499,7 +714,9 @@
 
   /**
    * Scan a scope for opted-in forms and bind any that aren't bound yet.
-   * wf-validate-element="form" may sit on the <form> or a wrapper around it.
+   * wf-validate-element="form" may sit on the <form> or a wrapper around it —
+   * that element is handed to the validator as its settings root (it's where
+   * form-level settings like wf-validate-submit-disable live).
    * @param {ParentNode} [scope]
    * @returns {void}
    */
@@ -507,7 +724,7 @@
     Array.from((scope || document).querySelectorAll('[wf-validate-element="form"]')).forEach((el) => {
       const form = /** @type {HTMLFormElement | null} */ (el.tagName === 'FORM' ? el : el.querySelector('form'))
       if (!form || bound.has(form)) return
-      bound.set(form, new FormValidator(form))
+      bound.set(form, new FormValidator(form, el))
     })
   }
 
