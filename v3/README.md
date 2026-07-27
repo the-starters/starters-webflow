@@ -17,16 +17,19 @@ allowed destination after login.
 
 ## Talent applications admin
 
-`../code-components/` contains the React **Talent Applications Admin** Code
-Component. It reviews the Xano-canonical V3 application queue, loads application
-details and audit events, and submits notes, interview links, and guarded status
-transitions with optimistic concurrency. It has no Airtable, Make, or Zapier
-integration and does not replace or modify existing V2 application workflows.
+`../code-components/` contains the parked, preparation-only React **Talent
+Applications Admin** Code Component. It reviews the Xano-canonical V3 application
+queue, loads application details and audit events, and submits notes, interview
+links, and guarded status transitions with optimistic concurrency. It has no
+Airtable, Make, or Zapier integration and does not replace or modify existing
+Admin Ops, Marketing Ops, or V2 application workflows.
 
 The Webflow registration exposes only the dashboard title and login URL, leaving
-the component on its `Staging` API default. No Webflow page has been published
-by this repository change. Memberstack supplies the browser session, the shared
-trade-token endpoint returns a Xano token, and the Xano
+the component on its `Staging` API default. This foundation is not production-ready:
+it has not been imported into Webflow or published on a page, and it must not be
+tagged or deployed through jsDelivr before a separate cutover review. Memberstack
+supplies the browser session, the shared trade-token endpoint returns a Xano token,
+and the Xano
 `admin/session` plus application endpoints remain the staff authorization and
 data boundary. The browser's transition map is not an authorization control.
 

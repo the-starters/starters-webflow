@@ -1,10 +1,11 @@
 # Webflow code components
 
-This package contains the V3 `Talent Applications Admin` React Code Component.
-It is an additive staging implementation: Xano is the application and audit
-source of truth. It has no Airtable, Make, or Zapier integration and leaves the
-existing V2 application workflows unchanged. The component source is not a
-published Webflow page.
+This package contains the parked V3 `Talent Applications Admin` React Code
+Component as a preparation-only foundation. It is not production-ready, has not
+been imported into Webflow or published on a Webflow page, and must not receive
+a semver tag or jsDelivr deployment. Xano is the application and audit source of
+truth. The component has no Airtable, Make, or Zapier integration and leaves the
+existing Admin Ops, Marketing Ops, and V2 application workflows unchanged.
 
 ## Local verification
 
@@ -34,9 +35,9 @@ Designer exposes:
 
 The Webflow registration deliberately does not expose the component's
 `environment` prop, so Designer instances use the `Staging` default. Do not add
-a Live selector or publish the component on a production page until the Xano
-contract, staff authorization, and staging QA have passed a separate cutover
-review.
+a Live selector, import the library into Webflow, publish the component, create
+a release tag, or deploy it through jsDelivr until the Xano contract, staff
+authorization, and staging QA have passed a separate cutover review.
 
 The page must load Memberstack so `window.$memberstackDom.getMemberCookie()` is
 available. The component does not contain an admin secret: it exchanges the
@@ -44,7 +45,10 @@ current Memberstack token at
 `/api:g1vmSLWh/auth/trade-token/v3`, then sends the returned Xano Bearer token to
 the selected talent-admin API. A missing Memberstack session shows the configured
 login link. A `401` from the admin API clears the cached Xano token, trades the
-current Memberstack token again, and retries once.
+current Memberstack token again, and retries once. A final `401` or any `403` is
+treated as an authentication failure. Memberstack account changes, logout, or a
+token change during a request invalidate in-flight work, clear cached tokens and
+private application state, and require a fresh authenticated load.
 
 ## Xano contract
 
