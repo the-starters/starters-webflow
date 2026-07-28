@@ -1218,15 +1218,17 @@
   async function waitForMappedMemberRole(memberstack, initialMember) {
     let member = initialMember
     let role = memberPlanRole(member)
-    if (role) return { member, role }
+    if (role || member.planConnections?.length) return { member, role }
 
     const startedAt = Date.now()
     while (Date.now() - startedAt < MEMBER_ROLE_HYDRATION_TIMEOUT_MS) {
       await new Promise((resolve) => window.setTimeout(resolve, MEMBER_ROLE_HYDRATION_POLL_MS))
-      const response = await memberstack.getCurrentMember()
-      if (response && response.data && response.data.id) member = response.data
+      try {
+        const response = await memberstack.getCurrentMember()
+        if (response && response.data && response.data.id) member = response.data
+      } catch (_) {}
       role = memberPlanRole(member)
-      if (role) return { member, role }
+      if (role || member.planConnections?.length) return { member, role }
     }
     return { member, role: null }
   }

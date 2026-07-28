@@ -410,6 +410,55 @@ test('waitForMappedMemberRole retries an authenticated snapshot until plans hydr
   assert.equal(calls, 1)
 })
 
+test('waitForMappedMemberRole does not retry a complete unmapped plan snapshot', async () => {
+  let calls = 0
+  const bridge = await loadBridge(async () => response({}))
+  const initialMember = {
+    id: 'm-unmapped',
+    customFields: {},
+    planConnections: [{ active: true, planId: 'pln_unknown' }],
+  }
+
+  const result = await bridge.window.Opp30.waitForMappedMemberRole(
+    {
+      getCurrentMember: async () => {
+        calls += 1
+        return { data: paidBrandMember }
+      },
+    },
+    initialMember,
+  )
+
+  assert.equal(result.member, initialMember)
+  assert.equal(result.role, null)
+  assert.equal(calls, 0)
+})
+
+test('waitForMappedMemberRole keeps polling after a transient Memberstack rejection', async () => {
+  let calls = 0
+  const bridge = await loadBridge(async () => response({}))
+  const initialMember = {
+    id: 'm-brand-before-plans-hydrate',
+    customFields: {},
+    planConnections: [],
+  }
+
+  const result = await bridge.window.Opp30.waitForMappedMemberRole(
+    {
+      getCurrentMember: async () => {
+        calls += 1
+        if (calls === 1) throw new Error('temporary Memberstack failure')
+        return { data: paidBrandMember }
+      },
+    },
+    initialMember,
+  )
+
+  assert.equal(result.member, paidBrandMember)
+  assert.equal(result.role, 'brand-paid')
+  assert.equal(calls, 2)
+})
+
 test('without the guard, gateByPlan sends an un-completed free brand to /quiz', async () => {
   const bridge = await loadBridge(async () => response({}), {
     member: freeBrandMember,
