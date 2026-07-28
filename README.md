@@ -272,6 +272,15 @@ reveals the allowed wrapper, stamps `html[data-opp-role-resolved]`, and
 activates only that wrapper's root through the race-safe `window.WfXano`
 pre-load queue. The hidden, wrong-role feed is never initialized.
 
+The merged page keeps exactly one native Webflow `Navbar v2` component.
+Its root carries the component's existing `data-preview-nav` attribute and its
+authored descendant groups retain their `#freelancer` / `#brands` and
+`data-ms-content` contracts. When the opportunity role resolves, the controller
+changes only the root attribute (`freelancer` for Talent, `brand` for paid
+Brand); `navbar-embeds/navlinks.css` owns descendant visibility. The controller
+does not clone a navbar, generate navbar HTML, or paint descendant visibility
+with inline styles.
+
 Load `v3/route-guard.js` sitewide before `opportunities-3.0.js`. The merged
 route allows Talent and paid Brand members, rejects free Brands, and guards both
 the bare and trailing-slash forms. An allowed initial plan snapshot proceeds

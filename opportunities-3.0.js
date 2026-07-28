@@ -1292,10 +1292,15 @@
    *  hide the rest. Pair with a page-head embed of
    *  <style>html:not([data-opp-role-resolved]) [data-opp-role]{display:none}</style>
    *  so neither wrapper flashes before this footer script resolves the member's
-   *  plan. */
+   *  plan. The page keeps one native Navbar v2 instance; its authored
+   *  data-preview-nav contract selects the matching descendant link group. */
   function showRoleWrapper(role) {
     $$('[data-opp-role]').forEach((el) => {
       el.style.display = el.getAttribute('data-opp-role') === role ? '' : 'none'
+    })
+    const navbarRole = role === 'talent' ? 'freelancer' : 'brand'
+    $$('[data-preview-nav]').forEach((navbar) => {
+      navbar.setAttribute('data-preview-nav', navbarRole)
     })
     document.documentElement.setAttribute('data-opp-role-resolved', role)
   }
