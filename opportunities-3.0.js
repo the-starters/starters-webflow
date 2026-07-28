@@ -2393,14 +2393,18 @@
    *  anti-flash CSS
    *  (<style>html:not([data-opp-role-resolved]) [data-opp-role]{display:none}</style>);
    *  both wf-xano feed roots carry wf-xano-defer="true" so neither fetches at
-   *  boot. Resolve the member's plan role, reveal that role's wrapper, and
-   *  activate only its feed — the wrong-role instance never constructs or
-   *  fetches. */
+   *  boot. Resolve the member's plan role, reveal that role's wrapper, change
+   *  only the existing native navbar's data-preview-nav role, and activate
+   *  only its feed — the wrong-role instance never constructs or fetches. */
   async function initMergedOppFeed() {
     const gate = await gateByPlan()
     if (!gate) return
     const role = gate.role === 'talent' ? 'talent' : 'brand'
     showRoleWrapper(role)
+    const navbarRole = role === 'talent' ? 'freelancer' : 'brand'
+    $$('[data-preview-nav]').forEach((navbar) => {
+      navbar.setAttribute('data-preview-nav', navbarRole)
+    })
     const feedRoot = $(
       `[data-opp-role="${role}"] [wf-xano-element="wrapper"][wf-xano-defer="true"]`,
     )

@@ -192,6 +192,7 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
   }
   const runRoute = async ({ pathname, search = '' }) => {
     const requests = []
+    const dom = mergedFeedDom({})
     const bridge = await loadBridge(
       async (input) => {
         const url = String(input)
@@ -202,7 +203,13 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
         }
         throw new Error(`Unexpected request: ${url}`)
       },
-      { member, pathname, search },
+      {
+        member,
+        pathname,
+        querySelector: dom.querySelector,
+        querySelectorAll: dom.querySelectorAll,
+        search,
+      },
     )
     await waitForRequestCount(requests, 2)
     for (let attempt = 0; attempt < 20 && bridge.location.href !== '/opportunities-brands-view'; attempt += 1) {
@@ -210,6 +217,10 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
     }
     assert.equal(bridge.location.href, '/opportunities-brands-view')
     assert.match(requests[1], /\/brand\/applications\/list$/)
+    if (/^\/opportunities\//.test(pathname)) {
+      assert.equal(dom.navbar.getAttribute('data-preview-nav'), 'common')
+      assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), 'brand')
+    }
   }
 
   await runRoute({
@@ -744,15 +755,24 @@ async function waitFor(check) {
 
 function mergedFeedDom(roots) {
   const wrappers = { talent: roleWrapper('talent'), brand: roleWrapper('brand') }
+  const navbarAttributes = new Map([['data-preview-nav', 'common']])
+  const navbar = {
+    getAttribute: (name) => navbarAttributes.get(name) || null,
+    setAttribute: (name, value) => navbarAttributes.set(name, String(value)),
+  }
   return {
+    navbar,
     wrappers,
     querySelector: (selector) => {
       const match = /^\[data-opp-role="(talent|brand)"\] \[wf-xano-element="wrapper"\]\[wf-xano-defer="true"\]$/.exec(selector)
       if (match) return roots[match[1]] || null
       return null
     },
-    querySelectorAll: (selector) =>
-      selector === '[data-opp-role]' ? [wrappers.talent, wrappers.brand] : [],
+    querySelectorAll: (selector) => {
+      if (selector === '[data-opp-role]') return [wrappers.talent, wrappers.brand]
+      if (selector === '[data-preview-nav]') return [navbar]
+      return []
+    },
   }
 }
 
@@ -769,6 +789,7 @@ test('boot routes bare /opportunities to the merged feed: talent wrapper + only 
 
   assert.ok(await waitFor(() => dom.wrappers.talent.style.display === ''), 'talent wrapper revealed')
   assert.equal(dom.wrappers.brand.style.display, 'none')
+  assert.equal(dom.navbar.getAttribute('data-preview-nav'), 'freelancer')
   // This VM has no CSSOM; the resolved stamp proves the anti-flash selector no longer applies.
   assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), 'talent')
   assert.equal(bridge.documentElement.getAttribute('data-opp30-talent-algolia'), 'wf-xano')
@@ -795,6 +816,7 @@ test('merged feed for a paid brand: brand wrapper + only the brand feed activate
 
   assert.ok(await waitFor(() => dom.wrappers.brand.style.display === ''), 'brand wrapper revealed')
   assert.equal(dom.wrappers.talent.style.display, 'none')
+  assert.equal(dom.navbar.getAttribute('data-preview-nav'), 'brand')
   assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), 'brand')
   assert.equal(bridge.documentElement.getAttribute('data-opp30-talent-algolia'), null)
 
