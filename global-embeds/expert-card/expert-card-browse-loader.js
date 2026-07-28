@@ -29,7 +29,10 @@
  * - Browse block: [wf-algolia-element="browse"]. Loader element: [data-loader]
  *   inside it (the page authors <div data-loader="1000" ...> as a SIBLING of
  *   the results list, so hiding the list never hides the loader). Results list:
- *   [wf-algolia-element="results"]. Any missing → bail quietly, patch nothing.
+ *   [wf-algolia-element="results"]. A page may hold SEVERAL browse blocks, so
+ *   we scan them all and drive the first VISIBLE one that has both a loader and
+ *   a results list — see the resolution note below. No qualifying block → bail
+ *   quietly, patch nothing.
  * - Self-heal: the page currently ships the loader permanently visible with no
  *   script managing it; this embed force-hides it once at init. The loader is
  *   never user-visible outside a session.
@@ -104,20 +107,122 @@
   var IMAGE_WAIT_MS = 1200; // bounded wait for freshly revealed lazy card imgs
   var POLL_INTERVAL_MS = 100;
   var POLL_MAX_MS = 10000;
+  var RESOLVE_MAX_MS = 10000; // give Memberstack this long to settle the gates
 
-  /* --- Resolve the contract markup (defer = DOM parsed). --- */
+  /* --- Resolve the contract markup.
+     A page can carry SEVERAL [wf-algolia-element="browse"] blocks. /all-starters
+     ships one per Memberstack gate variant plus satellites that hold only a
+     results-count — 5 blocks in its raw HTML, and the FIRST has no [data-loader]
+     and no results list. A plain document.querySelector() therefore grabbed a
+     block this embed cannot drive and bailed at init, managing nothing
+     (reproduced live 2026-07-28). Two rules make resolution deterministic:
 
-  var browseEl = document.querySelector('[wf-algolia-element="browse"]');
-  var loader = browseEl && browseEl.querySelector('[data-loader]');
-  var listEl =
-    browseEl && browseEl.querySelector('[wf-algolia-element="results"]');
-  if (!browseEl || !loader || !listEl) return; // markup missing — bail quietly
+       1. Only a block with BOTH a [data-loader] and a
+          [wf-algolia-element="results"] can be driven. Skip the others instead
+          of bailing on the first miss.
+       2. Prefer a VISIBLE qualifying block, and wait for the gates to settle
+          first. Memberstack REMOVES the non-matching variants, but only after it
+          resolves — and this embed runs at defer time, before that. Binding the
+          first qualifying block too early picks a variant that is about to be
+          deleted, which leaves the surviving one unmanaged. So wait on
+          window.memberReady (the site's own helper) and poll briefly for a
+          visible match, falling back to a hidden one rather than nothing. --- */
 
-  /* --- Minimum display duration from [data-loader]. --- */
-
+  var browseEl = null;
+  var loader = null;
+  var listEl = null;
   var minMs = DEFAULT_MIN_MS;
-  var authored = parseInt(loader.getAttribute('data-loader'), 10);
-  if (isFinite(authored) && authored >= 0) minMs = authored;
+
+  function qualifies(block) {
+    try {
+      return !!(
+        block.querySelector('[data-loader]') &&
+        block.querySelector('[wf-algolia-element="results"]')
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // offsetParent is null inside a display:none subtree, so a gate variant that
+  // Memberstack has hidden but not yet removed is skipped. getClientRects is the
+  // second opinion for position:fixed subtrees, where offsetParent is also null.
+  function isVisible(el) {
+    try {
+      return el.offsetParent !== null || el.getClientRects().length > 0;
+    } catch (e) {
+      return true; // never let a probe failure block resolution
+    }
+  }
+
+  // Returns a visible qualifying block, else any qualifying block, else null.
+  function resolveContract() {
+    var blocks;
+    var fallback = null;
+    var i;
+    try {
+      blocks = document.querySelectorAll('[wf-algolia-element="browse"]');
+    } catch (e) {
+      return null;
+    }
+    for (i = 0; i < blocks.length; i++) {
+      if (!qualifies(blocks[i])) continue;
+      if (isVisible(blocks[i])) return blocks[i];
+      if (!fallback) fallback = blocks[i];
+    }
+    return fallback;
+  }
+
+  // Calls run(block) at most once, as soon as a visible qualifying block exists.
+  function whenGateSettled(run) {
+    var started = Date.now();
+    var timer = null;
+    var done = false;
+
+    function finish(block) {
+      if (done) return;
+      done = true;
+      if (timer) clearInterval(timer);
+      run(block);
+    }
+
+    function attempt() {
+      if (done) return;
+      var block = resolveContract();
+      if (block && isVisible(block)) {
+        finish(block);
+        return;
+      }
+      if (Date.now() - started >= RESOLVE_MAX_MS) {
+        if (block) {
+          finish(block); // only hidden matches left — drive one rather than none
+          return;
+        }
+        done = true; // nothing on this page to drive — stop polling
+        if (timer) clearInterval(timer);
+      }
+    }
+
+    // memberReady resolving is the strongest signal that the gates are settled;
+    // the poll covers pages without the helper and Memberstack's own lag after it.
+    try {
+      if (window.memberReady && typeof window.memberReady.then === 'function') {
+        window.memberReady.then(attempt, attempt);
+      }
+    } catch (e) {
+      /* never break the page */
+    }
+    attempt();
+    if (!done) timer = setInterval(attempt, POLL_INTERVAL_MS);
+  }
+
+  function bindContract(block) {
+    browseEl = block;
+    loader = block.querySelector('[data-loader]');
+    listEl = block.querySelector('[wf-algolia-element="results"]');
+    var authored = parseInt(loader.getAttribute('data-loader'), 10);
+    if (isFinite(authored) && authored >= 0) minMs = authored;
+  }
 
   /* --- Show/hide helpers (never throw). ---
      No write attribution: MutationObserver callbacks are async microtasks, so a
@@ -179,28 +284,33 @@
     }
   }
 
-  /* Self-heal: the page ships the loader visible with no manager. Hide it now;
-     it must never be user-visible outside a session. */
-  hideLoader();
+  /* --- Self-heal + promote the loader to the engine's native loader contract.
+     Runs once the contract is bound, not at file scope. --- */
 
-  /* --- Promote the loader to the engine's native loader contract. --- */
+  function selfHealAndPromote() {
+    /* The page ships the loader visible with no manager. Hide it now; it must
+       never be user-visible outside a session. */
+    hideLoader();
 
-  try {
-    var existingLoader = browseEl.querySelector('[wf-algolia-element="loader"]');
-    if (!existingLoader || existingLoader === loader) {
-      // No other engine loader (or it IS our element) — safe to promote ours.
-      if (!loader.getAttribute('wf-algolia-element')) {
-        loader.setAttribute('wf-algolia-element', 'loader');
+    try {
+      var existingLoader = browseEl.querySelector(
+        '[wf-algolia-element="loader"]',
+      );
+      if (!existingLoader || existingLoader === loader) {
+        // No other engine loader (or it IS our element) — safe to promote ours.
+        if (!loader.getAttribute('wf-algolia-element')) {
+          loader.setAttribute('wf-algolia-element', 'loader');
+        }
+        if (!loader.getAttribute('wf-algolia-display')) {
+          // Prevents the engine's "display:block" console warning on show.
+          loader.setAttribute('wf-algolia-display', 'block');
+        }
       }
-      if (!loader.getAttribute('wf-algolia-display')) {
-        // Prevents the engine's "display:block" console warning on show.
-        loader.setAttribute('wf-algolia-display', 'block');
-      }
+      // If a DIFFERENT engine loader already exists we skip promoting, but still
+      // drive show/hide through our [data-loader] element.
+    } catch (e) {
+      /* never break the page */
     }
-    // If a DIFFERENT engine loader already exists, we skip promoting but still
-    // drive show/hide through our [data-loader] element below.
-  } catch (e) {
-    /* never break the page */
   }
 
   /* --- Session state --- */
@@ -407,8 +517,6 @@
     }
   }
 
-  window.addEventListener('expert-cards:relayout:done', onRelayoutDone);
-
   /* --- Observe the engine's loader show/hide writes. --- */
 
   function onLoaderStyleMutation() {
@@ -431,15 +539,7 @@
     }
   }
 
-  try {
-    var observer = new MutationObserver(onLoaderStyleMutation);
-    observer.observe(loader, {
-      attributes: true,
-      attributeFilter: ['style'],
-    });
-  } catch (e) {
-    /* never break the page */
-  }
+  var observer = null;
 
   /* --- Wire the engine bus once WfAlgolia is ready. --- */
 
@@ -457,30 +557,53 @@
     tryEndSession();
   }
 
-  var pollStart = Date.now();
-  var pollTimer = setInterval(function () {
+  /* --- Startup, once a drivable browse block exists. --- */
+
+  function start(block) {
+    if (!block) return; // no qualifying block on this page — stay off
+
+    bindContract(block);
+    selfHealAndPromote();
+
+    window.addEventListener('expert-cards:relayout:done', onRelayoutDone);
+
     try {
-      if (window.WfAlgolia && typeof window.WfAlgolia.on === 'function') {
-        clearInterval(pollTimer);
-        try {
-          window.WfAlgolia.on('results', onResults);
-          window.WfAlgolia.on('error', onError);
-        } catch (e) {
-          /* never break the page */
+      observer = new MutationObserver(onLoaderStyleMutation);
+      observer.observe(loader, {
+        attributes: true,
+        attributeFilter: ['style'],
+      });
+    } catch (e) {
+      /* never break the page */
+    }
+
+    var pollStart = Date.now();
+    var pollTimer = setInterval(function () {
+      try {
+        if (window.WfAlgolia && typeof window.WfAlgolia.on === 'function') {
+          clearInterval(pollTimer);
+          try {
+            window.WfAlgolia.on('results', onResults);
+            window.WfAlgolia.on('error', onError);
+          } catch (e) {
+            /* never break the page */
+          }
+          return;
         }
-        return;
-      }
-      if (Date.now() - pollStart >= POLL_MAX_MS) {
+        if (Date.now() - pollStart >= POLL_MAX_MS) {
+          clearInterval(pollTimer);
+          // Engine never appeared — force-restore and stay off.
+          try {
+            if (observer) observer.disconnect();
+          } catch (e) {}
+          endSession();
+        }
+      } catch (e) {
         clearInterval(pollTimer);
-        // Engine never appeared — force-restore and stay off.
-        try {
-          if (observer) observer.disconnect();
-        } catch (e) {}
         endSession();
       }
-    } catch (e) {
-      clearInterval(pollTimer);
-      endSession();
-    }
-  }, POLL_INTERVAL_MS);
+    }, POLL_INTERVAL_MS);
+  }
+
+  whenGateSettled(start);
 })();
