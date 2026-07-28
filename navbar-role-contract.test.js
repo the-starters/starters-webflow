@@ -24,10 +24,14 @@ test('merged opportunities uses the single authored navbar role contract in publ
   )
   assert.match(
     css,
-    /html:not\(\[data-opp-role-resolved\]\):has\(\[data-opp-role\]\) \[data-preview-nav\] #freelancer,/,
+    /html:not\(\[data-opp-role-resolved\]\):has\(\[data-opp-role\] \[wf-xano-element='wrapper'\]\[wf-xano-defer='true'\]\) \[data-preview-nav\] #freelancer,/,
   )
   assert.match(
     css,
-    /html:not\(\[data-opp-role-resolved\]\):has\(\[data-opp-role\]\) \[data-preview-nav\] \[data-ms-content='premium-brands'\]\s*\{\s*display:\s*none\s*!important\s*;/,
+    /html:not\(\[data-opp-role-resolved\]\):has\(\[data-opp-role\] \[wf-xano-element='wrapper'\]\[wf-xano-defer='true'\]\) \[data-preview-nav\] \[data-ms-content='premium-brands'\]\s*\{\s*display:\s*none\s*!important\s*;/,
+  )
+  assert.doesNotMatch(
+    css,
+    /html:not\(\[data-opp-role-resolved\]\):has\(\[data-opp-role\]\) \[data-preview-nav\]/,
   )
 })

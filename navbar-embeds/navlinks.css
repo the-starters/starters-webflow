@@ -33,10 +33,10 @@
     display: flex !important;
   }
 
-  html:not([data-opp-role-resolved]):has([data-opp-role]) [data-preview-nav] #freelancer,
-  html:not([data-opp-role-resolved]):has([data-opp-role]) [data-preview-nav] [data-ms-content='freelancer-only'],
-  html:not([data-opp-role-resolved]):has([data-opp-role]) [data-preview-nav] #brands,
-  html:not([data-opp-role-resolved]):has([data-opp-role]) [data-preview-nav] [data-ms-content='premium-brands'] {
+  html:not([data-opp-role-resolved]):has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav] #freelancer,
+  html:not([data-opp-role-resolved]):has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav] [data-ms-content='freelancer-only'],
+  html:not([data-opp-role-resolved]):has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav] #brands,
+  html:not([data-opp-role-resolved]):has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav] [data-ms-content='premium-brands'] {
     display: none !important;
   }
   
