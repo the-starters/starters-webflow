@@ -105,6 +105,7 @@ export function TalentApplicationsAdmin({
   const refreshRequest = React.useRef(0)
   const detailRequest = React.useRef(0)
   const transitionRequest = React.useRef(0)
+  const filterRef = React.useRef<ApplicationStatus | 'all'>(filter)
 
   const clearPrivateState = React.useCallback((invalidateRefresh = true) => {
     if (invalidateRefresh) refreshRequest.current += 1
@@ -157,6 +158,24 @@ export function TalentApplicationsAdmin({
     void refresh()
   }), [api, clearPrivateState, refresh])
 
+  function changeFilter(nextFilter: ApplicationStatus | 'all') {
+    refreshRequest.current += 1
+    filterRef.current = nextFilter
+    setApplications([])
+    setError(null)
+    setLoading(true)
+    setFilter(nextFilter)
+  }
+
+  function reconcileTransition(applicationId: number, nextStatus: ApplicationStatus) {
+    setApplications((current) => current.flatMap((application) => {
+      if (application.id !== applicationId) return [application]
+      const currentFilter = filterRef.current
+      if (currentFilter !== 'all' && currentFilter !== nextStatus) return []
+      return [{ ...application, status: nextStatus }]
+    }))
+  }
+
   async function openApplication(application: Application) {
     const request = ++detailRequest.current
     setError(null)
@@ -199,6 +218,7 @@ export function TalentApplicationsAdmin({
         return
       }
 
+      reconcileTransition(applicationId, nextStatus)
       if (detailSyncRequest !== detailRequest.current) return
 
       setSelected((current) => current && current.application.id === applicationId
@@ -440,7 +460,9 @@ export function TalentApplicationsAdmin({
             <span className={styles.srOnly}>Filter by status</span>
             <select
               value={filter}
-              onChange={(event) => setFilter(event.target.value as ApplicationStatus | 'all')}
+              onChange={(event) => {
+                changeFilter(event.target.value as ApplicationStatus | 'all')
+              }}
             >
               {FILTERS.map((status) => (
                 <option key={status} value={status}>

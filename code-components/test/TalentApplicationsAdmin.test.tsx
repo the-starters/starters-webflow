@@ -122,6 +122,46 @@ it('keeps the newest filter result when requests resolve out of order', async ()
   expect(screen.queryByText('Stale Result')).not.toBeInTheDocument()
 })
 
+it('suppresses stale rows when a new filter is loading or fails', async () => {
+  let rejectReview: ((response: Response) => void) | undefined
+  const reviewResponse = new Promise<Response>((resolve) => {
+    rejectReview = resolve
+  })
+  vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      const status = JSON.parse(String(init?.body)).status
+      if (status === 'under_review') return reviewResponse
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Previous Filter Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  expect(await screen.findByText('Previous Filter Applicant')).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'under_review' } })
+  expect(screen.queryByText('Previous Filter Applicant')).not.toBeInTheDocument()
+
+  await act(async () => {
+    rejectReview?.(jsonResponse({ message: 'Filter unavailable' }, 500))
+    await reviewResponse
+  })
+
+  expect(await screen.findByText('Dashboard unavailable')).toBeInTheDocument()
+  expect(screen.getByText('Filter unavailable')).toBeInTheDocument()
+  expect(screen.queryByText('Previous Filter Applicant')).not.toBeInTheDocument()
+})
+
 it('reports a synchronization error after a successful transition', async () => {
   let detailCalls = 0
   vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
@@ -510,6 +550,62 @@ it('does not refresh a stale filter after a transition completes', async () => {
   await waitFor(() => {
     expect(screen.getByText('Approved Applicant')).toBeInTheDocument()
     expect(screen.queryByText('Pending Applicant')).not.toBeInTheDocument()
+  })
+})
+
+it('removes a transitioned row from the latest active filter', async () => {
+  let resolveTransition: ((response: Response) => void) | undefined
+  const transitionResponse = new Promise<Response>((resolve) => {
+    resolveTransition = resolve
+  })
+  vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      const status = JSON.parse(String(init?.body)).status
+      return jsonResponse({
+        items: status === 'submitted' || status == null
+          ? [{
+              id: 12,
+              applicant_name: 'Pending Applicant',
+              status: 'submitted',
+              created_at: 1,
+            }]
+          : [],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Pending Applicant',
+          status: 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) return transitionResponse
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.change(await screen.findByRole('combobox'), { target: { value: 'submitted' } })
+  fireEvent.click(await screen.findByText('Pending Applicant'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Under review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'All applications' }))
+  expect(await screen.findByText('Pending Applicant')).toBeInTheDocument()
+
+  await act(async () => {
+    resolveTransition?.(jsonResponse({ id: 12, status: 'under_review' }))
+    await transitionResponse
+  })
+
+  await waitFor(() => {
+    expect(screen.queryByText('Pending Applicant')).not.toBeInTheDocument()
+    expect(screen.getByText('No applications match this view.')).toBeInTheDocument()
   })
 })
 
