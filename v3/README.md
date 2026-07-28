@@ -103,9 +103,14 @@ Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
 terminal `html[data-route-guard]` state, leaves access redirects to the guard,
 and retains its legacy per-page redirects only as a fallback when no guard is
-authored. For shared opportunity pages, an authenticated member snapshot with
-empty `planConnections` is retried for up to two seconds; a configured guard
-that never boots and still has no mapped role fails closed with
+authored. On `/opportunities` and `/opportunities/`, the guard allows a valid
+Talent or paid-Brand snapshot immediately. Before denying access, it polls for
+up to two seconds so an allowed role can hydrate after a partial lower Brand
+Free snapshot; transient polling failures are retried and an unsettled lookup
+cannot extend the deadline. The opportunity controller separately retries an
+authenticated snapshot with empty `planConnections` when it is operating
+without a resolved guard. A configured guard that never boots and still has no
+mapped role fails closed with
 `data-route-guard-error="member-role-unavailable"` rather than redirecting to
 `/`.
 [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md) documents the DOM states, events,

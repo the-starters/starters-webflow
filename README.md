@@ -274,7 +274,13 @@ pre-load queue. The hidden, wrong-role feed is never initialized.
 
 Load `v3/route-guard.js` sitewide before `opportunities-3.0.js`. The merged
 route allows Talent and paid Brand members, rejects free Brands, and guards both
-the bare and trailing-slash forms. The legacy
+the bare and trailing-slash forms. An allowed initial plan snapshot proceeds
+immediately. Before redirecting or surfacing an unmapped-plan error, the guard
+polls for up to two seconds so a partially hydrated lower Brand Free connection
+can be replaced by an allowed Talent or paid-Brand role. Polling lookup failures
+are retried within the same deadline, and a lookup that never settles cannot
+extend it. If no allowed role resolves, the original fail-closed redirect or
+error applies using the latest valid member snapshot. The legacy
 `/opportunities-freelancer-view` and `/opportunities-brands-view` boot branches
 remain supported separately.
 
