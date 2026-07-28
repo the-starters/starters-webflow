@@ -626,8 +626,9 @@
   // use a custom validity rule because the visible search query may be empty
   // while selected tags are stored separately. Estimated hours is an existing
   // Xano text field and is required only for Ongoing Part Time opportunities.
-  // wf-validate may already be bound when defer scripts run, so refresh it
-  // after injecting the new control.
+  // Webflow owns the form markup, including Estimated-Hours. This controller
+  // only binds behavior to the authored control. wf-validate may already be
+  // bound when defer scripts run, so refresh it after applying its state.
   function syncOpportunityEstimatedHours(form) {
     const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
     if (!estHoursInput) return
@@ -661,7 +662,7 @@
         root,
       ),
     )
-    Array.from(new Set(forms)).forEach((form, index) => {
+    Array.from(new Set(forms)).forEach((form) => {
       const categoryInput = $('[name="Category-option"]', form)
       if (categoryInput) {
         categoryInput.setAttribute('aria-required', 'true')
@@ -669,30 +670,6 @@
         categoryInput.setCustomValidity(
           selectedOpportunityCategories(form).length ? '' : CATEGORY_REQUIRED_MESSAGE,
         )
-      }
-
-      const partTimeGroup = $('[data-project-type="part-time"]', form)
-      const budgetInput = $('[name="Part-Time-Budget"]', partTimeGroup || form)
-      if (partTimeGroup && budgetInput && !$(`[name="${EST_HOURS_FIELD_NAME}"]`, form)) {
-        const budgetGroup = budgetInput.closest('.app-form_input_group')
-        if (budgetGroup) {
-          const fieldGroup = document.createElement('div')
-          const fieldId = `Estimated-Hours-${index + 1}`
-          fieldGroup.className = 'app-form_input_group'
-          fieldGroup.setAttribute('data-opp-est-hours-group', '')
-          fieldGroup.innerHTML = `
-            <label for="${fieldId}" class="form_label">Estimated hrs/week</label>
-            <input class="form_input mb-0 w-input"
-              maxlength="35"
-              name="${EST_HOURS_FIELD_NAME}"
-              data-name="Estimated Hours Per Week"
-              placeholder="Example: 25 hrs/week"
-              type="text"
-              id="${fieldId}"
-              wf-validate-message-required="${EST_HOURS_REQUIRED_MESSAGE}">
-          `
-          budgetGroup.insertAdjacentElement('beforebegin', fieldGroup)
-        }
       }
 
       const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)

@@ -166,16 +166,17 @@ Create and edit forms keep the existing category selector input named
 than the visible search text, so a missing category produces the inline message
 `Please select at least one category.` instead of silently blocking submission.
 
-The Ongoing Part Time variant must wrap its existing `Part-Time-Budget` input in
-`data-project-type="part-time"`. The controller inserts a plain-text
-`Estimated-Hours` field immediately before that budget group, labels it
-`Estimated hrs/week`, and requires it only while `Project-Type` resolves to
-`Ongoing Part Time`. Create and update requests send its trimmed value as the
-existing Xano `est_hours` field, and edit prefill restores that value. One Time
-and Full Time requests send an empty `est_hours` value and do not require the
-field.
+The Ongoing Part Time variant must contain Webflow-authored `Estimated-Hours`
+and `Part-Time-Budget` inputs. Label the plain-text hours field
+`Estimated hrs/week`, use `Example: 25 hrs/week` as its placeholder, and keep
+it inside the existing `data-project-type="part-time"` wrapper. The controller
+binds to that native element and requires it only while `Project-Type` resolves
+to `Ongoing Part Time`; it does not generate form markup. Create and update
+requests send its trimmed value as the existing Xano `est_hours` field, and edit
+prefill restores that value. One Time and Full Time requests send an empty
+`est_hours` value and do not require the field.
 
-Keep `utils/wf-validate.js` on these forms. The controller registers the injected
+Keep `utils/wf-validate.js` on these forms. The controller registers the authored
 field through `window.WfValidate.refresh(form)`, so category and estimated-hours
 failures use the form's normal inline error treatment. Client-side checks remain
 UX only; Xano retains authority over accepted payloads.

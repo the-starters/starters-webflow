@@ -14,8 +14,8 @@ test('opportunity forms expose visible category validation before wf-validate bi
 })
 
 test('ongoing part-time opportunities require and submit estimated weekly hours', () => {
-  assert.match(core, /name="\$\{EST_HOURS_FIELD_NAME\}"/)
-  assert.match(core, /placeholder="Example: 25 hrs\/week"/)
+  assert.match(core, /\$\(`\[name="\$\{EST_HOURS_FIELD_NAME\}"\]`, form\)/)
+  assert.doesNotMatch(core, /fieldGroup\.innerHTML/)
   assert.match(core, /payload\.project_type === 'Ongoing Part Time' && !payload\.est_hours/)
   assert.match(
     core,
@@ -91,20 +91,12 @@ function opportunityForm(kind) {
   const fields = new Map([
     ['Category-option', category],
     ['Part-Time-Budget', budget],
+    ['Estimated-Hours', new FakeControl({ name: 'Estimated-Hours' })],
   ])
   const partTimeGroup = {
     querySelector: (selector) =>
       selector === '[name="Part-Time-Budget"]' ? budget : null,
   }
-  const budgetGroup = {
-    insertAdjacentElement(position, fieldGroup) {
-      assert.equal(position, 'beforebegin')
-      assert.match(fieldGroup.innerHTML, /name="Estimated-Hours"/)
-      fields.set('Estimated-Hours', new FakeControl({ name: 'Estimated-Hours' }))
-    },
-  }
-  budget.closest = () => budgetGroup
-
   const form = {
     attrs: new Map(),
     kind,
@@ -217,7 +209,7 @@ function loadOpportunityForms() {
   return { create, edit, refreshed, window }
 }
 
-test('create and edit forms inject and register estimated hours', () => {
+test('create and edit forms bind Webflow-authored estimated hours without generating markup', () => {
   const { create, edit, refreshed } = loadOpportunityForms()
 
   assert.ok(create.fields.get('Estimated-Hours'))
