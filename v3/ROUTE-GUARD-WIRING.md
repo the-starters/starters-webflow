@@ -153,7 +153,7 @@ initializing either role's UI.
 - `window.Opp30` exposes `routeGuardActive`, `routeGuardConfigured`,
   `waitForRouteGuardHandoff`, `gateOrRedirect`, `gateByPlan`, `memberPlanRole`,
   `waitForMappedMemberRole`, `hasCompletedQuiz`, `brandFreeHome`, `initMergedOppFeed`,
-  `activateDeferredFeed`, and
+  `syncMergedNavbarRole`, `activateDeferredFeed`, and
   `redirectForeignBrandToFeed` for verifying the opportunity controller's
   handoff, plan hydration, merged-feed activation, legacy fallback, and
   ownership-denied redirect policy.
