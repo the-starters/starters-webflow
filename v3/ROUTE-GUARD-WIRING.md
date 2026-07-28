@@ -85,7 +85,12 @@ Regression rule: published source must contain one `opportunities-3.0.js` tag
 and place the route-guard tag first. The controller has a bounded handoff for an
 authored guard that executes later, waits for its terminal `allowed`, error, or
 redirect outcome, and falls back after two seconds only if the guard never
-boots. It also has an existing duplicate-load run-once guard, but those
+boots. On shared opportunity pages, it also polls for up to two seconds when an
+authenticated Memberstack snapshot has empty `planConnections`; it does not
+retry a non-empty, unmapped snapshot. If the configured guard never boots and
+no mapped role hydrates, opp30 leaves protected content hidden and stamps
+`html[data-route-guard-error="member-role-unavailable"]` instead of redirecting
+to `/`. It also has an existing duplicate-load run-once guard, but those
 protections are incident containment—not a replacement for clean Webflow script
 placement.
 
@@ -122,7 +127,9 @@ The guard is a routing/UX boundary only. It does not replace:
 
 `opportunities-3.0.js` defers access redirects to the sitewide guard. Before
 starting role-specific work, it verifies the member against the same stable plan
-IDs and otherwise bails without redirecting.
+IDs. An authenticated snapshot with no plan connections gets a bounded hydration
+retry; a complete unmapped snapshot does not. After the guard allows the route,
+an unresolved role bails without revealing or initializing either role's UI.
 
 ## Diagnostics
 
@@ -131,13 +138,16 @@ IDs and otherwise bails without redirecting.
   `redirectTargetFor` for console checks.
 - `window.Opp30` exposes `routeGuardActive`, `routeGuardConfigured`,
   `waitForRouteGuardHandoff`, `gateOrRedirect`, `gateByPlan`, `memberPlanRole`,
-  `hasCompletedQuiz`, `brandFreeHome`, `initMergedOppFeed`,
+  `waitForMappedMemberRole`, `hasCompletedQuiz`, `brandFreeHome`, `initMergedOppFeed`,
   `activateDeferredFeed`, and
   `redirectForeignBrandToFeed` for verifying the opportunity controller's
-  handoff, merged-feed activation, legacy fallback, and ownership-denied
-  redirect policy.
+  handoff, plan hydration, merged-feed activation, legacy fallback, and
+  ownership-denied redirect policy.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
   (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
+- If an authored guard never boots and opp30 cannot hydrate a mapped role,
+  opp30 stamps `html[data-route-guard-error="member-role-unavailable"]`; this
+  controller fallback does not dispatch the guard's error event.
 - A resolved allow dispatches `starters:v3-route-guard-allowed`.
 - Navigation stamps `html[data-route-guard="redirecting"]` and dispatches
   `starters:v3-route-guard-redirecting` before replacing the location.

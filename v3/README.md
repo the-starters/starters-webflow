@@ -102,8 +102,12 @@ the Memberstack `starter-quiz` custom field records completion, then
 Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
 terminal `html[data-route-guard]` state, leaves access redirects to the guard,
-and retains its legacy per-page redirects only as a fallback when the guard
-never boots.
+and retains its legacy per-page redirects only as a fallback when no guard is
+authored. For shared opportunity pages, an authenticated member snapshot with
+empty `planConnections` is retried for up to two seconds; a configured guard
+that never boots and still has no mapped role fails closed with
+`data-route-guard-error="member-role-unavailable"` rather than redirecting to
+`/`.
 [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md) documents the DOM states, events,
 diagnostics, exclusions, and release gate. The guard is a routing/UX layer and
 does not replace Memberstack visibility rules or Xano authorization.

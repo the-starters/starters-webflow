@@ -282,7 +282,13 @@ The controller also waits for an authored route guard to report `allowed`
 before it evaluates Memberstack role state. Guard errors and redirects leave
 both feeds hidden; after two seconds, the legacy fallback applies only when an
 authored guard never boots. This handoff protects against accidental reversed
-`defer` order while the Webflow script order is being corrected. A page must
+`defer` order while the Webflow script order is being corrected. If the first
+authenticated member snapshot has no `planConnections`, the controller polls
+Memberstack for up to two seconds for the plan-ID role to hydrate. It does not
+retry a non-empty, unmapped plan snapshot. If a configured guard never boots
+and no mapped role becomes available, the page stays hidden with
+`html[data-route-guard-error="member-role-unavailable"]` instead of redirecting
+to `/`; installs with no authored guard retain the legacy redirect. A page must
 still load the guard first. Duplicate
 `opportunities-3.0.js` tags are ignored after the first boot, but should be
 removed from Webflow rather than relied on.
@@ -290,6 +296,8 @@ removed from Webflow rather than relied on.
 The controller exposes `window.Opp30.routeGuardActive`,
 `window.Opp30.routeGuardConfigured`, and
 `window.Opp30.waitForRouteGuardHandoff` for guard diagnostics, plus
+`window.Opp30.waitForMappedMemberRole` for Memberstack plan-hydration checks,
+and
 `window.Opp30.initMergedOppFeed` and
 `window.Opp30.activateDeferredFeed` for merged-feed diagnostics.
 Run the merged-feed, router, and guard regressions with:

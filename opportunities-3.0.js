@@ -1236,10 +1236,12 @@
   /** Plan-based gate for pages shared by talent AND paying brands
    *  (/opportunities/<slug>). After the route guard reports `allowed`, this
    *  only resolves {member, role} for the two valid roles and bails quietly
-   *  otherwise; guard errors and redirects block page work. If an authored
-   *  guard never boots, the legacy fallback redirects apply: logged-out ->
-   *  /login?next=..., free brand -> brandFreeHome (/quiz or /quiz-results),
-   *  unmapped plans -> /. */
+   *  otherwise; guard errors and redirects block page work. An authenticated
+   *  snapshot with empty planConnections gets a bounded hydration retry, while
+   *  a non-empty unmapped snapshot does not. If no guard is authored, legacy
+   *  redirects apply: logged-out -> /login?next=..., free brand ->
+   *  brandFreeHome (/quiz or /quiz-results), unmapped plans -> /. A configured
+   *  guard that never boots and has no hydrated role fails closed in place. */
   async function gateByPlan() {
     const guardOutcome = await waitForRouteGuardHandoff()
     if (guardOutcome === 'blocked') return null
