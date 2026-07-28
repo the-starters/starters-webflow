@@ -248,8 +248,13 @@ the saved list lives; `/all-starters` hosts the hearts and the Favourites filter
 but no saved-list wrapper.
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/saved-starters-roles.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.11/v3/saved-starters-roles.js"></script>
 ```
+
+The embed is pinned to a tag rather than `@latest`, matching the other
+`/all-starters` embeds. Bumping it is a deliberate Webflow edit, so a future
+release cannot change this page's behaviour on its own. Update the version here
+whenever this module ships a fix.
 
 `/favorites` also needs two things this module does not provide, because
 `all-starters-favorites.js` supplies them only on `/all-starters` and returns
