@@ -628,12 +628,40 @@
   // Xano text field and is required only for Ongoing Part Time opportunities.
   // wf-validate may already be bound when defer scripts run, so refresh it
   // after injecting the new control.
-  function prepareOpportunityCreateForms(root = document) {
-    const forms = [
-      ...(root.matches && root.matches('[data-opp-form="create"]') ? [root] : []),
-      ...$$('[data-opp-form="create"]', root),
-    ]
-    forms.forEach((form, index) => {
+  function syncOpportunityEstimatedHours(form) {
+    const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
+    if (!estHoursInput) return
+    const projectType = $('[name="Project-Type"]:checked', form)
+    const required = Boolean(
+      projectType &&
+        (PROJECT_TYPE[projectType.id] || projectType.value) === 'Ongoing Part Time',
+    )
+    estHoursInput.required = required
+    estHoursInput.setAttribute('aria-required', required ? 'true' : 'false')
+    if (!required) estHoursInput.setCustomValidity('')
+    estHoursInput.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  function prepareOpportunityForms(root = document) {
+    const forms = []
+    if (root.matches && root.matches('[data-opp-form="create"]')) forms.push(root)
+    if (root.matches && root.matches('[data-modal-target="edit-opportunity"]')) {
+      const form = $('form', root)
+      if (form) forms.push(form)
+    }
+    if (
+      root.matches &&
+      root.matches('form') &&
+      root.closest('[data-modal-target="edit-opportunity"]')
+    )
+      forms.push(root)
+    forms.push(
+      ...$$(
+        '[data-opp-form="create"], [data-modal-target="edit-opportunity"] form',
+        root,
+      ),
+    )
+    Array.from(new Set(forms)).forEach((form, index) => {
       const categoryInput = $('[name="Category-option"]', form)
       if (categoryInput) {
         categoryInput.setAttribute('aria-required', 'true')
@@ -670,21 +698,10 @@
       const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
       if (!estHoursInput || form.getAttribute('data-opp-est-hours-inited') === 'true') return
       form.setAttribute('data-opp-est-hours-inited', 'true')
-      const syncRequired = () => {
-        const projectType = $('[name="Project-Type"]:checked', form)
-        const required = Boolean(
-          projectType &&
-            (PROJECT_TYPE[projectType.id] || projectType.value) === 'Ongoing Part Time',
-        )
-        estHoursInput.required = required
-        estHoursInput.setAttribute('aria-required', required ? 'true' : 'false')
-        if (!required) estHoursInput.setCustomValidity('')
-        estHoursInput.dispatchEvent(new Event('input', { bubbles: true }))
-      }
       $$('[name="Project-Type"]', form).forEach((radio) =>
-        radio.addEventListener('change', syncRequired),
+        radio.addEventListener('change', () => syncOpportunityEstimatedHours(form)),
       )
-      syncRequired()
+      syncOpportunityEstimatedHours(form)
       if (window.WfValidate && typeof window.WfValidate.refresh === 'function')
         window.WfValidate.refresh(form)
     })
@@ -2151,7 +2168,10 @@
   // radios, which otherwise submit their default state and clobber real values).
   async function prefillEditOpportunity(oppId) {
     const modal = $('[data-modal-target="edit-opportunity"]')
-    if (modal) initOpportunityCategorySelects(modal)
+    if (modal) {
+      prepareOpportunityForms(modal)
+      initOpportunityCategorySelects(modal)
+    }
     let o
     try {
       o = await API.brandOppGet(oppId)
@@ -2198,6 +2218,7 @@
       })
     checkRadio('Project-Type', o.project_type)
     checkRadio('Duration', o.est_project_duration)
+    syncOpportunityEstimatedHours(modal)
   }
 
   /** /opportunities/<slug> CMS detail page, shared by talent and PAYING brands.
@@ -2502,7 +2523,10 @@
   window.addEventListener('modal-open', (e) => {
     const modal = e.detail && e.detail.modal
     prepareOpportunityLoadingControls()
-    if (modal) initOpportunityCategorySelects(modal)
+    if (modal) {
+      prepareOpportunityForms(modal)
+      initOpportunityCategorySelects(modal)
+    }
     const flowEl = modal && modal.querySelector('[data-form-flow]')
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
@@ -3169,7 +3193,7 @@
   // The CDN script is loaded with `defer` on opportunity pages, so the modal
   // markup is available here before DOMContentLoaded. Claim the category
   // widgets now; the legacy component embed sees its run-once flag and skips.
-  prepareOpportunityCreateForms()
+  prepareOpportunityForms()
   initOpportunityCategorySelects()
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)
   else boot()
@@ -3194,7 +3218,9 @@
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,
-    prepareOpportunityCreateForms,
+    prepareOpportunityCreateForms: prepareOpportunityForms,
+    prepareOpportunityForms,
+    prefillEditOpportunity,
     initOpportunityCategorySelects,
     readOpportunityForm,
     validateOpportunityPayload,
