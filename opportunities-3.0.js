@@ -1050,13 +1050,11 @@
   }
 
   /**
-   * True when the sitewide route guard (v3/route-guard.js) is present and owns
-   * access on this page. The guard stamps `html[data-route-guard]` the moment it
-   * boots (before this controller runs, since it loads first in Head Code). When
-   * it is active, opp30 stops making its own access redirects — the guard is the
-   * single access authority, using the stable plan-ID matrix — and only fetches
-   * the member to scope its data. When it is absent (guard not yet installed),
-   * the legacy per-page redirects below stay in place so behavior is unchanged.
+   * True after the sitewide route guard (v3/route-guard.js) has stamped
+   * `html[data-route-guard]`. The authored script tag is detected separately so
+   * this controller can wait when reversed defer order lets it execute first.
+   * Once the guard reaches `allowed`, opp30 leaves access redirects to that
+   * stable plan-ID authority and only fetches the member to scope its data.
    * Real security is enforced server-side in Xano regardless.
    * @returns {boolean}
    */
@@ -1156,10 +1154,10 @@
   }
 
   /**
-   * Resolve the current member for a page. When the route guard is active,
-   * require the matching plan-ID role but leave redirects to the guard. When
-   * the guard is absent, the legacy custom-field check and redirects apply as a
-   * fallback.
+   * Resolve the current member for a page. Wait for an authored route guard;
+   * after `allowed`, require the matching plan-ID role but leave redirects to
+   * the guard. A guard error or redirect blocks page work. Only a guard that
+   * never boots uses the legacy custom-field check and redirects.
    * @param {'brand'|'freelancer'} expect
    * @returns {Promise<object|null>}
    */
@@ -1208,10 +1206,10 @@
   }
 
   /** Plan-based gate for pages shared by talent AND paying brands
-   *  (/opportunities/<slug>). When the route guard is active it has already
-   *  enforced access, so this only resolves {member, role} for the two roles
-   *  allowed here (talent, brand-paid) and bails quietly otherwise. When the
-   *  guard is absent, the legacy fallback redirects apply: logged-out ->
+   *  (/opportunities/<slug>). After the route guard reports `allowed`, this
+   *  only resolves {member, role} for the two valid roles and bails quietly
+   *  otherwise; guard errors and redirects block page work. If an authored
+   *  guard never boots, the legacy fallback redirects apply: logged-out ->
    *  /login?next=..., free brand -> brandFreeHome (/quiz or /quiz-results),
    *  unmapped plans -> /. */
   async function gateByPlan() {

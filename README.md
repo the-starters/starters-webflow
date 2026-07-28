@@ -280,15 +280,18 @@ remain supported separately.
 
 The controller also waits for an authored route guard to report `allowed`
 before it evaluates Memberstack role state. Guard errors and redirects leave
-both feeds hidden; the bounded legacy fallback applies only when an authored
-guard never boots. This handoff protects against accidental reversed `defer`
-order while the Webflow script order is being corrected. A page must still load
-the guard first. Duplicate
+both feeds hidden; after two seconds, the legacy fallback applies only when an
+authored guard never boots. This handoff protects against accidental reversed
+`defer` order while the Webflow script order is being corrected. A page must
+still load the guard first. Duplicate
 `opportunities-3.0.js` tags are ignored after the first boot, but should be
 removed from Webflow rather than relied on.
 
-The controller exposes `window.Opp30.initMergedOppFeed` and
-`window.Opp30.activateDeferredFeed` for its test harness and manual diagnostics.
+The controller exposes `window.Opp30.routeGuardActive`,
+`window.Opp30.routeGuardConfigured`, and
+`window.Opp30.waitForRouteGuardHandoff` for guard diagnostics, plus
+`window.Opp30.initMergedOppFeed` and
+`window.Opp30.activateDeferredFeed` for merged-feed diagnostics.
 Run the merged-feed, router, and guard regressions with:
 
 ```sh
@@ -304,11 +307,11 @@ Load `opportunities-3.0.js` on `/opportunities-freelancer-view` and
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0.js"></script>
 ```
 
-On V3, load `v3/route-guard.js` sitewide before this script. When the guard's
-`html[data-route-guard]` stamp is present, Opportunities 3.0 uses stable plan
-IDs to scope role-specific work but leaves all access redirects to the guard.
-Until the guard is installed, its legacy Memberstack custom-field redirects
-remain as a backward-compatible fallback. See
+On V3, load `v3/route-guard.js` sitewide before this script. Opportunities 3.0
+waits for the guard's terminal `html[data-route-guard]` state, then uses stable
+plan IDs to scope role-specific work but leaves all access redirects to the
+guard. If an authored guard never boots, its legacy Memberstack custom-field
+redirects remain as a backward-compatible fallback. See
 [`v3/ROUTE-GUARD-WIRING.md`](v3/ROUTE-GUARD-WIRING.md) for installation details.
 
 The starter feed's All tab reads the authenticated
