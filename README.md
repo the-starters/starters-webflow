@@ -281,6 +281,12 @@ Brand); `navbar-embeds/navlinks.css` owns descendant visibility. The controller
 does not clone a navbar, generate navbar HTML, or paint descendant visibility
 with inline styles.
 
+Because Webflow can restore a component property's authored value after the
+controller first resolves the member, the controller keeps the attribute in
+sync: a `MutationObserver` watches `data-preview-nav` changes and component DOM
+replacements and re-applies the resolved role. It still only mutates the
+existing attribute and never creates navbar markup.
+
 Keep `navbar-embeds/navlinks.css` published with that native component. Its
 merged-feed selectors use the deferred role-wrapper signature above, so they do
 not affect `/opportunities/<slug>` detail pages. Before
@@ -320,7 +326,8 @@ The controller exposes `window.Opp30.routeGuardActive`,
 `window.Opp30.waitForRouteGuardHandoff` for guard diagnostics, plus
 `window.Opp30.waitForMappedMemberRole` for Memberstack plan-hydration checks,
 and
-`window.Opp30.initMergedOppFeed` and
+`window.Opp30.initMergedOppFeed`,
+`window.Opp30.syncMergedNavbarRole`, and
 `window.Opp30.activateDeferredFeed` for merged-feed diagnostics.
 Run the merged-feed, router, and guard regressions with:
 

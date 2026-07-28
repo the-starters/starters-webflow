@@ -40,6 +40,7 @@ async function loadBridge(
   } = {},
 ) {
   const documentListeners = new Map()
+  const mutationObservers = []
   let authChange
   const attributes = new Map()
   if (routeGuard) {
@@ -104,7 +105,14 @@ async function loadBridge(
     FormData,
     Headers,
     MutationObserver: class MutationObserver {
-      disconnect() {}
+      constructor(callback) {
+        this.callback = callback
+        this.connected = true
+        mutationObservers.push(this)
+      }
+      disconnect() {
+        this.connected = false
+      }
       observe() {}
     },
     Request,
@@ -134,6 +142,11 @@ async function loadBridge(
     location,
     trackCalls,
     window,
+    notifyMutations(mutations = []) {
+      mutationObservers
+        .filter((observer) => observer.connected)
+        .forEach((observer) => observer.callback(mutations))
+    },
   }
 }
 
@@ -827,6 +840,23 @@ test('merged feed for a paid brand: brand wrapper + only the brand feed activate
   assert.deepEqual(inits, [roots.brand], 'only the brand root is activated')
   assert.equal(bridge.window.__opp30CloseWired, true, 'brand close-opportunity modal wired')
   assert.equal(bridge.window.__opp30CreatePage, true, 'brand create form binder ran')
+})
+
+test('merged feed re-applies the Talent navbar role after Webflow restores the authored component value', async () => {
+  const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+  const dom = mergedFeedDom(roots)
+  const bridge = await loadBridge(async () => response({}), {
+    member: talentMember,
+    pathname: '/opportunities',
+    querySelector: dom.querySelector,
+    querySelectorAll: dom.querySelectorAll,
+    routeGuard: true,
+  })
+
+  assert.ok(await waitFor(() => dom.navbar.getAttribute('data-preview-nav') === 'freelancer'))
+  dom.navbar.setAttribute('data-preview-nav', 'common')
+  bridge.notifyMutations([{ type: 'attributes', target: dom.navbar }])
+  assert.equal(dom.navbar.getAttribute('data-preview-nav'), 'freelancer')
 })
 
 test('merged feed with the guard active bails quietly for a free brand (guard owns the redirect)', async () => {
