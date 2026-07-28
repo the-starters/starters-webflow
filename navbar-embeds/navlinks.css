@@ -22,14 +22,14 @@
    * after Memberstack resolves the page role; these selectors let the authored
    * Webflow groups own published visibility just as they do in Designer.
    */
-  html[data-opp-role-resolved] [data-preview-nav] .navbar_link-list {
+  html[data-opp-role-resolved]:has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav] .navbar_link-list {
     display: none !important;
   }
 
-  html[data-opp-role-resolved] [data-preview-nav='freelancer'] #freelancer,
-  html[data-opp-role-resolved] [data-preview-nav='freelancer'] [data-ms-content='freelancer-only'],
-  html[data-opp-role-resolved] [data-preview-nav='brand'] #brands,
-  html[data-opp-role-resolved] [data-preview-nav='brand'] [data-ms-content='premium-brands'] {
+  html[data-opp-role-resolved]:has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav='freelancer'] #freelancer,
+  html[data-opp-role-resolved]:has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav='freelancer'] [data-ms-content='freelancer-only'],
+  html[data-opp-role-resolved]:has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav='brand'] #brands,
+  html[data-opp-role-resolved]:has([data-opp-role] [wf-xano-element='wrapper'][wf-xano-defer='true']) [data-preview-nav='brand'] [data-ms-content='premium-brands'] {
     display: flex !important;
   }
 

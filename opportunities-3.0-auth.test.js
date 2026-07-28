@@ -192,6 +192,7 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
   }
   const runRoute = async ({ pathname, search = '' }) => {
     const requests = []
+    const dom = mergedFeedDom({})
     const bridge = await loadBridge(
       async (input) => {
         const url = String(input)
@@ -202,7 +203,13 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
         }
         throw new Error(`Unexpected request: ${url}`)
       },
-      { member, pathname, search },
+      {
+        member,
+        pathname,
+        querySelector: dom.querySelector,
+        querySelectorAll: dom.querySelectorAll,
+        search,
+      },
     )
     await waitForRequestCount(requests, 2)
     for (let attempt = 0; attempt < 20 && bridge.location.href !== '/opportunities-brands-view'; attempt += 1) {
@@ -210,6 +217,10 @@ test('both brand detail routes redirect a foreign brand after the owner-scoped p
     }
     assert.equal(bridge.location.href, '/opportunities-brands-view')
     assert.match(requests[1], /\/brand\/applications\/list$/)
+    if (/^\/opportunities\//.test(pathname)) {
+      assert.equal(dom.navbar.getAttribute('data-preview-nav'), 'common')
+      assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), 'brand')
+    }
   }
 
   await runRoute({
