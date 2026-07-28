@@ -675,6 +675,10 @@
       const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
       if (!estHoursInput || form.getAttribute('data-opp-est-hours-inited') === 'true') return
       form.setAttribute('data-opp-est-hours-inited', 'true')
+      estHoursInput.setAttribute(
+        'wf-validate-message-required',
+        EST_HOURS_REQUIRED_MESSAGE,
+      )
       $$('[name="Project-Type"]', form).forEach((radio) =>
         radio.addEventListener('change', () => syncOpportunityEstimatedHours(form)),
       )

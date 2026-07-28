@@ -235,6 +235,10 @@ test('edit prefill sets weekly hours and restores conditional inline validation'
   assert.equal(edit.partTime.checked, true)
   assert.equal(estimatedHours.required, true)
   assert.equal(estimatedHours.getAttribute('aria-required'), 'true')
+  assert.equal(
+    estimatedHours.getAttribute('wf-validate-message-required'),
+    'Please enter the estimated hours per week.',
+  )
 
   edit.partTime.checked = false
   edit.fullTime.checked = true

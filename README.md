@@ -169,12 +169,14 @@ than the visible search text, so a missing category produces the inline message
 The Ongoing Part Time variant must contain Webflow-authored `Estimated-Hours`
 and `Part-Time-Budget` inputs. Label the plain-text hours field
 `Estimated hrs/week`, use `Example: 25 hrs/week` as its placeholder, and keep
-it inside the existing `data-project-type="part-time"` wrapper. The controller
-binds to that native element and requires it only while `Project-Type` resolves
-to `Ongoing Part Time`; it does not generate form markup. Create and update
-requests send its trimmed value as the existing Xano `est_hours` field, and edit
-prefill restores that value. One Time and Full Time requests send an empty
-`est_hours` value and do not require the field.
+it inside the existing `data-project-type="part-time"` wrapper. Both the Create
+and Edit components must publish that input before this controller is released.
+The controller binds to that native element, supplies its required-message
+attribute, and requires it only while `Project-Type` resolves to `Ongoing Part
+Time`; it does not generate form markup. Create and update requests send its
+trimmed value as the existing Xano `est_hours` field, and edit prefill restores
+that value. One Time and Full Time requests send an empty `est_hours` value and
+do not require the field.
 
 Keep `utils/wf-validate.js` on these forms. The controller registers the authored
 field through `window.WfValidate.refresh(form)`, so category and estimated-hours
