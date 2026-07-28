@@ -34,6 +34,8 @@ async function loadBridge(
     querySelector = null,
     querySelectorAll = null,
     routeGuard = false,
+    routeGuardDelayMs = null,
+    routeGuardScript = false,
     search = '',
   } = {},
 ) {
@@ -58,7 +60,10 @@ async function loadBridge(
     documentElement,
     getElementById: () => null,
     head: documentElement,
-    querySelector: (selector) => (querySelector ? querySelector(selector) : null),
+    querySelector: (selector) => {
+      if (selector === 'script[src*="/v3/route-guard.js"]' && routeGuardScript) return {}
+      return querySelector ? querySelector(selector) : null
+    },
     querySelectorAll: (selector) => (querySelectorAll ? querySelectorAll(selector) : []),
     readyState: 'loading',
   }
@@ -112,6 +117,9 @@ async function loadBridge(
     window,
   })
   vm.runInContext(source, context)
+  if (routeGuardDelayMs !== null) {
+    setTimeout(() => documentElement.setAttribute('data-route-guard', 'checking'), routeGuardDelayMs)
+  }
   for (const listener of documentListeners.get('DOMContentLoaded') || []) listener()
   await Promise.resolve()
   assert.equal(typeof authChange, 'function')
@@ -230,6 +238,28 @@ test('routeGuardActive reflects the html[data-route-guard] stamp', async () => {
 
   const on = await loadBridge(async () => response({}), { routeGuard: true })
   assert.equal(on.window.Opp30.routeGuardActive(), true)
+})
+
+test('waits for a configured later-ordered route guard before applying legacy redirects', async () => {
+  const rolelessSnapshot = {
+    id: 'm-brand-before-plans-hydrate',
+    customFields: {},
+    planConnections: [],
+  }
+  const bridge = await loadBridge(async () => response({}), {
+    member: rolelessSnapshot,
+    pathname: '/opportunities',
+    routeGuardDelayMs: 0,
+    routeGuardScript: true,
+  })
+
+  assert.equal(await bridge.window.Opp30.waitForRouteGuardHandoff(), true)
+  assert.equal(bridge.window.Opp30.routeGuardActive(), true)
+  assert.equal(
+    bridge.location.href,
+    'https://example.test/opportunities',
+    'the guard owns the unresolved-role decision instead of the legacy / fallback',
+  )
 })
 
 test('with the guard active, gateOrRedirect returns a matching member without a custom-field check or redirect', async () => {

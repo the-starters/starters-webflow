@@ -92,6 +92,7 @@
   const XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh' // WMX group: trade-token
   const XANO_OPP_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30' // Opportunities 3.0 group
   const XANO_TRADE_TOKEN_PATH = '/auth/trade-token/v3'
+  const ROUTE_GUARD_HANDOFF_TIMEOUT_MS = 2000
 
   // project_type: modal radio id  ->  human string Xano stores / display logic expects
   const PROJECT_TYPE = {
@@ -1068,6 +1069,55 @@
   }
 
   /**
+   * True when Webflow has authored the sitewide route-guard script on this
+   * page, even if an earlier defer script is currently executing before the
+   * guard has stamped html[data-route-guard].
+   * @returns {boolean}
+   */
+  function routeGuardConfigured() {
+    try {
+      return !!document.querySelector('script[src*="/v3/route-guard.js"]')
+    } catch (e) {
+      return false
+    }
+  }
+
+  let _routeGuardHandoffPromise = null
+
+  /**
+   * Give an authored, later-ordered route guard the opportunity to claim access
+   * redirects before this controller evaluates Memberstack role state. This
+   * closes the defer-order race where an early member snapshot can temporarily
+   * omit planConnections and the legacy fallback would redirect to `/`.
+   *
+   * A missing or failed guard still falls back after a bounded wait so legacy
+   * installs retain their previous behavior.
+   * @returns {Promise<boolean>} whether the guard claimed this page
+   */
+  function waitForRouteGuardHandoff() {
+    if (routeGuardActive()) return Promise.resolve(true)
+    if (!routeGuardConfigured()) return Promise.resolve(false)
+    if (_routeGuardHandoffPromise) return _routeGuardHandoffPromise
+
+    _routeGuardHandoffPromise = new Promise((resolve) => {
+      const startedAt = Date.now()
+      const check = () => {
+        if (routeGuardActive()) {
+          resolve(true)
+          return
+        }
+        if (Date.now() - startedAt >= ROUTE_GUARD_HANDOFF_TIMEOUT_MS) {
+          resolve(false)
+          return
+        }
+        window.setTimeout(check, 25)
+      }
+      check()
+    })
+    return _routeGuardHandoffPromise
+  }
+
+  /**
    * A brand opening an opportunity it does not own gets a 403/404 from the
    * owner-scoped applicants probe (server-side check). Product decision
    * 2026-07-23 (Kaeser): redirect such a brand to its opportunities feed rather
@@ -1094,6 +1144,7 @@
    * @returns {Promise<object|null>}
    */
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
+    await waitForRouteGuardHandoff()
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
@@ -1143,6 +1194,7 @@
    *  /login?next=..., free brand -> brandFreeHome (/quiz or /quiz-results),
    *  unmapped plans -> /. */
   async function gateByPlan() {
+    await waitForRouteGuardHandoff()
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
@@ -3187,6 +3239,8 @@
     diagnoseFreelancerFeed,
     loginPathWithNext,
     routeGuardActive,
+    routeGuardConfigured,
+    waitForRouteGuardHandoff,
     redirectForeignBrandToFeed,
     hasCompletedQuiz,
     brandFreeHome,

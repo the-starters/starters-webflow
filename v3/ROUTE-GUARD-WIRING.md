@@ -81,6 +81,12 @@ remains excluded until its authenticated-only status is confirmed.
    (same visible pattern as `/auth-route`). Optionally pre-hide protected
    content until `html[data-route-guard="allowed"]` to avoid a cross-role flash.
 
+Regression rule: published source must contain one `opportunities-3.0.js` tag
+and place the route-guard tag first. The controller has a bounded handoff for an
+authored guard that executes later and an existing duplicate-load run-once
+guard, but those protections are incident containment—not a replacement for
+clean Webflow script placement.
+
 ### Recommended install scope
 
 Install the guard sitewide so it boots before page controllers and is present on

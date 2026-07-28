@@ -278,6 +278,13 @@ the bare and trailing-slash forms. The legacy
 `/opportunities-freelancer-view` and `/opportunities-brands-view` boot branches
 remain supported separately.
 
+The controller also waits for an authored route-guard tag to stamp the page
+before it evaluates Memberstack role state. This bounded handoff protects
+against accidental reversed `defer` order while the Webflow script order is
+being corrected. A page must still load the guard first. Duplicate
+`opportunities-3.0.js` tags are ignored after the first boot, but should be
+removed from Webflow rather than relied on.
+
 The controller exposes `window.Opp30.initMergedOppFeed` and
 `window.Opp30.activateDeferredFeed` for its test harness and manual diagnostics.
 Run the merged-feed, router, and guard regressions with:
