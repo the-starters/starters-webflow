@@ -62,11 +62,13 @@
       '/starter-edit-profile',
       '/messages',
       '/opportunities-freelancer-view',
+      '/opportunities',
     ]),
     'brand-paid': new Set([
       '/all-starters',
       '/brand-dashboard',
       '/opportunities-brands-view',
+      '/opportunities',
       '/messages',
     ]),
     'brand-free': new Set(['/all-starters', '/quiz', '/quiz-results']),

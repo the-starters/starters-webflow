@@ -31,6 +31,8 @@ async function loadBridge(
     hostname = 'example.test',
     member = null,
     pathname = '/all-modals',
+    querySelector = null,
+    querySelectorAll = null,
     routeGuard = false,
     search = '',
   } = {},
@@ -56,8 +58,8 @@ async function loadBridge(
     documentElement,
     getElementById: () => null,
     head: documentElement,
-    querySelector: () => null,
-    querySelectorAll: () => [],
+    querySelector: (selector) => (querySelector ? querySelector(selector) : null),
+    querySelectorAll: (selector) => (querySelectorAll ? querySelectorAll(selector) : []),
     readyState: 'loading',
   }
   const trackCalls = []
@@ -565,4 +567,114 @@ test('auth switch rejects an in-flight response before it can resolve or track',
   await assert.rejects(request, { code: 'MEMBER_SCOPE_CHANGED' })
   assert.deepEqual(bridge.trackCalls, [])
   assert.equal(requests.length, 2)
+})
+
+// --- Merged /opportunities feed (one page, role wrappers, deferred wf-xano) ---
+
+function roleWrapper(role) {
+  return {
+    getAttribute: (name) => (name === 'data-opp-role' ? role : null),
+    style: {},
+  }
+}
+
+function deferredRoot(role) {
+  return { __role: role }
+}
+
+async function waitFor(check) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (check()) return true
+    await new Promise(setImmediate)
+  }
+  return check()
+}
+
+function mergedFeedDom(roots) {
+  const wrappers = { talent: roleWrapper('talent'), brand: roleWrapper('brand') }
+  return {
+    wrappers,
+    querySelector: (selector) => {
+      const match = /^\[data-opp-role="(talent|brand)"\] \[wf-xano-element="wrapper"\]\[wf-xano-defer="true"\]$/.exec(selector)
+      if (match) return roots[match[1]] || null
+      return null
+    },
+    querySelectorAll: (selector) =>
+      selector === '[data-opp-role]' ? [wrappers.talent, wrappers.brand] : [],
+  }
+}
+
+test('boot routes bare /opportunities to the merged feed: talent wrapper + only the talent feed activates', async () => {
+  const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+  const dom = mergedFeedDom(roots)
+  const bridge = await loadBridge(async () => response({}), {
+    member: talentMember,
+    pathname: '/opportunities',
+    querySelector: dom.querySelector,
+    querySelectorAll: dom.querySelectorAll,
+    routeGuard: true,
+  })
+
+  assert.ok(await waitFor(() => dom.wrappers.talent.style.display === ''), 'talent wrapper revealed')
+  assert.equal(dom.wrappers.brand.style.display, 'none')
+  assert.equal(bridge.documentElement.getAttribute('data-opp30-talent-algolia'), 'wf-xano')
+
+  // wf-xano not loaded yet in this harness: activation queued on the pre-load array.
+  assert.ok(Array.isArray(bridge.window.WfXano))
+  assert.equal(bridge.window.WfXano.length, 1)
+  const inits = []
+  bridge.window.WfXano[0]({ init: (root) => inits.push(root) })
+  assert.deepEqual(inits, [roots.talent], 'only the talent root is activated')
+  assert.equal(bridge.location.href, 'https://example.test/opportunities', 'no redirect')
+})
+
+test('merged feed for a paid brand: brand wrapper + only the brand feed activates', async () => {
+  const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+  const dom = mergedFeedDom(roots)
+  const bridge = await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    pathname: '/opportunities',
+    querySelector: dom.querySelector,
+    querySelectorAll: dom.querySelectorAll,
+    routeGuard: true,
+  })
+
+  assert.ok(await waitFor(() => dom.wrappers.brand.style.display === ''), 'brand wrapper revealed')
+  assert.equal(dom.wrappers.talent.style.display, 'none')
+  assert.equal(bridge.documentElement.getAttribute('data-opp30-talent-algolia'), null)
+
+  assert.ok(Array.isArray(bridge.window.WfXano))
+  assert.equal(bridge.window.WfXano.length, 1)
+  const inits = []
+  bridge.window.WfXano[0]({ init: (root) => inits.push(root) })
+  assert.deepEqual(inits, [roots.brand], 'only the brand root is activated')
+  assert.equal(bridge.window.__opp30CloseWired, true, 'brand close-opportunity modal wired')
+  assert.equal(bridge.window.__opp30CreatePage, true, 'brand create form binder ran')
+})
+
+test('merged feed with the guard active bails quietly for a free brand (guard owns the redirect)', async () => {
+  const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+  const dom = mergedFeedDom(roots)
+  const bridge = await loadBridge(async () => response({}), {
+    member: freeBrandMember,
+    pathname: '/opportunities',
+    querySelector: dom.querySelector,
+    querySelectorAll: dom.querySelectorAll,
+    routeGuard: true,
+  })
+
+  await bridge.window.Opp30.initMergedOppFeed()
+  assert.equal(dom.wrappers.talent.style.display, undefined)
+  assert.equal(dom.wrappers.brand.style.display, undefined)
+  assert.equal(bridge.window.WfXano, undefined, 'no feed activation queued')
+  assert.equal(bridge.location.href, 'https://example.test/opportunities')
+})
+
+test('activateDeferredFeed runs immediately when wf-xano is already loaded', async () => {
+  const bridge = await loadBridge(async () => response({}), { member: talentMember })
+  const inits = []
+  bridge.window.WfXano = { init: (root) => inits.push(root) }
+  const root = deferredRoot('talent')
+  bridge.window.Opp30.activateDeferredFeed(root)
+  assert.deepEqual(inits, [root])
 })

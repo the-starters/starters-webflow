@@ -2172,6 +2172,50 @@
     })
   }
 
+  /** Activate a wf-xano root that opted out of automatic boot with
+   *  wf-xano-defer="true" (wf-xano >= 0.28.0). Passing the root itself as the
+   *  init scope bypasses the defer skip. Uses the wf-xano pre-load queue so
+   *  activation is race-safe regardless of which script evaluates first. */
+  function activateDeferredFeed(rootEl) {
+    const run = (wfx) => {
+      try {
+        wfx.init(rootEl)
+      } catch (e) {
+        console.error('[opp30] deferred feed activation failed', e)
+      }
+    }
+    if (window.WfXano && !Array.isArray(window.WfXano)) run(window.WfXano)
+    else (window.WfXano = window.WfXano || []).push(run)
+  }
+
+  /** Merged opportunities feed (/opportunities): one page shared by talent and
+   *  paying brands. Both role sections live in the DOM behind the page-head
+   *  anti-flash CSS (<style>[data-opp-role]{display:none}</style>); both
+   *  wf-xano feed roots carry wf-xano-defer="true" so neither fetches at boot.
+   *  Resolve the member's plan role, reveal that role's wrapper, and activate
+   *  only its feed — the wrong-role instance never constructs or fetches. */
+  async function initMergedOppFeed() {
+    const gate = await gateByPlan()
+    if (!gate) return
+    const role = gate.role === 'talent' ? 'talent' : 'brand'
+    showRoleWrapper(role)
+    const feedRoot = $(
+      `[data-opp-role="${role}"] [wf-xano-element="wrapper"][wf-xano-defer="true"]`,
+    )
+    if (feedRoot) activateDeferredFeed(feedRoot)
+    else log('merged feed: no deferred wf-xano root for role', role)
+    if (role === 'talent') {
+      // Parity with initTalentList's wf-xano path: mark render ownership and
+      // honor the match-debug opt-in on the merged page too.
+      document.documentElement.setAttribute('data-opp30-talent-algolia', 'wf-xano')
+      if (opportunityMatchDebugEnabled()) loadOpportunityMatchDebug()
+      return
+    }
+    // Brand extras (both internally run-once/gated).
+    wireCloseOpportunityModal()
+    initBrandCreatePage()
+  }
+
   // Standalone brand "create opportunity" PAGE (/opportunities---create).
   // Unlike the modal, this is a full Webflow form with a native submit button
   // and no [data-opp-submit] hook, so we bind its stable role directly.
@@ -2853,7 +2897,7 @@
     try {
       const target = new URL(link.href, location.href)
       if (target.origin !== location.origin) return
-      if (!/^\/opportunities-freelancer-view\/?$/.test(target.pathname)) return
+      if (!/^\/opportunities(?:-freelancer-view)?\/?$/.test(target.pathname)) return
       if (target.searchParams.get(OPP_MATCH_DEBUG_PARAM) === value) return
       target.searchParams.set(OPP_MATCH_DEBUG_PARAM, value)
       link.href = `${target.pathname}${target.search}${target.hash}`
@@ -3008,6 +3052,10 @@
     if (p.includes('starter-dashboard')) initStarterDashboardOpportunityMatch()
     else if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/[^/]+\/?$/)) initOppDetailByRole()
+    // Merged feed (bare /opportunities, launched 2026-07): matches neither the
+    // detail regex above (needs a slug segment) nor the legacy *-view branches
+    // below. Legacy branches stay until the old pages are retired.
+    else if (/^\/opportunities\/?$/.test(p)) initMergedOppFeed()
     else if (p.includes('opportunities-brands-view')) {
       // Brand feed: when the page carries wf-xano brand-feed markup (Designer swap,
       // 2026-07-02), the wf-xano library owns the render — initBrandList would repeat
@@ -3056,6 +3104,8 @@
     gateOrRedirect,
     gateByPlan,
     memberPlanRole,
+    initMergedOppFeed,
+    activateDeferredFeed,
     paintOpportunityDetail,
     opportunityPath,
     pageOppId,

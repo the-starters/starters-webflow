@@ -78,6 +78,14 @@
   var PAGE_ROLES = {
     '/brand-dashboard': ['brand-paid'],
     '/messages': ['brand-paid', 'talent'],
+    // Merged opportunities feed (2026-07): one page, role wrappers decide the
+    // rendered view. Legacy per-role feed entries below stay until those pages
+    // are retired.
+    '/opportunities': ['brand-paid', 'talent'],
+    // Trailing-slash twin: exact map misses it and the /opportunities/ prefix
+    // rule requires a non-empty slug segment, so without this entry the
+    // slashed URL would be unguarded if Webflow ever serves it un-normalized.
+    '/opportunities/': ['brand-paid', 'talent'],
     '/opportunities-brands-view': ['brand-paid'],
     '/opportunities-freelancer-view': ['talent'],
     '/opportunities---create': ['brand-paid'],

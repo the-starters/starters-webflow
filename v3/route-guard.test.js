@@ -83,8 +83,21 @@ test('recognises guarded pages and ignores unlisted ones', () => {
   assert.equal(api.isGuardedPath('/opportunities/product-designer'), true)
   assert.equal(api.isGuardedPath('/'), false)
   assert.equal(api.isGuardedPath('/about'), false)
-  assert.equal(api.isGuardedPath('/opportunities/'), false)
   assert.equal(api.isGuardedPath('/opportunities/slug/apply'), false)
+})
+
+test('merged /opportunities feed is guarded for both roles (incl. trailing slash)', () => {
+  const { api } = loadGuard()
+  assert.equal(api.isGuardedPath('/opportunities'), true)
+  // Deliberately guarded since the merged-feed launch: the exact map misses
+  // the slashed form and the /opportunities/ prefix rule needs a slug segment,
+  // so this entry closes what used to be an unguarded gap.
+  assert.equal(api.isGuardedPath('/opportunities/'), true)
+  assert.equal(api.redirectTargetFor(TALENT, '/opportunities'), '')
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/opportunities'), '')
+  assert.equal(api.redirectTargetFor(TALENT, '/opportunities/'), '')
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/opportunities/'), '')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/opportunities'), '/quiz')
 })
 
 test('/quiz-results and /all-starters are intentionally NOT guarded', () => {
