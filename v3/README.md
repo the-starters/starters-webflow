@@ -37,6 +37,53 @@ See [`../code-components/README.md`](../code-components/README.md) for package
 commands, Designer properties, endpoint payloads, pagination behavior, status
 transitions, security requirements, and the production-cutover constraint.
 
+## Talent application intake
+
+`talent-application.js` owns the apply-form submission on
+`/freelancer-application/step-1`. It listens in capture phase so it runs before
+Webflow's delegated submit handler and the multistep library's final-submit
+behavior. It deliberately suppresses the native Webflow submission because
+Zapier is no longer the application intake path, then posts JSON to Xano's
+`talent/application/create` endpoint. Xano owns the authoritative application
+row and mirrors it to the Airtable review table server-side.
+
+Install the script on step 1 only:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talent-application.js"></script>
+```
+
+Webflow contract:
+
+- Keep `application-form` on the form itself:
+  `<form application-form>`. Generated IDs and styling classes are not selector
+  fallbacks.
+- Keep the form inside its `.w-form` wrapper with a `.w-form-fail` block. A
+  failed request reveals that block and re-enables the submit control for retry.
+- Set the form's `data-redirect` to `/freelancer-application/step-2`. The
+  script also accepts `redirect` and otherwise defaults to that path.
+- Remove any other custom submit interceptor from this form. The native
+  Webflow/Zapier submission is intentionally not allowed to run.
+
+The request maps the form's `email`, `first-name`, `last-name`, `phone`,
+`linkedin`, `profile-type`, `function`, `referral-source`, `country`, and
+`city` fields to the Xano intake contract. It selects `consult-option` and
+`rate-consult` for a `Consult Only` profile; otherwise it selects
+`role-option` and `rate`, with the other pair retained as a fallback. All
+string form fields are also sent in `answers`; repeated field names are joined
+in submission order, and non-string values such as file objects are ignored.
+
+Any successful HTTP response containing an application `id` continues to the
+redirect, including Xano's successful response for a duplicate open
+application with the same email. A non-success HTTP status, malformed response,
+or response without an `id` stays on step 1 and exposes the retry state.
+
+Run the focused test with:
+
+```sh
+node --test v3/talent-application.test.js
+```
+
 ## Protected-route guard
 
 `route-guard.js` enforces the access matrix when a member opens a guarded V3
