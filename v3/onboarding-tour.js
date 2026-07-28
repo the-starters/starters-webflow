@@ -308,20 +308,26 @@
     }
   }
 
-  // Reposition a few times so the popover follows the revealed element as the
-  // disclosure finishes opening, without depending on one exact timing.
-  function scheduleRefresh() {
-    ;[150, 350, 600].forEach(function (ms) {
-      window.setTimeout(function () {
-        try {
-          if (activeInstance && typeof activeInstance.refresh === 'function') {
-            activeInstance.refresh()
-          }
-        } catch (error) {
-          // Instance may have been destroyed between schedule and fire.
+  // Reposition the overlay ONCE, after the disclosure has finished opening.
+  // driver.js animates its overlay on every refresh(), so firing several
+  // refreshes while the menu is still animating makes the backdrop cutout
+  // slide repeatedly (a visible "shadow flash"). Instead, poll cheaply until
+  // the revealed target is actually laid out (or a short safety cap), then
+  // refresh a single time so the cutout lands on the open menu in one move.
+  function scheduleRefresh(step) {
+    var startedAt = Date.now()
+    var timer = window.setInterval(function () {
+      var ready = isVisible(requestedTarget(step))
+      if (!ready && Date.now() - startedAt < 1200) return
+      window.clearInterval(timer)
+      try {
+        if (activeInstance && typeof activeInstance.refresh === 'function') {
+          activeInstance.refresh()
         }
-      }, ms)
-    })
+      } catch (error) {
+        // Instance may have been destroyed between schedule and fire.
+      }
+    }, 50)
   }
 
   function buildDriverSteps(tour) {
@@ -360,7 +366,7 @@
               selector: step.open,
               target: requestedTarget(step),
             }
-            scheduleRefresh()
+            scheduleRefresh(step)
           }
         }
         return driverStep
