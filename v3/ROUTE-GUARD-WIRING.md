@@ -81,6 +81,14 @@ remains excluded until its authenticated-only status is confirmed.
    (same visible pattern as `/auth-route`). Optionally pre-hide protected
    content until `html[data-route-guard="allowed"]` to avoid a cross-role flash.
 
+Regression rule: published source must contain one `opportunities-3.0.js` tag
+and place the route-guard tag first. The controller has a bounded handoff for an
+authored guard that executes later, waits for its terminal `allowed`, error, or
+redirect outcome, and falls back after two seconds only if the guard never
+boots. It also has an existing duplicate-load run-once guard, but those
+protections are incident containment—not a replacement for clean Webflow script
+placement.
+
 ### Recommended install scope
 
 Install the guard sitewide so it boots before page controllers and is present on
@@ -121,15 +129,18 @@ IDs and otherwise bails without redirecting.
 - `window.StartersV3RouteGuard` exposes `activePlanIds`, `memberRole`,
   `hasCompletedQuiz`, `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and
   `redirectTargetFor` for console checks.
-- `window.Opp30` exposes `routeGuardActive`, `gateOrRedirect`, `gateByPlan`,
-  `memberPlanRole`, `hasCompletedQuiz`, `brandFreeHome`,
-  `initMergedOppFeed`, `activateDeferredFeed`, and
+- `window.Opp30` exposes `routeGuardActive`, `routeGuardConfigured`,
+  `waitForRouteGuardHandoff`, `gateOrRedirect`, `gateByPlan`, `memberPlanRole`,
+  `hasCompletedQuiz`, `brandFreeHome`, `initMergedOppFeed`,
+  `activateDeferredFeed`, and
   `redirectForeignBrandToFeed` for verifying the opportunity controller's
   handoff, merged-feed activation, legacy fallback, and ownership-denied
   redirect policy.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
   (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
 - A resolved allow dispatches `starters:v3-route-guard-allowed`.
+- Navigation stamps `html[data-route-guard="redirecting"]` and dispatches
+  `starters:v3-route-guard-redirecting` before replacing the location.
 
 ## Release gate
 

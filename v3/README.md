@@ -101,8 +101,9 @@ the Memberstack `starter-quiz` custom field records completion, then
 
 Install the guard once sitewide in Site Settings Head Code, before page
 controllers such as `opportunities-3.0.js`. The controller detects the guard's
-`html[data-route-guard]` stamp, leaves access redirects to the guard, and retains
-its legacy per-page redirects only as a fallback when the guard is absent.
+terminal `html[data-route-guard]` state, leaves access redirects to the guard,
+and retains its legacy per-page redirects only as a fallback when the guard
+never boots.
 [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md) documents the DOM states, events,
 diagnostics, exclusions, and release gate. The guard is a routing/UX layer and
 does not replace Memberstack visibility rules or Xano authorization.

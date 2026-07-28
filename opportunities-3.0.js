@@ -92,6 +92,7 @@
   const XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh' // WMX group: trade-token
   const XANO_OPP_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30' // Opportunities 3.0 group
   const XANO_TRADE_TOKEN_PATH = '/auth/trade-token/v3'
+  const ROUTE_GUARD_HANDOFF_TIMEOUT_MS = 2000
 
   // project_type: modal radio id  ->  human string Xano stores / display logic expects
   const PROJECT_TYPE = {
@@ -1049,13 +1050,11 @@
   }
 
   /**
-   * True when the sitewide route guard (v3/route-guard.js) is present and owns
-   * access on this page. The guard stamps `html[data-route-guard]` the moment it
-   * boots (before this controller runs, since it loads first in Head Code). When
-   * it is active, opp30 stops making its own access redirects — the guard is the
-   * single access authority, using the stable plan-ID matrix — and only fetches
-   * the member to scope its data. When it is absent (guard not yet installed),
-   * the legacy per-page redirects below stay in place so behavior is unchanged.
+   * True after the sitewide route guard (v3/route-guard.js) has stamped
+   * `html[data-route-guard]`. The authored script tag is detected separately so
+   * this controller can wait when reversed defer order lets it execute first.
+   * Once the guard reaches `allowed`, opp30 leaves access redirects to that
+   * stable plan-ID authority and only fetches the member to scope its data.
    * Real security is enforced server-side in Xano regardless.
    * @returns {boolean}
    */
@@ -1065,6 +1064,75 @@
     } catch (e) {
       return false
     }
+  }
+
+  /**
+   * True when Webflow has authored the sitewide route-guard script on this
+   * page, even if an earlier defer script is currently executing before the
+   * guard has stamped html[data-route-guard].
+   * @returns {boolean}
+   */
+  function routeGuardConfigured() {
+    try {
+      return !!document.querySelector('script[src*="/v3/route-guard.js"]')
+    } catch (e) {
+      return false
+    }
+  }
+
+  let _routeGuardHandoffPromise = null
+
+  function routeGuardOutcome() {
+    try {
+      if (document.documentElement.getAttribute('data-route-guard-error') != null) {
+        return 'blocked'
+      }
+      const state = document.documentElement.getAttribute('data-route-guard')
+      if (state === 'allowed') return 'allowed'
+      if (state === 'redirecting') return 'blocked'
+      return state == null ? null : 'pending'
+    } catch (e) {
+      return null
+    }
+  }
+
+  /**
+   * Give an authored, later-ordered route guard the opportunity to claim access
+   * redirects before this controller evaluates Memberstack role state. This
+   * closes the defer-order race where an early member snapshot can temporarily
+   * omit planConnections and the legacy fallback would redirect to `/`.
+   *
+   * A guard that never boots still falls back after a bounded wait so legacy
+   * installs retain their previous behavior.
+   * @returns {Promise<'allowed'|'blocked'|'fallback'>}
+   */
+  function waitForRouteGuardHandoff() {
+    if (_routeGuardHandoffPromise) return _routeGuardHandoffPromise
+    const initialOutcome = routeGuardOutcome()
+    if (initialOutcome === 'allowed' || initialOutcome === 'blocked') {
+      return Promise.resolve(initialOutcome)
+    }
+    if (initialOutcome == null && !routeGuardConfigured()) return Promise.resolve('fallback')
+
+    _routeGuardHandoffPromise = new Promise((resolve) => {
+      const startedAt = Date.now()
+      let guardBooted = initialOutcome != null
+      const check = () => {
+        const outcome = routeGuardOutcome()
+        if (outcome === 'allowed' || outcome === 'blocked') {
+          resolve(outcome)
+          return
+        }
+        if (outcome === 'pending') guardBooted = true
+        if (!guardBooted && Date.now() - startedAt >= ROUTE_GUARD_HANDOFF_TIMEOUT_MS) {
+          resolve('fallback')
+          return
+        }
+        window.setTimeout(check, 25)
+      }
+      check()
+    })
+    return _routeGuardHandoffPromise
   }
 
   /**
@@ -1086,24 +1154,26 @@
   }
 
   /**
-   * Resolve the current member for a page. When the route guard is active,
-   * require the matching plan-ID role but leave redirects to the guard. When
-   * the guard is absent, the legacy custom-field check and redirects apply as a
-   * fallback.
+   * Resolve the current member for a page. Wait for an authored route guard;
+   * after `allowed`, require the matching plan-ID role but leave redirects to
+   * the guard. A guard error or redirect blocks page work. Only a guard that
+   * never boots uses the legacy custom-field check and redirects.
    * @param {'brand'|'freelancer'} expect
    * @returns {Promise<object|null>}
    */
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
+    const guardOutcome = await waitForRouteGuardHandoff()
+    if (guardOutcome === 'blocked') return null
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      if (!routeGuardActive()) location.href = loginPathWithNext()
+      if (guardOutcome !== 'allowed') location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
-    if (routeGuardActive()) {
+    if (guardOutcome === 'allowed') {
       const role = memberPlanRole(member)
       const expectedRole = expect === 'brand' ? 'brand-paid' : 'talent'
       return role === expectedRole ? member : null
@@ -1136,25 +1206,27 @@
   }
 
   /** Plan-based gate for pages shared by talent AND paying brands
-   *  (/opportunities/<slug>). When the route guard is active it has already
-   *  enforced access, so this only resolves {member, role} for the two roles
-   *  allowed here (talent, brand-paid) and bails quietly otherwise. When the
-   *  guard is absent, the legacy fallback redirects apply: logged-out ->
+   *  (/opportunities/<slug>). After the route guard reports `allowed`, this
+   *  only resolves {member, role} for the two valid roles and bails quietly
+   *  otherwise; guard errors and redirects block page work. If an authored
+   *  guard never boots, the legacy fallback redirects apply: logged-out ->
    *  /login?next=..., free brand -> brandFreeHome (/quiz or /quiz-results),
    *  unmapped plans -> /. */
   async function gateByPlan() {
+    const guardOutcome = await waitForRouteGuardHandoff()
+    if (guardOutcome === 'blocked') return null
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      if (!routeGuardActive()) location.href = loginPathWithNext()
+      if (guardOutcome !== 'allowed') location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
     const role = memberPlanRole(member)
     log('gateByPlan role:', role)
-    if (routeGuardActive()) {
+    if (guardOutcome === 'allowed') {
       // Guard already enforced page access. Reveal content only for the roles
       // valid on this page; bail quietly for anything else (the guard is mid-
       // redirect or showing its error state).
@@ -3187,6 +3259,8 @@
     diagnoseFreelancerFeed,
     loginPathWithNext,
     routeGuardActive,
+    routeGuardConfigured,
+    waitForRouteGuardHandoff,
     redirectForeignBrandToFeed,
     hasCompletedQuiz,
     brandFreeHome,

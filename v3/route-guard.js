@@ -204,6 +204,12 @@
     window.dispatchEvent(new CustomEvent('starters:v3-route-guard-allowed'))
   }
 
+  function replaceLocation(target) {
+    document.documentElement.setAttribute('data-route-guard', 'redirecting')
+    window.dispatchEvent(new CustomEvent('starters:v3-route-guard-redirecting'))
+    window.location.replace(target)
+  }
+
   async function guardCurrentPage() {
     var memberstack = await waitForMemberstack()
     if (!memberstack) {
@@ -214,7 +220,7 @@
     var response = await memberstack.getCurrentMember()
     var member = response && response.data
     if (!member || !member.id) {
-      window.location.replace(loginPathWithNext())
+      replaceLocation(loginPathWithNext())
       return
     }
 
@@ -224,7 +230,7 @@
       return
     }
     if (target) {
-      window.location.replace(target)
+      replaceLocation(target)
       return
     }
 

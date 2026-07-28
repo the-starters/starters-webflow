@@ -34,13 +34,17 @@ async function loadBridge(
     querySelector = null,
     querySelectorAll = null,
     routeGuard = false,
+    routeGuardDelayMs = null,
+    routeGuardScript = false,
     search = '',
   } = {},
 ) {
   const documentListeners = new Map()
   let authChange
   const attributes = new Map()
-  if (routeGuard) attributes.set('data-route-guard', 'checking')
+  if (routeGuard) {
+    attributes.set('data-route-guard', routeGuard === true ? 'allowed' : String(routeGuard))
+  }
   const documentElement = {
     appendChild() {},
     getAttribute: (name) => attributes.get(name) || null,
@@ -58,14 +62,17 @@ async function loadBridge(
     documentElement,
     getElementById: () => null,
     head: documentElement,
-    querySelector: (selector) => (querySelector ? querySelector(selector) : null),
+    querySelector: (selector) => {
+      if (selector === 'script[src*="/v3/route-guard.js"]' && routeGuardScript) return {}
+      return querySelector ? querySelector(selector) : null
+    },
     querySelectorAll: (selector) => (querySelectorAll ? querySelectorAll(selector) : []),
     readyState: 'loading',
   }
   const trackCalls = []
   const window = {
     $memberstackDom: {
-      getCurrentMember: async () => ({ data: member }),
+      getCurrentMember: async () => ({ data: typeof member === 'function' ? member() : member }),
       getMemberCookie: async () => 'memberstack-a',
       onAuthChange(listener) {
         authChange = listener
@@ -112,6 +119,9 @@ async function loadBridge(
     window,
   })
   vm.runInContext(source, context)
+  if (routeGuardDelayMs !== null) {
+    setTimeout(() => documentElement.setAttribute('data-route-guard', 'checking'), routeGuardDelayMs)
+  }
   for (const listener of documentListeners.get('DOMContentLoaded') || []) listener()
   await Promise.resolve()
   assert.equal(typeof authChange, 'function')
@@ -230,6 +240,75 @@ test('routeGuardActive reflects the html[data-route-guard] stamp', async () => {
 
   const on = await loadBridge(async () => response({}), { routeGuard: true })
   assert.equal(on.window.Opp30.routeGuardActive(), true)
+})
+
+test('waits for an allowed guard outcome before revealing paid Brand and Talent feeds', async () => {
+  for (const [role, resolvedMember] of [
+    ['brand', paidBrandMember],
+    ['talent', talentMember],
+  ]) {
+    let memberSnapshot = {
+      id: `m-${role}-before-plans-hydrate`,
+      customFields: {},
+      planConnections: [],
+    }
+    const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+    const dom = mergedFeedDom(roots)
+    const bridge = await loadBridge(async () => response({}), {
+      member: () => memberSnapshot,
+      pathname: '/opportunities',
+      querySelector: dom.querySelector,
+      querySelectorAll: dom.querySelectorAll,
+      routeGuardScript: true,
+    })
+
+    assert.equal(dom.wrappers[role].style.display, undefined)
+    memberSnapshot = resolvedMember
+    bridge.documentElement.setAttribute('data-route-guard', 'allowed')
+
+    assert.equal(await bridge.window.Opp30.waitForRouteGuardHandoff(), 'allowed')
+    assert.ok(
+      await waitFor(() => dom.wrappers[role].style.display === ''),
+      `${role} wrapper revealed`,
+    )
+    assert.equal(dom.wrappers[role === 'brand' ? 'talent' : 'brand'].style.display, 'none')
+    assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), role)
+    assert.ok(Array.isArray(bridge.window.WfXano))
+    assert.equal(bridge.window.WfXano.length, 1)
+    assert.equal(bridge.window.Opp30.routeGuardActive(), true)
+    assert.equal(
+      bridge.location.href,
+      'https://example.test/opportunities',
+      'the guard owns the unresolved-role decision instead of the legacy / fallback',
+    )
+  }
+})
+
+test('guard errors and redirects leave the merged feed hidden without a legacy redirect', async () => {
+  for (const terminal of ['error', 'redirecting']) {
+    const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
+    const dom = mergedFeedDom(roots)
+    const bridge = await loadBridge(async () => response({}), {
+      member: paidBrandMember,
+      pathname: '/opportunities',
+      querySelector: dom.querySelector,
+      querySelectorAll: dom.querySelectorAll,
+      routeGuard: 'checking',
+      routeGuardScript: true,
+    })
+
+    if (terminal === 'error') {
+      bridge.documentElement.setAttribute('data-route-guard-error', 'unmapped-plan')
+    } else {
+      bridge.documentElement.setAttribute('data-route-guard', 'redirecting')
+    }
+
+    assert.equal(await bridge.window.Opp30.waitForRouteGuardHandoff(), 'blocked')
+    assert.equal(dom.wrappers.talent.style.display, undefined)
+    assert.equal(dom.wrappers.brand.style.display, undefined)
+    assert.equal(bridge.window.WfXano, undefined)
+    assert.equal(bridge.location.href, 'https://example.test/opportunities')
+  }
 })
 
 test('with the guard active, gateOrRedirect returns a matching member without a custom-field check or redirect', async () => {
