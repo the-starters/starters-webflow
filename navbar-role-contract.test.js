@@ -22,4 +22,12 @@ test('merged opportunities uses the single authored navbar role contract in publ
     css,
     /\[data-ms-content='premium-brands'\]\s*\{\s*display:\s*flex\s*!important\s*;/,
   )
+  assert.match(
+    css,
+    /html:not\(\[data-opp-role-resolved\]\):has\(\[data-opp-role\]\) \[data-preview-nav\] #freelancer,/,
+  )
+  assert.match(
+    css,
+    /html:not\(\[data-opp-role-resolved\]\):has\(\[data-opp-role\]\) \[data-preview-nav\] \[data-ms-content='premium-brands'\]\s*\{\s*display:\s*none\s*!important\s*;/,
+  )
 })

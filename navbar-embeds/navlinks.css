@@ -32,6 +32,13 @@
   html[data-opp-role-resolved] [data-preview-nav='brand'] [data-ms-content='premium-brands'] {
     display: flex !important;
   }
+
+  html:not([data-opp-role-resolved]):has([data-opp-role]) [data-preview-nav] #freelancer,
+  html:not([data-opp-role-resolved]):has([data-opp-role]) [data-preview-nav] [data-ms-content='freelancer-only'],
+  html:not([data-opp-role-resolved]):has([data-opp-role]) [data-preview-nav] #brands,
+  html:not([data-opp-role-resolved]):has([data-opp-role]) [data-preview-nav] [data-ms-content='premium-brands'] {
+    display: none !important;
+  }
   
   .wf-design-mode .navbar_link-list-wrapper{
     overflow: hidden;
