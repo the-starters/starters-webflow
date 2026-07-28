@@ -34,9 +34,12 @@ function trigger(attributes = {}) {
     tagName: attributes.tagName || 'A',
     getAttribute: (name) =>
       Object.prototype.hasOwnProperty.call(own, name) ? own[name] : null,
+    hasAttribute: (name) => Object.prototype.hasOwnProperty.call(own, name),
     setAttribute(name, value) {
       own[name] = String(value)
     },
+    querySelector: () => null,
+    closest: () => null,
     addEventListener(type, handler, capture) {
       listeners.push({ type, handler, capture })
     },
@@ -113,6 +116,7 @@ function load(options = {}) {
   const warnings = []
   const navigations = []
   const closed = []
+  const opened = []
   const calls = { users: [], conversations: [], mounted: [], selected: [], chatbox: 0 }
   const windowListeners = []
   const modalId = options.modalId || MODAL_ID
@@ -136,7 +140,13 @@ function load(options = {}) {
     addEventListener() {},
     head: { appendChild() {} },
     createElement: () => ({ dataset: {}, setAttribute() {}, textContent: '' }),
-    querySelectorAll: (selector) => (selector === BUTTON_SELECTOR ? state.triggers : []),
+    querySelectorAll: (selector) => {
+      if (selector === BUTTON_SELECTOR) return state.triggers
+      if (selector === '[data-modal-trigger="' + modalId + '"]') {
+        return options.modalTriggers || []
+      }
+      return []
+    },
     querySelector: (selector) => (selector === CHAT_SELECTOR ? container : null),
   }
 
@@ -200,7 +210,22 @@ function load(options = {}) {
       },
     },
     document,
-    lumos: { modal: { list: { [modalId]: { close: () => closed.push(true) } } } },
+    lumos: options.noModalJs
+      ? undefined
+      : {
+          modal: {
+            list: {
+              [modalId]: {
+                el: dialog,
+                open: () => {
+                  opened.push(true)
+                  dialog.open = true
+                },
+                close: () => closed.push(true),
+              },
+            },
+          },
+        },
     addEventListener(type, handler) {
       windowListeners.push({ type, handler })
     },
@@ -261,6 +286,7 @@ function load(options = {}) {
     warnings,
     navigations,
     closed,
+    opened,
     calls,
     container,
     dialog,
@@ -533,7 +559,11 @@ test('a logged-out click is intercepted before the modal can open', async () => 
   assert.match(loaded.navigations[0], /^\/login\?next=/)
 })
 
-test('a paid Brand click is left alone so modal.js opens the modal', async () => {
+test('a paid Brand click is taken over and opens the modal directly', async () => {
+  // modal.js cannot suppress navigation when its matched trigger is a wrapper
+  // DIV around an anchor, which is exactly Webflow's button component. So this
+  // module owns the click: always preventDefault, always stopPropagation, and
+  // open the modal through modal.js's registry instead of its delegation.
   const element = starterTrigger()
   const loaded = load({
     triggers: [element],
@@ -543,10 +573,132 @@ test('a paid Brand click is left alone so modal.js opens the modal', async () =>
   await settle()
 
   const event = element.click()
+  await settle()
 
-  assert.equal(event.defaultPrevented, false)
-  assert.equal(event.propagationStopped, false)
+  assert.equal(event.defaultPrevented, true, 'the href must not navigate')
+  assert.equal(event.propagationStopped, true, 'modal.js must not double-open')
+  assert.equal(loaded.opened.length, 1, 'modal opened through the registry')
   assert.deepEqual(loaded.navigations, [])
+  assert.equal(loaded.calls.mounted.length, 1, 'and the chat mounted')
+})
+
+test('an already-open dialog is not reopened, which would throw', async () => {
+  const element = starterTrigger()
+  const loaded = load({
+    triggers: [element],
+    member: { id: VIEWER_ID },
+    role: 'brand-paid',
+    dialogAlreadyOpen: true,
+  })
+  await settle()
+
+  element.click()
+  await settle()
+
+  assert.equal(loaded.opened.length, 0, 'open() not called on an open dialog')
+  assert.equal(loaded.calls.mounted.length, 1, 'chat still mounts')
+})
+
+test('with no modal.js the click falls back to the /messages deep link', async () => {
+  const element = starterTrigger()
+  const loaded = load({
+    triggers: [element],
+    member: { id: VIEWER_ID },
+    role: 'brand-paid',
+    noModalJs: true,
+  })
+  await settle()
+
+  const event = element.click()
+  await settle()
+
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(loaded.navigations, ['/messages?with=' + STARTER_ID])
+  assert.equal(loaded.calls.mounted.length, 0)
+})
+
+test('the pressed trigger decides the conversation, not the first in the DOM', async () => {
+  const OTHER = 'mem_second00000000000000'
+  const first = starterTrigger()
+  const second = starterTrigger({
+    [MEMBER_ATTRIBUTE]: OTHER,
+    [NAME_ATTRIBUTE]: 'Second Starter',
+  })
+  const loaded = load({
+    triggers: [first, second],
+    member: { id: VIEWER_ID },
+    role: 'brand-paid',
+  })
+  await settle()
+
+  second.click()
+  await settle()
+
+  assert.equal(loaded.calls.conversations.length, 1)
+  assert.equal(
+    loaded.calls.conversations[0].id,
+    'one:' + [VIEWER_ID, OTHER].sort().join('|'),
+    'used the trigger that was clicked',
+  )
+})
+
+test('href is written to anchors only, never to a wrapper div', async () => {
+  const wrapper = starterTrigger({ tagName: 'DIV' })
+  load({ triggers: [wrapper] })
+
+  assert.equal(
+    wrapper.getAttribute('href'),
+    '/messages',
+    'the div keeps whatever it had; no destination is injected',
+  )
+})
+
+test('a div trigger still takes the click and opens the modal', async () => {
+  // Attributes on the button_main-wrap rather than the inner anchor.
+  const wrapper = starterTrigger({ tagName: 'DIV' })
+  const loaded = load({
+    triggers: [wrapper],
+    member: { id: VIEWER_ID },
+    role: 'brand-paid',
+  })
+  await settle()
+
+  const event = wrapper.click()
+  await settle()
+
+  assert.equal(event.defaultPrevented, true, 'suppresses the inner anchor')
+  assert.equal(loaded.opened.length, 1)
+  assert.equal(loaded.calls.mounted.length, 1)
+})
+
+test('unwired Message buttons are called out by class name', async () => {
+  const unwired = {
+    tagName: 'DIV',
+    className: 'button_main-wrap',
+    hasAttribute: () => false,
+    getAttribute: () => null,
+    querySelector: () => null,
+    closest: () => null,
+  }
+  const { warnings } = load({
+    triggers: [starterTrigger()],
+    modalTriggers: [unwired],
+  })
+
+  const line = warnings.find((w) => /carry no messages-profile-message/.test(w))
+  assert.ok(line, 'expected an unwired warning, got: ' + JSON.stringify(warnings))
+  assert.match(line, /button_main-wrap/)
+})
+
+test('a wired trigger is not reported as unwired', async () => {
+  const wired = starterTrigger()
+  wired.hasAttribute = (name) => name === MEMBER_ATTRIBUTE
+  const { warnings } = load({ triggers: [wired], modalTriggers: [wired] })
+
+  assert.equal(
+    warnings.filter((w) => /carry no messages-profile-message/.test(w)).length,
+    0,
+  )
 })
 
 test('a free Brand is redirected to the configured upgrade target', async () => {

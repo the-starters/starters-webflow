@@ -192,13 +192,27 @@ else, so a sitewide embed is safe but pointless:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/messages-profile.js"></script>
 ```
 
-Opening the modal is not this module's job. `global-embeds/modal/modal.js`
-already opens a `.modal_dialog` from `[data-modal-trigger]` and announces it with
-a `modal-open` window event; this module listens for that event, ignores every
-modal that does not contain the chat container, and mounts into the one that
-does. Load the modal embed on the page as usual, and load `route-guard.js` too if
-you want the role rules to apply, since the role comes from
-`StartersV3RouteGuard.memberRole`.
+This module owns the click on a trigger: it always calls `preventDefault` and
+`stopPropagation`, then opens the modal through `window.lumos.modal`'s registry.
+It deliberately does not rely on modal.js's click delegation, because that cannot
+suppress navigation for Webflow's button component. That component renders an
+absolutely-positioned `a.clickable_link` inside
+`div.button_main-wrap[data-modal-trigger]`, and modal.js only calls
+`preventDefault` when the element it *matched* is itself an anchor:
+
+```js
+const trigger = e.target.closest(`[data-modal-trigger='${modalId}']`)
+if (trigger.tagName === "A") e.preventDefault()
+```
+
+There the match is the wrapping DIV, so the inner anchor's href wins and the page
+navigates away while the modal is still opening. Because this module takes the
+click instead, `data-modal-trigger` is optional and the identity attributes may
+sit on either the wrapper or the anchor; put them wherever is convenient in the
+Designer. It still listens for modal.js's `modal-open` event so the `?modal-id=`
+post-login return mounts with no click involved. Load the modal embed as usual,
+and load `route-guard.js` too if you want the role rules to apply, since the role
+comes from `StartersV3RouteGuard.memberRole`.
 
 Webflow markup contract. The trigger, with three CMS-bound custom attributes:
 
@@ -237,10 +251,12 @@ URL. `messages-profile-upgrade` is a static path, not a binding, and goes on the
 chat container or any trigger. Give the container a height in the Designer; a
 zero-height box renders a zero-height chat.
 
-Keep `href="/messages"` on the trigger. The module rewrites it to
+Keep `href="/messages"` on an anchor trigger. The module rewrites it to
 `/messages?with=<memberstack id>`, which the `/messages` deep link in
 `messages.js` understands, so the link still reaches the conversation if this
-module never boots. If TalkJS fails after the modal is already open, that same
+module never boots. The href is only ever written to an anchor, never injected
+into a wrapper div, and it never fires while the module is running because the
+click is always suppressed. If TalkJS fails after the modal is already open, that same
 link is rendered inside the container rather than leaving an empty box.
 
 TalkJS is loaded lazily on the first open. `/hire/<slug>` is public and
@@ -272,6 +288,11 @@ around xano-id 1004, so roughly 7 percent of `hire` items have an empty field.
 An empty CMS field renders an empty attribute, which is exactly the hidden-trigger
 path, so those profiles simply show no button until they are backfilled, with no
 code change needed afterwards.
+
+On staging the module also names any element that opens this modal but carries
+no `messages-profile-message`, since each of those is a Message button that would
+open a chat with nobody. A profile page usually has several (hero, sticky nav,
+mobile CTA) and every one of them needs the attributes.
 
 Triggers injected after `DOMContentLoaded` are out of scope; call
 `window.StartersMessagesProfile.apply()` after injecting one. Warnings name the
