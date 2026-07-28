@@ -51,7 +51,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`, diagnostics are opt-in through `starterQuizDebug`, and freelancer recommendations use the `Freelancers3.0-dev` Algolia index by default
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create page through `[data-opp-form="create"]`, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, maps ongoing Part Time estimated weekly hours through the existing Xano contract, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
 - `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations; brand-free lands on `/quiz` until the Memberstack `starter-quiz` field is set (quiz completed), then `/quiz-results`
 - `v3/talent-application.js` — `/freelancer-application/step-1` intake controller; suppresses the native Webflow/Zapier submission, posts `form[application-form]` to Xano, and continues successful applicants to step 2
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
@@ -69,7 +69,7 @@ Do not discard local changes unless the user explicitly asks.
 - `starters-list/apply-button-disable.js`
 - `starters-list/range-backfill.js`
 - `utils/loader.js` — env-switch script loader (`loadEnvScript`)
-- `utils/wf-validate.js` — declarative form validation: styled errors and success slots, live counters, soft-disabled submitters while a form is incomplete (see below)
+- `utils/wf-validate.js` — declarative form validation: styled errors and success slots, live counters, soft-disabled submitters while a form is incomplete, and refresh support for late-injected fields (see below)
 - `explore-search/explore-search-chip-fill.js` — chip click copies its text into the search input, fires the engine's `input` event, announces `explore-search:commit`
 - `explore-search/explore-search-tab-counts.js` — live per-index hit counts for the tab bar (intercepts the engine's own Algolia responses; zero extra operations)
 - `explore-search/explore-search-most-searched.js` — dynamic "Most Searched" chips from an Algolia Query Suggestions index, via a designer-owned template
@@ -161,10 +161,30 @@ submit handler. The Webflow form display name, generated ID, and styling classes
 can be cleaned up independently after the stable attribute is published because
 browser behavior no longer reads them.
 
-Run the focused form-selector and create-page authentication regressions with:
+Create and edit forms keep the existing category selector input named
+`Category-option`. The controller makes it required from the selected tags rather
+than the visible search text, so a missing category produces the inline message
+`Please select at least one category.` instead of silently blocking submission.
+
+The Ongoing Part Time variant must wrap its existing `Part-Time-Budget` input in
+`data-project-type="part-time"`. The controller inserts a plain-text
+`Estimated-Hours` field immediately before that budget group, labels it
+`Estimated hrs/week`, and requires it only while `Project-Type` resolves to
+`Ongoing Part Time`. Create and update requests send its trimmed value as the
+existing Xano `est_hours` field, and edit prefill restores that value. One Time
+and Full Time requests send an empty `est_hours` value and do not require the
+field.
+
+Keep `utils/wf-validate.js` on these forms. The controller registers the injected
+field through `window.WfValidate.refresh(form)`, so category and estimated-hours
+failures use the form's normal inline error treatment. Client-side checks remain
+UX only; Xano retains authority over accepted payloads.
+
+Run the focused form-selector, feedback, validation, and create-page authentication
+regressions with:
 
 ```sh
-node --test opportunities-form-contract.test.js opportunities-create-auth.test.js
+node --test opportunities-form-contract.test.js opportunities-create-auth.test.js opportunities-create-feedback.test.js wf-validate.test.js
 ```
 
 ## V3 Staging Scheduling Authentication
@@ -480,6 +500,10 @@ blocks invalid submits before Webflow's handler or page controllers see them.
   Completeness is checked silently — nothing is painted before it has been earned.
 - Resetting a form clears its validation state; counters and the submit-disable
   state are recomputed on the next tick, since `reset` fires before values revert.
+- Call `window.WfValidate.refresh(form)` after injecting controls into an
+  already-bound form. It adds only new controls, preserves existing groups and
+  touched/error state, and recomputes submit-disable state without duplicating
+  listeners. Use `init(scope)` instead when injecting a new opted-in form.
 - Invalid forms are gated on BOTH the submit event and clicks on submit buttons —
   page controllers that bind click and call the API directly (the opp30 modal
   pattern) never fire while the form is invalid. Put `wf-validate-element="submit"`
