@@ -78,6 +78,10 @@ class FakeControl {
 function opportunityForm(kind) {
   const category = new FakeControl({ name: 'Category-option' })
   const budget = new FakeControl({ name: 'Part-Time-Budget' })
+  const estimatedHoursGroup = { hidden: false }
+  const estimatedHours = new FakeControl({ name: 'Estimated-Hours' })
+  estimatedHours.closest = (selector) =>
+    selector === '[data-project-type="part-time"]' ? estimatedHoursGroup : null
   const partTime = new FakeControl({
     id: 'Ongoing-Part-Time',
     name: 'Project-Type',
@@ -91,7 +95,7 @@ function opportunityForm(kind) {
   const fields = new Map([
     ['Category-option', category],
     ['Part-Time-Budget', budget],
-    ['Estimated-Hours', new FakeControl({ name: 'Estimated-Hours' })],
+    ['Estimated-Hours', estimatedHours],
   ])
   const partTimeGroup = {
     querySelector: (selector) =>
@@ -133,7 +137,7 @@ function opportunityForm(kind) {
         ? [form]
         : form.querySelectorAll(selector),
   }
-  return { category, fields, form, fullTime, modal, partTime }
+  return { category, estimatedHoursGroup, fields, form, fullTime, modal, partTime }
 }
 
 function loadOpportunityForms() {
@@ -214,6 +218,8 @@ test('create and edit forms bind Webflow-authored estimated hours without genera
 
   assert.ok(create.fields.get('Estimated-Hours'))
   assert.ok(edit.fields.get('Estimated-Hours'))
+  assert.equal(create.estimatedHoursGroup.hidden, true)
+  assert.equal(edit.estimatedHoursGroup.hidden, true)
   assert.deepEqual(refreshed, [create.form, edit.form])
 })
 
@@ -233,6 +239,7 @@ test('edit prefill sets weekly hours and restores conditional inline validation'
   const estimatedHours = edit.fields.get('Estimated-Hours')
   assert.equal(estimatedHours.value, '25 hrs/week')
   assert.equal(edit.partTime.checked, true)
+  assert.equal(edit.estimatedHoursGroup.hidden, false)
   assert.equal(estimatedHours.required, true)
   assert.equal(estimatedHours.getAttribute('aria-required'), 'true')
   assert.equal(
@@ -246,4 +253,5 @@ test('edit prefill sets weekly hours and restores conditional inline validation'
 
   assert.equal(estimatedHours.required, false)
   assert.equal(estimatedHours.getAttribute('aria-required'), 'false')
+  assert.equal(edit.estimatedHoursGroup.hidden, true)
 })

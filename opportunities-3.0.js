@@ -635,11 +635,13 @@
   function syncOpportunityEstimatedHours(form) {
     const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
     if (!estHoursInput) return
+    const estHoursGroup = estHoursInput.closest('[data-project-type="part-time"]')
     const projectType = $('[name="Project-Type"]:checked', form)
     const required = Boolean(
       projectType &&
         (PROJECT_TYPE[projectType.id] || projectType.value) === 'Ongoing Part Time',
     )
+    if (estHoursGroup) estHoursGroup.hidden = !required
     estHoursInput.required = required
     estHoursInput.setAttribute('aria-required', required ? 'true' : 'false')
     if (!required) estHoursInput.setCustomValidity('')
