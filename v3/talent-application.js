@@ -23,6 +23,19 @@
   var FORM_SELECTOR = 'form[application-form]'
   var DEFAULT_REDIRECT = '/freelancer-application/step-2'
 
+  // The country/state selects store numeric option indexes as values (their
+  // options are built from a locations JSON); the human-readable name is the
+  // option's text. Sending raw values reproduces the legacy "Country: 0" bug,
+  // so resolve the selected option's text instead. City options use the city
+  // name as the value, but resolving text is correct for it too.
+  function selectText(form, name) {
+    var el = form.querySelector('select[name="' + name + '"]')
+    if (!el || !el.options || el.selectedIndex < 0) return ''
+    var option = el.options[el.selectedIndex]
+    if (!option || option.value === '') return ''
+    return (option.textContent || option.text || '').trim()
+  }
+
   function fieldMap(formData) {
     var raw = {}
     formData.forEach(function (value, key) {
@@ -96,6 +109,14 @@
     setSubmitting(form, true)
 
     var payload = fieldMap(new FormData(form))
+    var countryText = selectText(form, 'country')
+    var cityText = selectText(form, 'city')
+    var stateText = selectText(form, 'state')
+    if (countryText) payload.country = countryText
+    if (cityText) payload.city = cityText
+    if (stateText) payload.answers.state = stateText
+    if (countryText) payload.answers.country = countryText
+    if (cityText) payload.answers.city = cityText
 
     fetch(ENDPOINT, {
       method: 'POST',

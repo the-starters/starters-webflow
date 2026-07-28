@@ -6,7 +6,7 @@ const { setImmediate: tick } = require('node:timers/promises')
 
 const source = fs.readFileSync(require.resolve('./talent-application.js'), 'utf8')
 
-function makeForm(entries, attrs = {}) {
+function makeForm(entries, attrs = {}, selects = {}) {
   const failEl = { style: { display: 'none' } }
   return {
     entries,
@@ -22,10 +22,18 @@ function makeForm(entries, attrs = {}) {
     closest() {
       return { querySelector: (sel) => (sel === '.w-form-fail' ? failEl : null) }
     },
+    querySelector(selector) {
+      const m = selector.match(/^select\[name="(.+)"\]$/)
+      return m ? selects[m[1]] ?? null : null
+    },
     querySelectorAll() {
       return []
     },
   }
+}
+
+function makeSelect(options, selectedIndex) {
+  return { options, selectedIndex }
 }
 
 function load({ fetchImpl }) {
@@ -157,6 +165,31 @@ test('failure shows the fail block and allows retry', async () => {
   assert.equal(assigned.length, 0)
   assert.equal(form.failEl.style.display, 'block')
   assert.equal(form.__startersSubmitting, false)
+})
+
+test('resolves country/state select indexes to option text', async () => {
+  const calls = []
+  const { listeners } = load({
+    fetchImpl: (url, options) => {
+      calls.push({ url, options })
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 9 }) })
+    },
+  })
+  const entries = FULL_ENTRIES.map(([k, v]) => (k === 'country' ? [k, '17'] : k === 'city' ? [k, 'Manila'] : [k, v]))
+  const form = makeForm(entries, {}, {
+    country: makeSelect([{ value: '', textContent: 'Select country' }, { value: '17', textContent: 'Philippines' }], 1),
+    state: makeSelect([{ value: '', textContent: 'Select state' }, { value: '3', textContent: 'Metro Manila' }], 1),
+    city: makeSelect([{ value: '', textContent: 'Select city' }, { value: 'Manila', textContent: 'Manila' }], 1),
+  })
+  listeners[0].handler(submitEvent(form))
+  await tick()
+  await tick()
+
+  const payload = JSON.parse(calls[0].options.body)
+  assert.equal(payload.country, 'Philippines')
+  assert.equal(payload.city, 'Manila')
+  assert.equal(payload.answers.state, 'Metro Manila')
+  assert.equal(payload.answers.country, 'Philippines')
 })
 
 test('ignores forms without the application-form attribute', () => {
