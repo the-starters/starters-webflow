@@ -43,6 +43,7 @@ view it; any other authenticated role is redirected to its default.
 | `/opportunities-freelancer-view` | Talent |
 | `/messages` | Talent, Brand paid |
 | `/opportunities/<slug>` | Talent, Brand paid |
+| `/favorites` and `/favorites/` | Brand paid |
 
 The merged feed lists both `/opportunities` forms explicitly: the exact page
 map would otherwise miss the trailing slash, while the detail prefix requires a

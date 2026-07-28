@@ -89,6 +89,12 @@
     // slashed URL would be unguarded if Webflow ever serves it un-normalized.
     '/opportunities/': ['brand-paid', 'talent'],
     '/opportunities-brands-view': ['brand-paid'],
+    // Saved Starters list. Paid Brand only, matching Xano #1506's own
+    // memberstack_plan 4/5 precondition: a free Brand cannot hold favorites, so
+    // sending it to the quiz funnel beats an empty list it cannot fill.
+    // Trailing-slash twin for the same reason as /opportunities/ below.
+    '/favorites': ['brand-paid'],
+    '/favorites/': ['brand-paid'],
     '/opportunities-freelancer-view': ['talent'],
     '/opportunities---create': ['brand-paid'],
     '/starter-dashboard': ['talent'],
