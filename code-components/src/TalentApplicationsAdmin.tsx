@@ -120,11 +120,12 @@ export function TalentApplicationsAdmin({
 
   const refresh = React.useCallback(async (): Promise<RefreshResult> => {
     const request = ++refreshRequest.current
+    const currentFilter = filterRef.current
     setLoading(true)
     setError(null)
     try {
       await api.session()
-      const page = await api.list(filter === 'all' ? undefined : filter)
+      const page = await api.list(currentFilter === 'all' ? undefined : currentFilter)
       if (request === refreshRequest.current) {
         setApplications(Array.isArray(page.items) ? page.items : [])
       }
@@ -145,7 +146,7 @@ export function TalentApplicationsAdmin({
         setLoading(false)
       }
     }
-  }, [api, clearPrivateState, filter])
+  }, [api, clearPrivateState])
 
   React.useEffect(() => {
     void refresh()
@@ -165,6 +166,7 @@ export function TalentApplicationsAdmin({
     setError(null)
     setLoading(true)
     setFilter(nextFilter)
+    void refresh()
   }
 
   function reconcileTransition(applicationId: number, nextStatus: ApplicationStatus) {
@@ -219,7 +221,11 @@ export function TalentApplicationsAdmin({
       }
 
       reconcileTransition(applicationId, nextStatus)
-      if (detailSyncRequest !== detailRequest.current) return
+      const listResultPromise = refresh()
+      if (detailSyncRequest !== detailRequest.current) {
+        await listResultPromise
+        return
+      }
 
       setSelected((current) => current && current.application.id === applicationId
         ? {
@@ -240,7 +246,7 @@ export function TalentApplicationsAdmin({
               (error: unknown) => ({ status: 'rejected' as const, error }),
             )
           : Promise.resolve({ status: 'skipped' as const }),
-        refresh(),
+        listResultPromise,
       ])
       if (
         detailResult.status === 'rejected' &&

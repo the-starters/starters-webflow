@@ -553,7 +553,86 @@ it('does not refresh a stale filter after a transition completes', async () => {
   })
 })
 
+it('keeps a transitioned row when an older active-filter response resolves last', async () => {
+  let reviewListCalls = 0
+  let resolveStaleReview: ((response: Response) => void) | undefined
+  let resolveTransition: ((response: Response) => void) | undefined
+  const staleReviewResponse = new Promise<Response>((resolve) => {
+    resolveStaleReview = resolve
+  })
+  const transitionResponse = new Promise<Response>((resolve) => {
+    resolveTransition = resolve
+  })
+  vi.spyOn(window, 'fetch').mockImplementation(async (input, init) => {
+    const url = String(input)
+    if (url.includes('/auth/trade-token/v3')) return jsonResponse('xano-token')
+    if (url.endsWith('/admin/session')) return jsonResponse({ role: 'admin' })
+    if (url.endsWith('/admin/applications/list')) {
+      const status = JSON.parse(String(init?.body)).status
+      if (status === 'under_review') {
+        reviewListCalls += 1
+        if (reviewListCalls === 1) return staleReviewResponse
+        return jsonResponse({
+          items: [{
+            id: 12,
+            applicant_name: 'Transitioned Applicant',
+            status: 'under_review',
+            created_at: 1,
+          }],
+        })
+      }
+      return jsonResponse({
+        items: [{
+          id: 12,
+          applicant_name: 'Transitioned Applicant',
+          status: 'submitted',
+          created_at: 1,
+        }],
+      })
+    }
+    if (url.endsWith('/admin/applications/detail')) {
+      return jsonResponse({
+        application: {
+          id: 12,
+          applicant_name: 'Transitioned Applicant',
+          status: reviewListCalls > 0 ? 'under_review' : 'submitted',
+          created_at: 1,
+        },
+        events: [],
+      })
+    }
+    if (url.endsWith('/admin/applications/transition')) return transitionResponse
+    return jsonResponse({}, 404)
+  })
+
+  render(<TalentApplicationsAdmin />)
+
+  fireEvent.click(await screen.findByText('Transitioned Applicant'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Under review' }))
+  fireEvent.click(screen.getByRole('button', { name: 'All applications' }))
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'under_review' } })
+  await waitFor(() => expect(reviewListCalls).toBe(1))
+
+  await act(async () => {
+    resolveTransition?.(jsonResponse({ id: 12, status: 'under_review' }))
+    await transitionResponse
+  })
+
+  await waitFor(() => {
+    expect(reviewListCalls).toBe(2)
+    expect(screen.getByText('Transitioned Applicant')).toBeInTheDocument()
+  })
+
+  await act(async () => {
+    resolveStaleReview?.(jsonResponse({ items: [] }))
+    await staleReviewResponse
+  })
+
+  expect(screen.getByText('Transitioned Applicant')).toBeInTheDocument()
+})
+
 it('removes a transitioned row from the latest active filter', async () => {
+  let transitionCommitted = false
   let resolveTransition: ((response: Response) => void) | undefined
   const transitionResponse = new Promise<Response>((resolve) => {
     resolveTransition = resolve
@@ -565,7 +644,7 @@ it('removes a transitioned row from the latest active filter', async () => {
     if (url.endsWith('/admin/applications/list')) {
       const status = JSON.parse(String(init?.body)).status
       return jsonResponse({
-        items: status === 'submitted' || status == null
+        items: !transitionCommitted && (status === 'submitted' || status == null)
           ? [{
               id: 12,
               applicant_name: 'Pending Applicant',
@@ -599,6 +678,7 @@ it('removes a transitioned row from the latest active filter', async () => {
   expect(await screen.findByText('Pending Applicant')).toBeInTheDocument()
 
   await act(async () => {
+    transitionCommitted = true
     resolveTransition?.(jsonResponse({ id: 12, status: 'under_review' }))
     await transitionResponse
   })
