@@ -72,7 +72,9 @@ Every endpoint below receives `Authorization: Bearer <Xano token>`.
 The list client loads all pages, deduplicates by numeric application ID, rejects
 pagination that does not advance, and stops after 1,000 pages. Status filtering
 is sent to Xano; name and email search is applied in the browser to the loaded
-status result.
+status result. Changing the status filter clears the previous filter's rows
+immediately; an older request cannot replace a newer filter result, and a failed
+filter request does not restore stale rows.
 
 Xano remains responsible for authenticating the staff role, restricting private
 records, validating transitions, checking `expected_status`, and appending audit
@@ -95,9 +97,12 @@ Available transitions are:
 
 Review notes and the interview URL are submitted with a status transition; there
 is no independent save action. After a successful transition, the component
-reloads both the selected application and the queue. If either readback fails,
-it keeps the optimistic update visible and tells the reviewer to refresh before
-continuing.
+updates the selected application optimistically, updates or removes its queue
+row according to the latest active filter, and reloads that filter without
+allowing an older filter response to overwrite it. It also reloads the selected
+application if the reviewer has not moved to another detail. If either current
+readback fails, it keeps the optimistic update visible and tells the reviewer to
+refresh before continuing.
 
 The detail view displays the applicant's contact details, submitted time,
 timezone, availability, motivation, safe HTTP(S) portfolio and LinkedIn links,
