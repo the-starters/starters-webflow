@@ -228,17 +228,48 @@
       return { member: member, target: target }
     }
 
-    var startedAt = Date.now()
-    while (Date.now() - startedAt < SHARED_OPPORTUNITIES_ROLE_TIMEOUT_MS) {
+    var deadline = Date.now() + SHARED_OPPORTUNITIES_ROLE_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      var pollDelayMs = Math.min(
+        SHARED_OPPORTUNITIES_ROLE_POLL_MS,
+        deadline - Date.now(),
+      )
       await new Promise(function (resolve) {
-        window.setTimeout(resolve, SHARED_OPPORTUNITIES_ROLE_POLL_MS)
+        window.setTimeout(resolve, pollDelayMs)
       })
-      try {
-        var response = await memberstack.getCurrentMember()
-        if (response && response.data && response.data.id) member = response.data
-      } catch (error) {
-        continue
-      }
+      var remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) break
+
+      var lookup = await new Promise(function (resolve) {
+        var settled = false
+        var timer = window.setTimeout(function () {
+          finish({ timedOut: true })
+        }, remainingMs)
+
+        function finish(result) {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timer)
+          resolve(result)
+        }
+
+        Promise.resolve()
+          .then(function () {
+            return memberstack.getCurrentMember()
+          })
+          .then(
+            function (response) {
+              finish({ response: response })
+            },
+            function () {
+              finish({ failed: true })
+            },
+          )
+      })
+      if (lookup.timedOut) break
+      if (lookup.failed) continue
+      var response = lookup.response
+      if (response && response.data && response.data.id) member = response.data
       target = redirectTargetFor(member, pathname)
       if (target === '') return { member: member, target: target }
     }

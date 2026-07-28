@@ -45,7 +45,11 @@ function loadGuard(options = {}) {
     clearInterval,
     clearTimeout,
   }
-  if (Object.prototype.hasOwnProperty.call(options, 'member')) {
+  if (Object.prototype.hasOwnProperty.call(options, 'getCurrentMember')) {
+    window.$memberstackDom = {
+      getCurrentMember: options.getCurrentMember,
+    }
+  } else if (Object.prototype.hasOwnProperty.call(options, 'member')) {
     window.$memberstackDom = {
       getCurrentMember: async () => ({
         data: typeof options.member === 'function' ? options.member() : options.member,
@@ -306,6 +310,22 @@ test('shared opportunities keeps polling after a transient Memberstack lookup fa
   await waitFor(() => attributes['data-route-guard'] === 'allowed')
   assert.equal(location.replaced, undefined)
   assert.equal(calls, 3)
+})
+
+test('shared opportunities exits at the deadline when a polling lookup never settles', async () => {
+  let calls = 0
+  const { location, attributes } = loadGuard({
+    pathname: '/opportunities',
+    getCurrentMember: () => {
+      calls += 1
+      if (calls === 1) return Promise.resolve({ data: BRAND_FREE })
+      return new Promise(() => {})
+    },
+  })
+
+  await waitFor(() => attributes['data-route-guard'] === 'redirecting', 3000)
+  assert.equal(location.replaced, '/quiz')
+  assert.equal(calls, 2)
 })
 
 test('surfaces an unmapped plan on a guarded page instead of redirecting home', async () => {
