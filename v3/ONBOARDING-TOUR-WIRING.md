@@ -53,7 +53,7 @@ highlighted; `data-tour-target` can override the highlight:
 | `data-tour-side` | no | `bottom` | driver.js popover side (`top`/`right`/`bottom`/`left`). |
 | `data-tour-align` | no | `start` | driver.js popover align (`start`/`center`/`end`). |
 | `data-tour-target` | no | `.post-opportunity` or `text:Post Opportunity` | Highlight a different element. A CSS selector uses its first match. `text:<label>` prefers the smallest visible `a`, `button`, or `[role="button"]` whose trimmed text exactly matches, then the smallest visible `span`, `div`, or `p`. If the selector is invalid, has no match, or no visible exact-text match exists, the step's tagged element is highlighted instead. |
-| `data-tour-open` | no | `.navbar_profile-dropdown .w-dropdown-toggle` | CSS selector for a disclosure control to open before highlighting `data-tour-target`. The opener must be visible; otherwise the step is omitted from the tour and its progress count. The module dispatches the Webflow-compatible mouse sequence, refreshes the popover while the disclosure settles, and restores the disclosure when leaving the step or ending the tour. If every step is omitted, the tour does not start or update seen-state. |
+| `data-tour-open` | no | `.navbar_profile-dropdown .w-dropdown-toggle` | CSS selector for a disclosure control to open before highlighting `data-tour-target`. The opener must be visible; otherwise the step is omitted from the tour and its progress count. The module dispatches the Webflow-compatible mouse sequence, polls until the revealed target has a stable visible layout (with a 1.2-second safety cap), refreshes the overlay once, and restores the disclosure when leaving the step or ending the tour. If every step is omitted, the tour does not start or update seen-state. |
 | `data-tour-roles` | no | `talent` | Comma list; the tour auto-starts only for these roles (`talent`, `brand-paid`, `brand-free`). Put it on any one step; lists on multiple steps are merged. |
 | `data-tour-once` | no | `false` | On any step: replay the tour every visit (default is show-once). |
 
@@ -170,7 +170,9 @@ are ignored.
   an unmatched target falls back to the tagged step element. For a step with
   `data-tour-open`, confirm the disclosure opens before its target is
   highlighted, closes on next/previous navigation and tour dismissal, and does
-  not reopen if it was already dismissed. At a breakpoint where the disclosure
-  control is hidden, confirm the step is omitted and the progress count adjusts.
+  not reopen if it was already dismissed. Confirm the overlay cutout repositions
+  only once after the disclosure settles, without repeated shadow flashes. At a
+  breakpoint where the disclosure control is hidden, confirm the step is omitted
+  and the progress count adjusts.
 - Standard exposure scan: no Airtable/Make URLs or PAT patterns (this module
   calls only jsDelivr and Memberstack).

@@ -295,11 +295,21 @@
   // The active driver instance, so per-step hooks can reposition the popover
   // after a disclosure opens (its content may reveal/animate asynchronously).
   var activeInstance = null
+  var tourRunToken = 0
 
   // The disclosure the tour currently has open (only one at a time), so it can
   // be closed again when the step is left or the tour ends.
   var openedDisclosure = null
+  var disclosureRefreshTimer = null
+  function clearDisclosureRefresh(timer) {
+    if (timer === undefined) timer = disclosureRefreshTimer
+    if (timer === null) return
+    window.clearInterval(timer)
+    if (disclosureRefreshTimer === timer) disclosureRefreshTimer = null
+  }
+
   function restoreOpenedDisclosure() {
+    clearDisclosureRefresh()
     if (!openedDisclosure) return
     var disclosure = openedDisclosure
     openedDisclosure = null
@@ -308,20 +318,52 @@
     }
   }
 
-  // Reposition a few times so the popover follows the revealed element as the
-  // disclosure finishes opening, without depending on one exact timing.
-  function scheduleRefresh() {
-    ;[150, 350, 600].forEach(function (ms) {
-      window.setTimeout(function () {
-        try {
-          if (activeInstance && typeof activeInstance.refresh === 'function') {
-            activeInstance.refresh()
+  // Reposition the overlay ONCE, after the disclosure has finished opening.
+  // driver.js animates its overlay on every refresh(), so firing several
+  // refreshes while the menu is still animating makes the backdrop cutout
+  // slide repeatedly (a visible "shadow flash"). Instead, poll cheaply until
+  // the revealed target is actually laid out (or a short safety cap), then
+  // refresh a single time so the cutout lands on the open menu in one move.
+  function scheduleRefresh(step) {
+    clearDisclosureRefresh()
+    var startedAt = Date.now()
+    var runToken = tourRunToken
+    var instance = activeInstance
+    var previousRect = null
+    var timer = window.setInterval(function () {
+      if (tourRunToken !== runToken) {
+        clearDisclosureRefresh(timer)
+        return
+      }
+      var target = requestedTarget(step)
+      var rect = target ? target.getBoundingClientRect() : null
+      var visible = rect && rect.width > 0 && rect.height > 0
+      var settled =
+        visible &&
+        previousRect &&
+        rect.top === previousRect.top &&
+        rect.left === previousRect.left &&
+        rect.width === previousRect.width &&
+        rect.height === previousRect.height
+      previousRect = visible
+        ? {
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
           }
-        } catch (error) {
-          // Instance may have been destroyed between schedule and fire.
+        : null
+      if (!settled && Date.now() - startedAt < 1200) return
+      clearDisclosureRefresh(timer)
+      try {
+        if (instance && typeof instance.refresh === 'function') {
+          instance.refresh()
         }
-      }, ms)
-    })
+      } catch (error) {
+        // Instance may have been destroyed between schedule and fire.
+      }
+    }, 50)
+    disclosureRefreshTimer = timer
   }
 
   function buildDriverSteps(tour) {
@@ -360,7 +402,7 @@
               selector: step.open,
               target: requestedTarget(step),
             }
-            scheduleRefresh()
+            scheduleRefresh(step)
           }
         }
         return driverStep
@@ -486,7 +528,6 @@
   var driverLoadPromise = null
   var driverLoadFailed = false
   var tourStartInFlight = false
-  var tourRunToken = 0
   var endWatchInterval = null
   function loadDriver() {
     var existing = currentDriverFactory()
