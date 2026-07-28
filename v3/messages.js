@@ -5,6 +5,16 @@
  * redirects logged-out visitors through the V3 login router while preserving
  * the current path and query, loads TalkJS, syncs the current member's public
  * profile, and mounts the 3.0-themed inbox into #talkjs-container.
+ *
+ * Deep linking: `/messages?with=<memberstack id>` opens — creating if needed —
+ * the one-on-one conversation with that member and selects it in the inbox.
+ * `v3/hire-message.js` produces these links from the /hire/<slug> profile pages
+ * and leaves the starter's name and photo in a one-shot sessionStorage entry
+ * (`starters:hire-message-handoff`) for this module to consume, because TalkJS
+ * writes any display fields it is given onto that user's global record and a
+ * URL-carried name would therefore be forgeable. Without the query parameter
+ * nothing below runs and the page behaves exactly as it did before; the deep
+ * link resolves after the inbox is mounted, so a failure leaves a working inbox.
  */
 ;(function () {
   'use strict'
@@ -18,6 +28,13 @@
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const LOGIN_PATH = '/login'
+  const DEEP_LINK_PARAM = 'with'
+  const HANDOFF_KEY = 'starters:hire-message-handoff'
+  // Memberstack ids are `mem_` + an alphanumeric cuid. Anything else is a
+  // hand-edited or truncated URL and must not reach TalkJS, which would create a
+  // real user record for it.
+  const MEMBER_ID_PATTERN = /^mem_[A-Za-z0-9]+$/
+  const CONVERSATION_SOURCE = 'hire-page'
   const FEED_FILTER_ACTIONS = {
     'messages-filter-all': {},
     'messages-filter-unread': { isUnread: true },
@@ -148,6 +165,100 @@
     })
   }
 
+  /**
+   * The member named by `?with=`, or null when absent or malformed.
+   * @returns {string|null}
+   */
+  function deepLinkMemberId() {
+    const raw = new URLSearchParams(window.location.search).get(DEEP_LINK_PARAM)
+    const id = typeof raw === 'string' ? raw.trim() : ''
+    return MEMBER_ID_PATTERN.test(id) ? id : null
+  }
+
+  /**
+   * Read and clear the display fields left by v3/hire-message.js. The entry is
+   * rejected unless it names the same member as the URL, so a stale handoff from
+   * a different profile can never mislabel this conversation. Always cleared once
+   * read, so a later visit without a handoff falls back to an id-only reference
+   * rather than reusing someone else's fields.
+   * @param {string} memberId
+   * @returns {{name: string, photo: string, slug: string}|null}
+   */
+  function consumeHandoff(memberId) {
+    let raw = null
+    try {
+      raw = window.sessionStorage.getItem(HANDOFF_KEY)
+    } catch (error) {
+      return null
+    }
+    if (!raw) return null
+
+    try {
+      window.sessionStorage.removeItem(HANDOFF_KEY)
+    } catch (error) {}
+
+    let data = null
+    try {
+      data = JSON.parse(raw)
+    } catch (error) {
+      return null
+    }
+    if (!data || data.id !== memberId) return null
+
+    const photo = typeof data.photo === 'string' ? data.photo : ''
+    return {
+      name: typeof data.name === 'string' ? data.name.trim() : '',
+      // Rendered as an <img> source by TalkJS; only plain https is accepted.
+      photo: photo.indexOf('https://') === 0 ? photo : '',
+      slug: typeof data.slug === 'string' ? data.slug : '',
+    }
+  }
+
+  /**
+   * The other side of the conversation. Passing fields updates that user's stored
+   * TalkJS record, so fields are only ever passed when they came from the CMS via
+   * the handoff; otherwise the existing user is referenced by id alone and TalkJS
+   * keeps whatever they synced themselves.
+   * @param {object} Talk
+   * @param {string} memberId
+   * @param {{name: string, photo: string}|null} handoff
+   */
+  function otherParticipant(Talk, memberId, handoff) {
+    if (!handoff || !handoff.name) return new Talk.User(memberId)
+
+    const fields = { id: memberId, name: handoff.name }
+    if (handoff.photo) fields.photoUrl = handoff.photo
+    return new Talk.User(fields)
+  }
+
+  /**
+   * Open the deep-linked one-on-one conversation, creating it when it does not
+   * exist, and select it in the mounted inbox. Returns immediately when there is
+   * no `?with=` parameter, which is every ordinary visit to /messages.
+   */
+  async function openDeepLinkConversation(Talk, session, inbox, me, myId) {
+    const otherId = deepLinkMemberId()
+    // A self-link would produce a degenerate conversation with one participant.
+    if (!otherId || otherId === myId) return
+
+    const handoff = consumeHandoff(otherId)
+    const conversation = session.getOrCreateConversation(
+      Talk.oneOnOneId(myId, otherId),
+    )
+    conversation.setParticipant(me)
+    conversation.setParticipant(otherParticipant(Talk, otherId, handoff))
+    // Attribution for conversations started from a profile page. Custom values
+    // must be strings; this cannot be backfilled onto existing conversations.
+    conversation.setAttributes({
+      custom: {
+        source: CONVERSATION_SOURCE,
+        slug: (handoff && handoff.slug) || '',
+      },
+    })
+
+    await inbox.select(conversation)
+  }
+
   async function mountMessages() {
     const container = document.getElementById('talkjs-container')
     if (!container) throw new Error('Missing #talkjs-container')
@@ -174,6 +285,16 @@
 
     installFeedFilterActions(inbox)
     inbox.mount(container)
+
+    // Deliberately after mount and deliberately not awaited: the inbox is already
+    // usable, so a deep-link failure degrades to "your normal inbox" instead of
+    // taking the page down with it.
+    openDeepLinkConversation(Talk, session, inbox, me, member.id).catch((error) => {
+      console.warn(
+        '[messages-3.0] Unable to open the requested conversation',
+        error,
+      )
+    })
   }
 
   function start() {
