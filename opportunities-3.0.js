@@ -1084,30 +1084,50 @@
 
   let _routeGuardHandoffPromise = null
 
+  function routeGuardOutcome() {
+    try {
+      if (document.documentElement.getAttribute('data-route-guard-error') != null) {
+        return 'blocked'
+      }
+      const state = document.documentElement.getAttribute('data-route-guard')
+      if (state === 'allowed') return 'allowed'
+      if (state === 'redirecting') return 'blocked'
+      return state == null ? null : 'pending'
+    } catch (e) {
+      return null
+    }
+  }
+
   /**
    * Give an authored, later-ordered route guard the opportunity to claim access
    * redirects before this controller evaluates Memberstack role state. This
    * closes the defer-order race where an early member snapshot can temporarily
    * omit planConnections and the legacy fallback would redirect to `/`.
    *
-   * A missing or failed guard still falls back after a bounded wait so legacy
+   * A guard that never boots still falls back after a bounded wait so legacy
    * installs retain their previous behavior.
-   * @returns {Promise<boolean>} whether the guard claimed this page
+   * @returns {Promise<'allowed'|'blocked'|'fallback'>}
    */
   function waitForRouteGuardHandoff() {
-    if (routeGuardActive()) return Promise.resolve(true)
-    if (!routeGuardConfigured()) return Promise.resolve(false)
     if (_routeGuardHandoffPromise) return _routeGuardHandoffPromise
+    const initialOutcome = routeGuardOutcome()
+    if (initialOutcome === 'allowed' || initialOutcome === 'blocked') {
+      return Promise.resolve(initialOutcome)
+    }
+    if (initialOutcome == null && !routeGuardConfigured()) return Promise.resolve('fallback')
 
     _routeGuardHandoffPromise = new Promise((resolve) => {
       const startedAt = Date.now()
+      let guardBooted = initialOutcome != null
       const check = () => {
-        if (routeGuardActive()) {
-          resolve(true)
+        const outcome = routeGuardOutcome()
+        if (outcome === 'allowed' || outcome === 'blocked') {
+          resolve(outcome)
           return
         }
-        if (Date.now() - startedAt >= ROUTE_GUARD_HANDOFF_TIMEOUT_MS) {
-          resolve(false)
+        if (outcome === 'pending') guardBooted = true
+        if (!guardBooted && Date.now() - startedAt >= ROUTE_GUARD_HANDOFF_TIMEOUT_MS) {
+          resolve('fallback')
           return
         }
         window.setTimeout(check, 25)
@@ -1144,17 +1164,18 @@
    * @returns {Promise<object|null>}
    */
   async function gateOrRedirect(expect /* 'brand' | 'freelancer' */) {
-    await waitForRouteGuardHandoff()
+    const guardOutcome = await waitForRouteGuardHandoff()
+    if (guardOutcome === 'blocked') return null
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      if (!routeGuardActive()) location.href = loginPathWithNext()
+      if (guardOutcome !== 'allowed') location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
-    if (routeGuardActive()) {
+    if (guardOutcome === 'allowed') {
       const role = memberPlanRole(member)
       const expectedRole = expect === 'brand' ? 'brand-paid' : 'talent'
       return role === expectedRole ? member : null
@@ -1194,19 +1215,20 @@
    *  /login?next=..., free brand -> brandFreeHome (/quiz or /quiz-results),
    *  unmapped plans -> /. */
   async function gateByPlan() {
-    await waitForRouteGuardHandoff()
+    const guardOutcome = await waitForRouteGuardHandoff()
+    if (guardOutcome === 'blocked') return null
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
     const { data: member } = await memberstack.getCurrentMember()
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
-      if (!routeGuardActive()) location.href = loginPathWithNext()
+      if (guardOutcome !== 'allowed') location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
     const role = memberPlanRole(member)
     log('gateByPlan role:', role)
-    if (routeGuardActive()) {
+    if (guardOutcome === 'allowed') {
       // Guard already enforced page access. Reveal content only for the roles
       // valid on this page; bail quietly for anything else (the guard is mid-
       // redirect or showing its error state).

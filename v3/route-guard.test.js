@@ -226,13 +226,14 @@ test('does not touch an unguarded page even for a logged-out visitor', async () 
 })
 
 test('redirects a logged-out visitor to login preserving path and query', async () => {
-  const { location } = loadGuard({
+  const { attributes, location } = loadGuard({
     pathname: '/brand-dashboard',
     search: '?ref=email',
     member: null,
   })
   await flush()
   assert.equal(location.replaced, '/login?next=' + encodeURIComponent('/brand-dashboard?ref=email'))
+  assert.equal(attributes['data-route-guard'], 'redirecting')
 })
 
 test('redirects a Talent session away from a Brand page to the Talent default', async () => {
@@ -242,7 +243,7 @@ test('redirects a Talent session away from a Brand page to the Talent default', 
   })
   await flush()
   assert.equal(location.replaced, '/starter-dashboard')
-  assert.equal(attributes['data-route-guard'], 'checking')
+  assert.equal(attributes['data-route-guard'], 'redirecting')
 })
 
 test('lets an allowed member stay and marks the page resolved', async () => {

@@ -83,9 +83,10 @@ remains excluded until its authenticated-only status is confirmed.
 
 Regression rule: published source must contain one `opportunities-3.0.js` tag
 and place the route-guard tag first. The controller has a bounded handoff for an
-authored guard that executes later and an existing duplicate-load run-once
-guard, but those protections are incident containment—not a replacement for
-clean Webflow script placement.
+authored guard that executes later, waits for its terminal `allowed`, error, or
+redirect outcome, and falls back only if the guard never boots. It also has an
+existing duplicate-load run-once guard, but those protections are incident
+containment—not a replacement for clean Webflow script placement.
 
 ### Recommended install scope
 
@@ -136,6 +137,8 @@ IDs and otherwise bails without redirecting.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
   (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
 - A resolved allow dispatches `starters:v3-route-guard-allowed`.
+- Navigation stamps `html[data-route-guard="redirecting"]` and dispatches
+  `starters:v3-route-guard-redirecting` before replacing the location.
 
 ## Release gate
 

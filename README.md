@@ -278,10 +278,12 @@ the bare and trailing-slash forms. The legacy
 `/opportunities-freelancer-view` and `/opportunities-brands-view` boot branches
 remain supported separately.
 
-The controller also waits for an authored route-guard tag to stamp the page
-before it evaluates Memberstack role state. This bounded handoff protects
-against accidental reversed `defer` order while the Webflow script order is
-being corrected. A page must still load the guard first. Duplicate
+The controller also waits for an authored route guard to report `allowed`
+before it evaluates Memberstack role state. Guard errors and redirects leave
+both feeds hidden; the bounded legacy fallback applies only when an authored
+guard never boots. This handoff protects against accidental reversed `defer`
+order while the Webflow script order is being corrected. A page must still load
+the guard first. Duplicate
 `opportunities-3.0.js` tags are ignored after the first boot, but should be
 removed from Webflow rather than relied on.
 
