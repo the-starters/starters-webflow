@@ -57,7 +57,15 @@
         const containers = document.querySelectorAll(
           '[wf-algolia-element="browse"], [wf-algolia-element="results"]'
         );
-        if (!containers.length) return;
+        if (!containers.length) {
+          // Both the engine and every container are missing: the file is inert
+          // from here. Say so on staging/local only — this whole bug class is
+          // silent by nature and cost a debugging session once already.
+          if (/webflow\.io$|^localhost$|trycloudflare\.com$/.test(location.hostname) || window.STARTERS_DEBUG) {
+            console.warn('[starters companies] no wf-algolia engine and no browse/results container — modifier is inert.');
+          }
+          return;
+        }
         const observer = new MutationObserver(run);
         containers.forEach(c => observer.observe(c, { childList: true, subtree: true }));
       }
@@ -65,9 +73,11 @@
       // Preferred path: the engine's own render signal. wf-algolia emits "results"
       // after renderHits on both browse paths, so cards are in the DOM by then.
       //
-      // Do NOT read the event payload here — the two paths pass different shapes
-      // (single-index passes the raw Algolia response; federated passes
-      // { results, nbHits, nbPages }). Always re-query the DOM instead.
+      // Do NOT read the event payload here. The two paths pass different shapes:
+      // single-index passes the raw Algolia response (which HAS `hits`), the
+      // federated path — the one used on first load — passes
+      // { results, nbHits, nbPages } and has NO `hits`. So `payload.hits` is
+      // undefined exactly when you would first test it. Always re-query the DOM.
       //
       // wf-algolia is loaded with `async`, so it may not exist yet. Wait briefly
       // and give up quickly rather than polling for seconds.
@@ -89,7 +99,8 @@
         setTimeout(arm, 100);
       }
 
-      run(); // cheap no-op unless cards are somehow already on the page
+      // No standalone run() here: both arm() outcomes call it (immediately on
+      // success, or after the fallback observer is wired).
       arm();
     }
 
