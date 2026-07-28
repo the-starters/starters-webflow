@@ -72,6 +72,11 @@ The request maps the form's `email`, `first-name`, `last-name`, `phone`,
 `role-option` and `rate`, with the other pair retained as a fallback. All
 string form fields are also sent in `answers`; repeated field names are joined
 in submission order, and non-string values such as file objects are ignored.
+Because the runtime-built `country` and `state` selects store numeric option
+indexes, the request resolves the selected `country`, `state`, and `city`
+options to their visible text. The top-level `country` and `city` fields and
+their entries in `answers` use that text; `state` is recorded in `answers`.
+Empty placeholder options do not override the raw empty form values.
 
 Any successful HTTP response containing an application `id` continues to the
 redirect, including Xano's successful response for a duplicate open
