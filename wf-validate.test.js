@@ -366,6 +366,22 @@ test('submit-disable: validateAll refreshes the state (API path)', () => {
   assert.equal(isEnabled(f.themed), true)
 })
 
+test('refresh: a required field injected after bind joins the validation gate', () => {
+  const f = submitDisableFixture()
+  const app = mount(f.root)
+  f.email.value = 'hi@example.com'
+  app.fire(f.form, 'input', f.email)
+
+  const late = h('input', { name: 'Estimated-Hours', required: '' })
+  f.form.append(late)
+  assert.equal(app.WfValidate.validate(f.form), true, 'not part of the initial field scan')
+
+  app.WfValidate.refresh(f.form)
+  assert.equal(app.WfValidate.validate(f.form), false)
+  assert.equal(late.classList.contains(INVALID), true)
+  assert.equal(late.getAttribute('aria-invalid'), 'true')
+})
+
 // ---------------------------------------------------------------------------
 // 2. the silent check paints nothing and touches nothing
 // ---------------------------------------------------------------------------
