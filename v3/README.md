@@ -178,6 +178,114 @@ Run its focused test with:
 node --test v3/starters-ms-redirect.test.js
 ```
 
+## Profile message modal
+
+`messages-profile.js` mounts a TalkJS chatbox with the profiled starter inside
+the page's modal, so a brand can start or resume the conversation without
+leaving `/hire/<slug>`. The conversation is created on first open when it does
+not already exist.
+
+Install it in the footer of the `detail_hire` template. It is inert everywhere
+else, so a sitewide embed is safe but pointless:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/messages-profile.js"></script>
+```
+
+Opening the modal is not this module's job. `global-embeds/modal/modal.js`
+already opens a `.modal_dialog` from `[data-modal-trigger]` and announces it with
+a `modal-open` window event; this module listens for that event, ignores every
+modal that does not contain the chat container, and mounts into the one that
+does. Load the modal embed on the page as usual, and load `route-guard.js` too if
+you want the role rules to apply, since the role comes from
+`StartersV3RouteGuard.memberRole`.
+
+Webflow markup contract. The trigger, with three CMS-bound custom attributes:
+
+```html
+<a href="/messages"
+   data-modal-trigger="message-modal"
+   messages-profile-message="mem_clxz24xki027s0sredlom9psj"
+   messages-profile-photo="https://x08a-5ko8-jj1r.n7c.xano.io/vault/.../freelancer-558.jpg"
+   messages-profile-name="Brian Chung">Message</a>
+```
+
+And an empty container inside that modal, which is where the chat renders:
+
+```html
+<dialog class="modal_dialog" data-modal-target="message-modal">
+  <div class="modal_backdrop" data-modal-close></div>
+  <div class="modal_content">
+    <div class="modal_slot">
+      <div messages-profile-chat messages-profile-upgrade="/pricing"></div>
+    </div>
+  </div>
+</dialog>
+```
+
+| attribute | bind to CMS field | field type |
+| --- | --- | --- |
+| `messages-profile-message` | Memberstack id | PlainText (required) |
+| `messages-profile-name` | Name | PlainText (optional) |
+| `messages-profile-photo` | Profile Photo Xano | PlainText (optional) |
+
+The three identity attributes must be *field bindings*, not literal values, or
+every profile ships the same starter's id. Bind `Profile Photo Xano` rather than
+`Profile Photo`: the latter is an Image field and is not reliably offered for
+attribute binding, while the former is PlainText holding the durable Xano vault
+URL. `messages-profile-upgrade` is a static path, not a binding, and goes on the
+chat container or any trigger. Give the container a height in the Designer; a
+zero-height box renders a zero-height chat.
+
+Keep `href="/messages"` on the trigger. The module rewrites it to
+`/messages?with=<memberstack id>`, which the `/messages` deep link in
+`messages.js` understands, so the link still reaches the conversation if this
+module never boots. If TalkJS fails after the modal is already open, that same
+link is rendered inside the container rather than leaving an empty box.
+
+TalkJS is loaded lazily on the first open. `/hire/<slug>` is public and
+SEO-relevant, so visitors who never press Message never download the SDK.
+
+Who gets through:
+
+| viewer | outcome |
+| --- | --- |
+| logged out | `/login?next=/hire/<slug>?modal-id=<id>`, returning to an open modal |
+| free Brand | `messages-profile-upgrade`, else the member's route-guard home |
+| talent | trigger hidden; modal closes if opened anyway |
+| viewer is this starter | trigger hidden; modal closes if opened anyway |
+| paid Brand | the chat |
+| role unknown | the chat |
+
+The logged-out and free-Brand redirects also run as a capture-phase click
+handler on the trigger, which calls `stopPropagation` so `modal.js` never sees
+the click. Without that the modal would flash open a frame before the redirect.
+This only works once Memberstack has resolved; a click during that window opens
+the modal and is handled there instead.
+
+Every check here is client-side, and unlike the `/messages` route this modal
+never passes through route-guard. Treat the rules as product gating, not as an
+authorization boundary.
+
+Known data gap: the Webflow mirror of `Memberstack id` stopped being written
+around xano-id 1004, so roughly 7 percent of `hire` items have an empty field.
+An empty CMS field renders an empty attribute, which is exactly the hidden-trigger
+path, so those profiles simply show no button until they are backfilled, with no
+code change needed afterwards.
+
+Triggers injected after `DOMContentLoaded` are out of scope; call
+`window.StartersMessagesProfile.apply()` after injecting one. Warnings name the
+offending slug and appear on staging hosts only (`*.webflow.io`, localhost,
+`127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`).
+Conversations opened this way carry `custom.source = "hire-page"` and
+`custom.slug`, which cannot be backfilled onto conversations created earlier.
+
+Run its focused tests with:
+
+```sh
+node --test v3/messages-profile.test.js v3/messages.test.js
+```
+
 ## All Starters favorites
 
 `all-starters-favorites.js` decorates Starter favourite controls and binds the
