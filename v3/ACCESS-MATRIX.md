@@ -78,6 +78,14 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 > `auth-route.js`, `route-guard.js`, and `opportunities-3.0.js` all apply this via
 > a shared `brandFreeHome(member)` / `hasCompletedQuiz(member)` helper.
 
+> **Merged-feed plan hydration (updated 2026-07-28):** On `/opportunities` and
+> `/opportunities/`, `route-guard.js` immediately allows a mapped Talent or
+> paid-Brand snapshot. Before applying a denial, it gives Memberstack up to two
+> seconds to replace a partial lower Brand Free or unmapped snapshot with an
+> allowed role. Transient polling failures stay within that deadline; if no
+> allowed snapshot resolves, the latest valid snapshot follows the normal
+> fail-closed redirect or unmapped-plan error.
+
 ## Enforcement layers
 
 The route allowlist is not the security boundary by itself. Each concern has a

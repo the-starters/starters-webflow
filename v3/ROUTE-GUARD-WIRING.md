@@ -15,7 +15,7 @@ On an approved V3 host, for a page it recognises:
 | Member state | Action |
 | --- | --- |
 | Logged out | Replace with `/login?next=<current path+query>` |
-| Role allowed on this page | Stay; set `html[data-route-guard="allowed"]` |
+| Role allowed on this page | Stay immediately; set `html[data-route-guard="allowed"]` |
 | Role not allowed on this page | Replace with that role's own default (never the other role's page) |
 | Authenticated, no mapped active plan | Stay with `html[data-route-guard-error="unmapped-plan"]` |
 | Page not in the matrix | Do nothing (no Memberstack lookup) |
@@ -49,6 +49,15 @@ map would otherwise miss the trailing slash, while the detail prefix requires a
 non-empty slug. `/opportunities/<slug>` matches a single non-empty path segment
 only, so nested paths such as `/opportunities/<slug>/apply` are not treated as
 detail pages.
+
+Memberstack can initially expose only a lower Brand Free connection for a
+multi-plan member. On the two exact merged-feed paths, an allowed Talent or
+paid-Brand snapshot proceeds without delay. Before redirecting a denied role or
+showing `unmapped-plan`, the guard polls for an allowed snapshot for up to two
+seconds. A rejected polling lookup is retried within the same deadline, and a
+lookup that never settles is capped by the remaining time. At the deadline, the
+latest valid snapshot follows the normal fail-closed redirect or error. Other
+guarded routes and opportunity detail pages do not use this hydration delay.
 
 The guard's Brand paid allowance is role-level only. On both
 `/opportunities/<slug>` and the legacy
@@ -85,12 +94,13 @@ Regression rule: published source must contain one `opportunities-3.0.js` tag
 and place the route-guard tag first. The controller has a bounded handoff for an
 authored guard that executes later, waits for its terminal `allowed`, error, or
 redirect outcome, and falls back after two seconds only if the guard never
-boots. On shared opportunity pages, it also polls for up to two seconds when an
-authenticated Memberstack snapshot has empty `planConnections`; it does not
-retry a non-empty, unmapped snapshot. If the configured guard never boots and
-no mapped role hydrates, opp30 leaves protected content hidden and stamps
-`html[data-route-guard-error="member-role-unavailable"]` instead of redirecting
-to `/`. It also has an existing duplicate-load run-once guard, but those
+boots. The guard itself owns the merged route's bounded denial-side plan
+hydration described above. If the configured guard never boots, opp30
+separately polls for up to two seconds when an authenticated Memberstack
+snapshot has empty `planConnections`; it does not retry a non-empty, unmapped
+snapshot. If no mapped role hydrates, opp30 leaves protected content hidden and
+stamps `html[data-route-guard-error="member-role-unavailable"]` instead of
+redirecting to `/`. It also has an existing duplicate-load run-once guard, but those
 protections are incident containment—not a replacement for clean Webflow script
 placement.
 
@@ -127,15 +137,19 @@ The guard is a routing/UX boundary only. It does not replace:
 
 `opportunities-3.0.js` defers access redirects to the sitewide guard. Before
 starting role-specific work, it verifies the member against the same stable plan
-IDs. An authenticated snapshot with no plan connections gets a bounded hydration
-retry; a complete unmapped snapshot does not. After the guard allows the route,
-an unresolved role bails without revealing or initializing either role's UI.
+IDs. On the exact merged-feed paths, the guard performs the bounded
+denial-side hydration retry, including partial lower-role and unmapped
+snapshots. The opportunity controller's fallback retries only an authenticated
+snapshot with no plan connections; a complete unmapped snapshot does not.
+After the guard allows the route, an unresolved role bails without revealing or
+initializing either role's UI.
 
 ## Diagnostics
 
 - `window.StartersV3RouteGuard` exposes `activePlanIds`, `memberRole`,
   `hasCompletedQuiz`, `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and
-  `redirectTargetFor` for console checks.
+  `redirectTargetFor` for console checks, plus
+  `waitForSharedOpportunitiesAccess` for the merged-feed hydration decision.
 - `window.Opp30` exposes `routeGuardActive`, `routeGuardConfigured`,
   `waitForRouteGuardHandoff`, `gateOrRedirect`, `gateByPlan`, `memberPlanRole`,
   `waitForMappedMemberRole`, `hasCompletedQuiz`, `brandFreeHome`, `initMergedOppFeed`,

@@ -41,11 +41,19 @@ function loadGuard(options = {}) {
     },
     location,
     setInterval,
+    setTimeout,
     clearInterval,
+    clearTimeout,
   }
-  if (Object.prototype.hasOwnProperty.call(options, 'member')) {
+  if (Object.prototype.hasOwnProperty.call(options, 'getCurrentMember')) {
     window.$memberstackDom = {
-      getCurrentMember: async () => ({ data: options.member }),
+      getCurrentMember: options.getCurrentMember,
+    }
+  } else if (Object.prototype.hasOwnProperty.call(options, 'member')) {
+    window.$memberstackDom = {
+      getCurrentMember: async () => ({
+        data: typeof options.member === 'function' ? options.member() : options.member,
+      }),
     }
   } else if (options.memberstackMissing) {
     // leave $memberstackDom undefined
@@ -72,6 +80,14 @@ function loadGuard(options = {}) {
 
 async function flush() {
   await new Promise((resolve) => setImmediate(resolve))
+}
+
+async function waitFor(predicate, timeoutMs = 1000) {
+  const startedAt = Date.now()
+  while (!predicate() && Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  assert.equal(predicate(), true)
 }
 
 // --- Pure matrix logic --------------------------------------------------------
@@ -255,6 +271,61 @@ test('lets an allowed member stay and marks the page resolved', async () => {
   assert.equal(location.replaced, undefined)
   assert.equal(attributes['data-route-guard'], 'allowed')
   assert.ok(events.some((e) => e.name === 'starters:v3-route-guard-allowed'))
+})
+
+test('shared opportunities waits for a higher allowed plan to hydrate before redirecting', async () => {
+  const snapshots = [
+    BRAND_FREE,
+    {
+      id: 'm-test-brand',
+      planConnections: [
+        plan('pln_free-plan-f6kn0dxz'),
+        plan('pln_dorxata-test-brand-plan-777r02pa'),
+      ],
+    },
+  ]
+  let calls = 0
+  const { location, attributes } = loadGuard({
+    pathname: '/opportunities',
+    member: () => snapshots[Math.min(calls++, snapshots.length - 1)],
+  })
+
+  await waitFor(() => attributes['data-route-guard'] === 'allowed')
+  assert.equal(location.replaced, undefined)
+  assert.equal(calls, 2)
+})
+
+test('shared opportunities keeps polling after a transient Memberstack lookup failure', async () => {
+  let calls = 0
+  const { location, attributes } = loadGuard({
+    pathname: '/opportunities',
+    member: () => {
+      calls += 1
+      if (calls === 1) return BRAND_FREE
+      if (calls === 2) throw new Error('temporary Memberstack failure')
+      return TEST_BRAND
+    },
+  })
+
+  await waitFor(() => attributes['data-route-guard'] === 'allowed')
+  assert.equal(location.replaced, undefined)
+  assert.equal(calls, 3)
+})
+
+test('shared opportunities exits at the deadline when a polling lookup never settles', async () => {
+  let calls = 0
+  const { location, attributes } = loadGuard({
+    pathname: '/opportunities',
+    getCurrentMember: () => {
+      calls += 1
+      if (calls === 1) return Promise.resolve({ data: BRAND_FREE })
+      return new Promise(() => {})
+    },
+  })
+
+  await waitFor(() => attributes['data-route-guard'] === 'redirecting', 3000)
+  assert.equal(location.replaced, '/quiz')
+  assert.equal(calls, 2)
 })
 
 test('surfaces an unmapped plan on a guarded page instead of redirecting home', async () => {

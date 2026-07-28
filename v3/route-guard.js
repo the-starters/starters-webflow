@@ -33,6 +33,8 @@
   ])
   var LOGIN_PATH = '/login'
   var MEMBERSTACK_TIMEOUT_MS = 10000
+  var SHARED_OPPORTUNITIES_ROLE_TIMEOUT_MS = 2000
+  var SHARED_OPPORTUNITIES_ROLE_POLL_MS = 100
 
   // Identical to v3/auth-route.js and opportunities-3.0.js (MS_PLAN_ROLES).
   var PLAN_ROLES = {
@@ -210,6 +212,70 @@
     window.location.replace(target)
   }
 
+  function isSharedOpportunitiesPath(pathname) {
+    return pathname === '/opportunities' || pathname === '/opportunities/'
+  }
+
+  /**
+   * A member with several plans can briefly expose only the lower Brand Free
+   * connection during Memberstack boot. Before redirecting from the shared
+   * feed, give an allowed Talent or paid-Brand connection a bounded chance to
+   * hydrate. Allowed snapshots never wait; this only delays a denial.
+   */
+  async function waitForSharedOpportunitiesAccess(memberstack, member, pathname) {
+    var target = redirectTargetFor(member, pathname)
+    if (!isSharedOpportunitiesPath(pathname) || target === '') {
+      return { member: member, target: target }
+    }
+
+    var deadline = Date.now() + SHARED_OPPORTUNITIES_ROLE_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      var pollDelayMs = Math.min(
+        SHARED_OPPORTUNITIES_ROLE_POLL_MS,
+        deadline - Date.now(),
+      )
+      await new Promise(function (resolve) {
+        window.setTimeout(resolve, pollDelayMs)
+      })
+      var remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) break
+
+      var lookup = await new Promise(function (resolve) {
+        var settled = false
+        var timer = window.setTimeout(function () {
+          finish({ timedOut: true })
+        }, remainingMs)
+
+        function finish(result) {
+          if (settled) return
+          settled = true
+          window.clearTimeout(timer)
+          resolve(result)
+        }
+
+        Promise.resolve()
+          .then(function () {
+            return memberstack.getCurrentMember()
+          })
+          .then(
+            function (response) {
+              finish({ response: response })
+            },
+            function () {
+              finish({ failed: true })
+            },
+          )
+      })
+      if (lookup.timedOut) break
+      if (lookup.failed) continue
+      var response = lookup.response
+      if (response && response.data && response.data.id) member = response.data
+      target = redirectTargetFor(member, pathname)
+      if (target === '') return { member: member, target: target }
+    }
+    return { member: member, target: target }
+  }
+
   async function guardCurrentPage() {
     var memberstack = await waitForMemberstack()
     if (!memberstack) {
@@ -224,7 +290,13 @@
       return
     }
 
-    var target = redirectTargetFor(member, window.location.pathname)
+    var resolved = await waitForSharedOpportunitiesAccess(
+      memberstack,
+      member,
+      window.location.pathname,
+    )
+    member = resolved.member
+    var target = resolved.target
     if (target === null) {
       showGuardError('unmapped-plan')
       return
@@ -245,6 +317,7 @@
     pageRolesFor: pageRolesFor,
     isGuardedPath: isGuardedPath,
     redirectTargetFor: redirectTargetFor,
+    waitForSharedOpportunitiesAccess: waitForSharedOpportunitiesAccess,
   }
   window.StartersV3RouteGuard = api
 
