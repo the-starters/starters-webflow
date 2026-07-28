@@ -86,7 +86,7 @@ Do not discard local changes unless the user explicitly asks.
 - `explore-search-transitions/explore-search-transitions.js` — search overlay open/close transitions (GSAP timelines, inert-locked closed state)
 - `explore-search-transitions/explore-search-transitions.css` — companion styles for the search overlay transitions
 - `navbar-embeds/navbar-dropdown.css` — mobile (<=767px) navbar dropdown open/close height transition via `grid-template-rows`
-- `navbar-embeds/navlinks.css` — hides gated nav link groups until Memberstack gating adds `.ms-nav-ready`; Designer per-variant preview
+- `navbar-embeds/navlinks.css` — hides gated nav link groups until Memberstack gating adds `.ms-nav-ready`; owns Designer previews and the merged `/opportunities` navbar's resolved-role visibility
 - `navbar-embeds/account-dropdown.css` — mobile profile dropdown open/close transitions with independent open/close durations
 - `navbar-embeds/transparent-nav-bg.css` — fills the transparent navbar background while the mobile menu is open (`[data-nav-menu-open]`)
 - `navbar-embeds/transparent-nav-bg.js` — fades in the `.nav_bg` layer on scroll for transparent navbar variants
@@ -281,6 +281,13 @@ Brand); `navbar-embeds/navlinks.css` owns descendant visibility. The controller
 does not clone a navbar, generate navbar HTML, or paint descendant visibility
 with inline styles.
 
+Keep `navbar-embeds/navlinks.css` published with that native component. Its
+merged-feed selectors use the deferred role-wrapper signature above, so they do
+not affect `/opportunities/<slug>` detail pages. Before
+`html[data-opp-role-resolved]` is stamped, the CSS hides the authored Talent and
+paid-Brand groups; afterward it hides every role list and reveals only the
+resolved role's authored descendants.
+
 Load `v3/route-guard.js` sitewide before `opportunities-3.0.js`. The merged
 route allows Talent and paid Brand members, rejects free Brands, and guards both
 the bare and trailing-slash forms. An allowed initial plan snapshot proceeds
@@ -318,7 +325,7 @@ and
 Run the merged-feed, router, and guard regressions with:
 
 ```sh
-node --test opportunities-3.0-auth.test.js v3/auth-route.test.js v3/route-guard.test.js
+node --test navbar-role-contract.test.js opportunities-3.0-auth.test.js v3/auth-route.test.js v3/route-guard.test.js
 ```
 
 ## Opportunities 3.0 Starter Matching
