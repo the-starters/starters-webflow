@@ -17,13 +17,21 @@
  * Plus one empty container inside the modal, which is where the chat mounts:
  *   <div messages-profile-chat></div>
  *
- * Opening is not this module's job. `global-embeds/modal/modal.js` already opens
- * a `.modal_dialog` from `[data-modal-trigger='<id>']` or `a[href='#<id>']` and
- * announces it with a `modal-open` window event. This module listens for that
- * event, ignores every modal that does not contain the chat container, and
- * mounts into the one that does. That also makes the post-login return free:
- * `?modal-id=<id>` has modal.js open the modal on load, and the chat mounts with
- * no click involved.
+ * This module owns the click on a trigger: it always calls preventDefault and
+ * stopPropagation, then opens the modal through `window.lumos.modal`'s registry.
+ * It deliberately does not rely on modal.js's click delegation, which cannot
+ * suppress navigation for Webflow's button component — an absolutely-positioned
+ * `a.clickable_link` nested inside `div.button_main-wrap[data-modal-trigger]`.
+ * modal.js only calls preventDefault when the element it *matched* is itself an
+ * anchor, and there the match is the wrapping DIV, so the inner anchor's href
+ * wins and the page navigates away while the modal is still opening. Owning the
+ * click also makes `data-modal-trigger` optional, and lets the identity
+ * attributes sit on either the wrapper or the anchor.
+ *
+ * It still listens for modal.js's `modal-open` window event, ignoring every
+ * modal that does not contain the chat container, so the post-login return
+ * works: `?modal-id=<id>` has modal.js open the modal on load and the chat
+ * mounts with no click involved.
  *
  * TalkJS loads lazily, on the first open. `/hire/<slug>` pages are public and
  * SEO-relevant, so visitors who never press Message never pay for the SDK.
@@ -111,6 +119,9 @@
   // Resolved once on boot so a click can decide synchronously whether to let the
   // modal open at all, instead of flashing it and then navigating away.
   var viewer = { resolved: false, member: null, role: null }
+  // The starter whose trigger was actually pressed. Falls back to the page's
+  // single starter for the `?modal-id=` return, where there is no click.
+  var pendingIdentity = null
   var chatMounted = false
   var chatOpening = false
 
@@ -212,11 +223,39 @@
     return dialog ? text(dialog.getAttribute(MODAL_TARGET_ATTRIBUTE)) : ''
   }
 
-  function closeModal() {
+  function modalEntry() {
     var id = modalId()
     var modal = window.lumos && window.lumos.modal
-    var entry = id && modal && modal.list ? modal.list[id] : null
+    return id && modal && modal.list ? modal.list[id] : null
+  }
+
+  function closeModal() {
+    var entry = modalEntry()
     if (entry && typeof entry.close === 'function') entry.close()
+  }
+
+  /**
+   * Open our modal through modal.js's registry rather than relying on its click
+   * delegation, which cannot suppress navigation for Webflow's nested-anchor
+   * button component. Reopening an already-open dialog would throw, so an open
+   * dialog counts as success and is left alone.
+   * @returns {boolean} whether a modal system was there to open
+   */
+  function openModal() {
+    var entry = modalEntry()
+    if (!entry || typeof entry.open !== 'function') {
+      warn('modal.js is not on this page, so there is no modal to open')
+      return false
+    }
+    if (entry.el && entry.el.open) return true
+
+    try {
+      entry.open()
+    } catch (error) {
+      warn('modal.js refused to open: ' + (error && error.message))
+      return false
+    }
+    return true
   }
 
   /* ============================ DESTINATIONS ========================= */
@@ -458,7 +497,9 @@
       return
     }
 
-    var identity = pageIdentity()
+    // The pressed trigger wins; pageIdentity only answers for the `?modal-id=`
+    // return, where nothing was clicked.
+    var identity = pendingIdentity || pageIdentity()
     if (!identity) {
       warn('no usable Memberstack id on this profile; nothing to open')
       closeModal()
@@ -527,9 +568,59 @@
   }
 
   /**
-   * Validate the CMS identity, hide dead triggers, and give the rest the
-   * `/messages` fallback href plus a capture-phase guard that redirects a viewer
-   * who should not reach the chat before modal.js can open anything.
+   * Everything a click on a wired trigger can do. This owns the click outright:
+   * it always suppresses the default action and stops the event before
+   * modal.js's delegated document listener sees it.
+   *
+   * Taking the click was not optional. Webflow's button component renders an
+   * absolutely-positioned `a.clickable_link` inside a
+   * `div.button_main-wrap[data-modal-trigger]`, and modal.js only calls
+   * preventDefault when the element it *matched* is itself an anchor:
+   *
+   *   const trigger = e.target.closest("[data-modal-trigger='...']")
+   *   if (trigger.tagName === "A") e.preventDefault()
+   *
+   * With that component the match is the wrapping DIV, so the inner anchor's
+   * navigation is never suppressed and the fallback href wins over the modal.
+   * Opening the modal here instead makes the outcome independent of which
+   * element carries which attribute, and of whether modal.js matched at all.
+   * @param {Event} event
+   * @param {{id: string, name: string, photo: string}} identity
+   */
+  function handleTriggerClick(event, identity) {
+    if (typeof event.preventDefault === 'function') event.preventDefault()
+    if (typeof event.stopPropagation === 'function') event.stopPropagation()
+
+    // Whichever trigger was pressed decides the conversation, rather than
+    // whichever happens to come first in the document.
+    pendingIdentity = identity
+
+    if (viewer.resolved && !viewer.member) {
+      goTo(loginUrl())
+      return
+    }
+    if (
+      viewer.resolved &&
+      viewer.role &&
+      REDIRECTED_ROLES.indexOf(viewer.role) !== -1
+    ) {
+      goTo(upgradeUrl(viewer.member))
+      return
+    }
+
+    // Unresolved Memberstack falls through on purpose: openChat re-checks and
+    // redirects from there, so a fast click is never silently swallowed.
+    if (!openModal()) {
+      // No modal system on the page. The href is the honest fallback.
+      goTo(deepLinkPath(identity.id))
+      return
+    }
+    openChat()
+  }
+
+  /**
+   * Validate the CMS identity, hide dead triggers, give anchors the `/messages`
+   * fallback href, and take ownership of the click on the rest.
    */
   function decorate() {
     var armed = []
@@ -549,29 +640,23 @@
         return
       }
 
-      try {
-        element.setAttribute('href', deepLinkPath(identity.id))
-      } catch (error) {}
+      // Only anchors can carry a fallback destination. Writing href onto a
+      // wrapper div would be meaningless, and writing it onto an anchor nested
+      // in a modal trigger is exactly what used to hijack the click.
+      if (String(element.tagName || '').toUpperCase() === 'A') {
+        try {
+          element.setAttribute('href', deepLinkPath(identity.id))
+        } catch (error) {}
+      }
 
       if (element.getAttribute(BOUND_ATTRIBUTE) !== 'true') {
         element.setAttribute(BOUND_ATTRIBUTE, 'true')
-        // Capture phase on the trigger itself, so stopPropagation beats
-        // modal.js's delegated document listener and the modal never flashes
-        // open for someone who is about to be redirected away.
+        // Capture phase on the trigger, so this runs before the inner anchor's
+        // default action and before modal.js's document-level listener.
         element.addEventListener(
           'click',
           function (event) {
-            if (!viewer.resolved) return
-            var redirect = null
-            if (!viewer.member) redirect = loginUrl()
-            else if (viewer.role && REDIRECTED_ROLES.indexOf(viewer.role) !== -1) {
-              redirect = upgradeUrl(viewer.member)
-            }
-            if (!redirect) return
-
-            if (typeof event.preventDefault === 'function') event.preventDefault()
-            if (typeof event.stopPropagation === 'function') event.stopPropagation()
-            goTo(redirect)
+            handleTriggerClick(event, identity)
           },
           true,
         )
@@ -580,7 +665,49 @@
       armed.push({ element: element, identity: identity })
     })
 
+    warnAboutUnwiredTriggers()
     return armed
+  }
+
+  /**
+   * Point out Message buttons that open our modal but carry no identity. Every
+   * one of these is a button that will open an empty or wrong-starter chat.
+   */
+  function warnAboutUnwiredTriggers() {
+    var id = modalId()
+    if (!id) return
+
+    var unwired = Array.prototype.slice
+      .call(document.querySelectorAll('[data-modal-trigger="' + id + '"]'))
+      .filter(function (element) {
+        return (
+          !element.hasAttribute(MEMBER_ATTRIBUTE) &&
+          !element.querySelector(BUTTON_SELECTOR) &&
+          !element.closest(BUTTON_SELECTOR)
+        )
+      })
+
+    if (!unwired.length) return
+    warn(
+      unwired.length +
+        ' element(s) open the "' +
+        id +
+        '" modal but carry no ' +
+        MEMBER_ATTRIBUTE +
+        ', so they will open a chat with nobody. Add the three ' +
+        'messages-profile-* attributes to each: ' +
+        unwired
+          .map(function (element) {
+            return (
+              '<' +
+              String(element.tagName || '?').toLowerCase() +
+              ' class="' +
+              String(element.className || '').split(' ')[0] +
+              '">'
+            )
+          })
+          .join(', '),
+    )
   }
 
   /** Hide triggers the signed-in viewer should not see. */
