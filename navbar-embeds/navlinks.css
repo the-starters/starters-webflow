@@ -23,7 +23,7 @@
    * Webflow groups own published visibility just as they do in Designer.
    */
   html[data-opp-role-resolved] [data-preview-nav] .navbar_link-list {
-    display: none;
+    display: none !important;
   }
 
   html[data-opp-role-resolved] [data-preview-nav='freelancer'] #freelancer,
