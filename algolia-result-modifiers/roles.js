@@ -74,24 +74,36 @@
         if (changed) requestRelayout();
       }
 
-      // Fallback only: observe EVERY browse/results container, not just the first.
+      // Observe EVERY browse/results container, not just the first, and do it
+      // unconditionally rather than only as a fallback.
       //
-      // Why the first-match version was wrong: /all-starters has three
-      // [wf-algolia-element="browse"] containers (Premium list, Free list, and the
-      // gated-CTA block). querySelector bound to whichever came first, Memberstack
-      // then gated the section that did not apply to the member, and the observer
-      // was left watching a detached node while the engine rendered into a
-      // different list. Nothing threw; roles simply never got processed.
+      // Two separate reasons, both verified on /all-starters:
+      //
+      // 1. First-match was wrong. The page has three
+      //    [wf-algolia-element="browse"] containers (Premium list, Free list, and
+      //    the gated-CTA counter). querySelector bound to whichever came first,
+      //    Memberstack then gated the section that did not apply to the member,
+      //    and the observer was left watching a detached node while the engine
+      //    rendered into a different list.
+      // 2. The engine emits "results" from BROWSE MODE ONLY. The search overlay
+      //    (.search-brilliance_results-wrapper, which carries the "results" role)
+      //    renders through a path that fires no event at all: typing a query
+      //    there produced six cards with raw "cro-expert,ui-ux-designer" and
+      //    zero results events. So the event alone cannot cover that surface;
+      //    this observer is what covers it.
+      //
+      // Only childList is observed, so the engine's inline show/hide of sections
+      // (attribute mutations) causes no churn here.
       function observeAllContainers() {
         const containers = document.querySelectorAll(
           '[wf-algolia-element="browse"], [wf-algolia-element="results"]'
         );
         if (!containers.length) {
-          // Both the engine and every container are missing: the file is inert
-          // from here. Say so on staging/local only — this whole bug class is
+          // Nothing to watch, so any surface that never emits "results" is
+          // uncovered. Say so on staging/local only — this whole bug class is
           // silent by nature and cost a debugging session once already.
           if (/webflow\.io$|^localhost$|trycloudflare\.com$/.test(location.hostname) || window.STARTERS_DEBUG) {
-            console.warn('[starters roles] no wf-algolia engine and no browse/results container — modifier is inert.');
+            console.warn('[starters roles] no wf-algolia browse/results container found — only the engine results event can trigger this modifier.');
           }
           return;
         }
@@ -121,15 +133,16 @@
           return;
         }
         if (++tries > MAX_TRIES) {
-          observeAllContainers();
           run();
           return;
         }
         setTimeout(arm, 100);
       }
 
-      // No standalone run() here: both arm() outcomes call it (immediately on
-      // success, or after the fallback observer is wired).
+      // Both triggers, always. The observer reaches surfaces the browse-only
+      // "results" event never fires for; the event covers browse re-renders
+      // promptly without waiting on mutation batching.
+      observeAllContainers();
       arm();
     }
 
