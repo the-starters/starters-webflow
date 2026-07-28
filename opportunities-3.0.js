@@ -2388,6 +2388,33 @@
     else (window.WfXano = window.WfXano || []).push(run)
   }
 
+  /** Keep the single authored Navbar v2 component aligned with the merged
+   *  opportunities role. Webflow can restore a component property's authored
+   *  value after this controller first resolves the member, so re-apply the
+   *  existing data-preview-nav attribute when that value or the component DOM
+   *  changes. This mutates attributes only; it never creates navbar markup. */
+  function syncMergedNavbarRole(role) {
+    const navbarRole = role === 'talent' ? 'freelancer' : 'brand'
+    const apply = () => {
+      $$('[data-preview-nav]').forEach((navbar) => {
+        if (navbar.getAttribute('data-preview-nav') !== navbarRole) {
+          navbar.setAttribute('data-preview-nav', navbarRole)
+        }
+      })
+    }
+
+    apply()
+    if (window.__opp30NavbarRoleObserver) window.__opp30NavbarRoleObserver.disconnect()
+    const observer = new MutationObserver(apply)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-preview-nav'],
+      childList: true,
+      subtree: true,
+    })
+    window.__opp30NavbarRoleObserver = observer
+  }
+
   /** Merged opportunities feed (/opportunities): one page shared by talent and
    *  paying brands. Both role sections live in the DOM behind the page-head
    *  anti-flash CSS
@@ -2401,10 +2428,7 @@
     if (!gate) return
     const role = gate.role === 'talent' ? 'talent' : 'brand'
     showRoleWrapper(role)
-    const navbarRole = role === 'talent' ? 'freelancer' : 'brand'
-    $$('[data-preview-nav]').forEach((navbar) => {
-      navbar.setAttribute('data-preview-nav', navbarRole)
-    })
+    syncMergedNavbarRole(role)
     const feedRoot = $(
       `[data-opp-role="${role}"] [wf-xano-element="wrapper"][wf-xano-defer="true"]`,
     )
@@ -3318,6 +3342,7 @@
     memberPlanRole,
     waitForMappedMemberRole,
     initMergedOppFeed,
+    syncMergedNavbarRole,
     activateDeferredFeed,
     paintOpportunityDetail,
     opportunityPath,
