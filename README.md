@@ -40,6 +40,11 @@ Do not discard local changes unless the user explicitly asks.
 
 ## Current Scripts
 
+- `code-components/` — parked, preparation-only Webflow React package containing
+  the staging-pinned V3 Talent Applications Admin dashboard; it is not imported
+  into Webflow, published, tagged, or deployed through jsDelivr; see
+  [`code-components/README.md`](code-components/README.md) for local commands,
+  Webflow properties, Xano endpoints, security boundaries, and workflow states
 - `quiz-main/quiz-home.js` — homepage hero controller; saves selected category bucket IDs to `sessionStorage.quizSelectedCategories` and redirects to `/quiz` (see `quiz-main/README.md`)
 - `quiz-main/quiz-main.js` — `/quiz` controller; combines homepage bucket selections with saved Memberstack answers, persists draft/ready answers for results, and skips signup for logged-in retakers (see `quiz-main/README.md`)
 - `quiz-main/quiz-redirect.js` — `/quiz` member redirect; sends live or Test paid Brands to `/brand-dashboard` and completed free Brands to `/quiz-results`, unless the URL opts into a retake
