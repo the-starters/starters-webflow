@@ -116,6 +116,31 @@ test('merged /opportunities feed is guarded for both roles (incl. trailing slash
   assert.equal(api.redirectTargetFor(BRAND_FREE, '/opportunities'), '/quiz')
 })
 
+test('/favorites is guarded paid-Brand only (incl. trailing slash)', () => {
+  const { api } = loadGuard()
+  assert.equal(api.isGuardedPath('/favorites'), true)
+  // Same reason as the /opportunities/ twin: the exact map misses the slashed
+  // form and there is no prefix rule to catch it.
+  assert.equal(api.isGuardedPath('/favorites/'), true)
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/favorites'), '')
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/favorites/'), '')
+  // A free Brand cannot hold favorites (Xano #1506 requires plan 4/5), so it
+  // goes to its own quiz home rather than an empty list it cannot fill.
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/favorites'), '/quiz')
+  assert.equal(api.redirectTargetFor(TALENT, '/favorites'), '/starter-dashboard')
+  assert.equal(api.redirectTargetFor(TALENT, '/favorites/'), '/starter-dashboard')
+})
+
+test('a logged-out visitor to /favorites is sent to login and can return', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/favorites',
+    member: null,
+  })
+  await flush()
+  assert.equal(location.replaced, '/login?next=' + encodeURIComponent('/favorites'))
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+})
+
 test('/quiz-results and /all-starters are intentionally NOT guarded', () => {
   const { api } = loadGuard()
   // Decision 2026-07-23: excluded pending confirmation they are not pre-signup

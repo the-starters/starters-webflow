@@ -40,6 +40,7 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 | `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default until quiz completion |
 | `/quiz-results` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion |
 | `/all-starters` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return |
+| `/favorites` and `/favorites/` | Default quiz home | Allow | Default `/starter-dashboard` | Saved Starters list; paid Brand only, matching Xano #1506's plan 4/5 precondition |
 | `/brand-dashboard` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
 | `/messages` | Default quiz home | Allow | Allow | Free Brand is not allowed |
 | `/opportunities` and `/opportunities/` | Default quiz home | Allow | Allow | Merged feed; both URL forms are guarded |
