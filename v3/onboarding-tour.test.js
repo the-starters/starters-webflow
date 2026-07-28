@@ -891,13 +891,20 @@ test('startTour injects the typography theme style exactly once', async () => {
   )
 })
 
-function discEl({ w = 100, h = 20, dispatched = [] } = {}) {
+function discEl({ top = 0, left = 0, w = 100, h = 20, dispatched = [] } = {}) {
   return {
+    _top: top,
+    _left: left,
     _w: w,
     _h: h,
     dispatched,
     getBoundingClientRect() {
-      return { width: this._w, height: this._h }
+      return {
+        top: this._top,
+        left: this._left,
+        width: this._w,
+        height: this._h,
+      }
     },
     getElementsByTagName() {
       return { length: 0 }
@@ -981,6 +988,157 @@ test('onHighlightStarted opens the disclosure when the target is hidden', () => 
   step.onHighlightStarted()
   // full mouse sequence dispatched on the avatar toggle
   assert.deepEqual(avatar.dispatched, ['mousedown', 'mouseup', 'click'])
+})
+
+test('disclosure refresh waits for a stable visible target rect', async () => {
+  const intervals = []
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  let driverOptions
+  let refreshes = 0
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+    driver: {
+      js: {
+        driver(options) {
+          driverOptions = options
+          return {
+            drive() {},
+            refresh() {
+              refreshes += 1
+            },
+          }
+        },
+      },
+    },
+    setInterval(callback, delay) {
+      const interval = { callback, delay, cleared: false }
+      intervals.push(interval)
+      return interval
+    },
+    clearInterval(interval) {
+      interval.cleared = true
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+    ],
+  }
+
+  await api.startTour(tour)
+  driverOptions.steps[0].onHighlightStarted()
+  const refreshPoll = intervals.find((interval) => interval.delay === 50)
+  edit._w = 155
+  edit._h = 36
+  edit._top = 10
+  edit._left = 20
+  refreshPoll.callback()
+  assert.equal(refreshes, 0)
+
+  edit._top = 15
+  refreshPoll.callback()
+  assert.equal(refreshes, 0)
+
+  refreshPoll.callback()
+  assert.equal(refreshes, 1)
+  assert.equal(refreshPoll.cleared, true)
+})
+
+test('superseded disclosure refresh poll cannot refresh its prior instance', async () => {
+  const intervals = []
+  const driverOptions = []
+  const refreshes = []
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  const { api, window } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+    driver: {
+      js: {
+        driver(options) {
+          const index = driverOptions.length
+          driverOptions.push(options)
+          refreshes.push(0)
+          return {
+            drive() {},
+            refresh() {
+              refreshes[index] += 1
+            },
+          }
+        },
+      },
+    },
+    setInterval(callback, delay) {
+      const interval = { callback, delay, cleared: false }
+      intervals.push(interval)
+      return interval
+    },
+    clearInterval(interval) {
+      interval.cleared = true
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+    ],
+  }
+
+  await api.startTour(tour)
+  driverOptions[0].steps[0].onHighlightStarted()
+  const stalePoll = intervals.find((interval) => interval.delay === 50)
+  window.document.__popover = {}
+  intervals.find((interval) => interval.delay === 100).callback()
+  window.document.__popover = null
+  await api.startTour(tour)
+
+  edit._w = 155
+  edit._h = 36
+  stalePoll.callback()
+
+  assert.equal(stalePoll.cleared, true)
+  assert.deepEqual(refreshes, [0, 0])
+})
+
+test('leaving a disclosure step cancels its refresh poll', async () => {
+  const intervals = []
+  const avatar = discEl({ w: 37, h: 37 })
+  const edit = discEl({ w: 0, h: 0 })
+  let driverOptions
+  const { api } = loadModule({
+    cssTargets: { '.avatar': avatar, '.edit': edit },
+    driver: {
+      js: {
+        driver(options) {
+          driverOptions = options
+          return { drive() {}, refresh() {} }
+        },
+      },
+    },
+    setInterval(callback, delay) {
+      const interval = { callback, delay, cleared: false }
+      intervals.push(interval)
+      return interval
+    },
+    clearInterval(interval) {
+      interval.cleared = true
+    },
+  })
+  const tour = {
+    id: 'welcome',
+    steps: [
+      { selector: 'S1', target: '.edit', open: '.avatar', title: 'Edit' },
+      { selector: 'S2', target: '', open: '', title: 'Next' },
+    ],
+  }
+
+  await api.startTour(tour)
+  driverOptions.steps[0].onHighlightStarted()
+  const refreshPoll = intervals.find((interval) => interval.delay === 50)
+  driverOptions.steps[1].onHighlightStarted()
+
+  assert.equal(refreshPoll.cleared, true)
 })
 
 test('onHighlightStarted checks a text target before its visible fallback', () => {
