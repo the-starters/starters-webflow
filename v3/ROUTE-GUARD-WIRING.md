@@ -32,6 +32,7 @@ view it; any other authenticated role is redirected to its default.
 | Page | Allowed roles |
 | --- | --- |
 | `/brand-dashboard` | Brand paid |
+| `/opportunities` and `/opportunities/` | Talent, Brand paid |
 | `/opportunities-brands-view` | Brand paid |
 | `/opportunities---create` | Brand paid |
 | `/starter-dashboard` | Talent |
@@ -43,8 +44,11 @@ view it; any other authenticated role is redirected to its default.
 | `/messages` | Talent, Brand paid |
 | `/opportunities/<slug>` | Talent, Brand paid |
 
-`/opportunities/<slug>` matches a single non-empty path segment only, so nested
-paths such as `/opportunities/<slug>/apply` are not treated as detail pages.
+The merged feed lists both `/opportunities` forms explicitly: the exact page
+map would otherwise miss the trailing slash, while the detail prefix requires a
+non-empty slug. `/opportunities/<slug>` matches a single non-empty path segment
+only, so nested paths such as `/opportunities/<slug>/apply` are not treated as
+detail pages.
 
 The guard's Brand paid allowance is role-level only. On both
 `/opportunities/<slug>` and the legacy
@@ -86,6 +90,7 @@ every route in its page table:
 - `/starter-dashboard`, `/starter-edit-profile`, `/opportunities-freelancer-view`
 - `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`
 - `/messages`
+- `/opportunities` merged-feed page (including its trailing-slash URL)
 - `/opportunities/<slug>` collection-template pages
 
 With the guard sitewide, opp30 does not double-guard opportunity pages: it uses
@@ -117,9 +122,11 @@ IDs and otherwise bails without redirecting.
   `hasCompletedQuiz`, `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and
   `redirectTargetFor` for console checks.
 - `window.Opp30` exposes `routeGuardActive`, `gateOrRedirect`, `gateByPlan`,
-  `memberPlanRole`, `hasCompletedQuiz`, `brandFreeHome`, and
+  `memberPlanRole`, `hasCompletedQuiz`, `brandFreeHome`,
+  `initMergedOppFeed`, `activateDeferredFeed`, and
   `redirectForeignBrandToFeed` for verifying the opportunity controller's
-  handoff, legacy fallback, and ownership-denied redirect policy.
+  handoff, merged-feed activation, legacy fallback, and ownership-denied
+  redirect policy.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
   (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
 - A resolved allow dispatches `starters:v3-route-guard-allowed`.

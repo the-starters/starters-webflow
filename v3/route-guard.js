@@ -4,7 +4,8 @@
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
  * /login and /auth-route, so a logged-in member can still reach another role's
  * page by navigating directly (e.g. a Talent session opening /brand-dashboard).
- * This guard closes that gap: install it on each protected V3 page and it will
+ * This guard closes that gap: install it once sitewide before page controllers
+ * and it will
  *
  *   - send logged-out visitors to /login?next=<current path+query>,
  *   - send a logged-in member whose role is not allowed on this page to that
@@ -15,10 +16,9 @@
  *
  * The plan-ID → role map and guarded page roles derive from the stable access
  * matrix used by v3/auth-route.js and documented in v3/ACCESS-MATRIX.md.
- * /quiz-results and /all-starters remain deliberately unguarded pending product
- * confirmation. This guard is a routing/UX boundary only; Memberstack gated
- * content and Xano endpoint authorization remain separate, independently
- * enforced layers.
+ * /quiz, /quiz-results, and /all-starters remain deliberately unguarded. This
+ * guard is a routing/UX boundary only; Memberstack gated content and Xano
+ * endpoint authorization remain separate, independently enforced layers.
  */
 ;(function () {
   'use strict'
