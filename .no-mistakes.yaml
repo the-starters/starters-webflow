@@ -1,4 +1,8 @@
-agent: codex
+# codex is installed on this machine but is SIGKILLed as soon as the pipeline
+# invokes it ("agent review: codex exited: signal: killed"), which failed every
+# run before the first step could finish. claude is runnable here, so the
+# pipeline uses it instead.
+agent: claude
 
 ignore_patterns:
   - "*.min.js"
