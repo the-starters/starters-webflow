@@ -169,13 +169,14 @@ than the visible search text, so a missing category produces the inline message
 The Ongoing Part Time variant must contain Webflow-authored inputs named
 `Estimated-Hours` and `Part-Time-Budget`. In both the Create and Edit
 components, author the hours label, plain-text input, helper text, and field
-group in Webflow; place that group inside the existing
-`data-project-type="part-time"` wrapper before the budget group. Label the field
-`Estimated hrs/week` and use `Example: 25 hrs/week` as its placeholder. The
-controller binds to the native input, supplies its required-message attribute,
-and requires it only while `Project-Type` resolves to `Ongoing Part Time`; it
-does not generate the label, input, helper, or grouping markup. Both components
-must publish this markup before the controller is released.
+group in Webflow; give that group `data-project-type="part-time"` and place it
+before the existing part-time budget group. Label the field `Estimated hrs/week`
+and use `Example: 25 hrs/week` as its placeholder. The controller binds to the
+native input, supplies its required-message attribute, requires and reveals it
+only while `Project-Type` resolves to `Ongoing Part Time`, and hides the authored
+group for the other project types. It does not generate the label, input, helper,
+or grouping markup. Both components must publish this markup before the
+controller is released.
 
 Create and update requests send the input's trimmed value as the existing Xano
 `est_hours` field, and edit prefill restores that value. One Time and Full Time
