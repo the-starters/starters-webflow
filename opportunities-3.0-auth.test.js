@@ -386,6 +386,30 @@ test('with the guard active, gateByPlan resolves talent/paid-brand and bails on 
   assert.equal(free.location.href, 'https://example.test/all-modals') // guard owns the redirect
 })
 
+test('waitForMappedMemberRole retries an authenticated snapshot until plans hydrate', async () => {
+  let calls = 0
+  const bridge = await loadBridge(async () => response({}), {
+    member: () => {
+      calls += 1
+      return paidBrandMember
+    },
+  })
+  const initialMember = {
+    id: 'm-brand-before-plans-hydrate',
+    customFields: {},
+    planConnections: [],
+  }
+
+  const result = await bridge.window.Opp30.waitForMappedMemberRole(
+    bridge.window.$memberstackDom,
+    initialMember,
+  )
+
+  assert.equal(result.member, paidBrandMember)
+  assert.equal(result.role, 'brand-paid')
+  assert.equal(calls, 1)
+})
+
 test('without the guard, gateByPlan sends an un-completed free brand to /quiz', async () => {
   const bridge = await loadBridge(async () => response({}), {
     member: freeBrandMember,

@@ -93,6 +93,8 @@
   const XANO_OPP_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30' // Opportunities 3.0 group
   const XANO_TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   const ROUTE_GUARD_HANDOFF_TIMEOUT_MS = 2000
+  const MEMBER_ROLE_HYDRATION_TIMEOUT_MS = 2000
+  const MEMBER_ROLE_HYDRATION_POLL_MS = 50
 
   // project_type: modal radio id  ->  human string Xano stores / display logic expects
   const PROJECT_TYPE = {
@@ -1205,6 +1207,30 @@
     return null
   }
 
+  /**
+   * Memberstack can briefly return the authenticated member before
+   * `planConnections` has hydrated during a fresh page boot. Retry only that
+   * incomplete snapshot; an already-mapped role returns immediately.
+   * @param {{getCurrentMember: () => Promise<{data?: object|null}>}} memberstack
+   * @param {object} initialMember
+   * @returns {Promise<{member: object, role: 'brand-paid'|'brand-free'|'talent'|null}>}
+   */
+  async function waitForMappedMemberRole(memberstack, initialMember) {
+    let member = initialMember
+    let role = memberPlanRole(member)
+    if (role) return { member, role }
+
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < MEMBER_ROLE_HYDRATION_TIMEOUT_MS) {
+      await new Promise((resolve) => window.setTimeout(resolve, MEMBER_ROLE_HYDRATION_POLL_MS))
+      const response = await memberstack.getCurrentMember()
+      if (response && response.data && response.data.id) member = response.data
+      role = memberPlanRole(member)
+      if (role) return { member, role }
+    }
+    return { member, role: null }
+  }
+
   /** Plan-based gate for pages shared by talent AND paying brands
    *  (/opportunities/<slug>). After the route guard reports `allowed`, this
    *  only resolves {member, role} for the two valid roles and bails quietly
@@ -1217,14 +1243,21 @@
     if (guardOutcome === 'blocked') return null
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
-    const { data: member } = await memberstack.getCurrentMember()
+    const { data: initialMember } = await memberstack.getCurrentMember()
+    let member = initialMember
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
       if (guardOutcome !== 'allowed') location.href = loginPathWithNext()
       return null
     }
     resetMemberScopedCaches(member.id)
-    const role = memberPlanRole(member)
+    let role = memberPlanRole(member)
+    if (!role) {
+      const hydrated = await waitForMappedMemberRole(memberstack, member)
+      member = hydrated.member
+      role = hydrated.role
+      resetMemberScopedCaches(member.id)
+    }
     log('gateByPlan role:', role)
     if (guardOutcome === 'allowed') {
       // Guard already enforced page access. Reveal content only for the roles
@@ -1237,6 +1270,14 @@
       return null
     }
     if (!role) {
+      // A configured route guard is the access authority. If Memberstack never
+      // hydrates a mapped plan, fail closed on the current page instead of
+      // sending a valid but temporarily incomplete member snapshot to `/`.
+      if (routeGuardConfigured()) {
+        document.documentElement.setAttribute('data-route-guard-error', 'member-role-unavailable')
+        console.error('[opp30] Unable to resolve an active Memberstack plan for this page.')
+        return null
+      }
       location.href = '/'
       return null
     }
@@ -3267,6 +3308,7 @@
     gateOrRedirect,
     gateByPlan,
     memberPlanRole,
+    waitForMappedMemberRole,
     initMergedOppFeed,
     activateDeferredFeed,
     paintOpportunityDetail,
