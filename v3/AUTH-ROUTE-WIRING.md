@@ -35,8 +35,8 @@ removed. Invalid or disallowed destinations fall back to the role default.
 
 | Role | Allowed `next` pathnames |
 | --- | --- |
-| Talent | `/starter-dashboard`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities-freelancer-view`, `/opportunities/<slug>` |
-| Brand paid | `/all-starters`, `/brand-dashboard`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
+| Talent | `/starter-dashboard`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>` |
+| Brand paid | `/all-starters`, `/brand-dashboard`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
 | Brand free | `/all-starters`, `/quiz`, `/quiz-results` |
 
 The allowlist is derived from [ACCESS-MATRIX.md](ACCESS-MATRIX.md). It governs

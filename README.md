@@ -51,7 +51,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`, diagnostics are opt-in through `starterQuizDebug`, and freelancer recommendations use the `Freelancers3.0-dev` Algolia index by default
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (category-matched and applied starter feeds); binds the paid-Brand create page through `[data-opp-form="create"]`, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create page through `[data-opp-form="create"]`, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
 - `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations; brand-free lands on `/quiz` until the Memberstack `starter-quiz` field is set (quiz completed), then `/quiz-results`
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
 - `v3/onboarding-tour.js` — attribute-driven V3 product tours with highlight and disclosure overrides, role targeting, per-member seen-state, and replay/reset controls
@@ -222,6 +222,43 @@ override before enabling the initializer on either custom production domain. See
 See `v3/README.md` for the full markup, status, event, cache, and public-helper
 contracts.
 
+## Opportunities 3.0 Merged Feed
+
+The exact `/opportunities` and `/opportunities/` paths use one page for Talent
+and paid Brand feeds. Keep each role's section inside
+`[data-opp-role="talent"]` or `[data-opp-role="brand"]`, and add this page-head
+anti-flash rule:
+
+```html
+<style>
+  html:not([data-opp-role-resolved]) [data-opp-role] {
+    display: none;
+  }
+</style>
+```
+
+Both role sections must contain their own
+`[wf-xano-element="wrapper"][wf-xano-defer="true"]` feed root and load
+`wf-xano` v0.28.0 or newer. Neither root fetches during automatic `wf-xano`
+boot. After the stable Memberstack plan resolves, `opportunities-3.0.js`
+reveals the allowed wrapper, stamps `html[data-opp-role-resolved]`, and
+activates only that wrapper's root through the race-safe `window.WfXano`
+pre-load queue. The hidden, wrong-role feed is never initialized.
+
+Load `v3/route-guard.js` sitewide before `opportunities-3.0.js`. The merged
+route allows Talent and paid Brand members, rejects free Brands, and guards both
+the bare and trailing-slash forms. The legacy
+`/opportunities-freelancer-view` and `/opportunities-brands-view` boot branches
+remain supported separately.
+
+The controller exposes `window.Opp30.initMergedOppFeed` and
+`window.Opp30.activateDeferredFeed` for its test harness and manual diagnostics.
+Run the merged-feed, router, and guard regressions with:
+
+```sh
+node --test opportunities-3.0-auth.test.js v3/auth-route.test.js v3/route-guard.test.js
+```
+
 ## Opportunities 3.0 Starter Matching
 
 Load `opportunities-3.0.js` on `/opportunities-freelancer-view` and
@@ -283,7 +320,7 @@ sets `data-opp30-dashboard-match` to `ready`, `profile-incomplete`, or `error`.
 
 ### Opportunity matching QA mode
 
-Append `?opp_debug=1` to either `/starter-dashboard` or
+Append `?opp_debug=1` to `/starter-dashboard`, `/opportunities`, or
 `/opportunities-freelancer-view` to load the shared, authenticated matching QA panel.
 The values `1`, `true`, `yes`, and `on` are accepted case-insensitively; other values
 leave QA mode disabled. While enabled, `data-opp30-match-debug` on the document root
@@ -291,9 +328,9 @@ reports `loading`, `pass`, `check`, or `error`.
 
 The production binder lazy-loads `opportunities-3.0-debug.js`, which then loads
 `lil-gui@0.21.0`; neither debug script, the library, nor the extra Xano reads run for
-normal visitors. Same-origin dashboard links to `/opportunities-freelancer-view`,
-including View all, keep the query parameter so a tester can inspect both surfaces in
-one session.
+normal visitors. Same-origin dashboard links to either `/opportunities` or
+`/opportunities-freelancer-view`, including View all, keep the query parameter
+so a tester can inspect both surfaces in one session.
 
 The panel stays fixed below the navbar at desktop, tablet, and mobile breakpoints and
 scrolls within the remaining viewport. The starter's complete category list is shown

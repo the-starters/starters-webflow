@@ -217,6 +217,29 @@ test('allows Brand tiers into All Starters but keeps Messages paid-only', () => 
   assert.equal(api.destinationFor(freeBrand, '/messages'), '/quiz')
 })
 
+test('deep-links the merged /opportunities feed for Talent and paid Brand only', () => {
+  const { api } = loadRouter()
+  const talent = {
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+  const paidBrand = {
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }
+  const freeBrand = {
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+  }
+
+  assert.equal(api.destinationFor(talent, '/opportunities'), '/opportunities')
+  assert.equal(api.destinationFor(talent, '/opportunities/'), '/opportunities/')
+  assert.equal(api.destinationFor(paidBrand, '/opportunities'), '/opportunities')
+  assert.equal(
+    api.destinationFor(paidBrand, '/opportunities/'),
+    '/opportunities/',
+  )
+  assert.equal(api.destinationFor(freeBrand, '/opportunities'), '/quiz')
+  assert.equal(api.destinationFor(freeBrand, '/opportunities/'), '/quiz')
+})
+
 test('allows opportunity details only for Talent and paid Brand', () => {
   const { api } = loadRouter()
   const talent = {
@@ -240,10 +263,6 @@ test('allows opportunity details only for Talent and paid Brand', () => {
   assert.equal(
     api.destinationFor(freeBrand, '/opportunities/product-designer'),
     '/quiz',
-  )
-  assert.equal(
-    api.destinationFor(talent, '/opportunities/'),
-    '/starter-dashboard',
   )
   assert.equal(
     api.destinationFor(talent, '/opportunities/product-designer/apply'),

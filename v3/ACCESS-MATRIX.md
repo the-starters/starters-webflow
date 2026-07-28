@@ -42,6 +42,7 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 | `/all-starters` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return |
 | `/brand-dashboard` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
 | `/messages` | Default quiz home | Allow | Allow | Free Brand is not allowed |
+| `/opportunities` and `/opportunities/` | Default quiz home | Allow | Allow | Merged feed; both URL forms are guarded |
 | `/opportunities-brands-view` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
 | `/opportunities-freelancer-view` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
 | `/opportunities/<slug>` | Default quiz home | Allow | Allow | Free Brand is not allowed |
