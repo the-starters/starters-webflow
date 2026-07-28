@@ -235,6 +235,118 @@ Run its focused test with:
 node --test v3/all-starters-favorites.test.js
 ```
 
+## Saved Starters roles chips
+
+`saved-starters-roles.js` splits the Saved Starters card's roles value into one
+styled paragraph per role, so the saved list matches the Algolia browse cards.
+Xano returns a Starter's roles as a single delimited string, and wf-xano has no
+nested-repeat feature, so without this module the card renders the raw
+`growth-marketer; paid-social-marketer` text.
+
+Install it in `/favorites` Page Settings -> Custom Code -> Footer. That is where
+the saved list lives; `/all-starters` hosts the hearts and the Favourites filter
+but no saved-list wrapper.
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/saved-starters-roles.js"></script>
+```
+
+`/favorites` also needs two things this module does not provide, because
+`all-starters-favorites.js` supplies them only on `/all-starters` and returns
+early elsewhere. Without the first, wf-xano logs "favorite controls found but
+WfXanoConfig.favoritesSource is missing", hides every heart and wires no clicks.
+Without the second, a saved heart stays `fill: none`.
+
+```html
+<script>
+  window.WfXanoConfig = window.WfXanoConfig || {}
+  window.WfXanoConfig.favoritesSource = 'opp30:brand/favorites'
+</script>
+<style>
+  [wf-xano-element="favorite"].is-wf-xano-favorited path { fill: currentColor; }
+  .expert_favorite-button[hidden], .expert-card_favorite-wrapper[hidden] { display: none !important; }
+</style>
+```
+
+Set the property on the existing `WfXanoConfig` object rather than replacing it.
+wf-xano captures that reference at module scope, so assigning a fresh object
+after it loads has no effect.
+
+Webflow markup contract:
+
+- The saved-list wrapper carries `wf-xano-instance="saved-starters"`. The module
+  looks the instance up by that key and subscribes to its `results` event, so a
+  different key leaves the list unsplit.
+- The roles paragraph inside the card template carries both
+  `wf-xano-bind="<roles column>"` and `data-ts-roles`. The bind supplies the
+  value; `data-ts-roles` is what this module keys off.
+- Nothing else on the page uses `data-ts-roles`. The module only rewrites
+  elements carrying it, which is what keeps the neighbouring
+  `availability` value safe.
+- For visual parity with the browse cards, the roles paragraph should use
+  `.expert-card_service-text` (or any class setting
+  `text-transform: capitalize`) inside a flex wrapper like
+  `.expert-card_jobs-wrapper`. The browse cards store lowercase text such as
+  `paid social marketer` and let CSS do the title-casing, and this module
+  matches that. Without the capitalize rule the chips render lowercase.
+
+Chips are cloned from the roles paragraph, so they inherit its Webflow classes.
+Each one is marked `data-ts-roles-chip`. Values split on both `;` and `,`,
+hyphens become spaces, blank segments are dropped, and repeats are removed
+case-insensitively.
+
+Both delimiters are supported on purpose. Algolia stores `roles` as an array of
+slugs, and wf-xano has no array formatter, so an array value reaches the DOM
+through `String(value)` as `growth-marketer,paid-social-marketer` with no
+spaces. A Xano string column following the `subcategories` convention would
+instead arrive semicolon-delimited.
+
+The bound paragraph is hidden rather than replaced, which is the one design
+point worth preserving. A wrapper marked `wf-xano-reconcile="keyed"` reuses the
+existing card node and re-binds its fields in place, so a card whose bound
+element had been replaced by chips could never receive a new Starter's roles.
+Keeping the source in the DOM and rebuilding the chips on every `results` event
+is correct under both keyed and replace reconciliation, and needs no mode
+detection. Chips are stripped of every `wf-xano-bind*` attribute so a re-bind
+can never write into one. This is the opposite of
+`algolia-result-modifiers/roles.js`, which replaces its bound node outright and
+is safe doing so only because wf-algolia always re-renders cards from scratch.
+
+De-hyphenation is deliberately scoped to the roles element. The saved card also
+renders `availability` values such as `11-20`, and the sibling Algolia
+modifier's cleaner would turn that into `11 20`. Do not widen the selector.
+
+After chips change, the module dispatches `expert-cards:relayout` on a 60ms
+debounce, and only when a card's rendered roles actually changed.
+`global-embeds/expert-card/expert-card.js` caches the hover-expanded height in
+`--expert-card-jobs-open-height`, measured on window load, fonts ready, resize,
+and that event. wf-xano renders after load, so on a saved list the per-card value
+is otherwise never computed and `:root`'s `1lh` fallback wins: hover opens by
+exactly one line no matter how many roles a Starter has. If roles hover ever
+starts opening a sliver again, this dispatch is the thing that broke.
+
+The module arms through `WfXano.push()` and must keep doing so. wf-xano assigns
+`window.WfXano` to its API object at module scope, before its own `boot()`
+creates any instance, so a deferred script can observe a non-array `WfXano` whose
+instance list is still empty. Branching on `Array.isArray` and calling the arm
+path directly was a real bug: it looked the instance up too early, warned, and
+gave up permanently, leaving the list unsplit. `push()` is correct for both
+shapes, queueing until after `init(document)` either way.
+
+If the instance is genuinely absent after boot, the module splits whatever is
+already rendered and warns once on staging, local, and Cloudflare tunnel hosts
+(or with `window.STARTERS_DEBUG`). Production stays silent.
+
+Requires Xano endpoint #1506 to return a `roles` field, which it does as of
+2026-07-29. With no value bound the module emits zero chips and leaves the card
+untouched.
+
+Run its focused test with:
+
+```sh
+node --test v3/saved-starters-roles.test.js
+```
+
 ## Starter profile editing
 
 `../profile-image-auth-shim.js` is the interim auth and image-upload bridge for
