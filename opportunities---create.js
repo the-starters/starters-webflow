@@ -64,7 +64,7 @@
    * Build the Xano create payload from the form's field `name`s.
    * `est_project_duration` reads the radio VALUE (e.g. "≤ 1 months"), not its id.
    * @param {HTMLFormElement} form
-   * @returns {{title:string, description:string, exp_requirements:string, role_name:string, project_type:string, est_project_duration:string, budget:string, budget_frequency:string}}
+   * @returns {{title:string, description:string, exp_requirements:string, role_name:string, project_type:string, est_project_duration:string, est_hours:string, budget:string, budget_frequency:string}}
    */
   const readForm = (form) => {
     /** @param {string} name @returns {string} */
@@ -129,6 +129,7 @@
       role_name: multiVal('Category-option') || multiVal('Role-option'),
       project_type,
       est_project_duration: durEl ? durEl.value : '',
+      est_hours: project_type === 'Ongoing Part Time' ? val('Estimated-Hours') : '',
       budget: project_type
         ? val(BUDGET_FIELD[project_type])
         : val('One-Time-Budget') || val('Part-Time-Budget') || val('Full-Time-Budget'),
@@ -159,12 +160,30 @@
   }
 
   /**
+   * Fallback validation for pages where the shared core has not exposed its
+   * validator yet.
+   * @param {ReturnType<typeof readForm>} payload
+   * @returns {string}
+   */
+  const validatePayload = (payload) => {
+    if (!payload.title) return 'Please enter an opportunity title.'
+    if (!payload.role_name) return 'Please select at least one category.'
+    if (!payload.project_type) return 'Please choose a project type.'
+    if (payload.project_type === 'Ongoing Part Time' && !payload.est_hours)
+      return 'Please enter the estimated hours per week.'
+    if (!payload.budget) return 'Please enter a budget.'
+    return ''
+  }
+
+  /**
    * Bind the submit handler. Capture phase + stopPropagation stops Webflow's own
    * (bubble-phase) submit handler, and preventDefault stops the native GET reload.
    * @param {HTMLFormElement} form
    * @returns {void}
    */
   const bindForm = (form) => {
+    if (window.Opp30 && typeof window.Opp30.prepareOpportunityCreateForms === 'function')
+      window.Opp30.prepareOpportunityCreateForms(form)
     const statusEl = document.querySelector('[data-opp-create-status]')
     let submitting = false
     /** @param {string} msg @returns {void} */
@@ -187,11 +206,16 @@
         if (!window.Opp30 || !window.Opp30.API) return say('Core not loaded (window.Opp30 missing).')
         if (!(await ensureMember())) return
 
-        const payload = readForm(form)
+        const payload =
+          window.Opp30 && typeof window.Opp30.readOpportunityForm === 'function'
+            ? window.Opp30.readOpportunityForm(form)
+            : readForm(form)
         log('payload', payload)
-        if (!payload.title) return say('Please enter an opportunity title.')
-        if (!payload.project_type) return say('Please choose a project type.')
-        if (!payload.budget) return say('Please enter a budget.')
+        const validationMessage =
+          window.Opp30 && typeof window.Opp30.validateOpportunityPayload === 'function'
+            ? window.Opp30.validateOpportunityPayload(payload)
+            : validatePayload(payload)
+        if (validationMessage) return say(validationMessage)
 
         submitting = true
         if (btn) {

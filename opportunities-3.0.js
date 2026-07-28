@@ -385,6 +385,9 @@
 
   const CATEGORY_SET_EVENT = 'opp30:set-category-values'
   const MAX_CATEGORY_SELECTIONS = 3
+  const EST_HOURS_FIELD_NAME = 'Estimated-Hours'
+  const CATEGORY_REQUIRED_MESSAGE = 'Please select at least one category.'
+  const EST_HOURS_REQUIRED_MESSAGE = 'Please enter the estimated hours per week.'
 
   function parseStoredCategories(input) {
     try {
@@ -473,6 +476,7 @@
 
       const store = () => {
         input.setAttribute('data-opp30-selected-values', JSON.stringify(selected))
+        input.setCustomValidity(selected.length ? '' : CATEGORY_REQUIRED_MESSAGE)
         if (!focused) input.value = selected.join(', ')
       }
 
@@ -488,6 +492,7 @@
             event.stopPropagation()
             selected = selected.filter((item) => item !== value)
             render()
+            input.dispatchEvent(new Event('change', { bubbles: true }))
             hideWarning()
           })
         }
@@ -518,6 +523,7 @@
             render()
             input.focus()
           }
+          input.dispatchEvent(new Event('change', { bubbles: true }))
         })
         list.appendChild(option)
         return option
@@ -608,10 +614,96 @@
           })
           .slice(0, MAX_CATEGORY_SELECTIONS)
         render()
+        input.dispatchEvent(new Event('change', { bubbles: true }))
       })
 
       list.style.display = 'none'
       render()
+    })
+  }
+
+  // Complete the published Create/Edit opportunity form contract. Categories
+  // use a custom validity rule because the visible search query may be empty
+  // while selected tags are stored separately. Estimated hours is an existing
+  // Xano text field and is required only for Ongoing Part Time opportunities.
+  // wf-validate may already be bound when defer scripts run, so refresh it
+  // after injecting the new control.
+  function syncOpportunityEstimatedHours(form) {
+    const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
+    if (!estHoursInput) return
+    const projectType = $('[name="Project-Type"]:checked', form)
+    const required = Boolean(
+      projectType &&
+        (PROJECT_TYPE[projectType.id] || projectType.value) === 'Ongoing Part Time',
+    )
+    estHoursInput.required = required
+    estHoursInput.setAttribute('aria-required', required ? 'true' : 'false')
+    if (!required) estHoursInput.setCustomValidity('')
+    estHoursInput.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+
+  function prepareOpportunityForms(root = document) {
+    const forms = []
+    if (root.matches && root.matches('[data-opp-form="create"]')) forms.push(root)
+    if (root.matches && root.matches('[data-modal-target="edit-opportunity"]')) {
+      const form = $('form', root)
+      if (form) forms.push(form)
+    }
+    if (
+      root.matches &&
+      root.matches('form') &&
+      root.closest('[data-modal-target="edit-opportunity"]')
+    )
+      forms.push(root)
+    forms.push(
+      ...$$(
+        '[data-opp-form="create"], [data-modal-target="edit-opportunity"] form',
+        root,
+      ),
+    )
+    Array.from(new Set(forms)).forEach((form, index) => {
+      const categoryInput = $('[name="Category-option"]', form)
+      if (categoryInput) {
+        categoryInput.setAttribute('aria-required', 'true')
+        categoryInput.setAttribute('wf-validate-message', CATEGORY_REQUIRED_MESSAGE)
+        categoryInput.setCustomValidity(
+          selectedOpportunityCategories(form).length ? '' : CATEGORY_REQUIRED_MESSAGE,
+        )
+      }
+
+      const partTimeGroup = $('[data-project-type="part-time"]', form)
+      const budgetInput = $('[name="Part-Time-Budget"]', partTimeGroup || form)
+      if (partTimeGroup && budgetInput && !$(`[name="${EST_HOURS_FIELD_NAME}"]`, form)) {
+        const budgetGroup = budgetInput.closest('.app-form_input_group')
+        if (budgetGroup) {
+          const fieldGroup = document.createElement('div')
+          const fieldId = `Estimated-Hours-${index + 1}`
+          fieldGroup.className = 'app-form_input_group'
+          fieldGroup.setAttribute('data-opp-est-hours-group', '')
+          fieldGroup.innerHTML = `
+            <label for="${fieldId}" class="form_label">Estimated hrs/week</label>
+            <input class="form_input mb-0 w-input"
+              maxlength="35"
+              name="${EST_HOURS_FIELD_NAME}"
+              data-name="Estimated Hours Per Week"
+              placeholder="Example: 25 hrs/week"
+              type="text"
+              id="${fieldId}"
+              wf-validate-message-required="${EST_HOURS_REQUIRED_MESSAGE}">
+          `
+          budgetGroup.insertAdjacentElement('beforebegin', fieldGroup)
+        }
+      }
+
+      const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
+      if (!estHoursInput || form.getAttribute('data-opp-est-hours-inited') === 'true') return
+      form.setAttribute('data-opp-est-hours-inited', 'true')
+      $$('[name="Project-Type"]', form).forEach((radio) =>
+        radio.addEventListener('change', () => syncOpportunityEstimatedHours(form)),
+      )
+      syncOpportunityEstimatedHours(form)
+      if (window.WfValidate && typeof window.WfValidate.refresh === 'function')
+        window.WfValidate.refresh(form)
     })
   }
 
@@ -632,6 +724,8 @@
     if (!payload.role_names || !payload.role_names.length) return 'Please select at least one category.'
     if (!payload.project_type) return 'Please choose a project type.'
     if (!payload.est_project_duration) return 'Please choose an estimated project duration.'
+    if (payload.project_type === 'Ongoing Part Time' && !payload.est_hours)
+      return EST_HOURS_REQUIRED_MESSAGE
     if (!payload.budget) return 'Please enter a budget.'
     return ''
   }
@@ -697,6 +791,7 @@
       exp_requirements: val('Requirements'),
       project_type,
       est_project_duration: checkedVal('Duration'),
+      est_hours: project_type === 'Ongoing Part Time' ? val(EST_HOURS_FIELD_NAME) : '',
       budget,
       budget_frequency: BUDGET_FREQUENCY[project_type] || '',
       // Xano resolves role_name -> function/category/subcategory refs via v3 taxonomy tables.
@@ -2073,7 +2168,10 @@
   // radios, which otherwise submit their default state and clobber real values).
   async function prefillEditOpportunity(oppId) {
     const modal = $('[data-modal-target="edit-opportunity"]')
-    if (modal) initOpportunityCategorySelects(modal)
+    if (modal) {
+      prepareOpportunityForms(modal)
+      initOpportunityCategorySelects(modal)
+    }
     let o
     try {
       o = await API.brandOppGet(oppId)
@@ -2100,6 +2198,7 @@
     setVal('Description', o.description)
     setVal('Requirements', o.exp_requirements)
     setOpportunityCategoryValues(modal, o.category_names)
+    setVal(EST_HOURS_FIELD_NAME, o.est_hours)
     const budgetField =
       o.project_type === 'One Time'
         ? 'One-Time-Budget'
@@ -2119,6 +2218,7 @@
       })
     checkRadio('Project-Type', o.project_type)
     checkRadio('Duration', o.est_project_duration)
+    syncOpportunityEstimatedHours(modal)
   }
 
   /** /opportunities/<slug> CMS detail page, shared by talent and PAYING brands.
@@ -2423,7 +2523,10 @@
   window.addEventListener('modal-open', (e) => {
     const modal = e.detail && e.detail.modal
     prepareOpportunityLoadingControls()
-    if (modal) initOpportunityCategorySelects(modal)
+    if (modal) {
+      prepareOpportunityForms(modal)
+      initOpportunityCategorySelects(modal)
+    }
     const flowEl = modal && modal.querySelector('[data-form-flow]')
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
@@ -3090,6 +3193,7 @@
   // The CDN script is loaded with `defer` on opportunity pages, so the modal
   // markup is available here before DOMContentLoaded. Claim the category
   // widgets now; the legacy component embed sees its run-once flag and skips.
+  prepareOpportunityForms()
   initOpportunityCategorySelects()
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)
   else boot()
@@ -3114,7 +3218,11 @@
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,
+    prepareOpportunityCreateForms: prepareOpportunityForms,
+    prepareOpportunityForms,
+    prefillEditOpportunity,
     initOpportunityCategorySelects,
     readOpportunityForm,
+    validateOpportunityPayload,
   }
 })()

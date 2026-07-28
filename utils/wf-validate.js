@@ -117,9 +117,11 @@
  * Accessibility: error slots get role="alert"; fields get aria-invalid and
  * aria-describedby pointing at their error slot.
  *
- * API: window.WfValidate = { init(scope?), validate(form) }
+ * API: window.WfValidate = { init(scope?), refresh(form), validate(form) }
  *   init     — scan for unbound wf-validate-element="form" (call again after
  *              injecting forms dynamically; already-bound forms are skipped)
+ *   refresh  — add fields injected into an already-bound form without
+ *              duplicating the form listeners or resetting touched state
  *   validate — programmatically validate a bound form; returns boolean
  *
  * Client-side validation is UX only — server endpoints must still validate.
@@ -413,6 +415,37 @@
 
       // an empty required form is incomplete from the start, so paint the
       // submitters disabled before the user touches anything
+      this.applySubmitState()
+    }
+
+    /**
+     * Add fields injected after the form was bound. Existing groups and their
+     * touched/painted state are preserved; only genuinely new controls are
+     * appended. Error slots for those controls remain lazy like every other
+     * auto-injected error.
+     * @returns {void}
+     */
+    refresh() {
+      Array.from(this.form.querySelectorAll(FIELD_SELECTOR)).forEach((el) => {
+        const name = el.getAttribute('name')
+        if (!name) return
+        let group = this.groups.get(name)
+        if (!group) {
+          group = {
+            name,
+            els: [],
+            error: null,
+            messageEl: null,
+            success: null,
+            count: null,
+            countMax: null,
+            countWords: false,
+            touched: false,
+          }
+          this.groups.set(name, group)
+        }
+        if (!group.els.includes(el)) group.els.push(/** @type {HTMLInputElement} */ (el))
+      })
       this.applySubmitState()
     }
 
@@ -730,6 +763,15 @@
 
   window.WfValidate = {
     init,
+    /**
+     * Register controls injected into a form after its initial bind.
+     * @param {HTMLFormElement} form
+     * @returns {void}
+     */
+    refresh: (form) => {
+      const v = bound.get(form)
+      if (v) v.refresh()
+    },
     /**
      * Programmatically validate a bound form (shows all errors).
      * @param {HTMLFormElement} form
