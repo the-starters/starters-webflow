@@ -230,8 +230,14 @@ test('deep-links the merged /opportunities feed for Talent and paid Brand only',
   }
 
   assert.equal(api.destinationFor(talent, '/opportunities'), '/opportunities')
+  assert.equal(api.destinationFor(talent, '/opportunities/'), '/opportunities/')
   assert.equal(api.destinationFor(paidBrand, '/opportunities'), '/opportunities')
+  assert.equal(
+    api.destinationFor(paidBrand, '/opportunities/'),
+    '/opportunities/',
+  )
   assert.equal(api.destinationFor(freeBrand, '/opportunities'), '/quiz')
+  assert.equal(api.destinationFor(freeBrand, '/opportunities/'), '/quiz')
 })
 
 test('allows opportunity details only for Talent and paid Brand', () => {
@@ -257,10 +263,6 @@ test('allows opportunity details only for Talent and paid Brand', () => {
   assert.equal(
     api.destinationFor(freeBrand, '/opportunities/product-designer'),
     '/quiz',
-  )
-  assert.equal(
-    api.destinationFor(talent, '/opportunities/'),
-    '/starter-dashboard',
   )
   assert.equal(
     api.destinationFor(talent, '/opportunities/product-designer/apply'),
