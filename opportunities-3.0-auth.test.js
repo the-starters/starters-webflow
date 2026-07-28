@@ -617,6 +617,8 @@ test('boot routes bare /opportunities to the merged feed: talent wrapper + only 
 
   assert.ok(await waitFor(() => dom.wrappers.talent.style.display === ''), 'talent wrapper revealed')
   assert.equal(dom.wrappers.brand.style.display, 'none')
+  // This VM has no CSSOM; the resolved stamp proves the anti-flash selector no longer applies.
+  assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), 'talent')
   assert.equal(bridge.documentElement.getAttribute('data-opp30-talent-algolia'), 'wf-xano')
 
   // wf-xano not loaded yet in this harness: activation queued on the pre-load array.
@@ -641,6 +643,7 @@ test('merged feed for a paid brand: brand wrapper + only the brand feed activate
 
   assert.ok(await waitFor(() => dom.wrappers.brand.style.display === ''), 'brand wrapper revealed')
   assert.equal(dom.wrappers.talent.style.display, 'none')
+  assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), 'brand')
   assert.equal(bridge.documentElement.getAttribute('data-opp30-talent-algolia'), null)
 
   assert.ok(Array.isArray(bridge.window.WfXano))
@@ -666,6 +669,7 @@ test('merged feed with the guard active bails quietly for a free brand (guard ow
   await bridge.window.Opp30.initMergedOppFeed()
   assert.equal(dom.wrappers.talent.style.display, undefined)
   assert.equal(dom.wrappers.brand.style.display, undefined)
+  assert.equal(bridge.documentElement.getAttribute('data-opp-role-resolved'), null)
   assert.equal(bridge.window.WfXano, undefined, 'no feed activation queued')
   assert.equal(bridge.location.href, 'https://example.test/opportunities')
 })

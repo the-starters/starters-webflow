@@ -1097,12 +1097,14 @@
 
   /** Reveal the [data-opp-role] wrapper matching `role` ('talent' | 'brand') and
    *  hide the rest. Pair with a page-head embed of
-   *  <style>[data-opp-role]{display:none}</style> so neither wrapper flashes
-   *  before this footer script resolves the member's plan. */
+   *  <style>html:not([data-opp-role-resolved]) [data-opp-role]{display:none}</style>
+   *  so neither wrapper flashes before this footer script resolves the member's
+   *  plan. */
   function showRoleWrapper(role) {
     $$('[data-opp-role]').forEach((el) => {
       el.style.display = el.getAttribute('data-opp-role') === role ? '' : 'none'
     })
+    document.documentElement.setAttribute('data-opp-role-resolved', role)
   }
 
   /* ===================== GENERIC LIST RENDER ===================== */
@@ -2190,10 +2192,12 @@
 
   /** Merged opportunities feed (/opportunities): one page shared by talent and
    *  paying brands. Both role sections live in the DOM behind the page-head
-   *  anti-flash CSS (<style>[data-opp-role]{display:none}</style>); both
-   *  wf-xano feed roots carry wf-xano-defer="true" so neither fetches at boot.
-   *  Resolve the member's plan role, reveal that role's wrapper, and activate
-   *  only its feed — the wrong-role instance never constructs or fetches. */
+   *  anti-flash CSS
+   *  (<style>html:not([data-opp-role-resolved]) [data-opp-role]{display:none}</style>);
+   *  both wf-xano feed roots carry wf-xano-defer="true" so neither fetches at
+   *  boot. Resolve the member's plan role, reveal that role's wrapper, and
+   *  activate only its feed — the wrong-role instance never constructs or
+   *  fetches. */
   async function initMergedOppFeed() {
     const gate = await gateByPlan()
     if (!gate) return
