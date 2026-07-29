@@ -168,6 +168,15 @@ Create and edit forms keep the existing category selector input named
 than the visible search text, so a missing category produces the inline message
 `Please select at least one category.` instead of silently blocking submission.
 
+Both forms keep the authored 15-word rule on the `Opportunity-title` input
+(`wf-validate-maxwords="15"`) and gain a native 120-character backstop: the
+controller sets `maxlength="120"` and the inline message attribute
+`wf-validate-message-maxlength` to `Please keep the title to 120 characters or
+fewer.`. The same limit is enforced against the submitted payload, so a title
+longer than 120 characters — including a scripted or prefilled value that
+bypasses the input's `maxlength` — is rejected with that message. It does not
+generate the title input.
+
 The Ongoing Part Time variant must contain Webflow-authored inputs named
 `Estimated-Hours` and `Part-Time-Budget`. In both the Create and Edit
 components, author the hours label, plain-text input, helper text, and field
