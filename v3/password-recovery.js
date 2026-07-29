@@ -157,11 +157,11 @@
   function configureLoginEntry(pathname, origin) {
     if (pathname !== BRAND_LOGIN_PATH && pathname !== TALENT_LOGIN_PATH) return
 
-    elements('a[href="/forgot-password"], a[href="/starters-forgot-password"]').forEach(
-      function (link) {
-        setHref(link, pathWithOrigin(FORGOT_PATH, origin))
-      },
-    )
+    elements(
+      'a[href="/forgot-password"], a[href="/starters-forgot-password"], a[href="/legacy-starters-forgot-password"]',
+    ).forEach(function (link) {
+      setHref(link, pathWithOrigin(FORGOT_PATH, origin))
+    })
   }
 
   function configureForm(pathname, origin) {

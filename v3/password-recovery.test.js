@@ -145,7 +145,8 @@ test('unapproved hosts expose helpers but do not redirect or configure forms', (
 })
 
 test('Brand and Talent login pages point their forgot links at the canonical page', () => {
-  const selector = 'a[href="/forgot-password"], a[href="/starters-forgot-password"]'
+  const selector =
+    'a[href="/forgot-password"], a[href="/starters-forgot-password"], a[href="/legacy-starters-forgot-password"]'
 
   const brandLink = element({ href: '/forgot-password' })
   load({
@@ -154,7 +155,7 @@ test('Brand and Talent login pages point their forgot links at the canonical pag
   })
   assert.equal(brandLink.getAttribute('href'), '/forgot-password?from=brand')
 
-  const talentLink = element({ href: '/starters-forgot-password' })
+  const talentLink = element({ href: '/legacy-starters-forgot-password' })
   load({
     pathname: '/starter-login',
     selectors: { [selector]: [talentLink] },
