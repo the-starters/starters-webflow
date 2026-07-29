@@ -83,7 +83,7 @@
   var FALLBACK_FREE_BRAND_PATH = '/quiz'
 
   var TALKJS_APP_ID = 'LmYV8DIA'
-  var TALKJS_THEME = 'the-starters-3-0'
+  var TALKJS_THEME = 'the-starters-3-0-profile'
   var TALKJS_SCRIPT_URL = 'https://cdn.talkjs.com/talk.js'
   var TALKJS_TIMEOUT_MS = 15000
   var MEMBERSTACK_TIMEOUT_MS = 10000
