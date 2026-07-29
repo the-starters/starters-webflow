@@ -1194,7 +1194,7 @@
     const debugLogPrefix = '[Starter Quiz Funnel]'
     const algoliaDefaultAppId = 'PKVW6M9OPZ'
     const algoliaDefaultIndexName = 'Freelancers3.0-dev'
-    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v17'
+    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v18'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
     // Pool gathered per category before featured picks are drawn off the top,
@@ -1205,135 +1205,204 @@
     // Minimum unique candidates a category/subcategory search should gather
     // before its progressively broader query tiers stop expanding.
     const termExpansionTargetCount = 8
-    const testQuizTaxonomy = [
+    const quizTaxonomyCatalog = [
         {
             id: 'paid-media',
             label: 'Paid Media',
             subcategories: [
-                'Paid Social',
-                'Paid Search (SEM)',
-                'Programmatic & Display',
-                'Amazon Advertising',
-                'Performance Creative',
+                { id: 'paid-social', label: 'Paid Social' },
+                { id: 'paid-search', label: 'Paid Search (SEM)' },
+                {
+                    id: 'programmatic-display',
+                    label: 'Programmatic & Display',
+                },
+                { id: 'growth-marketing', label: 'Growth Marketing' },
+                {
+                    id: 'performance-creative-strategy',
+                    label: 'Performance Creative Strategy',
+                },
             ],
         },
         {
             id: 'content-organic',
             label: 'Content & Organic',
             subcategories: [
-                'SEO',
-                'Content Marketing',
-                'Organic Social',
-                'Content Creation & UGC',
+                { id: 'seo', label: 'SEO' },
+                { id: 'content-marketing', label: 'Content Marketing' },
+                { id: 'organic-social', label: 'Organic Social' },
+                {
+                    id: 'content-creation-ugc',
+                    label: 'Content Creation & UGC',
+                },
             ],
         },
         {
-            id: 'creative-brand',
-            label: 'Creative & Brand',
+            id: 'creative',
+            label: 'Creative',
             subcategories: [
-                'Creative Direction',
-                'Graphic Design',
-                'Copywriting',
-                'Video & Production',
-                'UI/UX Design',
+                { id: 'creative-direction', label: 'Creative Direction' },
+                { id: 'graphic-design', label: 'Graphic Design' },
+                { id: 'copywriting', label: 'Copywriting' },
+                { id: 'video-production', label: 'Video & Production' },
+                { id: 'ui-ux-design', label: 'UI/UX Design' },
             ],
         },
         {
             id: 'influencer-affiliate-pr',
             label: 'Influencer, Affiliate & PR',
             subcategories: [
-                'Influencer Marketing',
-                'Affiliate Marketing',
-                'Partnerships',
-                'PR & Communications',
+                {
+                    id: 'influencer-marketing',
+                    label: 'Influencer Marketing',
+                },
+                { id: 'affiliate-marketing', label: 'Affiliate Marketing' },
+                { id: 'partnerships', label: 'Partnerships' },
+                { id: 'pr-communications', label: 'PR & Communications' },
             ],
         },
         {
             id: 'retention-crm',
             label: 'Retention & CRM',
             subcategories: [
-                'Lifecycle Marketing',
-                'Retention Strategy',
-                'Loyalty & Subscription',
-                'Customer Experience',
+                { id: 'lifecycle-marketing', label: 'Lifecycle Marketing' },
+                { id: 'retention-strategy', label: 'Retention Strategy' },
+                { id: 'customer-experience', label: 'Customer Experience' },
             ],
         },
         {
             id: 'analytics-experimentation',
             label: 'Analytics & Experimentation',
-            subcategories: ['Data & Analytics', 'CRO & Experimentation'],
+            subcategories: [
+                { id: 'data-analytics', label: 'Data & Analytics' },
+                {
+                    id: 'cro-experimentation',
+                    label: 'CRO & Experimentation',
+                },
+            ],
         },
         {
             id: 'retail-marketplace',
             label: 'Retail & Marketplace',
             subcategories: [
-                'Retail Strategy',
-                'Amazon & Marketplace',
-                'Wholesale & Distribution',
-                'Demand Planning',
+                { id: 'retail-strategy', label: 'Retail Strategy' },
+                {
+                    id: 'amazon-marketplace',
+                    label: 'Amazon & Online Marketplaces',
+                },
             ],
         },
         {
             id: 'ai-technology',
             label: 'AI & Technology',
             subcategories: [
-                'Shopify & Site Dev',
-                'E-Commerce Management',
-                'Digital Product Mgmt',
-                'Technology Leadership',
-                'AI & Automation',
+                {
+                    id: 'shopify-site-dev',
+                    label: 'Shopify & Web Development',
+                },
+                {
+                    id: 'ecommerce-management',
+                    label: 'E-Commerce Management',
+                },
+                {
+                    id: 'digital-product-management',
+                    label: 'Digital Product Management',
+                },
+                {
+                    id: 'technology-leadership',
+                    label: 'Technology Leadership',
+                },
+                { id: 'ai-automation', label: 'AI & Automation' },
             ],
         },
         {
             id: 'physical-product-development',
-            label: 'Physical Product & Development',
+            label: 'Physical Product Development & Commercialization',
             subcategories: [
-                'Product Strategy',
-                'Product Development',
-                'Packaging & Design',
-                'Regulatory & Compliance',
-                'Product Launch',
+                { id: 'product-strategy', label: 'Product Strategy' },
+                { id: 'product-development', label: 'Product Development' },
+                { id: 'packaging-design', label: 'Packaging & Design' },
+                { id: 'product-launch', label: 'Product Launch' },
             ],
         },
         {
-            id: 'marketing-strategy-leadership',
-            label: 'Marketing Strategy & Leadership',
+            id: 'marketing-strategy-brand',
+            label: 'Marketing Strategy & Brand',
             subcategories: [
-                'CMO / Marketing Leadership',
-                'Growth Strategy',
-                'Brand & Positioning',
+                {
+                    id: 'marketing-leadership',
+                    label: 'Marketing Leadership',
+                },
+                { id: 'growth-strategy', label: 'Growth Strategy' },
+                { id: 'brand-positioning', label: 'Brand & Positioning' },
             ],
         },
         {
             id: 'finance',
             label: 'Finance',
             subcategories: [
-                'Financial Strategy',
-                'FP&A & Modeling',
-                'Accounting & Control',
-                'Financial Analysis',
+                { id: 'finance-leadership', label: 'Finance Leadership' },
+                {
+                    id: 'strategic-finance',
+                    label: 'Strategic Finance / FP&A',
+                },
+                { id: 'accounting-control', label: 'Accounting & Control' },
             ],
         },
         {
             id: 'operations-supply-chain',
             label: 'Operations & Supply Chain',
             subcategories: [
-                'Supply Chain',
-                'Fulfillment & Logistics',
-                'Procurement & Sourcing',
-                'COO / Ops Leadership',
-            ],
-        },
-        {
-            id: 'hiring-team-building',
-            label: 'Hiring & Team Building',
-            subcategories: [
-                'Talent & Recruiting',
-                'Org Design',
-                'Fractional Leadership',
+                {
+                    id: 'fulfillment-logistics',
+                    label: 'Fulfillment & Logistics',
+                },
+                { id: 'demand-planning', label: 'Demand Planning' },
+                {
+                    id: 'operations-leadership',
+                    label: 'Operations Leadership',
+                },
             ],
         },
     ]
+    const quizCategoryIdAliases = new Map([
+        ['creative-brand', 'creative'],
+        ['marketing-strategy-leadership', 'marketing-strategy-brand'],
+        ['hiring-team-building', ''],
+    ])
+    const quizSubcategoryIdAliases = new Map([
+        ['paid-search-sem', 'paid-search'],
+        ['performance-creative', 'performance-creative-strategy'],
+        ['amazon-advertising', 'amazon-marketplace'],
+        ['e-commerce-management', 'ecommerce-management'],
+        ['digital-product-mgmt', 'digital-product-management'],
+        ['cmo-marketing-leadership', 'marketing-leadership'],
+        ['financial-strategy', 'finance-leadership'],
+        ['fp-a-modeling', 'strategic-finance'],
+        ['coo-ops-leadership', 'operations-leadership'],
+        ['brand-strategy', 'brand-positioning'],
+        ['fractional-leadership', ''],
+        ['org-design', ''],
+        ['talent-recruiting', ''],
+        ['procurement-sourcing', ''],
+        ['supply-chain', ''],
+        ['financial-analysis', ''],
+        ['sourcing-manufacturing', ''],
+        ['regulatory-compliance', ''],
+        ['data-engineering', ''],
+        ['wholesale-distribution', ''],
+        ['loyalty-subscription', ''],
+    ])
+    const quizCategoryById = new Map(
+        quizTaxonomyCatalog.map((category) => [category.id, category]),
+    )
+    const quizSubcategoryById = new Map(
+        quizTaxonomyCatalog.flatMap((category) =>
+            category.subcategories.map((subcategory) => [
+                subcategory.id,
+                { ...subcategory, categoryId: category.id },
+            ]),
+        ),
+    )
 
     /**
      * Algolia field names checked, in order, for each displayed value. The
@@ -1713,7 +1782,7 @@
         const grid = document.createElement('div')
         grid.setAttribute('data-starter-quiz-test-grid', '')
 
-        testQuizTaxonomy.forEach((category) => {
+        quizTaxonomyCatalog.forEach((category) => {
             const card = document.createElement('div')
             card.setAttribute('data-starter-quiz-test-card', '')
 
@@ -1728,8 +1797,9 @@
             const subs = document.createElement('div')
             subs.setAttribute('data-starter-quiz-test-subs', '')
 
-            category.subcategories.forEach((subcategoryLabel) => {
-                const subcategoryId = slugify(subcategoryLabel)
+            category.subcategories.forEach((subcategory) => {
+                const subcategoryId = subcategory.id
+                const subcategoryLabel = subcategory.label
                 const subcategoryKey = category.id + '>' + subcategoryId
                 const subLabel = document.createElement('label')
                 const subInput = document.createElement('input')
@@ -1840,6 +1910,135 @@
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/(^-|-$)/g, '')
+    }
+
+    function getQuizTaxonomyItemId(item) {
+        if (typeof item === 'string') return slugify(item)
+
+        return slugify(item?.id) || slugify(item?.label)
+    }
+
+    function resolveQuizCategory(item) {
+        const sourceId = getQuizTaxonomyItemId(item)
+        const canonicalId = quizCategoryIdAliases.has(sourceId)
+            ? quizCategoryIdAliases.get(sourceId)
+            : sourceId
+
+        return {
+            sourceId,
+            category: canonicalId
+                ? quizCategoryById.get(canonicalId) || null
+                : null,
+        }
+    }
+
+    function resolveQuizSubcategory(item) {
+        const sourceId = getQuizTaxonomyItemId(item)
+        const canonicalId = quizSubcategoryIdAliases.has(sourceId)
+            ? quizSubcategoryIdAliases.get(sourceId)
+            : sourceId
+
+        return {
+            sourceId,
+            subcategory: canonicalId
+                ? quizSubcategoryById.get(canonicalId) || null
+                : null,
+        }
+    }
+
+    /**
+     * Converts saved pre-rollout quiz selections to the current canonical
+     * taxonomy before any rendering, filtering, recommendation, or save path
+     * consumes them. Renames and merges map deterministically. Retired or
+     * unknown choices are discarded because they have no approved successor.
+     *
+     * @param {object} pendingQuiz Saved or freshly submitted quiz payload.
+     * @returns {{
+     *   payload: object,
+     *   changed: boolean,
+     *   droppedCategoryIds: string[],
+     *   droppedSubcategoryIds: string[],
+     *   requiresReselection: boolean
+     * }} Canonical payload and compatibility outcome.
+     */
+    function normalizeQuizTaxonomyPayload(pendingQuiz) {
+        const sourceCategories = Array.isArray(pendingQuiz?.categories)
+            ? pendingQuiz.categories
+            : []
+        const sourceSubcategories = Array.isArray(pendingQuiz?.subcategories)
+            ? pendingQuiz.subcategories
+            : []
+        const categories = []
+        const subcategories = []
+        const categoryIds = new Set()
+        const subcategoryIds = new Set()
+        const droppedCategoryIds = []
+        const droppedSubcategoryIds = []
+
+        const addCategory = (category) => {
+            if (!category || categoryIds.has(category.id)) return
+
+            categoryIds.add(category.id)
+            categories.push({ id: category.id, label: category.label })
+        }
+
+        sourceCategories.forEach((item) => {
+            const { sourceId, category } = resolveQuizCategory(item)
+            if (!category) {
+                if (sourceId) droppedCategoryIds.push(sourceId)
+                return
+            }
+
+            addCategory(category)
+        })
+
+        sourceSubcategories.forEach((item) => {
+            const { sourceId, subcategory } = resolveQuizSubcategory(item)
+            if (!subcategory) {
+                if (sourceId) droppedSubcategoryIds.push(sourceId)
+                return
+            }
+            if (subcategoryIds.has(subcategory.id)) return
+
+            const parentCategory = quizCategoryById.get(
+                subcategory.categoryId,
+            )
+            if (!parentCategory) {
+                droppedSubcategoryIds.push(sourceId || subcategory.id)
+                return
+            }
+
+            addCategory(parentCategory)
+            subcategoryIds.add(subcategory.id)
+            subcategories.push({
+                id: subcategory.id,
+                label: subcategory.label,
+                categoryId: subcategory.categoryId,
+            })
+        })
+
+        const payload = {
+            ...pendingQuiz,
+            categories,
+            subcategories,
+        }
+        const hadTaxonomySelections =
+            sourceCategories.length > 0 || sourceSubcategories.length > 0
+        const changed =
+            JSON.stringify(sourceCategories) !== JSON.stringify(categories) ||
+            JSON.stringify(sourceSubcategories) !==
+                JSON.stringify(subcategories)
+
+        return {
+            payload,
+            changed,
+            droppedCategoryIds: Array.from(new Set(droppedCategoryIds)),
+            droppedSubcategoryIds: Array.from(
+                new Set(droppedSubcategoryIds),
+            ),
+            requiresReselection:
+                hadTaxonomySelections && categories.length === 0,
+        }
     }
 
     /**
@@ -5055,12 +5254,12 @@
         logQuizFlow('initialized', { pendingQuizStorageKey })
 
         const testPendingQuiz = getTestPendingQuizFromUrl()
-        const pendingQuiz =
+        const rawPendingQuiz =
             testPendingQuiz ||
             getPendingQuiz() ||
             (await getPendingQuizFromMemberstack())
 
-        if (!pendingQuiz) {
+        if (!rawPendingQuiz) {
             logQuizFlow('no pending quiz found; results page has nothing to save')
             await redirectLoggedOutWithoutResults()
             // If redirectLoggedOutWithoutResults() bounced a logged-out visitor
@@ -5068,6 +5267,38 @@
             // in with no data, or Memberstack unavailable) the loader must be
             // released so it does not hang.
             signalQuizResultsReady('no-data')
+            return
+        }
+
+        const taxonomyCompatibility =
+            normalizeQuizTaxonomyPayload(rawPendingQuiz)
+        const pendingQuiz = taxonomyCompatibility.payload
+
+        if (taxonomyCompatibility.changed) {
+            logQuizFlow('normalized saved quiz taxonomy', {
+                droppedCategoryIds:
+                    taxonomyCompatibility.droppedCategoryIds,
+                droppedSubcategoryIds:
+                    taxonomyCompatibility.droppedSubcategoryIds,
+                requiresReselection:
+                    taxonomyCompatibility.requiresReselection,
+            })
+
+            if (!testPendingQuiz) {
+                delete pendingQuiz.memberstackSavedAt
+            }
+        }
+
+        if (
+            taxonomyCompatibility.requiresReselection &&
+            !testPendingQuiz
+        ) {
+            sessionStorage.removeItem(pendingQuizStorageKey)
+            logQuizFlow(
+                'saved quiz has no current taxonomy selections; requiring retake',
+            )
+            signalQuizResultsReady('taxonomy-reselection')
+            window.location.replace('/quiz?retake=true&taxonomyUpdate=1')
             return
         }
 
