@@ -14,6 +14,40 @@
     "rate": "Rate"
   };
 
+  // Display-name overrides for role slugs that plain de-hyphenate+capitalize
+  // mangles (acronyms, and one plural). Keyed on the RAW stored slug.
+  // KEEP IN SYNC across:
+  //   starters-list-filter/custom-algolia-scripts/filters-text.js
+  //   algolia-result-modifiers/roles.js
+  //   v3/saved-starters-roles.js
+  var ROLE_NAMES = {
+    'ui-ux-designer': 'UI/UX Designer',
+    'cro-expert': 'CRO Expert',
+    'seo-marketer': 'SEO Marketer',
+    'crm-marketer': 'CRM Marketer',
+    'cx-director': 'CX Director',
+    'pr-directors': 'PR Director',
+    'ai-automation-expert': 'AI Automation Expert',
+    'e-commerce-manager': 'E-Commerce Manager'
+  };
+
+  // This file re-reads and rewrites the SAME nodes on every engine response, so
+  // every emitted label must map to itself on the next pass or the text
+  // oscillates. Not every display value is a humanize() fixed point:
+  // humanize("E-Commerce Manager") drops the hyphen. So already-mapped labels
+  // are matched back to themselves here, keyed on the lowercased display value.
+  var ROLE_DISPLAY = Object.create(null);
+  Object.keys(ROLE_NAMES).forEach(function (slug) {
+    ROLE_DISPLAY[ROLE_NAMES[slug].toLowerCase()] = ROLE_NAMES[slug];
+  });
+
+  // Applies to every field, not just "roles": the keys are exact role slugs, so
+  // no other facet value can collide with one.
+  function prettyRole(raw) {
+    var key = raw.trim().toLowerCase();
+    return ROLE_NAMES[key] || ROLE_DISPLAY[key] || null;
+  }
+
   function humanize(s) {
     return s
       .replace(/[-_]+/g, " ")
@@ -33,7 +67,7 @@
     }
     // Rate range chips from WF-Algolia already come formatted ("30 – 500", "$30 – $500")
     if (field === "rate") return raw;
-    return humanize(raw);
+    return prettyRole(raw) || humanize(raw);
   }
 
   function processSlot(el) {
@@ -48,7 +82,9 @@
     if (!raw) return;
     var idx = raw.indexOf(": ");
     if (idx === -1) {
-      var whole = humanize(raw);
+      // A bare chip carries just the value, so it takes the same
+      // map-then-humanize path a "Field: value" chip's value half takes.
+      var whole = prettyRole(raw) || humanize(raw);
       if (whole !== raw) el.textContent = whole;
       return;
     }

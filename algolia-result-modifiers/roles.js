@@ -12,6 +12,23 @@
     const HOOK = `[wf-algolia-text="${FIELD}"]`;
     const INJECTED = `.wf-algolia-injected ${HOOK}`;
 
+    // Display-name overrides for role slugs that plain de-hyphenate+capitalize
+    // mangles (acronyms, and one plural). Keyed on the RAW stored slug.
+    // KEEP IN SYNC across:
+    //   algolia-result-modifiers/roles.js
+    //   v3/saved-starters-roles.js
+    //   starters-list-filter/custom-algolia-scripts/filters-text.js
+    const ROLE_NAMES = {
+      'ui-ux-designer': 'UI/UX Designer',
+      'cro-expert': 'CRO Expert',
+      'seo-marketer': 'SEO Marketer',
+      'crm-marketer': 'CRM Marketer',
+      'cx-director': 'CX Director',
+      'pr-directors': 'PR Director',
+      'ai-automation-expert': 'AI Automation Expert',
+      'e-commerce-manager': 'E-Commerce Manager'
+    };
+
     function init() {
       // Marker gate: bail immediately on pages that have no roles-bound template.
       // The template ships in the static DOM, so this is a reliable "is this page
@@ -27,7 +44,13 @@
         }, 60);
       }
 
+      // Mapped roles are emitted in final display case. The card class sets
+      // `text-transform: capitalize`, which only uppercases word-initial
+      // letters and never lowercases, so "UI/UX Designer" survives it intact.
+      // Unmapped roles stay lowercase and let that CSS title-case them.
       function clean(role) {
+        const key = role.trim().toLowerCase();
+        if (ROLE_NAMES[key]) return ROLE_NAMES[key];
         return role.trim().replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
       }
 

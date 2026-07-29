@@ -483,12 +483,24 @@ Webflow markup contract:
   `text-transform: capitalize`) inside a flex wrapper like
   `.expert-card_jobs-wrapper`. The browse cards store lowercase text such as
   `paid social marketer` and let CSS do the title-casing, and this module
-  matches that. Without the capitalize rule the chips render lowercase.
+  matches that for any role it does not have an override for. Without the
+  capitalize rule those chips render lowercase.
 
 Chips are cloned from the roles paragraph, so they inherit its Webflow classes.
 Each one is marked `data-ts-roles-chip`. Values split on both `;` and `,`,
 hyphens become spaces, blank segments are dropped, and repeats are removed
 case-insensitively.
+
+Acronym roles are the exception. A slug listed in the module's `ROLE_NAMES`
+override map is emitted in its final display case instead of being
+de-hyphenated, so `cro-expert` becomes `CRO Expert` rather than the `Cro Expert`
+that `text-transform: capitalize` would otherwise produce. The capitalize rule
+leaves those values alone because it only uppercases word-initial letters. The
+same map lives in `algolia-result-modifiers/roles.js` and
+`starters-list-filter/custom-algolia-scripts/filters-text.js`, so the browse
+cards, the saved chips and the filter labels all read the same. Edit all three
+copies together. The map is consulted only for the `data-ts-roles` value, which
+is what keeps the neighbouring `availability` value such as `11-20` untouched.
 
 Both delimiters are supported on purpose. Algolia stores `roles` as an array of
 slugs, and wf-xano has no array formatter, so an array value reaches the DOM
