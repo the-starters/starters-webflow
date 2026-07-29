@@ -189,6 +189,15 @@ when the modal reopens. Project Type prefill also emits the native change event
 used by the authored tab controller, keeping its active pill and conditional
 panel aligned with the checked radio.
 
+After a successful create or edit, the controller paints the Webflow-authored
+review success screen in place; it binds only existing elements and generates no
+markup. It writes the saved opportunity title into the success block's
+`data-opp-bind="title"` element, falling back to an authored `[Job Name]`
+placeholder span or an empty span inside `.heading-style-h1` when that attribute
+is absent. It also rewrites the `.text-size-medium` confirmation message to
+opportunity-specific copy when the authored text still reads as application copy,
+so both flows read "Our team is carefully reviewing your opportunity."
+
 Keep `utils/wf-validate.js` on these forms. The controller registers the authored
 field through `window.WfValidate.refresh(form)`, so category and estimated-hours
 failures use the form's normal inline error treatment. Client-side checks remain
