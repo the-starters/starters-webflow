@@ -33,6 +33,12 @@
  * also renders `availability: "11-20"` — de-hyphenating that would print
  * "11 20". Never widen this selector.
  *
+ * Slugs listed in ROLE_NAMES are emitted in final display case ("cro-expert"
+ * becomes "CRO Expert") instead of being de-hyphenated, because a plain
+ * de-hyphenate under `text-transform: capitalize` renders "Cro Expert". That
+ * map is shared verbatim with the two sibling scripts and must stay in sync
+ * with them.
+ *
  * Renders trigger via the instance's own after-render event
  * (`on('results')`, which also replays the last result to a late subscriber),
  * so this covers first paint, pagination, and the `wf-xano-refresh-on="favorite"`
@@ -64,6 +70,23 @@
     'wf-xano-prefix',
     'wf-xano-suffix',
   ]
+
+  // Display-name overrides for role slugs that plain de-hyphenate+capitalize
+  // mangles (acronyms, and one plural). Keyed on the RAW stored slug.
+  // KEEP IN SYNC across:
+  //   v3/saved-starters-roles.js
+  //   algolia-result-modifiers/roles.js
+  //   starters-list-filter/custom-algolia-scripts/filters-text.js
+  var ROLE_NAMES = {
+    'ui-ux-designer': 'UI/UX Designer',
+    'cro-expert': 'CRO Expert',
+    'seo-marketer': 'SEO Marketer',
+    'crm-marketer': 'CRM Marketer',
+    'cx-director': 'CX Director',
+    'pr-directors': 'PR Director',
+    'ai-automation-expert': 'AI Automation Expert',
+    'e-commerce-manager': 'E-Commerce Manager'
+  }
 
   // Same predicate as the sibling result modifiers: loud on staging/local,
   // silent in production. This whole bug class is invisible by nature.
@@ -98,13 +121,19 @@
   // Xano's roles string has been seen semicolon-delimited (`subcategories`
   // style: "growth-strategy; paid-social") and Algolia's own roles attribute is
   // comma-delimited, so accept both rather than betting on one.
+  //
+  // ROLE_NAMES is consulted HERE ONLY, never in a shared helper: the same card
+  // renders `availability: "11-20"`, and anything that widens this lookup past
+  // the `data-ts-roles` element risks rewriting that value too. Numeric parts
+  // are not map keys, so they fall through to the de-hyphenate path unchanged.
   function parseRoles(text) {
     var seen = Object.create(null)
     var roles = []
     String(text == null ? '' : text)
       .split(/[;,]/)
       .forEach(function (part) {
-        var role = part.trim().replace(/-/g, ' ').replace(/\s+/g, ' ').trim()
+        var slug = part.trim().toLowerCase()
+        var role = ROLE_NAMES[slug] || part.trim().replace(/-/g, ' ').replace(/\s+/g, ' ').trim()
         if (!role) return
         var key = role.toLowerCase()
         if (seen[key]) return
