@@ -227,6 +227,78 @@
         return (value || '').trim()
     }
 
+    const savedQuizCategoryIdAliases = new Map([
+        ['creative-brand', 'creative'],
+        ['marketing-strategy-leadership', 'marketing-strategy-brand'],
+        ['hiring-team-building', ''],
+    ])
+    const savedQuizSubcategoryIdAliases = new Map([
+        ['paid-search-sem', 'paid-search'],
+        ['performance-creative', 'performance-creative-strategy'],
+        ['amazon-advertising', 'amazon-marketplace'],
+        ['e-commerce-management', 'ecommerce-management'],
+        ['digital-product-mgmt', 'digital-product-management'],
+        ['cmo-marketing-leadership', 'marketing-leadership'],
+        ['financial-strategy', 'finance-leadership'],
+        ['fp-a-modeling', 'strategic-finance'],
+        ['coo-ops-leadership', 'operations-leadership'],
+        ['brand-strategy', 'brand-positioning'],
+        ['fractional-leadership', ''],
+        ['org-design', ''],
+        ['talent-recruiting', ''],
+        ['procurement-sourcing', ''],
+        ['supply-chain', ''],
+        ['financial-analysis', ''],
+        ['sourcing-manufacturing', ''],
+        ['regulatory-compliance', ''],
+        ['data-engineering', ''],
+        ['wholesale-distribution', ''],
+        ['loyalty-subscription', ''],
+    ])
+
+    function normalizeSavedQuizId(value, aliases) {
+        const sourceId = normalize(value).toLowerCase()
+        if (!sourceId) return ''
+
+        return aliases.has(sourceId) ? aliases.get(sourceId) : sourceId
+    }
+
+    function normalizeSavedQuizSelectionIds(savedQuiz) {
+        const sourceCategoryIds = Array.isArray(savedQuiz?.categoryIds)
+            ? savedQuiz.categoryIds
+            : []
+        const sourceSubcategoryIds = Array.isArray(savedQuiz?.subcategoryIds)
+            ? savedQuiz.subcategoryIds
+            : []
+
+        return {
+            categoryIds: Array.from(
+                new Set(
+                    sourceCategoryIds
+                        .map((id) =>
+                            normalizeSavedQuizId(
+                                id,
+                                savedQuizCategoryIdAliases,
+                            ),
+                        )
+                        .filter(Boolean),
+                ),
+            ),
+            subcategoryIds: Array.from(
+                new Set(
+                    sourceSubcategoryIds
+                        .map((id) =>
+                            normalizeSavedQuizId(
+                                id,
+                                savedQuizSubcategoryIdAliases,
+                            ),
+                        )
+                        .filter(Boolean),
+                ),
+            ),
+        }
+    }
+
     /**
      * Reads bucket IDs selected on the homepage.
      *
@@ -430,18 +502,11 @@
             return false
         }
 
-        const savedCategoryIds = new Set(
-            (Array.isArray(savedQuiz.categoryIds) ? savedQuiz.categoryIds : [])
-                .map(normalize)
-                .filter(Boolean),
-        )
+        const normalizedSavedIds =
+            normalizeSavedQuizSelectionIds(savedQuiz)
+        const savedCategoryIds = new Set(normalizedSavedIds.categoryIds)
         const savedSubcategoryIds = new Set(
-            (Array.isArray(savedQuiz.subcategoryIds)
-                ? savedQuiz.subcategoryIds
-                : []
-            )
-                .map(normalize)
-                .filter(Boolean),
+            normalizedSavedIds.subcategoryIds,
         )
 
         if (!savedCategoryIds.size && !savedSubcategoryIds.size) {
@@ -455,6 +520,7 @@
         }
 
         let restoredInputCount = 0
+        const restoredParentCategoryIds = new Set()
 
         categoryInputs.forEach((input) => {
             if (savedCategoryIds.has(normalize(input.id))) {
@@ -463,13 +529,31 @@
             }
         })
 
-        subcategoryInputs.forEach((input) => {
+        subcategoryItems.forEach((item) => {
+            const input = getCheckboxInput(item)
+            if (!input) return
+
             const id =
                 normalize(input.id) ||
                 normalize(input.value) ||
                 normalize(getCheckboxLabel(input))
 
             if (id && savedSubcategoryIds.has(id)) {
+                setWebflowCheckboxState(input, true)
+                restoredInputCount += 1
+
+                const parentCategoryId = getSubcategoryCategoryId(item)
+                if (parentCategoryId) {
+                    restoredParentCategoryIds.add(parentCategoryId)
+                }
+            }
+        })
+
+        categoryInputs.forEach((input) => {
+            if (
+                restoredParentCategoryIds.has(normalize(input.id)) &&
+                !input.checked
+            ) {
                 setWebflowCheckboxState(input, true)
                 restoredInputCount += 1
             }
