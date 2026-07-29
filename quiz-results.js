@@ -4949,15 +4949,52 @@
         return response && typeof response === 'object' ? response : {}
     }
 
+    function getMemberCustomFields(member) {
+        if (!member || typeof member !== 'object' || Array.isArray(member)) {
+            return {}
+        }
+
+        return (
+            member.customFields ||
+            member.custom_fields ||
+            member['custom-fields'] ||
+            {}
+        )
+    }
+
+    function hasStarterQuizCompletionMarker(member) {
+        const value = getMemberCustomFields(member)['starter-quiz']
+
+        return typeof value === 'string'
+            ? normalize(value) !== ''
+            : Boolean(value)
+    }
+
+    function getAuthenticatedNoQuizDataRedirectTarget(member) {
+        if (
+            !member ||
+            typeof member !== 'object' ||
+            Array.isArray(member) ||
+            !member.id
+        ) {
+            return null
+        }
+
+        return hasStarterQuizCompletionMarker(member)
+            ? '/quiz?retake=true&quizDataMissing=1'
+            : '/quiz'
+    }
+
     /**
-     * When the results page has no quiz data to show, a logged-out visitor has
-     * nothing here — send them to the quiz to generate results (product decision
-     * 2026-07-24). Only redirects when Memberstack positively reports no member;
-     * if Memberstack is unavailable we stay put rather than bounce. A pre-signup
-     * funnel visitor is never affected because they arrive with a pending quiz in
-     * sessionStorage (so initResultsPage never reaches the no-data branch).
+     * When the results page has no usable quiz data, send a positively resolved
+     * visitor back to the quiz. Logged-out visitors start normally. Authenticated
+     * members with a completion marker but missing or malformed member JSON are
+     * sent through an explicit retake so they do not remain on an empty results
+     * page. If Memberstack is unavailable, stay put rather than risk a redirect
+     * loop. A pre-signup funnel visitor is unaffected because sessionStorage is
+     * checked before this branch.
      */
-    async function redirectLoggedOutWithoutResults() {
+    async function redirectVisitorWithoutResults() {
         try {
             const memberstack = await waitForMemberstack()
             if (!memberstack || typeof memberstack.getCurrentMember !== 'function') return
@@ -4975,9 +5012,25 @@
             if (isLoggedOut) {
                 logQuizFlow('logged-out visitor with no quiz data; redirecting to /quiz')
                 window.location.replace('/quiz')
+                return
+            }
+
+            const authenticatedRedirectTarget =
+                getAuthenticatedNoQuizDataRedirectTarget(member)
+
+            if (authenticatedRedirectTarget) {
+                logQuizFlow(
+                    'authenticated member with no usable quiz data; redirecting to quiz',
+                    {
+                        hasCompletionMarker:
+                            hasStarterQuizCompletionMarker(member),
+                        redirectTarget: authenticatedRedirectTarget,
+                    },
+                )
+                window.location.replace(authenticatedRedirectTarget)
             }
         } catch (error) {
-            logQuizFlow('logged-out redirect check failed; staying on page', { error })
+            logQuizFlow('no-data redirect check failed; staying on page', { error })
         }
     }
 
@@ -4997,11 +5050,7 @@
         try {
             const existingJson = await getExistingMemberJson(memberstack)
             const memberData = await getCurrentMemberData(memberstack)
-            const customFields =
-                memberData.customFields ||
-                memberData.custom_fields ||
-                memberData['custom-fields'] ||
-                {}
+            const customFields = getMemberCustomFields(memberData)
             const pendingQuiz =
                 parsePendingQuiz(existingJson.starterQuiz) ||
                 parseStarterQuizCustomField(customFields['starter-quiz'])
@@ -5261,11 +5310,10 @@
 
         if (!rawPendingQuiz) {
             logQuizFlow('no pending quiz found; results page has nothing to save')
-            await redirectLoggedOutWithoutResults()
-            // If redirectLoggedOutWithoutResults() bounced a logged-out visitor
-            // the page is unloading and this is harmless; if it stayed (logged
-            // in with no data, or Memberstack unavailable) the loader must be
-            // released so it does not hang.
+            await redirectVisitorWithoutResults()
+            // If redirectVisitorWithoutResults() bounced a resolved visitor the
+            // page is unloading and this is harmless; if Memberstack was
+            // unavailable, release the loader so it does not hang.
             signalQuizResultsReady('no-data')
             return
         }
