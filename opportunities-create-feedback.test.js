@@ -82,6 +82,11 @@ function opportunityForm(kind) {
   const estimatedHours = new FakeControl({ name: 'Estimated-Hours' })
   estimatedHours.closest = (selector) =>
     selector === '[data-project-type="part-time"]' ? estimatedHoursGroup : null
+  const oneTime = new FakeControl({
+    id: 'One-Time',
+    name: 'Project-Type',
+    value: 'One Time',
+  })
   const partTime = new FakeControl({
     id: 'Ongoing-Part-Time',
     name: 'Project-Type',
@@ -91,6 +96,31 @@ function opportunityForm(kind) {
     id: 'Full-Time',
     name: 'Project-Type',
     value: 'Full Time',
+  })
+  const projectRadios = [oneTime, partTime, fullTime]
+  const tabItems = new Map(
+    projectRadios.map((radio) => {
+      const attrs = new Map([['data-tab-filters-item', '']])
+      return [
+        radio,
+        {
+          getAttribute: (name) => attrs.get(name) ?? null,
+          removeAttribute: (name) => attrs.delete(name),
+          setAttribute: (name, value) => attrs.set(name, String(value)),
+        },
+      ]
+    }),
+  )
+  oneTime.checked = true
+  tabItems.get(oneTime).setAttribute('data-tab-filters-active', 'true')
+  projectRadios.forEach((radio) => {
+    radio.closest = (selector) =>
+      selector === '[data-tab-filters-item]' ? tabItems.get(radio) : null
+    radio.addEventListener('change', () => {
+      tabItems.forEach((item) => item.removeAttribute('data-tab-filters-active'))
+      const selected = projectRadios.find((candidate) => candidate.checked)
+      if (selected) tabItems.get(selected).setAttribute('data-tab-filters-active', 'true')
+    })
   })
   const fields = new Map([
     ['Category-option', category],
@@ -115,12 +145,12 @@ function opportunityForm(kind) {
     querySelector(selector) {
       if (selector === '[data-project-type="part-time"]') return partTimeGroup
       if (selector === '[name="Project-Type"]:checked')
-        return [partTime, fullTime].find((radio) => radio.checked) || null
+        return projectRadios.find((radio) => radio.checked) || null
       const name = /^\[name="([^"]+)"\]$/.exec(selector)
       return name ? fields.get(name[1]) || null : null
     },
     querySelectorAll(selector) {
-      return selector === '[name="Project-Type"]' ? [partTime, fullTime] : []
+      return selector === '[name="Project-Type"]' ? projectRadios : []
     },
     setAttribute(name, value) {
       this.attrs.set(name, String(value))
@@ -142,7 +172,17 @@ function opportunityForm(kind) {
         ? [form]
         : form.querySelectorAll(selector),
   }
-  return { category, estimatedHoursGroup, fields, form, fullTime, modal, partTime }
+  return {
+    category,
+    estimatedHoursGroup,
+    fields,
+    form,
+    fullTime,
+    modal,
+    oneTime,
+    partTime,
+    tabItems,
+  }
 }
 
 function loadOpportunityForms(pathname = '/all-modals') {
@@ -251,6 +291,11 @@ test('edit prefill sets weekly hours and restores conditional inline validation'
   const estimatedHours = edit.fields.get('Estimated-Hours')
   assert.equal(estimatedHours.value, '25 hrs/week')
   assert.equal(edit.partTime.checked, true)
+  assert.equal(edit.tabItems.get(edit.oneTime).getAttribute('data-tab-filters-active'), null)
+  assert.equal(
+    edit.tabItems.get(edit.partTime).getAttribute('data-tab-filters-active'),
+    'true',
+  )
   assert.equal(edit.estimatedHoursGroup.hidden, false)
   assert.equal(estimatedHours.required, true)
   assert.equal(estimatedHours.getAttribute('aria-required'), 'true')
@@ -287,7 +332,10 @@ test('opening the edit modal reapplies saved project type after the form-flow re
       list: { 'edit-flow': {} },
       reset() {
         edit.partTime.checked = false
-        edit.fullTime.checked = true
+        edit.fullTime.checked = false
+        edit.oneTime.checked = true
+        edit.tabItems.forEach((item) => item.removeAttribute('data-tab-filters-active'))
+        edit.tabItems.get(edit.oneTime).setAttribute('data-tab-filters-active', 'true')
       },
     },
   }
@@ -300,6 +348,11 @@ test('opening the edit modal reapplies saved project type after the form-flow re
 
   assert.equal(reads, 2)
   assert.equal(edit.partTime.checked, true)
+  assert.equal(edit.tabItems.get(edit.oneTime).getAttribute('data-tab-filters-active'), null)
+  assert.equal(
+    edit.tabItems.get(edit.partTime).getAttribute('data-tab-filters-active'),
+    'true',
+  )
   assert.equal(edit.fullTime.checked, false)
   assert.equal(edit.fields.get('Estimated-Hours').required, true)
   assert.equal(edit.estimatedHoursGroup.hidden, false)
