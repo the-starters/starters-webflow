@@ -1334,6 +1334,28 @@
     })
   }
 
+  // Paint the existing Webflow-authored opportunity review screen. Some
+  // modal instances predate the data-opp-bind contract and expose only an
+  // empty title span, so keep a narrow fallback without creating any markup.
+  function paintOpportunityReviewSuccess(done, title) {
+    if (!done) return
+    const opportunityTitle = title == null ? '' : String(title)
+    bind(done, 'title', opportunityTitle)
+    if (!$('[data-opp-bind="title"]', done)) {
+      const placeholder = $$('span', done).find((span) => span.textContent.trim() === '[Job Name]')
+      const heading = $('.heading-style-h1', done)
+      const emptyHeadingSpan =
+        heading && $$('span', heading).find((span) => !span.textContent.trim())
+      const titleSpan = placeholder || emptyHeadingSpan
+      if (titleSpan) titleSpan.textContent = opportunityTitle
+    }
+    const message = $('.text-size-medium', done)
+    if (message && /\bapplication\b/i.test(message.textContent)) {
+      message.textContent =
+        'Our team is carefully reviewing your opportunity. You will receive an update soon.'
+    }
+  }
+
   // Match the Webflow CMS `full-overview` projection used by Xano's
   // sync-webflow endpoint: escape the two editable source fields, preserve
   // their line breaks as <br>, then separate Requirements from Description
@@ -2518,14 +2540,7 @@
           const done =
             wrap && (wrap.querySelector('.create-opportunities_success') || wrap.querySelector('.w-form-done'))
           if (done) {
-            // Reuse the existing data-opp-bind grammar, scoped to the success
-            // block so it never touches card/detail [data-opp-bind="title"].
-            bind(done, 'title', payload.title || '')
-            // Fallback for the un-attributed "[Job Name]" placeholder span.
-            if (!$('[data-opp-bind="title"]', done)) {
-              const ph = [...done.querySelectorAll('span')].find((s) => s.textContent.trim() === '[Job Name]')
-              if (ph) ph.textContent = payload.title || ''
-            }
+            paintOpportunityReviewSuccess(done, payload.title)
             form.style.display = 'none'
             done.style.display = 'block'
             say('')
@@ -2758,6 +2773,10 @@
           const done = $('.w-form-done', modal)
           const fail = $('.w-form-fail', modal)
           if (form && done) {
+            paintOpportunityReviewSuccess(
+              done,
+              (updatedOpportunity && updatedOpportunity.title) || payload.title,
+            )
             if (fail) fail.style.display = 'none'
             form.style.display = 'none'
             done.style.display = 'block'
@@ -3370,6 +3389,7 @@
     syncMergedNavbarRole,
     activateDeferredFeed,
     paintOpportunityDetail,
+    paintOpportunityReviewSuccess,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,

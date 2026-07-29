@@ -24,6 +24,51 @@ test('ongoing part-time opportunities require and submit estimated weekly hours'
   assert.match(core, /setVal\(EST_HOURS_FIELD_NAME, o\.est_hours\)/)
 })
 
+test('opportunity review success binds the title and corrects application copy', () => {
+  const { window } = loadOpportunityForms()
+  const titleSpan = { textContent: '' }
+  const message = {
+    textContent:
+      'Our team is carefully examining your application. You will receive an update soon.',
+  }
+  const heading = {
+    querySelectorAll: (selector) => (selector === 'span' ? [titleSpan] : []),
+  }
+  const done = {
+    querySelector: (selector) => {
+      if (selector === '[data-opp-bind="title"]') return null
+      if (selector === '.heading-style-h1') return heading
+      if (selector === '.text-size-medium') return message
+      return null
+    },
+    querySelectorAll: () => [],
+  }
+
+  window.Opp30.paintOpportunityReviewSuccess(done, "Jai's Test Opportunity")
+
+  assert.equal(titleSpan.textContent, "Jai's Test Opportunity")
+  assert.equal(
+    message.textContent,
+    'Our team is carefully reviewing your opportunity. You will receive an update soon.',
+  )
+})
+
+test('opportunity review success paints a "[Job Name]" placeholder outside the heading', () => {
+  const { window } = loadOpportunityForms()
+  const placeholder = { textContent: '[Job Name]' }
+  const done = {
+    querySelector: (selector) => {
+      if (selector === '[data-opp-bind="title"]') return null
+      return null
+    },
+    querySelectorAll: (selector) => (selector === 'span' ? [placeholder] : []),
+  }
+
+  window.Opp30.paintOpportunityReviewSuccess(done, "Jai's Test Opportunity")
+
+  assert.equal(placeholder.textContent, "Jai's Test Opportunity")
+})
+
 test('standalone create controller delegates to the shared form and validation contract', () => {
   assert.match(standalone, /window\.Opp30\.prepareOpportunityCreateForms\(form\)/)
   assert.match(standalone, /window\.Opp30\.readOpportunityForm\(form\)/)

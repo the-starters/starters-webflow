@@ -51,7 +51,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`, diagnostics are opt-in through `starterQuizDebug`, and freelancer recommendations use the `Freelancers3.0-dev` Algolia index by default
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, maps ongoing Part Time estimated weekly hours through the existing Xano contract, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
 - `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations; brand-free lands on `/quiz` until the Memberstack `starter-quiz` field is set (quiz completed), then `/quiz-results`
 - `v3/talent-application.js` — `/freelancer-application/step-1` intake controller; suppresses the native Webflow/Zapier submission, posts `form[application-form]` to Xano, and continues successful applicants to step 2
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
@@ -188,6 +188,15 @@ authored default radio cannot replace the opportunity's current Project Type
 when the modal reopens. Project Type prefill also emits the native change event
 used by the authored tab controller, keeping its active pill and conditional
 panel aligned with the checked radio.
+
+After a successful create or edit, the controller paints the Webflow-authored
+review success screen in place; it binds only existing elements and generates no
+markup. It writes the saved opportunity title into the success block's
+`data-opp-bind="title"` element, falling back to an authored `[Job Name]`
+placeholder span or an empty span inside `.heading-style-h1` when that attribute
+is absent. It also rewrites the `.text-size-medium` confirmation message to
+opportunity-specific copy when the authored text still reads as application copy,
+so both flows read "Our team is carefully reviewing your opportunity."
 
 Keep `utils/wf-validate.js` on these forms. The controller registers the authored
 field through `window.WfValidate.refresh(form)`, so category and estimated-hours
