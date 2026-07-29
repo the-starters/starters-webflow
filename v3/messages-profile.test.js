@@ -532,17 +532,14 @@ test('Designer placeholder content is cleared when the chat mounts', async () =>
 
 /* ============================ gatekeeping ========================= */
 
-test('a logged-out visitor is sent to login and returns to an open modal', async () => {
+test('a logged-out visitor is sent to the quiz funnel', async () => {
   const loaded = load({ triggers: [starterTrigger()], member: null })
   await settle()
 
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(loaded.navigations, [
-    '/login?next=' +
-      encodeURIComponent('/hire/kaeser-valencerina?modal-id=' + MODAL_ID),
-  ])
+  assert.deepEqual(loaded.navigations, ['/quiz'])
   assert.equal(loaded.calls.mounted.length, 0)
 })
 
@@ -555,8 +552,7 @@ test('a logged-out click is intercepted before the modal can open', async () => 
 
   assert.equal(event.defaultPrevented, true)
   assert.equal(event.propagationStopped, true, 'modal.js must not see this click')
-  assert.equal(loaded.navigations.length, 1)
-  assert.match(loaded.navigations[0], /^\/login\?next=/)
+  assert.deepEqual(loaded.navigations, ['/quiz'])
 })
 
 test('a paid Brand click is taken over and opens the modal directly', async () => {
@@ -732,7 +728,7 @@ test('a free Brand click never opens the modal', async () => {
   assert.deepEqual(loaded.navigations, ['/pricing'])
 })
 
-test('with no upgrade target configured a free Brand falls back and warns', async () => {
+test('a free Brand who finished the quiz goes to /quiz-results', async () => {
   const loaded = load({
     triggers: [starterTrigger()],
     member: { id: VIEWER_ID },
@@ -745,7 +741,27 @@ test('with no upgrade target configured a free Brand falls back and warns', asyn
   await settle()
 
   assert.deepEqual(loaded.navigations, ['/quiz-results'])
-  assert.ok(loaded.warnings.some((line) => line.indexOf(UPGRADE_ATTRIBUTE) !== -1))
+  assert.equal(loaded.calls.mounted.length, 0)
+  assert.equal(
+    loaded.warnings.filter((w) => w.indexOf(UPGRADE_ATTRIBUTE) !== -1).length,
+    0,
+    'brandFreeHome is the intended default now, not a nagged-about fallback',
+  )
+})
+
+test('a free Brand who has not finished the quiz goes to /quiz', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: { id: VIEWER_ID },
+    role: 'brand-free',
+    brandFreeHome: '/quiz',
+  })
+  await settle()
+
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(loaded.navigations, ['/quiz'])
 })
 
 test('talent gets the modal closed rather than a chat', async () => {

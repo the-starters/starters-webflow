@@ -270,8 +270,8 @@ There the match is the wrapping DIV, so the inner anchor's href wins and the pag
 navigates away while the modal is still opening. Because this module takes the
 click instead, `data-modal-trigger` is optional and the identity attributes may
 sit on either the wrapper or the anchor; put them wherever is convenient in the
-Designer. It still listens for modal.js's `modal-open` event so the `?modal-id=`
-post-login return mounts with no click involved. Load the modal embed as usual,
+Designer. It still listens for modal.js's `modal-open` event, and a
+`?modal-id=<id>` URL mounts the chat with no click involved. Load the modal embed as usual,
 and load `route-guard.js` too if you want the role rules to apply, since the role
 comes from `StartersV3RouteGuard.memberRole`.
 
@@ -327,8 +327,8 @@ Who gets through:
 
 | viewer | outcome |
 | --- | --- |
-| logged out | `/login?next=/hire/<slug>?modal-id=<id>`, returning to an open modal |
-| free Brand | `messages-profile-upgrade`, else the member's route-guard home |
+| logged out | `/quiz` — the signup funnel; the chat intent is intentionally dropped, there is no login round trip back to the modal |
+| free Brand | `messages-profile-upgrade` when set, else route-guard's `brandFreeHome`: `/quiz-results` once the Memberstack `starter-quiz` field records completion, `/quiz` until then |
 | talent | trigger hidden; modal closes if opened anyway |
 | viewer is this starter | trigger hidden; modal closes if opened anyway |
 | paid Brand | the chat |
