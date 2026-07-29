@@ -46,7 +46,12 @@ module updates existing forms through their canonical Memberstack attributes;
 it never generates form or link markup.
 
 Until both native login choices are present, a direct visit with no origin uses
-the neutral homepage fallback instead of silently favoring Brand or Talent.
+the neutral homepage fallback instead of silently favoring Brand or Talent. The
+fallback points the link at `/` and sets an `aria-label` of `Return to
+homepage`. On a Webflow native button (an anchor inside `.button_main-wrap`) it
+rewrites the sibling `.button_main-text` label so the visible text changes
+without inserting overlapping overlay text; otherwise it updates the link's own
+text.
 
 Run its focused tests with:
 
