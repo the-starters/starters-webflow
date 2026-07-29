@@ -124,8 +124,20 @@
  *     Counters and the submit-disable state are recomputed on the next tick,
  *     because a `reset` event fires BEFORE the browser reverts the values
  *   - submit-disable state is recomputed silently (no painting, nothing marked
- *     touched) at bind time, on every input/change/focusout, inside every
- *     validateAll (so both gates and the API refresh it), and after a reset
+ *     touched) at bind time, on every input/change/focusin/focusout, inside
+ *     every validateAll (so both gates and the API refresh it), after a reset,
+ *     and when a <dialog> (or popover) containing the form opens. That last one
+ *     matters: a form bound while its dialog was closed measured every field as
+ *     unrendered, so it counted as complete and its submitter was left looking
+ *     enabled — and opening a dialog fires no input/change/focusout, so the
+ *     stale look survived until the first interaction. The `toggle` event is the
+ *     moment those measurements become real, so the state (and the counters,
+ *     computed from the same hidden fields) is recomputed there
+ *   - remaining stale-look limitation: a form revealed by programmatic
+ *     show/hide that is neither a dialog/popover toggle nor accompanied by an
+ *     event (a tab or wizard step swapped by a class change) still shows a stale
+ *     submitter until the first focusin, input or click — each of which
+ *     self-heals it. The GATE is never stale: it recomputes on every attempt
  *
  * Accessibility: error slots get role="alert"; fields get aria-invalid and
  * aria-describedby pointing at their error slot.
@@ -448,6 +460,11 @@
       form.addEventListener('input', (e) => this.onInput(e))
       form.addEventListener('change', (e) => this.onInput(e))
       form.addEventListener('reset', () => this.onReset())
+      // cheap, silent backstop for reveal patterns that fire no other event
+      // (tabs, wizard steps, a class-swapped panel): the instant the user enters
+      // any field, the fields are certainly rendered, so re-measure completeness.
+      // Nothing is painted and nothing is marked touched, so it can't punish early
+      form.addEventListener('focusin', () => this.applySubmitState())
       // submit interception happens at document capture (see below), so it
       // wins regardless of what order page controllers were bound in
 
@@ -707,6 +724,21 @@
       }, 0)
     }
 
+    /**
+     * The form just became visible (its <dialog>/popover opened). Everything
+     * measured while it was hidden was measured wrong: isActive() reads
+     * getClientRects(), which is empty for display:none fields, so every field
+     * was skipped and the form looked complete. Re-measure now that layout is
+     * real — the submit state, and the counters that were rendered from the same
+     * hidden fields. Silent, like every other recompute: no painting, nothing
+     * marked touched, so a freshly opened form never greets the user with errors.
+     * @returns {void}
+     */
+    onReveal() {
+      this.groups.forEach((group) => this.updateCount(group))
+      this.applySubmitState()
+    }
+
     /** @returns {boolean} whether the whole form is valid */
     validateAll() {
       let valid = true
@@ -782,6 +814,47 @@
         : /** @type {HTMLFormElement | null} */ (el.closest('form'))
       const validator = form && bound.get(form)
       if (validator) gateEvent(validator, e)
+    },
+    true,
+  )
+
+  /**
+   * Dialog / popover open. A form bound inside a closed <dialog> was measured
+   * while display:none, so every field was skipped as unrendered and the form
+   * computed as complete — leaving the submitter looking enabled on a form that
+   * is actually empty. Opening a dialog fires no input/change/focusout, so that
+   * stale look used to survive until the first interaction.
+   *
+   * ToggleEvent does NOT bubble, so this listens at document with capture (the
+   * only phase that reaches a non-bubbling event on a descendant). Popovers and
+   * <details> fire the same event and get the same treatment for free — a form
+   * inside a collapsed <details> was measured while hidden in exactly the same
+   * way, so recomputing when it expands is right, not incidental. Recompute is
+   * synchronous: `toggle` is already dispatched in a task queued AFTER the open
+   * state was applied, and getClientRects() forces layout on demand, so the
+   * measurements are real here — while deferring to setTimeout(0) (the trick
+   * onReset needs, because `reset` genuinely fires before values revert) would
+   * hand the browser a chance to paint one frame of the wrong, enabled-looking
+   * button. Browsers with no dialog ToggleEvent simply never fire this and fall
+   * back to the previous behavior: the gate still blocks, and the look self-heals
+   * on the first focusin/input/click.
+   */
+  document.addEventListener(
+    'toggle',
+    (e) => {
+      // older ToggleEvent shapes carry no newState — treat anything but an
+      // explicit "open" as not-open, so a close never triggers work
+      if (/** @type {{newState?: string}} */ (e).newState !== 'open') return
+      const host = e.target instanceof Element ? e.target : null
+      if (!host) return
+      // `bound` is a WeakMap (not enumerable), so walk the revealed subtree and
+      // ask it about each form found — including the host itself
+      const forms = Array.from(host.querySelectorAll('form'))
+      if (host.tagName === 'FORM') forms.unshift(/** @type {HTMLFormElement} */ (host))
+      forms.forEach((form) => {
+        const validator = bound.get(form)
+        if (validator) validator.onReveal()
+      })
     },
     true,
   )

@@ -589,6 +589,18 @@ blocks invalid submits before Webflow's handler or page controllers see them.
   attributes never restore the wrong one.
 - Resetting a form clears its validation state; counters and the submit-disable
   state are recomputed on the next tick, since `reset` fires before values revert.
+- A form inside a closed `<dialog>` is `display:none` at bind time, so every field
+  measures as unrendered and gets skipped — the form would count as complete and
+  its submitter would open looking enabled. The script listens for the `toggle`
+  event at document capture (it does not bubble) and recomputes the submit-disable
+  state plus the counters the moment a dialog, popover or `<details>` containing a
+  bound form opens, so a gated modal opens correctly disabled with no interaction
+  (a form inside a collapsed `<details>` was mismeasured the same way). Browsers
+  too old to fire a dialog `ToggleEvent` fall back to the previous behavior: the
+  gate still blocks, and the look self-heals on the first focusin, input or click
+  (a `focusin` listener on every bound form is the backstop for reveal patterns
+  that fire no event at all, such as tabs or wizard steps swapped by a class).
+  Only a programmatic show/hide that is neither of those still looks stale.
 - Call `window.WfValidate.refresh(form)` after injecting controls into an
   already-bound form. It adds only new controls, preserves existing groups and
   touched/error state, and recomputes submit-disable state without duplicating

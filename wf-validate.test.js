@@ -188,8 +188,13 @@ class Element {
 /** @returns {Element} */
 const h = (tag, attrs, children) => new Element(tag, attrs || {}, children || [])
 
-function makeEvent(type, target) {
-  return {
+/**
+ * @param {string} type
+ * @param {Element} target
+ * @param {object} [extra] extra event properties (e.g. ToggleEvent's newState)
+ */
+function makeEvent(type, target, extra) {
+  return Object.assign({
     type,
     target,
     defaultPrevented: false,
@@ -200,7 +205,7 @@ function makeEvent(type, target) {
     stopImmediatePropagation() {
       this.stopped = true
     },
-  }
+  }, extra || {})
 }
 
 /**
@@ -241,9 +246,9 @@ function mount(root, options = {}) {
     ;(el._listeners.get(type) || []).forEach((listener) => listener(event))
     return event
   }
-  /** fire the document-capture gates */
-  const fireDocument = (type, target) => {
-    const event = makeEvent(type, target)
+  /** fire the document-capture listeners (submit / click gates, dialog toggle) */
+  const fireDocument = (type, target, extra) => {
+    const event = makeEvent(type, target, extra)
     ;(documentListeners.get(type) || []).forEach((listener) => listener(event))
     return event
   }
@@ -733,4 +738,162 @@ test('prefers-reduced-motion makes the scroll instant', () => {
   assert.equal(f.short.scrollCalls.length, 1)
   assert.equal(f.short.scrollCalls[0].behavior, 'auto')
   assert.equal(f.short.scrollCalls[0].block, 'center')
+})
+
+// ---------------------------------------------------------------------------
+// 6. reveal recomputes: dialog toggle + focusin
+//
+// A form bound inside a closed <dialog> is display:none, so every field measures
+// as unrendered and is skipped: the empty form computes as COMPLETE and its
+// submitter is left looking enabled. Opening the dialog fires no
+// input/change/focusout, so that wrong look used to survive until the first
+// interaction. `rendered = false` on the stub's fields is the closed dialog.
+// ---------------------------------------------------------------------------
+
+/** A gated form living inside a <dialog>, themed off data-button-theme. */
+function dialogFixture() {
+  const email = h('input', { name: 'Email', type: 'email', required: '', maxlength: '80' })
+  const error = h('div', { 'wf-validate-element': 'error' })
+  const count = h('div', { 'wf-validate-element': 'count' })
+  const submit = h('button', { type: 'submit', 'data-button-theme': 'black' })
+  const form = h(
+    'form',
+    { 'wf-validate-element': 'form', 'wf-validate-submit-disable': 'data-button-theme' },
+    [h('div', {}, [email, error, count]), submit],
+  )
+  const dialog = h('dialog', {}, [form])
+  return { email, error, count, submit, form, dialog, root: h('body', {}, [dialog]) }
+}
+
+const themeDisabled = (el) =>
+  el.classList.contains(DISABLED) &&
+  el.getAttribute('aria-disabled') === 'true' &&
+  el.getAttribute('data-button-theme') === 'disabled'
+
+test('dialog toggle: opening the dialog flips the wrongly-enabled submitter to disabled', () => {
+  const f = dialogFixture()
+  f.email.rendered = false // closed dialog: display:none, no client rects
+  const app = mount(f.root)
+
+  // the bug this exists to fix: nothing was measurable, so the empty required
+  // form counted as complete and the submitter kept its authored look
+  assert.equal(isEnabled(f.submit), true, 'bound while hidden -> looks complete')
+  assert.equal(f.submit.getAttribute('data-button-theme'), 'black')
+
+  // dialog.showModal(): layout is real now, but no input/change/focusout fires
+  f.email.rendered = true
+  app.fireDocument('toggle', f.dialog, { newState: 'open' })
+
+  assert.equal(themeDisabled(f.submit), true, 'recomputed at open, before any interaction')
+})
+
+test('dialog toggle: the open recompute is silent — nothing painted, nothing touched', () => {
+  const f = dialogFixture()
+  f.email.rendered = false
+  const app = mount(f.root)
+
+  f.email.rendered = true
+  app.fireDocument('toggle', f.dialog, { newState: 'open' })
+
+  assert.equal(f.email.classList.contains(INVALID), false, 'a freshly opened modal shows no errors')
+  assert.equal(f.email.getAttribute('aria-invalid'), null)
+  assert.equal(f.error.style.display, 'none')
+  assert.equal(f.form.classList.contains(INVALID), false)
+
+  // ...and the user still earns the error the normal way
+  app.fire(f.form, 'focusout', f.email)
+  assert.equal(f.email.classList.contains(INVALID), true)
+  assert.equal(f.error.style.display, '')
+})
+
+test('dialog toggle: counters are refreshed in the same pass', () => {
+  const f = dialogFixture()
+  f.email.rendered = false
+  const app = mount(f.root)
+  assert.equal(f.count.textContent, '0 / 80')
+
+  // a value put there while the dialog was closed (draft restore, prefill) fires
+  // no input event, so the counter text is stale until the open recompute
+  f.email.value = 'hi@example.com'
+  f.email.rendered = true
+  assert.equal(f.count.textContent, '0 / 80', 'still stale — nothing has run')
+
+  app.fireDocument('toggle', f.dialog, { newState: 'open' })
+  assert.equal(f.count.textContent, '14 / 80')
+})
+
+test('dialog toggle: a close, or a ToggleEvent with no newState, recomputes nothing', () => {
+  const f = dialogFixture()
+  f.email.rendered = false
+  const app = mount(f.root)
+  assert.equal(isEnabled(f.submit), true)
+
+  f.email.rendered = true
+  app.fireDocument('toggle', f.dialog, { newState: 'closed' })
+  assert.equal(isEnabled(f.submit), true, 'closing is not a reveal')
+
+  app.fireDocument('toggle', f.dialog) // older ToggleEvent shape: no newState
+  assert.equal(isEnabled(f.submit), true, 'a missing newState is treated as not-open')
+
+  // and the real open still works after both no-ops
+  app.fireDocument('toggle', f.dialog, { newState: 'open' })
+  assert.equal(themeDisabled(f.submit), true)
+})
+
+test('dialog toggle: the toggling element may itself be the bound form (popover form)', () => {
+  const f = dialogFixture()
+  f.email.rendered = false
+  const app = mount(f.root)
+
+  // the popover/dialog attribute sits on the <form> itself, so the event target
+  // IS the bound form rather than an ancestor of it
+  f.email.rendered = true
+  app.fireDocument('toggle', f.form, { newState: 'open' })
+
+  assert.equal(themeDisabled(f.submit), true)
+})
+
+test('dialog toggle: an unbound form inside the revealed subtree is left alone', () => {
+  const f = dialogFixture()
+  f.email.rendered = false
+  const app = mount(f.root)
+
+  const stray = h('form', {}, [h('input', { name: 'Stray', required: '' })])
+  f.dialog.append(stray)
+
+  f.email.rendered = true
+  app.fireDocument('toggle', f.dialog, { newState: 'open' })
+
+  assert.equal(themeDisabled(f.submit), true, 'the bound form still recomputed')
+  assert.equal(stray.noValidate, false, 'the unbound one was never bound or touched')
+})
+
+test('focusin: entering a field recomputes state for reveals that fire no other event', () => {
+  const f = submitDisableFixture()
+  f.email.rendered = false // a class-swapped tab/step panel, not a dialog
+  const app = mount(f.root)
+  assert.equal(isEnabled(f.themed), true, 'measured while hidden -> looks complete')
+
+  // the panel is shown by a class change (no event the script can hear); the
+  // first focusin is the backstop
+  f.email.rendered = true
+  app.fire(f.form, 'focusin', f.email)
+
+  assert.equal(isDisabled(f.themed), true)
+  assert.equal(isDisabled(f.outside), true, 'external marked submitter too')
+  assert.equal(f.email.classList.contains(INVALID), false, 'focusin never paints')
+  assert.equal(f.error.style.display, 'none')
+})
+
+test('focusin: entering a field on a complete form leaves the submitter enabled', () => {
+  const f = submitDisableFixture()
+  const app = mount(f.root)
+
+  f.email.value = 'hi@example.com'
+  app.fire(f.form, 'input', f.email)
+  assert.equal(isEnabled(f.themed), true)
+
+  app.fire(f.form, 'focusin', f.email)
+  assert.equal(isEnabled(f.themed), true, 'no flicker back to disabled')
+  assert.equal(f.themed.getAttribute('data-theme'), 'primary')
 })
