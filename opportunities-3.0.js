@@ -391,6 +391,9 @@
   const EST_HOURS_FIELD_NAME = 'Estimated-Hours'
   const CATEGORY_REQUIRED_MESSAGE = 'Please select at least one category.'
   const EST_HOURS_REQUIRED_MESSAGE = 'Please enter the estimated hours per week.'
+  const OPPORTUNITY_TITLE_MAX_CHARS = 120
+  const OPPORTUNITY_TITLE_MAX_CHARS_MESSAGE =
+    'Please keep the title to 120 characters or fewer.'
 
   function parseStoredCategories(input) {
     try {
@@ -668,6 +671,15 @@
       ),
     )
     Array.from(new Set(forms)).forEach((form) => {
+      const titleInput = $('[name="Opportunity-title"]', form)
+      if (titleInput) {
+        titleInput.setAttribute('maxlength', String(OPPORTUNITY_TITLE_MAX_CHARS))
+        titleInput.setAttribute(
+          'wf-validate-message-maxlength',
+          OPPORTUNITY_TITLE_MAX_CHARS_MESSAGE,
+        )
+      }
+
       const categoryInput = $('[name="Category-option"]', form)
       if (categoryInput) {
         categoryInput.setAttribute('aria-required', 'true')
@@ -705,6 +717,8 @@
 
   function validateOpportunityPayload(payload) {
     if (!payload.title) return 'Please enter an opportunity title.'
+    if (payload.title.length > OPPORTUNITY_TITLE_MAX_CHARS)
+      return OPPORTUNITY_TITLE_MAX_CHARS_MESSAGE
     if (!payload.description) return 'Please enter an opportunity description.'
     if (!payload.exp_requirements) return 'Please enter the experience requirements.'
     if (!payload.role_names || !payload.role_names.length) return 'Please select at least one category.'
