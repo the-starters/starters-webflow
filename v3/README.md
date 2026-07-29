@@ -184,7 +184,9 @@ controller then combines saved Memberstack answers with any homepage-bucket
 selections. See `quiz-main/README.md` for plan scope and page-controller
 wiring. When `/quiz-results` has no test,
 pending, or saved quiz data, its page controller returns a positively identified
-logged-out visitor to `/quiz`; pending pre-signup quizzes and Memberstack
+logged-out visitor to `/quiz` and sends an authenticated member whose completion
+marker outlived missing or malformed member JSON to
+`/quiz?retake=true&quizDataMissing=1`; pending pre-signup quizzes and Memberstack
 failures do not redirect. `/all-starters` still awaits product confirmation that
 it is not a pre-signup funnel page.
 
