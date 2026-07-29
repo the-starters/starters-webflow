@@ -1,5 +1,56 @@
 # V3 browser scripts
 
+## Shared password recovery
+
+`password-recovery.js` consolidates the Brand and Talent password-recovery
+routes onto one canonical Memberstack flow:
+
+```text
+/forgot-password -> /reset-password -> /password-success
+```
+
+Install it once in the V3 site head, before Memberstack form initialization:
+
+```html
+<script
+  defer
+  src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/password-recovery.js"
+></script>
+```
+
+The module is inert outside the V3 staging hostname and production domains. It
+owns these compatibility redirects while preserving the original query string,
+reset token, encoding, and hash:
+
+| legacy path                  | canonical path      | origin |
+| ---------------------------- | ------------------- | ------ |
+| `/starters-forgot-password`  | `/forgot-password`  | Talent |
+| `/starters-reset-password`   | `/reset-password`   | Talent |
+| `/starters-password-success` | `/password-success` | Talent |
+| `/starter-password-success`  | `/password-success` | Talent |
+| `/password-sucess`           | `/password-success` | Brand  |
+
+The login pages should link to `/forgot-password?from=brand` and
+`/forgot-password?from=talent`. On the canonical recovery pages, author both
+login choices as native Webflow links:
+
+```html
+<a href="/login" data-password-recovery-login="brand">Brand login</a>
+<a href="/starter-login" data-password-recovery-login="talent">Talent login</a>
+```
+
+When origin is known, the other choice is hidden. When a reset email is opened
+without origin context, both remain visible. Add
+`data-password-recovery-retry` to any native “Different email?” link. The
+module updates existing forms through their canonical Memberstack attributes;
+it never generates form or link markup.
+
+Run its focused tests with:
+
+```sh
+node --test v3/password-recovery.test.js
+```
+
 ## Login router
 
 `auth-route.js` owns post-login and post-signup routing for V3 without changing
