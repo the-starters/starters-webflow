@@ -131,7 +131,12 @@ function opportunityForm(kind) {
   }
   const modal = {
     matches: (selector) => selector === '[data-modal-target="edit-opportunity"]',
-    querySelector: (selector) => (selector === 'form' ? form : form.querySelector(selector)),
+    querySelector: (selector) => {
+      if (selector === 'form') return form
+      if (selector === '[data-form-flow]')
+        return { getAttribute: (name) => (name === 'data-form-flow' ? 'edit-flow' : null) }
+      return form.querySelector(selector)
+    },
     querySelectorAll: (selector) =>
       selector === '[data-opp-form="create"], [data-modal-target="edit-opportunity"] form'
         ? [form]
@@ -140,10 +145,11 @@ function opportunityForm(kind) {
   return { category, estimatedHoursGroup, fields, form, fullTime, modal, partTime }
 }
 
-function loadOpportunityForms() {
+function loadOpportunityForms(pathname = '/all-modals') {
   const create = opportunityForm('create')
   const edit = opportunityForm('edit')
   const refreshed = []
+  const windowListeners = new Map()
   const documentElement = {
     appendChild() {},
     getAttribute: () => null,
@@ -167,10 +173,16 @@ function loadOpportunityForms() {
   }
   const window = {
     WfValidate: { refresh: (form) => refreshed.push(form) },
-    addEventListener() {},
+    addEventListener(type, listener) {
+      const listeners = windowListeners.get(type) || []
+      listeners.push(listener)
+      windowListeners.set(type, listeners)
+    },
     clearInterval,
     clearTimeout,
-    dispatchEvent() {},
+    dispatchEvent(event) {
+      for (const listener of windowListeners.get(event.type) || []) listener(event)
+    },
     setInterval,
     setTimeout,
   }
@@ -205,7 +217,7 @@ function loadOpportunityForms() {
     location: {
       href: 'https://example.test/all-modals',
       hostname: 'example.test',
-      pathname: '/all-modals',
+      pathname,
       search: '',
     },
     window,
@@ -254,4 +266,41 @@ test('edit prefill sets weekly hours and restores conditional inline validation'
   assert.equal(estimatedHours.required, false)
   assert.equal(estimatedHours.getAttribute('aria-required'), 'false')
   assert.equal(edit.estimatedHoursGroup.hidden, true)
+})
+
+test('opening the edit modal reapplies saved project type after the form-flow reset', async () => {
+  const { edit, window } = loadOpportunityForms('/opportunities/42')
+  let reads = 0
+  window.Opp30.API.brandOppGet = async () => {
+    reads += 1
+    return {
+      budget: '2000',
+      category_names: [],
+      est_hours: '25 hrs/week',
+      est_project_duration: '3 months',
+      project_type: 'Ongoing Part Time',
+      status: 'Active',
+    }
+  }
+  window.lumos = {
+    formFlow: {
+      list: { 'edit-flow': {} },
+      reset() {
+        edit.partTime.checked = false
+        edit.fullTime.checked = true
+      },
+    },
+  }
+
+  await window.Opp30.prefillEditOpportunity(42)
+  assert.equal(edit.partTime.checked, true)
+
+  window.dispatchEvent({ type: 'modal-open', detail: { modal: edit.modal } })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(reads, 2)
+  assert.equal(edit.partTime.checked, true)
+  assert.equal(edit.fullTime.checked, false)
+  assert.equal(edit.fields.get('Estimated-Hours').required, true)
+  assert.equal(edit.estimatedHoursGroup.hidden, false)
 })

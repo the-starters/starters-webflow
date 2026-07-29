@@ -2659,6 +2659,21 @@
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
     if (flowId && ff && ff.list && ff.list[flowId]) ff.reset(flowId)
+    // Edit-opportunity values are initially prefetched while the detail page
+    // loads. Lumos then restores the Webflow-authored form defaults whenever
+    // the modal opens, which can overwrite the native checked Project-Type
+    // radio after its visual class was already painted. Refresh the live
+    // opportunity after that synchronous reset so the native control, its
+    // Webflow visual state, conditional hours field, and submitted payload all
+    // agree. This only binds existing Designer markup.
+    const editOppId = activeOpp || pageOppId()
+    if (
+      modal &&
+      editOppId &&
+      modal.matches &&
+      modal.matches('[data-modal-target="edit-opportunity"]')
+    )
+      void prefillEditOpportunity(editOppId)
     // The withdraw modal's nav header lives OUTSIDE the form-flow steps (the
     // shared modal_nav bar), so the flow reset above can't rewind it. Its two
     // title variants follow the data-opp-state contract (like the close
