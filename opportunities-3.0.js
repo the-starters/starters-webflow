@@ -1342,13 +1342,11 @@
     const opportunityTitle = title == null ? '' : String(title)
     bind(done, 'title', opportunityTitle)
     if (!$('[data-opp-bind="title"]', done)) {
+      const placeholder = $$('span', done).find((span) => span.textContent.trim() === '[Job Name]')
       const heading = $('.heading-style-h1', done)
-      const titleSpan =
-        heading &&
-        [...heading.querySelectorAll('span')].find((span) => {
-          const text = span.textContent.trim()
-          return !text || text === '[Job Name]'
-        })
+      const emptyHeadingSpan =
+        heading && $$('span', heading).find((span) => !span.textContent.trim())
+      const titleSpan = placeholder || emptyHeadingSpan
       if (titleSpan) titleSpan.textContent = opportunityTitle
     }
     const message = $('.text-size-medium', done)

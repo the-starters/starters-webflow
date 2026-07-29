@@ -53,6 +53,22 @@ test('opportunity review success binds the title and corrects application copy',
   )
 })
 
+test('opportunity review success paints a "[Job Name]" placeholder outside the heading', () => {
+  const { window } = loadOpportunityForms()
+  const placeholder = { textContent: '[Job Name]' }
+  const done = {
+    querySelector: (selector) => {
+      if (selector === '[data-opp-bind="title"]') return null
+      return null
+    },
+    querySelectorAll: (selector) => (selector === 'span' ? [placeholder] : []),
+  }
+
+  window.Opp30.paintOpportunityReviewSuccess(done, "Jai's Test Opportunity")
+
+  assert.equal(placeholder.textContent, "Jai's Test Opportunity")
+})
+
 test('standalone create controller delegates to the shared form and validation contract', () => {
   assert.match(standalone, /window\.Opp30\.prepareOpportunityCreateForms\(form\)/)
   assert.match(standalone, /window\.Opp30\.readOpportunityForm\(form\)/)
