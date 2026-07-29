@@ -55,12 +55,17 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 | `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
 
 > **Logged-out Quiz Results (updated 2026-07-24):** `/quiz-results` remains
-> outside `route-guard.js`, but `quiz-results.js` redirects a logged-out visitor
-> to `/quiz` when there is no test payload, pending quiz in `sessionStorage`, or
-> saved Memberstack quiz to display. It redirects only after Memberstack
-> positively reports no current member; if Memberstack is unavailable or errors,
-> the visitor stays on the page. Pre-signup visitors with a pending quiz and
-> test-mode previews are unaffected.
+> outside `route-guard.js`, but `quiz-results.js` redirects a positively
+> resolved visitor to the quiz when there is no test payload, pending quiz in
+> `sessionStorage`, or saved Memberstack quiz to display. A logged-out visitor
+> goes to `/quiz`; an authenticated member whose `starter-quiz` completion
+> marker outlived missing or malformed member JSON is sent to
+> `/quiz?retake=true&quizDataMissing=1` so they retake instead of landing on an
+> empty page, while an authenticated member with no completion marker starts
+> `/quiz` normally. It redirects only after Memberstack positively reports
+> member state; if Memberstack is unavailable or errors, the visitor stays on
+> the page. Pre-signup visitors with a pending quiz and test-mode previews are
+> unaffected.
 
 > **Quiz entry controller (updated 2026-07-25):** `/quiz` remains outside
 > `route-guard.js`, but `quiz-main/quiz-redirect.js` redirects an active
