@@ -121,6 +121,10 @@ class FakeControl {
 }
 
 function opportunityForm(kind) {
+  const title = new FakeControl({
+    name: 'Opportunity-title',
+    'wf-validate-maxwords': '15',
+  })
   const category = new FakeControl({ name: 'Category-option' })
   const budget = new FakeControl({ name: 'Part-Time-Budget' })
   const estimatedHoursGroup = { hidden: false }
@@ -168,6 +172,7 @@ function opportunityForm(kind) {
     })
   })
   const fields = new Map([
+    ['Opportunity-title', title],
     ['Category-option', category],
     ['Part-Time-Budget', budget],
     ['Estimated-Hours', estimatedHours],
@@ -318,6 +323,27 @@ test('create and edit forms bind Webflow-authored estimated hours without genera
   assert.equal(create.estimatedHoursGroup.hidden, true)
   assert.equal(edit.estimatedHoursGroup.hidden, true)
   assert.deepEqual(refreshed, [create.form, edit.form])
+})
+
+test('create and edit titles keep the 15-word rule and add a 120-character backstop', () => {
+  const { create, edit, window } = loadOpportunityForms()
+
+  for (const opportunity of [create, edit]) {
+    const title = opportunity.fields.get('Opportunity-title')
+    assert.equal(title.getAttribute('maxlength'), '120')
+    assert.equal(title.getAttribute('wf-validate-maxwords'), '15')
+    assert.equal(
+      title.getAttribute('wf-validate-message-maxlength'),
+      'Please keep the title to 120 characters or fewer.',
+    )
+  }
+
+  assert.equal(
+    window.Opp30.validateOpportunityPayload({
+      title: 'x'.repeat(121),
+    }),
+    'Please keep the title to 120 characters or fewer.',
+  )
 })
 
 test('edit prefill sets weekly hours and restores conditional inline validation', async () => {
