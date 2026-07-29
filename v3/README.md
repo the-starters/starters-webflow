@@ -45,6 +45,9 @@ without origin context, both remain visible. Add
 module updates existing forms through their canonical Memberstack attributes;
 it never generates form or link markup.
 
+Until both native login choices are present, a direct visit with no origin uses
+the neutral homepage fallback instead of silently favoring Brand or Talent.
+
 Run its focused tests with:
 
 ```sh

@@ -8,6 +8,7 @@ const source = fs.readFileSync(require.resolve('./password-recovery.js'), 'utf8'
 function element(attributes = {}) {
   const own = Object.assign({}, attributes)
   return {
+    textContent: '',
     getAttribute(name) {
       return Object.prototype.hasOwnProperty.call(own, name) ? own[name] : null
     },
@@ -257,6 +258,18 @@ test('compatibility fallback rewrites existing login links for a known origin', 
 
   assert.equal(brandLink.getAttribute('href'), '/starter-login')
   assert.equal(talentLink.getAttribute('href'), '/starter-login')
+})
+
+test('compatibility fallback is neutral when origin is unavailable', () => {
+  const loginLink = element({ href: '/login' })
+  const selector = 'a[href="/login"], a[href="/starter-login"]'
+  load({
+    pathname: '/password-success',
+    selectors: { [selector]: [loginLink] },
+  })
+
+  assert.equal(loginLink.getAttribute('href'), '/')
+  assert.equal(loginLink.textContent, 'Return to homepage')
 })
 
 test('retry links return to canonical forgot page with origin', () => {
