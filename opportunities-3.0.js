@@ -2308,15 +2308,23 @@
     setVal(budgetField, o.budget)
     // Check the matching radio (value === current) and mirror Webflow's
     // visual class so the pre-selection shows when the modal opens.
-    const checkRadio = (name, current) =>
+    const checkRadio = (name, current, notify = false) => {
+      let selected = null
       $$(`[name="${name}"]`, modal).forEach((el) => {
         const on = el.value === current
         el.checked = on
+        if (on) selected = el
         el.classList.toggle('w--redirected-checked', on)
         const vis = el.parentElement && el.parentElement.querySelector('.w-radio-input')
         if (vis) vis.classList.toggle('w--redirected-checked', on)
       })
-    checkRadio('Project-Type', o.project_type)
+      // The authored Project Type tab controller listens for a native change
+      // event to move data-tab-filters-active and reveal the matching
+      // data-project-type panel. Assignment alone checks the real radio but
+      // leaves the default One Time pill and panel visually active.
+      if (notify && selected) selected.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    checkRadio('Project-Type', o.project_type, true)
     checkRadio('Duration', o.est_project_duration)
     syncOpportunityEstimatedHours(modal)
   }

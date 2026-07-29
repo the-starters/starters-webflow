@@ -185,7 +185,9 @@ Create and update requests send the input's trimmed value as the existing Xano
 requests send an empty `est_hours` value and do not require the field.
 The edit modal refreshes its saved values after each form-flow reset so Webflow's
 authored default radio cannot replace the opportunity's current Project Type
-when the modal reopens.
+when the modal reopens. Project Type prefill also emits the native change event
+used by the authored tab controller, keeping its active pill and conditional
+panel aligned with the checked radio.
 
 Keep `utils/wf-validate.js` on these forms. The controller registers the authored
 field through `window.WfValidate.refresh(form)`, so category and estimated-hours
