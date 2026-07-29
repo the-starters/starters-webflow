@@ -76,6 +76,85 @@ function getMainSavedIdNormalizer() {
     )
 }
 
+function runMainSubcategoryRestore({ subcategoryItems, categoryInputs, savedSubcategoryIds }) {
+    const getCheckboxInputSource = sliceSource(
+        mainSource,
+        'function getCheckboxInput(item)',
+        '/**\n     * Subcategory checkbox inputs',
+    )
+    const setWebflowCheckboxStateSource = sliceSource(
+        mainSource,
+        'function setWebflowCheckboxState(input, checked)',
+        '/**\n     * Switches the start heading',
+    )
+    const getSubcategoryCategoryIdSource = sliceSource(
+        mainSource,
+        'function getSubcategoryCategoryId(item)',
+        '/**\n     * Gets the readable label',
+    )
+    const getCheckboxLabelSource = sliceSource(
+        mainSource,
+        'function getCheckboxLabel(input)',
+        '/**\n     * Reads selected categories',
+    )
+    const restoreLoopSource = sliceSource(
+        mainSource,
+        'subcategoryItems.forEach((item) => {',
+        'if (!restoredInputCount) {',
+    )
+
+    const sandbox = { subcategoryItems, categoryInputs, savedSubcategoryIds }
+
+    vm.runInNewContext(
+        [
+            "function normalize(value) { return String(value || '').trim() }",
+            getCheckboxInputSource,
+            setWebflowCheckboxStateSource,
+            getSubcategoryCategoryIdSource,
+            getCheckboxLabelSource,
+            'let restoredInputCount = 0',
+            'const restoredParentCategoryIds = new Set()',
+            restoreLoopSource,
+            'globalThis.__restoreResult = {',
+            '  restoredInputCount,',
+            '  restoredParentCategoryIds: Array.from(restoredParentCategoryIds),',
+            '}',
+        ].join('\n'),
+        sandbox,
+    )
+
+    return sandbox.__restoreResult
+}
+
+function makeCheckboxInput(id) {
+    return {
+        id,
+        value: id,
+        checked: false,
+        matches(selector) {
+            return selector === 'input[type="checkbox"]'
+        },
+        closest() {
+            return null
+        },
+    }
+}
+
+function makeSubcategoryItem(input, categoryId) {
+    return {
+        dataset: { category: categoryId },
+        matches() {
+            return false
+        },
+        querySelector(selector) {
+            return selector === 'input[type="checkbox"]' ? input : null
+        },
+        closest() {
+            return null
+        },
+    }
+}
+
 test('results taxonomy catalog matches the approved 12 by 43 shape', () => {
     const { quizTaxonomyCatalog } = getResultsTaxonomyApi()
     const subcategoryCount = quizTaxonomyCatalog.reduce(
@@ -383,11 +462,31 @@ test('retake prefill maps aliases and discards no-successor IDs', () => {
         'amazon-marketplace',
         'finance-leadership',
     ])
-    assert.match(mainSource, /restoredParentCategoryIds/)
-    assert.match(
-        mainSource,
-        /getSubcategoryCategoryId\(item\)[\s\S]*restoredParentCategoryIds\.add/,
-    )
+})
+
+test('retake prefill restores subcategories and re-checks their parent category', () => {
+    const paidSearchInput = makeCheckboxInput('paid-search')
+    const marketingLeadershipInput = makeCheckboxInput('marketing-leadership')
+    const subcategoryItems = [
+        makeSubcategoryItem(paidSearchInput, 'paid-media'),
+        makeSubcategoryItem(marketingLeadershipInput, 'marketing-strategy-brand'),
+    ]
+    const paidMediaCategory = makeCheckboxInput('paid-media')
+    const marketingCategory = makeCheckboxInput('marketing-strategy-brand')
+    const categoryInputs = [paidMediaCategory, marketingCategory]
+
+    const result = runMainSubcategoryRestore({
+        subcategoryItems,
+        categoryInputs,
+        savedSubcategoryIds: new Set(['paid-search']),
+    })
+
+    assert.equal(paidSearchInput.checked, true)
+    assert.equal(marketingLeadershipInput.checked, false)
+    assert.equal(paidMediaCategory.checked, true)
+    assert.equal(marketingCategory.checked, false)
+    assert.deepEqual([...result.restoredParentCategoryIds], ['paid-media'])
+    assert.equal(result.restoredInputCount, 2)
 })
 
 test('taxonomy compatibility release invalidates v17 recommendations', () => {

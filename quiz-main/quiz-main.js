@@ -529,7 +529,10 @@
             }
         })
 
-        subcategoryInputs.forEach((input) => {
+        subcategoryItems.forEach((item) => {
+            const input = getCheckboxInput(item)
+            if (!input) return
+
             const id =
                 normalize(input.id) ||
                 normalize(input.value) ||
@@ -539,8 +542,7 @@
                 setWebflowCheckboxState(input, true)
                 restoredInputCount += 1
 
-                const parentCategoryId =
-                    getSubcategoryCategoryId(item)
+                const parentCategoryId = getSubcategoryCategoryId(item)
                 if (parentCategoryId) {
                     restoredParentCategoryIds.add(parentCategoryId)
                 }
