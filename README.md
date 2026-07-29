@@ -575,11 +575,18 @@ blocks invalid submits before Webflow's handler or page controllers see them.
   never appear next to a visible error. The script only toggles its visibility.
 - `wf-validate-submit-disable` on the same element as `wf-validate-element="form"`
   soft-disables every submitter while the form is incomplete: class
-  `is-wf-validate-disabled` (the styling hook), `aria-disabled="true"`, and
-  `data-theme="disabled"` (bonus wiring for data-theme button components; a
-  pre-existing value is restored on re-enable). Never the native `disabled`
-  property, so a click still hits the gate and reveals every error at once.
-  Completeness is checked silently — nothing is painted before it has been earned.
+  `is-wf-validate-disabled` (the styling hook), `aria-disabled="true"`, and a theme
+  attribute set to `"disabled"` (bonus wiring for button components that theme off
+  an attribute; a pre-existing value is cached and restored on re-enable, and an
+  attribute that wasn't there is removed). Never the native `disabled` property, so
+  a click still hits the gate and reveals every error at once. Completeness is
+  checked silently — nothing is painted before it has been earned.
+- The theme attribute is configurable through the opt-in's value: a value starting
+  with `data-` names it (`wf-validate-submit-disable="data-button-theme"` writes
+  `data-button-theme="disabled"`), and every other value — none, `true`, a typo —
+  keeps the default `data-theme`, so installs predating this behave identically.
+  The cache records which attribute it read, so two forms naming two different
+  attributes never restore the wrong one.
 - Resetting a form clears its validation state; counters and the submit-disable
   state are recomputed on the next tick, since `reset` fires before values revert.
 - Call `window.WfValidate.refresh(form)` after injecting controls into an

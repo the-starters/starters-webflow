@@ -50,14 +50,25 @@
  *
  * Settings (on the same element as wf-validate-element="form" — the <form> or
  * its wrapper):
- *   wf-validate-submit-disable  — bare attribute. While the form is incomplete,
- *                                 every submitter is SOFT-disabled: it gets the
- *                                 class is-wf-validate-disabled, aria-disabled
- *                                 ="true", and data-theme="disabled". All three
- *                                 are removed once the form validates (a
- *                                 pre-existing data-theme, e.g. "primary", is
- *                                 cached on the first overwrite and restored;
- *                                 if there was none, the attribute is removed).
+ *   wf-validate-submit-disable  — flag, with an optional value. While the form is
+ *                                 incomplete, every submitter is SOFT-disabled:
+ *                                 it gets the class is-wf-validate-disabled,
+ *                                 aria-disabled="true", and a theme attribute set
+ *                                 to "disabled". All three are removed once the
+ *                                 form validates (a pre-existing theme value,
+ *                                 e.g. "primary", is cached on the first
+ *                                 overwrite and restored; if there was none, the
+ *                                 attribute is removed).
+ *                                 The value names the theme attribute when it
+ *                                 starts with "data-", so button components that
+ *                                 theme off their own attribute are wired up
+ *                                 without CSS:
+ *                                   wf-validate-submit-disable="data-button-theme"
+ *                                     -> data-button-theme="disabled"
+ *                                 Anything else — no value, "true" (Webflow's
+ *                                 Designer wants a value), a typo — means the
+ *                                 default data-theme, so every existing install
+ *                                 keeps behaving exactly as before.
  *                                 Never the native `disabled` property: the
  *                                 button stays clickable and in tab order, so a
  *                                 click while incomplete still hits the gate and
@@ -89,10 +100,12 @@
  *                             has any invalid field.
  *   is-wf-validate-disabled — the canonical styling hook for a soft-disabled
  *                             submitter (opacity, cursor, pointer-events off if
- *                             you insist). data-theme="disabled" is written
- *                             alongside it purely as bonus wiring for projects
- *                             whose button components already theme off
- *                             data-theme; style the class, not the attribute.
+ *                             you insist). The theme attribute ("disabled" on
+ *                             data-theme, or on whatever the opt-in's value
+ *                             named) is written alongside it purely as bonus
+ *                             wiring for projects whose button components already
+ *                             theme off an attribute; style the class, not the
+ *                             attribute.
  *
  * Behavior ("reward early, punish late"):
  *   - a field first shows its error when the user leaves it (focusout)
@@ -147,6 +160,8 @@
 
   const INVALID_CLASS = 'is-wf-validate-invalid'
   const DISABLED_CLASS = 'is-wf-validate-disabled'
+  const SUBMIT_DISABLE_ATTR = 'wf-validate-submit-disable'
+  const DEFAULT_THEME_ATTR = 'data-theme'
   const FIELD_SELECTOR = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]), select, textarea'
   const NATIVE_SUBMIT_SELECTOR = 'button[type="submit"], input[type="submit"], button:not([type])'
   const MARKED_SUBMIT_SELECTOR = '[wf-validate-element="submit"]'
@@ -154,13 +169,33 @@
   let uid = 0
 
   /**
-   * Pre-existing data-theme values, remembered the first time we overwrite one
-   * with "disabled" so re-enabling can put the original back (a designer's
+   * Pre-existing theme values, remembered the first time we overwrite one with
+   * "disabled" so re-enabling can put the original back (a designer's
    * data-theme="primary" must survive a round-trip through the disabled state).
-   * A null entry means "had no data-theme" -> remove it on restore.
-   * @type {WeakMap<Element, string | null>}
+   * The attribute name is cached with the value: two forms on one page may name
+   * different theme attributes, and restore must never write to the other one.
+   * A null `prev` means "the attribute wasn't there" -> remove it on restore.
+   * @type {WeakMap<Element, {attr: string, prev: string | null}>}
    */
   const themeCache = new WeakMap()
+
+  /**
+   * Which attribute receives "disabled" while the form is incomplete. The opt-in's
+   * value names it when the value looks like a data attribute, so a project whose
+   * buttons theme off data-button-theme gets the disabled look for free:
+   *
+   *   wf-validate-submit-disable="data-button-theme"  ->  data-button-theme
+   *
+   * Every other value falls back to data-theme — no value, the "true" Webflow's
+   * Designer nudges you into, or a typo. That fallback is what keeps installs
+   * shipped before this was configurable behaving identically.
+   * @param {Element} root  the element carrying the opt-in
+   * @returns {string}
+   */
+  const themeAttrFor = (root) => {
+    const value = (root.getAttribute(SUBMIT_DISABLE_ATTR) || '').trim()
+    return value.indexOf('data-') === 0 ? value : DEFAULT_THEME_ATTR
+  }
 
   /**
    * A field is skipped when the browser wouldn't validate it (disabled,
@@ -351,7 +386,10 @@
       form.noValidate = true
 
       /** whether submitters are soft-disabled while the form is incomplete */
-      this.submitDisable = (root || form).hasAttribute('wf-validate-submit-disable')
+      this.submitDisable = (root || form).hasAttribute(SUBMIT_DISABLE_ATTR)
+
+      /** the attribute set to "disabled" on soft-disabled submitters; resolved once */
+      this.themeAttr = themeAttrFor(root || form)
 
       /** @type {Map<string, FieldGroup>} */
       this.groups = new Map()
@@ -583,18 +621,21 @@
         if (blocked) {
           el.classList.add(DISABLED_CLASS)
           el.setAttribute('aria-disabled', 'true')
-          if (!themeCache.has(el)) themeCache.set(el, el.getAttribute('data-theme'))
-          el.setAttribute('data-theme', 'disabled')
+          if (!themeCache.has(el)) {
+            themeCache.set(el, { attr: this.themeAttr, prev: el.getAttribute(this.themeAttr) })
+          }
+          el.setAttribute(this.themeAttr, 'disabled')
           return
         }
         el.classList.remove(DISABLED_CLASS)
         el.removeAttribute('aria-disabled')
-        // only touch data-theme if WE overwrote it; restore the cached value, or
-        // remove the attribute when there was nothing there before
-        if (themeCache.has(el)) {
-          const previous = themeCache.get(el)
-          if (typeof previous === 'string') el.setAttribute('data-theme', previous)
-          else el.removeAttribute('data-theme')
+        // only touch the theme attribute if WE overwrote it, and only the one we
+        // actually overwrote: restore its cached value, or remove the attribute
+        // when there was nothing there before
+        const cached = themeCache.get(el)
+        if (cached) {
+          if (typeof cached.prev === 'string') el.setAttribute(cached.attr, cached.prev)
+          else el.removeAttribute(cached.attr)
           themeCache.delete(el)
         }
       })

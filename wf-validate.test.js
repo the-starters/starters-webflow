@@ -366,6 +366,77 @@ test('submit-disable: validateAll refreshes the state (API path)', () => {
   assert.equal(isEnabled(f.themed), true)
 })
 
+// ---------------------------------------------------------------------------
+// 1b. submit-disable: the theme attribute the opt-in's value names
+// ---------------------------------------------------------------------------
+
+/**
+ * A form whose buttons theme off data-button-theme (the real-world shape: the
+ * authored value is "black", not a data-theme at all).
+ * @param {string} optIn value of wf-validate-submit-disable
+ */
+function customThemeFixture(optIn) {
+  const email = h('input', { name: 'Email', type: 'email', required: '' })
+  const themed = h('button', { type: 'submit', 'data-button-theme': 'black' })
+  const plain = h('button', { type: 'submit' })
+  const form = h('form', {}, [email, themed, plain])
+  const wrapper = h('div', { 'wf-validate-element': 'form', 'wf-validate-submit-disable': optIn }, [
+    form,
+  ])
+  return { email, themed, plain, form, root: h('body', {}, [wrapper]) }
+}
+
+test('submit-disable: a data- value names the attribute that gets "disabled"', () => {
+  const f = customThemeFixture('data-button-theme')
+  mount(f.root)
+
+  assert.equal(f.themed.classList.contains(DISABLED), true)
+  assert.equal(f.themed.getAttribute('aria-disabled'), 'true')
+  assert.equal(f.themed.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(f.themed.hasAttribute('data-theme'), false, 'the default attribute is left alone')
+
+  assert.equal(f.plain.getAttribute('data-button-theme'), 'disabled', 'invented on a bare button')
+  assert.equal(f.plain.hasAttribute('data-theme'), false)
+})
+
+test('submit-disable: the named attribute round-trips its authored value', () => {
+  const f = customThemeFixture('data-button-theme')
+  const app = mount(f.root)
+
+  f.email.value = 'hi@example.com'
+  app.fire(f.form, 'input', f.email)
+  assert.equal(isEnabled(f.themed), true)
+  assert.equal(f.themed.getAttribute('data-button-theme'), 'black', 'authored value restored')
+  assert.equal(f.plain.hasAttribute('data-button-theme'), false, 'nothing there before -> removed')
+  assert.equal(f.themed.hasAttribute('data-theme'), false, 'never touched, in either direction')
+
+  f.email.value = ''
+  app.fire(f.form, 'input', f.email)
+  assert.equal(f.themed.getAttribute('data-button-theme'), 'disabled')
+
+  f.email.value = 'again@example.com'
+  app.fire(f.form, 'input', f.email)
+  assert.equal(f.themed.getAttribute('data-button-theme'), 'black', 'still restored on the 2nd pass')
+})
+
+test('submit-disable: a non-attribute value falls back to data-theme', () => {
+  // "true" is what Webflow's Designer nudges you into typing, and what every
+  // install shipped before the value meant anything carries
+  ;['true', 'yes please', ''].forEach((optIn) => {
+    const f = submitDisableFixture()
+    f.root.children[0].setAttribute('wf-validate-submit-disable', optIn)
+    const app = mount(f.root)
+
+    assert.equal(isDisabled(f.themed), true, 'value ' + JSON.stringify(optIn) + ': data-theme used')
+    assert.equal(f.plain.getAttribute('data-theme'), 'disabled')
+
+    f.email.value = 'hi@example.com'
+    app.fire(f.form, 'input', f.email)
+    assert.equal(f.themed.getAttribute('data-theme'), 'primary')
+    assert.equal(f.plain.hasAttribute('data-theme'), false)
+  })
+})
+
 test('refresh: a required field injected after bind joins the validation gate', () => {
   const f = submitDisableFixture()
   const app = mount(f.root)
