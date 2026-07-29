@@ -391,6 +391,9 @@
   const EST_HOURS_FIELD_NAME = 'Estimated-Hours'
   const CATEGORY_REQUIRED_MESSAGE = 'Please select at least one category.'
   const EST_HOURS_REQUIRED_MESSAGE = 'Please enter the estimated hours per week.'
+  const OPPORTUNITY_TITLE_MAX_CHARS = 120
+  const OPPORTUNITY_TITLE_MAX_CHARS_MESSAGE =
+    'Please keep the title to 120 characters or fewer.'
 
   function parseStoredCategories(input) {
     try {
@@ -668,6 +671,15 @@
       ),
     )
     Array.from(new Set(forms)).forEach((form) => {
+      const titleInput = $('[name="Opportunity-title"]', form)
+      if (titleInput) {
+        titleInput.setAttribute('maxlength', String(OPPORTUNITY_TITLE_MAX_CHARS))
+        titleInput.setAttribute(
+          'wf-validate-message-maxlength',
+          OPPORTUNITY_TITLE_MAX_CHARS_MESSAGE,
+        )
+      }
+
       const categoryInput = $('[name="Category-option"]', form)
       if (categoryInput) {
         categoryInput.setAttribute('aria-required', 'true')
@@ -705,6 +717,8 @@
 
   function validateOpportunityPayload(payload) {
     if (!payload.title) return 'Please enter an opportunity title.'
+    if (payload.title.length > OPPORTUNITY_TITLE_MAX_CHARS)
+      return OPPORTUNITY_TITLE_MAX_CHARS_MESSAGE
     if (!payload.description) return 'Please enter an opportunity description.'
     if (!payload.exp_requirements) return 'Please enter the experience requirements.'
     if (!payload.role_names || !payload.role_names.length) return 'Please select at least one category.'
@@ -1332,6 +1346,28 @@
     $$(`[data-opp-bind="${field}"]`, card).forEach((el) => {
       el.textContent = value == null ? '' : value
     })
+  }
+
+  // Paint the existing Webflow-authored opportunity review screen. Some
+  // modal instances predate the data-opp-bind contract and expose only an
+  // empty title span, so keep a narrow fallback without creating any markup.
+  function paintOpportunityReviewSuccess(done, title) {
+    if (!done) return
+    const opportunityTitle = title == null ? '' : String(title)
+    bind(done, 'title', opportunityTitle)
+    if (!$('[data-opp-bind="title"]', done)) {
+      const placeholder = $$('span', done).find((span) => span.textContent.trim() === '[Job Name]')
+      const heading = $('.heading-style-h1', done)
+      const emptyHeadingSpan =
+        heading && $$('span', heading).find((span) => !span.textContent.trim())
+      const titleSpan = placeholder || emptyHeadingSpan
+      if (titleSpan) titleSpan.textContent = opportunityTitle
+    }
+    const message = $('.text-size-medium', done)
+    if (message && /\bapplication\b/i.test(message.textContent)) {
+      message.textContent =
+        'Our team is carefully reviewing your opportunity. You will receive an update soon.'
+    }
   }
 
   // Match the Webflow CMS `full-overview` projection used by Xano's
@@ -2308,15 +2344,23 @@
     setVal(budgetField, o.budget)
     // Check the matching radio (value === current) and mirror Webflow's
     // visual class so the pre-selection shows when the modal opens.
-    const checkRadio = (name, current) =>
+    const checkRadio = (name, current, notify = false) => {
+      let selected = null
       $$(`[name="${name}"]`, modal).forEach((el) => {
         const on = el.value === current
         el.checked = on
+        if (on) selected = el
         el.classList.toggle('w--redirected-checked', on)
         const vis = el.parentElement && el.parentElement.querySelector('.w-radio-input')
         if (vis) vis.classList.toggle('w--redirected-checked', on)
       })
-    checkRadio('Project-Type', o.project_type)
+      // The authored Project Type tab controller listens for a native change
+      // event to move data-tab-filters-active and reveal the matching
+      // data-project-type panel. Assignment alone checks the real radio but
+      // leaves the default One Time pill and panel visually active.
+      if (notify && selected) selected.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+    checkRadio('Project-Type', o.project_type, true)
     checkRadio('Duration', o.est_project_duration)
     syncOpportunityEstimatedHours(modal)
   }
@@ -2510,14 +2554,7 @@
           const done =
             wrap && (wrap.querySelector('.create-opportunities_success') || wrap.querySelector('.w-form-done'))
           if (done) {
-            // Reuse the existing data-opp-bind grammar, scoped to the success
-            // block so it never touches card/detail [data-opp-bind="title"].
-            bind(done, 'title', payload.title || '')
-            // Fallback for the un-attributed "[Job Name]" placeholder span.
-            if (!$('[data-opp-bind="title"]', done)) {
-              const ph = [...done.querySelectorAll('span')].find((s) => s.textContent.trim() === '[Job Name]')
-              if (ph) ph.textContent = payload.title || ''
-            }
+            paintOpportunityReviewSuccess(done, payload.title)
             form.style.display = 'none'
             done.style.display = 'block'
             say('')
@@ -2659,6 +2696,21 @@
     const flowId = flowEl && flowEl.getAttribute('data-form-flow')
     const ff = window.lumos && window.lumos.formFlow
     if (flowId && ff && ff.list && ff.list[flowId]) ff.reset(flowId)
+    // Edit-opportunity values are initially prefetched while the detail page
+    // loads. Lumos then restores the Webflow-authored form defaults whenever
+    // the modal opens, which can overwrite the native checked Project-Type
+    // radio after its visual class was already painted. Refresh the live
+    // opportunity after that synchronous reset so the native control, its
+    // Webflow visual state, conditional hours field, and submitted payload all
+    // agree. This only binds existing Designer markup.
+    const editOppId = activeOpp || pageOppId()
+    if (
+      modal &&
+      editOppId &&
+      modal.matches &&
+      modal.matches('[data-modal-target="edit-opportunity"]')
+    )
+      void prefillEditOpportunity(editOppId)
     // The withdraw modal's nav header lives OUTSIDE the form-flow steps (the
     // shared modal_nav bar), so the flow reset above can't rewind it. Its two
     // title variants follow the data-opp-state contract (like the close
@@ -2735,6 +2787,10 @@
           const done = $('.w-form-done', modal)
           const fail = $('.w-form-fail', modal)
           if (form && done) {
+            paintOpportunityReviewSuccess(
+              done,
+              (updatedOpportunity && updatedOpportunity.title) || payload.title,
+            )
             if (fail) fail.style.display = 'none'
             form.style.display = 'none'
             done.style.display = 'block'
@@ -3347,6 +3403,7 @@
     syncMergedNavbarRole,
     activateDeferredFeed,
     paintOpportunityDetail,
+    paintOpportunityReviewSuccess,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,

@@ -46,15 +46,16 @@ Do not discard local changes unless the user explicitly asks.
   [`code-components/README.md`](code-components/README.md) for local commands,
   Webflow properties, Xano endpoints, security boundaries, and workflow states
 - `quiz-main/quiz-home.js` — homepage hero controller; saves selected category bucket IDs to `sessionStorage.quizSelectedCategories` and redirects to `/quiz` (see `quiz-main/README.md`)
-- `quiz-main/quiz-main.js` — `/quiz` controller; combines homepage bucket selections with saved Memberstack answers, persists draft/ready answers for results, and skips signup for logged-in retakers (see `quiz-main/README.md`)
+- `quiz-main/quiz-main.js` — `/quiz` controller; combines homepage bucket selections with saved Memberstack answers, translates pre-rollout taxonomy IDs before retake prefill, persists draft/ready answers for results, and skips signup for logged-in retakers (see `quiz-main/README.md`)
 - `quiz-main/quiz-redirect.js` — `/quiz` member redirect; sends live or Test paid Brands to `/brand-dashboard` and completed free Brands to `/quiz-results`, unless the URL opts into a retake
-- `quiz-results.js` — quiz-results controller; logged-out visitors with no pending, test, or saved quiz data return to `/quiz`, diagnostics are opt-in through `starterQuizDebug`, and freelancer recommendations use the `Freelancers3.0-dev` Algolia index by default
+- `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, requires a retake when no current category survives retirement, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, keeps diagnostics opt-in through `starterQuizDebug`, and uses the `Freelancers3.0-dev` Algolia index for freelancer recommendations by default
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, maps ongoing Part Time estimated weekly hours through the existing Xano contract, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
 - `v3/auth-route.js` — V3-only login/signup router with plan-based defaults and role-scoped `next` destinations; brand-free lands on `/quiz` until the Memberstack `starter-quiz` field is set (quiz completed), then `/quiz-results`
 - `v3/talent-application.js` — `/freelancer-application/step-1` intake controller; suppresses the native Webflow/Zapier submission, posts `form[application-form]` to Xano, and continues successful applicants to step 2
 - `v3/route-guard.js` — V3-only direct-access guard for protected, role-scoped pages
+- `v3/password-recovery.js` — V3-only shared Brand/Talent password recovery; consolidates the routes onto the canonical `/forgot-password -> /reset-password -> /password-success` flow, redirects the legacy Talent and misspelled success paths while preserving the reset-token query string, encoding, and hash, and carries only non-sensitive `from=brand`/`from=talent` origin context
 - `v3/onboarding-tour.js` — attribute-driven V3 product tours with highlight and disclosure overrides, role targeting, per-member seen-state, and replay/reset controls
 - `v3/all-starters-favorites.js` — paid-Brand favourites controls and Designer-built All/Favourites filtering for `/all-starters`, backed by sitewide `wf-xano` and `wf-algolia`
 - `v3/saved-starters-roles.js` — `/favorites` saved-list roles chips: splits the card's delimited roles value (`data-ts-roles`, on both `;` and `,`) into one cloned paragraph per role, so the wf-xano saved list matches the Algolia browse cards. Hides the bound element instead of replacing it, so `wf-xano-reconcile="keyed"` card reuse can still re-bind; de-hyphenation is scoped to the roles element so sibling values like `availability: "11-20"` are untouched; dispatches `expert-cards:relayout` so the hover height recomputes for the added lines; arms via `WfXano.push()` because `window.WfXano` is the API object before any instance exists
@@ -168,6 +169,15 @@ Create and edit forms keep the existing category selector input named
 than the visible search text, so a missing category produces the inline message
 `Please select at least one category.` instead of silently blocking submission.
 
+Both forms keep the authored 15-word rule on the `Opportunity-title` input
+(`wf-validate-maxwords="15"`) and gain a native 120-character backstop: the
+controller sets `maxlength="120"` and the inline message attribute
+`wf-validate-message-maxlength` to `Please keep the title to 120 characters or
+fewer.`. The same limit is enforced against the submitted payload, so a title
+longer than 120 characters — including a scripted or prefilled value that
+bypasses the input's `maxlength` — is rejected with that message. It does not
+generate the title input.
+
 The Ongoing Part Time variant must contain Webflow-authored inputs named
 `Estimated-Hours` and `Part-Time-Budget`. In both the Create and Edit
 components, author the hours label, plain-text input, helper text, and field
@@ -183,6 +193,20 @@ controller is released.
 Create and update requests send the input's trimmed value as the existing Xano
 `est_hours` field, and edit prefill restores that value. One Time and Full Time
 requests send an empty `est_hours` value and do not require the field.
+The edit modal refreshes its saved values after each form-flow reset so Webflow's
+authored default radio cannot replace the opportunity's current Project Type
+when the modal reopens. Project Type prefill also emits the native change event
+used by the authored tab controller, keeping its active pill and conditional
+panel aligned with the checked radio.
+
+After a successful create or edit, the controller paints the Webflow-authored
+review success screen in place; it binds only existing elements and generates no
+markup. It writes the saved opportunity title into the success block's
+`data-opp-bind="title"` element, falling back to an authored `[Job Name]`
+placeholder span or an empty span inside `.heading-style-h1` when that attribute
+is absent. It also rewrites the `.text-size-medium` confirmation message to
+opportunity-specific copy when the authored text still reads as application copy,
+so both flows read "Our team is carefully reviewing your opportunity."
 
 Keep `utils/wf-validate.js` on these forms. The controller registers the authored
 field through `window.WfValidate.refresh(form)`, so category and estimated-hours

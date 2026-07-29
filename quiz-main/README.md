@@ -63,8 +63,19 @@ Saved Memberstack answers are restored whenever a logged-in member with a
 non-empty `starterQuiz` object reaches `/quiz`; `?retake=true` controls only the
 entry redirect. The restore checks matching boxes without clearing existing
 selections, so its `categoryIds` and `subcategoryIds` are combined with any
-homepage-bucket categories. If the member edits or advances the quiz before
-Memberstack returns, the delayed restore is skipped.
+homepage-bucket categories. Restoring a saved subcategory also selects its
+parent category so merged or renamed subcategories keep a valid parent. If the
+member edits or advances the quiz before Memberstack returns, the delayed
+restore is skipped.
+
+Saved answers created before a taxonomy rollout are normalized before retake
+prefill and results matching. Deterministic renames and merges map to their
+current IDs. Retired choices without an approved successor are discarded; if a
+saved payload has no current category left, `/quiz-results` clears the stale
+session payload and sends the member to `/quiz?retake=true&taxonomyUpdate=1`.
+Keep the compatibility aliases, the 12-category/43-subcategory results catalog,
+and `quiz-taxonomy-compatibility.test.js` aligned with each approved taxonomy
+release.
 
 ### Webflow markup contract
 
@@ -117,5 +128,5 @@ Run the focused quiz tests, including the form-selector contract regression,
 with:
 
 ```sh
-node --test quiz-main/*.test.js
+node --test quiz-main/*.test.js quiz-results-config.test.js quiz-taxonomy-compatibility.test.js
 ```

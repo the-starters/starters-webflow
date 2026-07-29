@@ -24,6 +24,51 @@ test('ongoing part-time opportunities require and submit estimated weekly hours'
   assert.match(core, /setVal\(EST_HOURS_FIELD_NAME, o\.est_hours\)/)
 })
 
+test('opportunity review success binds the title and corrects application copy', () => {
+  const { window } = loadOpportunityForms()
+  const titleSpan = { textContent: '' }
+  const message = {
+    textContent:
+      'Our team is carefully examining your application. You will receive an update soon.',
+  }
+  const heading = {
+    querySelectorAll: (selector) => (selector === 'span' ? [titleSpan] : []),
+  }
+  const done = {
+    querySelector: (selector) => {
+      if (selector === '[data-opp-bind="title"]') return null
+      if (selector === '.heading-style-h1') return heading
+      if (selector === '.text-size-medium') return message
+      return null
+    },
+    querySelectorAll: () => [],
+  }
+
+  window.Opp30.paintOpportunityReviewSuccess(done, "Jai's Test Opportunity")
+
+  assert.equal(titleSpan.textContent, "Jai's Test Opportunity")
+  assert.equal(
+    message.textContent,
+    'Our team is carefully reviewing your opportunity. You will receive an update soon.',
+  )
+})
+
+test('opportunity review success paints a "[Job Name]" placeholder outside the heading', () => {
+  const { window } = loadOpportunityForms()
+  const placeholder = { textContent: '[Job Name]' }
+  const done = {
+    querySelector: (selector) => {
+      if (selector === '[data-opp-bind="title"]') return null
+      return null
+    },
+    querySelectorAll: (selector) => (selector === 'span' ? [placeholder] : []),
+  }
+
+  window.Opp30.paintOpportunityReviewSuccess(done, "Jai's Test Opportunity")
+
+  assert.equal(placeholder.textContent, "Jai's Test Opportunity")
+})
+
 test('standalone create controller delegates to the shared form and validation contract', () => {
   assert.match(standalone, /window\.Opp30\.prepareOpportunityCreateForms\(form\)/)
   assert.match(standalone, /window\.Opp30\.readOpportunityForm\(form\)/)
@@ -76,12 +121,21 @@ class FakeControl {
 }
 
 function opportunityForm(kind) {
+  const title = new FakeControl({
+    name: 'Opportunity-title',
+    'wf-validate-maxwords': '15',
+  })
   const category = new FakeControl({ name: 'Category-option' })
   const budget = new FakeControl({ name: 'Part-Time-Budget' })
   const estimatedHoursGroup = { hidden: false }
   const estimatedHours = new FakeControl({ name: 'Estimated-Hours' })
   estimatedHours.closest = (selector) =>
     selector === '[data-project-type="part-time"]' ? estimatedHoursGroup : null
+  const oneTime = new FakeControl({
+    id: 'One-Time',
+    name: 'Project-Type',
+    value: 'One Time',
+  })
   const partTime = new FakeControl({
     id: 'Ongoing-Part-Time',
     name: 'Project-Type',
@@ -92,7 +146,33 @@ function opportunityForm(kind) {
     name: 'Project-Type',
     value: 'Full Time',
   })
+  const projectRadios = [oneTime, partTime, fullTime]
+  const tabItems = new Map(
+    projectRadios.map((radio) => {
+      const attrs = new Map([['data-tab-filters-item', '']])
+      return [
+        radio,
+        {
+          getAttribute: (name) => attrs.get(name) ?? null,
+          removeAttribute: (name) => attrs.delete(name),
+          setAttribute: (name, value) => attrs.set(name, String(value)),
+        },
+      ]
+    }),
+  )
+  oneTime.checked = true
+  tabItems.get(oneTime).setAttribute('data-tab-filters-active', 'true')
+  projectRadios.forEach((radio) => {
+    radio.closest = (selector) =>
+      selector === '[data-tab-filters-item]' ? tabItems.get(radio) : null
+    radio.addEventListener('change', () => {
+      tabItems.forEach((item) => item.removeAttribute('data-tab-filters-active'))
+      const selected = projectRadios.find((candidate) => candidate.checked)
+      if (selected) tabItems.get(selected).setAttribute('data-tab-filters-active', 'true')
+    })
+  })
   const fields = new Map([
+    ['Opportunity-title', title],
     ['Category-option', category],
     ['Part-Time-Budget', budget],
     ['Estimated-Hours', estimatedHours],
@@ -115,12 +195,12 @@ function opportunityForm(kind) {
     querySelector(selector) {
       if (selector === '[data-project-type="part-time"]') return partTimeGroup
       if (selector === '[name="Project-Type"]:checked')
-        return [partTime, fullTime].find((radio) => radio.checked) || null
+        return projectRadios.find((radio) => radio.checked) || null
       const name = /^\[name="([^"]+)"\]$/.exec(selector)
       return name ? fields.get(name[1]) || null : null
     },
     querySelectorAll(selector) {
-      return selector === '[name="Project-Type"]' ? [partTime, fullTime] : []
+      return selector === '[name="Project-Type"]' ? projectRadios : []
     },
     setAttribute(name, value) {
       this.attrs.set(name, String(value))
@@ -131,19 +211,35 @@ function opportunityForm(kind) {
   }
   const modal = {
     matches: (selector) => selector === '[data-modal-target="edit-opportunity"]',
-    querySelector: (selector) => (selector === 'form' ? form : form.querySelector(selector)),
+    querySelector: (selector) => {
+      if (selector === 'form') return form
+      if (selector === '[data-form-flow]')
+        return { getAttribute: (name) => (name === 'data-form-flow' ? 'edit-flow' : null) }
+      return form.querySelector(selector)
+    },
     querySelectorAll: (selector) =>
       selector === '[data-opp-form="create"], [data-modal-target="edit-opportunity"] form'
         ? [form]
         : form.querySelectorAll(selector),
   }
-  return { category, estimatedHoursGroup, fields, form, fullTime, modal, partTime }
+  return {
+    category,
+    estimatedHoursGroup,
+    fields,
+    form,
+    fullTime,
+    modal,
+    oneTime,
+    partTime,
+    tabItems,
+  }
 }
 
-function loadOpportunityForms() {
+function loadOpportunityForms(pathname = '/all-modals') {
   const create = opportunityForm('create')
   const edit = opportunityForm('edit')
   const refreshed = []
+  const windowListeners = new Map()
   const documentElement = {
     appendChild() {},
     getAttribute: () => null,
@@ -167,10 +263,16 @@ function loadOpportunityForms() {
   }
   const window = {
     WfValidate: { refresh: (form) => refreshed.push(form) },
-    addEventListener() {},
+    addEventListener(type, listener) {
+      const listeners = windowListeners.get(type) || []
+      listeners.push(listener)
+      windowListeners.set(type, listeners)
+    },
     clearInterval,
     clearTimeout,
-    dispatchEvent() {},
+    dispatchEvent(event) {
+      for (const listener of windowListeners.get(event.type) || []) listener(event)
+    },
     setInterval,
     setTimeout,
   }
@@ -205,7 +307,7 @@ function loadOpportunityForms() {
     location: {
       href: 'https://example.test/all-modals',
       hostname: 'example.test',
-      pathname: '/all-modals',
+      pathname,
       search: '',
     },
     window,
@@ -221,6 +323,27 @@ test('create and edit forms bind Webflow-authored estimated hours without genera
   assert.equal(create.estimatedHoursGroup.hidden, true)
   assert.equal(edit.estimatedHoursGroup.hidden, true)
   assert.deepEqual(refreshed, [create.form, edit.form])
+})
+
+test('create and edit titles keep the 15-word rule and add a 120-character backstop', () => {
+  const { create, edit, window } = loadOpportunityForms()
+
+  for (const opportunity of [create, edit]) {
+    const title = opportunity.fields.get('Opportunity-title')
+    assert.equal(title.getAttribute('maxlength'), '120')
+    assert.equal(title.getAttribute('wf-validate-maxwords'), '15')
+    assert.equal(
+      title.getAttribute('wf-validate-message-maxlength'),
+      'Please keep the title to 120 characters or fewer.',
+    )
+  }
+
+  assert.equal(
+    window.Opp30.validateOpportunityPayload({
+      title: 'x'.repeat(121),
+    }),
+    'Please keep the title to 120 characters or fewer.',
+  )
 })
 
 test('edit prefill sets weekly hours and restores conditional inline validation', async () => {
@@ -239,6 +362,11 @@ test('edit prefill sets weekly hours and restores conditional inline validation'
   const estimatedHours = edit.fields.get('Estimated-Hours')
   assert.equal(estimatedHours.value, '25 hrs/week')
   assert.equal(edit.partTime.checked, true)
+  assert.equal(edit.tabItems.get(edit.oneTime).getAttribute('data-tab-filters-active'), null)
+  assert.equal(
+    edit.tabItems.get(edit.partTime).getAttribute('data-tab-filters-active'),
+    'true',
+  )
   assert.equal(edit.estimatedHoursGroup.hidden, false)
   assert.equal(estimatedHours.required, true)
   assert.equal(estimatedHours.getAttribute('aria-required'), 'true')
@@ -254,4 +382,49 @@ test('edit prefill sets weekly hours and restores conditional inline validation'
   assert.equal(estimatedHours.required, false)
   assert.equal(estimatedHours.getAttribute('aria-required'), 'false')
   assert.equal(edit.estimatedHoursGroup.hidden, true)
+})
+
+test('opening the edit modal reapplies saved project type after the form-flow reset', async () => {
+  const { edit, window } = loadOpportunityForms('/opportunities/42')
+  let reads = 0
+  window.Opp30.API.brandOppGet = async () => {
+    reads += 1
+    return {
+      budget: '2000',
+      category_names: [],
+      est_hours: '25 hrs/week',
+      est_project_duration: '3 months',
+      project_type: 'Ongoing Part Time',
+      status: 'Active',
+    }
+  }
+  window.lumos = {
+    formFlow: {
+      list: { 'edit-flow': {} },
+      reset() {
+        edit.partTime.checked = false
+        edit.fullTime.checked = false
+        edit.oneTime.checked = true
+        edit.tabItems.forEach((item) => item.removeAttribute('data-tab-filters-active'))
+        edit.tabItems.get(edit.oneTime).setAttribute('data-tab-filters-active', 'true')
+      },
+    },
+  }
+
+  await window.Opp30.prefillEditOpportunity(42)
+  assert.equal(edit.partTime.checked, true)
+
+  window.dispatchEvent({ type: 'modal-open', detail: { modal: edit.modal } })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(reads, 2)
+  assert.equal(edit.partTime.checked, true)
+  assert.equal(edit.tabItems.get(edit.oneTime).getAttribute('data-tab-filters-active'), null)
+  assert.equal(
+    edit.tabItems.get(edit.partTime).getAttribute('data-tab-filters-active'),
+    'true',
+  )
+  assert.equal(edit.fullTime.checked, false)
+  assert.equal(edit.fields.get('Estimated-Hours').required, true)
+  assert.equal(edit.estimatedHoursGroup.hidden, false)
 })
