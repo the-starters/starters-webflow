@@ -157,11 +157,11 @@
   function configureLoginEntry(pathname, origin) {
     if (pathname !== BRAND_LOGIN_PATH && pathname !== TALENT_LOGIN_PATH) return
 
-    elements('a[href="/forgot-password"], a[href="/starters-forgot-password"]').forEach(
-      function (link) {
-        setHref(link, pathWithOrigin(FORGOT_PATH, origin))
-      },
-    )
+    elements(
+      'a[href="/forgot-password"], a[href="/starters-forgot-password"], a[href="/legacy-starters-forgot-password"]',
+    ).forEach(function (link) {
+      setHref(link, pathWithOrigin(FORGOT_PATH, origin))
+    })
   }
 
   function configureForm(pathname, origin) {
@@ -220,8 +220,15 @@
     }
 
     // Compatibility fallback while the canonical pages are being wired with
-    // native, explicitly marked Brand and Talent choices.
-    if (!origin) return
+    // native, explicitly marked Brand and Talent choices. Direct visits with
+    // no origin must not silently favor either persona.
+    if (!origin) {
+      elements('a[href="/login"], a[href="/starter-login"]').forEach(function (link) {
+        setHref(link, '/')
+        link.textContent = 'Return to homepage'
+      })
+      return
+    }
     var destination = origin === 'talent' ? TALENT_LOGIN_PATH : BRAND_LOGIN_PATH
     elements('a[href="/login"], a[href="/starter-login"]').forEach(function (link) {
       setHref(link, destination)
