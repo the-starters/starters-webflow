@@ -29,18 +29,18 @@
  * attributes sit on either the wrapper or the anchor.
  *
  * It still listens for modal.js's `modal-open` window event, ignoring every
- * modal that does not contain the chat container, so the post-login return
- * works: `?modal-id=<id>` has modal.js open the modal on load and the chat
- * mounts with no click involved.
+ * modal that does not contain the chat container, and a `?modal-id=<id>` in the
+ * URL has modal.js open the modal on load with the chat mounting clicklessly.
  *
  * TalkJS loads lazily, on the first open. `/hire/<slug>` pages are public and
  * SEO-relevant, so visitors who never press Message never pay for the SDK.
  *
  * Who gets through:
- *   logged out    -> /login?next=/hire/<slug>?modal-id=<id>, returning to an
- *                    already-open modal
- *   free Brand    -> `messages-profile-upgrade` when set, else the member's
- *                    route-guard home (`/quiz` or `/quiz-results`)
+ *   logged out    -> /quiz (the signup funnel; the chat intent is intentionally
+ *                    dropped — there is no login round trip back to the modal)
+ *   free Brand    -> `messages-profile-upgrade` when set, else route-guard's
+ *                    brandFreeHome: /quiz-results once the Memberstack
+ *                    `starter-quiz` field says the quiz is done, /quiz until then
  *   talent, self  -> trigger hidden, and the modal closes if opened anyway
  *   paid Brand    -> the chat
  * Role comes from `window.StartersV3RouteGuard.memberRole`, so route-guard.js has
@@ -77,7 +77,6 @@
 
   var HIRE_PATH_PREFIX = '/hire/'
   var MESSAGES_PATH = '/messages'
-  var LOGIN_PATH = '/login'
   var DEEP_LINK_PARAM = 'with'
   var MODAL_PARAM = 'modal-id'
   var FALLBACK_FREE_BRAND_PATH = '/quiz'
@@ -260,20 +259,24 @@
 
   /* ============================ DESTINATIONS ========================= */
 
-  /** `/login?next=/hire/<slug>?modal-id=<id>` so login returns to an open modal. */
-  function loginUrl() {
-    var id = modalId()
-    var next =
-      window.location.pathname +
-      (id ? '?' + MODAL_PARAM + '=' + encodeURIComponent(id) : '')
-    return LOGIN_PATH + '?next=' + encodeURIComponent(next)
+  /**
+   * Where a logged-out visitor goes: the quiz signup funnel, not /login. The
+   * product call (2026-07-29) is that a visitor who is not a member yet should
+   * enter the funnel rather than bounce off a login form. The cost is that the
+   * chat intent is dropped — nothing brings them back to this conversation
+   * after signup — which is accepted.
+   * @returns {string}
+   */
+  function loggedOutUrl() {
+    return FALLBACK_FREE_BRAND_PATH
   }
 
   /**
-   * Where a free Brand goes instead of the chat. Authors set
-   * `messages-profile-upgrade` on the chat container or a trigger; with no value
-   * we fall back to the member's route-guard home rather than inventing a URL,
-   * and say so on staging.
+   * Where a free Brand goes instead of the chat: `/quiz-results` once they have
+   * completed the quiz, `/quiz` until then — i.e. route-guard's brandFreeHome,
+   * which reads the Memberstack `starter-quiz` custom field. An explicit
+   * `messages-profile-upgrade` on the chat container or a trigger overrides
+   * both, for when a real upgrade page exists.
    * @param {object} member
    * @returns {string}
    */
@@ -291,13 +294,13 @@
     var guard = window.StartersV3RouteGuard
     var home =
       guard && typeof guard.brandFreeHome === 'function' ? guard.brandFreeHome(member) : ''
-    warn(
-      'no ' +
-        UPGRADE_ATTRIBUTE +
-        ' configured for free Brands; falling back to "' +
-        (home || FALLBACK_FREE_BRAND_PATH) +
-        '". Set that attribute once an upgrade page exists.',
-    )
+    if (!home) {
+      warn(
+        'route-guard.js is absent, so quiz completion is unknown; sending the ' +
+          'free Brand to ' +
+          FALLBACK_FREE_BRAND_PATH,
+      )
+    }
     return home || FALLBACK_FREE_BRAND_PATH
   }
 
@@ -511,7 +514,7 @@
       var state = viewer.resolved ? viewer : await resolveViewer()
 
       if (!state.member) {
-        goTo(loginUrl())
+        goTo(loggedOutUrl())
         return
       }
       if (state.member.id === identity.id) {
@@ -596,7 +599,7 @@
     pendingIdentity = identity
 
     if (viewer.resolved && !viewer.member) {
-      goTo(loginUrl())
+      goTo(loggedOutUrl())
       return
     }
     if (
