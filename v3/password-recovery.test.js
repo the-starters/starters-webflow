@@ -270,7 +270,28 @@ test('compatibility fallback is neutral when origin is unavailable', () => {
   })
 
   assert.equal(loginLink.getAttribute('href'), '/')
+  assert.equal(loginLink.getAttribute('aria-label'), 'Return to homepage')
   assert.equal(loginLink.textContent, 'Return to homepage')
+})
+
+test('neutral fallback updates the visible Webflow button label without overlay text', () => {
+  const visibleLabel = { textContent: 'Back to Login' }
+  const loginLink = element({ href: '/login' })
+  loginLink.closest = () => ({
+    querySelector() {
+      return visibleLabel
+    },
+  })
+  const selector = 'a[href="/login"], a[href="/starter-login"]'
+  load({
+    pathname: '/password-success',
+    selectors: { [selector]: [loginLink] },
+  })
+
+  assert.equal(loginLink.getAttribute('href'), '/')
+  assert.equal(loginLink.getAttribute('aria-label'), 'Return to homepage')
+  assert.equal(loginLink.textContent, '')
+  assert.equal(visibleLabel.textContent, 'Return to homepage')
 })
 
 test('retry links return to canonical forgot page with origin', () => {

@@ -225,7 +225,20 @@
     if (!origin) {
       elements('a[href="/login"], a[href="/starter-login"]').forEach(function (link) {
         setHref(link, '/')
-        link.textContent = 'Return to homepage'
+        link.setAttribute('aria-label', 'Return to homepage')
+
+        var buttonWrap =
+          typeof link.closest === 'function' ? link.closest('.button_main-wrap') : null
+        var visibleLabel =
+          buttonWrap && typeof buttonWrap.querySelector === 'function'
+            ? buttonWrap.querySelector('.button_main-text')
+            : null
+
+        if (visibleLabel) {
+          visibleLabel.textContent = 'Return to homepage'
+        } else {
+          link.textContent = 'Return to homepage'
+        }
       })
       return
     }
