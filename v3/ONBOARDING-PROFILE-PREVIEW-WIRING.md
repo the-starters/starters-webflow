@@ -37,6 +37,7 @@ skeleton loader.
   | Field | Derived from | Rule |
   | --- | --- | --- |
   | `Role_1` / `Role_2` / `Role_3` | `Roles` | Parsed to display values, first three only (extras dropped). Each chip hides on an empty value, so a one-role Starter shows one chip. See [Role parsing](#role-parsing) — the stored format varies per record and the chip needs `text-transform: capitalize`. |
+  | `Category` | `category_resolved` (from `primary_category_ref`), else the legacy `Category` string | The single Classification value. A slug-looking legacy value is de-hyphenated and relies on `text-transform: capitalize`. See [Category resolution](#category-resolution). |
   | `Location` | `City`, `State_Province`, `Country` | Joined with `, ` in that order, empty parts skipped, so no orphan commas. |
   | `Bio` | `Bio` | Quill rich-text HTML flattened to one line of plain text (tags stripped, `<br>`/block ends become spaces, entities decoded, whitespace collapsed). |
 
@@ -349,6 +350,11 @@ differences then live in their own rules, as the harness does with
   text-overflow:ellipsis;
   white-space:nowrap;
 }
+/* Final casing for a de-hyphenated Category fallback ("marketing strategy
+   leadership"). Scoped to the Category bind ONLY — Location must not be
+   capitalized, and a resolved category name is printed verbatim and needs none of
+   this. Same division of labour as the role chips. */
+.stp-pp__meta-item [wf-xano-bind="Category"]{text-transform:capitalize;}
 
 /* ---------- loader skeleton ---------- */
 .stp-pp__loader{
@@ -559,6 +565,27 @@ missing its wrapper attributes; if it says `3`, `hero-app_inner` still has its o
 what the endpoint sends. **First three only — a fourth role is dropped**, because
 the card has exactly three chip slots.
 
+### Ref order is the display order
+
+⚠ **Xano's `in` where-clause returns TABLE order, not the order of the ids handed
+to it.** A resolved array therefore cannot be trusted to arrive in ref order, which
+matters because the roles fill three *ordered* chip slots.
+
+So when resolved entries carry `id`, the client re-sorts them to match the record's
+own ref array — `roles_resolved` by `role_refs`, and the plural
+`categories_resolved` by `category_refs`. Entries with no `id`, or an `id` absent
+from the refs, keep their server order and go last. Ids are compared as strings, so
+`4` and `"4"` both match.
+
+Brian's record has `role_refs: [39, 38, 35]`; whatever order the resolved array
+arrives in, the chips render Head of Growth → Paid Social Marketer → Performance
+Creative Lead.
+
+⚠ **`primary_role_ref`, `secondary_role_ref` and `tertiary_role_ref` are LEGACY and
+deliberately ignored** (Jerico, 2026-07-30). `role_refs` is the authoritative list
+*and* the ordering source. The three legacy fields are copied through with the rest
+of the record but never consulted — do not "restore" them as an ordering input.
+
 ### Priority 1 — a server-resolved array (the forward path)
 
 If the record carries a non-empty **`roles_resolved`** array, it wins outright and
@@ -618,6 +645,44 @@ P.roleNames({ roles_resolved: [{ id: 39, name: 'Head of Growth' }] })  // -> ['H
 P.parseRoles('head-of-growth; paid-social-marketer')  // -> ['head of growth', 'paid social marketer']
 P.parseRoles('cro-expert')                            // -> ['CRO Expert']
 ```
+
+## Category resolution
+
+Classification displays **exactly one** category (Jerico, 2026-07-30), and its
+source is the single `primary_category_ref` field — **not** `category_refs[0]`.
+`category_refs` is the member's full category list and is not used for display.
+
+Resolution order:
+
+| # | Source | Rule |
+| --- | --- | --- |
+| 1 | **`category_resolved`** | The single entry Xano resolves from `primary_category_ref`. One string, or one object read as `name` → `display_name` → `title`. This is the intended shape. |
+| 2 | `categories_resolved` (or `categories`) | A plural array, accepted as a secondary shape so the endpoint can ship either. The entry whose `id` equals `primary_category_ref` wins; failing that the array is put in `category_refs` order and the first entry taken. |
+| 3 | the legacy `Category` string | De-hyphenated when it looks like a slug (see below). |
+
+Junk tolerance matches the roles contract: bare ids, booleans, `null`, `{}` and
+non-arrays all yield nothing and fall through to the next source, so a raw
+`category_refs`-shaped value can never print `4` on the card. Resolved names are
+authoritative and printed verbatim — never slug-mapped, never de-hyphenated.
+
+### Slug de-hyphenation in the fallback
+
+The legacy `Category` column holds either a display value or a slug, so the client
+decides per value: **hyphens and no spaces** means slug, and it becomes lowercase
+words for the CSS to capitalize. Anything containing a space passes through
+untouched.
+
+| Raw `Category` | Rendered | Why |
+| --- | --- | --- |
+| `marketing-strategy-leadership` (Brian) | `marketing strategy leadership` → *Marketing Strategy Leadership* | hyphens, no spaces → slug |
+| `Creative & Brand` (Kaeser) | `Creative & Brand` | contains a space → verbatim |
+| `E-Commerce Manager` | `E-Commerce Manager` | hyphen **and** space → verbatim |
+| `Marketing` | `Marketing` | no hyphen |
+
+⚠ This relies on `.stp-pp__meta-item [wf-xano-bind="Category"]{text-transform:capitalize}`
+in the structure embed. The rule is scoped to the Category bind on purpose —
+Location must not be capitalized. Once `category_resolved` is live the fallback is
+dead code and the capitalize rule becomes a no-op on already-cased values.
 
 ## Form-block switching
 
@@ -930,15 +995,21 @@ account switching clears and reloads the card automatically. Test in this order 
 logged in with a completed profile, logged in with no freelancer row (empty
 state), logged out, and an endpoint failure.
 
-## Roles: resolve `role_refs` in Xano
+## Roles and categories: resolve the refs in Xano
 
 **Bundle this with the auth flip above — one Xano session, same endpoint.**
 
-The record already carries the authoritative role reference IDs:
+The record already carries the authoritative reference IDs for both:
 
 ```json
-"role_refs": [39, 38, 35]
+"role_refs": [39, 38, 35],
+"primary_category_ref": 4,
+"category_refs": [4, 13]
 ```
+
+Two addons are needed, one per table — a `roles_by_ids` on the roles table and a
+`categories_by_ids` mirroring it on the categories table. (Validated XanoScript for
+these exists; the orchestrator relays it.)
 
 but the browser never sees names for them, so the client is left parsing the
 `Roles` string — a field whose format varies per record (comma display names in
@@ -974,23 +1045,41 @@ Join `role_refs` against the roles table and add a resolved array:
   recommended rollout: the client prefers the resolved array the moment it appears
   and falls back to the string for any record that lacks it.
 
-### Ordering — Jerico's call
+### What the endpoint should return — categories
 
-The card renders up to **three** chips and takes the **first three entries in
-array order**, dropping any extras. So the array order is the display order.
+Resolve the **single** `primary_category_ref` (Classification shows one value):
 
-The record also has `primary_role_ref`, `secondary_role_ref`, and
-`tertiary_role_ref` fields, which are **null in the test record** — so their
-intended semantics are unverified. **Jerico decides in Xano** whether
-`roles_resolved` should be ordered primary → secondary → tertiary from those
-fields, or simply follow `role_refs` order. Either is fine on the client; it just
-takes the first three as given.
+```json
+"category_resolved": { "id": 4, "name": "Marketing, Strategy & Leadership" }
+```
+
+- **Field name: `category_resolved`** (singular). This is what the client reads
+  first, and it is the shape to aim for.
+- A plural `categories_resolved` array (resolving all of `category_refs`) is also
+  accepted, and the client picks the entry matching `primary_category_ref`. Send it
+  only if something else on the page needs the full list — for this card the
+  singular field is enough and unambiguous.
+- Same entry shape and the same "final display casing, not slugs" rule as roles.
+- `category_refs` stays as-is; it is not used for display.
+
+### Ordering
+
+⚠ **`in` returns table order.** If a resolved ARRAY is sent, its order will not
+match the ids you passed. The client re-sorts by `role_refs` / `category_refs` when
+entries carry `id`, so **always include `id` on each entry** — without it, order is
+whatever the table returned. The singular `category_resolved` sidesteps this
+entirely.
+
+⚠ **`primary_role_ref` / `secondary_role_ref` / `tertiary_role_ref` are legacy and
+ignored by the client** (Jerico, 2026-07-30). Do not use them to order
+`roles_resolved`; `role_refs` array order is the contract.
 
 ### Once this ships
 
-`parseRoles()` and its `ROLE_NAMES` copy in this module become dead-ish code — the
-fallback for old records only. Leave them until every record returns
-`roles_resolved`, then the map's four-file sync burden can be reduced by one.
+`parseRoles()` and its `ROLE_NAMES` copy become dead-ish code — the fallback for
+old records only — and so does `deSlug()` and the Category `text-transform:
+capitalize` rule. Leave them until every record returns both resolved fields, then
+the `ROLE_NAMES` four-file sync burden can be reduced by one.
 
 ## Tune-ables
 

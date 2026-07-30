@@ -693,6 +693,25 @@ names, extras dropped, each chip hiding on an empty value), `Location` from
 `City, State_Province, Country` with empty parts skipped, and `Bio` flattened
 from Quill rich-text HTML to one line of plain text.
 
+`Category` is the single Classification value, resolved from the record's
+`primary_category_ref` — **not** `category_refs[0]`, and `category_refs` is not used
+for display. The client reads `category_resolved` (singular: one string or one
+object) first, accepts a plural `categories_resolved` array as a secondary shape
+(picking the entry whose `id` matches `primary_category_ref`), and otherwise falls
+back to the legacy `Category` string, de-hyphenating it only when it looks like a
+slug — hyphens and no spaces, so Brian's `marketing-strategy-leadership` becomes
+`marketing strategy leadership` while Kaeser's `Creative & Brand` passes through.
+That fallback relies on a `text-transform: capitalize` rule scoped to the Category
+bind alone, since Location must not be capitalized.
+
+⚠ Xano's `in` where-clause returns **table order**, not the order of the ids handed
+to it, so resolved arrays are re-sorted client-side into the record's ref order
+(`roles_resolved` by `role_refs`, plural categories by `category_refs`) whenever
+entries carry `id`; entries without a matching id keep server order and go last.
+`primary_role_ref`, `secondary_role_ref` and `tertiary_role_ref` are **legacy and
+deliberately ignored** (Jerico 2026-07-30) — `role_refs` is both the authoritative
+list and the ordering source.
+
 Role names come from one of two places. If the record carries a non-empty
 `roles_resolved` array (the forward path — Xano resolving `role_refs: [39, 38, 35]`
 server-side), it wins outright and is printed verbatim: trimmed, deduped, but never

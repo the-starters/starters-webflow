@@ -22,6 +22,10 @@
  *                             stored format varies per record (comma-separated
  *                             display names OR semicolon-separated slugs). See
  *                             roleNames() / parseRoles().
+ *   Category                  the single Classification value: the resolved
+ *                             `category_resolved` (from `primary_category_ref`)
+ *                             when present, else the legacy `Category` string
+ *                             with slug-looking values de-hyphenated
  *   Location                  "City, State_Province, Country", empty parts
  *                             skipped so no orphan commas render
  *   Bio                       the Quill rich-text HTML flattened to plain text
@@ -249,42 +253,97 @@
     return roles
   }
 
-  /* --------------------------- resolved role names ------------------------- *
-   * The record also carries `role_refs: [39, 38, 35]` — the authoritative role
-   * reference IDs. Once Xano resolves those server-side (see the wiring doc,
-   * "Roles: resolve role_refs in Xano"), the response will carry real display
-   * names and every heuristic below it becomes dead weight.
+  /* ------------------- resolved names (roles and category) ----------------- *
+   * The record carries the authoritative reference IDs — `role_refs: [39, 38, 35]`
+   * and `primary_category_ref: 4` — and Xano resolves them server-side into
+   * display names (see the wiring doc, "Roles and categories: resolve the refs in
+   * Xano"). This is the forward path, live now so that Xano change needs no
+   * client release. Resolved names are authoritative display values: NOT
+   * slug-mapped and NOT de-hyphenated, only trimmed, emptied-out, and deduped.
    *
-   * This is the forward path, live now so the Xano change needs no client
-   * release: if a resolved array is present and yields at least one name, it
-   * WINS over the `Roles` string. Resolved names are authoritative display
-   * values, so they are NOT slug-mapped and NOT de-hyphenated — only trimmed,
-   * emptied-out, and deduped.
+   * Field names are deliberately distinct from the raw fields so all shapes can
+   * coexist during the migration:
+   *   roles_resolved      array  (or `roles`)          <- role_refs
+   *   category_resolved   single (string or object)     <- primary_category_ref
+   *   categories_resolved array  (or `categories`)      <- category_refs
    *
-   * `roles_resolved` is the canonical field name. It is deliberately distinct
-   * from the existing `Roles` (the delimited string) and `role_refs` (the ids),
-   * so all three can coexist during the migration; `roles` is accepted too, in
-   * case the endpoint ships that name instead.
+   * ORDERING. Xano's `in` where-clause returns TABLE order, not the order of the
+   * ids handed to it, so a resolved array's order cannot be trusted. When entries
+   * carry `id`, they are re-sorted to match the record's ref array before use —
+   * which matters because the roles fill three ordered chip slots and the
+   * category shows exactly one value.
+   *
+   * LEGACY, DELIBERATELY UNREAD (Jerico, 2026-07-30): `primary_role_ref`,
+   * `secondary_role_ref`, `tertiary_role_ref`. `role_refs` is the authoritative
+   * role list and its array order is the display order. Those three fields are
+   * copied through with the rest of the record but never consulted; do not
+   * "restore" them as an ordering source.
    * ------------------------------------------------------------------------ */
   var RESOLVED_ROLE_FIELDS = ['roles_resolved', 'roles']
+  // Singular first: this is the one resolved from `primary_category_ref`, and it
+  // is what Classification displays. The plural array is a secondary shape, kept
+  // so the endpoint can ship either.
+  var RESOLVED_CATEGORY_FIELD = 'category_resolved'
+  var RESOLVED_CATEGORY_LIST_FIELDS = ['categories_resolved', 'categories']
   var RESOLVED_NAME_KEYS = ['name', 'display_name', 'title']
+  var ROLE_REF_FIELD = 'role_refs'
+  var CATEGORY_REF_FIELD = 'category_refs'
+  var PRIMARY_CATEGORY_REF_FIELD = 'primary_category_ref'
 
-  function resolvedRoleNames(value) {
+  // A resolved entry is either a display string or an object naming one. Anything
+  // else — a bare id, a boolean, null — yields '' and is skipped by the callers,
+  // so an array of raw ids produces nothing and falls through to the legacy path
+  // instead of printing "39" on the card.
+  function entryName(entry) {
+    if (typeof entry === 'string') return text(entry)
+    if (entry != null && typeof entry === 'object') {
+      for (var i = 0; i < RESOLVED_NAME_KEYS.length; i++) {
+        var candidate = text(entry[RESOLVED_NAME_KEYS[i]])
+        if (candidate) return candidate
+      }
+    }
+    return ''
+  }
+
+  // Compared as strings so 4 and "4" match — Xano has been seen to send either.
+  function entryId(entry) {
+    if (entry == null || typeof entry !== 'object') return null
+    var id = text(entry.id)
+    return id.length ? id : null
+  }
+
+  // Re-sort resolved entries into the record's ref order. Entries with no id, or
+  // an id absent from the refs, keep their server order and go last (stable).
+  function orderByRefs(list, refs) {
+    if (!Array.isArray(list) || list.length < 2) return list
+    if (!Array.isArray(refs) || !refs.length) return list
+    var rank = Object.create(null)
+    refs.forEach(function (ref, index) {
+      var key = text(ref)
+      if (key.length && !(key in rank)) rank[key] = index
+    })
+    return list
+      .map(function (entry, index) {
+        var id = entryId(entry)
+        var ranked = id != null && id in rank
+        return { entry: entry, index: index, ranked: ranked, rank: ranked ? rank[id] : 0 }
+      })
+      .sort(function (a, b) {
+        if (a.ranked !== b.ranked) return a.ranked ? -1 : 1
+        if (a.ranked && a.rank !== b.rank) return a.rank - b.rank
+        return a.index - b.index // stable for everything else
+      })
+      .map(function (item) {
+        return item.entry
+      })
+  }
+
+  function resolvedNames(value, refs) {
     if (!Array.isArray(value)) return []
     var seen = Object.create(null)
     var names = []
-    value.forEach(function (entry) {
-      var name = ''
-      if (typeof entry === 'string') {
-        name = text(entry)
-      } else if (entry != null && typeof entry === 'object') {
-        for (var i = 0; i < RESOLVED_NAME_KEYS.length && !name; i++) {
-          name = text(entry[RESOLVED_NAME_KEYS[i]])
-        }
-      }
-      // Anything else — a bare id, a boolean, null — is skipped on purpose. A
-      // chip reading "39" is worse than no chip, and an array of raw ids simply
-      // yields nothing, which falls through to the string path below.
+    orderByRefs(value, refs).forEach(function (entry) {
+      var name = entryName(entry)
       if (!name) return
       var key = name.toLowerCase()
       if (seen[key]) return
@@ -294,16 +353,66 @@
     return names
   }
 
+  // Kept as its own export: reads a resolved array with no ref ordering applied.
+  function resolvedRoleNames(value) {
+    return resolvedNames(value, null)
+  }
+
   // The one place that decides where role names come from. Resolved array first
-  // (in field-name preference order), delimited string as the fallback.
+  // (in field-name preference order, re-sorted into role_refs order), delimited
+  // string as the fallback.
   function roleNames(record) {
     if (record && typeof record === 'object') {
       for (var i = 0; i < RESOLVED_ROLE_FIELDS.length; i++) {
-        var resolved = resolvedRoleNames(record[RESOLVED_ROLE_FIELDS[i]])
+        var resolved = resolvedNames(record[RESOLVED_ROLE_FIELDS[i]], record[ROLE_REF_FIELD])
         if (resolved.length) return resolved
       }
     }
     return parseRoles(record ? record.Roles : '')
+  }
+
+  // A slug-like value has hyphens and NO spaces ("marketing-strategy-leadership").
+  // De-hyphenate it to lowercase words and let the card's CSS capitalize, exactly
+  // as the roles fallback does. A display value ("Creative & Brand") contains a
+  // space and passes through verbatim, as does a single word.
+  function deSlug(value) {
+    var out = text(value)
+    if (!out || out.indexOf(' ') > -1 || out.indexOf('-') === -1) return out
+    return out.replace(/-+/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+  }
+
+  // Classification shows exactly ONE category (Jerico, 2026-07-30). Priority:
+  //   1. `category_resolved` — the single entry Xano resolves from
+  //      `primary_category_ref`. This is the intended source.
+  //   2. `categories_resolved` / `categories` — a plural array, secondary shape.
+  //      The entry matching `primary_category_ref` wins if it is identifiable;
+  //      otherwise the array is put in `category_refs` order and the first taken.
+  //   3. the legacy `Category` string, de-hyphenated when it looks like a slug.
+  function categoryName(record) {
+    if (!record || typeof record !== 'object') return ''
+
+    var single = entryName(record[RESOLVED_CATEGORY_FIELD])
+    if (single) return single
+
+    var primary = text(record[PRIMARY_CATEGORY_REF_FIELD])
+    for (var i = 0; i < RESOLVED_CATEGORY_LIST_FIELDS.length; i++) {
+      var list = record[RESOLVED_CATEGORY_LIST_FIELDS[i]]
+      if (!Array.isArray(list) || !list.length) continue
+      // Prefer the entry the record actually calls primary; ref order is only the
+      // tie-breaker for a list that cannot be matched to it.
+      if (primary) {
+        for (var j = 0; j < list.length; j++) {
+          if (entryId(list[j]) === primary) {
+            var named = entryName(list[j])
+            if (named) return named
+          }
+        }
+      }
+      var names = resolvedNames(list, record[CATEGORY_REF_FIELD])
+      if (names.length) return names[0]
+    }
+
+    return deSlug(record.Category)
   }
 
   function joinLocation(record) {
@@ -355,6 +464,7 @@
     for (var slot = 0; slot < ROLE_SLOTS; slot++) {
       out['Role_' + (slot + 1)] = roles[slot] || ''
     }
+    out.Category = categoryName(record)
     out.Location = joinLocation(record)
     out.Bio = htmlToText(record.Bio)
     out[TYPE_FIELD] = normalizeType(record[TYPE_FIELD])
@@ -502,7 +612,11 @@
     parseRoles: parseRoles,
     normalizeType: normalizeType,
     resolvedRoleNames: resolvedRoleNames,
+    resolvedNames: resolvedNames,
+    orderByRefs: orderByRefs,
     roleNames: roleNames,
+    categoryName: categoryName,
+    deSlug: deSlug,
     joinLocation: joinLocation,
     unwrap: unwrap,
     // Answers "why is/isn't ?ms= doing anything here" without reading the source.

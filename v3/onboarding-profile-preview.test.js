@@ -446,6 +446,249 @@ test('resolvedRoleNames rejects non-arrays and junk entry types', () => {
   assert.deepEqual(list(resolvedRoleNames([39, true, false, [], {}])), [])
 })
 
+/* ------------------- ref ordering (Xano returns table order) --------------- *
+ * Xano's `in` where-clause returns TABLE order, not the order of the ids handed
+ * to it, so resolved arrays must be re-sorted into the record's ref order. This
+ * matters: roles fill three ORDERED chip slots, and the category shows exactly
+ * one value.
+ * -------------------------------------------------------------------------- */
+
+test('orderByRefs re-sorts a shuffled server response into ref order', () => {
+  const { orderByRefs } = transform()
+  const shuffled = [{ id: 35, name: 'C' }, { id: 39, name: 'A' }, { id: 38, name: 'B' }]
+  assert.deepEqual(
+    list(orderByRefs(shuffled, [39, 38, 35])).map((e) => e.name),
+    ['A', 'B', 'C'],
+  )
+})
+
+test('orderByRefs matches ids across string/number types', () => {
+  const { orderByRefs } = transform()
+  const entries = [{ id: '35', name: 'C' }, { id: 39, name: 'A' }]
+  assert.deepEqual(list(orderByRefs(entries, ['39', 35])).map((e) => e.name), ['A', 'C'])
+})
+
+test('orderByRefs sends ids missing from the refs to the end, stably', () => {
+  const { orderByRefs } = transform()
+  const entries = [
+    { id: 99, name: 'unlisted-1' },
+    { id: 38, name: 'B' },
+    { id: 98, name: 'unlisted-2' },
+    { id: 39, name: 'A' },
+  ]
+  assert.deepEqual(
+    list(orderByRefs(entries, [39, 38])).map((e) => e.name),
+    ['A', 'B', 'unlisted-1', 'unlisted-2'],
+  )
+})
+
+test('orderByRefs leaves entries without ids in server order', () => {
+  const { orderByRefs } = transform()
+  assert.deepEqual(list(orderByRefs(['C', 'A', 'B'], [39, 38, 35])), ['C', 'A', 'B'])
+  // Mixed: identifiable entries sort first, id-less ones keep order behind them.
+  const mixed = [{ name: 'no-id-1' }, { id: 38, name: 'B' }, { name: 'no-id-2' }, { id: 39, name: 'A' }]
+  assert.deepEqual(
+    list(orderByRefs(mixed, [39, 38])).map((e) => e.name),
+    ['A', 'B', 'no-id-1', 'no-id-2'],
+  )
+})
+
+test('orderByRefs is a no-op without usable refs or with fewer than two entries', () => {
+  const { orderByRefs } = transform()
+  const entries = [{ id: 35, name: 'C' }, { id: 39, name: 'A' }]
+  assert.deepEqual(list(orderByRefs(entries, null)).map((e) => e.name), ['C', 'A'])
+  assert.deepEqual(list(orderByRefs(entries, [])).map((e) => e.name), ['C', 'A'])
+  assert.deepEqual(list(orderByRefs([{ id: 1, name: 'only' }], [9, 1])).map((e) => e.name), ['only'])
+})
+
+// Brian's record: role_refs [39, 38, 35].
+test('roleNames applies role_refs order to a shuffled resolved array', () => {
+  const { roleNames } = transform()
+  const names = roleNames({
+    role_refs: [39, 38, 35],
+    roles_resolved: [
+      { id: 35, name: 'Performance Creative Lead' },
+      { id: 39, name: 'Head of Growth' },
+      { id: 38, name: 'Paid Social Marketer' },
+    ],
+  })
+  assert.deepEqual(list(names), ['Head of Growth', 'Paid Social Marketer', 'Performance Creative Lead'])
+})
+
+test('unwrap fills the chip slots in role_refs order, not server order', () => {
+  const { unwrap } = transform()
+  const [item] = unwrap(
+    envelope({
+      First_Name: 'Brian',
+      role_refs: [39, 38, 35],
+      roles_resolved: [
+        { id: 38, name: 'Paid Social Marketer' },
+        { id: 35, name: 'Performance Creative Lead' },
+        { id: 39, name: 'Head of Growth' },
+      ],
+    }),
+  )
+  assert.deepEqual(
+    [item.Role_1, item.Role_2, item.Role_3],
+    ['Head of Growth', 'Paid Social Marketer', 'Performance Creative Lead'],
+  )
+})
+
+// LEGACY, per Jerico 2026-07-30: role_refs is authoritative; these three fields
+// must never influence ordering or selection.
+test('legacy primary/secondary/tertiary_role_ref fields are carried but ignored', () => {
+  const { unwrap } = transform()
+  const [item] = unwrap(
+    envelope({
+      First_Name: 'A',
+      role_refs: [39, 38],
+      // Deliberately disagreeing with role_refs order.
+      primary_role_ref: 38,
+      secondary_role_ref: 39,
+      tertiary_role_ref: null,
+      roles_resolved: [{ id: 39, name: 'Head of Growth' }, { id: 38, name: 'Paid Social Marketer' }],
+    }),
+  )
+  assert.equal(item.Role_1, 'Head of Growth', 'role_refs[0] wins, not primary_role_ref')
+  assert.equal(item.Role_2, 'Paid Social Marketer')
+  // Still copied through untouched, in case something else ever binds them.
+  assert.equal(item.primary_role_ref, 38)
+  assert.equal(item.secondary_role_ref, 39)
+  assert.equal(item.tertiary_role_ref, null)
+})
+
+/* --------------------------- category (one value) -------------------------- *
+ * Classification displays exactly ONE category, resolved from the single
+ * `primary_category_ref` field. Brian: primary_category_ref 4, category_refs
+ * [4, 13], raw Category slug "marketing-strategy-leadership".
+ * -------------------------------------------------------------------------- */
+
+test('category_resolved (singular) wins and may be a string or an object', () => {
+  const { categoryName } = transform()
+  assert.equal(categoryName({ category_resolved: 'Marketing, Strategy & Leadership' }), 'Marketing, Strategy & Leadership')
+  assert.equal(categoryName({ category_resolved: { id: 4, name: 'Marketing & Strategy' } }), 'Marketing & Strategy')
+  assert.equal(categoryName({ category_resolved: { display_name: 'From display_name' } }), 'From display_name')
+  assert.equal(categoryName({ category_resolved: { title: 'From title' } }), 'From title')
+})
+
+test('the singular field beats the plural array and the legacy string', () => {
+  const { categoryName } = transform()
+  assert.equal(
+    categoryName({
+      category_resolved: { id: 4, name: 'Singular Wins' },
+      categories_resolved: [{ id: 4, name: 'Plural Loses' }],
+      Category: 'marketing-strategy-leadership',
+    }),
+    'Singular Wins',
+  )
+})
+
+test('the plural array is accepted as a secondary shape', () => {
+  const { categoryName } = transform()
+  assert.equal(categoryName({ categories_resolved: [{ id: 4, name: 'From Plural' }] }), 'From Plural')
+  assert.equal(categoryName({ categories: ['From categories'] }), 'From categories')
+  assert.equal(
+    categoryName({ categories_resolved: [{ id: 4, name: 'Preferred' }], categories: [{ id: 4, name: 'Secondary' }] }),
+    'Preferred',
+  )
+})
+
+// The whole point of the correction: "first category" means the record's
+// primary_category_ref, never the lowest id or the server's table order.
+test('the plural array picks the entry matching primary_category_ref', () => {
+  const { categoryName } = transform()
+  const record = {
+    primary_category_ref: 4,
+    category_refs: [4, 13],
+    // Table order puts 13 first — the naive "first" would be wrong.
+    categories_resolved: [
+      { id: 13, name: 'Operations' },
+      { id: 4, name: 'Marketing & Strategy' },
+    ],
+  }
+  assert.equal(categoryName(record), 'Marketing & Strategy')
+})
+
+test('without a primary ref the plural array falls back to category_refs order', () => {
+  const { categoryName } = transform()
+  assert.equal(
+    categoryName({
+      category_refs: [4, 13],
+      categories_resolved: [{ id: 13, name: 'Operations' }, { id: 4, name: 'Marketing & Strategy' }],
+    }),
+    'Marketing & Strategy',
+  )
+  // No refs at all: server order stands.
+  assert.equal(
+    categoryName({ categories_resolved: [{ id: 13, name: 'Operations' }, { id: 4, name: 'Marketing' }] }),
+    'Operations',
+  )
+})
+
+test('a primary ref with no matching entry still yields a category', () => {
+  const { categoryName } = transform()
+  assert.equal(
+    categoryName({
+      primary_category_ref: 999,
+      category_refs: [4, 13],
+      categories_resolved: [{ id: 13, name: 'Operations' }, { id: 4, name: 'Marketing & Strategy' }],
+    }),
+    'Marketing & Strategy',
+    'unmatched primary falls through to ref order rather than rendering nothing',
+  )
+})
+
+// Brian's live fallback case.
+test('the legacy Category string de-hyphenates a slug-looking value', () => {
+  const { categoryName, deSlug } = transform()
+  assert.equal(categoryName({ Category: 'marketing-strategy-leadership' }), 'marketing strategy leadership')
+  assert.equal(deSlug('marketing-strategy-leadership'), 'marketing strategy leadership')
+  assert.equal(deSlug('CRO-Expert'), 'cro expert', 'lowercased; the card CSS capitalizes')
+})
+
+// Kaeser's live value.
+test('the legacy Category string passes display-like values through verbatim', () => {
+  const { categoryName, deSlug } = transform()
+  assert.equal(categoryName({ Category: 'Creative & Brand' }), 'Creative & Brand')
+  assert.equal(deSlug('Creative & Brand'), 'Creative & Brand', 'has a space, so not a slug')
+  assert.equal(deSlug('E-Commerce Manager'), 'E-Commerce Manager', 'hyphen AND space: left alone')
+  assert.equal(deSlug('Marketing'), 'Marketing', 'single word, no hyphen')
+  assert.equal(deSlug('  Padded  '), 'Padded')
+})
+
+test('categoryName tolerates junk and missing values', () => {
+  const { categoryName } = transform()
+  assert.equal(categoryName({}), '')
+  assert.equal(categoryName(null), '')
+  assert.equal(categoryName({ Category: null }), '')
+  assert.equal(categoryName({ category_resolved: 4 }), '', 'a bare id is not a display name')
+  assert.equal(categoryName({ category_resolved: {} }), '')
+  assert.equal(categoryName({ category_resolved: [] }), '')
+  assert.equal(categoryName({ categories_resolved: [39, 13], Category: 'ops-and-more' }), 'ops and more')
+  assert.equal(categoryName({ categories_resolved: 'not an array', Category: 'Ops' }), 'Ops')
+})
+
+test('unwrap sets Category from the resolved field and keeps the raw refs', () => {
+  const { unwrap } = transform()
+  const [resolved] = unwrap(
+    envelope({
+      First_Name: 'Brian',
+      primary_category_ref: 4,
+      category_refs: [4, 13],
+      category_resolved: { id: 4, name: 'Marketing, Strategy & Leadership' },
+      Category: 'marketing-strategy-leadership',
+    }),
+  )
+  assert.equal(resolved.Category, 'Marketing, Strategy & Leadership')
+  assert.equal(resolved.primary_category_ref, 4, 'raw refs carried through untouched')
+  assert.deepEqual(list(resolved.category_refs), [4, 13])
+
+  const [fallback] = unwrap(
+    envelope({ First_Name: 'Brian', primary_category_ref: 4, Category: 'marketing-strategy-leadership' }),
+  )
+  assert.equal(fallback.Category, 'marketing strategy leadership')
+})
+
 test('joinLocation joins city, state and country in order', () => {
   const { joinLocation } = transform()
   assert.equal(
@@ -1093,12 +1336,16 @@ test('a duplicate load does not register the hook twice', () => {
 test('exposes the transform and the override decision for console debugging', () => {
   const mod = loadModule()
   assert.deepEqual(Object.keys(mod.api).sort(), [
+    'categoryName',
+    'deSlug',
     'htmlToText',
     'instanceMatches',
     'joinLocation',
     'memberOverride',
     'normalizeType',
+    'orderByRefs',
     'parseRoles',
+    'resolvedNames',
     'resolvedRoleNames',
     'roleNames',
     'sourceMatches',
