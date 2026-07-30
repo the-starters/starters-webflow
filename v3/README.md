@@ -632,6 +632,148 @@ JSON. It is presentation-only and does not grant or restrict access. See
 attributes, install snippet, persistence behavior, diagnostics, and release
 checks.
 
+## Onboarding profile preview
+
+`onboarding-profile-preview.js` is the page glue for the wf-xano list keyed
+`onboarding-self-preview` — the freelancer's own profile rendered as a
+profile-preview card on the onboarding completion page ("Your 30-day visibility
+boost is already running"). The card's CSS and markup live in the structure embed
+in [ONBOARDING-PROFILE-PREVIEW-WIRING.md](ONBOARDING-PROFILE-PREVIEW-WIRING.md);
+the script owns exactly one thing, the `beforeRender` transform.
+
+The page runs **one wf-xano instance per form block**, and the wiring doc is the
+source of truth for the attribute sets. Each form block is itself a wrapper
+(`onboarding-preview-full` / `onboarding-preview-consult`) and contains its own
+card template; one shared scripts embed serves both. This is forced by the
+library, not a preference: `this.template = owned(elSel('template'))` binds
+exactly one template per wrapper and silently ignores a second, so two card
+layouts require two wrappers. Consequences worth knowing before touching this
+page: the state classes (`is-wf-xano-error` and friends) land on each **form
+block**, so the card CSS matches them as an ancestor; a plain load makes **two**
+GETs of the same endpoint (accepted); and any ancestor that still carries wrapper
+attributes becomes a third instance that steals the first form's template.
+
+Because the keys are no longer fixed, the module arms by **endpoint**: at boot it
+scans `WfXano.instances` and registers its `beforeRender` hook on every instance
+whose source contains `starters_onboarding/get_freelancers` as a segment prefix
+(checking `url` and raw `source`), plus anything still keyed
+`onboarding-self-preview`, deduped by identity. Segment *prefix*, not `endsWith`,
+because the endpoint name is in flux — the page currently reads
+`get_freelancers_test`, a temporary secret-gated mirror, and `_secure` may follow.
+An `endsWith` matcher was a live blocker: nothing armed on `_test`, so every bind
+rendered against the raw envelope while the list still initialised and the request
+still succeeded. The tell is `armed 0` plus rendered item keys of
+`["freelancer"]`. It reports `armed N instance(s)` on staging, which is the fastest check
+that both forms are wired — a count of 1 means one form is missing its attributes.
+Arming is a one-shot boot pass; an instance created by a later manual
+`WfXano.init(el)` would not be armed, since the library emits no
+instance-created event. Nothing on this page does that.
+
+The **form-block switching is not JavaScript** — the consult and full blocks carry
+`wf-xano-if-state="data.items.0.profile_type_30 === consult"` and
+`… !== consult` respectively, plus a mandatory `wf-xano-display`, on the same
+element as their wrapper attributes (state projection includes the instance root,
+so each form self-toggles against its own instance). `!== consult` on the full block is what makes
+it the fallback for an empty result, a blank field, or a fetch error, since
+`String(undefined) !== 'consult'`. `=== full` would show nothing in those cases.
+The comparison is case- and whitespace-exact (`String(left) === right`), and the
+stored values are inconsistent — `"full"` on one record, `"Full"` on another — so
+the transform lowercases `profile_type_30` on the copied record. The published
+attributes therefore need no list of accepted casings and no Designer churn. Safe
+because the field is only a switching key, never bound or displayed; if it ever
+needs showing, bind a separate un-normalized field.
+
+`starters_onboarding/get_freelancers` answers with an envelope,
+`{"freelancer": [ <one record> ]}`. wf-xano's `normalize()` sees an object rather
+than an array and takes its single-object branch, so `items[0]` is the whole body
+and every plain `wf-xano-bind` would resolve against the envelope instead of the
+record. The hook unwraps it and adds the three computed fields the template binds
+and Xano does not send: `Role_1`/`Role_2`/`Role_3` (first three role display
+names, extras dropped, each chip hiding on an empty value), `Location` from
+`City, State_Province, Country` with empty parts skipped, and `Bio` flattened
+from Quill rich-text HTML to one line of plain text.
+
+`Category` is the single Classification value, resolved from the record's
+`primary_category_ref` — **not** `category_refs[0]`, and `category_refs` is not used
+for display. The client reads `category_resolved` (singular: one string or one
+object) first, accepts a plural `categories_resolved` array as a secondary shape
+(picking the entry whose `id` matches `primary_category_ref`), and otherwise falls
+back to the legacy `Category` string, de-hyphenating it only when it looks like a
+slug — hyphens and no spaces, so Brian's `marketing-strategy-leadership` becomes
+`marketing strategy leadership` while Kaeser's `Creative & Brand` passes through.
+That fallback relies on a `text-transform: capitalize` rule scoped to the Category
+bind alone, since Location must not be capitalized.
+
+⚠ Xano's `in` where-clause returns **table order**, not the order of the ids handed
+to it, so resolved arrays are re-sorted client-side into the record's ref order
+(`roles_resolved` by `role_refs`, plural categories by `category_refs`) whenever
+entries carry `id`; entries without a matching id keep server order and go last.
+`primary_role_ref`, `secondary_role_ref` and `tertiary_role_ref` are **legacy and
+deliberately ignored** (Jerico 2026-07-30) — `role_refs` is both the authoritative
+list and the ordering source.
+
+Role names come from one of two places. If the record carries a non-empty
+`roles_resolved` array (the forward path — Xano resolving `role_refs: [39, 38, 35]`
+server-side), it wins outright and is printed verbatim: trimmed, deduped, but never
+slug-mapped or de-hyphenated, because a resolved name is authoritative. Entries may
+be strings or `{id, name}` objects (`name` → `display_name` → `title`), and junk
+entries such as bare ids are skipped, so a raw `role_refs`-shaped array falls
+through rather than printing `39` in a chip.
+
+Otherwise the `Roles` string is parsed with `parseRoles()`, **ported verbatim from
+the saved-list sibling above** — including its `ROLE_NAMES` map, which this file is
+now the 4th copy of (every copy carries the same four-file `KEEP IN SYNC` comment).
+The earlier comma-only split here was a live bug: the stored format varies per
+record, and a real member's `head-of-growth; paid-social-marketer;
+performance-creative-lead` landed entirely in `Role_1` with chips 2 and 3 empty.
+Both `;` and `,` are now accepted. As with the sibling, de-hyphenated fallbacks are
+lowercase and **the chip's CSS must supply `text-transform: capitalize`**; map
+entries carry their own final casing and are unaffected by it, which is the whole
+point of the map (`capitalize` on `cro expert` gives "Cro Expert").
+
+Entity decoding in the bio flattener is deliberately single-pass. A
+loop-until-stable decode would turn the literal `&amp;lt;` an author typed into
+`<`, which is how escaped markup gets smuggled back into a value. Nothing is ever
+assigned as HTML either way — wf-xano's binds write `textContent` — so the
+flattener is a formatting concern, not the security boundary.
+
+The module arms through `WfXano.push()` for the same reason the saved-list script
+does, and is marker-gated on the instance-key selector so it costs nothing on
+other pages. `arm()` also reads `getState()` and calls `refresh()` when the status
+is already `success` or `error`: that only happens when something booted wf-xano
+early enough for a response to render before this file ran, i.e. an untransformed
+render is already on screen. Script-tag order relative to the wf-xano tag does not
+matter (verified against the library's boot guard and queue drain — see the wiring
+doc).
+
+If the instance is genuinely absent after boot, the module warns once on staging,
+local, and Cloudflare tunnel hosts (or with `window.STARTERS_DEBUG`) and stays
+silent in production. The warning earns its place: with no transform the binds
+resolve against the envelope, the template's
+`wf-xano-if="First_Name|Last_Name|Professional_Headline"` guard hides the card,
+and the page shows its empty state to a member who has a complete profile.
+
+A staging-only `?ms=<memberstack_id>` tester renders any member's card, applied
+through `instance.setParam()` on **every** armed instance (which reloads, so the
+settled-state belt is skipped when an override is in play — and a `?ms=` load
+therefore makes four GETs on a two-form page: two initial, two reloads). It is honored on `*.webflow.io`, `localhost`,
+`127.0.0.1`, and `*.trycloudflare.com` only. The host predicate is deliberately
+anchored tighter than the loose one the sibling modules share, because here it
+gates a data read rather than a `console.warn`, and `STARTERS_DEBUG` — which may
+be set in production — must never unlock it.
+
+The endpoint is still public with a hardcoded demo `memberstack_id`. The wiring
+doc carries the Xano authentication spec and the two-attribute embed flip; treat
+that flip as required before the page reaches real members. The `?ms=` tester goes
+inert on its own at that point: the server stops honoring the param, so the
+override cannot outlive the fix.
+
+Run its focused test with:
+
+```sh
+node --test v3/onboarding-profile-preview.test.js
+```
+
 ## Scheduling auth
 
 `scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and
