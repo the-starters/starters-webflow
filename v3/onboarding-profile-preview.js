@@ -47,7 +47,8 @@
  * their own card layout, and wf-xano binds exactly ONE template per wrapper — so
  * each form block is its own wrapper with its own template and its own instance
  * key. This module therefore arms EVERY instance whose source reads
- * `starters_onboarding/get_freelancers`, not one instance by name (the legacy key
+ * `starters_onboarding/get_freelancers` (or a suffixed variant of it, such as the
+ * temporary `get_freelancers_test`), not one instance by name (the legacy key
  * `onboarding-self-preview` is still honored for a rolled-back page). Two
  * wrappers means two GETs of the same endpoint on load; that is accepted, and it
  * is the reason the ?ms= override reloads twice.
@@ -95,11 +96,20 @@
   var INSTANCE = 'onboarding-self-preview'
   // What actually identifies our lists: the endpoint they read. Any wrapper
   // pointing here gets the transform, whatever its instance key is named.
-  var SOURCE_SUFFIX = 'starters_onboarding/get_freelancers'
+  var SOURCE_PATH = 'starters_onboarding/get_freelancers'
+  // SUFFIX VARIANTS MUST MATCH. The page has been pointed at
+  // `get_freelancers_test` (a temporary secret-gated mirror) and a
+  // `get_freelancers_secure` may follow, so this is a segment-prefix test, not an
+  // exact-endsWith one: `starters_onboarding` must start a path segment and
+  // `get_freelancers` must start the next, after which anything may follow.
+  // An endsWith check here was a live bug — nothing armed on the _test endpoint
+  // and every bind rendered against the raw envelope.
+  var SOURCE_RE = new RegExp('(^|[/:])' + SOURCE_PATH)
   // Marker gate, matching either grammar: the legacy key, or any wrapper whose
   // source attribute names our endpoint. Both are plain page HTML at parse time.
+  // CSS `*=` is a plain substring match, so it already covers the suffix variants.
   var WRAPPER =
-    '[wf-xano-instance="' + INSTANCE + '"], [wf-xano-source*="' + SOURCE_SUFFIX + '"]'
+    '[wf-xano-instance="' + INSTANCE + '"], [wf-xano-source*="' + SOURCE_PATH + '"]'
   // First three only — the card has exactly three chip slots.
   var ROLE_SLOTS = 3
   var LOCATION_FIELDS = ['City', 'State_Province', 'Country']
@@ -381,13 +391,18 @@
    * ------------------------------------------------------------------------ */
 
   // Path comparison only. resolveUrl() returns an absolute source verbatim and
-  // load() appends the query string per request, but strip query/hash/trailing
-  // slashes anyway so a source written with any of them still matches.
+  // load() appends the query string per request, but strip query/hash anyway so a
+  // source written with either still matches.
+  //
+  // Segment-prefix, NOT endsWith: `get_freelancers_test` and
+  // `get_freelancers_secure` are real endpoint names this page has used, and both
+  // must arm. The leading `(^|[/:])` is what keeps it honest — it anchors
+  // `starters_onboarding` to a segment start, so `other_group/get_freelancers` and
+  // `not_starters_onboarding/get_freelancers` do not match.
   function sourceMatches(value) {
     var url = text(value)
     if (!url) return false
-    url = url.split('#')[0].split('?')[0].replace(/\/+$/, '')
-    return url.length >= SOURCE_SUFFIX.length && url.slice(-SOURCE_SUFFIX.length) === SOURCE_SUFFIX
+    return SOURCE_RE.test(url.split('#')[0].split('?')[0])
   }
 
   function instanceMatches(instance) {
@@ -447,7 +462,7 @@
       // hides the card, and the page silently shows its empty state to a member
       // who has a complete profile.
       warn(
-        'no wf-xano instance reading ' + SOURCE_SUFFIX + ' (and none keyed "' + INSTANCE +
+        'no wf-xano instance reading ' + SOURCE_PATH + '* (and none keyed "' + INSTANCE +
           '") — the card cannot unwrap the response and will show its empty state.',
       )
       return

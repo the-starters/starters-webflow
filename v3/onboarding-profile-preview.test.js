@@ -685,7 +685,7 @@ test('warns on staging when the instance is missing after boot', () => {
   const mod = loadModule({ withInstance: false })
   mod.drain()
   assert.equal(mod.warnings.length, 1)
-  assert.match(mod.warnings[0], /no wf-xano instance reading starters_onboarding\/get_freelancers/)
+  assert.match(mod.warnings[0], /no wf-xano instance reading starters_onboarding\/get_freelancers\*/)
   assert.match(mod.warnings[0], /none keyed "onboarding-self-preview"/)
 })
 
@@ -727,16 +727,45 @@ test('sourceMatches accepts the endpoint in the shapes a source can take', () =>
   assert.equal(sourceMatches(ENDPOINT + '#frag'), true, 'hash')
   assert.equal(sourceMatches('KZf7nFnk:starters_onboarding/get_freelancers'), true, 'raw group:path source')
   assert.equal(sourceMatches('/starters_onboarding/get_freelancers'), true, 'relative source')
+  assert.equal(sourceMatches('starters_onboarding/get_freelancers'), true, 'bare path')
+})
+
+// REGRESSION (live, blocking): the page was repointed at `get_freelancers_test`, a
+// temporary secret-gated mirror. The matcher was an exact endsWith, so nothing
+// armed, no transform ran, and every bind rendered against the raw envelope. The
+// endpoint name is expected to keep changing (`_secure` is next), so suffixed
+// variants must match.
+test('sourceMatches accepts suffixed endpoint variants', () => {
+  const { sourceMatches } = loadModule().api
+  assert.equal(sourceMatches(ENDPOINT + '_test'), true, 'the temporary secret-gated mirror')
+  assert.equal(sourceMatches(ENDPOINT + '_secure'), true)
+  assert.equal(sourceMatches(ENDPOINT + '_test?memberstack_id=mem_x'), true)
+  assert.equal(sourceMatches('KZf7nFnk:starters_onboarding/get_freelancers_test'), true)
 })
 
 test('sourceMatches rejects other endpoints and junk', () => {
   const { sourceMatches } = loadModule().api
-  assert.equal(sourceMatches('https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_brands'), false)
-  assert.equal(sourceMatches(ENDPOINT + '/extra'), false, 'must END with the path, not merely contain it')
-  assert.equal(sourceMatches('get_freelancers'), false, 'the whole suffix is required, not the tail of it')
+  const GROUP = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/'
+  assert.equal(sourceMatches(GROUP + 'starters_onboarding/get_brands'), false)
+  assert.equal(sourceMatches(GROUP + 'starters_onboarding/get_something_else'), false, 'same group, other endpoint')
+  // The group name has to start a path segment, so lookalikes stay out.
+  assert.equal(sourceMatches(GROUP + 'other_group/get_freelancers'), false)
+  assert.equal(sourceMatches(GROUP + 'not_starters_onboarding/get_freelancers'), false)
+  assert.equal(sourceMatches('get_freelancers'), false, 'the group segment is required, not just the endpoint')
   assert.equal(sourceMatches(''), false)
   assert.equal(sourceMatches(null), false)
   assert.equal(sourceMatches(undefined), false)
+})
+
+// DELIBERATE LOOSENING. This asserted false when the matcher was an exact
+// endsWith. Matching suffixed endpoints (`_test`, `_secure`) means the check is now
+// a segment-prefix one, and a deeper path under the same endpoint comes along for
+// the ride. That is accepted: no such route exists, and if one is ever added it
+// would still be this endpoint's data and still want the same transform. Keeping it
+// excluded would mean re-tightening to an endsWith and re-breaking `_test`.
+test('sourceMatches now also accepts a deeper path under the endpoint', () => {
+  const { sourceMatches } = loadModule().api
+  assert.equal(sourceMatches(ENDPOINT + '/extra'), true)
 })
 
 test('instanceMatches takes the endpoint from url or source, or the legacy key', () => {
@@ -756,6 +785,37 @@ test('arms BOTH form instances, each with its own hook', () => {
   assert.equal(consult.own.hooks.beforeRender.length, 1, 'consult form instance armed')
   assert.equal(full.own.hooks.beforeRender[0], consult.own.hooks.beforeRender[0], 'same pure transform')
   assert.deepEqual(mod.warnings, [])
+})
+
+// The live blocking case: both form wrappers pointed at the _test mirror.
+test('arms both form instances on a suffixed endpoint variant', () => {
+  const mod = loadModule({
+    instances: [
+      { key: 'onboarding-preview-full', url: ENDPOINT + '_test' },
+      { key: 'onboarding-preview-consult', url: ENDPOINT + '_test' },
+    ],
+  })
+  mod.drain()
+  assert.deepEqual(
+    mod.instanceList.map((i) => i.own.hooks.beforeRender.length),
+    [1, 1],
+  )
+  assert.deepEqual(mod.warnings, [])
+  assert.match(mod.infos[0], /armed 2 instance\(s\)/)
+})
+
+test('arms a mix of base and variant endpoints together', () => {
+  const mod = loadModule({
+    instances: [
+      { key: 'onboarding-preview-full', url: ENDPOINT + '_secure' },
+      { key: 'onboarding-preview-consult', url: ENDPOINT },
+    ],
+  })
+  mod.drain()
+  assert.deepEqual(
+    mod.instanceList.map((i) => i.own.hooks.beforeRender.length),
+    [1, 1],
+  )
 })
 
 test('ignores instances pointing at a different endpoint', () => {
@@ -808,7 +868,7 @@ test('warns when no instance reads the endpoint', () => {
   })
   mod.drain()
   assert.equal(mod.warnings.length, 1)
-  assert.match(mod.warnings[0], /no wf-xano instance reading starters_onboarding\/get_freelancers/)
+  assert.match(mod.warnings[0], /no wf-xano instance reading starters_onboarding\/get_freelancers\*/)
 })
 
 test('reports which instances were armed, on staging only', () => {

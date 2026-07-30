@@ -95,7 +95,7 @@ param — only the instance key and the `if-state` differ.
 | --- | --- | --- |
 | `wf-xano-element` | `wrapper` | `wrapper` |
 | `wf-xano-instance` | `onboarding-preview-full` | `onboarding-preview-consult` |
-| `wf-xano-source` | `https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers` | *(same)* |
+| `wf-xano-source` | `https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers`<br>…or a variant such as `…/get_freelancers_test` (see [Endpoint name variants](#endpoint-name-variants)) | *(same as the full form)* |
 | `wf-xano-method` | `GET` | `GET` |
 | `wf-xano-auth` | `none` (until the [auth flip](#xano-auth-flip-required-before-real-users)) | *(same)* |
 | `wf-xano-per-page` | `1` | `1` |
@@ -114,6 +114,29 @@ Then:
   attributes. That works because state projection includes the root itself
   (`projectionElements` unshifts `self.root` when it matches the selector), so
   each form self-toggles against **its own** instance's state.
+
+### Endpoint name variants
+
+The endpoint name is **in flux**, and the script is built for that. It currently
+reads `starters_onboarding/get_freelancers_test` — a temporary secret-gated mirror —
+and a `get_freelancers_secure` may follow.
+
+The script arms on a **segment prefix**, not an exact name: `starters_onboarding`
+must start a path segment and `get_freelancers` must start the next, after which
+any suffix is allowed. So `get_freelancers`, `get_freelancers_test`, and
+`get_freelancers_secure` all arm with no code change, while
+`starters_onboarding/get_brands`, `other_group/get_freelancers`, and
+`not_starters_onboarding/get_freelancers` correctly do not.
+
+Both form wrappers should point at the **same** endpoint. Nothing enforces it —
+they are independent instances — but a mismatch means the two forms decide from
+two different responses.
+
+⚠ An earlier exact-`endsWith` matcher was a live blocker: the page moved to
+`_test`, nothing armed, and every bind rendered against the raw envelope. If the
+endpoint is ever renamed in a way that does not keep `starters_onboarding/` +
+`get_freelancers…`, the matcher in `v3/onboarding-profile-preview.js`
+(`SOURCE_PATH` / `SOURCE_RE`) has to be updated with it.
 
 Everything about the `if-state` grammar — why `!== consult` on the full block, why
 `wf-xano-display` is mandatory, and the case-sensitivity trap — is unchanged and
@@ -1036,8 +1059,26 @@ rule in the structure embed does.
   `[starters onboarding-preview] armed 2 instance(s): "onboarding-preview-full", "onboarding-preview-consult"`.
   **A count of 1 means one form block is missing its wrapper attributes** — the
   quickest check that the Designer wiring is complete.
+- **Triage table for "the card is blank / binds are empty":**
+
+  | Symptom | Cause | Fix |
+  | --- | --- | --- |
+  | `armed 0` (or the no-instance warning), and the rendered item's keys are `["freelancer"]` | The **source matcher did not match** — almost always the endpoint was renamed. The transform never ran, so every bind resolved against the raw envelope. | Compare the wrappers' `wf-xano-source` against [Endpoint name variants](#endpoint-name-variants). `StartersV3OnboardingProfilePreview.sourceMatches('<the source>')` answers it in one call. |
+  | `armed 1` on a two-form page | One form block is missing its wrapper attributes | Complete the [per-form attribute set](#per-form-wrapper-attributes) |
+  | `initialized 3 list(s)` | An ancestor (`hero-app_inner`) still carries wrapper attributes and stole a form's template | Strip its `wf-xano-*` attributes |
+  | Both forms hidden | Neither `if-state` matched, or `wf-xano-display` is missing | See [Form-block switching](#form-block-switching) |
+
+  The first row is the one to check first, because everything looks superficially
+  fine: the list initialises, the request succeeds, the card renders — just with
+  every field empty.
+
+  ```js
+  // Did the transform run? Record fields = yes. ["freelancer"] = no.
+  Object.keys(WfXano.instances[0].getState().data.items[0])
+  ```
+
 - If no instance reads the endpoint it warns instead:
-  `[starters onboarding-preview] no wf-xano instance reading starters_onboarding/get_freelancers (and none keyed "onboarding-self-preview") — …`.
+  `[starters onboarding-preview] no wf-xano instance reading starters_onboarding/get_freelancers* (and none keyed "onboarding-self-preview") — …`.
   All of this is gated to staging hosts (`*.webflow.io`, `localhost`, `127.0.0.1`,
   `*.trycloudflare.com`) or `window.STARTERS_DEBUG = true`, and silent in
   production. The warning matters because the failure is otherwise invisible: with

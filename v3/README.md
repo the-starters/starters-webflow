@@ -655,9 +655,15 @@ attributes becomes a third instance that steals the first form's template.
 
 Because the keys are no longer fixed, the module arms by **endpoint**: at boot it
 scans `WfXano.instances` and registers its `beforeRender` hook on every instance
-whose source ends with `starters_onboarding/get_freelancers` (checking `url` and
-raw `source`), plus anything still keyed `onboarding-self-preview`, deduped by
-identity. It reports `armed N instance(s)` on staging, which is the fastest check
+whose source contains `starters_onboarding/get_freelancers` as a segment prefix
+(checking `url` and raw `source`), plus anything still keyed
+`onboarding-self-preview`, deduped by identity. Segment *prefix*, not `endsWith`,
+because the endpoint name is in flux — the page currently reads
+`get_freelancers_test`, a temporary secret-gated mirror, and `_secure` may follow.
+An `endsWith` matcher was a live blocker: nothing armed on `_test`, so every bind
+rendered against the raw envelope while the list still initialised and the request
+still succeeded. The tell is `armed 0` plus rendered item keys of
+`["freelancer"]`. It reports `armed N instance(s)` on staging, which is the fastest check
 that both forms are wired — a count of 1 means one form is missing its attributes.
 Arming is a one-shot boot pass; an instance created by a later manual
 `WfXano.init(el)` would not be armed, since the library emits no
