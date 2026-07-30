@@ -54,9 +54,11 @@
  * module scope, BEFORE boot() creates any instance, so a deferred page script
  * landing in that window arms against an empty instance list and gives up.
  *
- * Install: the onboarding completion page's HTML Embed, one deferred tag next
- * to the pinned wf-xano tag. See v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md for
- * the paste block, the tune-ables, and the Xano auth flip.
+ * Install: the onboarding completion page, one deferred tag next to the pinned
+ * wf-xano tag, in the scripts embed (Part 2). The wf-xano wrapper attributes
+ * live on a Designer div that CONTAINS the structure embed (Part 1), not on the
+ * embed itself. See v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md for both embeds, the
+ * form-block switching, the tune-ables, and the Xano auth flip.
  */
 ;(function () {
   'use strict'
@@ -65,8 +67,10 @@
   window.__startersV3OnboardingProfilePreviewBooted = true
 
   var INSTANCE = 'onboarding-self-preview'
-  // Marker gate: the wrapper ships in the embed's raw HTML, so its instance key
-  // is a reliable "is this page relevant" check with one selector.
+  // Marker gate. The instance key lives on the Designer div that WRAPS the
+  // structure embed (see the wiring doc: the embed itself carries no wrapper
+  // attributes), which is still plain page HTML at parse time — so this stays a
+  // reliable "is this page relevant" check with one selector.
   var WRAPPER = '[wf-xano-instance="' + INSTANCE + '"]'
   // First three only — the card has exactly three chip slots.
   var ROLE_SLOTS = 3

@@ -637,9 +637,30 @@ checks.
 `onboarding-profile-preview.js` is the page glue for the wf-xano list keyed
 `onboarding-self-preview` — the freelancer's own profile rendered as a
 profile-preview card on the onboarding completion page ("Your 30-day visibility
-boost is already running"). The card's CSS and markup live in the paste block in
-[ONBOARDING-PROFILE-PREVIEW-WIRING.md](ONBOARDING-PROFILE-PREVIEW-WIRING.md);
+boost is already running"). The card's CSS and markup live in the structure embed
+in [ONBOARDING-PROFILE-PREVIEW-WIRING.md](ONBOARDING-PROFILE-PREVIEW-WIRING.md);
 the script owns exactly one thing, the `beforeRender` transform.
+
+The page is wired in three parts, and the wiring doc is the source of truth for
+all of them: a **Designer div** carries every `wf-xano-*` wrapper attribute, one
+HTML Embed inside it holds the card's style and markup (no wrapper attributes),
+and a second embed holds the two deferred script tags. The wrapper sits on a
+Designer div rather than the embed so the page's two form blocks can live inside
+the same instance — wf-xano scopes state projection to the instance root. Two
+consequences worth knowing before touching this page: the state classes
+(`is-wf-xano-error` and friends) land on that Designer div, so the embed's CSS
+matches them as an **ancestor**; and exactly one element may carry
+`wf-xano-element="wrapper"` for this instance, so a leftover single-embed version
+has to lose its wrapper attributes.
+
+The **form-block switching is not JavaScript** — the consult and full blocks carry
+`wf-xano-if-state="data.items.0.profile_type_30 === consult"` and
+`… !== consult` respectively, plus a mandatory `wf-xano-display`, and wf-xano's own
+state projection reveals the winner. `!== consult` on the full block is what makes
+it the fallback for an empty result, a blank field, or a fetch error, since
+`String(undefined) !== 'consult'`. `=== full` would show nothing in those cases.
+Note the comparison is case- and whitespace-exact (`String(left) === right`), so a
+capitalised value in Xano would break both blocks silently — normalise it there.
 
 `starters_onboarding/get_freelancers` answers with an envelope,
 `{"freelancer": [ <one record> ]}`. wf-xano's `normalize()` sees an object rather

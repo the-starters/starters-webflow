@@ -10,8 +10,14 @@ running"). It is the reassurance beat at the end of onboarding: this is exactly
 how clients browsing Starters see you right now.
 
 Built on [wf-xano](https://github.com/the-starters/wf-xano) v0.28.0, loaded
-pinned from jsDelivr. The card's CSS and markup live in the paste block below;
-the script owns only the response transform.
+pinned from jsDelivr. The card's CSS and markup live in the structure embed
+below; the script owns only the response transform. The page's two form blocks
+are switched by wf-xano's own state projection — no JavaScript here — see
+[Form-block switching](#form-block-switching).
+
+Start with [Page architecture](#page-architecture): the wf-xano wrapper is a
+**Designer div** that contains the embed, not the embed itself. Getting that
+wrong is the difference between a working card and a permanent skeleton loader.
 
 ## What it does
 
@@ -46,22 +52,68 @@ survives is printed as characters. Entity decoding is deliberately **single
 pass**: a loop-until-stable decode would turn the literal `&amp;lt;` the author
 typed into `<`, which is how escaped markup gets smuggled back in.
 
-## Paste block
+## Page architecture
 
-One Webflow **HTML Embed** element on the onboarding completion page. Do not
-split the `<style>`, markup, and script tags across separate embeds — they are
-one unit. This block (minus the two script tags) is the source of truth for the
-card's CSS and markup; `local-demos/onboarding-profile-preview-harness.html`
-copies it for local QA.
+Three parts, and the split matters:
 
-Replace `<SCRIPT-URL>` with one of the two variants in
-[Script URLs](#script-urls) below.
+| Part | Where it lives | What it carries |
+| --- | --- | --- |
+| **Designer wrapper** | A Designer div that **contains** the structure embed (on the current page: `hero-app_inner`) | Every `wf-xano-*` wrapper attribute — see [Designer wrapper](#designer-wrapper) |
+| **Part 1 — structure** | One HTML Embed, inside that div | The scoped `<style>` and the card markup. **No wrapper attributes.** |
+| **Part 2 — scripts** | A second HTML Embed, or the page's custom code before `</body>` | The two `<script defer src>` tags |
+
+The wrapper lives on a **Designer div rather than the embed** because the form
+blocks have to sit inside the wrapper to be switched (wf-xano only projects state
+onto elements within the instance root — see
+[Form-block switching](#form-block-switching)), and an HTML Embed cannot contain
+Designer-built form blocks. Hoisting the wrapper one level up puts the card and
+the forms in the same instance.
+
+Part 1 and Part 2 can be pasted in either order, and Part 2 can equally go in
+page custom code: the script only pushes onto wf-xano's queue, which works
+pre- and post-boot alike.
+
+### Designer wrapper
+
+Put these on the Designer div that contains the structure embed. Without them
+nothing loads; the embed alone is inert markup.
+
+| Attribute | Value |
+| --- | --- |
+| `wf-xano-element` | `wrapper` |
+| `wf-xano-instance` | `onboarding-self-preview` |
+| `wf-xano-source` | `https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers` |
+| `wf-xano-method` | `GET` |
+| `wf-xano-auth` | `none` (until the [auth flip](#xano-auth-flip-required-before-real-users)) |
+| `wf-xano-per-page` | `1` |
+| `wf-xano-param-memberstack_id` | `mem_cms4ovj4t0dp60tmoe1rn0swl` (demo phase) |
+
+⚠ **Exactly one element on the page may carry `wf-xano-element="wrapper"` for
+this instance.** If the old single-embed version is still on the page, its
+wrapper attributes must come off (or the embed must be deleted) — two wrappers
+claiming `onboarding-self-preview` means `WfXano.get()` returns whichever
+initialised first, and the other one silently never renders.
+
+⚠ **`wf-xano-instance="onboarding-self-preview"` is load-bearing, not decoration.**
+It is how the script finds this list — both its page gate and
+`WfXano.get('onboarding-self-preview')`. Rename or drop it and the card renders
+the raw envelope, the template's `wf-xano-if` guard hides it, and the page shows
+its empty state to a member with a complete profile. The only clue is the staging
+console warning.
+
+## Part 1 — structure embed
+
+One Webflow **HTML Embed**, inside the Designer wrapper div. This block is the
+source of truth for the card's CSS and markup;
+`local-demos/onboarding-profile-preview-harness.html` copies it for local QA.
 
 ```html
 <!-- ==========================================================================
-     Onboarding profile preview — freelancer self-preview card (wf-xano)
+     Onboarding profile preview — PART 1 of 2: HTML STRUCTURE (style + markup)
      SOURCE OF TRUTH: v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md (this file)
-     Paste this whole block into ONE Webflow HTML Embed element.
+     Paste into an HTML Embed INSIDE the Designer div that carries the
+     wf-xano wrapper attributes. Requires PART 2 on the same page, or the
+     skeleton loader shows forever.
      Do not edit it only inside Webflow — edit this doc, then re-paste.
      ========================================================================== -->
 
@@ -287,8 +339,12 @@ Replace `<SCRIPT-URL>` with one of the two variants in
   color:var(--stp-pp-ink-soft);
 }
 /* On a failed request the library renders 0 items, so it shows the empty
-   element too. Suppress it so only the error message is visible. */
-.stp-profile-preview.is-wf-xano-error [wf-xano-element="empty"]{display:none !important;}
+   element too. Suppress it so only the error message is visible.
+   `is-wf-xano-error` is toggled on the WRAPPER — now the Designer div, an
+   ANCESTOR of this embed — so it is matched as an ancestor, not on
+   .stp-profile-preview itself. Reverting this to a compound selector
+   (.stp-profile-preview.is-wf-xano-error) silently stops matching. */
+.is-wf-xano-error .stp-profile-preview [wf-xano-element="empty"]{display:none !important;}
 .stp-pp__state strong{
   display:block;
   margin-bottom:5px;
@@ -324,14 +380,12 @@ Replace `<SCRIPT-URL>` with one of the two variants in
 }
 </style>
 
-<div class="stp-profile-preview"
-     wf-xano-element="wrapper"
-     wf-xano-instance="onboarding-self-preview"
-     wf-xano-source="https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers"
-     wf-xano-method="GET"
-     wf-xano-auth="none"
-     wf-xano-per-page="1"
-     wf-xano-param-memberstack_id="mem_cms4ovj4t0dp60tmoe1rn0swl">
+<!-- NOTE: this div is NOT the wf-xano wrapper. The wrapper attributes
+     (wf-xano-element="wrapper", -instance, -source, -method, -auth,
+     -per-page, -param-memberstack_id) live on the Designer div that CONTAINS
+     this embed. Adding them here too would create a second wrapper for the
+     same instance — see "Designer wrapper" above. -->
+<div class="stp-profile-preview">
 
   <!-- Loading skeleton. Visible in raw HTML so nothing ever flashes empty. -->
   <div class="stp-pp__loader" wf-xano-element="loader" wf-xano-display="flex" aria-hidden="true">
@@ -404,21 +458,11 @@ Replace `<SCRIPT-URL>` with one of the two variants in
     Refresh the page in a moment — your profile itself is safe.
   </div>
 </div>
-
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/wf-xano@v0.28.0/wf-xano.min.js"></script>
-<script defer src="<SCRIPT-URL>/v3/onboarding-profile-preview.js"></script>
 ```
 
-The wf-xano tag above is pinned to **`@v0.28.0`**, and should stay pinned. If the
-page currently loads `wf-xano@latest`, swap it for the pinned URL: `@latest`
-follows that repo's newest tag, so a library release could change this card's
-rendering without anyone touching this page. The card's contract with the library
-is narrow but real — the `beforeRender` hook, `normalize()`'s single-object
-branch, and `setParam()` — and v0.28.0 is the version it was verified against.
-
-The card is centred with `max-width:820px`. Put the embed inside whatever Webflow
-container gives the page its normal content width; the card fills that container
-up to 820px and stacks the photo above the text below 640px.
+The card is centred with `max-width:820px`. Put the Designer wrapper div inside
+whatever container gives the page its normal content width; the card fills that
+container up to 820px and stacks the photo above the text below 640px.
 
 Delete the static mock card, or — to keep it in the Designer as a visual
 reference — give the mock's wrapper `wf-xano-element="delete"`. wf-xano removes
@@ -426,12 +470,119 @@ every element carrying that marker at boot, and its FOUC stylesheet hides them
 with `display:none!important` before then, so the mock never flashes on the live
 page.
 
+## Part 2 — scripts embed
+
+A second HTML Embed, or the page's custom code before `</body>`. Order relative
+to Part 1 does not matter. Replace `<SCRIPT-URL>` with one of the two variants in
+[Script URLs](#script-urls) below.
+
+```html
+<!-- ==========================================================================
+     Onboarding profile preview — PART 2 of 2: SCRIPTS
+     Requires PART 1 (the structure embed) inside a Designer div carrying the
+     wf-xano wrapper attributes, on the same page.
+     ========================================================================== -->
+
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/wf-xano@v0.28.0/wf-xano.min.js"></script>
+<script defer src="<SCRIPT-URL>/v3/onboarding-profile-preview.js"></script>
+```
+
+The wf-xano tag is pinned to **`@v0.28.0`**, and should stay pinned. If the page
+currently loads `wf-xano@latest`, swap it for the pinned URL: `@latest` follows
+that repo's newest tag, so a library release could change this card's rendering
+without anyone touching this page. The card's contract with the library is narrow
+but real — the `beforeRender` hook, `normalize()`'s single-object branch,
+`setParam()`, and the `wf-xano-if-state` projection the form blocks rely on — and
+v0.28.0 is the version it was verified against.
+
 After publishing, check the console. On production the only expected log is
 `[wf-xano] initialized 1 list(s)`.
 
+## Form-block switching
+
+The page ships **two Webflow form blocks** — one for consult-type freelancers, one
+for full-type — and only the one matching the loaded record may be visible.
+
+**This needs no JavaScript.** wf-xano projects its own reactive state onto any
+element carrying `wf-xano-if-state`, and the record's type is in that state by the
+time the card paints. So the switch is two Designer attributes per block and
+nothing in this repo's script.
+
+### Designer steps
+
+On **each** form block's outermost wrapper:
+
+| Block | `wf-xano-if-state` | `wf-xano-display` |
+| --- | --- | --- |
+| Consult form | `data.items.0.profile_type_30 === consult` | `block` (or `flex`/`grid` — the block's real display) |
+| Full form | `data.items.0.profile_type_30 !== consult` | `block` (or `flex`/`grid`) |
+
+Then, in the Designer, set **both blocks to `display: none`** on their own class.
+That is the pre-data state: nothing flashes before the record lands, and wf-xano
+reveals the winner on its first projection. Accepted tradeoff (Jerico's call): if
+wf-xano fails to load, no form shows.
+
+Three requirements that are easy to miss, each verified against `wf-xano.js`:
+
+1. **Both blocks must live INSIDE the Designer wrapper div.** State projection
+   runs `self.qa(selector)` — scoped to the instance root — so a form block that
+   is a sibling of the wrapper is never found and never revealed.
+2. **`wf-xano-display` is mandatory here, not optional.** `showStateEl()` does
+   `el.style.display = visible ? el.getAttribute('wf-xano-display') || '' : 'none'`.
+   With no `wf-xano-display`, "show" writes `display:''`, which *clears* the inline
+   style and hands the decision back to CSS — where the class's `display: none`
+   still applies. The block would then never appear, with no error anywhere. The
+   attribute has to name the shown value because "not hidden" is not a single CSS
+   value.
+3. ⚠ **The comparison is case- and whitespace-exact.** `evalIf` does
+   `String(left) === right` after trimming only the expression, so `consult`
+   matches `"consult"` and **not** `"Consult"` or `" consult"`. The live record's
+   `profile_type_30` is lowercase `full` (verified 2026-07-30). If Xano ever
+   starts storing a capitalised or padded value, both blocks break silently —
+   normalise it in Xano rather than adding cases here.
+
+Quotes on the right-hand side are optional: `evalIf` strips one leading and
+trailing `'` or `"`, so `=== consult` and `=== 'consult'` behave identically. The
+unquoted form is used above because Webflow's attribute editor makes quotes easy
+to mistype.
+
+### Why `!== consult` for the full block
+
+It encodes Jerico's "unknown type → full" rule in the grammar itself, with no
+enumeration of types. On an empty result — a member with no freelancer row, a
+bogus `?ms=`, or a first-load fetch error — `data.items` is `[]`, so
+`data.items.0.profile_type_30` is `undefined`, and:
+
+- consult block: `String(undefined) === 'consult'` → `"undefined" === "consult"` → **false**, stays hidden.
+- full block: `String(undefined) !== 'consult'` → **true**, shows.
+
+So the full form is the fallback for every unknown case, and any future type
+added in Xano also lands on the full form until someone tags a block for it.
+`=== full` would look more symmetrical and would be **wrong**: it shows nothing at
+all when the field is blank or the fetch fails.
+
+If a third type ever needs its own form, tag it
+`wf-xano-if-state="data.items.0.profile_type_30 === hybrid"` and tighten the full
+block to `!== consult & !== hybrid` (`&` is AND in this grammar, and binds tighter
+than `|`).
+
+### Checking it
+
+`data.items` holds the **post-transform** record — the script's `beforeRender`
+hook runs before the state transition — so `profile_type_30` is present there
+alongside the computed `Role_1..3`, `Location`, and flattened `Bio`. In the
+console:
+
+```js
+WfXano.get('onboarding-self-preview').getState().data.items[0].profile_type_30
+```
+
+`?ms=<memberstack_id>` with a member of the other type is the end-to-end check on
+staging: the reload re-projects, so the blocks switch with the card.
+
 ## Script URLs
 
-`<SCRIPT-URL>` in the paste block takes one of two forms.
+`<SCRIPT-URL>` in the Part 2 embed takes one of two forms.
 
 **Staging QA (dev tunnel).** Run `./dev-tunnel.sh` from `starters-git/` (the
 parent folder, not this repo) and use the hostname it prints:
@@ -572,10 +723,11 @@ curl -i -H "Authorization: Bearer <XANO_TOKEN>" \
 The third call is the important one. If it returns someone else's record, step 2
 or 3 is incomplete.
 
-### Part 2 — the embed flip
+### Part 2 — the wrapper flip
 
-Two attributes on the `wf-xano-element="wrapper"` element. Markup, CSS, and the
-script are untouched:
+Two attributes on the Designer wrapper div (the element carrying
+`wf-xano-element="wrapper"` — not the embed). Markup, CSS, the form-block
+attributes, and the script are all untouched:
 
 ```diff
    wf-xano-source="https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers"
@@ -600,9 +752,9 @@ Both must already be true on the onboarding page (see wf-xano `docs/usage.md` §
    `authBase` + `/auth/trade-token/v3` and uses the returned Xano token as
    `Authorization: Bearer …`.
 
-   **This embed deliberately sets no `WfXanoConfig`,** so it cannot clobber a
+   **Neither embed sets any `WfXanoConfig`,** so this page cannot clobber a
    site-wide config — and so `authBase` has to come from that site-wide block. If
-   the onboarding page has none, add one there, not in this embed. Without
+   the onboarding page has none, add one there, not in Part 2. Without
    `authBase`, wf-xano logs `authBase is required` and the list never loads.
 3. **`wf-xano-source` stays a full HTTPS URL,** so `xanoBase` is not required
    here. Authenticated requests over plain `http://` are refused by the library.
@@ -616,7 +768,7 @@ state), logged out, and an endpoint failure.
 
 ## Tune-ables
 
-In the paste block's `<style>`:
+In the structure embed's `<style>`:
 
 | What | Where | Note |
 | --- | --- | --- |
@@ -641,9 +793,16 @@ document.querySelector('[wf-xano-item] .stp-pp__name').textContent   // rendered
 document.querySelectorAll('.stp-pp__card')[1]                        // fragile — do not
 ```
 
-The same applies to the loader, empty, and error elements: they are all present
-in the DOM at all times and switched with inline `display`, so presence proves
-nothing. Check computed visibility, not existence.
+The same applies to the loader, empty, error, and form-block elements: they are
+all present in the DOM at all times and switched with inline `display`, so
+presence proves nothing. Check computed visibility, not existence.
+
+A second scoping trap now that the wrapper is a Designer div: the state classes
+(`is-wf-xano-loading`, `is-wf-xano-error`, `is-wf-xano-empty`) land on **that
+div**, not on `.stp-profile-preview`. Read them from the wrapper —
+`document.querySelector('[wf-xano-instance="onboarding-self-preview"]').className` —
+and write CSS that matches them as an **ancestor**, as the empty-state suppression
+rule in the structure embed does.
 
 ## Diagnostics
 
@@ -671,6 +830,13 @@ around the same CSS and markup, loading `/v3/onboarding-profile-preview.js` by
 relative path against the live endpoint. `local-demos/` is gitignored, so the
 harness is local-only and never published.
 
+It mirrors the page architecture rather than shortcutting it: an outer div stands
+in for the Designer wrapper and carries the `wf-xano-*` attributes, the card
+markup sits inside it with none, and two stand-in form blocks inside the same
+wrapper carry the real `wf-xano-if-state` / `wf-xano-display` pairs and are hidden
+by their own class. So the switching it exercises is the same wf-xano projection
+the live page uses, not a simulation.
+
 ```sh
 # from the repo root
 python3 -m http.server 8747     # then open http://localhost:8747/local-demos/onboarding-profile-preview-harness.html
@@ -694,6 +860,13 @@ open is **not** a staging host, so serve the page rather than double-clicking it
   the real test id renders that card), then land it: branch → PR → merge on
   GitHub → semver tag → verify the jsDelivr URL returns 200.
 - Confirm the page's wf-xano tag is the pinned `@v0.28.0` URL, not `@latest`.
+- Confirm exactly one element on the page carries
+  `wf-xano-element="wrapper"` + `wf-xano-instance="onboarding-self-preview"`, and
+  that both form blocks are inside it.
+- Form-block check: the full block shows for the test record
+  (`profile_type_30 = "full"`), the consult block stays hidden, and on
+  `?ms=mem_definitely_bogus` the full block still shows (the `!== consult`
+  fallback) while the card shows its empty state.
 - Standard exposure scan before tagging: no `api.airtable.com`, no
   `hook.us1.make.com`, no `pat…` PAT patterns. This module calls nothing itself —
   the only URLs in the deliverable are the jsDelivr wf-xano tag and the Xano
