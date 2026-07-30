@@ -974,8 +974,15 @@ use these values:
 The script never calculates points or rank in the browser. It trades the active
 Memberstack session for a Xano token and renders only the authenticated summary.
 When Xano reports `refreshing`, or a nominally ready payload lacks a rank/cohort,
-the position is withheld. Missing primary roles receive setup guidance, and no
-state renders raw `N/A`.
+the position is withheld and the primary-role card is hidden. The `ineligible`
+and `quarantined` statuses likewise hide the role card and show their own
+guidance (join-rankings and points-reconciliation copy, respectively). Missing
+primary roles keep the overall rank and receive setup guidance, and no state
+renders raw `N/A`.
+
+Each root reflects its resolved state onto `data-points-status`
+(`ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so Designer CSS
+can style per state.
 
 Run its focused tests with:
 
