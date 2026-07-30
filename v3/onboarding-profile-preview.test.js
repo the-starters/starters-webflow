@@ -29,29 +29,61 @@ function loadModule({
   withRefresh = true,
   debug,
   readyState = 'interactive',
+  // When set, window.WfXano gains an `instances` array built from these specs
+  // ({ key, url, source }), mirroring the real library. Omit it to keep the
+  // legacy shape: no instances array, one instance reachable only by get().
+  instances = null,
   // 'array'  = wf-xano has not loaded yet; window.WfXano is the pre-load queue.
   // 'object' = wf-xano's module scope has run (window.WfXano is the API object)
   //            but boot() has NOT created instances yet, so get() returns null.
   wfXano = 'array',
 } = {}) {
   const warnings = []
+  const infos = []
   const hooks = {}
   const refreshes = []
   const params = []
   const selectors = []
   const domListeners = {}
 
-  const instance = {
-    key: 'onboarding-self-preview',
-    on(event, handler) {
-      ;(hooks[event] = hooks[event] || []).push(handler)
-      return this
-    },
+  // Per-instance recorders, so a multi-instance test can assert that BOTH lists
+  // were armed rather than just counting globally.
+  function makeInstance(spec = {}) {
+    const own = { hooks: {}, refreshes: [], params: [] }
+    const made = {
+      key: 'key' in spec ? spec.key : 'onboarding-self-preview',
+      own,
+      on(event, handler) {
+        ;(own.hooks[event] = own.hooks[event] || []).push(handler)
+        ;(hooks[event] = hooks[event] || []).push(handler)
+        return this
+      },
+    }
+    if ('url' in spec) made.url = spec.url
+    if ('source' in spec) made.source = spec.source
+    if (withGetState) made.getState = () => ({ status })
+    if (withRefresh) {
+      made.refresh = () => {
+        own.refreshes.push(true)
+        refreshes.push(true)
+      }
+    }
+    // Real setParam sets the param, resets to page 1, and reloads.
+    if (withSetParam) {
+      made.setParam = (field, value) => {
+        own.params.push([field, value])
+        params.push([field, value])
+      }
+    }
+    return made
   }
-  if (withGetState) instance.getState = () => ({ status })
-  if (withRefresh) instance.refresh = () => refreshes.push(true)
-  // Real setParam sets the param, resets to page 1, and reloads.
-  if (withSetParam) instance.setParam = (field, value) => params.push([field, value])
+
+  const instanceList = instances ? instances.map(makeInstance) : null
+  // The legacy-key instance get() resolves to. With an instances array present,
+  // reuse the matching member so identity dedupe is exercised for real.
+  const instance =
+    (instanceList && instanceList.filter((i) => i.key === 'onboarding-self-preview')[0]) ||
+    (instances ? null : makeInstance())
 
   let booted = false
   const queue = []
@@ -61,7 +93,7 @@ function loadModule({
       // empty and get() resolves to null for every key.
       if (wfXano === 'object' && !booted) return null
       if (!withInstance) return null
-      return key === 'onboarding-self-preview' ? instance : null
+      return instance && key === instance.key ? instance : null
     },
     // Mirrors wf-xano's own push(): run now if booted, else queue until boot.
     push(fn) {
@@ -75,7 +107,7 @@ function loadModule({
     console: {
       warn: (...args) => warnings.push(args.join(' ')),
       error: () => {},
-      info: () => {},
+      info: (...args) => infos.push(args.join(' ')),
       log: () => {},
     },
     location: { hostname, search },
@@ -91,6 +123,8 @@ function loadModule({
     },
   }
   if (withUrlSearchParams) sandbox.URLSearchParams = URLSearchParams
+  // Mirrors the real API object, which exposes its instance list.
+  if (instanceList) api.instances = instanceList
   sandbox.window = sandbox
   sandbox.window.WfXano = wfXano === 'object' ? api : queue
   if (debug !== undefined) sandbox.window.STARTERS_DEBUG = debug
@@ -100,10 +134,13 @@ function loadModule({
 
   return {
     warnings,
+    infos,
     hooks,
     refreshes,
     params,
     selectors,
+    instanceList,
+    api2: api,
     queue,
     sandbox,
     api: sandbox.window.StartersV3OnboardingProfilePreview,
@@ -429,7 +466,8 @@ test('warns on staging when the instance is missing after boot', () => {
   const mod = loadModule({ withInstance: false })
   mod.drain()
   assert.equal(mod.warnings.length, 1)
-  assert.match(mod.warnings[0], /no wf-xano instance "onboarding-self-preview"/)
+  assert.match(mod.warnings[0], /no wf-xano instance reading starters_onboarding\/get_freelancers/)
+  assert.match(mod.warnings[0], /none keyed "onboarding-self-preview"/)
 })
 
 test('stays silent in production when the instance is missing', () => {
@@ -448,6 +486,162 @@ test('STARTERS_DEBUG re-enables the warning in production', () => {
   const mod = loadModule({ withInstance: false, hostname: 'thestarters.com', debug: true })
   mod.drain()
   assert.equal(mod.warnings.length, 1)
+})
+
+/* ------------------- multi-instance arming (one per form) ------------------ *
+ * Each form block is its own wrapper with its own card template, because
+ * wf-xano binds exactly one template per wrapper. So the module arms by
+ * ENDPOINT, not by instance key.
+ * -------------------------------------------------------------------------- */
+
+const ENDPOINT = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers'
+const TWO_FORMS = [
+  { key: 'onboarding-preview-full', url: ENDPOINT },
+  { key: 'onboarding-preview-consult', url: ENDPOINT },
+]
+
+test('sourceMatches accepts the endpoint in the shapes a source can take', () => {
+  const { sourceMatches } = loadModule().api
+  assert.equal(sourceMatches(ENDPOINT), true)
+  assert.equal(sourceMatches(ENDPOINT + '/'), true, 'trailing slash')
+  assert.equal(sourceMatches(ENDPOINT + '?memberstack_id=mem_x'), true, 'query string')
+  assert.equal(sourceMatches(ENDPOINT + '#frag'), true, 'hash')
+  assert.equal(sourceMatches('KZf7nFnk:starters_onboarding/get_freelancers'), true, 'raw group:path source')
+  assert.equal(sourceMatches('/starters_onboarding/get_freelancers'), true, 'relative source')
+})
+
+test('sourceMatches rejects other endpoints and junk', () => {
+  const { sourceMatches } = loadModule().api
+  assert.equal(sourceMatches('https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_brands'), false)
+  assert.equal(sourceMatches(ENDPOINT + '/extra'), false, 'must END with the path, not merely contain it')
+  assert.equal(sourceMatches('get_freelancers'), false, 'the whole suffix is required, not the tail of it')
+  assert.equal(sourceMatches(''), false)
+  assert.equal(sourceMatches(null), false)
+  assert.equal(sourceMatches(undefined), false)
+})
+
+test('instanceMatches takes the endpoint from url or source, or the legacy key', () => {
+  const { instanceMatches } = loadModule().api
+  assert.equal(instanceMatches({ key: 'onboarding-preview-full', url: ENDPOINT }), true)
+  assert.equal(instanceMatches({ key: 'x', source: 'KZf7nFnk:starters_onboarding/get_freelancers' }), true)
+  assert.equal(instanceMatches({ key: 'onboarding-self-preview' }), true, 'legacy key needs no source')
+  assert.equal(instanceMatches({ key: 'saved-starters', url: 'https://example.test/other' }), false)
+  assert.equal(instanceMatches(null), false)
+})
+
+test('arms BOTH form instances, each with its own hook', () => {
+  const mod = loadModule({ instances: TWO_FORMS })
+  mod.drain()
+  const [full, consult] = mod.instanceList
+  assert.equal(full.own.hooks.beforeRender.length, 1, 'full form instance armed')
+  assert.equal(consult.own.hooks.beforeRender.length, 1, 'consult form instance armed')
+  assert.equal(full.own.hooks.beforeRender[0], consult.own.hooks.beforeRender[0], 'same pure transform')
+  assert.deepEqual(mod.warnings, [])
+})
+
+test('ignores instances pointing at a different endpoint', () => {
+  const mod = loadModule({
+    instances: [
+      { key: 'saved-starters', url: 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/brand/favorites' },
+      { key: 'onboarding-preview-full', url: ENDPOINT },
+      { key: 'some-other-list', url: 'https://example.test/api/things' },
+    ],
+  })
+  mod.drain()
+  const [favorites, full, other] = mod.instanceList
+  assert.deepEqual(favorites.own.hooks, {}, 'never touch another list')
+  assert.deepEqual(other.own.hooks, {})
+  assert.equal(full.own.hooks.beforeRender.length, 1)
+})
+
+test('falls back to the legacy key when the API exposes no instances array', () => {
+  const mod = loadModule() // no `instances` -> get()-only, as before
+  mod.drain()
+  assert.equal(mod.hooks.beforeRender.length, 1)
+  assert.deepEqual(mod.warnings, [])
+})
+
+// The legacy instance is reachable BOTH ways; it must be armed once, or the
+// transform would run twice per render.
+test('dedupes an instance found by both source match and legacy key', () => {
+  const mod = loadModule({ instances: [{ key: 'onboarding-self-preview', url: ENDPOINT }] })
+  mod.drain()
+  assert.equal(mod.instanceList[0].own.hooks.beforeRender.length, 1)
+  assert.equal(mod.hooks.beforeRender.length, 1)
+})
+
+test('arms a legacy-keyed instance alongside the two new ones, without duplication', () => {
+  const mod = loadModule({
+    instances: [{ key: 'onboarding-self-preview' }, ...TWO_FORMS],
+  })
+  mod.drain()
+  assert.deepEqual(
+    mod.instanceList.map((i) => i.own.hooks.beforeRender.length),
+    [1, 1, 1],
+  )
+  assert.equal(mod.hooks.beforeRender.length, 3, 'three lists, three registrations, no repeats')
+})
+
+test('warns when no instance reads the endpoint', () => {
+  const mod = loadModule({
+    instances: [{ key: 'saved-starters', url: 'https://example.test/other' }],
+    withInstance: false,
+  })
+  mod.drain()
+  assert.equal(mod.warnings.length, 1)
+  assert.match(mod.warnings[0], /no wf-xano instance reading starters_onboarding\/get_freelancers/)
+})
+
+test('reports which instances were armed, on staging only', () => {
+  const staging = loadModule({ instances: TWO_FORMS })
+  staging.drain()
+  assert.equal(staging.infos.length, 1)
+  assert.match(staging.infos[0], /armed 2 instance\(s\): "onboarding-preview-full", "onboarding-preview-consult"/)
+
+  const prod = loadModule({ instances: TWO_FORMS, hostname: 'thestarters.com' })
+  prod.drain()
+  assert.deepEqual(prod.infos, [])
+  assert.deepEqual(prod.warnings, [])
+  assert.equal(prod.instanceList[0].own.hooks.beforeRender.length, 1, 'silent, but still armed')
+})
+
+test('names an unkeyed instance rather than printing undefined', () => {
+  const mod = loadModule({ instances: [{ key: null, url: ENDPOINT }] })
+  mod.drain()
+  assert.match(mod.infos[0], /armed 1 instance\(s\): "\(unkeyed\)"/)
+})
+
+test('?ms= drives every instance, each reloading independently', () => {
+  const mod = loadModule({ instances: TWO_FORMS, search: '?ms=mem_bogus' })
+  mod.drain()
+  const [full, consult] = mod.instanceList
+  assert.deepEqual(full.own.params, [['memberstack_id', 'mem_bogus']])
+  assert.deepEqual(consult.own.params, [['memberstack_id', 'mem_bogus']])
+  assert.deepEqual(full.own.refreshes, [], 'setParam already reloads')
+  assert.deepEqual(consult.own.refreshes, [])
+})
+
+test('announces the ?ms= preview once, with the instance count', () => {
+  const mod = loadModule({ instances: TWO_FORMS, search: '?ms=mem_bogus' })
+  mod.drain()
+  assert.equal(mod.warnings.length, 1, 'one line, not one per instance')
+  assert.match(mod.warnings[0], /previewing member "mem_bogus" from \?ms= \(staging only\) on 2 instance\(s\)/)
+  assert.match(mod.warnings[0], /each reloads separately/)
+})
+
+test('the settled-state belt applies per instance', () => {
+  const mod = loadModule({ instances: TWO_FORMS, status: 'success' })
+  mod.drain()
+  assert.equal(mod.instanceList[0].own.refreshes.length, 1)
+  assert.equal(mod.instanceList[1].own.refreshes.length, 1)
+})
+
+test('targetInstances is exposed and re-runnable against a live API object', () => {
+  const mod = loadModule({ instances: TWO_FORMS })
+  mod.drain()
+  assert.equal(list(mod.api.targetInstances(mod.api2)).length, 2)
+  assert.equal(list(mod.api.targetInstances({ instances: [] })).length, 0)
+  assert.equal(list(mod.api.targetInstances(null)).length, 0)
 })
 
 /* --------------------- staging-only ?ms= override --------------------- */
@@ -589,7 +783,11 @@ test('falls back to the belt when the library predates setParam', () => {
 test('marker gate: does not touch WfXano on a page without the wrapper', () => {
   const mod = loadModule({ hasWrapper: false })
   assert.deepEqual(mod.queue, [])
-  assert.deepEqual(mod.selectors, ['[wf-xano-instance="onboarding-self-preview"]'])
+  // Both grammars: the legacy key, and any wrapper naming our endpoint (the new
+  // per-form wrappers have their own keys, so a key-only gate would miss them).
+  assert.deepEqual(mod.selectors, [
+    '[wf-xano-instance="onboarding-self-preview"], [wf-xano-source*="starters_onboarding/get_freelancers"]',
+  ])
 })
 
 test('waits for DOMContentLoaded when the document is still parsing', () => {
@@ -617,10 +815,13 @@ test('exposes the transform and the override decision for console debugging', ()
   const mod = loadModule()
   assert.deepEqual(Object.keys(mod.api).sort(), [
     'htmlToText',
+    'instanceMatches',
     'joinLocation',
     'memberOverride',
+    'sourceMatches',
     'splitRoles',
     'stagingHost',
+    'targetInstances',
     'unwrap',
   ])
 })

@@ -641,22 +641,33 @@ boost is already running"). The card's CSS and markup live in the structure embe
 in [ONBOARDING-PROFILE-PREVIEW-WIRING.md](ONBOARDING-PROFILE-PREVIEW-WIRING.md);
 the script owns exactly one thing, the `beforeRender` transform.
 
-The page is wired in three parts, and the wiring doc is the source of truth for
-all of them: a **Designer div** carries every `wf-xano-*` wrapper attribute, one
-HTML Embed inside it holds the card's style and markup (no wrapper attributes),
-and a second embed holds the two deferred script tags. The wrapper sits on a
-Designer div rather than the embed so the page's two form blocks can live inside
-the same instance — wf-xano scopes state projection to the instance root. Two
-consequences worth knowing before touching this page: the state classes
-(`is-wf-xano-error` and friends) land on that Designer div, so the embed's CSS
-matches them as an **ancestor**; and exactly one element may carry
-`wf-xano-element="wrapper"` for this instance, so a leftover single-embed version
-has to lose its wrapper attributes.
+The page runs **one wf-xano instance per form block**, and the wiring doc is the
+source of truth for the attribute sets. Each form block is itself a wrapper
+(`onboarding-preview-full` / `onboarding-preview-consult`) and contains its own
+card template; one shared scripts embed serves both. This is forced by the
+library, not a preference: `this.template = owned(elSel('template'))` binds
+exactly one template per wrapper and silently ignores a second, so two card
+layouts require two wrappers. Consequences worth knowing before touching this
+page: the state classes (`is-wf-xano-error` and friends) land on each **form
+block**, so the card CSS matches them as an ancestor; a plain load makes **two**
+GETs of the same endpoint (accepted); and any ancestor that still carries wrapper
+attributes becomes a third instance that steals the first form's template.
+
+Because the keys are no longer fixed, the module arms by **endpoint**: at boot it
+scans `WfXano.instances` and registers its `beforeRender` hook on every instance
+whose source ends with `starters_onboarding/get_freelancers` (checking `url` and
+raw `source`), plus anything still keyed `onboarding-self-preview`, deduped by
+identity. It reports `armed N instance(s)` on staging, which is the fastest check
+that both forms are wired — a count of 1 means one form is missing its attributes.
+Arming is a one-shot boot pass; an instance created by a later manual
+`WfXano.init(el)` would not be armed, since the library emits no
+instance-created event. Nothing on this page does that.
 
 The **form-block switching is not JavaScript** — the consult and full blocks carry
 `wf-xano-if-state="data.items.0.profile_type_30 === consult"` and
-`… !== consult` respectively, plus a mandatory `wf-xano-display`, and wf-xano's own
-state projection reveals the winner. `!== consult` on the full block is what makes
+`… !== consult` respectively, plus a mandatory `wf-xano-display`, on the same
+element as their wrapper attributes (state projection includes the instance root,
+so each form self-toggles against its own instance). `!== consult` on the full block is what makes
 it the fallback for an empty result, a blank field, or a fetch error, since
 `String(undefined) !== 'consult'`. `=== full` would show nothing in those cases.
 Note the comparison is case- and whitespace-exact (`String(left) === right`), so a
@@ -699,8 +710,9 @@ resolve against the envelope, the template's
 and the page shows its empty state to a member who has a complete profile.
 
 A staging-only `?ms=<memberstack_id>` tester renders any member's card, applied
-through `instance.setParam()` (which reloads, so the settled-state belt is skipped
-when an override is in play). It is honored on `*.webflow.io`, `localhost`,
+through `instance.setParam()` on **every** armed instance (which reloads, so the
+settled-state belt is skipped when an override is in play — and a `?ms=` load
+therefore makes four GETs on a two-form page: two initial, two reloads). It is honored on `*.webflow.io`, `localhost`,
 `127.0.0.1`, and `*.trycloudflare.com` only. The host predicate is deliberately
 anchored tighter than the loose one the sibling modules share, because here it
 gates a data read rather than a `console.warn`, and `STARTERS_DEBUG` — which may
