@@ -7,8 +7,8 @@
  * Designer wiring:
  *   data-points-element="root|loading|content|error|state-refreshing|
  *   state-ineligible|state-quarantined|state-missing-role|points|
- *   overall-rank|overall-cohort-size|role-card|role-rank|role-label|
- *   role-cohort-size"
+ *   overall-card|overall-rank|overall-cohort-size|role-card|role-rank|
+ *   role-label|role-cohort-size"
  *
  * State copy and its containers are authored in Webflow. This controller only
  * binds authenticated values and selects which authored state is visible.
@@ -126,6 +126,7 @@
     showState(root, model.stateElement)
     show(find(root, 'content'), true)
     show(find(root, 'role-card'), model.showRoleCard)
+    show(find(root, 'overall-card'), model.status === 'ready')
     text(root, 'points', model.totalPoints)
     text(root, 'overall-rank', model.overallRank)
     text(root, 'overall-cohort-size', model.overallCohortSize)
@@ -141,6 +142,7 @@
 
   function clearDynamicFields(root) {
     show(find(root, 'role-card'), false)
+    show(find(root, 'overall-card'), false)
     text(root, 'points', '')
     text(root, 'overall-rank', '')
     text(root, 'overall-cohort-size', '')

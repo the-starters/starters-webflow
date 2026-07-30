@@ -972,6 +972,7 @@ use these values:
 | `state-quarantined` | Designer-owned reconciliation guidance |
 | `state-missing-role` | Designer-owned primary-role setup guidance |
 | `points` | Canonical ledger total |
+| `overall-card` | Overall-rank card wrapper; visible only when rank status is ready |
 | `overall-rank` | Overall competition rank |
 | `overall-cohort-size` | Overall cohort size only; surrounding copy stays in Webflow |
 | `role-card` | Primary-role rank card wrapper |
@@ -982,11 +983,11 @@ use these values:
 The script never calculates points or rank in the browser. It trades the active
 Memberstack session for a Xano token and renders only the authenticated summary.
 When Xano reports `refreshing`, or a nominally ready payload lacks a rank/cohort,
-the position is withheld and the primary-role card is hidden. The `ineligible`
-and `quarantined` statuses likewise hide the role card and reveal their matching
-Designer-authored state blocks. Missing primary roles keep the overall rank and
-reveal the authored setup state inside the role card. No state renders raw
-`N/A`.
+the position is withheld and both the overall-rank and primary-role cards are
+hidden. The `ineligible` and `quarantined` statuses likewise hide both cards and
+reveal their matching Designer-authored state blocks. Missing primary roles keep
+the overall-rank card and reveal the authored setup state inside the role card.
+No state renders raw `N/A`.
 
 All state containers, copy, links, and styling live in Webflow. The controller
 does not create markup or inject state sentences. It only binds the dynamic

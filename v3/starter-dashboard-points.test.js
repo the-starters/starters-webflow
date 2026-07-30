@@ -42,6 +42,7 @@ function tile(options = {}) {
     'state-quarantined',
     'state-missing-role',
     'points',
+    'overall-card',
     'overall-rank',
     'overall-cohort-size',
     'role-card',
@@ -85,6 +86,7 @@ test('ready state renders points plus overall and primary-role ranks', () => {
   assert.equal(elements['state-refreshing'].style.display, 'none')
   assert.equal(elements.content.style.display, '')
   assert.equal(elements['role-card'].style.display, '')
+  assert.equal(elements['overall-card'].style.display, '')
   assert.equal(root.getAttribute('data-points-view'), 'ready')
 })
 
@@ -102,6 +104,7 @@ test('refreshing state keeps points visible and reveals authored guidance', () =
   assert.equal(elements.points.textContent, '500')
   assert.equal(elements['overall-rank'].textContent, '')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['overall-card'].style.display, 'none')
   assert.equal(elements['state-refreshing'].style.display, '')
   assert.equal(
     elements['state-refreshing'].textContent,
@@ -141,6 +144,7 @@ test('ineligible state reveals Webflow-authored profile guidance unchanged', () 
 
   assert.equal(root.getAttribute('data-points-status'), 'ineligible')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['overall-card'].style.display, 'none')
   assert.equal(elements['state-ineligible'].style.display, '')
   assert.equal(
     elements['state-ineligible'].textContent,
@@ -160,6 +164,7 @@ test('quarantined state reveals Webflow-authored reconciliation copy', () => {
 
   assert.equal(root.getAttribute('data-points-status'), 'quarantined')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['overall-card'].style.display, 'none')
   assert.equal(elements['state-quarantined'].style.display, '')
   assert.equal(
     elements['state-quarantined'].textContent,
@@ -221,6 +226,7 @@ test('loading clears dynamic values without writing status copy', () => {
   assert.equal(elements['overall-rank'].textContent, '')
   assert.equal(elements['overall-cohort-size'].textContent, '')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['overall-card'].style.display, 'none')
   assert.equal(elements.loading.style.display, '')
   assert.equal(elements.loading.textContent, 'Loading your points...')
 })
@@ -237,6 +243,7 @@ test('error clears dynamic values without writing status copy', () => {
   assert.equal(elements.points.textContent, '')
   assert.equal(elements['overall-rank'].textContent, '')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['overall-card'].style.display, 'none')
   assert.equal(elements.error.style.display, '')
   assert.equal(
     elements.error.textContent,
