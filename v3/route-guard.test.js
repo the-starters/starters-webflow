@@ -45,7 +45,13 @@ function loadGuard(options = {}) {
     clearInterval,
     clearTimeout,
   }
-  if (Object.prototype.hasOwnProperty.call(options, 'getCurrentMember')) {
+  if (Object.prototype.hasOwnProperty.call(options, 'delayedMember')) {
+    window.setTimeout(() => {
+      window.$memberstackDom = {
+        getCurrentMember: async () => ({ data: options.delayedMember }),
+      }
+    }, options.memberstackDelayMs || 25)
+  } else if (Object.prototype.hasOwnProperty.call(options, 'getCurrentMember')) {
     window.$memberstackDom = {
       getCurrentMember: options.getCurrentMember,
     }
@@ -94,6 +100,8 @@ async function waitFor(predicate, timeoutMs = 1000) {
 
 test('recognises guarded pages and ignores unlisted ones', () => {
   const { api } = loadGuard()
+  assert.equal(api.isGuardedPath('/dashboard'), true)
+  assert.equal(api.isGuardedPath('/dashboard/'), true)
   assert.equal(api.isGuardedPath('/brand-dashboard'), true)
   assert.equal(api.isGuardedPath('/starter-dashboard'), true)
   assert.equal(api.isGuardedPath('/opportunities/product-designer'), true)
@@ -158,6 +166,29 @@ test('allowed roles stay on the page (empty redirect target)', () => {
   assert.equal(api.redirectTargetFor(TEST_BRAND, '/opportunities-brands-view'), '')
 })
 
+test('canonical /dashboard routes every mapped role to its authored home page', () => {
+  const { api } = loadGuard()
+  const completedFreeBrand = {
+    ...BRAND_FREE,
+    customFields: { 'starter-quiz': '{"status":"ready"}' },
+  }
+
+  assert.equal(api.redirectTargetFor(TALENT, '/dashboard'), '/starter-dashboard')
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/dashboard'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(TEST_BRAND, '/dashboard'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/dashboard'), '/quiz')
+  assert.equal(api.redirectTargetFor(completedFreeBrand, '/dashboard'), '/quiz-results')
+
+  // Trailing-slash twin routes identically for the same reason as
+  // /opportunities/ and /favorites/: the exact map misses the slashed form and
+  // no prefix rule catches it.
+  assert.equal(api.redirectTargetFor(TALENT, '/dashboard/'), '/starter-dashboard')
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/dashboard/'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(TEST_BRAND, '/dashboard/'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/dashboard/'), '/quiz')
+  assert.equal(api.redirectTargetFor(completedFreeBrand, '/dashboard/'), '/quiz-results')
+})
+
 test('a wrong-role member is sent to its own default, never the other role page', () => {
   const { api } = loadGuard()
   // The exact reproduced audit failures:
@@ -216,15 +247,31 @@ test('build-profile onboarding pages are Talent only', () => {
   }
 })
 
-test('paid Brand precedence when a member holds several mapped active plans', () => {
+test('cross-family Talent and Brand plans fail closed as conflicting', () => {
   const { api } = loadGuard()
   const multi = {
     id: 'm-multi',
     planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o'), plan('pln_new-paid-plan-463h04ph')],
   }
-  assert.equal(api.memberRole(multi), 'brand-paid')
-  assert.equal(api.redirectTargetFor(multi, '/brand-dashboard'), '')
-  assert.equal(api.redirectTargetFor(multi, '/starter-dashboard'), '/brand-dashboard')
+  assert.equal(api.memberRole(multi), null)
+  assert.equal(api.memberRoleError(multi), 'conflicting-plan-roles')
+  assert.equal(api.redirectTargetFor(multi, '/brand-dashboard'), null)
+  assert.equal(api.redirectTargetFor(multi, '/dashboard'), null)
+})
+
+test('paid Brand wins over Brand Free in a valid same-family upgrade state', () => {
+  const { api } = loadGuard()
+  const upgradingBrand = {
+    id: 'm-upgrading-brand',
+    planConnections: [
+      plan('pln_free-plan-f6kn0dxz'),
+      plan('pln_new-paid-plan-463h04ph'),
+    ],
+  }
+  assert.equal(api.memberRole(upgradingBrand), 'brand-paid')
+  assert.equal(api.memberRoleError(upgradingBrand), null)
+  assert.equal(api.redirectTargetFor(upgradingBrand, '/brand-dashboard'), '')
+  assert.equal(api.redirectTargetFor(upgradingBrand, '/dashboard'), '/brand-dashboard')
 })
 
 test('a mapped plan still determines the role when another active plan is unmapped', () => {
@@ -284,6 +331,39 @@ test('redirects a Talent session away from a Brand page to the Talent default', 
   })
   await flush()
   assert.equal(location.replaced, '/starter-dashboard')
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+})
+
+test('routes an authenticated Talent session from /dashboard without page-body access', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/dashboard',
+    member: TALENT,
+  })
+  assert.equal(attributes['data-route-guard'], 'checking')
+  await flush()
+  assert.equal(location.replaced, '/starter-dashboard')
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+})
+
+test('keeps the neutral /dashboard checking state while Memberstack loads late', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/dashboard',
+    delayedMember: TEST_BRAND,
+    memberstackDelayMs: 25,
+  })
+  assert.equal(attributes['data-route-guard'], 'checking')
+  assert.equal(location.replaced, undefined)
+  await waitFor(() => location.replaced === '/brand-dashboard')
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+})
+
+test('routes a logged-out /dashboard visitor through login with a safe return', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/dashboard',
+    member: null,
+  })
+  await flush()
+  assert.equal(location.replaced, '/login?next=' + encodeURIComponent('/dashboard'))
   assert.equal(attributes['data-route-guard'], 'redirecting')
 })
 
@@ -361,6 +441,23 @@ test('surfaces an unmapped plan on a guarded page instead of redirecting home', 
   await flush()
   assert.equal(location.replaced, undefined)
   assert.equal(attributes['data-route-guard-error'], 'unmapped-plan')
+})
+
+test('surfaces a cross-family role conflict instead of choosing a dashboard', async () => {
+  const conflict = {
+    id: 'm-conflict',
+    planConnections: [
+      plan('pln_dorxata-test-free-plan-dvcg0k8o'),
+      plan('pln_new-paid-plan-463h04ph'),
+    ],
+  }
+  const { location, attributes } = loadGuard({
+    pathname: '/dashboard',
+    member: conflict,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.equal(attributes['data-route-guard-error'], 'conflicting-plan-roles')
 })
 
 test('sets the checking state synchronously on a guarded page', () => {

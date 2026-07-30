@@ -4,6 +4,10 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./auth-route.js'), 'utf8')
+const routeGuardSource = fs.readFileSync(
+  require.resolve('./route-guard.js'),
+  'utf8',
+)
 
 function plan(planId) {
   return { active: true, planId }
@@ -58,9 +62,17 @@ function loadRouter(options = {}) {
     location,
     sessionStorage,
     setInterval,
+    setTimeout,
     clearInterval,
+    clearTimeout,
   }
-  if (options.member) {
+  if (options.delayedMember) {
+    window.setTimeout(() => {
+      window.$memberstackDom = {
+        getCurrentMember: async () => ({ data: options.delayedMember }),
+      }
+    }, options.memberstackDelayMs || 25)
+  } else if (options.member) {
     window.$memberstackDom = {
       getCurrentMember: async () => ({ data: options.member }),
     }
@@ -76,7 +88,7 @@ function loadRouter(options = {}) {
     },
   }
 
-  vm.runInNewContext(source, {
+  const context = vm.createContext({
     console: { error() {} },
     CustomEvent: window.CustomEvent,
     URL,
@@ -84,6 +96,10 @@ function loadRouter(options = {}) {
     document,
     window,
   })
+  if (!options.roleContractMissing) {
+    vm.runInContext(routeGuardSource, context)
+  }
+  vm.runInContext(source, context)
 
   return { api: window.StartersV3AuthRouter, attributes, location, storage, window }
 }
@@ -105,7 +121,20 @@ test('maps stable active plan IDs to application roles', () => {
   )
 })
 
-test('paid Brand wins when a member has more than one mapped active plan', () => {
+test('paid Brand wins over Brand Free during a valid same-family upgrade', () => {
+  const { api } = loadRouter()
+  const member = {
+    planConnections: [
+      plan('pln_free-plan-f6kn0dxz'),
+      plan('pln_new-paid-plan-463h04ph'),
+    ],
+  }
+
+  assert.equal(api.memberRole(member), 'brand-paid')
+  assert.equal(api.destinationFor(member), '/brand-dashboard')
+})
+
+test('cross-family Talent and Brand plans fail closed', () => {
   const { api } = loadRouter()
   const member = {
     planConnections: [
@@ -114,8 +143,9 @@ test('paid Brand wins when a member has more than one mapped active plan', () =>
     ],
   }
 
-  assert.equal(api.memberRole(member), 'brand-paid')
-  assert.equal(api.destinationFor(member), '/brand-dashboard')
+  assert.equal(api.memberRole(member), null)
+  assert.equal(api.memberRoleError(member), 'conflicting-plan-roles')
+  assert.equal(api.destinationFor(member), null)
 })
 
 test('uses role defaults for Talent, paid Brand, and free Brand', () => {
@@ -184,6 +214,24 @@ test('preserves only same-origin destinations allowed for the member role', () =
     api.destinationFor(talent, '//evil.example/steal'),
     '/starter-dashboard',
   )
+})
+
+test('canonical /dashboard next always resolves to the role-specific home', () => {
+  const { api } = loadRouter()
+  const talent = {
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }
+  const paidBrand = {
+    planConnections: [plan('pln_dorxata-test-brand-plan-777r02pa')],
+  }
+  const completedFreeBrand = {
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    customFields: { 'starter-quiz': '{"status":"ready"}' },
+  }
+
+  assert.equal(api.destinationFor(talent, '/dashboard'), '/starter-dashboard')
+  assert.equal(api.destinationFor(paidBrand, '/dashboard'), '/brand-dashboard')
+  assert.equal(api.destinationFor(completedFreeBrand, '/dashboard'), '/quiz-results')
 })
 
 test('preserves the V3 Talent routes defined by the access matrix', () => {
@@ -376,6 +424,37 @@ test('auth route sends a paid Brand to the confirmed V3 Brand dashboard', async 
   assert.equal(location.replaced, '/brand-dashboard')
 })
 
+test('auth route consumes /dashboard next without creating a redirect loop', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/dashboard',
+    member: {
+      id: 'member-talent',
+      planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+    },
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(location.replaced, '/starter-dashboard')
+})
+
+test('auth route waits for delayed Memberstack before resolving /dashboard', async () => {
+  const { location, attributes } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/dashboard',
+    delayedMember: {
+      id: 'member-test-brand',
+      planConnections: [plan('pln_dorxata-test-brand-plan-777r02pa')],
+    },
+    memberstackDelayMs: 25,
+  })
+
+  assert.equal(location.replaced, undefined)
+  assert.equal(attributes['data-auth-route-error'], undefined)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  assert.equal(location.replaced, '/brand-dashboard')
+})
+
 test('auth route preserves the stored destination from login', async () => {
   const { location } = loadRouter({
     pathname: '/auth-route',
@@ -418,4 +497,39 @@ test('auth route surfaces unmapped plans instead of silently routing home', asyn
 
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(attributes['data-auth-route-error'], 'unmapped-plan')
+})
+
+test('auth route surfaces cross-family role conflicts instead of picking a dashboard', async () => {
+  const { attributes, location } = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-conflict',
+      planConnections: [
+        plan('pln_dorxata-test-free-plan-dvcg0k8o'),
+        plan('pln_new-paid-plan-463h04ph'),
+      ],
+    },
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(location.replaced, undefined)
+  assert.equal(attributes['data-auth-route-error'], 'conflicting-plan-roles')
+})
+
+test('auth route fails safely when the shared role contract is missing', async () => {
+  const { attributes, location } = loadRouter({
+    pathname: '/auth-route',
+    roleContractMissing: true,
+    member: {
+      id: 'member-brand',
+      planConnections: [plan('pln_new-paid-plan-463h04ph')],
+    },
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(location.replaced, undefined)
+  assert.equal(
+    attributes['data-auth-route-error'],
+    'role-contract-unavailable',
+  )
 })

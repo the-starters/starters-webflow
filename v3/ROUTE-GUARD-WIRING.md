@@ -2,6 +2,9 @@
 
 Status: Local implementation only; not published
 
+Tracking: Jira `INITIATIVE-132`. This router release remains independent from
+the `INITIATIVE-131` points reconciliation and dashboard tile rollout.
+
 `v3/route-guard.js` is the sitewide companion to [auth-route.js](auth-route.js).
 `auth-route.js` only routes at `/login` and `/auth-route`, so a logged-in member
 can still open another role's page by navigating directly. This guard closes
@@ -15,14 +18,20 @@ On an approved V3 host, for a page it recognises:
 | Member state | Action |
 | --- | --- |
 | Logged out | Replace with `/login?next=<current path+query>` |
+| Mapped member on `/dashboard` | Replace with the role-specific authored page (or Free Brand quiz home) |
 | Role allowed on this page | Stay immediately; set `html[data-route-guard="allowed"]` |
 | Role not allowed on this page | Replace with that role's own default (never the other role's page) |
 | Authenticated, no mapped active plan | Stay with `html[data-route-guard-error="unmapped-plan"]` |
+| Active Talent plus Brand roles | Stay with `html[data-route-guard-error="conflicting-plan-roles"]` |
 | Page not in the matrix | Do nothing (no Memberstack lookup) |
 
 Role defaults (identical to `auth-route.js`): Talent → `/starter-dashboard`,
 Brand paid → `/brand-dashboard`, Brand free → `/quiz` (or `/quiz-results` once
 the quiz is completed — see brand-free routing below).
+
+`/dashboard` is deliberately a thin router page. It must contain only a neutral
+loading/error surface, never copies of the Starter or Brand dashboard bodies.
+The role-specific pages remain the implementation and compatibility URLs.
 
 ## Guarded pages
 
@@ -31,6 +40,7 @@ view it; any other authenticated role is redirected to its default.
 
 | Page | Allowed roles |
 | --- | --- |
+| `/dashboard` and `/dashboard/` | None stay; all mapped roles redirect to their role home |
 | `/brand-dashboard` | Brand paid |
 | `/opportunities` and `/opportunities/` | Talent, Brand paid |
 | `/opportunities-brands-view` | Brand paid |
@@ -49,7 +59,9 @@ The merged feed lists both `/opportunities` forms explicitly: the exact page
 map would otherwise miss the trailing slash, while the detail prefix requires a
 non-empty slug. `/opportunities/<slug>` matches a single non-empty path segment
 only, so nested paths such as `/opportunities/<slug>/apply` are not treated as
-detail pages.
+detail pages. `/dashboard` and `/favorites` list both slash forms for the same
+reason: no prefix rule catches their trailing-slash twin, so each must appear
+explicitly for both canonical URL forms to route identically.
 
 Memberstack can initially expose only a lower Brand Free connection for a
 multi-plan member. On the two exact merged-feed paths, an allowed Talent or
@@ -84,12 +96,16 @@ remains excluded until its authenticated-only status is confirmed.
 ## Webflow install
 
 1. Load `v3/route-guard.js` once sitewide in Site Settings Head Code, before
-   `opportunities-3.0.js`. This includes opportunity pages: opp30 detects the
-   guard through `html[data-route-guard]` and defers its access decisions to it.
+   `v3/auth-route.js` and `opportunities-3.0.js`. This includes opportunity
+   pages: opp30 detects the guard through `html[data-route-guard]` and defers
+   its access decisions to it.
 2. Do not install it on V2.
 3. Give guarded pages an error block keyed by `html[data-route-guard-error]`
    (same visible pattern as `/auth-route`). Optionally pre-hide protected
    content until `html[data-route-guard="allowed"]` to avoid a cross-role flash.
+4. Create `/dashboard` as a utility page with a neutral loading/error surface.
+   Keep `/starter-dashboard` and `/brand-dashboard` unchanged as the actual
+   authored dashboards.
 
 Regression rule: published source must contain one `opportunities-3.0.js` tag
 and place the route-guard tag first. The controller has a bounded handoff for an
@@ -112,6 +128,7 @@ every route in its page table:
 
 - `/brand-dashboard`, `/opportunities-brands-view`, `/opportunities---create`
 - `/starter-dashboard`, `/starter-edit-profile`, `/opportunities-freelancer-view`
+- `/dashboard` canonical role-router utility page
 - `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`
 - `/messages`
 - `/opportunities` merged-feed page (including its trailing-slash URL)
@@ -126,6 +143,22 @@ guard's page table (see the note above the guarded-pages table). Revisit
 `/all-starters` after confirming whether it is authenticated-only;
 both quiz pages keep their page-controller redirects separate from the sitewide
 guard.
+
+## Integration checklist
+
+- Point new generic dashboard links, post-auth Memberstack destinations, and
+  shared navbar Dashboard links to `/dashboard`.
+- Keep existing role-specific links and bookmarks working; do not redirect
+  `/starter-dashboard` or `/brand-dashboard` into `/dashboard`.
+- Keep V3 login/signup forms on `/auth-route`; a stored `next=/dashboard` is
+  consumed there and translated directly to the member's role home.
+- Verify Talent, paid Brand, Test Brand, Free Brand before quiz, and Free Brand
+  after quiz.
+- Verify both direct legacy dashboard URLs with the allowed role and the wrong
+  role.
+- Treat the dashboard-router release independently from INITIATIVE-131 points
+  reconciliation. Neither release is a prerequisite or implicit approval for
+  the other.
 
 ## Relationship to other layers
 
@@ -148,8 +181,9 @@ initializing either role's UI.
 ## Diagnostics
 
 - `window.StartersV3RouteGuard` exposes `activePlanIds`, `memberRole`,
-  `hasCompletedQuiz`, `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and
-  `redirectTargetFor` for console checks, plus
+  `memberRoleError`, `roleResolution`, `roleHome`, `hasCompletedQuiz`,
+  `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and `redirectTargetFor` for
+  console checks, plus
   `waitForSharedOpportunitiesAccess` for the merged-feed hydration decision.
 - `window.Opp30` exposes `routeGuardActive`, `routeGuardConfigured`,
   `waitForRouteGuardHandoff`, `gateOrRedirect`, `gateByPlan`, `memberPlanRole`,
@@ -159,7 +193,8 @@ initializing either role's UI.
   handoff, plan hydration, merged-feed activation, legacy fallback, and
   ownership-denied redirect policy.
 - Errors dispatch `starters:v3-route-guard-error` on `window` with `detail.code`
-  (`unmapped-plan`, `memberstack-unavailable`, `unexpected-error`).
+  (`unmapped-plan`, `conflicting-plan-roles`, `memberstack-unavailable`,
+  `unexpected-error`).
 - If an authored guard never boots and opp30 cannot hydrate a mapped role,
   opp30 stamps `html[data-route-guard-error="member-role-unavailable"]`; this
   controller fallback does not dispatch the guard's error event.
@@ -170,7 +205,12 @@ initializing either role's UI.
 ## Release gate
 
 - Run `node --test v3/route-guard.test.js`.
+- Confirm `/dashboard` has no role page body and hides its neutral content while
+  `data-route-guard="checking"`.
 - Confirm each guarded page has a visible error state.
 - Back up page-level code before installing.
+- Verify `/dashboard`, `/starter-dashboard`, and `/brand-dashboard` for Talent,
+  paid Brand, Test Brand, both Free Brand quiz states, logged-out, unmapped, and
+  deliberately conflicted fixtures.
 - Run the full cross-role staging matrix behind the Webflow password.
 - Do not publish custom domains until the separate production go signal.

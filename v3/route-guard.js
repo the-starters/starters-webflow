@@ -8,10 +8,11 @@
  * and it will
  *
  *   - send logged-out visitors to /login?next=<current path+query>,
+ *   - route /dashboard to the authenticated member's role-specific home,
  *   - send a logged-in member whose role is not allowed on this page to that
  *     member's role default (never the other role's page),
- *   - leave an authenticated-but-unmapped plan on the page with an explicit
- *     error state instead of silently redirecting home,
+ *   - leave an authenticated-but-unmapped or cross-role-conflicted member on
+ *     the page with an explicit error state instead of silently redirecting,
  *   - do nothing on a page it does not recognise (public/unlisted route).
  *
  * The plan-ID → role map and guarded page roles derive from the stable access
@@ -78,6 +79,15 @@
   // guard never forces a login there even if installed site-wide. Add them here
   // only after confirming both are authenticated-only in V3 beta.
   var PAGE_ROLES = {
+    // Canonical dashboard entry point. No role stays here: the empty allowlist
+    // makes every mapped role resolve to its own default while preserving the
+    // two authored dashboard pages as the actual page bodies.
+    '/dashboard': [],
+    // Trailing-slash twin for the same reason as /opportunities/ below: the
+    // exact map misses it and there is no /dashboard/ prefix rule, so without
+    // this entry the slashed URL would be unguarded if Webflow ever serves it
+    // un-normalized, stranding the member on the neutral loading surface.
+    '/dashboard/': [],
     '/brand-dashboard': ['brand-paid'],
     '/messages': ['brand-paid', 'talent'],
     // Merged opportunities feed (2026-07): one page, role wrappers decide the
@@ -120,18 +130,46 @@
       })
   }
 
-  // Mixed mapped/unmapped plans use the highest mapped role, matching auth-route.js.
-  function memberRole(member) {
+  /**
+   * Resolve active plans into one application role.
+   *
+   * Brand Free + paid Brand is a valid same-family upgrade state and resolves
+   * to paid Brand. Talent + either Brand role is a cross-family conflict and
+   * fails closed. Unknown active plans are ignored when a known role exists,
+   * preserving the existing mixed known/unmapped contract.
+   */
+  function roleResolution(member) {
     var roles = activePlanIds(member)
       .map(function (planId) {
         return PLAN_ROLES[planId]
       })
       .filter(Boolean)
 
-    if (roles.includes('brand-paid')) return 'brand-paid'
-    if (roles.includes('brand-free')) return 'brand-free'
-    if (roles.includes('talent')) return 'talent'
-    return null
+    var hasTalent = roles.includes('talent')
+    var hasBrandPaid = roles.includes('brand-paid')
+    var hasBrandFree = roles.includes('brand-free')
+    if (hasTalent && (hasBrandPaid || hasBrandFree)) {
+      return { role: null, error: 'conflicting-plan-roles' }
+    }
+    if (hasBrandPaid) return { role: 'brand-paid', error: null }
+    if (hasBrandFree) return { role: 'brand-free', error: null }
+    if (hasTalent) return { role: 'talent', error: null }
+    return { role: null, error: 'unmapped-plan' }
+  }
+
+  function memberRole(member) {
+    return roleResolution(member).role
+  }
+
+  function memberRoleError(member) {
+    return roleResolution(member).error
+  }
+
+  function roleHome(member) {
+    var role = memberRole(member)
+    if (!role) return null
+    if (role === 'brand-free') return brandFreeHome(member)
+    return ROLE_DEFAULTS[role]
   }
 
   // The roles allowed on a pathname, or null when the page is not guarded.
@@ -159,9 +197,9 @@
     var role = memberRole(member)
     if (!role) return null // authenticated but no mapped active plan
     if (allowed.indexOf(role) !== -1) return '' // allowed on this page
-    // wrong role -> own default, never the other role's page
-    if (role === 'brand-free') return brandFreeHome(member)
-    return ROLE_DEFAULTS[role]
+    // wrong role (or canonical /dashboard) -> own default, never the other
+    // role's page.
+    return roleHome(member)
   }
 
   function loginPathWithNext() {
@@ -304,7 +342,7 @@
     member = resolved.member
     var target = resolved.target
     if (target === null) {
-      showGuardError('unmapped-plan')
+      showGuardError(memberRoleError(member) || 'unmapped-plan')
       return
     }
     if (target) {
@@ -317,7 +355,10 @@
 
   var api = {
     activePlanIds: activePlanIds,
+    roleResolution: roleResolution,
     memberRole: memberRole,
+    memberRoleError: memberRoleError,
+    roleHome: roleHome,
     hasCompletedQuiz: hasCompletedQuiz,
     brandFreeHome: brandFreeHome,
     pageRolesFor: pageRolesFor,
