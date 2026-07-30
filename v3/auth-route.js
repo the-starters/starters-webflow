@@ -18,39 +18,54 @@
   ])
   var LOGIN_PATH = '/login'
   var ROUTE_PATH = '/auth-route'
+  var DASHBOARD_PATH = '/dashboard'
   var NEXT_STORAGE_KEY = 'thestarters:v3-auth-next'
   var MEMBERSTACK_TIMEOUT_MS = 10000
 
-  var PLAN_ROLES = {
-    'pln_free-plan-f6kn0dxz': 'brand-free',
-    'pln_new-paid-plan-463h04ph': 'brand-paid',
-    'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
-    'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
+  /**
+   * route-guard.js is loaded sitewide before page controllers and owns the
+   * stable plan-ID role contract. Reusing its exported API keeps login routing,
+   * direct access, and /dashboard on one resolver.
+   */
+  function roleContract() {
+    var contract = window.StartersV3RouteGuard
+    if (
+      !contract ||
+      typeof contract.memberRole !== 'function' ||
+      typeof contract.memberRoleError !== 'function' ||
+      typeof contract.roleHome !== 'function'
+    ) {
+      return null
+    }
+    return contract
   }
 
-  // brand-free's home is decided at runtime by quiz completion — see
-  // brandFreeHome(). The map value is the fallback for callers that pass no
-  // member (kept as /quiz for the not-yet-completed default).
-  var ROLE_DEFAULTS = {
-    talent: '/starter-dashboard',
-    'brand-paid': '/brand-dashboard',
-    'brand-free': '/quiz',
+  // Backwards-compatible diagnostic wrappers around the shared role contract.
+  function activePlanIds(member) {
+    var contract = roleContract()
+    return contract ? contract.activePlanIds(member) : []
   }
-  var QUIZ_PATH = '/quiz'
-  var QUIZ_RESULTS_PATH = '/quiz-results'
-
-  // A brand-free member goes to /quiz-results only once they have completed the
-  // quiz, otherwise to /quiz. Completion is the same durable signal the
-  // /quiz-results page itself reads: the Memberstack `starter-quiz` custom field
-  // (written alongside the member-JSON quiz payload on completion). Available on
-  // the member object, so no extra Memberstack call is needed.
+  function memberRole(member) {
+    var contract = roleContract()
+    return contract ? contract.memberRole(member) : null
+  }
+  function memberRoleError(member) {
+    var contract = roleContract()
+    return contract
+      ? contract.memberRoleError(member)
+      : 'role-contract-unavailable'
+  }
+  function roleHome(member) {
+    var contract = roleContract()
+    return contract ? contract.roleHome(member) : null
+  }
   function hasCompletedQuiz(member) {
-    var cf = (member && member.customFields) || {}
-    var value = cf['starter-quiz']
-    return typeof value === 'string' ? value.trim() !== '' : !!value
+    var contract = roleContract()
+    return contract ? contract.hasCompletedQuiz(member) : false
   }
   function brandFreeHome(member) {
-    return hasCompletedQuiz(member) ? QUIZ_RESULTS_PATH : QUIZ_PATH
+    var contract = roleContract()
+    return contract ? contract.brandFreeHome(member) : null
   }
 
   var ROLE_DESTINATIONS = {
@@ -83,29 +98,6 @@
 
   ROLE_DESTINATIONS['brand-paid'].add('/opportunities---create')
 
-  function activePlanIds(member) {
-    return (member && member.planConnections ? member.planConnections : [])
-      .filter(function (connection) {
-        return connection.active === true || connection.status === 'ACTIVE'
-      })
-      .map(function (connection) {
-        return connection.planId
-      })
-  }
-
-  function memberRole(member) {
-    var roles = activePlanIds(member)
-      .map(function (planId) {
-        return PLAN_ROLES[planId]
-      })
-      .filter(Boolean)
-
-    if (roles.includes('brand-paid')) return 'brand-paid'
-    if (roles.includes('brand-free')) return 'brand-free'
-    if (roles.includes('talent')) return 'talent'
-    return null
-  }
-
   function localPath(rawValue) {
     if (!rawValue || typeof rawValue !== 'string') return null
 
@@ -134,6 +126,7 @@
 
     var requested = localPath(requestedDestination)
     var requestedPathname = pathnameOf(requested)
+    if (requestedPathname === DASHBOARD_PATH) return roleHome(member)
     var matchesRoleDestination =
       requestedPathname &&
       (ROLE_DESTINATIONS[role].has(requestedPathname) ||
@@ -146,8 +139,7 @@
       return requested
     }
 
-    if (role === 'brand-free') return brandFreeHome(member)
-    return ROLE_DEFAULTS[role]
+    return roleHome(member)
   }
 
   function readStoredDestination() {
@@ -260,7 +252,7 @@
 
     var destination = destinationFor(member, consumeRequestedDestination())
     if (!destination) {
-      showConfigurationError('unmapped-plan')
+      showConfigurationError(memberRoleError(member))
       return
     }
 
@@ -274,6 +266,8 @@
     brandFreeHome: brandFreeHome,
     localPath: localPath,
     memberRole: memberRole,
+    memberRoleError: memberRoleError,
+    roleHome: roleHome,
   }
   window.StartersV3AuthRouter = api
 

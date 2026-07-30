@@ -21,9 +21,12 @@ application roles and identifies which layer must enforce each rule.
 Use stable plan IDs for access decisions. Display names are descriptive only.
 Unknown active plan IDs fail closed as unmapped configuration only when a
 member has no active mapped plan. A member with at least one known active plan
-is authorized under the highest known role even when other active plan IDs are
-unmapped. This matches `auth-route.js`, keeping login routing and page guarding
-consistent.
+is authorized under that known role even when other active plan IDs are
+unmapped. Brand Free plus paid Brand is a valid same-family upgrade state and
+resolves to paid Brand. Talent plus either Brand role is a cross-family conflict
+and fails closed with `conflicting-plan-roles`. `route-guard.js` owns this
+resolution contract; `auth-route.js` consumes its exported API so login routing,
+the canonical dashboard router, and direct-page guarding cannot drift.
 
 ## Route-level access
 
@@ -37,6 +40,7 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
+| `/dashboard` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Canonical authenticated entry only; no dashboard page body lives here |
 | `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default until quiz completion |
 | `/quiz-results` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion |
 | `/all-starters` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return |
@@ -81,8 +85,8 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 > until they complete the quiz, then `/quiz-results`. Completion is the Memberstack
 > `starter-quiz` custom field (the same signal the `/quiz-results` page reads);
 > a missing, empty, or whitespace-only value is not complete.
-> `auth-route.js`, `route-guard.js`, and `opportunities-3.0.js` all apply this via
-> a shared `brandFreeHome(member)` / `hasCompletedQuiz(member)` helper.
+> `route-guard.js` owns this via the exported `brandFreeHome(member)` /
+> `hasCompletedQuiz(member)` contract. `auth-route.js` reuses that contract.
 
 > **Merged-feed plan hydration (updated 2026-07-28):** On `/opportunities` and
 > `/opportunities/`, `route-guard.js` immediately allows a mapped Talent or
@@ -99,8 +103,9 @@ separate owner:
 
 | Concern | Enforcement owner | Status |
 | --- | --- | --- |
-| Post-login destination and cross-role redirects | `v3/auth-route.js` | Implemented for the routes above |
-| Direct protected-page access (deep links, typed URLs) | `v3/route-guard.js` | Implemented; install per [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md); staging matrix pending |
+| Stable plan-role resolution | `v3/route-guard.js` exported contract | Implemented; cross-family conflicts fail closed |
+| Post-login destination and cross-role redirects | `v3/auth-route.js` consuming the shared contract | Implemented for the routes above |
+| Canonical `/dashboard` role routing and direct protected-page access | `v3/route-guard.js` | Implemented locally; install per [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md); staging matrix pending |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
 | Free Brand blurred/limited All Starters results | Page/list rendering and data response | Not enforced by the router |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |
