@@ -15,8 +15,13 @@
  * against the envelope, not the record. `unwrap()` pulls the record out and adds
  * the three computed fields the template binds and Xano does not send:
  *
- *   Role_1 / Role_2 / Role_3  the `Roles` comma-string split and trimmed, first
- *                             three only; each chip hides on an empty value
+ *   Role_1 / Role_2 / Role_3  role display names, first three only (extras
+ *                             dropped); each chip hides when empty. Source of
+ *                             truth is a server-resolved `roles_resolved` array
+ *                             when present; otherwise the `Roles` string, whose
+ *                             stored format varies per record (comma-separated
+ *                             display names OR semicolon-separated slugs). See
+ *                             roleNames() / parseRoles().
  *   Location                  "City, State_Province, Country", empty parts
  *                             skipped so no orphan commas render
  *   Bio                       the Quill rich-text HTML flattened to plain text
@@ -72,9 +77,10 @@
  * landing in that window arms against an empty instance list and gives up.
  *
  * Install: the onboarding completion page, one deferred tag next to the pinned
- * wf-xano tag, in the scripts embed (Part 2). The wf-xano wrapper attributes
- * live on a Designer div that CONTAINS the structure embed (Part 1), not on the
- * embed itself. See v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md for both embeds, the
+ * wf-xano tag, in the scripts embed — ONE pair of tags for the page, however many
+ * form-block wrappers it has. The wf-xano wrapper attributes live on each FORM
+ * BLOCK, which contains its own structure embed. See
+ * v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md for the per-form attribute table, the
  * form-block switching, the tune-ables, and the Xano auth flip.
  */
 ;(function () {
@@ -180,19 +186,114 @@
     return value == null ? '' : String(value).trim()
   }
 
-  // Xano stores this record's roles as ONE comma string. Unlike the saved-list
-  // sibling this does NOT split on ";" — the onboarding record is a different
-  // column with a different delimiter, and accepting ";" here would break a role
-  // whose display name legitimately contains one.
-  function splitRoles(value) {
-    return text(value)
-      .split(',')
-      .map(function (part) {
-        return part.trim()
+  // Display-name overrides for role slugs that plain de-hyphenate+capitalize
+  // mangles (acronyms, and one plural). Keyed on the RAW stored slug.
+  // KEEP IN SYNC across:
+  //   v3/saved-starters-roles.js
+  //   algolia-result-modifiers/roles.js
+  //   starters-list-filter/custom-algolia-scripts/filters-text.js
+  //   v3/onboarding-profile-preview.js
+  var ROLE_NAMES = {
+    'ui-ux-designer': 'UI/UX Designer',
+    'cro-expert': 'CRO Expert',
+    'seo-marketer': 'SEO Marketer',
+    'crm-marketer': 'CRM Marketer',
+    'cx-director': 'CX Director',
+    'pr-directors': 'PR Director',
+    'ai-automation-expert': 'AI Automation Expert',
+    'e-commerce-manager': 'E-Commerce Manager'
+  }
+
+  // Ported verbatim from v3/saved-starters-roles.js parseRoles(), because this
+  // field has exactly the same two-format problem.
+  //
+  // The stored value's format VARIES PER RECORD: sometimes display names with
+  // commas ("AI Automation Expert"), sometimes slugs with semicolons
+  // ("head-of-growth; paid-social-marketer; performance-creative-lead"). An
+  // earlier comma-only split here was a live bug — the whole semicolon string
+  // landed in Role_1 and chips 2 and 3 rendered empty. The Kaeser test record is
+  // a single display name, so it never exercised it. Accept both separators
+  // rather than betting on one.
+  //
+  // A slug that is not in ROLE_NAMES is de-hyphenated to lowercase words
+  // ("head-of-growth" -> "head of growth"); the CHIP'S CSS supplies the final
+  // casing via `text-transform: capitalize`. Map entries already carry their own
+  // final casing (and are unaffected by capitalize), which is the whole reason
+  // the map exists: plain de-hyphenate + capitalize renders "Cro Expert".
+  // Display names pass through untouched by construction — they are not map
+  // keys and contain no hyphens.
+  function parseRoles(text) {
+    var seen = Object.create(null)
+    var roles = []
+    String(text == null ? '' : text)
+      .split(/[;,]/)
+      .forEach(function (part) {
+        var slug = part.trim().toLowerCase()
+        var role = ROLE_NAMES[slug] || part.trim().replace(/-/g, ' ').replace(/\s+/g, ' ').trim()
+        if (!role) return
+        var key = role.toLowerCase()
+        if (seen[key]) return
+        seen[key] = true
+        roles.push(role)
       })
-      .filter(function (part) {
-        return part.length > 0
-      })
+    return roles
+  }
+
+  /* --------------------------- resolved role names ------------------------- *
+   * The record also carries `role_refs: [39, 38, 35]` — the authoritative role
+   * reference IDs. Once Xano resolves those server-side (see the wiring doc,
+   * "Roles: resolve role_refs in Xano"), the response will carry real display
+   * names and every heuristic below it becomes dead weight.
+   *
+   * This is the forward path, live now so the Xano change needs no client
+   * release: if a resolved array is present and yields at least one name, it
+   * WINS over the `Roles` string. Resolved names are authoritative display
+   * values, so they are NOT slug-mapped and NOT de-hyphenated — only trimmed,
+   * emptied-out, and deduped.
+   *
+   * `roles_resolved` is the canonical field name. It is deliberately distinct
+   * from the existing `Roles` (the delimited string) and `role_refs` (the ids),
+   * so all three can coexist during the migration; `roles` is accepted too, in
+   * case the endpoint ships that name instead.
+   * ------------------------------------------------------------------------ */
+  var RESOLVED_ROLE_FIELDS = ['roles_resolved', 'roles']
+  var RESOLVED_NAME_KEYS = ['name', 'display_name', 'title']
+
+  function resolvedRoleNames(value) {
+    if (!Array.isArray(value)) return []
+    var seen = Object.create(null)
+    var names = []
+    value.forEach(function (entry) {
+      var name = ''
+      if (typeof entry === 'string') {
+        name = text(entry)
+      } else if (entry != null && typeof entry === 'object') {
+        for (var i = 0; i < RESOLVED_NAME_KEYS.length && !name; i++) {
+          name = text(entry[RESOLVED_NAME_KEYS[i]])
+        }
+      }
+      // Anything else — a bare id, a boolean, null — is skipped on purpose. A
+      // chip reading "39" is worse than no chip, and an array of raw ids simply
+      // yields nothing, which falls through to the string path below.
+      if (!name) return
+      var key = name.toLowerCase()
+      if (seen[key]) return
+      seen[key] = true
+      names.push(name)
+    })
+    return names
+  }
+
+  // The one place that decides where role names come from. Resolved array first
+  // (in field-name preference order), delimited string as the fallback.
+  function roleNames(record) {
+    if (record && typeof record === 'object') {
+      for (var i = 0; i < RESOLVED_ROLE_FIELDS.length; i++) {
+        var resolved = resolvedRoleNames(record[RESOLVED_ROLE_FIELDS[i]])
+        if (resolved.length) return resolved
+      }
+    }
+    return parseRoles(record ? record.Roles : '')
   }
 
   function joinLocation(record) {
@@ -215,7 +316,7 @@
     var record = Array.isArray(list) && list.length ? list[0] : null
     if (!record || typeof record !== 'object') return []
 
-    var roles = splitRoles(record.Roles)
+    var roles = roleNames(record)
     var out = {}
     for (var key in record) {
       if (Object.prototype.hasOwnProperty.call(record, key)) out[key] = record[key]
@@ -361,7 +462,9 @@
   // against a real Bio or Roles string without reloading the page.
   window.StartersV3OnboardingProfilePreview = {
     htmlToText: htmlToText,
-    splitRoles: splitRoles,
+    parseRoles: parseRoles,
+    resolvedRoleNames: resolvedRoleNames,
+    roleNames: roleNames,
     joinLocation: joinLocation,
     unwrap: unwrap,
     // Answers "why is/isn't ?ms= doing anything here" without reading the source.

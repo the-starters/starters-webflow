@@ -36,7 +36,7 @@ skeleton loader.
 
   | Field | Derived from | Rule |
   | --- | --- | --- |
-  | `Role_1` / `Role_2` / `Role_3` | `Roles` | Comma string split and trimmed, first three only. Each chip hides on an empty value, so a one-role Starter shows one chip. |
+  | `Role_1` / `Role_2` / `Role_3` | `Roles` | Parsed to display values, first three only (extras dropped). Each chip hides on an empty value, so a one-role Starter shows one chip. See [Role parsing](#role-parsing) — the stored format varies per record and the chip needs `text-transform: capitalize`. |
   | `Location` | `City`, `State_Province`, `Country` | Joined with `, ` in that order, empty parts skipped, so no orphan commas. |
   | `Bio` | `Bio` | Quill rich-text HTML flattened to one line of plain text (tags stripped, `<br>`/block ends become spaces, entities decoded, whitespace collapsed). |
 
@@ -265,6 +265,11 @@ differences then live in their own rules, as the harness does with
 .stp-pp__role{
   display:inline-flex;
   align-items:center;
+  /* Final casing for de-hyphenated role fallbacks ("head of growth"). Slugs in
+     the ROLE_NAMES map already carry their own casing and are unaffected; a
+     resolved `roles_resolved` name is printed verbatim and needs none of this.
+     Removing this makes fallback chips render lowercase. */
+  text-transform:capitalize;
   padding:4px 11px;
   border-radius:999px;
   background:var(--stp-pp-green-bg);
@@ -524,6 +529,72 @@ v0.28.0 is the version it was verified against.
 After publishing, check the console. On production the only expected log is
 `[wf-xano] initialized 2 list(s)` — one per form block. If it says `1`, one form is
 missing its wrapper attributes; if it says `3`, `hero-app_inner` still has its own.
+
+## Role parsing
+
+`Role_1` / `Role_2` / `Role_3` are computed, and where they come from depends on
+what the endpoint sends. **First three only — a fourth role is dropped**, because
+the card has exactly three chip slots.
+
+### Priority 1 — a server-resolved array (the forward path)
+
+If the record carries a non-empty **`roles_resolved`** array, it wins outright and
+no string parsing happens. This is the shape the endpoint should move to (see
+[Roles: resolve role_refs in Xano](#roles-resolve-role_refs-in-xano)); the client
+already supports it, so the Xano change needs no code release here.
+
+The client accepts it tolerantly:
+
+| Aspect | Contract |
+| --- | --- |
+| Field name | **`roles_resolved`** (canonical), or `roles`. `roles_resolved` wins if both are present. Deliberately distinct from `Roles` (the delimited string) and `role_refs` (the ids) so all three can coexist during the migration. |
+| Entries | Strings (`"Head of Growth"`) **or** objects. From an object it reads `name`, then `display_name`, then `title` — first non-empty wins. |
+| Junk | Bare numbers, booleans, `null`, `{}`, nested arrays are skipped. So `role_refs`-style `[39, 38, 35]` yields nothing and correctly falls through to the string path rather than printing `39` in a chip. |
+| Cleanup | Trimmed, empties skipped, deduped case-insensitively. |
+| **Not** applied | No slug mapping, no de-hyphenation. A resolved name is authoritative and is printed exactly as sent — even `"cro-expert"`, if the server ever sent that, would render literally. |
+| Fallback | An absent, non-array, empty, or all-junk value falls through to priority 2. |
+
+### Priority 2 — parsing the `Roles` string
+
+The stored format **varies per record**, which caused a live bug: sometimes
+comma-separated display names (`AI Automation Expert`), sometimes
+semicolon-separated slugs (`head-of-growth; paid-social-marketer;
+performance-creative-lead`). A comma-only split put that whole second string into
+`Role_1` and left chips 2 and 3 empty. The parser is now ported verbatim from
+`v3/saved-starters-roles.js`:
+
+- Splits on **both** `;` and `,`.
+- Looks the trimmed, lowercased part up in `ROLE_NAMES` — the shared
+  acronym/plural override map (`cro-expert` → `CRO Expert`, `ui-ux-designer` →
+  `UI/UX Designer`, `pr-directors` → `PR Director`, …).
+- Otherwise de-hyphenates to lowercase words: `head-of-growth` → `head of growth`.
+- Display names pass through untouched by construction — they are not map keys and
+  contain no hyphens.
+- Deduped case-insensitively, so a slug and its own display name in the same value
+  collapse to one chip.
+
+⚠ **The chip needs `text-transform: capitalize` in the Designer/CSS.** The
+de-hyphenated fallback is intentionally lowercase (`head of growth`) and relies on
+CSS for its final casing. Map entries already carry their own final casing and are
+unaffected by `capitalize` — which is exactly why the map exists, since
+capitalising `cro expert` yields "Cro Expert". Without the CSS rule, fallback
+chips render lowercase.
+
+The `ROLE_NAMES` map is duplicated in four files and each copy carries the same
+`KEEP IN SYNC` comment listing all four: `v3/saved-starters-roles.js`,
+`algolia-result-modifiers/roles.js`,
+`starters-list-filter/custom-algolia-scripts/filters-text.js`, and
+`v3/onboarding-profile-preview.js`. Edit them together. The resolved-array path
+above is what eventually retires all four.
+
+### Checking it
+
+```js
+const P = StartersV3OnboardingProfilePreview
+P.roleNames({ roles_resolved: [{ id: 39, name: 'Head of Growth' }] })  // -> ['Head of Growth']
+P.parseRoles('head-of-growth; paid-social-marketer')  // -> ['head of growth', 'paid social marketer']
+P.parseRoles('cro-expert')                            // -> ['CRO Expert']
+```
 
 ## Form-block switching
 
@@ -813,6 +884,68 @@ page can be reached logged out); the demo id disappears from the page source;
 account switching clears and reloads the card automatically. Test in this order —
 logged in with a completed profile, logged in with no freelancer row (empty
 state), logged out, and an endpoint failure.
+
+## Roles: resolve `role_refs` in Xano
+
+**Bundle this with the auth flip above — one Xano session, same endpoint.**
+
+The record already carries the authoritative role reference IDs:
+
+```json
+"role_refs": [39, 38, 35]
+```
+
+but the browser never sees names for them, so the client is left parsing the
+`Roles` string — a field whose format varies per record (comma display names in
+some rows, semicolon slugs in others) and which needs a duplicated
+acronym-override map to render `CRO Expert` instead of "Cro Expert". Resolving the
+refs server-side retires all of that.
+
+### What the endpoint should return
+
+Join `role_refs` against the roles table and add a resolved array:
+
+```json
+"roles_resolved": [
+  { "id": 39, "name": "Head of Growth" },
+  { "id": 38, "name": "Paid Social Marketer" },
+  { "id": 35, "name": "Performance Creative Lead" }
+]
+```
+
+- **Field name: `roles_resolved`.** Deliberately distinct from the existing
+  `Roles` (delimited string) and `role_refs` (ids) so all three can coexist while
+  this rolls out. The client also accepts `roles`, but prefers `roles_resolved`
+  when both are present.
+- **Entry shape:** `{id, name}` objects are preferred (`id` is useful for
+  debugging and future links). Plain strings work too. From an object the client
+  reads `name`, then `display_name`, then `title`.
+- **Names must be final display values** — properly cased, not slugs. The client
+  does **not** slug-map or de-hyphenate resolved values, by design: whatever the
+  server sends is printed verbatim.
+- **Keep the rest of the response shape identical**, including the
+  `{"freelancer": [ … ]}` envelope, so no JavaScript changes.
+- Sending `roles_resolved` alongside the legacy `Roles` is safe and is the
+  recommended rollout: the client prefers the resolved array the moment it appears
+  and falls back to the string for any record that lacks it.
+
+### Ordering — Jerico's call
+
+The card renders up to **three** chips and takes the **first three entries in
+array order**, dropping any extras. So the array order is the display order.
+
+The record also has `primary_role_ref`, `secondary_role_ref`, and
+`tertiary_role_ref` fields, which are **null in the test record** — so their
+intended semantics are unverified. **Jerico decides in Xano** whether
+`roles_resolved` should be ordered primary → secondary → tertiary from those
+fields, or simply follow `role_refs` order. Either is fine on the client; it just
+takes the first three as given.
+
+### Once this ships
+
+`parseRoles()` and its `ROLE_NAMES` copy in this module become dead-ish code — the
+fallback for old records only. Leave them until every record returns
+`roles_resolved`, then the map's four-file sync burden can be reduced by one.
 
 ## Tune-ables
 

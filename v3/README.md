@@ -678,14 +678,29 @@ capitalised value in Xano would break both blocks silently — normalise it ther
 than an array and takes its single-object branch, so `items[0]` is the whole body
 and every plain `wf-xano-bind` would resolve against the envelope instead of the
 record. The hook unwraps it and adds the three computed fields the template binds
-and Xano does not send: `Role_1`/`Role_2`/`Role_3` from the comma-delimited
-`Roles` string (first three, each chip hiding on an empty value), `Location` from
+and Xano does not send: `Role_1`/`Role_2`/`Role_3` (first three role display
+names, extras dropped, each chip hiding on an empty value), `Location` from
 `City, State_Province, Country` with empty parts skipped, and `Bio` flattened
 from Quill rich-text HTML to one line of plain text.
 
-Unlike the saved-list sibling above, `Roles` here is split on commas **only**. It
-is a different column with a different delimiter, and accepting `;` would break a
-role whose display name legitimately contains one.
+Role names come from one of two places. If the record carries a non-empty
+`roles_resolved` array (the forward path — Xano resolving `role_refs: [39, 38, 35]`
+server-side), it wins outright and is printed verbatim: trimmed, deduped, but never
+slug-mapped or de-hyphenated, because a resolved name is authoritative. Entries may
+be strings or `{id, name}` objects (`name` → `display_name` → `title`), and junk
+entries such as bare ids are skipped, so a raw `role_refs`-shaped array falls
+through rather than printing `39` in a chip.
+
+Otherwise the `Roles` string is parsed with `parseRoles()`, **ported verbatim from
+the saved-list sibling above** — including its `ROLE_NAMES` map, which this file is
+now the 4th copy of (every copy carries the same four-file `KEEP IN SYNC` comment).
+The earlier comma-only split here was a live bug: the stored format varies per
+record, and a real member's `head-of-growth; paid-social-marketer;
+performance-creative-lead` landed entirely in `Role_1` with chips 2 and 3 empty.
+Both `;` and `,` are now accepted. As with the sibling, de-hyphenated fallbacks are
+lowercase and **the chip's CSS must supply `text-transform: capitalize`**; map
+entries carry their own final casing and are unaffected by it, which is the whole
+point of the map (`capitalize` on `cro expert` gives "Cro Expert").
 
 Entity decoding in the bio flattener is deliberately single-pass. A
 loop-until-stable decode would turn the literal `&amp;lt;` an author typed into

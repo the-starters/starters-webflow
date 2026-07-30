@@ -231,48 +231,163 @@ test('htmlToText stringifies non-string input', () => {
   assert.equal(htmlToText(42), '42')
 })
 
-/* ------------------------------ splitRoles ----------------------------- */
+/* ------------------------------ parseRoles ----------------------------- *
+ * Ported verbatim from v3/saved-starters-roles.js, so these mirror the sibling's
+ * semantics: BOTH separators, ROLE_NAMES for acronym slugs, de-hyphenate as the
+ * fallback (the chip's CSS text-transform supplies final casing), and
+ * case-insensitive dedupe.
+ * ---------------------------------------------------------------------- */
 
-test('splitRoles returns an empty array for empty and blank values', () => {
-  const { splitRoles } = transform()
-  assert.deepEqual(list(splitRoles('')), [])
-  assert.deepEqual(list(splitRoles(null)), [])
-  assert.deepEqual(list(splitRoles(undefined)), [])
-  assert.deepEqual(list(splitRoles('   ')), [])
-  assert.deepEqual(list(splitRoles(' , , ')), [], 'separators with nothing between them yield nothing')
+// REGRESSION (live bug, found on the published page): a real member's Roles value
+// is semicolon-separated SLUGS. The old comma-only split put the entire string in
+// Role_1 and left chips 2 and 3 empty. The Kaeser test record is a single display
+// name, so it never caught this.
+test('splits the live semicolon-separated slug string into three roles', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('head-of-growth; paid-social-marketer; performance-creative-lead')), [
+    'head of growth',
+    'paid social marketer',
+    'performance creative lead',
+  ])
 })
 
-test('splitRoles handles a single role', () => {
-  const { splitRoles } = transform()
-  assert.deepEqual(list(splitRoles('Growth Marketer')), ['Growth Marketer'])
-})
-
-test('splitRoles handles exactly three roles', () => {
-  const { splitRoles } = transform()
-  assert.deepEqual(list(splitRoles('Growth Marketer,Paid Social,CRO Expert')), [
+test('comma-separated display names pass through untouched', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('AI Automation Expert')), ['AI Automation Expert'])
+  assert.deepEqual(list(parseRoles('Growth Marketer,Paid Social,CRO Expert')), [
     'Growth Marketer',
     'Paid Social',
     'CRO Expert',
   ])
 })
 
-test('splitRoles returns every role past the third — the slot cap lives in unwrap()', () => {
-  const { splitRoles } = transform()
-  assert.deepEqual(list(splitRoles('One,Two,Three,Four,Five')), ['One', 'Two', 'Three', 'Four', 'Five'])
+test('accepts both separators in one value', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('growth-strategy; paid-social,cro-expert')), [
+    'growth strategy',
+    'paid social',
+    'CRO Expert',
+  ])
 })
 
-test('splitRoles trims surrounding whitespace and drops empty segments', () => {
-  const { splitRoles } = transform()
-  assert.deepEqual(list(splitRoles('  Growth Marketer ,, Paid Social  ,  ')), ['Growth Marketer', 'Paid Social'])
-  assert.deepEqual(list(splitRoles('\n Brand Strategy \t')), ['Brand Strategy'])
+test('maps acronym slugs to their display names instead of de-hyphenating', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('cro-expert')), ['CRO Expert'], 'not "cro expert" -> "Cro Expert"')
+  assert.deepEqual(list(parseRoles('ui-ux-designer')), ['UI/UX Designer'])
+  assert.deepEqual(list(parseRoles('seo-marketer; crm-marketer')), ['SEO Marketer', 'CRM Marketer'])
+  assert.deepEqual(list(parseRoles('pr-directors')), ['PR Director'], 'the one plural fix')
+  assert.deepEqual(list(parseRoles('e-commerce-manager')), ['E-Commerce Manager'])
+  assert.deepEqual(list(parseRoles('ai-automation-expert')), ['AI Automation Expert'])
 })
 
-test('splitRoles does not split on semicolons (unlike the saved-list sibling)', () => {
-  const { splitRoles } = transform()
-  assert.deepEqual(list(splitRoles('Growth; Paid Social')), ['Growth; Paid Social'])
+test('map lookup is case-insensitive on the stored slug', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('CRO-Expert')), ['CRO Expert'])
 })
 
-/* ----------------------------- joinLocation ---------------------------- */
+test('dedupes case-insensitively, including a slug and its display name together', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('cro-expert, CRO Expert')), ['CRO Expert'], 'map output collides with the display name')
+  assert.deepEqual(list(parseRoles('paid-social; Paid-Social; paid social')), ['paid social'])
+})
+
+test('returns every role past the third — the slot cap lives in unwrap()', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('one,two,three,four,five')), ['one', 'two', 'three', 'four', 'five'])
+})
+
+test('trims whitespace, collapses runs, and drops empty segments', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('  Growth Marketer ,, Paid Social  ,  ')), ['Growth Marketer', 'Paid Social'])
+  assert.deepEqual(list(parseRoles('\n Brand Strategy \t')), ['Brand Strategy'])
+  assert.deepEqual(list(parseRoles('  ui--ux-designer ; ; brand-strategy ')), ['ui ux designer', 'brand strategy'])
+})
+
+test('returns an empty array for empty, blank and separator-only values', () => {
+  const { parseRoles } = transform()
+  assert.deepEqual(list(parseRoles('')), [])
+  assert.deepEqual(list(parseRoles(null)), [])
+  assert.deepEqual(list(parseRoles(undefined)), [])
+  assert.deepEqual(list(parseRoles('   ')), [])
+  assert.deepEqual(list(parseRoles(' , , ')), [])
+  assert.deepEqual(list(parseRoles(' ; , - ')), [], 'a lone hyphen de-hyphenates to nothing')
+})
+
+/* ------------------- resolved role names (the forward path) ---------------- *
+ * The record carries `role_refs: [39, 38, 35]`; once Xano resolves those
+ * server-side the response will carry real display names, which must win over
+ * every string heuristic. Live now so that Xano change needs no client release.
+ * -------------------------------------------------------------------------- */
+
+test('a resolved array of strings wins over the Roles string', () => {
+  const { roleNames } = transform()
+  assert.deepEqual(
+    list(roleNames({ roles_resolved: ['Head of Growth', 'Paid Social Marketer'], Roles: 'cro-expert' })),
+    ['Head of Growth', 'Paid Social Marketer'],
+  )
+})
+
+test('a resolved array of objects reads name, display_name or title', () => {
+  const { roleNames } = transform()
+  assert.deepEqual(
+    list(roleNames({ roles_resolved: [{ id: 39, name: 'Head of Growth' }, { id: 38, name: 'Paid Social Marketer' }] })),
+    ['Head of Growth', 'Paid Social Marketer'],
+  )
+  assert.deepEqual(list(roleNames({ roles_resolved: [{ display_name: 'CX Director' }] })), ['CX Director'])
+  assert.deepEqual(list(roleNames({ roles_resolved: [{ title: 'Brand Strategist' }] })), ['Brand Strategist'])
+  assert.deepEqual(
+    list(roleNames({ roles_resolved: [{ name: 'Wins', display_name: 'Loses', title: 'Loses' }] })),
+    ['Wins'],
+    'name beats display_name beats title',
+  )
+})
+
+test('the `roles` field name is accepted too, with roles_resolved preferred', () => {
+  const { roleNames } = transform()
+  assert.deepEqual(list(roleNames({ roles: ['From roles'] })), ['From roles'])
+  assert.deepEqual(
+    list(roleNames({ roles_resolved: ['Canonical'], roles: ['Secondary'] })),
+    ['Canonical'],
+    'roles_resolved is the canonical field',
+  )
+})
+
+test('an empty or all-junk resolved array falls back to parsing the Roles string', () => {
+  const { roleNames } = transform()
+  const Roles = 'head-of-growth; paid-social-marketer'
+  const expected = ['head of growth', 'paid social marketer']
+  assert.deepEqual(list(roleNames({ roles_resolved: [], Roles })), expected, 'empty array')
+  assert.deepEqual(list(roleNames({ roles_resolved: [{}, null, ''], Roles })), expected, 'no usable names')
+  assert.deepEqual(list(roleNames({ roles: [39, 38, 35], Roles })), expected, 'bare ids are not display names')
+  assert.deepEqual(list(roleNames({ roles_resolved: 'not an array', Roles })), expected)
+  assert.deepEqual(list(roleNames({ Roles })), expected, 'no resolved field at all')
+})
+
+test('resolved values are NOT slug-mapped or de-hyphenated — they are authoritative', () => {
+  const { roleNames } = transform()
+  assert.deepEqual(
+    list(roleNames({ roles_resolved: ['cro-expert'] })),
+    ['cro-expert'],
+    'printed as sent, even if it looks like a slug',
+  )
+  assert.deepEqual(list(roleNames({ roles_resolved: ['head-of-growth'] })), ['head-of-growth'])
+})
+
+test('resolved names are trimmed, emptied-out and deduped case-insensitively', () => {
+  const { resolvedRoleNames } = transform()
+  assert.deepEqual(list(resolvedRoleNames(['  Head of Growth  '])), ['Head of Growth'])
+  assert.deepEqual(list(resolvedRoleNames(['Growth', 'growth', 'GROWTH'])), ['Growth'])
+  assert.deepEqual(list(resolvedRoleNames(['A', '', '   ', null, undefined, 'B'])), ['A', 'B'])
+  assert.deepEqual(list(resolvedRoleNames([{ name: '  Spaced  ' }, { name: 'spaced' }])), ['Spaced'])
+})
+
+test('resolvedRoleNames rejects non-arrays and junk entry types', () => {
+  const { resolvedRoleNames } = transform()
+  assert.deepEqual(list(resolvedRoleNames(null)), [])
+  assert.deepEqual(list(resolvedRoleNames(undefined)), [])
+  assert.deepEqual(list(resolvedRoleNames('Head of Growth')), [], 'a bare string is not a list')
+  assert.deepEqual(list(resolvedRoleNames([39, true, false, [], {}])), [])
+})
 
 test('joinLocation joins city, state and country in order', () => {
   const { joinLocation } = transform()
@@ -330,6 +445,53 @@ test('unwrap pulls the record out of the {"freelancer":[…]} envelope', () => {
   assert.equal(item.Role_3, '')
   assert.equal(item.Location, 'Bashkia Klos, Dibër, Albania')
   assert.equal(item.Bio, 'Ten years of paid growth.')
+})
+
+// The live bug, end to end: the record's semicolon slug string must reach the
+// three chip slots as three separate display values.
+test('unwrap prefers resolved names and still caps at three slots', () => {
+  const { unwrap } = transform()
+  const [item] = unwrap(
+    envelope({
+      First_Name: 'A',
+      role_refs: [39, 38, 35],
+      roles_resolved: [
+        { id: 39, name: 'Head of Growth' },
+        { id: 38, name: 'Paid Social Marketer' },
+        { id: 35, name: 'Performance Creative Lead' },
+        { id: 12, name: 'Dropped Fourth' },
+      ],
+      Roles: 'ignored-because-resolved-wins',
+    }),
+  )
+  assert.deepEqual(
+    [item.Role_1, item.Role_2, item.Role_3],
+    ['Head of Growth', 'Paid Social Marketer', 'Performance Creative Lead'],
+  )
+  assert.equal(item.Role_4, undefined)
+  assert.equal(list(item.role_refs).length, 3, 'the raw refs are carried through untouched')
+})
+
+test('unwrap fills the chip slots from the live semicolon slug string', () => {
+  const { unwrap } = transform()
+  const [item] = unwrap(
+    envelope({
+      First_Name: 'A',
+      Roles: 'head-of-growth; paid-social-marketer; performance-creative-lead',
+    }),
+  )
+  assert.equal(item.Role_1, 'head of growth')
+  assert.equal(item.Role_2, 'paid social marketer')
+  assert.equal(item.Role_3, 'performance creative lead')
+})
+
+test('unwrap truncates a semicolon slug string past three roles', () => {
+  const { unwrap } = transform()
+  const [item] = unwrap(
+    envelope({ First_Name: 'A', Roles: 'cro-expert; seo-marketer; crm-marketer; brand-strategy' }),
+  )
+  assert.deepEqual([item.Role_1, item.Role_2, item.Role_3], ['CRO Expert', 'SEO Marketer', 'CRM Marketer'])
+  assert.equal(item.Role_4, undefined, 'the fourth role is dropped, not stored')
 })
 
 test('unwrap fills all three role slots and drops the overflow', () => {
@@ -818,8 +980,10 @@ test('exposes the transform and the override decision for console debugging', ()
     'instanceMatches',
     'joinLocation',
     'memberOverride',
+    'parseRoles',
+    'resolvedRoleNames',
+    'roleNames',
     'sourceMatches',
-    'splitRoles',
     'stagingHost',
     'targetInstances',
     'unwrap',
