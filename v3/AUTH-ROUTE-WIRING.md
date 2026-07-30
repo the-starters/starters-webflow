@@ -81,8 +81,9 @@ routing cannot continue:
 
 Each error also dispatches `starters:v3-auth-route-error` on `window` with
 `detail.code`. For browser-console diagnostics, the script exposes
-`window.StartersV3AuthRouter` with `activePlanIds`, `memberRole`, `localPath`,
-`destinationFor`, `hasCompletedQuiz`, and `brandFreeHome`.
+`window.StartersV3AuthRouter` with `activePlanIds`, `memberRole`,
+`memberRoleError`, `roleHome`, `localPath`, `destinationFor`, `hasCompletedQuiz`,
+and `brandFreeHome`.
 
 ## Release Gate
 
