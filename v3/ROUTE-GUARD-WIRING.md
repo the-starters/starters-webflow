@@ -40,7 +40,7 @@ view it; any other authenticated role is redirected to its default.
 
 | Page | Allowed roles |
 | --- | --- |
-| `/dashboard` | None stay; all mapped roles redirect to their role home |
+| `/dashboard` and `/dashboard/` | None stay; all mapped roles redirect to their role home |
 | `/brand-dashboard` | Brand paid |
 | `/opportunities` and `/opportunities/` | Talent, Brand paid |
 | `/opportunities-brands-view` | Brand paid |
@@ -59,7 +59,9 @@ The merged feed lists both `/opportunities` forms explicitly: the exact page
 map would otherwise miss the trailing slash, while the detail prefix requires a
 non-empty slug. `/opportunities/<slug>` matches a single non-empty path segment
 only, so nested paths such as `/opportunities/<slug>/apply` are not treated as
-detail pages.
+detail pages. `/dashboard` and `/favorites` list both slash forms for the same
+reason: no prefix rule catches their trailing-slash twin, so each must appear
+explicitly for both canonical URL forms to route identically.
 
 Memberstack can initially expose only a lower Brand Free connection for a
 multi-plan member. On the two exact merged-feed paths, an allowed Talent or

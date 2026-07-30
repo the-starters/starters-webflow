@@ -83,6 +83,11 @@
     // makes every mapped role resolve to its own default while preserving the
     // two authored dashboard pages as the actual page bodies.
     '/dashboard': [],
+    // Trailing-slash twin for the same reason as /opportunities/ below: the
+    // exact map misses it and there is no /dashboard/ prefix rule, so without
+    // this entry the slashed URL would be unguarded if Webflow ever serves it
+    // un-normalized, stranding the member on the neutral loading surface.
+    '/dashboard/': [],
     '/brand-dashboard': ['brand-paid'],
     '/messages': ['brand-paid', 'talent'],
     // Merged opportunities feed (2026-07): one page, role wrappers decide the

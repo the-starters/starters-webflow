@@ -101,6 +101,7 @@ async function waitFor(predicate, timeoutMs = 1000) {
 test('recognises guarded pages and ignores unlisted ones', () => {
   const { api } = loadGuard()
   assert.equal(api.isGuardedPath('/dashboard'), true)
+  assert.equal(api.isGuardedPath('/dashboard/'), true)
   assert.equal(api.isGuardedPath('/brand-dashboard'), true)
   assert.equal(api.isGuardedPath('/starter-dashboard'), true)
   assert.equal(api.isGuardedPath('/opportunities/product-designer'), true)
@@ -177,6 +178,15 @@ test('canonical /dashboard routes every mapped role to its authored home page', 
   assert.equal(api.redirectTargetFor(TEST_BRAND, '/dashboard'), '/brand-dashboard')
   assert.equal(api.redirectTargetFor(BRAND_FREE, '/dashboard'), '/quiz')
   assert.equal(api.redirectTargetFor(completedFreeBrand, '/dashboard'), '/quiz-results')
+
+  // Trailing-slash twin routes identically for the same reason as
+  // /opportunities/ and /favorites/: the exact map misses the slashed form and
+  // no prefix rule catches it.
+  assert.equal(api.redirectTargetFor(TALENT, '/dashboard/'), '/starter-dashboard')
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/dashboard/'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(TEST_BRAND, '/dashboard/'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/dashboard/'), '/quiz')
+  assert.equal(api.redirectTargetFor(completedFreeBrand, '/dashboard/'), '/quiz-results')
 })
 
 test('a wrong-role member is sent to its own default, never the other role page', () => {
