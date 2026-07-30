@@ -677,9 +677,19 @@ resolve against the envelope, the template's
 `wf-xano-if="First_Name|Last_Name|Professional_Headline"` guard hides the card,
 and the page shows its empty state to a member who has a complete profile.
 
+A staging-only `?ms=<memberstack_id>` tester renders any member's card, applied
+through `instance.setParam()` (which reloads, so the settled-state belt is skipped
+when an override is in play). It is honored on `*.webflow.io`, `localhost`,
+`127.0.0.1`, and `*.trycloudflare.com` only. The host predicate is deliberately
+anchored tighter than the loose one the sibling modules share, because here it
+gates a data read rather than a `console.warn`, and `STARTERS_DEBUG` — which may
+be set in production — must never unlock it.
+
 The endpoint is still public with a hardcoded demo `memberstack_id`. The wiring
 doc carries the Xano authentication spec and the two-attribute embed flip; treat
-that flip as required before the page reaches real members.
+that flip as required before the page reaches real members. The `?ms=` tester goes
+inert on its own at that point: the server stops honoring the param, so the
+override cannot outlive the fix.
 
 Run its focused test with:
 

@@ -14,8 +14,13 @@ const source = fs.readFileSync(require.resolve('./onboarding-profile-preview.js'
 
 function loadModule({
   hostname = 'the-starters-3-0.webflow.io',
+  search = '',
   hasWrapper = true,
   withInstance = true,
+  withSetParam = true,
+  // Drop URLSearchParams from the realm to prove the override degrades to null
+  // instead of throwing out of the queue callback.
+  withUrlSearchParams = true,
   // Instance state seen at arm() time: 'loading' is the normal case (the fetch
   // wf-xano started in init() is still in flight); 'success'/'error' mean a
   // render already happened without the transform.
@@ -32,6 +37,7 @@ function loadModule({
   const warnings = []
   const hooks = {}
   const refreshes = []
+  const params = []
   const selectors = []
   const domListeners = {}
 
@@ -44,6 +50,8 @@ function loadModule({
   }
   if (withGetState) instance.getState = () => ({ status })
   if (withRefresh) instance.refresh = () => refreshes.push(true)
+  // Real setParam sets the param, resets to page 1, and reloads.
+  if (withSetParam) instance.setParam = (field, value) => params.push([field, value])
 
   let booted = false
   const queue = []
@@ -70,7 +78,7 @@ function loadModule({
       info: () => {},
       log: () => {},
     },
-    location: { hostname },
+    location: { hostname, search },
     document: {
       readyState,
       querySelector: (selector) => {
@@ -82,6 +90,7 @@ function loadModule({
       },
     },
   }
+  if (withUrlSearchParams) sandbox.URLSearchParams = URLSearchParams
   sandbox.window = sandbox
   sandbox.window.WfXano = wfXano === 'object' ? api : queue
   if (debug !== undefined) sandbox.window.STARTERS_DEBUG = debug
@@ -93,6 +102,7 @@ function loadModule({
     warnings,
     hooks,
     refreshes,
+    params,
     selectors,
     queue,
     sandbox,
@@ -440,6 +450,140 @@ test('STARTERS_DEBUG re-enables the warning in production', () => {
   assert.equal(mod.warnings.length, 1)
 })
 
+/* --------------------- staging-only ?ms= override --------------------- */
+
+const overrideOf = (options) => loadModule(options).api.memberOverride()
+
+test('stagingHost accepts webflow.io, localhost and cloudflared tunnels only', () => {
+  const accepted = [
+    'the-starters-3-0.webflow.io',
+    'webflow.io',
+    'localhost',
+    '127.0.0.1',
+    'function-robot-chain-bless.trycloudflare.com',
+  ]
+  accepted.forEach((hostname) => {
+    assert.equal(loadModule({ hostname }).api.stagingHost(), true, hostname)
+  })
+
+  const rejected = [
+    'thestarters.com',
+    'www.thestarters.com',
+    // Lookalikes: the unanchored regex the sibling modules use would pass these,
+    // which is tolerable for a console.warn and NOT for a data-read capability.
+    'notwebflow.io',
+    'evil-trycloudflare.com',
+    'webflow.io.attacker.test',
+    'localhost.attacker.test',
+    '',
+  ]
+  rejected.forEach((hostname) => {
+    assert.equal(loadModule({ hostname }).api.stagingHost(), false, hostname)
+  })
+})
+
+test('production never honors ?ms=, whatever the query string says', () => {
+  assert.equal(overrideOf({ hostname: 'thestarters.com', search: '?ms=mem_someone_else' }), null)
+  assert.equal(overrideOf({ hostname: 'www.thestarters.com', search: '?ms=mem_someone_else' }), null)
+})
+
+// The override reads another member's record, so the logging escape hatch must
+// not double as an access escape hatch.
+test('STARTERS_DEBUG does not unlock the override in production', () => {
+  const mod = loadModule({
+    hostname: 'thestarters.com',
+    search: '?ms=mem_someone_else',
+    debug: true,
+  })
+  assert.equal(mod.api.memberOverride(), null)
+  mod.drain()
+  assert.deepEqual(mod.params, [], 'no setParam call may reach the instance')
+})
+
+test('a staging host with ?ms= returns that member id', () => {
+  assert.equal(
+    overrideOf({ hostname: 'the-starters-3-0.webflow.io', search: '?ms=mem_cms4ovj4t0dp60tmoe1rn0swl' }),
+    'mem_cms4ovj4t0dp60tmoe1rn0swl',
+  )
+  assert.equal(overrideOf({ hostname: 'localhost', search: '?ms=mem_bogus' }), 'mem_bogus')
+  assert.equal(
+    overrideOf({ hostname: 'function-robot-chain-bless.trycloudflare.com', search: '?ms=mem_x' }),
+    'mem_x',
+  )
+})
+
+test('a staging host with no ms param returns null', () => {
+  assert.equal(overrideOf({ search: '' }), null)
+  assert.equal(overrideOf({ search: '?' }), null)
+  assert.equal(overrideOf({ search: '?other=1&msx=2' }), null)
+})
+
+test('picks ms out of a multi-parameter query, in any position', () => {
+  assert.equal(overrideOf({ search: '?a=1&ms=mem_x&b=2' }), 'mem_x')
+  assert.equal(overrideOf({ search: '?ms=mem_x&ms=mem_y' }), 'mem_x', 'first wins, like URLSearchParams.get')
+})
+
+test('a blank or whitespace-only ms value is treated as absent', () => {
+  assert.equal(overrideOf({ search: '?ms=' }), null)
+  assert.equal(overrideOf({ search: '?ms' }), null)
+  assert.equal(overrideOf({ search: '?ms=%20%20' }), null)
+})
+
+test('surrounding whitespace is trimmed off a pasted id', () => {
+  assert.equal(overrideOf({ search: '?ms=%20mem_x%20' }), 'mem_x')
+})
+
+test('a malformed query string cannot throw out of the override', () => {
+  assert.equal(overrideOf({ search: '?%' }), null)
+  // URLSearchParams is lenient rather than throwing: a truncated percent escape
+  // decodes to U+FFFD and the dangling part is left as written. Whatever comes
+  // out is only ever sent back as a query param, so a junk id simply misses and
+  // the empty state shows.
+  assert.equal(overrideOf({ search: '?ms=%E0%A4%A' }), '�%A')
+  assert.equal(overrideOf({ search: '???&&&==' }), null)
+})
+
+test('degrades to null when the realm has no URLSearchParams', () => {
+  const mod = loadModule({ search: '?ms=mem_x', withUrlSearchParams: false })
+  assert.equal(mod.api.memberOverride(), null)
+  mod.drain()
+  assert.equal(mod.hooks.beforeRender.length, 1, 'the transform must still be registered')
+  assert.deepEqual(mod.params, [])
+})
+
+test('an override calls setParam and skips the refresh belt (setParam reloads)', () => {
+  const mod = loadModule({ search: '?ms=mem_bogus', status: 'success' })
+  mod.drain()
+  assert.deepEqual(mod.params, [['memberstack_id', 'mem_bogus']])
+  assert.deepEqual(mod.refreshes, [], 'setParam already reloads — two GETs for one paint otherwise')
+  assert.equal(mod.hooks.beforeRender.length, 1, 'the hook is registered BEFORE the reload is triggered')
+})
+
+test('an override announces itself on staging and stays quiet in production', () => {
+  const staging = loadModule({ search: '?ms=mem_bogus' })
+  staging.drain()
+  assert.equal(staging.warnings.length, 1)
+  assert.match(staging.warnings[0], /previewing member "mem_bogus" from \?ms=/)
+
+  const prod = loadModule({ hostname: 'thestarters.com', search: '?ms=mem_bogus' })
+  prod.drain()
+  assert.deepEqual(prod.warnings, [])
+})
+
+test('no override leaves the normal settled-state belt intact', () => {
+  const mod = loadModule({ search: '?other=1', status: 'success' })
+  mod.drain()
+  assert.deepEqual(mod.params, [])
+  assert.equal(mod.refreshes.length, 1)
+})
+
+test('falls back to the belt when the library predates setParam', () => {
+  const mod = loadModule({ search: '?ms=mem_bogus', status: 'success', withSetParam: false })
+  mod.drain()
+  assert.deepEqual(mod.params, [])
+  assert.equal(mod.refreshes.length, 1, 'better a correct repaint of the default member than nothing')
+})
+
 /* -------------------------------- boot -------------------------------- */
 
 test('marker gate: does not touch WfXano on a page without the wrapper', () => {
@@ -469,7 +613,14 @@ test('a duplicate load does not register the hook twice', () => {
   assert.equal(mod.hooks.beforeRender.length, 1)
 })
 
-test('exposes the transform for console debugging', () => {
+test('exposes the transform and the override decision for console debugging', () => {
   const mod = loadModule()
-  assert.deepEqual(Object.keys(mod.api).sort(), ['htmlToText', 'joinLocation', 'splitRoles', 'unwrap'])
+  assert.deepEqual(Object.keys(mod.api).sort(), [
+    'htmlToText',
+    'joinLocation',
+    'memberOverride',
+    'splitRoles',
+    'stagingHost',
+    'unwrap',
+  ])
 })

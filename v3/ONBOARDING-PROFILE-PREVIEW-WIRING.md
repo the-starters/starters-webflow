@@ -409,6 +409,13 @@ Replace `<SCRIPT-URL>` with one of the two variants in
 <script defer src="<SCRIPT-URL>/v3/onboarding-profile-preview.js"></script>
 ```
 
+The wf-xano tag above is pinned to **`@v0.28.0`**, and should stay pinned. If the
+page currently loads `wf-xano@latest`, swap it for the pinned URL: `@latest`
+follows that repo's newest tag, so a library release could change this card's
+rendering without anyone touching this page. The card's contract with the library
+is narrow but real — the `beforeRender` hook, `normalize()`'s single-object
+branch, and `setParam()` — and v0.28.0 is the version it was verified against.
+
 The card is centred with `max-width:820px`. Put the embed inside whatever Webflow
 container gives the page its normal content width; the card fills that container
 up to 820px and stacks the photo above the text below 640px.
@@ -472,6 +479,40 @@ so both orders and both `window.WfXano` shapes work. As a belt for the one case
 ordering cannot cover (another script boots wf-xano early enough that a response
 already rendered untransformed), `arm()` reads `getState()` and calls
 `refresh()` when the status is already `success` or `error`.
+
+## Staging tester: `?ms=<memberstack_id>`
+
+Append `?ms=<memberstack_id>` to the page URL to render **that** member's card
+instead of the one in `wf-xano-param-memberstack_id`. It exists so QA can check a
+real profile — or the empty state — without that member's login:
+
+```txt
+https://the-starters-3-0.webflow.io/<onboarding-page>?ms=mem_cms4ovj4t0dp60tmoe1rn0swl
+https://the-starters-3-0.webflow.io/<onboarding-page>?ms=mem_definitely_bogus   # empty state
+```
+
+Rules, all enforced in `v3/onboarding-profile-preview.js`:
+
+- **Staging only.** Honored on `*.webflow.io`, `localhost`, `127.0.0.1`, and
+  `*.trycloudflare.com`. On `thestarters.com` the parameter is ignored outright,
+  so a link with `?ms=` in it is inert in production.
+- **`STARTERS_DEBUG` does not unlock it.** That flag turns console logging on,
+  including in production; it deliberately has no effect on this override.
+- **Blank means absent.** `?ms=`, `?ms`, and a whitespace-only value all fall back
+  to the page's own parameter. A pasted id is trimmed.
+- Applied with `instance.setParam('memberstack_id', <id>)`, which sets the param,
+  resets to page 1, and reloads. The `beforeRender` hook is registered before that
+  reload is triggered, and the settled-state `refresh()` belt is skipped when an
+  override is in play — otherwise one paint would cost two GETs.
+- It announces itself in the console on staging:
+  `[starters onboarding-preview] previewing member "<id>" from ?ms= (staging only).`
+
+**This goes inert after the Xano auth flip, by design.** It works today only
+because the endpoint still trusts a client-supplied `memberstack_id`. Once the
+server derives the member from the auth token (below), the parameter is ignored
+server-side and `?ms=` silently stops changing anything — the override is not a
+hole that survives the fix, and the code needs no follow-up edit. At that point
+QA previews another member by logging in as them.
 
 ## Xano auth flip (required before real users)
 
@@ -610,10 +651,15 @@ nothing. Check computed visibility, not existence.
   `splitRoles`, `joinLocation`, and `unwrap` for console debugging. The transform
   is pure, so each piece can be checked against a real `Bio` or `Roles` string
   without reloading.
+- The same object exposes `stagingHost()` and `memberOverride()`, which answer
+  "why is `?ms=` doing nothing here" in one call: `stagingHost()` is `false` on
+  production, and `memberOverride()` returns the id actually being honored (or
+  `null`).
 - A missing wf-xano instance logs
   `[starters onboarding-preview] no wf-xano instance "onboarding-self-preview" — …`,
-  gated to staging hosts (`*.webflow.io`, `localhost`, `*.trycloudflare.com`) or
-  `window.STARTERS_DEBUG = true`. Silent in production. This warning matters
+  gated to staging hosts (`*.webflow.io`, `localhost`, `127.0.0.1`,
+  `*.trycloudflare.com`) or `window.STARTERS_DEBUG = true`. Silent in production.
+  This warning matters
   because the failure is otherwise invisible: with no transform the binds resolve
   against the envelope, the template's `wf-xano-if` guard hides the card, and the
   page shows the empty state to a member who has a complete profile.
@@ -634,16 +680,20 @@ Or serve it through the tunnel (`./dev-tunnel.sh` from `starters-git/`) at
 `https://<tunnel>/local-demos/onboarding-profile-preview-harness.html`, which
 exercises the exact script URL a Webflow staging page would load.
 
-Append `?ms=<memberstack_id>` to override the demo member id — use a bogus one
-(`?ms=mem_bogus`) to exercise the empty state.
+`?ms=<memberstack_id>` works here too — `localhost`, `127.0.0.1`, and the tunnel
+host all count as staging. The harness has no override logic of its own, so the
+code path it exercises is the same one a Webflow staging page runs. A `file://`
+open is **not** a staging host, so serve the page rather than double-clicking it.
 
 ## Release gate
 
 - Run `node --test v3/onboarding-profile-preview.test.js`.
 - QA through the dev tunnel first (card renders the test record with name, photo,
   role chips, plain-text bio, joined location, static reviews and pill; zero
-  console errors; `?ms=mem_bogus` shows the empty state), then land it: branch →
-  PR → merge on GitHub → semver tag → verify the jsDelivr URL returns 200.
+  console errors; `?ms=mem_definitely_bogus` shows the empty state; `?ms=` with
+  the real test id renders that card), then land it: branch → PR → merge on
+  GitHub → semver tag → verify the jsDelivr URL returns 200.
+- Confirm the page's wf-xano tag is the pinned `@v0.28.0` URL, not `@latest`.
 - Standard exposure scan before tagging: no `api.airtable.com`, no
   `hook.us1.make.com`, no `pat…` PAT patterns. This module calls nothing itself —
   the only URLs in the deliverable are the jsDelivr wf-xano tag and the Xano

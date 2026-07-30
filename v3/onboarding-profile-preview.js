@@ -38,6 +38,14 @@
  * then is cheap (one GET) and repaints the card correctly instead of leaving the
  * raw-envelope render on screen.
  *
+ * STAGING-ONLY TESTER: `?ms=<memberstack_id>` on the page URL previews another
+ * member's card, so QA does not need that member's login. Honored only on
+ * `*.webflow.io`, `localhost`/`127.0.0.1`, and `*.trycloudflare.com` — never on
+ * the production domain, and never unlocked by `STARTERS_DEBUG`. It works today
+ * only because the endpoint still trusts a client-supplied `memberstack_id`;
+ * after the Xano auth flip the server derives the member from the token and
+ * ignores the param, so the override goes inert by itself.
+ *
  * ALWAYS go through `WfXano.push()`, never call arm() directly on
  * `window.WfXano`. Both shapes of that global expose push() and both defer
  * correctly (pre-load array drained at boot; post-load API object runs now if
@@ -75,11 +83,27 @@
     reg: '®', deg: '°', eacute: 'é', egrave: 'è'
   }
 
-  // Same predicate as the sibling v3 modules: loud on staging/local/tunnel,
-  // silent in production. A missing instance renders a plausible-looking card,
-  // so this bug class is invisible without the warning.
+  // Staging, local, or a cloudflared dev tunnel — never the production domain.
+  //
+  // Tighter than the loose `/webflow\.io$|^localhost$|trycloudflare\.com$/` the
+  // sibling v3 modules use, on purpose: there it only gates a console.warn,
+  // whereas here it also gates the ?ms= member override below, which reads
+  // another member's record. Anchoring the dots means a lookalike domain like
+  // "notwebflow.io" or "evil-trycloudflare.com" cannot pass for staging.
+  function stagingHost() {
+    var host = location.hostname
+    return /(\.|^)webflow\.io$/.test(host) ||
+      host === 'localhost' || host === '127.0.0.1' ||
+      /(\.|^)trycloudflare\.com$/.test(host)
+  }
+
+  // Same shape as the sibling v3 modules: loud on staging/local/tunnel, silent
+  // in production unless explicitly asked. A missing instance renders a
+  // plausible-looking card, so this bug class is invisible without the warning.
+  // STARTERS_DEBUG belongs HERE and not in stagingHost() — it may turn logging
+  // on in production, and must never unlock the member override.
   function diagnostic() {
-    return /webflow\.io$|^localhost$|trycloudflare\.com$/.test(location.hostname) || window.STARTERS_DEBUG
+    return stagingHost() || window.STARTERS_DEBUG
   }
 
   function warn(message) {
@@ -172,6 +196,26 @@
     return [out]
   }
 
+  // STAGING-ONLY TESTER: `?ms=<memberstack_id>` on the page URL previews any
+  // member's card, so QA does not need that member's login. Returns null in
+  // production, whatever the query string says — the page's own hardcoded param
+  // is the only id honored there.
+  //
+  // This is a stopgap that exists because the endpoint currently trusts a
+  // client-supplied `memberstack_id`. After the Xano auth flip (see the wiring
+  // doc) the server derives the member from the auth token and ignores the
+  // param, so this override goes inert on its own rather than becoming a hole.
+  function memberOverride() {
+    if (!stagingHost()) return null
+    try {
+      var value = new URLSearchParams(location.search).get('ms')
+      value = value == null ? '' : String(value).trim()
+      return value.length ? value : null
+    } catch (e) {
+      return null // no URLSearchParams, or a query string it refuses to parse
+    }
+  }
+
   function arm(api) {
     var instance = api && typeof api.get === 'function' ? api.get(INSTANCE) : null
     if (!instance || typeof instance.on !== 'function') {
@@ -183,6 +227,17 @@
       return
     }
     instance.on('beforeRender', unwrap)
+
+    var override = memberOverride()
+    if (override && typeof instance.setParam === 'function') {
+      // setParam sets the param, resets to page 1, and reloads (wf-xano
+      // docs/api.md). That reload subsumes the settled-state belt below, so
+      // return early — running both would fire two GETs for one paint.
+      warn('previewing member "' + override + '" from ?ms= (staging only).')
+      instance.setParam('memberstack_id', override)
+      return
+    }
+
     var state = typeof instance.getState === 'function' ? instance.getState() : null
     // Only true if something booted wf-xano before this file ran, i.e. a render
     // already happened without the transform. Repaint it.
@@ -204,6 +259,9 @@
     splitRoles: splitRoles,
     joinLocation: joinLocation,
     unwrap: unwrap,
+    // Answers "why is/isn't ?ms= doing anything here" without reading the source.
+    stagingHost: stagingHost,
+    memberOverride: memberOverride,
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)
