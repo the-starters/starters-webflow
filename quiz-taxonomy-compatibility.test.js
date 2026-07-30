@@ -76,6 +76,38 @@ function getMainSavedIdNormalizer() {
     )
 }
 
+function getLearnContentTaxonomyApi() {
+    const aliasesSource = sliceSource(
+        resultsSource,
+        'const learnContentCategoryFilterAliases =',
+        '/**\n     * Checks whether starter quiz debug logging is enabled.',
+    )
+    const filtersSource = sliceSource(
+        resultsSource,
+        'function getLearnContentCategoryFilterValues(',
+        'function getLearnContentSearchConfig(',
+    )
+
+    return vm.runInNewContext(
+        [
+            'function normalizeLearnContentValue(value) {',
+            "  return String(value || '').trim()",
+            '}',
+            'function slugifyLearnContentValue(value) {',
+            '  return normalizeLearnContentValue(value).toLowerCase()',
+            "    .replace(/[^a-z0-9]+/g, '-')",
+            "    .replace(/(^-|-$)/g, '')",
+            '}',
+            aliasesSource,
+            filtersSource,
+            '({',
+            '  getLearnContentCategoryFilterValues,',
+            '  getLearnContentCategoryFilters,',
+            '})',
+        ].join('\n'),
+    )
+}
+
 function runMainSubcategoryRestore({ subcategoryItems, categoryInputs, savedSubcategoryIds }) {
     const getCheckboxInputSource = sliceSource(
         mainSource,
@@ -188,6 +220,88 @@ test('results taxonomy catalog matches the approved 12 by 43 shape', () => {
             'const quizCategoryIdAliases =',
         ),
         /Hiring & Team Building|Creative & Brand|Marketing Strategy & Leadership/,
+    )
+})
+
+test('LearnContent filters project renamed V3 categories to legacy tags', () => {
+    const { getLearnContentCategoryFilterValues } =
+        getLearnContentTaxonomyApi()
+
+    assert.deepEqual(
+        Array.from(
+            getLearnContentCategoryFilterValues({
+                id: 'creative',
+                label: 'Creative',
+            }),
+        ),
+        ['creative', 'creative-brand', 'Creative'],
+    )
+    assert.deepEqual(
+        Array.from(
+            getLearnContentCategoryFilterValues({
+                id: 'marketing-strategy-brand',
+                label: 'Marketing Strategy & Brand',
+            }),
+        ),
+        [
+            'marketing-strategy-brand',
+            'marketing-strategy-leadership',
+            'Marketing Strategy & Brand',
+        ],
+    )
+})
+
+test('LearnContent filters remain compatible with legacy saved category IDs', () => {
+    const { getLearnContentCategoryFilterValues } =
+        getLearnContentTaxonomyApi()
+
+    assert.deepEqual(
+        Array.from(getLearnContentCategoryFilterValues('creative-brand')),
+        ['creative-brand', 'creative'],
+    )
+    assert.deepEqual(
+        Array.from(
+            getLearnContentCategoryFilterValues(
+                'marketing-strategy-leadership',
+            ),
+        ),
+        ['marketing-strategy-leadership', 'marketing-strategy-brand'],
+    )
+})
+
+test('LearnContent filters preserve current categories without invented aliases', () => {
+    const { getLearnContentCategoryFilters } = getLearnContentTaxonomyApi()
+    const filters = getLearnContentCategoryFilters({
+        categories: [
+            { id: 'paid-media', label: 'Paid Media' },
+            { id: 'retention-crm', label: 'Retention & CRM' },
+        ],
+    })
+
+    assert.deepEqual(Array.from(filters.selectedCategoryFilters), [
+        'paid-media',
+        'Paid Media',
+        'retention-crm',
+        'Retention & CRM',
+    ])
+    assert.deepEqual(
+        Array.from(
+            filters.selectedCategoryFilterGroups,
+            ({ categoryId, filterValues }) => ({
+                categoryId,
+                filterValues: Array.from(filterValues),
+            }),
+        ),
+        [
+            {
+                categoryId: 'paid-media',
+                filterValues: ['paid-media', 'Paid Media'],
+            },
+            {
+                categoryId: 'retention-crm',
+                filterValues: ['retention-crm', 'Retention & CRM'],
+            },
+        ],
     )
 })
 

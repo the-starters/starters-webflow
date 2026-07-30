@@ -40,6 +40,21 @@
         'swiper-slide-visible',
         'swiper-slide-fully-visible',
     ]
+    // LearnContent still contains pre-V3 category slugs while the quiz now
+    // saves the canonical V3 taxonomy. Keep both values searchable during the
+    // content migration so old and newly retagged records can coexist.
+    const learnContentCategoryFilterAliases = new Map([
+        ['creative', ['creative-brand']],
+        ['creative-brand', ['creative']],
+        [
+            'marketing-strategy-brand',
+            ['marketing-strategy-leadership'],
+        ],
+        [
+            'marketing-strategy-leadership',
+            ['marketing-strategy-brand'],
+        ],
+    ])
 
     /**
      * Checks whether starter quiz debug logging is enabled.
@@ -192,33 +207,36 @@
     function getLearnContentCategoryFilterValues(category) {
         if (!category) return []
 
-        if (typeof category !== 'object') {
-            return Array.from(
-                new Set(
-                    [
-                        normalizeLearnContentValue(category),
-                        slugifyLearnContentValue(category),
-                    ].filter(Boolean),
-                ),
-            )
-        }
-
-        const candidateValues = [
-            category.membershipId,
-            category.membershipID,
-            category.membership_id,
-            category.categoryMembershipId,
-            category.category_membership_id,
-            category.id,
-            category.value,
-            category.label,
-            slugifyLearnContentValue(category.label),
-            slugifyLearnContentValue(category.id),
-        ]
+        const candidateValues =
+            typeof category !== 'object'
+                ? [
+                      normalizeLearnContentValue(category),
+                      slugifyLearnContentValue(category),
+                  ]
+                : [
+                      category.membershipId,
+                      category.membershipID,
+                      category.membership_id,
+                      category.categoryMembershipId,
+                      category.category_membership_id,
+                      category.id,
+                      category.value,
+                      category.label,
+                      slugifyLearnContentValue(category.label),
+                      slugifyLearnContentValue(category.id),
+                  ]
 
         return Array.from(
             new Set(
-                candidateValues.map(normalizeLearnContentValue).filter(Boolean),
+                candidateValues
+                    .map(normalizeLearnContentValue)
+                    .filter(Boolean)
+                    .flatMap((value) => [
+                        value,
+                        ...(learnContentCategoryFilterAliases.get(
+                            slugifyLearnContentValue(value),
+                        ) || []),
+                    ]),
             ),
         )
     }
