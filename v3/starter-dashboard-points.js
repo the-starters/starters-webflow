@@ -121,10 +121,41 @@
     root.setAttribute('data-points-status', model.status)
   }
 
+  function clearDynamicFields(root) {
+    show(find(root, 'role-card'), false)
+    text(root, 'points', '')
+    text(root, 'overall-rank', '')
+    text(root, 'overall-cohort', '')
+    text(root, 'role-rank', '')
+    text(root, 'role-label', '')
+    text(root, 'role-cohort', '')
+  }
+
+  function renderLoading(root) {
+    const loading = find(root, 'loading')
+    const content = find(root, 'content')
+    show(loading, true)
+    show(content, false)
+    show(find(root, 'error'), false)
+
+    if (!loading && !content) {
+      clearDynamicFields(root)
+      text(root, 'rank-message', 'Loading your points...')
+    }
+    root.setAttribute('data-points-status', 'loading')
+  }
+
   function renderError(root) {
+    const content = find(root, 'content')
+    const error = find(root, 'error')
     show(find(root, 'loading'), false)
-    show(find(root, 'content'), false)
-    show(find(root, 'error'), true)
+    show(content, false)
+    show(error, true)
+
+    if (!content && !error) {
+      clearDynamicFields(root)
+      text(root, 'rank-message', 'Points are temporarily unavailable.')
+    }
     root.setAttribute('data-points-status', 'error')
   }
 
@@ -197,11 +228,7 @@
     )
     if (!roots.length) return
 
-    roots.forEach(function (root) {
-      show(find(root, 'loading'), true)
-      show(find(root, 'content'), false)
-      show(find(root, 'error'), false)
-    })
+    roots.forEach(renderLoading)
 
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) {
@@ -228,6 +255,7 @@
     mount,
     render,
     renderError,
+    renderLoading,
     viewModel,
   }
 

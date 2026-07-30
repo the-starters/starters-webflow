@@ -980,9 +980,15 @@ guidance (join-rankings and points-reconciliation copy, respectively). Missing
 primary roles keep the overall rank and receive setup guidance, and no state
 renders raw `N/A`.
 
+The `loading`, `content`, and `error` wrappers are optional for the existing
+three-card dashboard hero. When they are absent, the controller clears authored
+placeholder values, hides the role card, and writes safe loading/error copy into
+the `rank-message` element. This keeps all markup Designer-owned.
+
 Each root reflects its resolved state onto `data-points-status`
-(`ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so Designer CSS
-can style per state.
+(`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so
+Designer CSS can style per state. The transient `loading` value is set while the
+summary is being fetched, before a terminal state resolves.
 
 Run its focused tests with:
 

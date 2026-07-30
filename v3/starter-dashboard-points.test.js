@@ -30,8 +30,9 @@ class FakeElement {
   }
 }
 
-function tile() {
+function tile(options = {}) {
   const root = new FakeElement('root')
+  const omitted = new Set(options.omit || [])
   const names = [
     'loading',
     'content',
@@ -49,7 +50,7 @@ function tile() {
     names.map((name) => [name, new FakeElement(name)]),
   )
   for (const [name, element] of Object.entries(elements)) {
-    root.children.set(selector(name), element)
+    if (!omitted.has(name)) root.children.set(selector(name), element)
   }
   return { root, elements }
 }
@@ -189,6 +190,45 @@ test('error state hides content and reveals Designer-owned error markup', () => 
   assert.equal(elements.loading.style.display, 'none')
   assert.equal(elements.content.style.display, 'none')
   assert.equal(elements.error.style.display, '')
+})
+
+test('wrapper-free loading state clears Designer placeholders', () => {
+  const { root, elements } = tile({
+    omit: ['loading', 'content', 'error'],
+  })
+  elements.points.textContent = '16,525'
+  elements['overall-rank'].textContent = '#75'
+  elements['overall-cohort'].textContent = 'Out of 629 Starters'
+  elements['role-rank'].textContent = '#7'
+  elements['role-label'].textContent = 'CMO'
+
+  api.renderLoading(root)
+
+  assert.equal(root.getAttribute('data-points-status'), 'loading')
+  assert.equal(elements.points.textContent, '')
+  assert.equal(elements['overall-rank'].textContent, '')
+  assert.equal(elements['overall-cohort'].textContent, '')
+  assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['rank-message'].textContent, 'Loading your points...')
+})
+
+test('wrapper-free error state clears data and renders safe status copy', () => {
+  const { root, elements } = tile({
+    omit: ['loading', 'content', 'error'],
+  })
+  elements.points.textContent = '16,525'
+  elements['overall-rank'].textContent = '#75'
+
+  api.renderError(root)
+
+  assert.equal(root.getAttribute('data-points-status'), 'error')
+  assert.equal(elements.points.textContent, '')
+  assert.equal(elements['overall-rank'].textContent, '')
+  assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(
+    elements['rank-message'].textContent,
+    'Points are temporarily unavailable.',
+  )
 })
 
 test('summary fetch trades the Memberstack token and sends Xano auth', async () => {
