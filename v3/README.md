@@ -1117,10 +1117,12 @@ use these values:
 | `overall-card` | Overall-rank card wrapper; visible only when rank status is ready |
 | `overall-rank` | Overall competition rank |
 | `overall-cohort-size` | Overall cohort size only; surrounding copy stays in Webflow |
+| `overall-tie` | Designer-authored tie label; shown only when multiple eligible Starters share the overall score |
 | `role-card` | Primary-role rank card wrapper |
 | `role-rank` | Primary-role competition rank |
 | `role-label` | Primary-role name only; surrounding copy stays in Webflow |
 | `role-cohort-size` | Primary-role cohort size only; surrounding copy stays in Webflow |
+| `role-tie` | Designer-authored tie label; shown only when multiple Starters share the role score |
 
 The script never calculates points or rank in the browser. It trades the active
 Memberstack session for a Xano token and renders only the authenticated summary.
@@ -1134,7 +1136,9 @@ No state renders raw `N/A`.
 All state containers, copy, links, and styling live in Webflow. The controller
 does not create markup or inject state sentences. It only binds the dynamic
 points/rank/role/cohort values, clears stale dynamic values, and selects the
-matching authored state element. Keep surrounding phrases such as “Out of”,
+matching authored state element. Tie labels are also authored and styled in
+Webflow; the controller only toggles their visibility from Xano tie counts.
+Keep surrounding phrases such as “Out of”,
 “eligible Starters”, and “Rank” outside the dynamic hooks.
 
 Each root reflects its resolved state onto `data-points-status`

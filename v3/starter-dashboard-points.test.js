@@ -45,10 +45,12 @@ function tile(options = {}) {
     'overall-card',
     'overall-rank',
     'overall-cohort-size',
+    'overall-tie',
     'role-card',
     'role-rank',
     'role-label',
     'role-cohort-size',
+    'role-tie',
   ]
   const elements = Object.fromEntries(
     names.map((name) => [name, new FakeElement(name)]),
@@ -67,10 +69,12 @@ test('ready state renders points plus overall and primary-role ranks', () => {
     rank_status: 'ready',
     overall_rank: 12,
     overall_cohort_size: 680,
+    overall_tie_count: 3,
     primary_role: {
       label: 'CMO',
       rank: 3,
       cohort_size: 48,
+      tie_count: 2,
     },
   })
 
@@ -78,9 +82,11 @@ test('ready state renders points plus overall and primary-role ranks', () => {
   assert.equal(elements.points.textContent, '12,500')
   assert.equal(elements['overall-rank'].textContent, '#12')
   assert.equal(elements['overall-cohort-size'].textContent, '680')
+  assert.equal(elements['overall-tie'].style.display, '')
   assert.equal(elements['role-rank'].textContent, '#3')
   assert.equal(elements['role-label'].textContent, 'CMO')
   assert.equal(elements['role-cohort-size'].textContent, '48')
+  assert.equal(elements['role-tie'].style.display, '')
   assert.equal(elements.loading.style.display, 'none')
   assert.equal(elements.error.style.display, 'none')
   assert.equal(elements['state-refreshing'].style.display, 'none')
@@ -88,6 +94,31 @@ test('ready state renders points plus overall and primary-role ranks', () => {
   assert.equal(elements['role-card'].style.display, '')
   assert.equal(elements['overall-card'].style.display, '')
   assert.equal(root.getAttribute('data-points-view'), 'ready')
+})
+
+test('ready state hides authored tie labels for unique ranks', () => {
+  const { root, elements } = tile()
+  elements['overall-tie'].textContent = 'Tied'
+  elements['role-tie'].textContent = 'Tied'
+
+  api.render(root, {
+    total_points: 12500,
+    rank_status: 'ready',
+    overall_rank: 12,
+    overall_cohort_size: 680,
+    overall_tie_count: 1,
+    primary_role: {
+      label: 'CMO',
+      rank: 3,
+      cohort_size: 48,
+      tie_count: 1,
+    },
+  })
+
+  assert.equal(elements['overall-tie'].style.display, 'none')
+  assert.equal(elements['role-tie'].style.display, 'none')
+  assert.equal(elements['overall-tie'].textContent, 'Tied')
+  assert.equal(elements['role-tie'].textContent, 'Tied')
 })
 
 test('refreshing state keeps points visible and reveals authored guidance', () => {
@@ -105,6 +136,8 @@ test('refreshing state keeps points visible and reveals authored guidance', () =
   assert.equal(elements['overall-rank'].textContent, '')
   assert.equal(elements['role-card'].style.display, 'none')
   assert.equal(elements['overall-card'].style.display, 'none')
+  assert.equal(elements['overall-tie'].style.display, 'none')
+  assert.equal(elements['role-tie'].style.display, 'none')
   assert.equal(elements['state-refreshing'].style.display, '')
   assert.equal(
     elements['state-refreshing'].textContent,
