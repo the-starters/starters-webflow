@@ -630,12 +630,13 @@ Three requirements that are easy to miss, each verified against `wf-xano.js`:
    still applies. The block would then never appear, with no error anywhere. The
    attribute has to name the shown value because "not hidden" is not a single CSS
    value.
-3. ⚠ **The comparison is case- and whitespace-exact.** `evalIf` does
+3. ⚠ **The comparison is case- and whitespace-exact** — `evalIf` does
    `String(left) === right` after trimming only the expression, so `consult`
-   matches `"consult"` and **not** `"Consult"` or `" consult"`. The live record's
-   `profile_type_30` is lowercase `full` (verified 2026-07-30). If Xano ever
-   starts storing a capitalised or padded value, both blocks break silently —
-   normalise it in Xano rather than adding cases here.
+   matches `"consult"` and not `"Consult"`. **The client compensates:** the
+   transform lowercases `profile_type_30` on the copied record before wf-xano
+   projects it, so a stored `"Full"`, `"FULL"`, or `" Consult "` all work and the
+   attribute values above need no change. See
+   [Profile type normalization](#profile-type-normalization).
 
 Quotes on the right-hand side are optional: `evalIf` strips one leading and
 trailing `'` or `"`, so `=== consult` and `=== 'consult'` behave identically. The
@@ -661,6 +662,27 @@ If a third type ever needs its own form, tag it
 `wf-xano-if-state="data.items.0.profile_type_30 === hybrid"` and tighten the full
 block to `!== consult & !== hybrid` (`&` is AND in this grammar, and binds tighter
 than `|`).
+
+### Profile type normalization
+
+The stored values are **case-inconsistent across records** — the Kaeser record has
+`"full"`, Brian Chung (id 558) has `"Full"` (both verified 2026-07-30). Since
+`wf-xano-if-state` compares case-exactly, a future `"Consult"` with a capital C
+would have silently fallen through to the full form.
+
+So `unwrap()` lowercases and trims `profile_type_30` on the copied record before
+returning it, which means:
+
+- the published `=== consult` / `!== consult` attributes keep working unchanged —
+  **zero Designer churn**, and no list of accepted casings anywhere;
+- `"Full"`, `"FULL"`, `"full"`, `" Consult "` and `"CONSULT"` all resolve correctly;
+- a missing or blank field becomes `""`, which still satisfies `!== consult`, so
+  the full-form fallback is unchanged.
+
+This is safe **because the field is only ever a switching key** — it is never
+bound, never displayed. If it ever needs to be shown on the card, bind a separate
+un-normalized field rather than removing the normalization. Xano normalising the
+column at the source would make this redundant but harmless.
 
 ### Checking it
 

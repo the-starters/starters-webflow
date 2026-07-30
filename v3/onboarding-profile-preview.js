@@ -306,6 +306,27 @@
       .join(', ')
   }
 
+  /* ------------------------- profile type normalization -------------------- *
+   * `profile_type_30` decides which form block shows, via each form's own
+   * `wf-xano-if-state="data.items.0.profile_type_30 === consult"` (see the wiring
+   * doc). That comparison is `String(left) === right` — case- and
+   * whitespace-EXACT — and the stored values are case-inconsistent across
+   * records: the Kaeser record has "full", Brian Chung (id 558) has "Full"
+   * (verified 2026-07-30). A future "Consult" with a capital C would therefore
+   * silently fall to the full form.
+   *
+   * So the transform lowercases the field in place, and the published attribute
+   * expressions keep working with zero Designer churn. Safe to do because this
+   * field is ONLY a switching key — it is never bound, never displayed. If it
+   * ever needs to be shown, bind a separate un-normalized field rather than
+   * un-doing this.
+   * ------------------------------------------------------------------------ */
+  var TYPE_FIELD = 'profile_type_30'
+
+  function normalizeType(value) {
+    return text(value).toLowerCase()
+  }
+
   // items[0] is the whole response body (normalize()'s single-object branch).
   // Returning [] on anything unexpected is the safe direction: the card template
   // carries wf-xano-if="First_Name|Last_Name|Professional_Headline", so zero
@@ -326,6 +347,7 @@
     }
     out.Location = joinLocation(record)
     out.Bio = htmlToText(record.Bio)
+    out[TYPE_FIELD] = normalizeType(record[TYPE_FIELD])
     return [out]
   }
 
@@ -463,6 +485,7 @@
   window.StartersV3OnboardingProfilePreview = {
     htmlToText: htmlToText,
     parseRoles: parseRoles,
+    normalizeType: normalizeType,
     resolvedRoleNames: resolvedRoleNames,
     roleNames: roleNames,
     joinLocation: joinLocation,

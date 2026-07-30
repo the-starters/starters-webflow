@@ -670,8 +670,12 @@ element as their wrapper attributes (state projection includes the instance root
 so each form self-toggles against its own instance). `!== consult` on the full block is what makes
 it the fallback for an empty result, a blank field, or a fetch error, since
 `String(undefined) !== 'consult'`. `=== full` would show nothing in those cases.
-Note the comparison is case- and whitespace-exact (`String(left) === right`), so a
-capitalised value in Xano would break both blocks silently — normalise it there.
+The comparison is case- and whitespace-exact (`String(left) === right`), and the
+stored values are inconsistent — `"full"` on one record, `"Full"` on another — so
+the transform lowercases `profile_type_30` on the copied record. The published
+attributes therefore need no list of accepted casings and no Designer churn. Safe
+because the field is only a switching key, never bound or displayed; if it ever
+needs showing, bind a separate un-normalized field.
 
 `starters_onboarding/get_freelancers` answers with an envelope,
 `{"freelancer": [ <one record> ]}`. wf-xano's `normalize()` sees an object rather

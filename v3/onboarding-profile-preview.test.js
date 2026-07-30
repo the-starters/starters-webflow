@@ -313,6 +313,63 @@ test('returns an empty array for empty, blank and separator-only values', () => 
   assert.deepEqual(list(parseRoles(' ; , - ')), [], 'a lone hyphen de-hyphenates to nothing')
 })
 
+/* --------------------- profile type normalization --------------------- *
+ * The form blocks switch on `wf-xano-if-state="… === consult"`, whose comparison
+ * is String(left) === right — case- and whitespace-exact. Live values are
+ * case-inconsistent ("full" on one record, "Full" on another), so the transform
+ * lowercases the field and the published attributes need no change.
+ * -------------------------------------------------------------------- */
+
+test('normalizeType lowercases and trims', () => {
+  const { normalizeType } = transform()
+  assert.equal(normalizeType('Full'), 'full')
+  assert.equal(normalizeType('FULL'), 'full')
+  assert.equal(normalizeType(' Consult '), 'consult')
+  assert.equal(normalizeType('\tCoNsUlT\n'), 'consult')
+  assert.equal(normalizeType('full'), 'full', 'already-normal values are unchanged')
+})
+
+test('normalizeType returns an empty string for absent values', () => {
+  const { normalizeType } = transform()
+  assert.equal(normalizeType(null), '')
+  assert.equal(normalizeType(undefined), '')
+  assert.equal(normalizeType(''), '')
+  assert.equal(normalizeType('   '), '')
+})
+
+test('normalizeType is safe on non-string values', () => {
+  const { normalizeType } = transform()
+  assert.equal(normalizeType(39), '39')
+  assert.equal(normalizeType(true), 'true')
+  assert.equal(normalizeType(0), '0')
+  assert.doesNotThrow(() => normalizeType({}))
+  assert.doesNotThrow(() => normalizeType([1, 2]))
+})
+
+// The actual bug: Brian Chung (id 558) stores "Full", Kaeser stores "full".
+test('unwrap normalizes a capitalised profile_type_30 in place', () => {
+  const { unwrap } = transform()
+  const [full] = unwrap(envelope({ First_Name: 'Brian', profile_type_30: 'Full' }))
+  assert.equal(full.profile_type_30, 'full')
+  const [consult] = unwrap(envelope({ First_Name: 'A', profile_type_30: ' Consult ' }))
+  assert.equal(consult.profile_type_30, 'consult', 'a capital-C Consult must reach the consult form')
+})
+
+test('unwrap leaves an absent profile_type_30 as an empty string', () => {
+  const { unwrap } = transform()
+  assert.equal(unwrap(envelope({ First_Name: 'A' }))[0].profile_type_30, '')
+  assert.equal(unwrap(envelope({ First_Name: 'A', profile_type_30: null }))[0].profile_type_30, '')
+  // Either way the `!== consult` full-form fallback still evaluates true, so the
+  // switching behaviour is unchanged for records with no type.
+})
+
+test('unwrap does not mutate the source record while normalizing', () => {
+  const { unwrap } = transform()
+  const record = { First_Name: 'A', profile_type_30: 'Full' }
+  unwrap(envelope(record))
+  assert.equal(record.profile_type_30, 'Full', 'the copy is normalized, not the input')
+})
+
 /* ------------------- resolved role names (the forward path) ---------------- *
  * The record carries `role_refs: [39, 38, 35]`; once Xano resolves those
  * server-side the response will carry real display names, which must win over
@@ -980,6 +1037,7 @@ test('exposes the transform and the override decision for console debugging', ()
     'instanceMatches',
     'joinLocation',
     'memberOverride',
+    'normalizeType',
     'parseRoles',
     'resolvedRoleNames',
     'roleNames',
