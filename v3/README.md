@@ -962,33 +962,39 @@ use these values:
 | `loading` | Loading card or spinner |
 | `content` | Normal points/rank content |
 | `error` | Designer-owned safe error state |
+| `state-refreshing` | Designer-owned rank-refreshing guidance |
+| `state-ineligible` | Designer-owned profile-completion guidance |
+| `state-quarantined` | Designer-owned reconciliation guidance |
+| `state-missing-role` | Designer-owned primary-role setup guidance |
 | `points` | Canonical ledger total |
 | `overall-rank` | Overall competition rank |
-| `overall-cohort` | Overall cohort copy |
+| `overall-cohort-size` | Overall cohort size only; surrounding copy stays in Webflow |
 | `role-card` | Primary-role rank card wrapper |
 | `role-rank` | Primary-role competition rank |
-| `role-label` | Primary-role label |
-| `role-cohort` | Primary-role cohort copy |
-| `rank-message` | Refreshing or eligibility guidance |
+| `role-label` | Primary-role name only; surrounding copy stays in Webflow |
+| `role-cohort-size` | Primary-role cohort size only; surrounding copy stays in Webflow |
 
 The script never calculates points or rank in the browser. It trades the active
 Memberstack session for a Xano token and renders only the authenticated summary.
 When Xano reports `refreshing`, or a nominally ready payload lacks a rank/cohort,
 the position is withheld and the primary-role card is hidden. The `ineligible`
-and `quarantined` statuses likewise hide the role card and show their own
-guidance (join-rankings and points-reconciliation copy, respectively). Missing
-primary roles keep the overall rank and receive setup guidance, and no state
-renders raw `N/A`.
+and `quarantined` statuses likewise hide the role card and reveal their matching
+Designer-authored state blocks. Missing primary roles keep the overall rank and
+reveal the authored setup state inside the role card. No state renders raw
+`N/A`.
 
-The `loading`, `content`, and `error` wrappers are optional for the existing
-three-card dashboard hero. When they are absent, the controller clears authored
-placeholder values, hides the role card, and writes safe loading/error copy into
-the `rank-message` element. This keeps all markup Designer-owned.
+All state containers, copy, links, and styling live in Webflow. The controller
+does not create markup or inject state sentences. It only binds the dynamic
+points/rank/role/cohort values, clears stale dynamic values, and selects the
+matching authored state element. Keep surrounding phrases such as “Out of”,
+“eligible Starters”, and “Rank” outside the dynamic hooks.
 
 Each root reflects its resolved state onto `data-points-status`
 (`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so
-Designer CSS can style per state. The transient `loading` value is set while the
-summary is being fetched, before a terminal state resolves.
+Designer CSS can style per backend state. It also sets `data-points-view`
+(`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, `missing-role`,
+or `error`) for the exact visual state. The transient `loading` value is set
+while the summary is being fetched, before a terminal state resolves.
 
 Run its focused tests with:
 

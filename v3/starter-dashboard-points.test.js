@@ -37,14 +37,17 @@ function tile(options = {}) {
     'loading',
     'content',
     'error',
+    'state-refreshing',
+    'state-ineligible',
+    'state-quarantined',
+    'state-missing-role',
     'points',
     'overall-rank',
-    'overall-cohort',
+    'overall-cohort-size',
     'role-card',
     'role-rank',
     'role-label',
-    'role-cohort',
-    'rank-message',
+    'role-cohort-size',
   ]
   const elements = Object.fromEntries(
     names.map((name) => [name, new FakeElement(name)]),
@@ -73,21 +76,22 @@ test('ready state renders points plus overall and primary-role ranks', () => {
   assert.equal(root.getAttribute('data-points-status'), 'ready')
   assert.equal(elements.points.textContent, '12,500')
   assert.equal(elements['overall-rank'].textContent, '#12')
-  assert.equal(
-    elements['overall-cohort'].textContent,
-    'Out of 680 eligible Starters',
-  )
+  assert.equal(elements['overall-cohort-size'].textContent, '680')
   assert.equal(elements['role-rank'].textContent, '#3')
-  assert.equal(elements['role-label'].textContent, 'CMO Rank')
-  assert.equal(elements['role-cohort'].textContent, 'Out of 48 in this role')
+  assert.equal(elements['role-label'].textContent, 'CMO')
+  assert.equal(elements['role-cohort-size'].textContent, '48')
   assert.equal(elements.loading.style.display, 'none')
   assert.equal(elements.error.style.display, 'none')
+  assert.equal(elements['state-refreshing'].style.display, 'none')
   assert.equal(elements.content.style.display, '')
   assert.equal(elements['role-card'].style.display, '')
+  assert.equal(root.getAttribute('data-points-view'), 'ready')
 })
 
-test('refreshing state keeps points visible and withholds rank', () => {
+test('refreshing state keeps points visible and reveals authored guidance', () => {
   const { root, elements } = tile()
+  elements['state-refreshing'].textContent =
+    'Your position will appear shortly.'
 
   api.render(root, {
     total_points: 500,
@@ -98,8 +102,9 @@ test('refreshing state keeps points visible and withholds rank', () => {
   assert.equal(elements.points.textContent, '500')
   assert.equal(elements['overall-rank'].textContent, '')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['state-refreshing'].style.display, '')
   assert.equal(
-    elements['rank-message'].textContent,
+    elements['state-refreshing'].textContent,
     'Your position will appear shortly.',
   )
 })
@@ -117,18 +122,17 @@ test('a stale ready payload degrades to refreshing instead of showing N/A', () =
   assert.equal(root.getAttribute('data-points-status'), 'refreshing')
   assert.equal(elements['overall-rank'].textContent, '')
   assert.equal(elements['role-card'].style.display, 'none')
-  assert.equal(
-    elements['rank-message'].textContent,
-    'Your position will appear shortly.',
-  )
+  assert.equal(elements['state-refreshing'].style.display, '')
   assert.equal(
     Object.values(elements).some((element) => element.textContent === 'N/A'),
     false,
   )
 })
 
-test('ineligible state hides the role card and shows profile guidance', () => {
+test('ineligible state reveals Webflow-authored profile guidance unchanged', () => {
   const { root, elements } = tile()
+  elements['state-ineligible'].textContent =
+    'Complete your profile to join rankings.'
 
   api.render(root, {
     total_points: 1000,
@@ -137,14 +141,17 @@ test('ineligible state hides the role card and shows profile guidance', () => {
 
   assert.equal(root.getAttribute('data-points-status'), 'ineligible')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['state-ineligible'].style.display, '')
   assert.equal(
-    elements['rank-message'].textContent,
+    elements['state-ineligible'].textContent,
     'Complete your profile to join rankings.',
   )
 })
 
-test('quarantined state hides the role card while reconciling', () => {
+test('quarantined state reveals Webflow-authored reconciliation copy', () => {
   const { root, elements } = tile()
+  elements['state-quarantined'].textContent =
+    'We are reconciling your points history.'
 
   api.render(root, {
     total_points: 1000,
@@ -153,14 +160,17 @@ test('quarantined state hides the role card while reconciling', () => {
 
   assert.equal(root.getAttribute('data-points-status'), 'quarantined')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['state-quarantined'].style.display, '')
   assert.equal(
-    elements['rank-message'].textContent,
+    elements['state-quarantined'].textContent,
     'We are reconciling your points history.',
   )
 })
 
 test('missing primary role keeps overall rank and shows setup guidance', () => {
   const { root, elements } = tile()
+  elements['state-missing-role'].textContent =
+    'Choose a primary role to see your role rank.'
 
   api.render(root, {
     total_points: 0,
@@ -171,13 +181,15 @@ test('missing primary role keeps overall rank and shows setup guidance', () => {
   })
 
   assert.equal(root.getAttribute('data-points-status'), 'ready')
+  assert.equal(root.getAttribute('data-points-view'), 'missing-role')
   assert.equal(elements['overall-rank'].textContent, '#600')
   assert.equal(elements['role-card'].style.display, '')
   assert.equal(elements['role-rank'].textContent, '')
-  assert.equal(elements['role-label'].textContent, 'Set a primary role')
+  assert.equal(elements['role-label'].textContent, '')
+  assert.equal(elements['state-missing-role'].style.display, '')
   assert.equal(
-    elements['role-cohort'].textContent,
-    'Choose one to see your role rank.',
+    elements['state-missing-role'].textContent,
+    'Choose a primary role to see your role rank.',
   )
 })
 
@@ -187,18 +199,18 @@ test('error state hides content and reveals Designer-owned error markup', () => 
   api.renderError(root)
 
   assert.equal(root.getAttribute('data-points-status'), 'error')
+  assert.equal(root.getAttribute('data-points-view'), 'error')
   assert.equal(elements.loading.style.display, 'none')
   assert.equal(elements.content.style.display, 'none')
   assert.equal(elements.error.style.display, '')
 })
 
-test('wrapper-free loading state clears Designer placeholders', () => {
-  const { root, elements } = tile({
-    omit: ['loading', 'content', 'error'],
-  })
+test('loading clears dynamic values without writing status copy', () => {
+  const { root, elements } = tile()
+  elements.loading.textContent = 'Loading your points...'
   elements.points.textContent = '16,525'
   elements['overall-rank'].textContent = '#75'
-  elements['overall-cohort'].textContent = 'Out of 629 Starters'
+  elements['overall-cohort-size'].textContent = '629'
   elements['role-rank'].textContent = '#7'
   elements['role-label'].textContent = 'CMO'
 
@@ -207,15 +219,15 @@ test('wrapper-free loading state clears Designer placeholders', () => {
   assert.equal(root.getAttribute('data-points-status'), 'loading')
   assert.equal(elements.points.textContent, '')
   assert.equal(elements['overall-rank'].textContent, '')
-  assert.equal(elements['overall-cohort'].textContent, '')
+  assert.equal(elements['overall-cohort-size'].textContent, '')
   assert.equal(elements['role-card'].style.display, 'none')
-  assert.equal(elements['rank-message'].textContent, 'Loading your points...')
+  assert.equal(elements.loading.style.display, '')
+  assert.equal(elements.loading.textContent, 'Loading your points...')
 })
 
-test('wrapper-free error state clears data and renders safe status copy', () => {
-  const { root, elements } = tile({
-    omit: ['loading', 'content', 'error'],
-  })
+test('error clears dynamic values without writing status copy', () => {
+  const { root, elements } = tile()
+  elements.error.textContent = 'Points are temporarily unavailable.'
   elements.points.textContent = '16,525'
   elements['overall-rank'].textContent = '#75'
 
@@ -225,8 +237,9 @@ test('wrapper-free error state clears data and renders safe status copy', () => 
   assert.equal(elements.points.textContent, '')
   assert.equal(elements['overall-rank'].textContent, '')
   assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements.error.style.display, '')
   assert.equal(
-    elements['rank-message'].textContent,
+    elements.error.textContent,
     'Points are temporarily unavailable.',
   )
 })

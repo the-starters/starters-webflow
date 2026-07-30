@@ -5,8 +5,13 @@
  * markup. Xano remains authoritative for both the ledger total and rank.
  *
  * Designer wiring:
- *   data-points-element="root|loading|content|error|points|overall-rank|
- *   overall-cohort|role-card|role-rank|role-label|role-cohort|rank-message"
+ *   data-points-element="root|loading|content|error|state-refreshing|
+ *   state-ineligible|state-quarantined|state-missing-role|points|
+ *   overall-rank|overall-cohort-size|role-card|role-rank|role-label|
+ *   role-cohort-size"
+ *
+ * State copy and its containers are authored in Webflow. This controller only
+ * binds authenticated values and selects which authored state is visible.
  */
 ;(function (global) {
   'use strict'
@@ -25,6 +30,14 @@
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const ATTR = 'data-points-element'
   const selector = (name) => '[' + ATTR + '="' + name + '"]'
+  const STATE_ELEMENTS = [
+    'loading',
+    'error',
+    'state-refreshing',
+    'state-ineligible',
+    'state-quarantined',
+    'state-missing-role',
+  ]
 
   function number(value) {
     const parsed = Number(value)
@@ -38,11 +51,11 @@
       totalPoints: totalPoints.toLocaleString(),
       status,
       overallRank: '',
-      overallCohort: '',
+      overallCohortSize: '',
       roleRank: '',
       roleLabel: '',
-      roleCohort: '',
-      rankMessage: '',
+      roleCohortSize: '',
+      stateElement: '',
       showRoleCard: true,
     }
 
@@ -51,11 +64,10 @@
       const overallSize = number(summary.overall_cohort_size)
       if (overallRank && overallSize) {
         model.overallRank = '#' + overallRank
-        model.overallCohort =
-          'Out of ' + overallSize.toLocaleString() + ' eligible Starters'
+        model.overallCohortSize = overallSize.toLocaleString()
       } else {
         model.status = 'refreshing'
-        model.rankMessage = 'Your position will appear shortly.'
+        model.stateElement = 'state-refreshing'
         model.showRoleCard = false
         return model
       }
@@ -63,29 +75,27 @@
       const role = summary.primary_role
       if (role && number(role.rank) && number(role.cohort_size)) {
         model.roleRank = '#' + number(role.rank)
-        model.roleLabel = String(role.label || 'Primary role') + ' Rank'
-        model.roleCohort =
-          'Out of ' + number(role.cohort_size).toLocaleString() + ' in this role'
+        model.roleLabel = String(role.label || 'Primary role')
+        model.roleCohortSize = number(role.cohort_size).toLocaleString()
       } else {
-        model.roleLabel = 'Set a primary role'
-        model.roleCohort = 'Choose one to see your role rank.'
+        model.stateElement = 'state-missing-role'
       }
       return model
     }
 
     if (status === 'ineligible') {
-      model.rankMessage = 'Complete your profile to join rankings.'
+      model.stateElement = 'state-ineligible'
       model.showRoleCard = false
       return model
     }
 
     if (status === 'quarantined') {
-      model.rankMessage = 'We are reconciling your points history.'
+      model.stateElement = 'state-quarantined'
       model.showRoleCard = false
       return model
     }
 
-    model.rankMessage = 'Your position will appear shortly.'
+    model.stateElement = 'state-refreshing'
     model.showRoleCard = false
     return model
   }
@@ -105,58 +115,54 @@
     if (element) element.textContent = value
   }
 
+  function showState(root, activeName) {
+    STATE_ELEMENTS.forEach(function (name) {
+      show(find(root, name), name === activeName)
+    })
+  }
+
   function render(root, summary) {
     const model = viewModel(summary)
-    show(find(root, 'loading'), false)
-    show(find(root, 'error'), false)
+    showState(root, model.stateElement)
     show(find(root, 'content'), true)
     show(find(root, 'role-card'), model.showRoleCard)
     text(root, 'points', model.totalPoints)
     text(root, 'overall-rank', model.overallRank)
-    text(root, 'overall-cohort', model.overallCohort)
+    text(root, 'overall-cohort-size', model.overallCohortSize)
     text(root, 'role-rank', model.roleRank)
     text(root, 'role-label', model.roleLabel)
-    text(root, 'role-cohort', model.roleCohort)
-    text(root, 'rank-message', model.rankMessage)
+    text(root, 'role-cohort-size', model.roleCohortSize)
     root.setAttribute('data-points-status', model.status)
+    root.setAttribute(
+      'data-points-view',
+      model.stateElement.replace(/^state-/, '') || 'ready',
+    )
   }
 
   function clearDynamicFields(root) {
     show(find(root, 'role-card'), false)
     text(root, 'points', '')
     text(root, 'overall-rank', '')
-    text(root, 'overall-cohort', '')
+    text(root, 'overall-cohort-size', '')
     text(root, 'role-rank', '')
     text(root, 'role-label', '')
-    text(root, 'role-cohort', '')
+    text(root, 'role-cohort-size', '')
   }
 
   function renderLoading(root) {
-    const loading = find(root, 'loading')
-    const content = find(root, 'content')
-    show(loading, true)
-    show(content, false)
-    show(find(root, 'error'), false)
-
-    if (!loading && !content) {
-      clearDynamicFields(root)
-      text(root, 'rank-message', 'Loading your points...')
-    }
+    showState(root, 'loading')
+    show(find(root, 'content'), false)
+    clearDynamicFields(root)
     root.setAttribute('data-points-status', 'loading')
+    root.setAttribute('data-points-view', 'loading')
   }
 
   function renderError(root) {
-    const content = find(root, 'content')
-    const error = find(root, 'error')
-    show(find(root, 'loading'), false)
-    show(content, false)
-    show(error, true)
-
-    if (!content && !error) {
-      clearDynamicFields(root)
-      text(root, 'rank-message', 'Points are temporarily unavailable.')
-    }
+    showState(root, 'error')
+    show(find(root, 'content'), false)
+    clearDynamicFields(root)
     root.setAttribute('data-points-status', 'error')
+    root.setAttribute('data-points-view', 'error')
   }
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
