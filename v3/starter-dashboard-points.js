@@ -7,8 +7,8 @@
  * Designer wiring:
  *   data-points-element="root|loading|content|error|state-refreshing|
  *   state-ineligible|state-quarantined|state-missing-role|points|
- *   overall-card|overall-rank|overall-cohort-size|role-card|role-rank|
- *   role-label|role-cohort-size"
+ *   overall-card|overall-rank|overall-cohort-size|overall-tie|role-card|
+ *   role-rank|role-label|role-cohort-size|role-tie"
  *
  * State copy and its containers are authored in Webflow. This controller only
  * binds authenticated values and selects which authored state is visible.
@@ -52,9 +52,11 @@
       status,
       overallRank: '',
       overallCohortSize: '',
+      overallTied: false,
       roleRank: '',
       roleLabel: '',
       roleCohortSize: '',
+      roleTied: false,
       stateElement: '',
       showRoleCard: true,
     }
@@ -65,6 +67,7 @@
       if (overallRank && overallSize) {
         model.overallRank = '#' + overallRank
         model.overallCohortSize = overallSize.toLocaleString()
+        model.overallTied = number(summary.overall_tie_count) > 1
       } else {
         model.status = 'refreshing'
         model.stateElement = 'state-refreshing'
@@ -77,6 +80,7 @@
         model.roleRank = '#' + number(role.rank)
         model.roleLabel = String(role.label || 'Primary role')
         model.roleCohortSize = number(role.cohort_size).toLocaleString()
+        model.roleTied = number(role.tie_count) > 1
       } else {
         model.stateElement = 'state-missing-role'
       }
@@ -127,6 +131,8 @@
     show(find(root, 'content'), true)
     show(find(root, 'role-card'), model.showRoleCard)
     show(find(root, 'overall-card'), model.status === 'ready')
+    show(find(root, 'overall-tie'), model.overallTied)
+    show(find(root, 'role-tie'), model.showRoleCard && model.roleTied)
     text(root, 'points', model.totalPoints)
     text(root, 'overall-rank', model.overallRank)
     text(root, 'overall-cohort-size', model.overallCohortSize)
@@ -143,6 +149,8 @@
   function clearDynamicFields(root) {
     show(find(root, 'role-card'), false)
     show(find(root, 'overall-card'), false)
+    show(find(root, 'overall-tie'), false)
+    show(find(root, 'role-tie'), false)
     text(root, 'points', '')
     text(root, 'overall-rank', '')
     text(root, 'overall-cohort-size', '')
