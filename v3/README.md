@@ -632,6 +632,61 @@ JSON. It is presentation-only and does not grant or restrict access. See
 attributes, install snippet, persistence behavior, diagnostics, and release
 checks.
 
+## Onboarding profile preview
+
+`onboarding-profile-preview.js` is the page glue for the wf-xano list keyed
+`onboarding-self-preview` — the freelancer's own profile rendered as a
+profile-preview card on the onboarding completion page ("Your 30-day visibility
+boost is already running"). The card's CSS and markup live in the paste block in
+[ONBOARDING-PROFILE-PREVIEW-WIRING.md](ONBOARDING-PROFILE-PREVIEW-WIRING.md);
+the script owns exactly one thing, the `beforeRender` transform.
+
+`starters_onboarding/get_freelancers` answers with an envelope,
+`{"freelancer": [ <one record> ]}`. wf-xano's `normalize()` sees an object rather
+than an array and takes its single-object branch, so `items[0]` is the whole body
+and every plain `wf-xano-bind` would resolve against the envelope instead of the
+record. The hook unwraps it and adds the three computed fields the template binds
+and Xano does not send: `Role_1`/`Role_2`/`Role_3` from the comma-delimited
+`Roles` string (first three, each chip hiding on an empty value), `Location` from
+`City, State_Province, Country` with empty parts skipped, and `Bio` flattened
+from Quill rich-text HTML to one line of plain text.
+
+Unlike the saved-list sibling above, `Roles` here is split on commas **only**. It
+is a different column with a different delimiter, and accepting `;` would break a
+role whose display name legitimately contains one.
+
+Entity decoding in the bio flattener is deliberately single-pass. A
+loop-until-stable decode would turn the literal `&amp;lt;` an author typed into
+`<`, which is how escaped markup gets smuggled back into a value. Nothing is ever
+assigned as HTML either way — wf-xano's binds write `textContent` — so the
+flattener is a formatting concern, not the security boundary.
+
+The module arms through `WfXano.push()` for the same reason the saved-list script
+does, and is marker-gated on the instance-key selector so it costs nothing on
+other pages. `arm()` also reads `getState()` and calls `refresh()` when the status
+is already `success` or `error`: that only happens when something booted wf-xano
+early enough for a response to render before this file ran, i.e. an untransformed
+render is already on screen. Script-tag order relative to the wf-xano tag does not
+matter (verified against the library's boot guard and queue drain — see the wiring
+doc).
+
+If the instance is genuinely absent after boot, the module warns once on staging,
+local, and Cloudflare tunnel hosts (or with `window.STARTERS_DEBUG`) and stays
+silent in production. The warning earns its place: with no transform the binds
+resolve against the envelope, the template's
+`wf-xano-if="First_Name|Last_Name|Professional_Headline"` guard hides the card,
+and the page shows its empty state to a member who has a complete profile.
+
+The endpoint is still public with a hardcoded demo `memberstack_id`. The wiring
+doc carries the Xano authentication spec and the two-attribute embed flip; treat
+that flip as required before the page reaches real members.
+
+Run its focused test with:
+
+```sh
+node --test v3/onboarding-profile-preview.test.js
+```
+
 ## Scheduling auth
 
 `scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and
