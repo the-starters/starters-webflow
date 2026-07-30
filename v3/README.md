@@ -940,3 +940,52 @@ avoid column names (hence `in_timezone`).
 ⚠ The OAuth `redirect_uri` in endpoints 1456/1457 is pinned to the published
 slug `/starter-dashboard---availability-stage`. If the page rename ships with
 a new slug, update both endpoints in the same change.
+## Starter Dashboard points and rank tile
+
+`starter-dashboard-points.js` binds Designer-owned dashboard markup to the
+authenticated Xano `POST /starter/points/summary` read model. It is a standalone
+tile controller because it does not own a reusable list or form that belongs in
+`wf-xano`, and keeping it separate avoids expanding the general Opportunities
+controller.
+
+Load it on `/starter-dashboard`:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-dashboard-points.js"></script>
+```
+
+Wire one or more tile roots with `data-points-element="root"`. Within each root,
+use these values:
+
+| Value | Purpose |
+| --- | --- |
+| `loading` | Loading card or spinner |
+| `content` | Normal points/rank content |
+| `error` | Designer-owned safe error state |
+| `points` | Canonical ledger total |
+| `overall-rank` | Overall competition rank |
+| `overall-cohort` | Overall cohort copy |
+| `role-card` | Primary-role rank card wrapper |
+| `role-rank` | Primary-role competition rank |
+| `role-label` | Primary-role label |
+| `role-cohort` | Primary-role cohort copy |
+| `rank-message` | Refreshing or eligibility guidance |
+
+The script never calculates points or rank in the browser. It trades the active
+Memberstack session for a Xano token and renders only the authenticated summary.
+When Xano reports `refreshing`, or a nominally ready payload lacks a rank/cohort,
+the position is withheld and the primary-role card is hidden. The `ineligible`
+and `quarantined` statuses likewise hide the role card and show their own
+guidance (join-rankings and points-reconciliation copy, respectively). Missing
+primary roles keep the overall rank and receive setup guidance, and no state
+renders raw `N/A`.
+
+Each root reflects its resolved state onto `data-points-status`
+(`ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so Designer CSS
+can style per state.
+
+Run its focused tests with:
+
+```sh
+node --test v3/starter-dashboard-points.test.js
+```
