@@ -13,6 +13,14 @@
  * after blur/input or a blocked attempt (styled in step-flow-css.html). Exempt a field or
  * wrapper with `data-validate-ignore`. Needs the CSS embed for the red outline.
  *
+ * Opt-in scroll-to-top: set `data-form-flow-scroll-top="true"` on the flow root and every
+ * step change scrolls the flow root back to the top of view. Up only, never down, so a step
+ * already sitting in view is left alone, and never on initial page-load init.
+ * `data-form-flow-scroll-offset="<px>"` adds breathing room above the root, and
+ * `data-form-flow-scroll-container="window" | "nearest"` overrides the auto-detected
+ * scroller (nearest scrollable ancestor if there is one, else the window). Window scrolls
+ * also clear sticky/fixed `[data-toc-navbar]` (or `.w-nav`) chrome, measured live per scroll.
+ *
  * Works alongside `Panel Flow - JS`, which swaps whole panels (hub ↔
  * flow). This script resets a flow when `[data-panel-nav-target]` is clicked.
  *
@@ -50,6 +58,28 @@ document.addEventListener("DOMContentLoaded", function () {
 
   /** @type {Set<string>} Input types that skip value/format checks (handled separately). */
   const NON_VALUE_INPUT_TYPES = new Set(["hidden", "submit", "button", "checkbox", "radio", "file"])
+
+  /**
+   * @type {string} Explicit navbar tag for the scroll-to-top offset. Deliberately the
+   * site-wide convention already used by `utils/section-custom-toc` — same tag, same
+   * meaning — but resolved locally so neither script depends on the other.
+   */
+  const NAVBAR_SELECTOR = "[data-toc-navbar]"
+
+  /** @type {string} Fallback when nothing is tagged: Webflow's own navbar class. */
+  const NAVBAR_FALLBACK_SELECTOR = ".w-nav"
+
+  /** @type {readonly string[]} `position` values that make a bar cover page content. */
+  const COVERING_POSITIONS = ["fixed", "sticky"]
+
+  /** @type {readonly string[]} `overflow-y` values that make an ancestor its own scroller. */
+  const SCROLLABLE_OVERFLOWS = ["auto", "scroll"]
+
+  /** @type {string} `data-form-flow-scroll-container` value forcing the page/window scroller. */
+  const SCROLL_CONTAINER_WINDOW = "window"
+
+  /** @type {string} Media query that opts a visitor out of animated scrolling. */
+  const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
 
   /** Webflow-style boolean attrs use `"True"`; accept common casings. */
   const isAttrTrue = (value) => typeof value === "string" && value.toLowerCase() === "true"
@@ -649,6 +679,142 @@ document.addEventListener("DOMContentLoaded", function () {
     !!(el && (el.closest(`[${VALIDATE_DISABLED_ATTR}]`) || el.hasAttribute(VALIDATE_DISABLED_ATTR)))
 
   /**
+   * Parses `data-form-flow-scroll-offset` into extra pixels above the flow root.
+   * Webflow-tolerant: a trailing unit (`"40px"`) still reads as 40. Anything that is
+   * absent, unparseable, or negative means "no extra room".
+   *
+   * @param {string | null | undefined} value - Raw attribute value.
+   * @returns {number} Non-negative whole pixels; `0` by default.
+   */
+  const parseScrollOffset = (value) => {
+    if (typeof value !== "string") return 0
+    const parsed = Number.parseInt(value.trim(), 10)
+    if (!Number.isFinite(parsed) || parsed < 0) return 0
+    return parsed
+  }
+
+  /**
+   * Whether an element scrolls its own overflow *and* currently has room to scroll.
+   * A pane styled `overflow-y: auto` that fits its content is not the scroller the
+   * user is looking at, so it does not count.
+   *
+   * @param {HTMLElement} el - Candidate ancestor.
+   * @returns {boolean}
+   */
+  const isScrollableEl = (el) => {
+    let overflowY = ""
+    try {
+      overflowY = getComputedStyle(el).overflowY
+    } catch (error) {
+      return false
+    }
+    if (!SCROLLABLE_OVERFLOWS.includes(overflowY)) return false
+    return (el.scrollHeight || 0) > (el.clientHeight || 0)
+  }
+
+  /**
+   * Nearest scrollable ancestor of an element, or `null` when the page itself scrolls.
+   * Used both for `data-form-flow-scroll-container="nearest"` and for the auto-detect
+   * default (the attribute being absent) — the two behave identically; only
+   * `"window"` short-circuits this walk.
+   *
+   * @param {HTMLElement} el - Flow root element.
+   * @returns {HTMLElement | null} Scrollable ancestor, or `null` to mean the window.
+   */
+  const findScrollableAncestor = (el) => {
+    let node = el.parentElement
+    while (node) {
+      if (isScrollableEl(node)) return node
+      node = node.parentElement
+    }
+    return null
+  }
+
+  /**
+   * The page's navbars: every explicitly tagged bar, else Webflow's single `.w-nav`.
+   * Re-resolved per scroll so a navbar added or swapped per breakpoint needs no config.
+   *
+   * @returns {HTMLElement[]} Bars to consider for the window scroll offset.
+   */
+  const resolveNavbars = () => {
+    const tagged = [...document.querySelectorAll(NAVBAR_SELECTOR)]
+    if (tagged.length) return tagged
+    const fallback = document.querySelector(NAVBAR_FALLBACK_SELECTOR)
+    return fallback ? [fallback] : []
+  }
+
+  /**
+   * Combined live height of the navbars that currently cover page content. Stacked
+   * chrome sums. Position *and* height are read at call time, never cached: a Webflow
+   * navbar can be `fixed` on desktop and `static` on mobile, and a hidden bar measures
+   * `0`, so both breakpoint cases fall out for free.
+   *
+   * @returns {number} Pixels of covering chrome; `0` when nothing qualifies.
+   */
+  const getNavbarOffset = () => {
+    let total = 0
+    resolveNavbars().forEach((bar) => {
+      if (!bar) return
+      let position = ""
+      try {
+        position = getComputedStyle(bar).position
+      } catch (error) {
+        return
+      }
+      if (!COVERING_POSITIONS.includes(position)) return
+      total += bar.offsetHeight || 0
+    })
+    return total
+  }
+
+  /**
+   * Scroll behavior for the step transition, honoring the visitor's motion preference.
+   * @returns {"smooth" | "auto"} `"auto"` (instant) under reduced motion.
+   */
+  const getScrollBehavior = () => {
+    try {
+      if (typeof window.matchMedia !== "function") return "smooth"
+      return window.matchMedia(REDUCED_MOTION_QUERY).matches ? "auto" : "smooth"
+    } catch (error) {
+      return "smooth"
+    }
+  }
+
+  /**
+   * Scrolls a flow root back up to the top of view after a step swap.
+   *
+   * Only ever scrolls UP. If the computed target is at or below the scroller's current
+   * position the top of the step is already visible, and a nudge would be noise — so the
+   * routine does nothing. Window scrolls subtract sticky navbar chrome; a scrollable
+   * ancestor does not (page chrome is irrelevant inside a panel), though the configured
+   * offset applies to both.
+   *
+   * @param {HTMLElement} parent - Flow root element.
+   * @param {{ offset: number, container: string | null }} config - Parsed scroll options.
+   * @returns {void}
+   */
+  const scrollFlowRootIntoView = (parent, config) => {
+    const parentRect = parent.getBoundingClientRect()
+    const behavior = getScrollBehavior()
+    const containerEl =
+      config.container === SCROLL_CONTAINER_WINDOW ? null : findScrollableAncestor(parent)
+
+    if (containerEl) {
+      const containerRect = containerEl.getBoundingClientRect()
+      const current = containerEl.scrollTop || 0
+      const target = Math.max(0, current + parentRect.top - containerRect.top - config.offset)
+      if (target >= current) return
+      containerEl.scrollTo({ top: target, behavior })
+      return
+    }
+
+    const current = window.pageYOffset || document.documentElement.scrollTop || 0
+    const target = Math.max(0, current + parentRect.top - getNavbarOffset() - config.offset)
+    if (target >= current) return
+    window.scrollTo({ top: target, behavior })
+  }
+
+  /**
    * Initializes a single form flow root (linear or multi-sub).
    * Registers click handlers, step state, and `formFlowSystem.list[flowId]`.
    *
@@ -663,6 +829,13 @@ document.addEventListener("DOMContentLoaded", function () {
     const isMultiSub = parent.getAttribute("data-form-flow-type") === "multi-sub"
     const previewPath = parent.getAttribute("data-form-flow-preview-path")
     const validateFlow = isAttrTrue(parent.getAttribute("data-form-flow-validate"))
+    const scrollTopFlow = isAttrTrue(parent.getAttribute("data-form-flow-scroll-top"))
+
+    /** @type {{ offset: number, container: string | null }} Parsed scroll-to-top options. */
+    const scrollConfig = {
+      offset: parseScrollOffset(parent.getAttribute("data-form-flow-scroll-offset")),
+      container: parent.getAttribute("data-form-flow-scroll-container"),
+    }
 
     const entryWrapper = parent.querySelector("[data-form-flow-entry]")
     const entryIsWrapper = !!entryWrapper
@@ -680,6 +853,13 @@ document.addEventListener("DOMContentLoaded", function () {
       currentGroupEl: null,
       history: [],
     }
+
+    /**
+     * @type {boolean} Flipped after the initial `resetFlow()`. Init paints step 1 through
+     * `showStep` like any other navigation, and the page must not jump on load — so the
+     * opt-in scroll stays parked until the first real transition.
+     */
+    let scrollReady = false
 
     /**
      * Finds a content step by id within a subflow or the flow root.
@@ -764,6 +944,24 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     /**
+     * Runs the opt-in scroll-to-top once a step swap has finished. Called last so the
+     * measurement sees the final layout, and only when the visible step actually changed.
+     * Deliberately swallows errors: a failed measurement must never break navigation.
+     *
+     * @param {string | null} previousStepId - Step id before this transition.
+     * @returns {void}
+     */
+    const maybeScrollToTop = (previousStepId) => {
+      if (!scrollTopFlow || !scrollReady) return
+      if (previousStepId === state.currentStepId) return
+      try {
+        scrollFlowRootIntoView(parent, scrollConfig)
+      } catch (error) {
+        /* no-op */
+      }
+    }
+
+    /**
      * Shows one step, updates subflow visibility, and syncs footer button groups.
      * @param {string} stepId - Target step id.
      * @param {{ pushHistory?: boolean, subflowEl?: HTMLElement | null }} [options] - Navigation options.
@@ -771,6 +969,7 @@ document.addEventListener("DOMContentLoaded", function () {
      */
     const showStep = (stepId, options = {}) => {
       const { pushHistory = false, subflowEl = state.activeSubflowEl } = options
+      const previousStepId = state.currentStepId
 
       if (pushHistory && state.currentStepId && state.currentStepId !== stepId) {
         state.history.push({
@@ -788,6 +987,7 @@ document.addEventListener("DOMContentLoaded", function () {
         state.currentGroupEl = showButtonGroup(STEP1_ID, entryWrapper)
         state.currentStepId = STEP1_ID
         syncStepValidation()
+        maybeScrollToTop(previousStepId)
         return
       }
 
@@ -815,6 +1015,7 @@ document.addEventListener("DOMContentLoaded", function () {
       state.currentGroupEl = showButtonGroup(stepId, getButtonGroupScope(stepId, subflowEl))
       state.currentStepId = stepId
       syncStepValidation()
+      maybeScrollToTop(previousStepId)
     }
 
     /**
@@ -1069,6 +1270,9 @@ document.addEventListener("DOMContentLoaded", function () {
     if (sharedFooter) hideEl(sharedFooter)
 
     resetFlow()
+
+    // Init is done painting step 1; from here every showStep is a real transition.
+    scrollReady = true
 
     if (flowId) {
       formFlowSystem.list[flowId] = {
