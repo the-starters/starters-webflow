@@ -56,6 +56,7 @@
       } else {
         model.status = 'refreshing'
         model.rankMessage = 'Your position will appear shortly.'
+        model.showRoleCard = false
         return model
       }
 
@@ -80,10 +81,12 @@
 
     if (status === 'quarantined') {
       model.rankMessage = 'We are reconciling your points history.'
+      model.showRoleCard = false
       return model
     }
 
     model.rankMessage = 'Your position will appear shortly.'
+    model.showRoleCard = false
     return model
   }
 

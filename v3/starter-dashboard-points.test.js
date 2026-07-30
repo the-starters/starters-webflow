@@ -96,6 +96,7 @@ test('refreshing state keeps points visible and withholds rank', () => {
   assert.equal(root.getAttribute('data-points-status'), 'refreshing')
   assert.equal(elements.points.textContent, '500')
   assert.equal(elements['overall-rank'].textContent, '')
+  assert.equal(elements['role-card'].style.display, 'none')
   assert.equal(
     elements['rank-message'].textContent,
     'Your position will appear shortly.',
@@ -114,6 +115,7 @@ test('a stale ready payload degrades to refreshing instead of showing N/A', () =
 
   assert.equal(root.getAttribute('data-points-status'), 'refreshing')
   assert.equal(elements['overall-rank'].textContent, '')
+  assert.equal(elements['role-card'].style.display, 'none')
   assert.equal(
     elements['rank-message'].textContent,
     'Your position will appear shortly.',
@@ -140,6 +142,22 @@ test('ineligible state hides the role card and shows profile guidance', () => {
   )
 })
 
+test('quarantined state hides the role card while reconciling', () => {
+  const { root, elements } = tile()
+
+  api.render(root, {
+    total_points: 1000,
+    rank_status: 'quarantined',
+  })
+
+  assert.equal(root.getAttribute('data-points-status'), 'quarantined')
+  assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(
+    elements['rank-message'].textContent,
+    'We are reconciling your points history.',
+  )
+})
+
 test('missing primary role keeps overall rank and shows setup guidance', () => {
   const { root, elements } = tile()
 
@@ -153,6 +171,7 @@ test('missing primary role keeps overall rank and shows setup guidance', () => {
 
   assert.equal(root.getAttribute('data-points-status'), 'ready')
   assert.equal(elements['overall-rank'].textContent, '#600')
+  assert.equal(elements['role-card'].style.display, '')
   assert.equal(elements['role-rank'].textContent, '')
   assert.equal(elements['role-label'].textContent, 'Set a primary role')
   assert.equal(
