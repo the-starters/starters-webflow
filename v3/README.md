@@ -986,8 +986,9 @@ placeholder values, hides the role card, and writes safe loading/error copy into
 the `rank-message` element. This keeps all markup Designer-owned.
 
 Each root reflects its resolved state onto `data-points-status`
-(`ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so Designer CSS
-can style per state.
+(`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so
+Designer CSS can style per state. The transient `loading` value is set while the
+summary is being fetched, before a terminal state resolves.
 
 Run its focused tests with:
 
