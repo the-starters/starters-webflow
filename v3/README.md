@@ -972,6 +972,7 @@ use these values:
 | `state-quarantined` | Designer-owned reconciliation guidance |
 | `state-missing-role` | Designer-owned primary-role setup guidance |
 | `points` | Canonical ledger total |
+| `overall-card` | Overall-rank card wrapper; visible only when rank status is ready |
 | `overall-rank` | Overall competition rank |
 | `overall-cohort-size` | Overall cohort size only; surrounding copy stays in Webflow |
 | `role-card` | Primary-role rank card wrapper |
