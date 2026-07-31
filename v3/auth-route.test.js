@@ -9,8 +9,76 @@ const routeGuardSource = fs.readFileSync(
   'utf8',
 )
 
+const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
+const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
+const GET_URL = XANO + '/api:KZf7nFnk/starters_onboarding/get_freelancers'
+const DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: true }] }
+const NOT_DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: false }] }
+
 function plan(planId) {
   return { active: true, planId }
+}
+
+function flush() {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+/**
+ * Opt-in deterministic clock (`clock: true`), so the 4s onboarding-check budget
+ * is testable without waiting for it. Tests that do not ask for it keep the
+ * real timers the existing Memberstack-delay cases rely on.
+ */
+function makeClock() {
+  let now = 1700000000000
+  let seq = 0
+  const timers = new Map()
+
+  return {
+    now: () => now,
+    pending: () => timers.size,
+    setTimeout(fn, ms) {
+      const id = ++seq
+      timers.set(id, { fn, at: now + (ms || 0), repeat: null })
+      return id
+    },
+    clearTimeout(id) {
+      timers.delete(id)
+    },
+    setInterval(fn, ms) {
+      const id = ++seq
+      timers.set(id, { fn, at: now + (ms || 0), repeat: ms || 1 })
+      return id
+    },
+    clearInterval(id) {
+      timers.delete(id)
+    },
+    async advance(ms) {
+      const target = now + ms
+      for (let guard = 0; guard < 5000; guard += 1) {
+        let dueId = null
+        let due = null
+        for (const [id, timer] of timers) {
+          if (timer.at > target) continue
+          if (!due || timer.at < due.at) {
+            due = timer
+            dueId = id
+          }
+        }
+        if (!due) break
+        now = Math.max(now, due.at)
+        if (due.repeat === null) timers.delete(dueId)
+        else due.at = now + due.repeat
+        due.fn()
+        await flush()
+      }
+      now = target
+      await flush()
+    },
+  }
+}
+
+function jsonResponse(body, { ok = true, status = 200 } = {}) {
+  return { ok, status, json: async () => body }
 }
 
 function loadRouter(options = {}) {
@@ -49,6 +117,46 @@ function loadRouter(options = {}) {
       storage.set(key, value)
     },
   }
+  const clock = options.clock ? makeClock() : null
+  const fetchCalls = []
+  const aborted = []
+  const logs = { info: [], warn: [], error: [] }
+
+  // Only wired when a test asks for Xano (`xano: {...}`). Everything else keeps
+  // a window without `fetch`, which is exactly how the funnel check behaves in
+  // a browser that cannot reach Xano: it fails open.
+  const xano = options.xano || {}
+  async function fetchStub(url, config = {}) {
+    fetchCalls.push({ url: String(url), config })
+
+    if (String(url).indexOf(TRADE_URL) === 0) {
+      if (xano.tradeRejects) throw new Error('trade network failure')
+      if (xano.tradeStatus) {
+        return jsonResponse(null, { ok: false, status: xano.tradeStatus })
+      }
+      return jsonResponse(
+        Object.prototype.hasOwnProperty.call(xano, 'tradeBody')
+          ? xano.tradeBody
+          : 'xano-token-abc',
+      )
+    }
+
+    if (String(url) === GET_URL) {
+      if (xano.getNeverSettles) return new Promise(() => {})
+      if (xano.getRejects) throw new Error('get network failure')
+      if (xano.getStatus) {
+        return jsonResponse(null, { ok: false, status: xano.getStatus })
+      }
+      return jsonResponse(
+        Object.prototype.hasOwnProperty.call(xano, 'envelope')
+          ? xano.envelope
+          : DONE_ENVELOPE,
+      )
+    }
+
+    throw new Error('unexpected fetch: ' + url)
+  }
+
   const window = {
     CustomEvent: class CustomEvent {
       constructor(name, init) {
@@ -61,21 +169,40 @@ function loadRouter(options = {}) {
     dispatchEvent() {},
     location,
     sessionStorage,
-    setInterval,
-    setTimeout,
-    clearInterval,
-    clearTimeout,
+    setInterval: clock ? clock.setInterval : setInterval,
+    setTimeout: clock ? clock.setTimeout : setTimeout,
+    clearInterval: clock ? clock.clearInterval : clearInterval,
+    clearTimeout: clock ? clock.clearTimeout : clearTimeout,
+  }
+  if (options.xano) {
+    window.fetch = fetchStub
+    window.AbortController = class {
+      constructor() {
+        this.signal = { aborted: false }
+      }
+      abort() {
+        this.signal.aborted = true
+        aborted.push(this)
+      }
+    }
+  }
+  if (options.debug) window.STARTERS_DEBUG = true
+
+  function memberstackFor(member) {
+    return {
+      getCurrentMember: async () => ({ data: member }),
+      getMemberCookie: async () => {
+        if (options.cookieRejects) throw new Error('memberstack failure')
+        return options.loggedOutCookie ? null : options.memberCookie || 'ms-jwt'
+      },
+    }
   }
   if (options.delayedMember) {
     window.setTimeout(() => {
-      window.$memberstackDom = {
-        getCurrentMember: async () => ({ data: options.delayedMember }),
-      }
+      window.$memberstackDom = memberstackFor(options.delayedMember)
     }, options.memberstackDelayMs || 25)
   } else if (options.member) {
-    window.$memberstackDom = {
-      getCurrentMember: async () => ({ data: options.member }),
-    }
+    window.$memberstackDom = memberstackFor(options.member)
   }
   const document = {
     documentElement: {
@@ -88,21 +215,50 @@ function loadRouter(options = {}) {
     },
   }
 
-  const context = vm.createContext({
-    console: { error() {} },
+  class FakeDate extends Date {
+    static now() {
+      return clock.now()
+    }
+  }
+
+  const context = {
+    console: {
+      error: (message) => logs.error.push(message),
+      warn: (message) => logs.warn.push(message),
+      info: (message) => logs.info.push(message),
+    },
     CustomEvent: window.CustomEvent,
     URL,
     URLSearchParams,
     document,
     window,
-  })
+  }
+  if (clock) context.Date = FakeDate
+  vm.createContext(context)
   if (!options.roleContractMissing) {
     vm.runInContext(routeGuardSource, context)
   }
   vm.runInContext(source, context)
 
-  return { api: window.StartersV3AuthRouter, attributes, location, storage, window }
+  return {
+    api: window.StartersV3AuthRouter,
+    aborted,
+    attributes,
+    clock,
+    fetchCalls,
+    location,
+    logs,
+    storage,
+    window,
+  }
 }
+
+const urlsOf = (calls) => calls.map((call) => call.url)
+const callsTo = (calls, url) => calls.filter((call) => call.url === url)
+const talentMember = () => ({
+  id: 'member-talent',
+  planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+})
 
 test('maps stable active plan IDs to application roles', () => {
   const { api } = loadRouter()
@@ -514,6 +670,287 @@ test('auth route surfaces cross-family role conflicts instead of picking a dashb
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(location.replaced, undefined)
   assert.equal(attributes['data-auth-route-error'], 'conflicting-plan-roles')
+})
+
+// --- Talent onboarding funnel -------------------------------------------------
+
+test('/starter-onboarding is an allowed Talent next and stays Talent-only', () => {
+  const { api } = loadRouter()
+  const paidBrand = {
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }
+
+  assert.equal(
+    api.destinationFor(talentMember(), '/starter-onboarding'),
+    '/starter-onboarding',
+  )
+  assert.equal(
+    api.destinationFor(talentMember(), '/starter-onboarding?step=2'),
+    '/starter-onboarding?step=2',
+  )
+  assert.equal(
+    api.destinationFor(paidBrand, '/starter-onboarding'),
+    '/brand-dashboard',
+  )
+})
+
+test('the freelancer envelope maps to the three funnel states', () => {
+  const { api } = loadRouter()
+
+  assert.equal(api.onboardingStateFrom(DONE_ENVELOPE), 'done')
+  assert.equal(api.onboardingStateFrom(NOT_DONE_ENVELOPE), 'not-done')
+  assert.equal(api.onboardingStateFrom({ freelancer: [{}] }), 'not-done')
+  assert.equal(
+    api.onboardingStateFrom({ freelancer: [{ onboarding_done: 'true' }] }),
+    'not-done',
+  )
+  assert.equal(api.onboardingStateFrom({ freelancer: [] }), 'no-record')
+  assert.equal(api.onboardingStateFrom({}), 'no-record')
+  assert.equal(api.onboardingStateFrom(null), 'no-record')
+})
+
+test('a Talent member with no freelancer row is sent to Build profile', async () => {
+  const { location, fetchCalls } = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { envelope: {} },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/build-profile/select-profile')
+  assert.ok(urlsOf(fetchCalls)[0].startsWith(TRADE_URL + '?token='))
+  const reads = callsTo(fetchCalls, GET_URL)
+  assert.equal(reads.length, 1)
+  assert.equal(reads[0].config.headers.Authorization, 'Bearer xano-token-abc')
+})
+
+test('unfinished onboarding wins over a valid stored next and consumes it', async () => {
+  const { location, storage } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/messages',
+    member: talentMember(),
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/starter-onboarding')
+  assert.equal(storage.has('thestarters:v3-auth-next'), false)
+})
+
+test('unfinished onboarding wins over a query next too', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    search: '?next=%2Fopportunities%2Fproduct-designer',
+    member: talentMember(),
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/starter-onboarding')
+})
+
+test('a finished Talent member keeps the requested next', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/messages',
+    member: talentMember(),
+    xano: { envelope: DONE_ENVELOPE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/messages')
+})
+
+test('a finished Talent member completes the /starter-onboarding round trip', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    search: '?next=%2Fstarter-onboarding',
+    member: talentMember(),
+    xano: { envelope: DONE_ENVELOPE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/starter-onboarding')
+})
+
+test('a finished Talent member with no next lands on the Talent home', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { envelope: DONE_ENVELOPE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/starter-dashboard')
+})
+
+test('an HTTP error on the freelancer read fails open to the standard route', async () => {
+  const { location, fetchCalls } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/messages',
+    member: talentMember(),
+    xano: { getStatus: 500 },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/messages')
+  assert.equal(callsTo(fetchCalls, GET_URL).length, 1)
+})
+
+test('a rejected read, a failed trade, and a tokenless trade all fail open', async () => {
+  const rejected = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { getRejects: true },
+  })
+  const tradeFailed = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { tradeStatus: 401 },
+  })
+  const tokenless = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { tradeBody: { nothing: true } },
+  })
+
+  await flush()
+  assert.equal(rejected.location.replaced, '/starter-dashboard')
+  assert.equal(tradeFailed.location.replaced, '/starter-dashboard')
+  assert.equal(tokenless.location.replaced, '/starter-dashboard')
+  assert.equal(callsTo(tradeFailed.fetchCalls, GET_URL).length, 0)
+  assert.equal(callsTo(tokenless.fetchCalls, GET_URL).length, 0)
+})
+
+test('a member with no Memberstack cookie never reaches Xano and routes normally', async () => {
+  const { location, fetchCalls } = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    loggedOutCookie: true,
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/starter-dashboard')
+  assert.equal(fetchCalls.length, 0)
+})
+
+test('a hung onboarding check is abandoned at the 4s budget and fails open', async () => {
+  const { location, clock, aborted, logs } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/messages',
+    member: talentMember(),
+    clock: true,
+    xano: { getNeverSettles: true },
+  })
+
+  await flush()
+  assert.equal(location.replaced, undefined, 'still waiting inside the budget')
+
+  await clock.advance(4000)
+  assert.equal(location.replaced, '/messages')
+  assert.equal(aborted.length, 1, 'the in-flight request is aborted')
+  assert.ok(logs.warn.some((line) => line.includes('budget')))
+})
+
+test('a slow but in-budget check still drives the funnel', async () => {
+  const { location, clock } = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    clock: true,
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/starter-onboarding')
+  // The budget timer is cleared once the answer lands, so nothing fires later.
+  await clock.advance(10000)
+  assert.equal(location.replaced, '/starter-onboarding')
+  assert.equal(clock.pending(), 0)
+})
+
+test('Brand logins never spend a Xano call on the Talent funnel', async () => {
+  const paidBrand = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-brand-paid',
+      planConnections: [plan('pln_new-paid-plan-463h04ph')],
+    },
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+  const freeBrand = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-brand-free',
+      planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    },
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+  const unmapped = loadRouter({
+    pathname: '/auth-route',
+    member: { id: 'member-unknown', planConnections: [plan('pln_unknown')] },
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+
+  await flush()
+  assert.equal(paidBrand.location.replaced, '/brand-dashboard')
+  assert.equal(paidBrand.fetchCalls.length, 0)
+  assert.equal(freeBrand.location.replaced, '/quiz')
+  assert.equal(freeBrand.fetchCalls.length, 0)
+  assert.equal(unmapped.location.replaced, undefined)
+  assert.equal(unmapped.fetchCalls.length, 0)
+})
+
+test('funnel diagnostics are staging-only unless STARTERS_DEBUG is set', async () => {
+  const quiet = loadRouter({
+    hostname: 'www.thestarters.com',
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+  await flush()
+  assert.equal(quiet.location.replaced, '/starter-onboarding')
+  assert.equal(quiet.logs.info.length + quiet.logs.warn.length, 0)
+
+  const loud = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+  await flush()
+  assert.ok(loud.logs.info.some((line) => line.includes('/starter-onboarding')))
+
+  const debugged = loadRouter({
+    hostname: 'www.thestarters.com',
+    pathname: '/auth-route',
+    member: talentMember(),
+    debug: true,
+    xano: { envelope: NOT_DONE_ENVELOPE },
+  })
+  await flush()
+  assert.equal(debugged.location.replaced, '/starter-onboarding')
+  assert.ok(debugged.logs.info.length > 0)
+})
+
+test('the staging host gate rejects lookalike hostnames', () => {
+  const { api } = loadRouter()
+
+  for (const host of [
+    'the-starters-3-0.webflow.io',
+    'localhost',
+    '127.0.0.1',
+    'some-generated-name.trycloudflare.com',
+  ]) {
+    assert.equal(api.stagingHost(host), true, host)
+  }
+  for (const host of [
+    'notwebflow.io',
+    'evil-trycloudflare.com',
+    'www.thestarters.com',
+    '',
+  ]) {
+    assert.equal(api.stagingHost(host), false, host)
+  }
 })
 
 test('auth route fails safely when the shared role contract is missing', async () => {
