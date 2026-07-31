@@ -4,7 +4,9 @@
  * Xano reads Stripe-authoritative state from freelancers_v3. Webflow owns all
  * markup, copy, links, and styling; this module only selects authored states,
  * handles the Connect redirect, and exchanges an OAuth code for the active
- * Memberstack member.
+ * Memberstack member. Every Xano call is Bearer-authenticated: the active
+ * Memberstack session is traded for a Xano token and the server derives the
+ * member identity from that token, so no client-supplied member id is trusted.
  *
  * Designer wiring:
  *   data-stripe-connect-element="root|loading|disconnected|incomplete|
@@ -22,6 +24,8 @@
   }
 
   const XANO_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
+  const XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
+  const TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   const STATUS_PATH = '/stripe_connect/status/v3'
   const START_PATH = '/stripe_connect/start/v3'
   const EXCHANGE_PATH = '/stripe_connect/oauth_exchange/v3'
@@ -129,10 +133,55 @@
     throw new Error('No logged-in Memberstack member')
   }
 
+  let xanoTokenPromise = null
+
+  async function tradeForXanoToken() {
+    let memberstack = global.$memberstackDom
+    if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
+      memberstack = await waitForMemberstackDom()
+    }
+    if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
+      throw new Error('No logged-in Memberstack member')
+    }
+    const memberstackToken = await memberstack.getMemberCookie()
+    if (!memberstackToken) throw new Error('No logged-in Memberstack member')
+
+    const response = await global.fetch(
+      XANO_AUTH_BASE +
+        TRADE_TOKEN_PATH +
+        '?token=' +
+        encodeURIComponent(memberstackToken),
+    )
+    const data = await response.json().catch(function () {
+      return null
+    })
+    if (!response.ok) throw new Error('Xano token trade failed')
+    const token =
+      typeof data === 'string'
+        ? data
+        : data && (data.authToken || data.token)
+    if (!token) throw new Error('Xano token trade returned no token')
+    return token
+  }
+
+  function xanoToken() {
+    if (!xanoTokenPromise) {
+      xanoTokenPromise = tradeForXanoToken().catch(function (error) {
+        xanoTokenPromise = null
+        throw error
+      })
+    }
+    return xanoTokenPromise
+  }
+
   async function post(path, payload) {
+    const token = await xanoToken()
     const response = await global.fetch(XANO_BASE + path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + token,
+      },
       body: JSON.stringify(payload),
     })
     const data = await response.json().catch(function () {
@@ -150,22 +199,16 @@
     return data
   }
 
-  function fetchStatus(memberId) {
-    return post(STATUS_PATH, { member_id: memberId })
+  function fetchStatus() {
+    return post(STATUS_PATH, {})
   }
 
-  function startConnect(memberId, returnUrl) {
-    return post(START_PATH, {
-      member_id: memberId,
-      return_url: returnUrl,
-    })
+  function startConnect(returnUrl) {
+    return post(START_PATH, { return_url: returnUrl })
   }
 
-  function exchangeCode(memberId, code) {
-    return post(EXCHANGE_PATH, {
-      member_id: memberId,
-      code,
-    })
+  function exchangeCode(code) {
+    return post(EXCHANGE_PATH, { code })
   }
 
   function isStripeUrl(value) {
@@ -203,13 +246,13 @@
     )
   }
 
-  async function readSettledStatus(memberId, returnedFromStripe) {
+  async function readSettledStatus(returnedFromStripe) {
     let status = null
     const delays = returnedFromStripe ? RETURN_POLL_DELAYS_MS : [0]
 
     for (const delay of delays) {
       if (delay) await wait(delay)
-      status = await fetchStatus(memberId)
+      status = await fetchStatus()
       if (status.charges_enabled === true) break
     }
     return status
@@ -225,10 +268,10 @@
     global.dispatchEvent(new global.CustomEvent(name, { detail }))
   }
 
-  async function loadDashboardStatus(roots, memberId, returnedFromStripe) {
+  async function loadDashboardStatus(roots, returnedFromStripe) {
     renderRoots(roots, 'loading')
     try {
-      const status = await readSettledStatus(memberId, returnedFromStripe)
+      const status = await readSettledStatus(returnedFromStripe)
       const view = resolveDashboardView(status, returnedFromStripe)
       renderRoots(roots, view)
       emit('starterStripeConnectReady', { view, status })
@@ -257,7 +300,7 @@
         throw new Error('Member session changed before Stripe Connect redirect')
       }
       const returnUrl = new URL(DASHBOARD_PATH, global.location.origin).toString()
-      const result = await startConnect(activeMemberId, returnUrl)
+      const result = await startConnect(returnUrl)
       if (!isStripeUrl(result.url)) {
         throw new Error('Stripe Connect start returned an invalid URL')
       }
@@ -284,25 +327,43 @@
     if (!roots.length) return null
 
     renderRoots(roots, 'loading')
+
+    let actionPending = false
+    function runExclusive(task) {
+      if (actionPending) return Promise.resolve(null)
+      actionPending = true
+      return Promise.resolve()
+        .then(task)
+        .finally(function () {
+          actionPending = false
+        })
+    }
+
     try {
       const memberId = await currentMemberId()
       roots.forEach(function (root) {
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
-            handleStart(button, roots, memberId)
+            runExclusive(function () {
+              return handleStart(button, roots, memberId)
+            })
           })
         })
         root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
-            loadDashboardStatus(roots, memberId, false)
+            runExclusive(function () {
+              return loadDashboardStatus(roots, false)
+            })
           })
         })
       })
 
       const returnedFromStripe = returnMarker()
-      return loadDashboardStatus(roots, memberId, returnedFromStripe)
+      return runExclusive(function () {
+        return loadDashboardStatus(roots, returnedFromStripe)
+      })
     } catch (error) {
       renderRoots(roots, 'error')
       emit('starterStripeConnectError', {
@@ -352,7 +413,7 @@
         throw new Error('Stripe Connect state does not match the logged-in member')
       }
 
-      const result = await exchangeCode(memberId, params.code)
+      const result = await exchangeCode(params.code)
       if (result.connected !== true) {
         throw new Error('Stripe Connect exchange did not connect the account')
       }

@@ -1159,8 +1159,12 @@ node --test v3/starter-dashboard-points.test.js
 `starter-dashboard-stripe-connect.js` replaces the V2 nightly
 Airtable/Webflow-CMS display chain with an immediate read of the
 Stripe-authoritative V3 Xano mirror. The same module handles the
-`/stripe-connect-callback` OAuth return. It always resolves `member_id` from the
-active Memberstack session, never from the URL, page markup, or local storage.
+`/stripe-connect-callback` OAuth return. Every Xano call is Bearer-authenticated:
+the module trades the active Memberstack session for a Xano token through
+`api:g1vmSLWh/auth/trade-token/v3` and the `status/v3`, `start/v3`, and
+`oauth_exchange/v3` endpoints derive the member identity from that token
+(`auth = user_v3`). It never sends a client-supplied `member_id`, so a forged
+request cannot read or link another member's Stripe account.
 
 Load it on `/starter-dashboard` and `/stripe-connect-callback`:
 
@@ -1182,9 +1186,10 @@ root, use these values:
 
 Give every Connect or Complete setup control
 `data-stripe-connect-action="start"`. An optional retry control can use
-`data-stripe-connect-action="refresh"`. The controller prevents repeat clicks
-while `start/v3` resolves and accepts only an HTTPS `connect.stripe.com` URL
-before redirecting.
+`data-stripe-connect-action="refresh"`. A single in-flight guard is shared
+across every start and refresh control in the dashboard, so a second click on
+any control is ignored while a start or status request is resolving. Start
+accepts only an HTTPS `connect.stripe.com` URL before redirecting.
 
 The dashboard calls `status/v3` immediately. `connected:false` selects
 `disconnected`; `connected:true` with `charges_enabled:false` selects
@@ -1196,8 +1201,9 @@ to the old nightly batch state.
 
 The callback reads `code` and optional `state`, removes OAuth parameters from
 the visible URL before doing network work, resolves the current Memberstack
-member, rejects a mismatched state, and posts only `{member_id, code}` to
-`oauth_exchange/v3`. A successful exchange redirects to
+member, rejects a mismatched state, and posts only `{code}` to
+`oauth_exchange/v3` with the Bearer token identifying the member. A successful
+exchange redirects to
 `/starter-dashboard?stripe_connect=connected`, where the dashboard re-reads
 canonical status. Callback errors stay on the authored error state for safe
 recovery.

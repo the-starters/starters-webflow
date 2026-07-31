@@ -104,39 +104,57 @@ test('rendering selects authored state without changing its copy', () => {
   assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
 })
 
-test('status reads Xano with only the authenticated member id', async () => {
-  const previousFetch = global.fetch
+function stripeRequest(requests, path) {
+  return requests.find((request) => String(request.url).includes(path))
+}
+
+test('status reads Xano with a Bearer token and no client-supplied member id', async () => {
+  const previous = {
+    fetch: global.fetch,
+    memberstack: global.$memberstackDom,
+  }
   const requests = []
+  global.$memberstackDom = { getMemberCookie: async () => 'ms-cookie' }
   global.fetch = async (url, options) => {
     requests.push({ url, options })
-    return response({
-      connected: true,
-      charges_enabled: true,
-      synced_at: 123,
-    })
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({ connected: true, charges_enabled: true, synced_at: 123 })
   }
 
   try {
-    const status = await api.fetchStatus('mem-authenticated')
+    const status = await api.fetchStatus()
     assert.equal(status.charges_enabled, true)
+    const statusRequest = stripeRequest(requests, '/stripe_connect/status/v3')
     assert.equal(
-      requests[0].url,
+      statusRequest.url,
       'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/stripe_connect/status/v3',
     )
-    assert.equal(requests[0].options.method, 'POST')
-    assert.deepEqual(JSON.parse(requests[0].options.body), {
-      member_id: 'mem-authenticated',
-    })
+    assert.equal(statusRequest.options.method, 'POST')
+    assert.match(
+      statusRequest.options.headers.Authorization,
+      /^Bearer .+/,
+    )
+    assert.deepEqual(JSON.parse(statusRequest.options.body), {})
   } finally {
-    global.fetch = previousFetch
+    global.fetch = previous.fetch
+    global.$memberstackDom = previous.memberstack
   }
 })
 
 test('start sends the dashboard return URL and accepts Stripe URLs only', async () => {
-  const previousFetch = global.fetch
-  let request
+  const previous = {
+    fetch: global.fetch,
+    memberstack: global.$memberstackDom,
+  }
+  const requests = []
+  global.$memberstackDom = { getMemberCookie: async () => 'ms-cookie' }
   global.fetch = async (url, options) => {
-    request = { url, options }
+    requests.push({ url, options })
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
     return response({
       mode: 'oauth',
       url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
@@ -145,19 +163,20 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
 
   try {
     const result = await api.startConnect(
-      'mem-authenticated',
       'https://thestarters.com/starter-dashboard',
     )
     assert.equal(result.mode, 'oauth')
-    assert.deepEqual(JSON.parse(request.options.body), {
-      member_id: 'mem-authenticated',
+    const startRequest = stripeRequest(requests, '/stripe_connect/start/v3')
+    assert.match(startRequest.options.headers.Authorization, /^Bearer .+/)
+    assert.deepEqual(JSON.parse(startRequest.options.body), {
       return_url: 'https://thestarters.com/starter-dashboard',
     })
     assert.equal(api.isStripeUrl(result.url), true)
     assert.equal(api.isStripeUrl('https://evil.example/stripe'), false)
     assert.equal(api.isStripeUrl('javascript:alert(1)'), false)
   } finally {
-    global.fetch = previousFetch
+    global.fetch = previous.fetch
+    global.$memberstackDom = previous.memberstack
   }
 })
 
@@ -188,17 +207,25 @@ test('callback strips OAuth params and exchanges for the live member session', a
   }
   global.$memberstackDom = {
     getCurrentMember: async () => ({ data: { id: 'mem-live' } }),
+    getMemberCookie: async () => 'ms-cookie',
   }
   global.fetch = async (url, options) => {
     requests.push({ url, options })
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
     return response({ connected: true, charges_enabled: false })
   }
 
   try {
     const result = await api.mountCallback()
     assert.equal(result.connected, true)
-    assert.deepEqual(JSON.parse(requests[0].options.body), {
-      member_id: 'mem-live',
+    const exchangeRequest = stripeRequest(
+      requests,
+      '/stripe_connect/oauth_exchange/v3',
+    )
+    assert.match(exchangeRequest.options.headers.Authorization, /^Bearer .+/)
+    assert.deepEqual(JSON.parse(exchangeRequest.options.body), {
       code: 'code-123',
     })
     assert.equal(historyCalls.length, 1)
