@@ -170,6 +170,7 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
     assert.match(startRequest.options.headers.Authorization, /^Bearer .+/)
     assert.deepEqual(JSON.parse(startRequest.options.body), {
       return_url: 'https://thestarters.com/starter-dashboard',
+      callback_url: 'https://thestarters.com/stripe-connect-callback',
     })
     assert.equal(api.isStripeUrl(result.url), true)
     assert.equal(api.isStripeUrl('https://evil.example/stripe'), false)

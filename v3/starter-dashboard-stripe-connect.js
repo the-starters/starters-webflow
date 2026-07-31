@@ -220,9 +220,8 @@
   }
 
   function startConnect(returnUrl, sandbox) {
-    if (!sandbox) return post(START_PATH, { return_url: returnUrl })
-    const callbackUrl = new URL(CALLBACK_PATH, global.location.origin).toString()
-    return post(SANDBOX_START_PATH, {
+    const callbackUrl = new URL(CALLBACK_PATH, new URL(returnUrl).origin).toString()
+    return post(sandbox ? SANDBOX_START_PATH : START_PATH, {
       return_url: returnUrl,
       callback_url: callbackUrl,
     })
