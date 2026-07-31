@@ -1,0 +1,646 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const test = require('node:test')
+const vm = require('node:vm')
+
+const MODULE_PATH = require.resolve('./patch-onboarding-status.js')
+const REDIRECT_PATH = require.resolve('./onboarding-done-redirect.js')
+const source = fs.readFileSync(MODULE_PATH, 'utf8')
+
+const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
+const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
+const PATCH_URL = XANO + '/api:KZf7nFnk/starters_onboarding/set_onboarding_status'
+const MARKER_KEY = 'starter-onboarding-just-submitted'
+
+function flush() {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+/**
+ * A deterministic clock driving both `Date.now()` and the module's timers, so
+ * the 8s request/Memberstack budgets and the 1s/3s PATCH backoff are testable
+ * without waiting for them.
+ */
+function makeClock() {
+  let now = 1700000000000
+  let seq = 0
+  const timers = new Map()
+
+  return {
+    now: () => now,
+    pending: () => timers.size,
+    setTimeout(fn, ms) {
+      const id = ++seq
+      timers.set(id, { fn, at: now + (ms || 0), repeat: null })
+      return id
+    },
+    clearTimeout(id) {
+      timers.delete(id)
+    },
+    setInterval(fn, ms) {
+      const id = ++seq
+      timers.set(id, { fn, at: now + (ms || 0), repeat: ms || 1 })
+      return id
+    },
+    clearInterval(id) {
+      timers.delete(id)
+    },
+    async advance(ms) {
+      const target = now + ms
+      for (let guard = 0; guard < 5000; guard += 1) {
+        let dueId = null
+        let due = null
+        for (const [id, timer] of timers) {
+          if (timer.at > target) continue
+          if (!due || timer.at < due.at) {
+            due = timer
+            dueId = id
+          }
+        }
+        if (!due) break
+        now = Math.max(now, due.at)
+        if (due.repeat === null) timers.delete(dueId)
+        else due.at = now + due.repeat
+        due.fn()
+        await flush()
+      }
+      now = target
+      await flush()
+    },
+  }
+}
+
+function makeSessionStorage({ throws = false } = {}) {
+  const store = new Map()
+  const guard = () => {
+    if (throws) throw new Error('SecurityError: storage is disabled')
+  }
+  return {
+    store,
+    api: {
+      getItem(key) {
+        guard()
+        return store.has(key) ? store.get(key) : null
+      },
+      setItem(key, value) {
+        guard()
+        store.set(key, String(value))
+      },
+      removeItem(key) {
+        guard()
+        store.delete(key)
+      },
+    },
+  }
+}
+
+/** A `.w-form` wrapper holding a form and its hidden `.w-form-done` sibling. */
+function formWrapper({
+  withForm = true,
+  withDone = true,
+  doneVisible = false,
+  formAttributes = {},
+} = {}) {
+  const done = {
+    style: { display: doneVisible ? 'block' : 'none' },
+    offsetParent: null,
+    observers: [],
+  }
+  const form = {
+    style: {},
+    // A real form element always answers getAttribute; absent attributes are null.
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(formAttributes, name)
+        ? formAttributes[name]
+        : null
+    },
+  }
+  const wrapper = {
+    querySelector(selector) {
+      if (selector === 'form') return withForm ? form : null
+      if (selector === '.w-form-done') return withDone ? done : null
+      return null
+    },
+  }
+
+  return {
+    wrapper,
+    form,
+    done,
+    /** What Webflow does on a successful AJAX submit. */
+    succeed() {
+      form.style.display = 'none'
+      done.style.display = 'block'
+      done.observers.slice().forEach((observer) => observer.fire())
+    },
+  }
+}
+
+function jsonResponse(body, { ok = true, status = 200 } = {}) {
+  return { ok, status, json: async () => body }
+}
+
+function loadModule(options = {}) {
+  const clock = makeClock()
+  const hostname = options.hostname || 'the-starters-3-0.webflow.io'
+  const fetchCalls = []
+  const aborted = []
+  const logs = { warn: [], info: [] }
+  const storage = makeSessionStorage({ throws: options.storageThrows })
+  const fixtures = options.wrappers || []
+  const patchOutcomes = (options.patchOutcomes || []).slice()
+
+  const location = {
+    hostname,
+    pathname: options.pathname || '/starter-onboarding',
+    search: '',
+    href: 'https://' + hostname + (options.pathname || '/starter-onboarding'),
+  }
+
+  async function fetchStub(url, config = {}) {
+    fetchCalls.push({
+      url,
+      config,
+      // Captured at call time so "marker written before the PATCH" is provable.
+      markerAtCall: storage.store.has(MARKER_KEY) ? storage.store.get(MARKER_KEY) : null,
+    })
+
+    if (url.indexOf(TRADE_URL) === 0) {
+      if (options.tradeRejects) throw new Error('trade network failure')
+      if (options.tradeFails) return jsonResponse(null, { ok: false, status: 401 })
+      return jsonResponse(
+        Object.prototype.hasOwnProperty.call(options, 'tradeBody')
+          ? options.tradeBody
+          : 'xano-token-abc',
+      )
+    }
+
+    if (url === PATCH_URL) {
+      const outcome = patchOutcomes.length ? patchOutcomes.shift() : 'ok'
+      if (outcome === 'reject') throw new Error('patch network failure')
+      if (outcome === 'fail') return jsonResponse(null, { ok: false, status: 500 })
+      return jsonResponse({ onboarding_done: true })
+    }
+
+    throw new Error('unexpected fetch: ' + url)
+  }
+
+  const window = {
+    location,
+    sessionStorage: storage.api,
+    fetch: fetchStub,
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    setInterval: clock.setInterval,
+    clearInterval: clock.clearInterval,
+    AbortController: class {
+      constructor() {
+        this.signal = { aborted: false }
+      }
+      abort() {
+        this.signal.aborted = true
+        aborted.push(this)
+      }
+    },
+    MutationObserver: class {
+      constructor(callback) {
+        this.callback = callback
+      }
+      observe(target, init) {
+        this.target = target
+        this.init = init
+        target.observers.push(this)
+      }
+      disconnect() {
+        this.disconnected = true
+        const index = this.target.observers.indexOf(this)
+        if (index !== -1) this.target.observers.splice(index, 1)
+      }
+      fire() {
+        this.callback([], this)
+      }
+    },
+  }
+  if (options.debug) window.STARTERS_DEBUG = true
+
+  if (!options.memberstackMissing) {
+    window.$memberstackDom = {
+      getMemberCookie: async () => {
+        if (options.memberstackRejects) throw new Error('memberstack failure')
+        return options.loggedOut ? null : 'ms-jwt'
+      },
+    }
+  }
+
+  const document = {
+    readyState: options.readyState || 'complete',
+    listeners: {},
+    querySelectorAll(selector) {
+      return selector === '.w-form' ? fixtures.map((fixture) => fixture.wrapper) : []
+    },
+    addEventListener(type, handler) {
+      document.listeners[type] = document.listeners[type] || []
+      document.listeners[type].push(handler)
+    },
+  }
+
+  class FakeDate extends Date {
+    static now() {
+      return clock.now()
+    }
+  }
+
+  const context = vm.createContext({
+    window,
+    document,
+    Date: FakeDate,
+    console: {
+      warn: (message) => logs.warn.push(message),
+      info: (message) => logs.info.push(message),
+      error: (message) => logs.warn.push(message),
+    },
+  })
+
+  const run = () => vm.runInContext(source, context)
+  run()
+
+  return {
+    api: window.StartersPatchOnboardingStatus,
+    aborted,
+    clock,
+    document,
+    fetchCalls,
+    location,
+    logs,
+    run,
+    storage,
+    window,
+  }
+}
+
+const urlsOf = (calls) => calls.map((call) => call.url)
+const callsTo = (calls, url) => calls.filter((call) => call.url === url)
+
+// --- Pure helpers -------------------------------------------------------------
+
+test('only the two /starter-onboarding path forms are in scope', () => {
+  const { api } = loadModule({ pathname: '/other' })
+  assert.equal(api.isOnboardingPath('/starter-onboarding'), true)
+  assert.equal(api.isOnboardingPath('/starter-onboarding/'), true)
+  assert.equal(api.isOnboardingPath('/starter-onboarding/step-2'), false)
+  assert.equal(api.isOnboardingPath('/starter-dashboard'), false)
+  assert.equal(api.isOnboardingPath('/'), false)
+})
+
+test('host gate covers production, staging, local, and dev tunnels but not lookalikes', () => {
+  const { api } = loadModule({ pathname: '/other' })
+  for (const host of [
+    'the-starters-3-0.webflow.io',
+    'thestarters.com',
+    'www.thestarters.com',
+    'localhost',
+    '127.0.0.1',
+    'some-generated-name.trycloudflare.com',
+  ]) {
+    assert.equal(api.allowedHost(host), true, host)
+  }
+  for (const host of [
+    'notwebflow.io',
+    'evil-trycloudflare.com',
+    'thestarters.com.attacker.example',
+    'attacker.example',
+    '',
+  ]) {
+    assert.equal(api.allowedHost(host), false, host)
+  }
+})
+
+test('a Webflow done block reads as shown only once its inline display changes', () => {
+  const { api } = loadModule({ pathname: '/other' })
+  assert.equal(api.isShown(null), false)
+  assert.equal(api.isShown({ style: { display: 'none' } }), false)
+  assert.equal(api.isShown({ style: { display: 'block' } }), true)
+  assert.equal(api.isShown({ style: {}, offsetParent: null }), false)
+  assert.equal(api.isShown({ style: {}, offsetParent: {} }), true)
+})
+
+// --- Mark done on submit ------------------------------------------------------
+
+test('a Webflow success PATCHes the status endpoint with a bearer token', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls } = loadModule({ wrappers: [fixture] })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+
+  const patches = callsTo(fetchCalls, PATCH_URL)
+  assert.equal(patches.length, 1)
+  assert.equal(patches[0].config.method, 'PATCH')
+  assert.equal(patches[0].config.headers.Authorization, 'Bearer xano-token-abc')
+  assert.ok(urlsOf(fetchCalls)[0].startsWith(TRADE_URL + '?token='))
+})
+
+test('the fresh-submit marker is written before the PATCH goes out', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls, storage } = loadModule({ wrappers: [fixture] })
+  await flush()
+  assert.equal(storage.store.has(MARKER_KEY), false, 'nothing is written before a submit')
+
+  fixture.succeed()
+  await flush()
+
+  assert.equal(storage.store.get(MARKER_KEY), '1')
+  const patches = callsTo(fetchCalls, PATCH_URL)
+  assert.equal(patches[0].markerAtCall, '1', 'marker already present when the PATCH was issued')
+})
+
+test('a submit success fires at most once per form', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls } = loadModule({ wrappers: [fixture] })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  fixture.succeed() // a second mutation on the same done block
+  fixture.done.style.display = 'flex'
+  fixture.succeed()
+  await flush()
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+})
+
+test('either of the two page forms counts, and each fires on its own', async () => {
+  const full = formWrapper()
+  const consult = formWrapper()
+  const { fetchCalls } = loadModule({ wrappers: [full, consult] })
+  await flush()
+
+  consult.succeed()
+  await flush()
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+
+  full.succeed()
+  await flush()
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2)
+})
+
+test('a mutation that does not reveal the done block does not fire', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls } = loadModule({ wrappers: [fixture] })
+  await flush()
+
+  fixture.done.observers.slice().forEach((observer) => observer.fire())
+  await flush()
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
+})
+
+test('a done block already visible at boot is left to the marker, not PATCHed', async () => {
+  const fixture = formWrapper({ doneVisible: true })
+  const { fetchCalls } = loadModule({ wrappers: [fixture] })
+  await flush()
+
+  assert.equal(fixture.done.observers.length, 0)
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
+})
+
+test('a wrapper without a form or without a done block is skipped safely', async () => {
+  const formless = formWrapper({ withForm: false })
+  const doneless = formWrapper({ withDone: false })
+  const { fetchCalls, logs } = loadModule({ wrappers: [formless, doneless] })
+  await flush()
+
+  assert.equal(formless.done.observers.length, 0)
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
+  assert.ok(logs.warn.some((line) => line.includes('.w-form-done')))
+})
+
+// A Designer Redirect URL on either form navigates away on success, so
+// `.w-form-done` never appears and the PATCH below is unreachable. The module
+// cannot fix that, but it must never let it be silent.
+
+test('a form with a Webflow success redirect is flagged but still watched', async () => {
+  const attributed = formWrapper({
+    formAttributes: { 'data-name': 'starter-onboarding-full', 'data-redirect': '/dashboard' },
+  })
+  const { logs } = loadModule({ wrappers: [attributed] })
+  await flush()
+
+  assert.equal(attributed.done.observers.length, 1, 'fail open: the watcher goes on anyway')
+  assert.equal(logs.warn.length, 1, 'exactly one warning')
+  assert.ok(logs.warn[0].includes('Redirect URL'))
+  assert.ok(logs.warn[0].includes('starter-onboarding-full'), 'the form is named')
+  assert.ok(logs.warn[0].includes('/dashboard'), 'the offending value is quoted')
+
+  // Webflow has also been seen writing the setting as a bare `redirect`.
+  const bare = formWrapper({ formAttributes: { redirect: '/dashboard' } })
+  const plain = loadModule({ wrappers: [bare] })
+  await flush()
+
+  assert.equal(bare.done.observers.length, 1)
+  assert.equal(plain.logs.warn.length, 1)
+  assert.ok(plain.logs.warn[0].includes('Redirect URL'))
+})
+
+test('the success-redirect warning is staging-only, like every other diagnostic', async () => {
+  const fixture = formWrapper({
+    formAttributes: { 'data-name': 'starter-onboarding-full', 'data-redirect': '/dashboard' },
+  })
+  const { logs } = loadModule({ hostname: 'www.thestarters.com', wrappers: [fixture] })
+  await flush()
+
+  assert.equal(logs.warn.length + logs.info.length, 0)
+  assert.equal(fixture.done.observers.length, 1, 'behaviour is identical to staging')
+})
+
+test('a form without a success redirect is not flagged', async () => {
+  const plain = formWrapper()
+  const { logs } = loadModule({ wrappers: [plain] })
+  await flush()
+
+  assert.equal(plain.done.observers.length, 1)
+  assert.equal(logs.warn.length, 0)
+
+  // An empty Redirect URL field is the same as no redirect at all.
+  const emptied = formWrapper({ formAttributes: { 'data-redirect': '' } })
+  const blank = loadModule({ wrappers: [emptied] })
+  await flush()
+
+  assert.equal(emptied.done.observers.length, 1)
+  assert.equal(blank.logs.warn.length, 0)
+})
+
+test('a failed PATCH is retried on the 1s/3s backoff and can still succeed', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls, clock } = loadModule({
+    wrappers: [fixture],
+    patchOutcomes: ['fail', 'ok'],
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+
+  await clock.advance(1000)
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2)
+  await clock.advance(3000)
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2, 'no attempt after a success')
+})
+
+test('three failures give up quietly with a staging-only warning', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls, clock, logs } = loadModule({
+    wrappers: [fixture],
+    patchOutcomes: ['fail', 'reject', 'fail'],
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await clock.advance(1000)
+  await clock.advance(3000)
+  await clock.advance(10000)
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 3, 'initial attempt plus two retries')
+  assert.ok(logs.warn.some((line) => line.includes('gave up marking onboarding_done')))
+})
+
+test('a logged-out submit never reaches Xano and is not retried', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls, clock, logs } = loadModule({ loggedOut: true, wrappers: [fixture] })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  assert.equal(fetchCalls.length, 0)
+
+  await clock.advance(1000)
+  await clock.advance(3000)
+  assert.equal(fetchCalls.length, 0, 'the retry loop breaks instead of re-trading')
+  assert.ok(logs.warn.some((line) => line.includes('No Memberstack session')))
+})
+
+// --- Scope gates --------------------------------------------------------------
+
+test('does nothing on another page of the site', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls } = loadModule({
+    pathname: '/starter-dashboard',
+    wrappers: [fixture],
+  })
+  await flush()
+  assert.equal(fixture.done.observers.length, 0, 'no submit watcher outside the onboarding page')
+  assert.equal(fetchCalls.length, 0)
+
+  fixture.succeed()
+  await flush()
+  assert.equal(fetchCalls.length, 0)
+})
+
+test('does nothing on an unapproved host', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls } = loadModule({
+    hostname: 'attacker.example',
+    wrappers: [fixture],
+  })
+  await flush()
+  assert.equal(fixture.done.observers.length, 0)
+  assert.equal(fetchCalls.length, 0)
+
+  fixture.succeed()
+  await flush()
+  assert.equal(fetchCalls.length, 0)
+})
+
+test('runs on a cloudflared dev tunnel so the staging loop can QA it', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls } = loadModule({
+    hostname: 'chain-bless-robot.trycloudflare.com',
+    wrappers: [fixture],
+  })
+  await flush()
+  assert.equal(fixture.done.observers.length, 1)
+
+  fixture.succeed()
+  await flush()
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+})
+
+test('a second load of the same tag is a no-op (boot guard)', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls, run } = loadModule({ wrappers: [fixture] })
+  run()
+  await flush()
+  assert.equal(fixture.done.observers.length, 1, 'the done block is watched once, not twice')
+
+  fixture.succeed()
+  await flush()
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+})
+
+test('the trailing-slash path form is in scope at runtime too', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls } = loadModule({ pathname: '/starter-onboarding/', wrappers: [fixture] })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+})
+
+test('production stays silent while staging logs', async () => {
+  const quiet = loadModule({ hostname: 'www.thestarters.com', wrappers: [formWrapper()] })
+  await flush()
+  assert.equal(quiet.logs.warn.length + quiet.logs.info.length, 0)
+
+  const loud = loadModule({ wrappers: [formWrapper()] })
+  await flush()
+  assert.ok(loud.logs.info.length > 0)
+})
+
+test('STARTERS_DEBUG turns logging on in production without changing behaviour', async () => {
+  const fixture = formWrapper()
+  const { logs } = loadModule({
+    hostname: 'www.thestarters.com',
+    wrappers: [fixture],
+    debug: true,
+  })
+  await flush()
+  assert.equal(fixture.done.observers.length, 1)
+  assert.ok(logs.info.length > 0)
+})
+
+test('a deferred-late document waits for DOMContentLoaded before doing anything', async () => {
+  const fixture = formWrapper()
+  const { document, fetchCalls } = loadModule({
+    readyState: 'loading',
+    wrappers: [fixture],
+  })
+  await flush()
+  assert.equal(fetchCalls.length, 0)
+  assert.equal(fixture.done.observers.length, 0)
+
+  document.listeners.DOMContentLoaded.forEach((handler) => handler())
+  await flush()
+  assert.equal(fixture.done.observers.length, 1)
+
+  fixture.succeed()
+  await flush()
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+})
+
+// --- Cross-file contract ------------------------------------------------------
+
+test('both halves of the pair agree on the sessionStorage marker key', () => {
+  const { api } = loadModule({ pathname: '/other' })
+  const redirectSource = fs.readFileSync(REDIRECT_PATH, 'utf8')
+
+  assert.equal(api.justSubmittedKey, MARKER_KEY)
+  assert.ok(source.includes("'" + MARKER_KEY + "'"), 'the writer still uses the agreed key')
+  assert.ok(
+    redirectSource.includes("'" + MARKER_KEY + "'"),
+    'the reader still uses the agreed key',
+  )
+})

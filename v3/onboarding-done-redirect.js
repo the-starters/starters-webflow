@@ -1,22 +1,19 @@
 /**
- * /starter-onboarding — completion redirect and "done" marker.
+ * /starter-onboarding — completion redirect.
  *
- * Two jobs, one page-scoped module:
+ * ONE job: a member whose Xano freelancer record already carries
+ * `onboarding_done === true` is sent to /starter-dashboard with
+ * `location.replace()`, so a finished member cannot land back inside the
+ * onboarding flow from a bookmark, the back button, or a stale link.
  *
- *   1. ON LOAD — a member whose Xano freelancer record already carries
- *      `onboarding_done === true` is sent to /starter-dashboard with
- *      `location.replace()`, so a finished member cannot land back inside the
- *      onboarding flow from a bookmark, the back button, or a stale link.
- *   2. ON SUCCESSFUL SUBMIT — when either of the page's two native Webflow
- *      forms (full profile and consult; both count as completing onboarding)
- *      reaches its Webflow success state, the module PATCHes the Xano endpoint
- *      that sets `onboarding_done = true`.
- *
- * Those two jobs would fight each other without the fresh-submit beat. The
- * member who just submitted has to see the page's own completion/preview state
- * rather than be bounced to the dashboard, so a successful submit writes a
- * `sessionStorage` marker and the next load consumes it — reads it, removes it,
- * and skips job 1 exactly once.
+ * PAIRED WITH v3/patch-onboarding-status.js, which owns the writing half: when
+ * one of this page's Webflow forms reaches its success state, that module PATCHes
+ * Xano and leaves the `sessionStorage` marker 'starter-onboarding-just-submitted'
+ * behind. Unread, this check would bounce the member who just submitted straight
+ * past the page's own completion/preview state — so the marker is consumed here
+ * on every load: read it, remove it, and skip the redirect exactly once. The two
+ * files install together as a pair of deferred tags on /starter-onboarding;
+ * either one alone is a broken half of the flow.
  *
  * FAIL-OPEN, EVERYWHERE. Logged out, Memberstack missing or slow, token trade
  * rejected, HTTP error, malformed envelope, request timeout: every one of those
@@ -28,15 +25,16 @@
  * Auth is the proven trade-token flow the sibling v3 modules use (see
  * opportunities-3.0.js, v3/starter-dashboard-points.js): the Memberstack JWT
  * from `getMemberCookie()` is traded at api:g1vmSLWh/auth/trade-token/v3 for a
- * Xano token, which authorizes both api:KZf7nFnk calls as a bearer. The traded
- * token is memoized for the page so the guard and the submit hook share one
- * trade, and dropped on failure so a retry re-trades rather than reusing a
- * token that just failed.
+ * Xano token, which authorizes the api:KZf7nFnk read as a bearer. The traded
+ * token is memoized for the page, and dropped on failure so a retry re-trades
+ * rather than reusing a token that just failed.
  *
- * Install: ONE deferred tag, on /starter-onboarding only. Diagnostics are
- * staging-only (`*.webflow.io`, localhost, 127.0.0.1, `*.trycloudflare.com`, or
- * `window.STARTERS_DEBUG === true`); production is silent. Page wiring and the
- * staging QA order: see v3/ONBOARDING-DONE-REDIRECT-WIRING.md.
+ * Install: TWO deferred tags on /starter-onboarding and nowhere else — this file
+ * and v3/patch-onboarding-status.js, versioned and shipped together, never one
+ * without the other. Diagnostics are staging-only (`*.webflow.io`, localhost,
+ * 127.0.0.1, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`);
+ * production is silent. Page wiring and the staging QA order: see
+ * v3/ONBOARDING-DONE-REDIRECT-WIRING.md.
  */
 ;(function () {
   'use strict'
@@ -48,7 +46,6 @@
   var XANO_ONBOARDING_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
   var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   var GET_FREELANCERS_PATH = '/starters_onboarding/get_freelancers'
-  var SET_STATUS_PATH = '/starters_onboarding/set_onboarding_status'
 
   var ONBOARDING_PATHS = ['/starter-onboarding', '/starter-onboarding/']
   var DASHBOARD_PATH = '/starter-dashboard'
@@ -57,22 +54,17 @@
   // be dead on staging exactly when it needs QA.
   var APPROVED_HOSTS = ['the-starters-3-0.webflow.io', 'thestarters.com', 'www.thestarters.com']
 
-  // Namespaced so it cannot collide with Webflow, Memberstack, or the vendor
-  // multi-step script. sessionStorage (not localStorage) on purpose: the skip is
-  // meant for this tab's immediate post-submit view, not forever.
+  // Consumed here, written by v3/patch-onboarding-status.js.
+  // Namespaced so it cannot collide with Webflow, Memberstack, or the step-flow
+  // script driving this page's panels. sessionStorage (not localStorage) on
+  // purpose: the skip is meant for this tab's immediate post-submit view, not
+  // forever.
   var JUST_SUBMITTED_KEY = 'starter-onboarding-just-submitted'
 
   var MEMBERSTACK_TIMEOUT_MS = 8000
   var MEMBERSTACK_POLL_MS = 100
   var REQUEST_TIMEOUT_MS = 8000
-  // Initial attempt plus these two delays. A failed mark is recoverable — the
-  // next visit simply redirects late — so this gives up quietly rather than
-  // hammering Xano or blocking the completion view.
-  var PATCH_RETRY_DELAYS_MS = [1000, 3000]
 
-  var FORM_WRAPPER_SELECTOR = '.w-form'
-  var FORM_SELECTOR = 'form'
-  var DONE_SELECTOR = '.w-form-done'
   var LOG_PREFIX = '[starters onboarding-done]'
 
   /* ------------------------------ environment ------------------------------ */
@@ -139,23 +131,7 @@
     }
   }
 
-  function markJustSubmitted() {
-    try {
-      window.sessionStorage.setItem(JUST_SUBMITTED_KEY, '1')
-      return true
-    } catch (error) {
-      warn('could not write the fresh-submit marker: ' + describe(error))
-      return false
-    }
-  }
-
   /* --------------------------------- fetch --------------------------------- */
-
-  function delay(ms) {
-    return new Promise(function (resolve) {
-      window.setTimeout(resolve, ms)
-    })
-  }
 
   // A hung request must not leave the member staring at a page that may still
   // redirect. AbortController is used when present so the socket is released
@@ -286,7 +262,7 @@
     return { Authorization: 'Bearer ' + token }
   }
 
-  /* ------------------------- job 1: redirect on visit ------------------------ */
+  /* ---------------------------- redirect on visit ---------------------------- */
 
   /**
    * `{"freelancer": [ <one record> ]}`, and an empty envelope for a member with
@@ -343,127 +319,9 @@
     return true
   }
 
-  /* ------------------------ job 2: mark done on submit ----------------------- */
-
-  async function markOnboardingDone() {
-    var attempts = PATCH_RETRY_DELAYS_MS.length + 1
-    var lastError = null
-
-    for (var attempt = 0; attempt < attempts; attempt += 1) {
-      if (attempt > 0) await delay(PATCH_RETRY_DELAYS_MS[attempt - 1])
-      try {
-        var token = await xanoToken()
-        var response = await fetchWithTimeout(XANO_ONBOARDING_BASE + SET_STATUS_PATH, {
-          method: 'PATCH',
-          headers: authHeaders(token),
-        })
-        if (response && response.ok) {
-          note('onboarding_done set on attempt ' + (attempt + 1) + '.')
-          return true
-        }
-        throw new Error(
-          'set_onboarding_status responded ' + ((response && response.status) || 'no response'),
-        )
-      } catch (error) {
-        lastError = error
-        // The token may itself be the reason this failed; re-trade next round
-        // rather than replaying a token Xano just rejected.
-        forgetXanoToken()
-        if (error && error.code === 'logged-out') break
-      }
-    }
-
-    warn(
-      'gave up marking onboarding_done after ' +
-        attempts +
-        ' attempts: ' +
-        describe(lastError) +
-        ' — the member can still be marked on a later visit.',
-    )
-    return false
-  }
-
-  /**
-   * Webflow's AJAX success path hides the `form` and reveals its sibling
-   * `.w-form-done`, which ships with an inline `display:none`, by writing a new
-   * inline `display`. So an inline value that is neither empty nor "none" is the
-   * positive signal; `offsetParent` is the fallback for a page whose done state
-   * is driven by a class instead.
-   */
-  function isShown(element) {
-    if (!element) return false
-    var inline = (element.style && element.style.display) || ''
-    if (inline === 'none') return false
-    if (inline !== '') return true
-    return !!element.offsetParent
-  }
-
-  // Success is detected per `.w-form` wrapper, not per submit click: a click
-  // only means "tried", and the vendor multi-step script on this page fires its
-  // own click handling first. Firing at most once per wrapper per page load
-  // keeps a re-render or a second mutation from double-PATCHing.
-  function handleFormSuccess(wrapper) {
-    if (!wrapper || wrapper.__startersOnboardingDoneFired) return false
-    wrapper.__startersOnboardingDoneFired = true
-
-    // Set the marker BEFORE the PATCH: the completion view must survive even if
-    // the write fails or the member navigates while it is in flight.
-    markJustSubmitted()
-    note('form success detected; marking onboarding done.')
-    markOnboardingDone().catch(function (error) {
-      warn('unexpected failure marking onboarding done: ' + describe(error))
-    })
-    return true
-  }
-
-  function watchForm(wrapper) {
-    if (!wrapper || typeof wrapper.querySelector !== 'function') return false
-    if (wrapper.__startersOnboardingDoneWatched) return false
-    if (!wrapper.querySelector(FORM_SELECTOR)) return false
-
-    var done = wrapper.querySelector(DONE_SELECTOR)
-    if (!done) {
-      warn('a .w-form wrapper on this page has no ' + DONE_SELECTOR + ' sibling; skipping it.')
-      return false
-    }
-    // Already visible at parse time means this is not a submit we witnessed
-    // (a re-served page, an authored preview). Job 1's marker owns that case.
-    if (isShown(done)) return false
-    if (typeof window.MutationObserver !== 'function') {
-      warn('MutationObserver unavailable; submit success cannot be detected.')
-      return false
-    }
-
-    wrapper.__startersOnboardingDoneWatched = true
-    var observer = new window.MutationObserver(function () {
-      if (!isShown(done)) return
-      observer.disconnect()
-      handleFormSuccess(wrapper)
-    })
-    observer.observe(done, { attributes: true, attributeFilter: ['style', 'class'] })
-    return true
-  }
-
-  function watchForms() {
-    var wrappers = document.querySelectorAll(FORM_WRAPPER_SELECTOR)
-    var list = wrappers ? Array.prototype.slice.call(wrappers) : []
-    if (list.length === 0) {
-      warn('no ' + FORM_WRAPPER_SELECTOR + ' wrapper found; nothing to watch for submit success.')
-      return 0
-    }
-    var watched = 0
-    list.forEach(function (wrapper) {
-      if (watchForm(wrapper)) watched += 1
-    })
-    note('watching ' + watched + ' of ' + list.length + ' form wrappers for success.')
-    return watched
-  }
-
   /* ---------------------------------- boot ---------------------------------- */
 
   function start() {
-    watchForms()
-
     // Consumed on every load, whether or not it is present, so a marker left by
     // an abandoned submit can never suppress more than the one next load.
     if (consumeJustSubmitted()) {
@@ -482,9 +340,6 @@
     isOnboardingPath: isOnboardingPath,
     diagnosticsEnabled: diagnosticsEnabled,
     onboardingDone: onboardingDone,
-    isShown: isShown,
-    watchForms: watchForms,
-    markOnboardingDone: markOnboardingDone,
     redirectIfDone: redirectIfDone,
     justSubmittedKey: JUST_SUBMITTED_KEY,
     dashboardPath: DASHBOARD_PATH,

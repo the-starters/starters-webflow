@@ -8,7 +8,6 @@ const source = fs.readFileSync(require.resolve('./onboarding-done-redirect.js'),
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
 const GET_URL = XANO + '/api:KZf7nFnk/starters_onboarding/get_freelancers'
-const PATCH_URL = XANO + '/api:KZf7nFnk/starters_onboarding/set_onboarding_status'
 const MARKER_KEY = 'starter-onboarding-just-submitted'
 const DASHBOARD = '/starter-dashboard'
 const DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: true }] }
@@ -96,35 +95,6 @@ function makeSessionStorage({ throws = false } = {}) {
   }
 }
 
-/** A `.w-form` wrapper holding a form and its hidden `.w-form-done` sibling. */
-function formWrapper({ withForm = true, withDone = true, doneVisible = false } = {}) {
-  const done = {
-    style: { display: doneVisible ? 'block' : 'none' },
-    offsetParent: null,
-    observers: [],
-  }
-  const form = { style: {} }
-  const wrapper = {
-    querySelector(selector) {
-      if (selector === 'form') return withForm ? form : null
-      if (selector === '.w-form-done') return withDone ? done : null
-      return null
-    },
-  }
-
-  return {
-    wrapper,
-    form,
-    done,
-    /** What Webflow does on a successful AJAX submit. */
-    succeed() {
-      form.style.display = 'none'
-      done.style.display = 'block'
-      done.observers.slice().forEach((observer) => observer.fire())
-    },
-  }
-}
-
 function jsonResponse(body, { ok = true, status = 200 } = {}) {
   return { ok, status, json: async () => body }
 }
@@ -137,8 +107,6 @@ function loadModule(options = {}) {
   const logs = { warn: [], info: [] }
   const storage = makeSessionStorage({ throws: options.storageThrows })
   if (options.markerPresent) storage.store.set(MARKER_KEY, '1')
-  const fixtures = options.wrappers || []
-  const patchOutcomes = (options.patchOutcomes || []).slice()
 
   const location = {
     hostname,
@@ -151,12 +119,7 @@ function loadModule(options = {}) {
   }
 
   async function fetchStub(url, config = {}) {
-    fetchCalls.push({
-      url,
-      config,
-      // Captured at call time so "marker written before the PATCH" is provable.
-      markerAtCall: storage.store.has(MARKER_KEY) ? storage.store.get(MARKER_KEY) : null,
-    })
+    fetchCalls.push({ url, config })
 
     if (url.indexOf(TRADE_URL) === 0) {
       if (options.tradeRejects) throw new Error('trade network failure')
@@ -179,13 +142,6 @@ function loadModule(options = {}) {
       )
     }
 
-    if (url === PATCH_URL) {
-      const outcome = patchOutcomes.length ? patchOutcomes.shift() : 'ok'
-      if (outcome === 'reject') throw new Error('patch network failure')
-      if (outcome === 'fail') return jsonResponse(null, { ok: false, status: 500 })
-      return jsonResponse({ onboarding_done: true })
-    }
-
     throw new Error('unexpected fetch: ' + url)
   }
 
@@ -206,24 +162,6 @@ function loadModule(options = {}) {
         aborted.push(this)
       }
     },
-    MutationObserver: class {
-      constructor(callback) {
-        this.callback = callback
-      }
-      observe(target, init) {
-        this.target = target
-        this.init = init
-        target.observers.push(this)
-      }
-      disconnect() {
-        this.disconnected = true
-        const index = this.target.observers.indexOf(this)
-        if (index !== -1) this.target.observers.splice(index, 1)
-      }
-      fire() {
-        this.callback([], this)
-      }
-    },
   }
   if (options.debug) window.STARTERS_DEBUG = true
 
@@ -239,9 +177,6 @@ function loadModule(options = {}) {
   const document = {
     readyState: options.readyState || 'complete',
     listeners: {},
-    querySelectorAll(selector) {
-      return selector === '.w-form' ? fixtures.map((fixture) => fixture.wrapper) : []
-    },
     addEventListener(type, handler) {
       document.listeners[type] = document.listeners[type] || []
       document.listeners[type].push(handler)
@@ -332,16 +267,7 @@ test('only a literal true in the freelancer envelope counts as done', () => {
   assert.equal(api.onboardingDone(null), false)
 })
 
-test('a Webflow done block reads as shown only once its inline display changes', () => {
-  const { api } = loadModule({ pathname: '/other' })
-  assert.equal(api.isShown(null), false)
-  assert.equal(api.isShown({ style: { display: 'none' } }), false)
-  assert.equal(api.isShown({ style: { display: 'block' } }), true)
-  assert.equal(api.isShown({ style: {}, offsetParent: null }), false)
-  assert.equal(api.isShown({ style: {}, offsetParent: {} }), true)
-})
-
-// --- Job 1: redirect on visit -------------------------------------------------
+// --- Redirect on visit --------------------------------------------------------
 
 test('a completed member is replaced to the dashboard with a bearer-authorized read', async () => {
   const { location, fetchCalls } = loadModule()
@@ -451,27 +377,17 @@ test('storage that throws (Safari private mode) does not break the redirect', as
 // --- Scope gates --------------------------------------------------------------
 
 test('does nothing on another page of the site', async () => {
-  const fixture = formWrapper()
-  const { location, fetchCalls } = loadModule({
-    pathname: '/starter-dashboard',
-    wrappers: [fixture],
-  })
+  const { location, fetchCalls } = loadModule({ pathname: '/starter-dashboard' })
   await flush()
   assert.equal(location.replaced, undefined)
   assert.equal(fetchCalls.length, 0)
-  assert.equal(fixture.done.observers.length, 0, 'no submit watcher outside the onboarding page')
 })
 
 test('does nothing on an unapproved host', async () => {
-  const fixture = formWrapper()
-  const { location, fetchCalls } = loadModule({
-    hostname: 'attacker.example',
-    wrappers: [fixture],
-  })
+  const { location, fetchCalls } = loadModule({ hostname: 'attacker.example' })
   await flush()
   assert.equal(location.replaced, undefined)
   assert.equal(fetchCalls.length, 0)
-  assert.equal(fixture.done.observers.length, 0)
 })
 
 test('runs on a cloudflared dev tunnel so the staging loop can QA it', async () => {
@@ -493,139 +409,7 @@ test('the trailing-slash path form is in scope at runtime too', async () => {
   assert.equal(location.replaced, DASHBOARD)
 })
 
-// --- Job 2: mark done on submit ----------------------------------------------
-
-test('a Webflow success PATCHes the status endpoint with a bearer token', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls } = loadModule({
-    markerPresent: true, // skip job 1 so only the submit path is exercised
-    wrappers: [fixture],
-  })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-
-  const patches = callsTo(fetchCalls, PATCH_URL)
-  assert.equal(patches.length, 1)
-  assert.equal(patches[0].config.method, 'PATCH')
-  assert.equal(patches[0].config.headers.Authorization, 'Bearer xano-token-abc')
-})
-
-test('the fresh-submit marker is written before the PATCH goes out', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls, storage } = loadModule({ markerPresent: true, wrappers: [fixture] })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-
-  assert.equal(storage.store.get(MARKER_KEY), '1')
-  const patches = callsTo(fetchCalls, PATCH_URL)
-  assert.equal(patches[0].markerAtCall, '1', 'marker already present when the PATCH was issued')
-})
-
-test('a submit success fires at most once per form', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls } = loadModule({ markerPresent: true, wrappers: [fixture] })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-  fixture.succeed() // a second mutation on the same done block
-  fixture.done.style.display = 'flex'
-  fixture.succeed()
-  await flush()
-
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
-})
-
-test('either of the two page forms counts, and each fires on its own', async () => {
-  const full = formWrapper()
-  const consult = formWrapper()
-  const { fetchCalls } = loadModule({ markerPresent: true, wrappers: [full, consult] })
-  await flush()
-
-  consult.succeed()
-  await flush()
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
-
-  full.succeed()
-  await flush()
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2)
-})
-
-test('a mutation that does not reveal the done block does not fire', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls } = loadModule({ markerPresent: true, wrappers: [fixture] })
-  await flush()
-
-  fixture.done.observers.slice().forEach((observer) => observer.fire())
-  await flush()
-
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
-})
-
-test('a done block already visible at boot is left to the marker, not PATCHed', async () => {
-  const fixture = formWrapper({ doneVisible: true })
-  const { fetchCalls } = loadModule({ markerPresent: true, wrappers: [fixture] })
-  await flush()
-
-  assert.equal(fixture.done.observers.length, 0)
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
-})
-
-test('a wrapper without a form or without a done block is skipped safely', async () => {
-  const formless = formWrapper({ withForm: false })
-  const doneless = formWrapper({ withDone: false })
-  const { fetchCalls, logs } = loadModule({
-    markerPresent: true,
-    wrappers: [formless, doneless],
-  })
-  await flush()
-
-  assert.equal(formless.done.observers.length, 0)
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
-  assert.ok(logs.warn.some((line) => line.includes('.w-form-done')))
-})
-
-test('a failed PATCH is retried on the 1s/3s backoff and can still succeed', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls, clock } = loadModule({
-    markerPresent: true,
-    wrappers: [fixture],
-    patchOutcomes: ['fail', 'ok'],
-  })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
-
-  await clock.advance(1000)
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2)
-  await clock.advance(3000)
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2, 'no attempt after a success')
-})
-
-test('three failures give up quietly with a staging-only warning', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls, clock, logs } = loadModule({
-    markerPresent: true,
-    wrappers: [fixture],
-    patchOutcomes: ['fail', 'reject', 'fail'],
-  })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-  await clock.advance(1000)
-  await clock.advance(3000)
-  await clock.advance(10000)
-
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 3, 'initial attempt plus two retries')
-  assert.ok(logs.warn.some((line) => line.includes('gave up marking onboarding_done')))
-})
+// --- Diagnostics and boot -----------------------------------------------------
 
 test('production stays silent while staging logs', async () => {
   const quiet = loadModule({ hostname: 'www.thestarters.com', envelope: NOT_DONE_ENVELOPE })
@@ -649,17 +433,11 @@ test('STARTERS_DEBUG turns logging on in production without changing behaviour',
 })
 
 test('a deferred-late document waits for DOMContentLoaded before doing anything', async () => {
-  const fixture = formWrapper()
-  const { document, fetchCalls, location } = loadModule({
-    readyState: 'loading',
-    wrappers: [fixture],
-  })
+  const { document, fetchCalls, location } = loadModule({ readyState: 'loading' })
   await flush()
   assert.equal(fetchCalls.length, 0)
-  assert.equal(fixture.done.observers.length, 0)
 
   document.listeners.DOMContentLoaded.forEach((handler) => handler())
   await flush()
   assert.equal(location.replaced, DASHBOARD)
-  assert.equal(fixture.done.observers.length, 1)
 })
