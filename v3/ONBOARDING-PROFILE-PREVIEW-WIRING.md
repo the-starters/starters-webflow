@@ -3,8 +3,8 @@
 Status: Shipped and installed on the `starter-onboarding` page (script pinned
 `@v1.59.35`). The [Xano auth flip](#xano-auth-flip-done-2026-07-31) landed
 2026-07-31, and the staging `?ms=` member-preview tester was
-[removed](#removed-staging-tester-msmemberstack_id) with it — that removal is
-pending a tag (the first one after `v1.59.35`).
+[removed](#removed-staging-tester-msmemberstack_id) with it — that removal shipped in
+`v1.59.42` (the page embed still pins `@v1.59.35` until bumped).
 
 Known open regression: the page has **no loader, empty, or error state elements**
 — they were lost when the card was componentized. See
@@ -866,7 +866,7 @@ the fix.
 
 ## REMOVED staging tester: `?ms=<memberstack_id>`
 
-**Gone from the script as of 2026-07-31**, in the first tag after `v1.59.35`.
+**Gone from the script as of 2026-07-31**, shipped in `v1.59.42`.
 
 It appended `?ms=<memberstack_id>` to the page URL to render *that* member's card
 without their login, by calling `instance.setParam('memberstack_id', <id>)` on
