@@ -9,7 +9,7 @@ const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
 const GET_URL = XANO + '/api:KZf7nFnk/starters_onboarding/get_freelancers'
 const PATCH_URL = XANO + '/api:KZf7nFnk/starters_onboarding/set_onboarding_status'
-const MARKER_KEY = 'starters-onboarding-just-submitted'
+const MARKER_KEY = 'starter-onboarding-just-submitted'
 const DASHBOARD = '/starter-dashboard'
 const DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: true }] }
 const NOT_DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: false }] }
@@ -142,9 +142,9 @@ function loadModule(options = {}) {
 
   const location = {
     hostname,
-    pathname: options.pathname || '/starters-onboarding',
+    pathname: options.pathname || '/starter-onboarding',
     search: '',
-    href: 'https://' + hostname + (options.pathname || '/starters-onboarding'),
+    href: 'https://' + hostname + (options.pathname || '/starter-onboarding'),
     replace(value) {
       location.replaced = value
     },
@@ -287,11 +287,11 @@ const callsTo = (calls, url) => calls.filter((call) => call.url === url)
 
 // --- Pure helpers -------------------------------------------------------------
 
-test('only the two /starters-onboarding path forms are in scope', () => {
+test('only the two /starter-onboarding path forms are in scope', () => {
   const { api } = loadModule({ pathname: '/other' })
-  assert.equal(api.isOnboardingPath('/starters-onboarding'), true)
-  assert.equal(api.isOnboardingPath('/starters-onboarding/'), true)
-  assert.equal(api.isOnboardingPath('/starters-onboarding/step-2'), false)
+  assert.equal(api.isOnboardingPath('/starter-onboarding'), true)
+  assert.equal(api.isOnboardingPath('/starter-onboarding/'), true)
+  assert.equal(api.isOnboardingPath('/starter-onboarding/step-2'), false)
   assert.equal(api.isOnboardingPath('/starter-dashboard'), false)
   assert.equal(api.isOnboardingPath('/'), false)
 })
@@ -488,7 +488,7 @@ test('a second load of the same tag is a no-op (boot guard)', async () => {
 })
 
 test('the trailing-slash path form is in scope at runtime too', async () => {
-  const { location } = loadModule({ pathname: '/starters-onboarding/' })
+  const { location } = loadModule({ pathname: '/starter-onboarding/' })
   await flush()
   assert.equal(location.replaced, DASHBOARD)
 })

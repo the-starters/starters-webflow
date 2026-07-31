@@ -1,5 +1,5 @@
 /**
- * /starters-onboarding — completion redirect and "done" marker.
+ * /starter-onboarding — completion redirect and "done" marker.
  *
  * Two jobs, one page-scoped module:
  *
@@ -33,7 +33,7 @@
  * trade, and dropped on failure so a retry re-trades rather than reusing a
  * token that just failed.
  *
- * Install: ONE deferred tag, on /starters-onboarding only. Diagnostics are
+ * Install: ONE deferred tag, on /starter-onboarding only. Diagnostics are
  * staging-only (`*.webflow.io`, localhost, 127.0.0.1, `*.trycloudflare.com`, or
  * `window.STARTERS_DEBUG === true`); production is silent. Page wiring and the
  * staging QA order: see v3/ONBOARDING-DONE-REDIRECT-WIRING.md.
@@ -50,7 +50,7 @@
   var GET_FREELANCERS_PATH = '/starters_onboarding/get_freelancers'
   var SET_STATUS_PATH = '/starters_onboarding/set_onboarding_status'
 
-  var ONBOARDING_PATHS = ['/starters-onboarding', '/starters-onboarding/']
+  var ONBOARDING_PATHS = ['/starter-onboarding', '/starter-onboarding/']
   var DASHBOARD_PATH = '/starter-dashboard'
   // Same production allowlist as v3/route-guard.js, plus the local/dev-tunnel
   // hosts the ./dev-tunnel.sh loop serves from — without those the module would
@@ -60,7 +60,7 @@
   // Namespaced so it cannot collide with Webflow, Memberstack, or the vendor
   // multi-step script. sessionStorage (not localStorage) on purpose: the skip is
   // meant for this tab's immediate post-submit view, not forever.
-  var JUST_SUBMITTED_KEY = 'starters-onboarding-just-submitted'
+  var JUST_SUBMITTED_KEY = 'starter-onboarding-just-submitted'
 
   var MEMBERSTACK_TIMEOUT_MS = 8000
   var MEMBERSTACK_POLL_MS = 100
@@ -296,8 +296,12 @@
    */
   function onboardingDone(payload) {
     var records = payload && payload.freelancer
-    if (!Array.isArray(records) || records.length === 0) return false
+    if (!Array.isArray(records) || records.length === 0) {
+      note('freelancer record: none — onboarding_done unknown, treated as not done.')
+      return false
+    }
     var record = records[0]
+    note('freelancer record found; onboarding_done = ' + (record ? JSON.stringify(record.onboarding_done) : 'unreadable record'))
     return !!record && record.onboarding_done === true
   }
 

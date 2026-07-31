@@ -247,31 +247,31 @@ test('build-profile onboarding pages are Talent only', () => {
   }
 })
 
-test('/starters-onboarding is guarded Talent only', () => {
+test('/starter-onboarding is guarded Talent only', () => {
   const { api } = loadGuard()
-  assert.equal(api.isGuardedPath('/starters-onboarding'), true)
-  assert.equal(api.redirectTargetFor(TALENT, '/starters-onboarding'), '')
-  assert.equal(api.redirectTargetFor(BRAND_PAID, '/starters-onboarding'), '/brand-dashboard')
-  assert.equal(api.redirectTargetFor(TEST_BRAND, '/starters-onboarding'), '/brand-dashboard')
-  assert.equal(api.redirectTargetFor(BRAND_FREE, '/starters-onboarding'), '/quiz')
+  assert.equal(api.isGuardedPath('/starter-onboarding'), true)
+  assert.equal(api.redirectTargetFor(TALENT, '/starter-onboarding'), '')
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/starter-onboarding'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(TEST_BRAND, '/starter-onboarding'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/starter-onboarding'), '/quiz')
 })
 
-test('a logged-out visitor to /starters-onboarding is sent to login and can return', async () => {
+test('a logged-out visitor to /starter-onboarding is sent to login and can return', async () => {
   const { location, attributes } = loadGuard({
-    pathname: '/starters-onboarding',
+    pathname: '/starter-onboarding',
     member: null,
   })
   await flush()
   assert.equal(
     location.replaced,
-    '/login?next=' + encodeURIComponent('/starters-onboarding'),
+    '/login?next=' + encodeURIComponent('/starter-onboarding'),
   )
   assert.equal(attributes['data-route-guard'], 'redirecting')
 })
 
-test('redirects a Brand session away from /starters-onboarding to its own default', async () => {
+test('redirects a Brand session away from /starter-onboarding to its own default', async () => {
   const { location, attributes } = loadGuard({
-    pathname: '/starters-onboarding',
+    pathname: '/starter-onboarding',
     member: BRAND_PAID,
   })
   await flush()

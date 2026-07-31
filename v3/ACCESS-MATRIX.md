@@ -57,7 +57,7 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 | `/build-profile/select-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
 | `/build-profile/full-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
 | `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
-| `/starters-onboarding` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding form; onboarding-done redirect handled by `v3/onboarding-done-redirect.js` (page-scoped), not this guard |
+| `/starter-onboarding` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding form; onboarding-done redirect handled by `v3/onboarding-done-redirect.js` (page-scoped), not this guard |
 
 > **Logged-out Quiz Results (updated 2026-07-24):** `/quiz-results` remains
 > outside `route-guard.js`, but `quiz-results.js` redirects a positively

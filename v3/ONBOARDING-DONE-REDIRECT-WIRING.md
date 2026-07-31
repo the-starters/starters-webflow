@@ -3,7 +3,7 @@
 Status: Local implementation only; not published
 
 `v3/onboarding-done-redirect.js` is a **page-scoped** module for
-`/starters-onboarding`. It does two things that belong together, and nothing
+`/starter-onboarding`. It does two things that belong together, and nothing
 else: it keeps a member who has already finished onboarding out of the
 onboarding flow, and it records the completion when a member finishes it.
 
@@ -65,7 +65,7 @@ The two jobs would otherwise fight. A member submits, Xano flips
 preview state the page is authored to show — would redirect them away before
 they could read it.
 
-So a successful submit writes `sessionStorage['starters-onboarding-just-submitted'] = '1'`
+So a successful submit writes `sessionStorage['starter-onboarding-just-submitted'] = '1'`
 **before** the PATCH is issued, and the next load *consumes* it: reads it,
 removes it, and skips the redirect check once. Written before the PATCH on
 purpose, so the completion view survives even if the write fails or the member
@@ -104,7 +104,7 @@ blocks or reloads the completion view.
 ## Webflow install
 
 One deferred tag, in **Page Settings → Custom Code → Before `</body>`** on
-`/starters-onboarding` only. Do not install it sitewide.
+`/starter-onboarding` only. Do not install it sitewide.
 
 ```html
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/onboarding-done-redirect.js" defer></script>
@@ -127,7 +127,7 @@ Pin `@vX.Y.Z` instead of `@latest` for production stability once the tag exists.
    module logs a staging warning and skips it).
 4. Nothing else on the page should show `.w-form-done` for a non-submit reason —
    that is read as a successful submit.
-5. `/starters-onboarding` is Talent-only in the route-guard matrix. Leave that
+5. `/starter-onboarding` is Talent-only in the route-guard matrix. Leave that
    entry alone; this module assumes the guard has already done role routing.
 
 ## Staging QA order
@@ -137,13 +137,13 @@ Run behind the Webflow password on `the-starters-3-0.webflow.io`, or through
 `*.webflow.io`, and `*.trycloudflare.com` so the tunnel loop works). Open the
 console — staging is chatty, production is silent.
 
-1. **Logged out.** Open `/starters-onboarding`. The page renders, no redirect,
+1. **Logged out.** Open `/starter-onboarding`. The page renders, no redirect,
    no Xano call in the Network tab.
 2. **Fresh Talent, not yet done.** Log in, open the page. It renders. The
    console notes "onboarding not marked done".
 3. **Submit the full-profile form.** On the success state: confirm the
    `PATCH .../set_onboarding_status` fired and returned `{"onboarding_done": true}`,
-   and that `sessionStorage['starters-onboarding-just-submitted']` was set.
+   and that `sessionStorage['starter-onboarding-just-submitted']` was set.
    Confirm you are **not** redirected — the completion state must stay visible.
 4. **Reload immediately.** This is the fresh-submit beat: the page renders once
    more, no Xano read at all, and the sessionStorage key is now gone.
