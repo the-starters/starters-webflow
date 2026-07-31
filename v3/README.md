@@ -1213,6 +1213,33 @@ Each root reflects the selected state in `data-stripe-connect-status` and
 `starterStripeConnectReady`, `starterStripeConnectRedirect`, and
 `starterStripeConnectError` events for diagnostics.
 
+### Isolated sandbox flow
+
+An opt-in sandbox path lets the staging V3 Test Talent member complete a
+Connect OAuth round-trip without creating a live-mode connection or writing a
+test account ID into `freelancers_v3`. It activates only when both conditions
+hold: the page is served from the Webflow staging host
+`the-starters-3-0.webflow.io`, and the request carries `stripe_connect_sandbox=1`
+in the query string. Every other host or a missing flag keeps the production
+flow unchanged. Like the OAuth parameters, `stripe_connect_sandbox` is stripped
+from the visible URL before network work.
+
+In sandbox mode `start` posts to `/stripe_connect/sandbox/start/v3` with the
+dashboard `return_url` plus an explicit `callback_url` built from
+`/stripe-connect-callback`, and the exchange posts to
+`/stripe_connect/sandbox/oauth_exchange/v3`. Both sandbox endpoints stay
+Bearer-authenticated the same way as the production ones; the Xano exchange
+uses the test secret key and performs no database write.
+
+The sandbox callback is staging-only and self-identifying: its OAuth `state` is
+the member id prefixed with `sandbox:`. The callback rejects a `sandbox:` state
+unless it is running on the staging host, requires the state to equal
+`sandbox:<member_id>`, and requires the exchange to return `sandbox: true` so a
+sandbox request can never resolve through the production, persisted path. A
+successful sandbox exchange redirects to
+`/starter-dashboard?stripe_connect=connected&stripe_connect_sandbox=verified`,
+after which the dashboard re-reads canonical status exactly as in production.
+
 Run its focused tests with:
 
 ```sh
