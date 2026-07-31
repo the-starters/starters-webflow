@@ -1153,3 +1153,68 @@ Run its focused tests with:
 ```sh
 node --test v3/starter-dashboard-points.test.js
 ```
+
+## Starter Dashboard Stripe Connect
+
+`starter-dashboard-stripe-connect.js` replaces the V2 nightly
+Airtable/Webflow-CMS display chain with an immediate read of the
+Stripe-authoritative V3 Xano mirror. The same module handles the
+`/stripe-connect-callback` OAuth return. Every Xano call is Bearer-authenticated:
+the module trades the active Memberstack session for a Xano token through
+`api:g1vmSLWh/auth/trade-token/v3` and the `status/v3`, `start/v3`, and
+`oauth_exchange/v3` endpoints derive the member identity from that token
+(`auth = user_v3`). It never sends a client-supplied `member_id`, so a forged
+request cannot read or link another member's Stripe account.
+
+Load it on `/starter-dashboard` and `/stripe-connect-callback`:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-dashboard-stripe-connect.js"></script>
+```
+
+Wire a root on each page with `data-stripe-connect-element="root"`. Within the
+root, use these values:
+
+| Value | Purpose |
+| --- | --- |
+| `loading` | Immediate loading state while Memberstack and Xano resolve |
+| `disconnected` | No connected Stripe account; contains the authored connect CTA |
+| `incomplete` | Connected account whose charges are not enabled; contains the authored “Complete setup” CTA |
+| `ready` | Stripe reports `charges_enabled: true` |
+| `review` | The user just returned from Stripe, but the authoritative enabled flag has not settled after short polling |
+| `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code |
+
+Give every Connect or Complete setup control
+`data-stripe-connect-action="start"`. An optional retry control can use
+`data-stripe-connect-action="refresh"`. A single in-flight guard is shared
+across every start and refresh control in the dashboard, so a second click on
+any control is ignored while a start or status request is resolving. Start
+accepts only an HTTPS `connect.stripe.com` URL before redirecting.
+
+The dashboard calls `status/v3` immediately. `connected:false` selects
+`disconnected`; `connected:true` with `charges_enabled:false` selects
+`incomplete`; and `charges_enabled:true` selects `ready`. After either the
+OAuth callback or Stripe-hosted onboarding returns, the controller polls the
+status briefly to absorb webhook timing. If the flag is still false, it selects
+the authored `review` state instead of painting a false success or falling back
+to the old nightly batch state.
+
+The callback reads `code` and optional `state`, removes OAuth parameters from
+the visible URL before doing network work, resolves the current Memberstack
+member, rejects a mismatched state, and posts only `{code}` to
+`oauth_exchange/v3` with the Bearer token identifying the member. A successful
+exchange redirects to
+`/starter-dashboard?stripe_connect=connected`, where the dashboard re-reads
+canonical status. Callback errors stay on the authored error state for safe
+recovery.
+
+Each root reflects the selected state in `data-stripe-connect-status` and
+`data-stripe-connect-view`. The module also emits
+`starterStripeConnectReady`, `starterStripeConnectRedirect`, and
+`starterStripeConnectError` events for diagnostics.
+
+Run its focused tests with:
+
+```sh
+node --test v3/starter-dashboard-stripe-connect.test.js
+```

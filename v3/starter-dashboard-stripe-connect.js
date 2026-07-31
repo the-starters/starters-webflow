@@ -1,0 +1,480 @@
+/**
+ * Starter Dashboard 3.0 — Stripe Connect status and callback controller.
+ *
+ * Xano reads Stripe-authoritative state from freelancers_v3. Webflow owns all
+ * markup, copy, links, and styling; this module only selects authored states,
+ * handles the Connect redirect, and exchanges an OAuth code for the active
+ * Memberstack member. Every Xano call is Bearer-authenticated: the active
+ * Memberstack session is traded for a Xano token and the server derives the
+ * member identity from that token, so no client-supplied member id is trusted.
+ *
+ * Designer wiring:
+ *   data-stripe-connect-element="root|loading|disconnected|incomplete|
+ *   ready|review|error"
+ *   data-stripe-connect-action="start|refresh"
+ */
+;(function (global) {
+  'use strict'
+
+  const isCommonJs =
+    typeof module !== 'undefined' && typeof module.exports !== 'undefined'
+  if (!isCommonJs) {
+    if (global.__startersStripeConnectBooted) return
+    global.__startersStripeConnectBooted = true
+  }
+
+  const XANO_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
+  const XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
+  const TRADE_TOKEN_PATH = '/auth/trade-token/v3'
+  const STATUS_PATH = '/stripe_connect/status/v3'
+  const START_PATH = '/stripe_connect/start/v3'
+  const EXCHANGE_PATH = '/stripe_connect/oauth_exchange/v3'
+  const DASHBOARD_PATH = '/starter-dashboard'
+  const CALLBACK_PATH = '/stripe-connect-callback'
+  const MEMBERSTACK_TIMEOUT_MS = 10000
+  const RETURN_POLL_DELAYS_MS = [0, 750, 1500, 3000, 5000]
+  const ELEMENT_ATTR = 'data-stripe-connect-element'
+  const ACTION_ATTR = 'data-stripe-connect-action'
+  const STATES = [
+    'loading',
+    'disconnected',
+    'incomplete',
+    'ready',
+    'review',
+    'error',
+  ]
+  const elementSelector = (name) =>
+    '[' + ELEMENT_ATTR + '="' + name + '"]'
+  const actionSelector = (name) => '[' + ACTION_ATTR + '="' + name + '"]'
+
+  function show(element, visible) {
+    if (!element) return
+    element.hidden = !visible
+    element.style.display = visible ? '' : 'none'
+  }
+
+  function setView(root, view) {
+    STATES.forEach(function (state) {
+      show(root.querySelector(elementSelector(state)), state === view)
+    })
+    root.setAttribute('data-stripe-connect-status', view)
+    root.setAttribute('data-stripe-connect-view', view)
+  }
+
+  function renderRoots(roots, view) {
+    roots.forEach(function (root) {
+      setView(root, view)
+    })
+  }
+
+  function resolveDashboardView(status, returnedFromStripe) {
+    if (!status || typeof status !== 'object') return 'error'
+    if (status.charges_enabled === true) return 'ready'
+    if (returnedFromStripe) return 'review'
+    if (status.connected === true) return 'incomplete'
+    return 'disconnected'
+  }
+
+  function wait(ms) {
+    return new Promise(function (resolve) {
+      global.setTimeout(resolve, ms)
+    })
+  }
+
+  async function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
+    if (
+      global.$memberstackDom &&
+      typeof global.$memberstackDom.getCurrentMember === 'function'
+    ) {
+      return global.$memberstackDom
+    }
+
+    return new Promise(function (resolve) {
+      const startedAt = Date.now()
+      const timer = global.setInterval(function () {
+        if (
+          global.$memberstackDom &&
+          typeof global.$memberstackDom.getCurrentMember === 'function'
+        ) {
+          global.clearInterval(timer)
+          resolve(global.$memberstackDom)
+          return
+        }
+        if (Date.now() - startedAt >= timeoutMs) {
+          global.clearInterval(timer)
+          resolve(null)
+        }
+      }, 100)
+    })
+  }
+
+  async function currentMemberId() {
+    if (
+      global.$memberstackDom &&
+      typeof global.$memberstackDom.getCurrentMember === 'function'
+    ) {
+      const result = await global.$memberstackDom.getCurrentMember()
+      const member = result && result.data
+      if (member && member.id) return member.id
+    }
+
+    if (global.memberReady && typeof global.memberReady.then === 'function') {
+      const member = await global.memberReady
+      if (member && member.id) return member.id
+    }
+
+    const memberstack = await waitForMemberstackDom()
+    if (memberstack) {
+      const result = await memberstack.getCurrentMember()
+      const member = result && result.data
+      if (member && member.id) return member.id
+    }
+
+    throw new Error('No logged-in Memberstack member')
+  }
+
+  let xanoTokenPromise = null
+
+  async function tradeForXanoToken() {
+    let memberstack = global.$memberstackDom
+    if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
+      memberstack = await waitForMemberstackDom()
+    }
+    if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
+      throw new Error('No logged-in Memberstack member')
+    }
+    const memberstackToken = await memberstack.getMemberCookie()
+    if (!memberstackToken) throw new Error('No logged-in Memberstack member')
+
+    const response = await global.fetch(
+      XANO_AUTH_BASE +
+        TRADE_TOKEN_PATH +
+        '?token=' +
+        encodeURIComponent(memberstackToken),
+    )
+    const data = await response.json().catch(function () {
+      return null
+    })
+    if (!response.ok) throw new Error('Xano token trade failed')
+    const token =
+      typeof data === 'string'
+        ? data
+        : data && (data.authToken || data.token)
+    if (!token) throw new Error('Xano token trade returned no token')
+    return token
+  }
+
+  function xanoToken() {
+    if (!xanoTokenPromise) {
+      xanoTokenPromise = tradeForXanoToken().catch(function (error) {
+        xanoTokenPromise = null
+        throw error
+      })
+    }
+    return xanoTokenPromise
+  }
+
+  async function post(path, payload, allowAuthRetry) {
+    const retryOnAuthFailure = allowAuthRetry !== false
+    const tokenPromise = xanoToken()
+    const token = await tokenPromise
+    const response = await global.fetch(XANO_BASE + path, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + token,
+      },
+      body: JSON.stringify(payload),
+    })
+    if (response.status === 401 && retryOnAuthFailure) {
+      if (xanoTokenPromise === tokenPromise) xanoTokenPromise = null
+      return post(path, payload, false)
+    }
+    const data = await response.json().catch(function () {
+      return null
+    })
+    if (!response.ok) {
+      throw Object.assign(new Error(path + ' failed (' + response.status + ')'), {
+        status: response.status,
+        data,
+      })
+    }
+    if (!data || typeof data !== 'object') {
+      throw new Error(path + ' returned no data')
+    }
+    return data
+  }
+
+  function fetchStatus() {
+    return post(STATUS_PATH, {})
+  }
+
+  function startConnect(returnUrl) {
+    return post(START_PATH, { return_url: returnUrl })
+  }
+
+  function exchangeCode(code) {
+    return post(EXCHANGE_PATH, { code })
+  }
+
+  function isStripeUrl(value) {
+    try {
+      const url = new URL(value)
+      return url.protocol === 'https:' && url.hostname === 'connect.stripe.com'
+    } catch (error) {
+      return false
+    }
+  }
+
+  function setActionPending(button, pending) {
+    if (!button) return
+    button.setAttribute('aria-busy', pending ? 'true' : 'false')
+    if ('disabled' in button) button.disabled = pending
+    button.style.pointerEvents = pending ? 'none' : ''
+  }
+
+  function returnMarker() {
+    const params = new URLSearchParams(global.location.search)
+    return (
+      params.get('after_onboarding') === 'true' ||
+      params.get('stripe_connect') === 'connected'
+    )
+  }
+
+  function cleanReturnMarker() {
+    const url = new URL(global.location.href)
+    url.searchParams.delete('after_onboarding')
+    url.searchParams.delete('stripe_connect')
+    global.history.replaceState(
+      {},
+      global.document.title,
+      url.pathname + url.search + url.hash,
+    )
+  }
+
+  async function readSettledStatus(returnedFromStripe) {
+    let status = null
+    const delays = returnedFromStripe ? RETURN_POLL_DELAYS_MS : [0]
+
+    for (const delay of delays) {
+      if (delay) await wait(delay)
+      status = await fetchStatus()
+      if (status.charges_enabled === true) break
+    }
+    return status
+  }
+
+  function emit(name, detail) {
+    if (
+      typeof global.CustomEvent !== 'function' ||
+      typeof global.dispatchEvent !== 'function'
+    ) {
+      return
+    }
+    global.dispatchEvent(new global.CustomEvent(name, { detail }))
+  }
+
+  async function loadDashboardStatus(roots, returnedFromStripe) {
+    renderRoots(roots, 'loading')
+    try {
+      const status = await readSettledStatus(returnedFromStripe)
+      const view = resolveDashboardView(status, returnedFromStripe)
+      renderRoots(roots, view)
+      emit('starterStripeConnectReady', { view, status })
+      return status
+    } catch (error) {
+      renderRoots(roots, 'error')
+      emit('starterStripeConnectError', {
+        action: 'status',
+        message: error.message || 'Stripe Connect status failed',
+      })
+      global.console.error(
+        '[starter-dashboard] Unable to load Stripe Connect status',
+        error,
+      )
+      return null
+    } finally {
+      if (returnedFromStripe) cleanReturnMarker()
+    }
+  }
+
+  async function handleStart(button, roots, bootMemberId) {
+    setActionPending(button, true)
+    try {
+      const activeMemberId = await currentMemberId()
+      if (activeMemberId !== bootMemberId) {
+        throw new Error('Member session changed before Stripe Connect redirect')
+      }
+      const returnUrl = new URL(DASHBOARD_PATH, global.location.origin).toString()
+      const result = await startConnect(returnUrl)
+      if (!isStripeUrl(result.url)) {
+        throw new Error('Stripe Connect start returned an invalid URL')
+      }
+      emit('starterStripeConnectRedirect', { mode: result.mode || '' })
+      global.location.assign(result.url)
+    } catch (error) {
+      setActionPending(button, false)
+      renderRoots(roots, 'error')
+      emit('starterStripeConnectError', {
+        action: 'start',
+        message: error.message || 'Stripe Connect start failed',
+      })
+      global.console.error(
+        '[starter-dashboard] Unable to start Stripe Connect',
+        error,
+      )
+    }
+  }
+
+  async function mountDashboard() {
+    const roots = Array.prototype.slice.call(
+      global.document.querySelectorAll(elementSelector('root')),
+    )
+    if (!roots.length) return null
+
+    renderRoots(roots, 'loading')
+
+    let actionPending = false
+    function runExclusive(task) {
+      if (actionPending) return Promise.resolve(null)
+      actionPending = true
+      return Promise.resolve()
+        .then(task)
+        .finally(function () {
+          actionPending = false
+        })
+    }
+
+    try {
+      const memberId = await currentMemberId()
+      roots.forEach(function (root) {
+        root.querySelectorAll(actionSelector('start')).forEach(function (button) {
+          button.addEventListener('click', function (event) {
+            event.preventDefault()
+            runExclusive(function () {
+              return handleStart(button, roots, memberId)
+            })
+          })
+        })
+        root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
+          button.addEventListener('click', function (event) {
+            event.preventDefault()
+            runExclusive(function () {
+              return loadDashboardStatus(roots, false)
+            })
+          })
+        })
+      })
+
+      const returnedFromStripe = returnMarker()
+      return runExclusive(function () {
+        return loadDashboardStatus(roots, returnedFromStripe)
+      })
+    } catch (error) {
+      renderRoots(roots, 'error')
+      emit('starterStripeConnectError', {
+        action: 'session',
+        message: error.message || 'Member session unavailable',
+      })
+      global.console.error(
+        '[starter-dashboard] Unable to resolve Stripe Connect member',
+        error,
+      )
+      return null
+    }
+  }
+
+  function callbackParams() {
+    const url = new URL(global.location.href)
+    const result = {
+      code: url.searchParams.get('code') || '',
+      state: url.searchParams.get('state') || '',
+      error: url.searchParams.get('error') || '',
+    }
+    url.searchParams.delete('code')
+    url.searchParams.delete('state')
+    url.searchParams.delete('error')
+    url.searchParams.delete('error_description')
+    global.history.replaceState(
+      {},
+      global.document.title,
+      url.pathname + url.search + url.hash,
+    )
+    return result
+  }
+
+  async function mountCallback() {
+    const roots = Array.prototype.slice.call(
+      global.document.querySelectorAll(elementSelector('root')),
+    )
+    renderRoots(roots, 'loading')
+    const params = callbackParams()
+
+    try {
+      if (params.error) throw new Error('Stripe Connect authorization was not completed')
+      if (!params.code) throw new Error('Stripe Connect callback code is missing')
+
+      const memberId = await currentMemberId()
+      if (params.state && params.state !== memberId) {
+        throw new Error('Stripe Connect state does not match the logged-in member')
+      }
+
+      const result = await exchangeCode(params.code)
+      if (result.connected !== true) {
+        throw new Error('Stripe Connect exchange did not connect the account')
+      }
+
+      const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
+      dashboardUrl.searchParams.set('stripe_connect', 'connected')
+      global.location.assign(dashboardUrl.toString())
+      return result
+    } catch (error) {
+      renderRoots(roots, 'error')
+      emit('starterStripeConnectError', {
+        action: 'callback',
+        message: error.message || 'Stripe Connect callback failed',
+      })
+      global.console.error('[stripe-connect-callback] Exchange failed', error)
+      return null
+    }
+  }
+
+  const testApi = {
+    CALLBACK_PATH,
+    DASHBOARD_PATH,
+    EXCHANGE_PATH,
+    START_PATH,
+    STATUS_PATH,
+    __resetXanoToken: function () {
+      xanoTokenPromise = null
+    },
+    callbackParams,
+    currentMemberId,
+    exchangeCode,
+    fetchStatus,
+    isStripeUrl,
+    loadDashboardStatus,
+    mountCallback,
+    mountDashboard,
+    renderRoots,
+    resolveDashboardView,
+    setView,
+    startConnect,
+  }
+
+  if (isCommonJs) {
+    module.exports = testApi
+    return
+  }
+
+  function mount() {
+    if (global.location.pathname === CALLBACK_PATH) mountCallback()
+    else if (global.location.pathname === DASHBOARD_PATH) mountDashboard()
+  }
+
+  if (global.document.readyState === 'loading') {
+    global.document.addEventListener('DOMContentLoaded', mount, { once: true })
+  } else {
+    mount()
+  }
+})(typeof window !== 'undefined' ? window : globalThis)
