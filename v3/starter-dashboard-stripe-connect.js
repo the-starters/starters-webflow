@@ -29,6 +29,10 @@
   const STATUS_PATH = '/stripe_connect/status/v3'
   const START_PATH = '/stripe_connect/start/v3'
   const EXCHANGE_PATH = '/stripe_connect/oauth_exchange/v3'
+  const SANDBOX_START_PATH = '/stripe_connect/sandbox/start/v3'
+  const SANDBOX_EXCHANGE_PATH = '/stripe_connect/sandbox/oauth_exchange/v3'
+  const SANDBOX_STATE_PREFIX = 'sandbox:'
+  const SANDBOX_HOST = 'the-starters-3-0.webflow.io'
   const DASHBOARD_PATH = '/starter-dashboard'
   const CALLBACK_PATH = '/stripe-connect-callback'
   const MEMBERSTACK_TIMEOUT_MS = 10000
@@ -209,12 +213,23 @@
     return post(STATUS_PATH, {})
   }
 
-  function startConnect(returnUrl) {
-    return post(START_PATH, { return_url: returnUrl })
+  function sandboxMode() {
+    if (!global.location || global.location.hostname !== SANDBOX_HOST) return false
+    const params = new URLSearchParams(global.location.search)
+    return params.get('stripe_connect_sandbox') === '1'
   }
 
-  function exchangeCode(code) {
-    return post(EXCHANGE_PATH, { code })
+  function startConnect(returnUrl, sandbox) {
+    if (!sandbox) return post(START_PATH, { return_url: returnUrl })
+    const callbackUrl = new URL(CALLBACK_PATH, global.location.origin).toString()
+    return post(SANDBOX_START_PATH, {
+      return_url: returnUrl,
+      callback_url: callbackUrl,
+    })
+  }
+
+  function exchangeCode(code, sandbox) {
+    return post(sandbox ? SANDBOX_EXCHANGE_PATH : EXCHANGE_PATH, { code })
   }
 
   function isStripeUrl(value) {
@@ -245,6 +260,7 @@
     const url = new URL(global.location.href)
     url.searchParams.delete('after_onboarding')
     url.searchParams.delete('stripe_connect')
+    url.searchParams.delete('stripe_connect_sandbox')
     global.history.replaceState(
       {},
       global.document.title,
@@ -306,7 +322,7 @@
         throw new Error('Member session changed before Stripe Connect redirect')
       }
       const returnUrl = new URL(DASHBOARD_PATH, global.location.origin).toString()
-      const result = await startConnect(returnUrl)
+      const result = await startConnect(returnUrl, sandboxMode())
       if (!isStripeUrl(result.url)) {
         throw new Error('Stripe Connect start returned an invalid URL')
       }
@@ -415,17 +431,28 @@
       if (!params.code) throw new Error('Stripe Connect callback code is missing')
 
       const memberId = await currentMemberId()
-      if (params.state && params.state !== memberId) {
+      const sandbox = params.state.startsWith(SANDBOX_STATE_PREFIX)
+      if (sandbox && global.location.hostname !== SANDBOX_HOST) {
+        throw new Error('Stripe Connect sandbox callback is staging-only')
+      }
+      const expectedState = sandbox
+        ? SANDBOX_STATE_PREFIX + memberId
+        : memberId
+      if (params.state && params.state !== expectedState) {
         throw new Error('Stripe Connect state does not match the logged-in member')
       }
 
-      const result = await exchangeCode(params.code)
+      const result = await exchangeCode(params.code, sandbox)
       if (result.connected !== true) {
         throw new Error('Stripe Connect exchange did not connect the account')
+      }
+      if (sandbox && result.sandbox !== true) {
+        throw new Error('Stripe Connect sandbox exchange was not isolated')
       }
 
       const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
       dashboardUrl.searchParams.set('stripe_connect', 'connected')
+      if (sandbox) dashboardUrl.searchParams.set('stripe_connect_sandbox', 'verified')
       global.location.assign(dashboardUrl.toString())
       return result
     } catch (error) {
@@ -443,6 +470,8 @@
     CALLBACK_PATH,
     DASHBOARD_PATH,
     EXCHANGE_PATH,
+    SANDBOX_EXCHANGE_PATH,
+    SANDBOX_START_PATH,
     START_PATH,
     STATUS_PATH,
     __resetXanoToken: function () {
@@ -458,6 +487,7 @@
     mountDashboard,
     renderRoots,
     resolveDashboardView,
+    sandboxMode,
     setView,
     startConnect,
   }

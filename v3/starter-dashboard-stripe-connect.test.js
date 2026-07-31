@@ -180,6 +180,57 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
   }
 })
 
+test('sandbox start is staging-only and sends an explicit callback URL', async () => {
+  const previous = {
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+  }
+  const requests = []
+  global.location = {
+    hostname: 'the-starters-3-0.webflow.io',
+    origin: 'https://the-starters-3-0.webflow.io',
+    search: '?stripe_connect_sandbox=1',
+  }
+  global.$memberstackDom = { getMemberCookie: async () => 'ms-cookie' }
+  global.fetch = async (url, options) => {
+    requests.push({ url, options })
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({
+      mode: 'oauth',
+      sandbox: true,
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+
+  try {
+    assert.equal(api.sandboxMode(), true)
+    await api.startConnect(
+      'https://the-starters-3-0.webflow.io/starter-dashboard',
+      true,
+    )
+    const startRequest = stripeRequest(
+      requests,
+      '/stripe_connect/sandbox/start/v3',
+    )
+    assert.match(startRequest.options.headers.Authorization, /^Bearer .+/)
+    assert.deepEqual(JSON.parse(startRequest.options.body), {
+      return_url: 'https://the-starters-3-0.webflow.io/starter-dashboard',
+      callback_url:
+        'https://the-starters-3-0.webflow.io/stripe-connect-callback',
+    })
+
+    global.location.hostname = 'thestarters.com'
+    assert.equal(api.sandboxMode(), false)
+  } finally {
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
 test('a stale Xano token triggers one re-trade and retry on 401', async () => {
   const previous = {
     fetch: global.fetch,
@@ -364,6 +415,71 @@ test('callback refuses a state for another member without exchanging', async () 
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
   } finally {
     global.console = previous.console
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.history = previous.history
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('sandbox callback exchanges without production persistence and marks verification', async () => {
+  const previous = {
+    document: global.document,
+    fetch: global.fetch,
+    history: global.history,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+  }
+  const { root, states } = stripeRoot()
+  const requests = []
+  const assigned = []
+
+  global.document = {
+    title: 'Stripe callback',
+    querySelectorAll: () => [root],
+  }
+  global.history = { replaceState: () => {} }
+  global.location = {
+    hostname: 'the-starters-3-0.webflow.io',
+    href:
+      'https://the-starters-3-0.webflow.io/stripe-connect-callback?' +
+      'code=test-code&state=sandbox%3Amem-test',
+    origin: 'https://the-starters-3-0.webflow.io',
+    assign: (url) => assigned.push(url),
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'mem-test' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url, options) => {
+    requests.push({ url, options })
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({
+      connected: true,
+      charges_enabled: false,
+      sandbox: true,
+    })
+  }
+
+  try {
+    const result = await api.mountCallback()
+    assert.equal(result.sandbox, true)
+    const exchangeRequest = stripeRequest(
+      requests,
+      '/stripe_connect/sandbox/oauth_exchange/v3',
+    )
+    assert.deepEqual(JSON.parse(exchangeRequest.options.body), {
+      code: 'test-code',
+    })
+    assert.deepEqual(assigned, [
+      'https://the-starters-3-0.webflow.io/starter-dashboard?' +
+        'stripe_connect=connected&stripe_connect_sandbox=verified',
+    ])
+    assert.equal(states.error.style.display, 'none')
+  } finally {
     global.document = previous.document
     global.fetch = previous.fetch
     global.history = previous.history
