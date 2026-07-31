@@ -158,12 +158,68 @@ test('the authored Earnings div redirects only after it is enabled', () => {
     event.prevented = false
     api.setEarningsAccess([earnings], true)
     assert.equal(earnings.getAttribute('tabindex'), '0')
+    assert.equal(earnings.getAttribute('role'), 'button')
     assert.equal(api.handleEarningsClick(earnings, event), true)
     assert.equal(event.prevented, true)
     assert.deepEqual(destinations, ['https://dashboard.stripe.com/'])
   } finally {
     global.location = previousLocation
   }
+})
+
+test('the authored Earnings div activates from the keyboard once enabled', () => {
+  const previousLocation = global.location
+  const earnings = new FakeElement()
+  const destinations = []
+  const keydown = (key) => ({
+    key,
+    prevented: false,
+    preventDefault() {
+      this.prevented = true
+    },
+  })
+  global.location = { assign: (value) => destinations.push(value) }
+
+  try {
+    api.setEarningsAccess([earnings], false)
+    const whileDisabled = keydown('Enter')
+    assert.equal(api.handleEarningsKeydown(earnings, whileDisabled), false)
+    assert.equal(whileDisabled.prevented, true)
+    assert.deepEqual(destinations, [])
+
+    api.setEarningsAccess([earnings], true)
+    const ignored = keydown('a')
+    assert.equal(api.handleEarningsKeydown(earnings, ignored), false)
+    assert.equal(ignored.prevented, false)
+    assert.deepEqual(destinations, [])
+
+    const enter = keydown('Enter')
+    assert.equal(api.handleEarningsKeydown(earnings, enter), true)
+    assert.equal(enter.prevented, true)
+
+    const space = keydown(' ')
+    assert.equal(api.handleEarningsKeydown(earnings, space), true)
+    assert.equal(space.prevented, true)
+    assert.deepEqual(destinations, [
+      'https://dashboard.stripe.com/',
+      'https://dashboard.stripe.com/',
+    ])
+  } finally {
+    global.location = previousLocation
+  }
+})
+
+test('keyboard activation is a no-op for the anchor earnings tile', () => {
+  const earnings = new FakeElement('A')
+  const event = {
+    key: 'Enter',
+    prevented: false,
+    preventDefault() {
+      this.prevented = true
+    },
+  }
+  assert.equal(api.handleEarningsKeydown(earnings, event), false)
+  assert.equal(event.prevented, false)
 })
 
 function stripeRequest(requests, path) {

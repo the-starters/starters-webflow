@@ -258,6 +258,7 @@
           element.setAttribute('href', STRIPE_DASHBOARD_URL)
           element.removeAttribute('tabindex')
         } else {
+          element.setAttribute('role', 'button')
           element.setAttribute('tabindex', '0')
         }
       } else {
@@ -277,6 +278,14 @@
       global.location.assign(STRIPE_DASHBOARD_URL)
     }
     return true
+  }
+
+  function handleEarningsKeydown(element, event) {
+    if (element.tagName === 'A') return false
+    if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') {
+      return false
+    }
+    return handleEarningsClick(element, event)
   }
 
   function returnMarker() {
@@ -409,6 +418,9 @@
         link.addEventListener('click', function (event) {
           handleEarningsClick(link, event)
         })
+        link.addEventListener('keydown', function (event) {
+          handleEarningsKeydown(link, event)
+        })
       })
       roots.forEach(function (root) {
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
@@ -531,6 +543,7 @@
     exchangeCode,
     fetchStatus,
     handleEarningsClick,
+    handleEarningsKeydown,
     isStripeUrl,
     loadDashboardStatus,
     mountCallback,

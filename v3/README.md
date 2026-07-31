@@ -1193,7 +1193,11 @@ until the same authenticated status response reports `charges_enabled:true`.
 Only then does it enable the link and point it to
 `https://dashboard.stripe.com/`. A status or session failure disables it again.
 This keeps the V3 link independent of the legacy Make redirect while preserving
-Stripe as the earnings UI for the connected Standard account.
+Stripe as the earnings UI for the connected Standard account. The action works on
+either a native anchor or an authored non-anchor tile (e.g. a `div`); when
+enabled, a non-anchor tile is exposed as `role="button"` with `tabindex="0"` and
+activates from both click and Enter/Space so keyboard users can reach the
+dashboard.
 
 A single in-flight guard is shared
 across every start and refresh control in the dashboard, so a second click on
