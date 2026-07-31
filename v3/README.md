@@ -1186,7 +1186,16 @@ root, use these values:
 
 Give every Connect or Complete setup control
 `data-stripe-connect-action="start"`. An optional retry control can use
-`data-stripe-connect-action="refresh"`. A single in-flight guard is shared
+`data-stripe-connect-action="refresh"`. Put
+`data-stripe-connect-action="earnings"` on the authored Earnings link. The
+controller removes its destination and keeps the existing `is-disabled` class
+until the same authenticated status response reports `charges_enabled:true`.
+Only then does it enable the link and point it to
+`https://dashboard.stripe.com/`. A status or session failure disables it again.
+This keeps the V3 link independent of the legacy Make redirect while preserving
+Stripe as the earnings UI for the connected Standard account.
+
+A single in-flight guard is shared
 across every start and refresh control in the dashboard, so a second click on
 any control is ignored while a start or status request is resolving. Start
 posts the dashboard `return_url` plus an explicit `callback_url` —

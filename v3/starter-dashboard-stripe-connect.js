@@ -11,7 +11,7 @@
  * Designer wiring:
  *   data-stripe-connect-element="root|loading|disconnected|incomplete|
  *   ready|review|error"
- *   data-stripe-connect-action="start|refresh"
+ *   data-stripe-connect-action="start|refresh|earnings"
  */
 ;(function (global) {
   'use strict'
@@ -33,6 +33,7 @@
   const SANDBOX_EXCHANGE_PATH = '/stripe_connect/sandbox/oauth_exchange/v3'
   const SANDBOX_STATE_PREFIX = 'sandbox:'
   const SANDBOX_HOST = 'the-starters-3-0.webflow.io'
+  const STRIPE_DASHBOARD_URL = 'https://dashboard.stripe.com/'
   const DASHBOARD_PATH = '/starter-dashboard'
   const CALLBACK_PATH = '/stripe-connect-callback'
   const MEMBERSTACK_TIMEOUT_MS = 10000
@@ -247,6 +248,35 @@
     button.style.pointerEvents = pending ? 'none' : ''
   }
 
+  function setEarningsAccess(elements, enabled) {
+    elements.forEach(function (element) {
+      element.setAttribute('aria-disabled', enabled ? 'false' : 'true')
+      if (element.classList) element.classList.toggle('is-disabled', !enabled)
+
+      if (enabled) {
+        if (element.tagName === 'A') {
+          element.setAttribute('href', STRIPE_DASHBOARD_URL)
+        }
+        element.removeAttribute('tabindex')
+      } else {
+        element.removeAttribute('href')
+        element.setAttribute('tabindex', '-1')
+      }
+    })
+  }
+
+  function handleEarningsClick(element, event) {
+    if (element.getAttribute('aria-disabled') === 'true') {
+      event.preventDefault()
+      return false
+    }
+    if (element.tagName !== 'A') {
+      event.preventDefault()
+      global.location.assign(STRIPE_DASHBOARD_URL)
+    }
+    return true
+  }
+
   function returnMarker() {
     const params = new URLSearchParams(global.location.search)
     return (
@@ -289,16 +319,23 @@
     global.dispatchEvent(new global.CustomEvent(name, { detail }))
   }
 
-  async function loadDashboardStatus(roots, returnedFromStripe) {
+  async function loadDashboardStatus(
+    roots,
+    returnedFromStripe,
+    earningsLinks = [],
+  ) {
     renderRoots(roots, 'loading')
+    setEarningsAccess(earningsLinks, false)
     try {
       const status = await readSettledStatus(returnedFromStripe)
       const view = resolveDashboardView(status, returnedFromStripe)
       renderRoots(roots, view)
+      setEarningsAccess(earningsLinks, status.charges_enabled === true)
       emit('starterStripeConnectReady', { view, status })
       return status
     } catch (error) {
       renderRoots(roots, 'error')
+      setEarningsAccess(earningsLinks, false)
       emit('starterStripeConnectError', {
         action: 'status',
         message: error.message || 'Stripe Connect status failed',
@@ -347,7 +384,11 @@
     )
     if (!roots.length) return null
 
+    const earningsLinks = Array.prototype.slice.call(
+      global.document.querySelectorAll(actionSelector('earnings')),
+    )
     renderRoots(roots, 'loading')
+    setEarningsAccess(earningsLinks, false)
 
     let actionPending = false
     function runExclusive(task) {
@@ -362,6 +403,11 @@
 
     try {
       const memberId = await currentMemberId()
+      earningsLinks.forEach(function (link) {
+        link.addEventListener('click', function (event) {
+          handleEarningsClick(link, event)
+        })
+      })
       roots.forEach(function (root) {
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
           button.addEventListener('click', function (event) {
@@ -375,7 +421,7 @@
           button.addEventListener('click', function (event) {
             event.preventDefault()
             runExclusive(function () {
-              return loadDashboardStatus(roots, false)
+              return loadDashboardStatus(roots, false, earningsLinks)
             })
           })
         })
@@ -383,10 +429,11 @@
 
       const returnedFromStripe = returnMarker()
       return runExclusive(function () {
-        return loadDashboardStatus(roots, returnedFromStripe)
+        return loadDashboardStatus(roots, returnedFromStripe, earningsLinks)
       })
     } catch (error) {
       renderRoots(roots, 'error')
+      setEarningsAccess(earningsLinks, false)
       emit('starterStripeConnectError', {
         action: 'session',
         message: error.message || 'Member session unavailable',
@@ -473,6 +520,7 @@
     SANDBOX_START_PATH,
     START_PATH,
     STATUS_PATH,
+    STRIPE_DASHBOARD_URL,
     __resetXanoToken: function () {
       xanoTokenPromise = null
     },
@@ -480,6 +528,7 @@
     currentMemberId,
     exchangeCode,
     fetchStatus,
+    handleEarningsClick,
     isStripeUrl,
     loadDashboardStatus,
     mountCallback,
@@ -487,6 +536,7 @@
     renderRoots,
     resolveDashboardView,
     sandboxMode,
+    setEarningsAccess,
     setView,
     startConnect,
   }

@@ -8,11 +8,20 @@ const ELEMENT_ATTR = 'data-stripe-connect-element'
 const selector = (name) => '[' + ELEMENT_ATTR + '="' + name + '"]'
 
 class FakeElement {
-  constructor() {
+  constructor(tagName = 'DIV') {
+    this.tagName = tagName
     this.attributes = new Map()
     this.children = new Map()
     this.hidden = false
     this.style = {}
+    this.classes = new Set()
+    this.classList = {
+      contains: (name) => this.classes.has(name),
+      toggle: (name, force) => {
+        if (force) this.classes.add(name)
+        else this.classes.delete(name)
+      },
+    }
   }
 
   querySelector(value) {
@@ -25,6 +34,10 @@ class FakeElement {
 
   getAttribute(name) {
     return this.attributes.get(name) || null
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name)
   }
 }
 
@@ -102,6 +115,53 @@ test('rendering selects authored state without changing its copy', () => {
   assert.equal(states.review.textContent, 'Stripe is reviewing your account.')
   assert.equal(root.getAttribute('data-stripe-connect-status'), 'review')
   assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
+})
+
+test('earnings opens Stripe only while charges are enabled', () => {
+  const earnings = new FakeElement('A')
+  earnings.setAttribute('href', '#')
+
+  api.setEarningsAccess([earnings], false)
+
+  assert.equal(earnings.getAttribute('href'), null)
+  assert.equal(earnings.getAttribute('aria-disabled'), 'true')
+  assert.equal(earnings.getAttribute('tabindex'), '-1')
+  assert.equal(earnings.classList.contains('is-disabled'), true)
+
+  api.setEarningsAccess([earnings], true)
+
+  assert.equal(earnings.getAttribute('href'), 'https://dashboard.stripe.com/')
+  assert.equal(earnings.getAttribute('aria-disabled'), 'false')
+  assert.equal(earnings.getAttribute('tabindex'), null)
+  assert.equal(earnings.classList.contains('is-disabled'), false)
+})
+
+test('the authored Earnings div redirects only after it is enabled', () => {
+  const previousLocation = global.location
+  const earnings = new FakeElement()
+  const destinations = []
+  const event = {
+    prevented: false,
+    preventDefault() {
+      this.prevented = true
+    },
+  }
+  global.location = { assign: (value) => destinations.push(value) }
+
+  try {
+    api.setEarningsAccess([earnings], false)
+    assert.equal(api.handleEarningsClick(earnings, event), false)
+    assert.equal(event.prevented, true)
+    assert.deepEqual(destinations, [])
+
+    event.prevented = false
+    api.setEarningsAccess([earnings], true)
+    assert.equal(api.handleEarningsClick(earnings, event), true)
+    assert.equal(event.prevented, true)
+    assert.deepEqual(destinations, ['https://dashboard.stripe.com/'])
+  } finally {
+    global.location = previousLocation
+  }
 })
 
 function stripeRequest(requests, path) {
