@@ -316,7 +316,16 @@ test('splits a semicolon-delimited roles string', () => {
 
 test('splits on both delimiters in one value', () => {
   const { page } = render({ roles: ['growth-strategy; paid-social,cro-expert'] })
-  assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth strategy', 'paid social', 'cro expert'])
+  assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth strategy', 'paid social', 'CRO Expert'])
+})
+
+// REGRESSION: ROLE_NAMES overrides the display text for slugs that plain
+// de-hyphenation mangles, and is consulted only for the mapped slug. One value
+// covering both branches pins the override and proves it did not widen: an
+// unmapped slug alongside it must still come out de-hyphenated, untouched.
+test('renders a mapped slug in display case while unmapped slugs still de-hyphenate', () => {
+  const { page } = render({ roles: ['ui-ux-designer,growth-marketer'] })
+  assert.deepEqual(chipText(page.cards[0].rolesEl), ['UI/UX Designer', 'growth marketer'])
 })
 
 test('collapses whitespace and drops empty segments', () => {
@@ -384,7 +393,7 @@ test('is idempotent across re-renders — the keyed path reuses the same card', 
   const { page, emitResults } = render({ roles: ['growth-marketer,cro-expert'] })
   emitResults()
   emitResults()
-  assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth marketer', 'cro expert'])
+  assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth marketer', 'CRO Expert'])
 })
 
 test('rebuilds chips when a reused card is re-bound to a different Starter', () => {
@@ -399,7 +408,7 @@ test('rebuilds chips when a reused card is re-bound to a different Starter', () 
 test('handles every rendered card, not just the first', () => {
   const { page } = render({ roles: ['growth-marketer', 'cro-expert;paid-social'] })
   assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth marketer'])
-  assert.deepEqual(chipText(page.cards[1].rolesEl), ['cro expert', 'paid social'])
+  assert.deepEqual(chipText(page.cards[1].rolesEl), ['CRO Expert', 'paid social'])
 })
 
 // REGRESSION: wf-xano assigns window.WfXano = {api} at module scope, before its
@@ -415,7 +424,7 @@ test('queues through push() when WfXano is the API object but has not booted yet
   // wf-xano boots: instances exist, queued callbacks run.
   mod.drain()
   mod.emitResults()
-  assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth marketer', 'cro expert'])
+  assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth marketer', 'CRO Expert'])
   assert.deepEqual(mod.warnings, [])
 })
 
@@ -530,5 +539,5 @@ test('a duplicate load does not double the chips', () => {
   mod.reevaluate()
   mod.drain()
   mod.emitResults()
-  assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth marketer', 'cro expert'])
+  assert.deepEqual(chipText(page.cards[0].rolesEl), ['growth marketer', 'CRO Expert'])
 })
