@@ -1,25 +1,31 @@
 /**
- * /starter-onboarding — mark onboarding done on a successful submit.
+ * /starter-onboarding — mark onboarding done on a successful submit, then send
+ * the member to the dashboard.
  *
- * ONE job: when either of the page's two native Webflow forms (full profile and
- * consult; both count as completing onboarding) reaches its Webflow success
- * state, PATCH the Xano endpoint that sets `onboarding_done = true`.
+ * ONE job, in four beats: when either of the page's two native Webflow forms
+ * (full profile and consult; both count as completing onboarding) reaches its
+ * Webflow success state, reveal the optional `[data-page-spinner]` element,
+ * hide the submitted form's `.w-form` wrapper, PATCH the Xano endpoint that sets
+ * `onboarding_done = true`, and — once that PATCH settles either way —
+ * `location.replace('/starter-dashboard')`. The member never reads Webflow's own
+ * success message; the loader covers the patch window instead.
  *
- * PAIRED WITH v3/onboarding-done-redirect.js, which sends a member whose record
- * already carries `onboarding_done === true` off this page. That check would
- * bounce the member who just submitted before the page's own completion view
- * could be read, so a success here writes the `sessionStorage` marker
- * 'starter-onboarding-just-submitted' BEFORE the PATCH, and the redirect module
- * consumes it on the next load to skip its check exactly once. The two files
- * install together as a pair of deferred tags on /starter-onboarding; either one
- * alone is a broken half of the flow.
+ * The redirect fires even when the PATCH gave up. A member parked behind a
+ * hidden form with no way forward is the one genuinely bad outcome here, and an
+ * unmarked record costs only that the onboarding page renders again on a later
+ * visit. The single exception is a member with no Memberstack session, who is
+ * left exactly where they are.
+ *
+ * PAIRED WITH v3/onboarding-done-redirect.js, which reads the record on load and
+ * keeps an already-done member from re-entering this page from a bookmark, the
+ * back button, or a stale link. This module owns the whole post-submit journey,
+ * so the two never fight over it. They install together as a pair of deferred
+ * tags on /starter-onboarding; either one alone is a broken half of the flow.
  *
  * FAIL-OPEN, EVERYWHERE. Logged out, Memberstack missing or slow, token trade
- * rejected, HTTP error, request timeout, storage that refuses to be written:
- * every one of those leaves the page exactly as authored, showing the completion
- * state the member just earned. A mark that never lands is recoverable — the
- * member is simply not redirected away on a later visit — so nothing here is
- * allowed to throw at the page or stand between a submit and its success view.
+ * rejected, HTTP error, request timeout, a loader element that was never built:
+ * none of those is allowed to throw at the page or to stand between a submit and
+ * its redirect. A mark that never lands is recoverable; a stuck member is not.
  *
  * Auth is the proven trade-token flow the sibling v3 modules use (see
  * opportunities-3.0.js, v3/starter-dashboard-points.js): the Memberstack JWT
@@ -48,17 +54,11 @@
   var SET_STATUS_PATH = '/starters_onboarding/set_onboarding_status'
 
   var ONBOARDING_PATHS = ['/starter-onboarding', '/starter-onboarding/']
+  var DASHBOARD_PATH = '/starter-dashboard'
   // Same production allowlist as v3/route-guard.js, plus the local/dev-tunnel
   // hosts the ./dev-tunnel.sh loop serves from — without those the module would
   // be dead on staging exactly when it needs QA.
   var APPROVED_HOSTS = ['the-starters-3-0.webflow.io', 'thestarters.com', 'www.thestarters.com']
-
-  // Written here, consumed by v3/onboarding-done-redirect.js.
-  // Namespaced so it cannot collide with Webflow, Memberstack, or the step-flow
-  // script driving this page's panels. sessionStorage (not localStorage) on
-  // purpose: the skip is meant for this tab's immediate post-submit view, not
-  // forever.
-  var JUST_SUBMITTED_KEY = 'starter-onboarding-just-submitted'
 
   var MEMBERSTACK_TIMEOUT_MS = 8000
   var MEMBERSTACK_POLL_MS = 100
@@ -71,6 +71,9 @@
   var FORM_WRAPPER_SELECTOR = '.w-form'
   var FORM_SELECTOR = 'form'
   var DONE_SELECTOR = '.w-form-done'
+  // Optional: an element the Designer may add, hidden by default, shown for the
+  // length of the patch window. The page works without it.
+  var LOADER_SELECTOR = '[data-page-spinner]'
   var LOG_PREFIX = '[starters patch-onboarding-status]'
 
   /* ------------------------------ environment ------------------------------ */
@@ -121,18 +124,73 @@
     return (error && error.message) || String(error)
   }
 
-  /* --------------------------- fresh-submit marker -------------------------- */
-  // Every sessionStorage touch is wrapped: Safari private mode throws on access,
-  // and a storage failure must never take the page down with it. A marker that
-  // cannot be written just means the next load redirects one beat too early.
+  /* ------------------------- post-submit page state ------------------------- */
+  // Every DOM touch below is wrapped and every one of them is optional: the
+  // PATCH and the redirect are the parts that matter, and a page whose loader
+  // was never built, or whose wrapper refuses to be styled, must still complete
+  // the flow rather than strand the member.
 
-  function markJustSubmitted() {
+  /**
+   * The loader is a Designer element that does not exist yet, so its absence is
+   * an ordinary outcome, not a fault. Webflow ships hidden elements as an inline
+   * `display:none`, sometimes alongside the `hidden` attribute, so both are
+   * cleared.
+   */
+  function showLoader() {
+    var loader = null
     try {
-      window.sessionStorage.setItem(JUST_SUBMITTED_KEY, '1')
+      loader = document.querySelector(LOADER_SELECTOR)
+    } catch (error) {
+      return null
+    }
+    if (!loader) {
+      note('no ' + LOADER_SELECTOR + ' element on this page; continuing without a loader.')
+      return null
+    }
+    try {
+      if (loader.style) loader.style.display = 'block'
+      if (typeof loader.removeAttribute === 'function') loader.removeAttribute('hidden')
+    } catch (error) {
+      warn('could not reveal the loader: ' + describe(error))
+      return null
+    }
+    return loader
+  }
+
+  // Hides Webflow's success message along with the form: the member is on their
+  // way to the dashboard and should not read a completion panel they are about
+  // to lose.
+  function hideWrapper(wrapper) {
+    try {
+      if (!wrapper || !wrapper.style) return false
+      wrapper.style.display = 'none'
       return true
     } catch (error) {
-      warn('could not write the fresh-submit marker: ' + describe(error))
+      warn('could not hide the submitted form: ' + describe(error))
       return false
+    }
+  }
+
+  // The logged-out branch is the one outcome that leaves the member on this
+  // page, so it has to undo the two changes above: a loader spinning over a
+  // hidden form with no redirect coming is exactly the stranding this module
+  // exists to avoid. The wrapper goes back to its authored display rather than
+  // a hard-coded one, since Webflow ships `.w-form` without an inline value.
+  function restorePage(loader, wrapper) {
+    try {
+      if (loader && loader.style) loader.style.display = 'none'
+      if (wrapper && wrapper.style) wrapper.style.display = ''
+    } catch (error) {
+      warn('could not restore the page after a logged-out submit: ' + describe(error))
+    }
+  }
+
+  function goToDashboard() {
+    note('patch settled; replacing with ' + DASHBOARD_PATH + '.')
+    try {
+      window.location.replace(DASHBOARD_PATH)
+    } catch (error) {
+      warn('could not redirect to ' + DASHBOARD_PATH + ': ' + describe(error))
     }
   }
 
@@ -275,7 +333,12 @@
 
   /* -------------------------- mark done on submit --------------------------- */
 
-  async function markOnboardingDone() {
+  /**
+   * Resolves with an outcome instead of throwing, because the caller has to know
+   * *why* a mark failed: every failure still redirects except a missing member
+   * session, which is the one case where there is nothing to redirect to.
+   */
+  async function attemptMarkOnboardingDone() {
     var attempts = PATCH_RETRY_DELAYS_MS.length + 1
     var lastError = null
 
@@ -289,7 +352,7 @@
         })
         if (response && response.ok) {
           note('onboarding_done set on attempt ' + (attempt + 1) + '.')
-          return true
+          return { ok: true, code: null }
         }
         throw new Error(
           'set_onboarding_status responded ' + ((response && response.status) || 'no response'),
@@ -310,7 +373,13 @@
         describe(lastError) +
         ' — the member can still be marked on a later visit.',
     )
-    return false
+    return { ok: false, code: (lastError && lastError.code) || null }
+  }
+
+  // The plain boolean form, kept for hand-exercising the write on staging.
+  async function markOnboardingDone() {
+    var outcome = await attemptMarkOnboardingDone()
+    return outcome.ok
   }
 
   /**
@@ -336,13 +405,31 @@
     if (!wrapper || wrapper.__startersOnboardingDoneFired) return false
     wrapper.__startersOnboardingDoneFired = true
 
-    // Set the marker BEFORE the PATCH: the completion view must survive even if
-    // the write fails or the member navigates while it is in flight.
-    markJustSubmitted()
     note('form success detected; marking onboarding done.')
-    markOnboardingDone().catch(function (error) {
-      warn('unexpected failure marking onboarding done: ' + describe(error))
-    })
+    // Page state first, so the loader is up for the whole patch window rather
+    // than for whatever is left of it. Neither call can throw, so neither can
+    // stand between the submit and the PATCH.
+    var loader = showLoader()
+    hideWrapper(wrapper)
+
+    attemptMarkOnboardingDone().then(
+      function (outcome) {
+        // A member with no session has nowhere to be sent, so the page is put
+        // back the way it was found. Every other failure still redirects:
+        // leaving them behind a hidden form is worse than a record that gets
+        // marked on a later visit.
+        if (outcome && outcome.code === 'logged-out') {
+          note('no member session; restoring the page instead of redirecting.')
+          restorePage(loader, wrapper)
+          return
+        }
+        goToDashboard()
+      },
+      function (error) {
+        warn('unexpected failure marking onboarding done: ' + describe(error))
+        goToDashboard()
+      },
+    )
     return true
   }
 
@@ -433,7 +520,8 @@
     isShown: isShown,
     watchForms: watchForms,
     markOnboardingDone: markOnboardingDone,
-    justSubmittedKey: JUST_SUBMITTED_KEY,
+    dashboardPath: DASHBOARD_PATH,
+    loaderSelector: LOADER_SELECTOR,
   }
 
   if (!allowedHost(window.location.hostname)) return

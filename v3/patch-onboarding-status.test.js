@@ -10,7 +10,8 @@ const source = fs.readFileSync(MODULE_PATH, 'utf8')
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
 const PATCH_URL = XANO + '/api:KZf7nFnk/starters_onboarding/set_onboarding_status'
-const MARKER_KEY = 'starter-onboarding-just-submitted'
+const LOADER_SELECTOR = '[data-page-spinner]'
+const DASHBOARD = '/starter-dashboard'
 
 function flush() {
   return new Promise((resolve) => setImmediate(resolve))
@@ -70,26 +71,36 @@ function makeClock() {
   }
 }
 
-function makeSessionStorage({ throws = false } = {}) {
-  const store = new Map()
-  const guard = () => {
-    if (throws) throw new Error('SecurityError: storage is disabled')
-  }
+/**
+ * The module no longer keeps any state between loads, so every storage call is
+ * recorded rather than served: the tests below assert the count stays at zero.
+ */
+function makeSessionStorage() {
+  const touches = []
   return {
-    store,
+    touches,
     api: {
       getItem(key) {
-        guard()
-        return store.has(key) ? store.get(key) : null
+        touches.push(['getItem', key])
+        return null
       },
       setItem(key, value) {
-        guard()
-        store.set(key, String(value))
+        touches.push(['setItem', key, value])
       },
       removeItem(key) {
-        guard()
-        store.delete(key)
+        touches.push(['removeItem', key])
       },
+    },
+  }
+}
+
+/** The optional Designer element revealed for the length of the patch window. */
+function loaderElement({ withHiddenAttribute = true } = {}) {
+  return {
+    style: { display: 'none' },
+    attributes: withHiddenAttribute ? { hidden: '' } : {},
+    removeAttribute(name) {
+      delete this.attributes[name]
     },
   }
 }
@@ -98,6 +109,7 @@ function makeSessionStorage({ throws = false } = {}) {
 function formWrapper({
   withForm = true,
   withDone = true,
+  withStyle = true,
   doneVisible = false,
   formAttributes = {},
 } = {}) {
@@ -116,6 +128,9 @@ function formWrapper({
     },
   }
   const wrapper = {
+    // A wrapper built without `style` stands in for a DOM the module cannot
+    // touch; hiding it must fail quietly rather than block the PATCH.
+    style: withStyle ? {} : null,
     querySelector(selector) {
       if (selector === 'form') return withForm ? form : null
       if (selector === '.w-form-done') return withDone ? done : null
@@ -146,8 +161,9 @@ function loadModule(options = {}) {
   const fetchCalls = []
   const aborted = []
   const logs = { warn: [], info: [] }
-  const storage = makeSessionStorage({ throws: options.storageThrows })
+  const storage = makeSessionStorage()
   const fixtures = options.wrappers || []
+  const loader = Object.prototype.hasOwnProperty.call(options, 'loader') ? options.loader : null
   const patchOutcomes = (options.patchOutcomes || []).slice()
 
   const location = {
@@ -155,14 +171,21 @@ function loadModule(options = {}) {
     pathname: options.pathname || '/starter-onboarding',
     search: '',
     href: 'https://' + hostname + (options.pathname || '/starter-onboarding'),
+    replace(value) {
+      location.replaced = value
+      location.replaceCount = (location.replaceCount || 0) + 1
+    },
   }
 
   async function fetchStub(url, config = {}) {
     fetchCalls.push({
       url,
       config,
-      // Captured at call time so "marker written before the PATCH" is provable.
-      markerAtCall: storage.store.has(MARKER_KEY) ? storage.store.get(MARKER_KEY) : null,
+      // Captured at call time so "the form was hidden before the PATCH went
+      // out" is provable rather than merely true by the end of the test.
+      wrapperDisplaysAtCall: fixtures.map(
+        (fixture) => (fixture.wrapper.style && fixture.wrapper.style.display) || '',
+      ),
     })
 
     if (url.indexOf(TRADE_URL) === 0) {
@@ -235,6 +258,9 @@ function loadModule(options = {}) {
   const document = {
     readyState: options.readyState || 'complete',
     listeners: {},
+    querySelector(selector) {
+      return selector === LOADER_SELECTOR ? loader : null
+    },
     querySelectorAll(selector) {
       return selector === '.w-form' ? fixtures.map((fixture) => fixture.wrapper) : []
     },
@@ -270,6 +296,7 @@ function loadModule(options = {}) {
     clock,
     document,
     fetchCalls,
+    loader,
     location,
     logs,
     run,
@@ -341,18 +368,111 @@ test('a Webflow success PATCHes the status endpoint with a bearer token', async 
   assert.ok(urlsOf(fetchCalls)[0].startsWith(TRADE_URL + '?token='))
 })
 
-test('the fresh-submit marker is written before the PATCH goes out', async () => {
+// --- Loader, hidden form, redirect --------------------------------------------
+
+test('a success shows the loader and hides the form before the PATCH goes out', async () => {
   const fixture = formWrapper()
-  const { fetchCalls, storage } = loadModule({ wrappers: [fixture] })
+  const loader = loaderElement()
+  const { fetchCalls } = loadModule({ wrappers: [fixture], loader })
   await flush()
-  assert.equal(storage.store.has(MARKER_KEY), false, 'nothing is written before a submit')
+  assert.equal(loader.style.display, 'none', 'nothing is touched before a submit')
+  assert.equal(fixture.wrapper.style.display, undefined)
 
   fixture.succeed()
   await flush()
 
-  assert.equal(storage.store.get(MARKER_KEY), '1')
+  assert.equal(loader.style.display, 'block')
+  assert.equal(loader.attributes.hidden, undefined, 'the hidden attribute is cleared too')
+  assert.equal(fixture.wrapper.style.display, 'none', "Webflow's success message goes with it")
+
   const patches = callsTo(fetchCalls, PATCH_URL)
-  assert.equal(patches[0].markerAtCall, '1', 'marker already present when the PATCH was issued')
+  assert.deepEqual(patches[0].wrapperDisplaysAtCall, ['none'], 'hidden before the PATCH, not after')
+})
+
+test('a loader element built without the hidden attribute is still revealed', async () => {
+  const fixture = formWrapper()
+  const loader = loaderElement({ withHiddenAttribute: false })
+  loadModule({ wrappers: [fixture], loader })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  assert.equal(loader.style.display, 'block')
+})
+
+test('a missing loader is a silent no-op that still patches and redirects', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls, location, logs } = loadModule({ wrappers: [fixture] })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+  assert.equal(location.replaced, DASHBOARD)
+  assert.equal(logs.warn.length, 0, 'an unbuilt Designer element is not a fault')
+  assert.ok(logs.info.some((line) => line.includes(LOADER_SELECTOR)))
+})
+
+test('a wrapper that cannot be styled does not block the PATCH or the redirect', async () => {
+  const fixture = formWrapper({ withStyle: false })
+  const { fetchCalls, location } = loadModule({ wrappers: [fixture] })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+  assert.equal(location.replaced, DASHBOARD)
+})
+
+test('a successful PATCH replaces to the dashboard, once', async () => {
+  const fixture = formWrapper()
+  const { location } = loadModule({ wrappers: [fixture] })
+  await flush()
+  assert.equal(location.replaced, undefined, 'nothing before a submit')
+
+  fixture.succeed()
+  await flush()
+
+  assert.equal(location.replaced, DASHBOARD)
+  assert.equal(location.replaceCount, 1)
+})
+
+test('a PATCH that gives up after every retry still redirects', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls, clock, location, logs } = loadModule({
+    wrappers: [fixture],
+    patchOutcomes: ['fail', 'reject', 'fail'],
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  assert.equal(location.replaced, undefined, 'the redirect waits for the retries')
+
+  await clock.advance(1000)
+  assert.equal(location.replaced, undefined)
+  await clock.advance(3000)
+  await clock.advance(10000)
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 3, 'initial attempt plus two retries')
+  assert.equal(location.replaced, DASHBOARD, 'fail open: never stranded behind a hidden form')
+  assert.equal(location.replaceCount, 1)
+  assert.ok(logs.warn.some((line) => line.includes('gave up marking onboarding_done')))
+})
+
+test('a redirect that the browser refuses is swallowed, not thrown at the page', async () => {
+  const fixture = formWrapper()
+  const { location, logs } = loadModule({ wrappers: [fixture] })
+  location.replace = () => {
+    throw new Error('navigation blocked')
+  }
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  assert.ok(logs.warn.some((line) => line.includes('could not redirect')))
 })
 
 test('a submit success fires at most once per form', async () => {
@@ -396,13 +516,14 @@ test('a mutation that does not reveal the done block does not fire', async () =>
   assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
 })
 
-test('a done block already visible at boot is left to the marker, not PATCHed', async () => {
+test('a done block already visible at boot is left alone, not PATCHed', async () => {
   const fixture = formWrapper({ doneVisible: true })
-  const { fetchCalls } = loadModule({ wrappers: [fixture] })
+  const { fetchCalls, location } = loadModule({ wrappers: [fixture] })
   await flush()
 
   assert.equal(fixture.done.observers.length, 0)
   assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
+  assert.equal(location.replaced, undefined, 'a page served in its done state is not a submit')
 })
 
 test('a wrapper without a form or without a done block is skipped safely', async () => {
@@ -473,7 +594,7 @@ test('a form without a success redirect is not flagged', async () => {
 
 test('a failed PATCH is retried on the 1s/3s backoff and can still succeed', async () => {
   const fixture = formWrapper()
-  const { fetchCalls, clock } = loadModule({
+  const { fetchCalls, clock, location } = loadModule({
     wrappers: [fixture],
     patchOutcomes: ['fail', 'ok'],
   })
@@ -482,34 +603,23 @@ test('a failed PATCH is retried on the 1s/3s backoff and can still succeed', asy
   fixture.succeed()
   await flush()
   assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+  assert.equal(location.replaced, undefined, 'the member waits behind the loader, not the form')
 
   await clock.advance(1000)
   assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2)
+  assert.equal(location.replaced, DASHBOARD)
   await clock.advance(3000)
   assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2, 'no attempt after a success')
 })
 
-test('three failures give up quietly with a staging-only warning', async () => {
+test('a logged-out submit never reaches Xano, is not retried, and is left in place', async () => {
   const fixture = formWrapper()
-  const { fetchCalls, clock, logs } = loadModule({
+  const loader = loaderElement()
+  const { fetchCalls, clock, location, logs } = loadModule({
+    loggedOut: true,
     wrappers: [fixture],
-    patchOutcomes: ['fail', 'reject', 'fail'],
+    loader,
   })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-  await clock.advance(1000)
-  await clock.advance(3000)
-  await clock.advance(10000)
-
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 3, 'initial attempt plus two retries')
-  assert.ok(logs.warn.some((line) => line.includes('gave up marking onboarding_done')))
-})
-
-test('a logged-out submit never reaches Xano and is not retried', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls, clock, logs } = loadModule({ loggedOut: true, wrappers: [fixture] })
   await flush()
 
   fixture.succeed()
@@ -519,7 +629,12 @@ test('a logged-out submit never reaches Xano and is not retried', async () => {
   await clock.advance(1000)
   await clock.advance(3000)
   assert.equal(fetchCalls.length, 0, 'the retry loop breaks instead of re-trading')
+  assert.equal(location.replaced, undefined, 'no session, nowhere to send them')
   assert.ok(logs.warn.some((line) => line.includes('No Memberstack session')))
+
+  // Left on the page means left on a usable page, not behind a spinner.
+  assert.equal(loader.style.display, 'none', 'the loader is taken back down')
+  assert.equal(fixture.wrapper.style.display, '', 'the form goes back to its authored display')
 })
 
 // --- Scope gates --------------------------------------------------------------
@@ -633,14 +748,43 @@ test('a deferred-late document waits for DOMContentLoaded before doing anything'
 
 // --- Cross-file contract ------------------------------------------------------
 
-test('both halves of the pair agree on the sessionStorage marker key', () => {
+test('both halves of the pair send members to the same dashboard path', () => {
   const { api } = loadModule({ pathname: '/other' })
   const redirectSource = fs.readFileSync(REDIRECT_PATH, 'utf8')
 
-  assert.equal(api.justSubmittedKey, MARKER_KEY)
-  assert.ok(source.includes("'" + MARKER_KEY + "'"), 'the writer still uses the agreed key')
+  assert.equal(api.dashboardPath, DASHBOARD)
+  assert.equal(api.loaderSelector, LOADER_SELECTOR)
+  assert.ok(redirectSource.includes("'" + DASHBOARD + "'"), 'the read half agrees on the target')
+})
+
+// One element, raised by both files in windows that cannot overlap. A rename in
+// one half and not the other would leave the page half-covered, and nothing at
+// runtime would say so.
+test('both halves of the pair raise the same spinner element', () => {
+  const { api } = loadModule({ pathname: '/other' })
+  const redirectSource = fs.readFileSync(REDIRECT_PATH, 'utf8')
+
+  assert.equal(api.loaderSelector, LOADER_SELECTOR)
   assert.ok(
-    redirectSource.includes("'" + MARKER_KEY + "'"),
-    'the reader still uses the agreed key',
+    redirectSource.includes("var LOADER_SELECTOR = '" + LOADER_SELECTOR + "'"),
+    'the read half declares the same selector',
   )
+})
+
+// The retired sessionStorage handshake: the write half redirects the member
+// itself now, so neither file may quietly grow a marker back.
+test('neither half of the pair touches sessionStorage any more', async () => {
+  const fixture = formWrapper()
+  const { storage, location } = loadModule({ wrappers: [fixture], loader: loaderElement() })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  assert.equal(location.replaced, DASHBOARD)
+  assert.deepEqual(storage.touches, [])
+
+  const redirectSource = fs.readFileSync(REDIRECT_PATH, 'utf8')
+  for (const text of [source, redirectSource]) {
+    assert.equal(text.includes('sessionStorage'), false, 'no storage call survives in the source')
+  }
 })

@@ -1,17 +1,21 @@
 # Onboarding Patch Status Wiring
 
 Status: Shipping in the v1.59.47 split of `onboarding-done-redirect.js` (job 2
-of the former single file)
+of the former single file), reworked since to carry the post-submit journey —
+loader, hidden form, then a redirect to `/starter-dashboard` — in place of the
+`sessionStorage` marker the two halves used to hand between them. Unreleased;
+the next tag carries it.
 
 `v3/patch-onboarding-status.js` is a **page-scoped** module for
-`/starter-onboarding`. It does one thing: when a member finishes onboarding on
-that page, it records the completion in Xano. It is the **write half** of a
-pair, and it never reads status, never routes, and never touches the page's
-markup.
+`/starter-onboarding`. It owns everything that happens after a member finishes
+onboarding on that page: it records the completion in Xano and then takes the
+member to the dashboard. It is the **write half** of a pair, and it never reads
+status and never routes anyone anywhere except off this page after their own
+submit.
 
 The read half is
-[onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md), which is what
-later acts on the record by keeping a finished member out of the onboarding
+[onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md), which acts on
+the record on later visits by keeping a finished member out of the onboarding
 flow. Both jobs shipped as one file through v1.59.45 and were split at
 v1.59.47. They are deliberately self-contained twins — host allowlist, path
 gate, trade-token auth, the 8-second request budget, and the staging-only
@@ -21,19 +25,23 @@ version together.
 
 It is not a sibling of [route-guard.js](route-guard.js) and does not replace it.
 The route guard answers "may this role open this page" from Memberstack plans;
-this module answers nothing, makes no access decision, and only writes a
-completion flag for the Xano record it is authorized for.
+this module makes no access decision at all. It writes a completion flag for the
+Xano record it is authorized for and then moves the member on from a page they
+have just finished with, which is navigation, not authorization.
 
 ## What it does
 
 | Situation | Action |
 | --- | --- |
-| Either page form reaches its Webflow success state | Set the fresh-submit marker, then `PATCH` `set_onboarding_status` |
+| Either page form reaches its Webflow success state | Show `[data-page-spinner]`, hide that form's `.w-form` wrapper, then `PATCH` `set_onboarding_status` |
+| The `PATCH` succeeds | `location.replace('/starter-dashboard')` |
 | That wrapper's success block mutates again | Nothing — the observer disconnected on the first hit |
 | A `PATCH` attempt fails or times out | Retry at roughly 1s and 3s, re-trading the token between attempts |
-| All attempts fail | Give up silently, with a staging-only warning; never block or reload the completion view |
+| All attempts fail | Warn on staging, then redirect anyway — a member behind a hidden form must never be stranded |
+| No `[data-page-spinner]` element on the page | Nothing; the rest of the sequence runs unchanged |
 | A success block is already visible when the module boots | Leave it alone — only a transition *into* the done state is a submit |
-| Logged out, Memberstack absent, trade failed, HTTP error, timeout | Render the page as authored and write nothing |
+| Logged out (no Memberstack session) | Write nothing and redirect nowhere: put the loader back down and the form back up, leaving the page as authored |
+| Memberstack absent, trade failed, HTTP error, timeout | Give up on the write, then redirect to the dashboard |
 | Any other path, or an unapproved host | Do nothing at all (no Memberstack lookup, no observers) |
 
 The one endpoint it touches, on `api:KZf7nFnk` and bearer-authorized:
@@ -53,11 +61,11 @@ replaying a token Xano just rejected.
 
 ### Fail-open, everywhere
 
-Every failure mode leaves the page exactly as authored: logged out, Memberstack
-never loading, `getMemberCookie()` rejecting, a failed or empty token trade, a
-non-2xx write, a request that hangs past the 8-second budget. Nothing is
-blocked, nothing is reloaded, and no error state is painted over the completion
-view the member just earned.
+No failure mode is allowed to strand the member: logged out, Memberstack never
+loading, `getMemberCookie()` rejecting, a failed or empty token trade, a non-2xx
+write, a request that hangs past the 8-second budget, a loader element that was
+never built. Nothing is blocked, nothing is reloaded, and no error state is
+painted over the moment the member just finished.
 
 This is deliberate and is the whole risk posture of the module. Marking
 completion is **bookkeeping, not a security boundary**. A member whose mark is
@@ -67,25 +75,48 @@ exact moment they finished, is worse. Access control stays where it already is:
 Memberstack gated content, `v3/route-guard.js` for role routing, and Xano
 endpoint authorization for the records themselves.
 
-### The fresh-submit beat
+### Submit → loader → hidden form → PATCH → dashboard
 
-The write and the read would otherwise fight. A member submits, Xano flips
-`onboarding_done` to true, and the very next load of the page — the completion /
-preview state the page is authored to show — would redirect them away before
-they could read it.
+A successful submit runs one sequence, in this order:
 
-So a successful submit writes `sessionStorage['starter-onboarding-just-submitted'] = '1'`
-**before** the `PATCH` is issued, and the next load *consumes* it: the read half
-reads it, removes it, and skips the redirect check once. Written before the
-`PATCH` on purpose, so the completion view survives even if the write fails or
-the member navigates while it is in flight. This file only ever writes the key;
-[onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md) owns consuming
-it, unconditionally on every load, so a marker left behind by an abandoned
-submit can never suppress more than one load. `sessionStorage`, not
-`localStorage`: the skip is for this tab's immediate post-submit view, not
-forever. Every access is wrapped in `try`/`catch` — Safari private mode throws
-on storage, and the worst consequence of a failed marker is that the next load
-redirects one beat early.
+1. **Show the loader.** `document.querySelector('[data-page-spinner]')`, and
+   if it exists, `display: block` plus the `hidden` attribute removed. The
+   element is optional; its absence is a staging note, not a warning, and the
+   rest of the sequence is unaffected. It is **shared with the read half**,
+   which raises the same element during its load-time status check — see
+   [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md). The two
+   windows cannot overlap (a load-time check is long finished before anyone can
+   fill in a form), so neither file coordinates with the other.
+2. **Hide the submitted form.** That form's `.w-form` wrapper gets
+   `display: none`, which takes Webflow's own success message down with it. The
+   member is on their way out; a completion panel they are about to lose is
+   noise. Guarded, so a DOM that refuses to be styled cannot stand between the
+   submit and the write.
+3. **`PATCH` `set_onboarding_status`**, with the retry behaviour below.
+4. **`location.replace('/starter-dashboard')`** once the `PATCH` settles.
+
+The redirect fires **whether or not the write landed** — success, a give-up
+after every retry, or an unexpected rejection all end at the dashboard. That is
+the fail-open doctrine applied to the new shape of the page: the form is already
+hidden by the time the write is in flight, so a member left behind it has
+nowhere to go and nothing to read, while an unmarked record costs only that the
+onboarding page renders again on a later visit and is marked then. Stranding is
+unrecoverable for the member; a missed mark is not.
+
+The one exception is a member with **no Memberstack session**, who is left
+exactly where they are — there is nothing to write and no dashboard to send them
+to, and it matches how every other logged-out case in the module behaves.
+"Left where they are" is literal: that branch takes the loader back down and
+puts the form back up, because a spinner over a hidden form with no redirect
+behind it would be the very stranding this doctrine forbids. In practice a
+member who just submitted a form is logged in, so this branch is a
+belt-and-braces guard rather than a live path.
+
+There is no `sessionStorage` handshake between the two halves any more. The old
+`starter-onboarding-just-submitted` marker existed to stop the read half from
+bouncing a member off their own completion view; now the write half takes them
+off the page itself, so the beat it was protecting no longer exists. Neither
+file touches storage, and the tests assert it stays that way.
 
 ### Submit success, not submit click
 
@@ -103,15 +134,17 @@ inline display that is neither empty nor `none` as the signal, with
 positive mutation it disconnects that wrapper's observer and marks the wrapper,
 so a re-render or a second mutation cannot double-fire. Each wrapper fires at
 most once per page load; a done block that is *already* visible when the module
-boots is left alone and handed to the marker instead.
+boots is left alone, because a page served in its done state is not a submit
+anyone witnessed.
 
 ### The PATCH
 
 Initial attempt plus two retries, at roughly 1s and 3s, re-trading the token
-between failed attempts, then it gives up silently with a staging-only warning.
-A missed mark is recoverable — the member simply gets redirected on a later
-visit once the record is right — so this never blocks or reloads the completion
-view.
+between failed attempts, then it gives up with a staging-only warning. The
+member waits behind the loader for that whole window — up to about four seconds
+of backoff plus the request budget — and is redirected at the end of it either
+way. A missed mark is recoverable: the record is set on a later visit, and until
+then the only cost is that the onboarding page renders again.
 
 ## Webflow install
 
@@ -155,7 +188,23 @@ learns that anyone finished.
    module logs a staging warning and skips it).
 5. Nothing else on the page should show `.w-form-done` for a non-submit reason —
    that is read as a successful submit.
-6. `/starter-onboarding` is Talent-only in the route-guard matrix. Leave that
+6. **The loader element carrying `data-page-spinner`.** Keep it **outside both
+   `.w-form` wrappers** — a full-screen overlay near the end of the body is the
+   intended shape — and **hidden by default** in the Designer. Outside matters:
+   the submitted wrapper is hidden in the same beat, so a loader nested inside
+   one would be revealed and then hidden along with its parent. The first
+   element matching the attribute wins, so build exactly one.
+
+   **Both modules share it.** This one reveals it (`display: block`, `hidden`
+   attribute cleared) for the length of the patch window and never hides it
+   again, because the page is replaced a moment later. The read half raises the
+   same element during its load-time status check and *does* lower it again when
+   the member is staying — see
+   [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md). The two
+   windows cannot overlap, so nothing coordinates between them. Technically
+   optional in both files: without the element, each still behaves identically,
+   the member just sees an uncovered page.
+7. `/starter-onboarding` is Talent-only in the route-guard matrix. Leave that
    entry alone; this module assumes the guard has already done role routing.
 
 ## Staging QA order
@@ -168,26 +217,42 @@ deliberately allow `localhost`, `127.0.0.1`, `*.webflow.io`, and
 chatty, production is silent.
 
 1. **Logged out.** Open `/starter-onboarding`. The page renders, no redirect,
-   no Xano call in the Network tab from either file.
-2. **Fresh Talent, not yet done.** Log in, open the page. It renders. The
-   console notes "onboarding not marked done".
-3. **Submit the full-profile form.** Watch the **Network tab**, not the page:
-   find the `PATCH .../set_onboarding_status` request, confirm it actually fired,
-   and read its response body for `{"onboarding_done": true}`. Then confirm
-   `sessionStorage['starter-onboarding-just-submitted']` was set, and that you
-   are **not** redirected — the completion state must stay visible. A success
-   visual is not evidence on its own: a redirect-configured form can look like
-   it submitted while no `PATCH` was ever issued.
-4. **Reload immediately.** This is the fresh-submit beat: the page renders once
-   more, no Xano read at all, and the sessionStorage key is now gone.
-5. **Reload again.** Now the redirect fires: `/starter-dashboard`, via
-   `replace()`, so Back does not bounce you into a loop.
+   no Xano call in the Network tab from either file. The spinner may sit over
+   the page for up to 8 seconds first, while the read half waits for
+   Memberstack; that pause is the documented trade-off, not a bug.
+2. **Fresh Talent, not yet done.** Log in, open the page. The spinner appears
+   briefly over the page while the read half checks Xano, then comes down and
+   the page renders. The console notes "onboarding not marked done". If the
+   spinner never comes down, stop here — that is the read half, not the submit
+   flow, and it is diagnosed in
+   [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md).
+3. **Submit the full-profile form.** Watch the page and the **Network tab**
+   together, with "Preserve log" on so the redirect does not wipe the evidence.
+   The form should disappear, the loader (if it has been built) should appear,
+   and you should land on `/starter-dashboard` via `replace()` — so Back does
+   not bounce you into a loop. In the network log, find the
+   `PATCH .../set_onboarding_status` request, confirm it actually fired, and read
+   its response body for `{"onboarding_done": true}`. A success visual is not
+   evidence on its own: a redirect-configured form can look like it submitted
+   while no `PATCH` was ever issued.
+4. **Check nothing was left in storage.** In the console on the dashboard,
+   `sessionStorage` should carry no `starter-onboarding-*` key. The old
+   fresh-submit marker is gone; if you see one, a stale copy of either file is
+   still installed.
+5. **Go back to `/starter-onboarding`.** Now the read half does its job: the
+   spinner covers the page, stays up, and the redirect fires again on load, from
+   [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md) this time
+   (its `[starters onboarding-done]` prefix in the console tells them apart).
+   You should not see the onboarding page paint at all.
 6. **Repeat 2–5 with the consult form** on a second Talent account. Both forms
    count.
 7. **Offline / blocked-Xano check.** With the Network tab throttled to offline
-   (or the Xano origin blocked), reload the page and submit: it must render
-   normally within a couple of seconds, the submit must not stall or error out,
-   and no state may be left blank or stuck.
+   (or the Xano origin blocked), reload the page and submit: the page must
+   render normally within a couple of seconds, and the submit must still end at
+   `/starter-dashboard` once the retries are exhausted — roughly four seconds of
+   backoff, longer if the requests hang out to their 8-second budget. The member
+   may never be left sitting on a hidden form. The record stays unmarked, which
+   is expected: this member gets marked on a later submit.
 8. **Production silence.** After publishing, confirm the console prints nothing
    from `[starters patch-onboarding-status]` *or* `[starters onboarding-done]`
    on `thestarters.com`.
@@ -203,16 +268,23 @@ chatty, production is silent.
 | PATCH never fires on success | The success block is missing, was already visible at boot, or is not inside the `.w-form` wrapper. The staging console names the case. |
 | PATCH fires twice | Two `.w-form` wrappers reached their success state, which is the intended per-form behaviour. A single wrapper cannot fire twice. |
 | PATCH fires and 401s or 404s | The trade-token call failed or the member has no `user_v3` row (trade-token 404s without one). The staging message carries the status. |
-| PATCH returns 2xx but the member is never redirected later | Not this file — the record is right, so check the read half in [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md). |
-| Redirects immediately after submitting | The marker was not written. Check `sessionStorage` is available (private mode, or a cookie/storage blocker) and look for the "could not write the fresh-submit marker" warning. |
+| PATCH returns 2xx but a later visit to the page does not redirect | Not this file — the record is right, so check the read half in [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md). |
+| Submitted, the form vanished, but the member was never redirected | The `PATCH` is still in flight or still retrying — wait out the ~4s of backoff plus request budget before calling it stuck. If it never arrives: the member has no Memberstack session (the one case that deliberately does not redirect; the console says so), or the browser refused the navigation ("could not redirect to /starter-dashboard" on staging). |
+| Loader never appears, but the flow otherwise works | No element matching `[data-page-spinner]` on the page — the staging console notes it by name. Add one in the Designer, hidden by default; the module only ever reveals it. |
+| Loader appears and stays forever after a submit | The redirect did not fire; see the "never redirected" row. This module never lowers the loader, because the page is normally replaced out from under it. |
+| Loader is up on a page nobody submitted on | That is the read half's window, not this one. Expected while its status check runs (and permanently once its redirect is navigating) — see [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md). |
 
 ## Diagnostics
 
 `window.StartersPatchOnboardingStatus` exposes `allowedHost`, `stagingHost`,
 `isOnboardingPath`, `diagnosticsEnabled`, `isShown`, `watchForms`,
-`markOnboardingDone`, and `justSubmittedKey` for console checks.
-`markOnboardingDone()` is callable by hand on staging to exercise the write —
-marker and all — without submitting a form.
+`markOnboardingDone`, `dashboardPath`, and `loaderSelector` for console checks.
+`markOnboardingDone()` is callable by hand on staging to exercise the write on
+its own: it resolves `true` or `false` and does **not** touch the loader, the
+form, or the location, so it can be run without being navigated away from the
+page. To see the whole sequence, submit a form. `loaderSelector` reads the same
+`[data-page-spinner]` value the read half exposes as its own `loaderSelector`;
+if the two ever disagree, one file is stale.
 
 ## Release gate
 

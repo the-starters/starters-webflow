@@ -6,21 +6,34 @@
  * `location.replace()`, so a finished member cannot land back inside the
  * onboarding flow from a bookmark, the back button, or a stale link.
  *
+ * That answer costs a round trip, and until it lands the onboarding page is
+ * fully visible — so an already-done member used to watch the page render and
+ * then vanish under the redirect. This module therefore also owns the shared
+ * `[data-page-spinner]` element, the same one v3/patch-onboarding-status.js
+ * raises during its PATCH, for the length of its check: up before the read, down
+ * again the moment the answer is "stay". When the answer is "go" it is left up
+ * on purpose, because the navigation is already in flight and lowering it would
+ * flash the page one last time on the way out.
+ *
  * PAIRED WITH v3/patch-onboarding-status.js, which owns the writing half: when
- * one of this page's Webflow forms reaches its success state, that module PATCHes
- * Xano and leaves the `sessionStorage` marker 'starter-onboarding-just-submitted'
- * behind. Unread, this check would bounce the member who just submitted straight
- * past the page's own completion/preview state — so the marker is consumed here
- * on every load: read it, remove it, and skip the redirect exactly once. The two
- * files install together as a pair of deferred tags on /starter-onboarding;
- * either one alone is a broken half of the flow.
+ * one of this page's Webflow forms reaches its success state, that module hides
+ * the form, PATCHes Xano, and redirects the member itself. The post-submit
+ * journey is entirely its business, so this module's job is only to keep an
+ * already-done member from re-entering the page on a later visit — a bookmark,
+ * the back button, a stale link. It runs once per load and never touches the
+ * forms. The two files install together as a pair of deferred tags on
+ * /starter-onboarding; either one alone is a broken half of the flow.
  *
  * FAIL-OPEN, EVERYWHERE. Logged out, Memberstack missing or slow, token trade
  * rejected, HTTP error, malformed envelope, request timeout: every one of those
- * leaves the page exactly as authored. This redirect is a UX courtesy, never a
- * security boundary — Memberstack gated content and Xano endpoint authorization
- * remain the enforced layers, and a member who should not see this page is
- * still handled by v3/route-guard.js.
+ * leaves the page exactly as authored, spinner included — it comes back down on
+ * every outcome except a redirect that is already navigating, and no DOM failure
+ * around it is allowed to delay or prevent the decision itself. The cost of that
+ * rule is one accepted wait: a visitor whose Memberstack never loads sits under
+ * the spinner for the full 8-second budget before it lowers. This redirect is a
+ * UX courtesy, never a security boundary — Memberstack gated content and Xano
+ * endpoint authorization remain the enforced layers, and a member who should not
+ * see this page is still handled by v3/route-guard.js.
  *
  * Auth is the proven trade-token flow the sibling v3 modules use (see
  * opportunities-3.0.js, v3/starter-dashboard-points.js): the Memberstack JWT
@@ -54,16 +67,15 @@
   // be dead on staging exactly when it needs QA.
   var APPROVED_HOSTS = ['the-starters-3-0.webflow.io', 'thestarters.com', 'www.thestarters.com']
 
-  // Consumed here, written by v3/patch-onboarding-status.js.
-  // Namespaced so it cannot collide with Webflow, Memberstack, or the step-flow
-  // script driving this page's panels. sessionStorage (not localStorage) on
-  // purpose: the skip is meant for this tab's immediate post-submit view, not
-  // forever.
-  var JUST_SUBMITTED_KEY = 'starter-onboarding-just-submitted'
-
   var MEMBERSTACK_TIMEOUT_MS = 8000
   var MEMBERSTACK_POLL_MS = 100
   var REQUEST_TIMEOUT_MS = 8000
+
+  // Optional, and shared with v3/patch-onboarding-status.js: one element, two
+  // windows that cannot overlap — this half raises it at page load for the
+  // status read, the write half at form submit for the PATCH. Neither needs to
+  // know about the other.
+  var LOADER_SELECTOR = '[data-page-spinner]'
 
   var LOG_PREFIX = '[starters onboarding-done]'
 
@@ -115,20 +127,53 @@
     return (error && error.message) || String(error)
   }
 
-  /* --------------------------- fresh-submit marker -------------------------- */
-  // Every sessionStorage touch is wrapped: Safari private mode throws on access,
-  // and a storage failure must never take the page down with it. A marker that
-  // cannot be written just means the next load redirects one beat too early.
+  /* ------------------------------ page spinner ------------------------------ */
+  // Every access is guarded and every one of them is optional. The redirect
+  // decision is the part that matters: a page with no spinner built, or a DOM
+  // that refuses to be styled, must still reach the same answer at the same
+  // speed. Looked up fresh each time rather than held between the raise and the
+  // lower, so neither call depends on the other having worked.
 
-  function consumeJustSubmitted() {
+  function findLoader() {
     try {
-      var value = window.sessionStorage.getItem(JUST_SUBMITTED_KEY)
-      if (value === null || typeof value === 'undefined') return false
-      window.sessionStorage.removeItem(JUST_SUBMITTED_KEY)
-      return true
+      return document.querySelector(LOADER_SELECTOR)
     } catch (error) {
+      return null
+    }
+  }
+
+  // Webflow ships hidden elements as an inline `display:none`, sometimes
+  // alongside the `hidden` attribute, so both are cleared — the same reveal the
+  // write half performs.
+  function showLoader() {
+    var loader = findLoader()
+    if (!loader) {
+      note('no ' + LOADER_SELECTOR + ' element on this page; the check runs uncovered.')
       return false
     }
+    try {
+      if (loader.style) loader.style.display = 'block'
+      if (typeof loader.removeAttribute === 'function') loader.removeAttribute('hidden')
+    } catch (error) {
+      warn('could not reveal the spinner: ' + describe(error))
+      return false
+    }
+    return true
+  }
+
+  // Back to the inline `display:none` Webflow authored it with. Silent when
+  // there is no element: showLoader() has already said so once, and this runs on
+  // every load.
+  function hideLoader() {
+    var loader = findLoader()
+    if (!loader) return false
+    try {
+      if (loader.style) loader.style.display = 'none'
+    } catch (error) {
+      warn('could not hide the spinner: ' + describe(error))
+      return false
+    }
+    return true
   }
 
   /* --------------------------------- fetch --------------------------------- */
@@ -321,17 +366,24 @@
 
   /* ---------------------------------- boot ---------------------------------- */
 
+  // The spinner is raised and lowered here and nowhere else, so the exposed
+  // redirectIfDone() stays a pure read-and-decide that can be called by hand on
+  // staging without the page changing underneath the console.
   function start() {
-    // Consumed on every load, whether or not it is present, so a marker left by
-    // an abandoned submit can never suppress more than the one next load.
-    if (consumeJustSubmitted()) {
-      note('fresh submit marker consumed; skipping the redirect check once.')
-      return
-    }
-
-    redirectIfDone().catch(function (error) {
-      warn('unexpected redirect-check failure: ' + describe(error))
-    })
+    showLoader()
+    redirectIfDone().then(
+      function (redirecting) {
+        // Left up on purpose when a redirect is in flight: the page is being
+        // replaced, and uncovering it first would flash the onboarding view the
+        // member is on their way out of.
+        if (redirecting) return
+        hideLoader()
+      },
+      function (error) {
+        warn('unexpected redirect-check failure: ' + describe(error))
+        hideLoader()
+      },
+    )
   }
 
   window.StartersOnboardingDoneRedirect = {
@@ -341,8 +393,8 @@
     diagnosticsEnabled: diagnosticsEnabled,
     onboardingDone: onboardingDone,
     redirectIfDone: redirectIfDone,
-    justSubmittedKey: JUST_SUBMITTED_KEY,
     dashboardPath: DASHBOARD_PATH,
+    loaderSelector: LOADER_SELECTOR,
   }
 
   if (!allowedHost(window.location.hostname)) return
