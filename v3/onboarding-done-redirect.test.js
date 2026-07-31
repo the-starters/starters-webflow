@@ -8,9 +8,8 @@ const source = fs.readFileSync(require.resolve('./onboarding-done-redirect.js'),
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
 const GET_URL = XANO + '/api:KZf7nFnk/starters_onboarding/get_freelancers'
-const PATCH_URL = XANO + '/api:KZf7nFnk/starters_onboarding/set_onboarding_status'
-const MARKER_KEY = 'starter-onboarding-just-submitted'
 const DASHBOARD = '/starter-dashboard'
+const LOADER_SELECTOR = '[data-page-spinner]'
 const DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: true }] }
 const NOT_DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: false }] }
 
@@ -72,55 +71,45 @@ function makeClock() {
   }
 }
 
+/**
+ * The module keeps no state between loads any more, so storage is a recorder,
+ * not a store: the tests below assert nothing here is ever called. The throwing
+ * variant stands in for Safari private mode, where a stray call would surface as
+ * a failure rather than as a silent regression.
+ */
 function makeSessionStorage({ throws = false } = {}) {
-  const store = new Map()
-  const guard = () => {
+  const touches = []
+  const guard = (call) => {
+    touches.push(call)
     if (throws) throw new Error('SecurityError: storage is disabled')
   }
   return {
-    store,
+    touches,
     api: {
       getItem(key) {
-        guard()
-        return store.has(key) ? store.get(key) : null
+        guard(['getItem', key])
+        return null
       },
       setItem(key, value) {
-        guard()
-        store.set(key, String(value))
+        guard(['setItem', key, value])
       },
       removeItem(key) {
-        guard()
-        store.delete(key)
+        guard(['removeItem', key])
       },
     },
   }
 }
 
-/** A `.w-form` wrapper holding a form and its hidden `.w-form-done` sibling. */
-function formWrapper({ withForm = true, withDone = true, doneVisible = false } = {}) {
-  const done = {
-    style: { display: doneVisible ? 'block' : 'none' },
-    offsetParent: null,
-    observers: [],
-  }
-  const form = { style: {} }
-  const wrapper = {
-    querySelector(selector) {
-      if (selector === 'form') return withForm ? form : null
-      if (selector === '.w-form-done') return withDone ? done : null
-      return null
-    },
-  }
-
+/**
+ * The `[data-page-spinner]` element shared with the write half, in the state the
+ * Designer authors it: hidden, and carrying the `hidden` attribute Webflow adds.
+ */
+function loaderElement({ withHiddenAttribute = true } = {}) {
   return {
-    wrapper,
-    form,
-    done,
-    /** What Webflow does on a successful AJAX submit. */
-    succeed() {
-      form.style.display = 'none'
-      done.style.display = 'block'
-      done.observers.slice().forEach((observer) => observer.fire())
+    style: { display: 'none' },
+    attributes: withHiddenAttribute ? { hidden: '' } : {},
+    removeAttribute(name) {
+      delete this.attributes[name]
     },
   }
 }
@@ -136,9 +125,7 @@ function loadModule(options = {}) {
   const aborted = []
   const logs = { warn: [], info: [] }
   const storage = makeSessionStorage({ throws: options.storageThrows })
-  if (options.markerPresent) storage.store.set(MARKER_KEY, '1')
-  const fixtures = options.wrappers || []
-  const patchOutcomes = (options.patchOutcomes || []).slice()
+  const loader = Object.prototype.hasOwnProperty.call(options, 'loader') ? options.loader : null
 
   const location = {
     hostname,
@@ -151,12 +138,7 @@ function loadModule(options = {}) {
   }
 
   async function fetchStub(url, config = {}) {
-    fetchCalls.push({
-      url,
-      config,
-      // Captured at call time so "marker written before the PATCH" is provable.
-      markerAtCall: storage.store.has(MARKER_KEY) ? storage.store.get(MARKER_KEY) : null,
-    })
+    fetchCalls.push({ url, config })
 
     if (url.indexOf(TRADE_URL) === 0) {
       if (options.tradeRejects) throw new Error('trade network failure')
@@ -179,13 +161,6 @@ function loadModule(options = {}) {
       )
     }
 
-    if (url === PATCH_URL) {
-      const outcome = patchOutcomes.length ? patchOutcomes.shift() : 'ok'
-      if (outcome === 'reject') throw new Error('patch network failure')
-      if (outcome === 'fail') return jsonResponse(null, { ok: false, status: 500 })
-      return jsonResponse({ onboarding_done: true })
-    }
-
     throw new Error('unexpected fetch: ' + url)
   }
 
@@ -206,24 +181,6 @@ function loadModule(options = {}) {
         aborted.push(this)
       }
     },
-    MutationObserver: class {
-      constructor(callback) {
-        this.callback = callback
-      }
-      observe(target, init) {
-        this.target = target
-        this.init = init
-        target.observers.push(this)
-      }
-      disconnect() {
-        this.disconnected = true
-        const index = this.target.observers.indexOf(this)
-        if (index !== -1) this.target.observers.splice(index, 1)
-      }
-      fire() {
-        this.callback([], this)
-      }
-    },
   }
   if (options.debug) window.STARTERS_DEBUG = true
 
@@ -239,8 +196,11 @@ function loadModule(options = {}) {
   const document = {
     readyState: options.readyState || 'complete',
     listeners: {},
-    querySelectorAll(selector) {
-      return selector === '.w-form' ? fixtures.map((fixture) => fixture.wrapper) : []
+    querySelector(selector) {
+      // Content blockers and exotic embeds have been seen to break lookups; the
+      // decision must survive it.
+      if (options.querySelectorThrows) throw new Error('querySelector is unavailable')
+      return selector === LOADER_SELECTOR ? loader : null
     },
     addEventListener(type, handler) {
       document.listeners[type] = document.listeners[type] || []
@@ -274,6 +234,7 @@ function loadModule(options = {}) {
     clock,
     document,
     fetchCalls,
+    loader,
     location,
     logs,
     run,
@@ -332,16 +293,7 @@ test('only a literal true in the freelancer envelope counts as done', () => {
   assert.equal(api.onboardingDone(null), false)
 })
 
-test('a Webflow done block reads as shown only once its inline display changes', () => {
-  const { api } = loadModule({ pathname: '/other' })
-  assert.equal(api.isShown(null), false)
-  assert.equal(api.isShown({ style: { display: 'none' } }), false)
-  assert.equal(api.isShown({ style: { display: 'block' } }), true)
-  assert.equal(api.isShown({ style: {}, offsetParent: null }), false)
-  assert.equal(api.isShown({ style: {}, offsetParent: {} }), true)
-})
-
-// --- Job 1: redirect on visit -------------------------------------------------
+// --- Redirect on visit --------------------------------------------------------
 
 test('a completed member is replaced to the dashboard with a bearer-authorized read', async () => {
   const { location, fetchCalls } = loadModule()
@@ -423,23 +375,16 @@ test('a rejected Memberstack cookie lookup fails open', async () => {
   assert.equal(fetchCalls.length, 0)
 })
 
-test('the fresh-submit marker suppresses the redirect once and is cleared', async () => {
-  const { location, fetchCalls, storage } = loadModule({ markerPresent: true })
-  await flush()
-  assert.equal(location.replaced, undefined)
-  assert.equal(fetchCalls.length, 0, 'no Xano call is spent on a skipped load')
-  assert.equal(storage.store.has(MARKER_KEY), false, 'marker is consumed, not left behind')
-})
+// The write half now hides the form and redirects the member itself, so there
+// is no post-submit beat for this module to sit out: every load is a plain
+// "have they already finished" check.
 
-test('the load after a consumed marker redirects normally', async () => {
-  const first = loadModule({ markerPresent: true })
+test('the redirect check never touches sessionStorage', async () => {
+  const { location, storage } = loadModule()
   await flush()
-  assert.equal(first.location.replaced, undefined)
-
-  // A second page load in the same tab: same storage contents, fresh module.
-  const second = loadModule({ markerPresent: first.storage.store.has(MARKER_KEY) })
-  await flush()
-  assert.equal(second.location.replaced, DASHBOARD)
+  assert.equal(location.replaced, DASHBOARD)
+  assert.deepEqual(storage.touches, [], 'no marker is read, written, or cleared')
+  assert.equal(source.includes('sessionStorage'), false, 'and none is left in the source')
 })
 
 test('storage that throws (Safari private mode) does not break the redirect', async () => {
@@ -448,30 +393,191 @@ test('storage that throws (Safari private mode) does not break the redirect', as
   assert.equal(location.replaced, DASHBOARD)
 })
 
+test('every load runs the check, including the one right after a submit', async () => {
+  const first = loadModule()
+  await flush()
+  assert.equal(first.location.replaced, DASHBOARD)
+
+  // A second page load in the same tab: nothing carries over between them.
+  const second = loadModule()
+  await flush()
+  assert.equal(second.location.replaced, DASHBOARD)
+  assert.equal(callsTo(second.fetchCalls, GET_URL).length, 1)
+})
+
+// --- The page spinner ---------------------------------------------------------
+// The `[data-page-spinner]` element is shared with the write half, which raises
+// it during its post-submit PATCH. This half owns it for the length of the
+// load-time status read, and the two windows cannot overlap.
+
+test('the spinner is raised before the status read begins', async () => {
+  const loader = loaderElement()
+  const { fetchCalls } = loadModule({ loader })
+
+  assert.equal(loader.style.display, 'block', 'raised synchronously at boot')
+  assert.equal(loader.attributes.hidden, undefined, 'the hidden attribute is cleared too')
+  assert.equal(fetchCalls.length, 0, 'and before the first request goes out')
+  await flush()
+})
+
+test('the spinner stays up while the redirect navigates', async () => {
+  const loader = loaderElement()
+  const { location } = loadModule({ loader })
+  await flush()
+
+  assert.equal(location.replaced, DASHBOARD)
+  assert.equal(loader.style.display, 'block', 'uncovering the page would flash it on the way out')
+})
+
+test('the spinner comes down when the member is not done and the page renders', async () => {
+  const loader = loaderElement()
+  const { location } = loadModule({ loader, envelope: NOT_DONE_ENVELOPE })
+  assert.equal(loader.style.display, 'block', 'up first, or the assertion below proves nothing')
+  await flush()
+
+  assert.equal(location.replaced, undefined)
+  assert.equal(loader.style.display, 'none')
+})
+
+test('the spinner comes down for a logged-out visitor', async () => {
+  const loader = loaderElement()
+  const { location, fetchCalls } = loadModule({ loader, loggedOut: true })
+  assert.equal(loader.style.display, 'block')
+  await flush()
+
+  assert.equal(location.replaced, undefined)
+  assert.equal(fetchCalls.length, 0)
+  assert.equal(loader.style.display, 'none')
+})
+
+test('the spinner comes down on every read failure', async () => {
+  for (const failure of [
+    { getRejects: true },
+    { getStatus: 500 },
+    { tradeFails: true },
+    { tradeRejects: true },
+    { tradeBody: { nothing: true } },
+    { memberstackRejects: true },
+    { envelope: {} },
+  ]) {
+    const label = JSON.stringify(failure)
+    const loader = loaderElement()
+    const { location } = loadModule(Object.assign({ loader }, failure))
+    assert.equal(loader.style.display, 'block', label)
+    await flush()
+
+    assert.equal(location.replaced, undefined, label)
+    assert.equal(loader.style.display, 'none', label)
+  }
+})
+
+test('the spinner comes down after a hung read times out', async () => {
+  const loader = loaderElement()
+  const { location, clock, aborted } = loadModule({ loader, getNeverSettles: true })
+  await flush()
+  assert.equal(loader.style.display, 'block', 'still covering the page while the read is in flight')
+
+  await clock.advance(8000)
+
+  assert.equal(aborted.length, 1)
+  assert.equal(location.replaced, undefined)
+  assert.equal(loader.style.display, 'none')
+})
+
+// The accepted cost of covering the page: a visitor whose Memberstack never
+// arrives waits out the full budget before the page is uncovered.
+test('a Memberstack that never loads holds the spinner for the 8s budget, then lowers it', async () => {
+  const loader = loaderElement()
+  const { location, clock } = loadModule({ loader, memberstackMissing: true })
+  await flush()
+  assert.equal(loader.style.display, 'block')
+
+  await clock.advance(7900)
+  assert.equal(loader.style.display, 'block', 'still waiting inside the budget')
+
+  await clock.advance(200)
+  assert.equal(loader.style.display, 'none')
+  assert.equal(location.replaced, undefined)
+})
+
+// A refused navigation rejects the check, which is the one way a "go" answer
+// ends with the member still here — so the page has to be uncovered after all.
+test('a redirect the browser refuses brings the spinner back down', async () => {
+  const loader = loaderElement()
+  const { location, logs } = loadModule({ loader })
+  location.replace = () => {
+    throw new Error('navigation blocked')
+  }
+  await flush()
+
+  assert.equal(loader.style.display, 'none')
+  assert.ok(logs.warn.some((line) => line.includes('unexpected redirect-check failure')))
+})
+
+test('a spinner element built without the hidden attribute is still raised', async () => {
+  const loader = loaderElement({ withHiddenAttribute: false })
+  loadModule({ loader, envelope: NOT_DONE_ENVELOPE })
+  assert.equal(loader.style.display, 'block')
+  await flush()
+  assert.equal(loader.style.display, 'none')
+})
+
+test('a page with no spinner element decides exactly the same way', async () => {
+  const { location, logs, loader } = loadModule()
+  assert.equal(loader, null, 'nothing to raise')
+  await flush()
+
+  assert.equal(location.replaced, DASHBOARD)
+  assert.equal(logs.warn.length, 0, 'an unbuilt Designer element is not a fault')
+  assert.ok(logs.info.some((line) => line.includes(LOADER_SELECTOR)))
+
+  const staying = loadModule({ envelope: NOT_DONE_ENVELOPE })
+  await flush()
+  assert.equal(staying.location.replaced, undefined)
+})
+
+test('a querySelector that throws cannot stop the redirect', async () => {
+  const { location, loader } = loadModule({ loader: loaderElement(), querySelectorThrows: true })
+  await flush()
+  assert.equal(location.replaced, DASHBOARD)
+  assert.equal(loader.style.display, 'none', 'never reached, so never changed')
+
+  const staying = loadModule({
+    loader: loaderElement(),
+    querySelectorThrows: true,
+    envelope: NOT_DONE_ENVELOPE,
+  })
+  await flush()
+  assert.equal(staying.location.replaced, undefined)
+})
+
+// Only the boot path drives the spinner, so the exposed diagnostic stays a pure
+// read-and-decide that can be run from the console without the page moving.
+test('redirectIfDone() called by hand leaves the spinner alone', async () => {
+  const loader = loaderElement()
+  const { api } = loadModule({ loader, pathname: '/other', envelope: NOT_DONE_ENVELOPE })
+  await flush()
+  assert.equal(loader.style.display, 'none', 'untouched: this load never booted')
+
+  const done = await api.redirectIfDone()
+  assert.equal(done, false)
+  assert.equal(loader.style.display, 'none', 'still untouched')
+})
+
 // --- Scope gates --------------------------------------------------------------
 
 test('does nothing on another page of the site', async () => {
-  const fixture = formWrapper()
-  const { location, fetchCalls } = loadModule({
-    pathname: '/starter-dashboard',
-    wrappers: [fixture],
-  })
+  const { location, fetchCalls } = loadModule({ pathname: '/starter-dashboard' })
   await flush()
   assert.equal(location.replaced, undefined)
   assert.equal(fetchCalls.length, 0)
-  assert.equal(fixture.done.observers.length, 0, 'no submit watcher outside the onboarding page')
 })
 
 test('does nothing on an unapproved host', async () => {
-  const fixture = formWrapper()
-  const { location, fetchCalls } = loadModule({
-    hostname: 'attacker.example',
-    wrappers: [fixture],
-  })
+  const { location, fetchCalls } = loadModule({ hostname: 'attacker.example' })
   await flush()
   assert.equal(location.replaced, undefined)
   assert.equal(fetchCalls.length, 0)
-  assert.equal(fixture.done.observers.length, 0)
 })
 
 test('runs on a cloudflared dev tunnel so the staging loop can QA it', async () => {
@@ -493,138 +599,22 @@ test('the trailing-slash path form is in scope at runtime too', async () => {
   assert.equal(location.replaced, DASHBOARD)
 })
 
-// --- Job 2: mark done on submit ----------------------------------------------
+// --- Diagnostics and boot -----------------------------------------------------
 
-test('a Webflow success PATCHes the status endpoint with a bearer token', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls } = loadModule({
-    markerPresent: true, // skip job 1 so only the submit path is exercised
-    wrappers: [fixture],
-  })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-
-  const patches = callsTo(fetchCalls, PATCH_URL)
-  assert.equal(patches.length, 1)
-  assert.equal(patches[0].config.method, 'PATCH')
-  assert.equal(patches[0].config.headers.Authorization, 'Bearer xano-token-abc')
-})
-
-test('the fresh-submit marker is written before the PATCH goes out', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls, storage } = loadModule({ markerPresent: true, wrappers: [fixture] })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-
-  assert.equal(storage.store.get(MARKER_KEY), '1')
-  const patches = callsTo(fetchCalls, PATCH_URL)
-  assert.equal(patches[0].markerAtCall, '1', 'marker already present when the PATCH was issued')
-})
-
-test('a submit success fires at most once per form', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls } = loadModule({ markerPresent: true, wrappers: [fixture] })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-  fixture.succeed() // a second mutation on the same done block
-  fixture.done.style.display = 'flex'
-  fixture.succeed()
-  await flush()
-
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
-})
-
-test('either of the two page forms counts, and each fires on its own', async () => {
-  const full = formWrapper()
-  const consult = formWrapper()
-  const { fetchCalls } = loadModule({ markerPresent: true, wrappers: [full, consult] })
-  await flush()
-
-  consult.succeed()
-  await flush()
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
-
-  full.succeed()
-  await flush()
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2)
-})
-
-test('a mutation that does not reveal the done block does not fire', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls } = loadModule({ markerPresent: true, wrappers: [fixture] })
-  await flush()
-
-  fixture.done.observers.slice().forEach((observer) => observer.fire())
-  await flush()
-
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
-})
-
-test('a done block already visible at boot is left to the marker, not PATCHed', async () => {
-  const fixture = formWrapper({ doneVisible: true })
-  const { fetchCalls } = loadModule({ markerPresent: true, wrappers: [fixture] })
-  await flush()
-
-  assert.equal(fixture.done.observers.length, 0)
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
-})
-
-test('a wrapper without a form or without a done block is skipped safely', async () => {
-  const formless = formWrapper({ withForm: false })
-  const doneless = formWrapper({ withDone: false })
-  const { fetchCalls, logs } = loadModule({
-    markerPresent: true,
-    wrappers: [formless, doneless],
-  })
-  await flush()
-
-  assert.equal(formless.done.observers.length, 0)
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 0)
-  assert.ok(logs.warn.some((line) => line.includes('.w-form-done')))
-})
-
-test('a failed PATCH is retried on the 1s/3s backoff and can still succeed', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls, clock } = loadModule({
-    markerPresent: true,
-    wrappers: [fixture],
-    patchOutcomes: ['fail', 'ok'],
-  })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
-
-  await clock.advance(1000)
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2)
-  await clock.advance(3000)
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 2, 'no attempt after a success')
-})
-
-test('three failures give up quietly with a staging-only warning', async () => {
-  const fixture = formWrapper()
-  const { fetchCalls, clock, logs } = loadModule({
-    markerPresent: true,
-    wrappers: [fixture],
-    patchOutcomes: ['fail', 'reject', 'fail'],
-  })
-  await flush()
-
-  fixture.succeed()
-  await flush()
-  await clock.advance(1000)
-  await clock.advance(3000)
-  await clock.advance(10000)
-
-  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 3, 'initial attempt plus two retries')
-  assert.ok(logs.warn.some((line) => line.includes('gave up marking onboarding_done')))
+test('the exposed console surface is the read half only', () => {
+  const { api } = loadModule({ pathname: '/other' })
+  assert.deepEqual(Object.keys(api).sort(), [
+    'allowedHost',
+    'dashboardPath',
+    'diagnosticsEnabled',
+    'isOnboardingPath',
+    'loaderSelector',
+    'onboardingDone',
+    'redirectIfDone',
+    'stagingHost',
+  ])
+  assert.equal(api.dashboardPath, DASHBOARD)
+  assert.equal(api.loaderSelector, LOADER_SELECTOR)
 })
 
 test('production stays silent while staging logs', async () => {
@@ -649,17 +639,11 @@ test('STARTERS_DEBUG turns logging on in production without changing behaviour',
 })
 
 test('a deferred-late document waits for DOMContentLoaded before doing anything', async () => {
-  const fixture = formWrapper()
-  const { document, fetchCalls, location } = loadModule({
-    readyState: 'loading',
-    wrappers: [fixture],
-  })
+  const { document, fetchCalls, location } = loadModule({ readyState: 'loading' })
   await flush()
   assert.equal(fetchCalls.length, 0)
-  assert.equal(fixture.done.observers.length, 0)
 
   document.listeners.DOMContentLoaded.forEach((handler) => handler())
   await flush()
   assert.equal(location.replaced, DASHBOARD)
-  assert.equal(fixture.done.observers.length, 1)
 })
