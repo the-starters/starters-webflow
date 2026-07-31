@@ -1,6 +1,8 @@
 # V3 Auth Route Wiring
 
-Status: Local implementation only; not published
+Status: Live. Verified on 2026-07-31 loading on `/login` from jsDelivr
+`@latest`. The Talent onboarding funnel described below is the newest change and
+still needs its own staging pass.
 
 ## Webflow
 
@@ -33,6 +35,47 @@ Brand Free plus paid Brand is a valid same-family upgrade state and resolves to
 paid Brand. Talent plus either Brand role is a cross-family conflict and remains
 on the utility page with `conflicting-plan-roles`.
 
+## Talent onboarding funnel
+
+The product flow is Apply, then Build profile (which creates the Xano
+`freelancers_v3` row before the member has an account session), then Login, then
+Onboarding, then Dashboard. `/auth-route` is the one page every Talent login
+passes through, so the router asks Xano where in that flow the member actually
+is and routes accordingly.
+
+The check runs for the Talent role only. Brand paid, Brand free, unmapped, and
+conflicted members never trigger a Xano request.
+
+| Freelancer record state | Destination |
+| --- | --- |
+| No `freelancers_v3` row (empty or missing `freelancer` array) | `/build-profile/select-profile` |
+| Row exists, `onboarding_done` is not `true` | `/starter-onboarding`, which wins over any `?next=` or stored destination |
+| Row exists, `onboarding_done === true` | Normal routing: the validated `next`, else the role home |
+| Any Xano failure, or the check exceeds its 4 second budget | Normal routing (fail open) |
+
+The requested destination is consumed before the check runs, so a `next` that
+loses to `/starter-onboarding` is dropped rather than replayed on the next
+login. Only a literal `true` reads as done; a missing field or an unreadable
+record counts as not done, which sends the member into onboarding rather than
+past it.
+
+Reads use the same trade-token flow as the sibling V3 modules: the Memberstack
+JWT from `getMemberCookie()` is traded at `api:g1vmSLWh/auth/trade-token/v3` for
+a Xano token, which authorizes
+`api:KZf7nFnk/starters_onboarding/get_freelancers` as a bearer. The response
+envelope is `{"freelancer": [ <record> ]}`.
+
+The 4 second budget is one overall deadline for the trade plus the read, not a
+per-request timeout, because the member is looking at a blank hop page while it
+runs. On expiry the shared `AbortController` cancels the in-flight request and
+routing continues as if the check had never happened. Every other failure path
+behaves the same way: logged out of Memberstack, a rejected trade, an HTTP
+error, a malformed envelope, or a browser without `fetch`.
+
+This is funnel UX, not a security boundary. `/starter-onboarding` itself remains
+guarded by `v3/route-guard.js`, and `v3/onboarding-done-redirect.js` still
+bounces a finished member off that page.
+
 An optional `?next=` destination survives login only when it is same-origin and
 allowlisted for the authenticated role. This prevents an open redirect and prevents
 Talent/Brand cross-role routing. Query strings are preserved and fragments are
@@ -43,9 +86,14 @@ returning to `/dashboard`, preventing a redirect loop.
 
 | Role | Allowed `next` pathnames |
 | --- | --- |
-| Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>` |
+| Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/starter-onboarding`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>` |
 | Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
 | Brand free | `/dashboard` (resolved to quiz home), `/all-starters`, `/quiz`, `/quiz-results` |
+
+`/starter-onboarding` is allowlisted for Talent because `v3/route-guard.js`
+sends a logged-out visitor there through `/login?next=/starter-onboarding`.
+Without the entry that round trip silently dropped the destination and landed on
+`/starter-dashboard`.
 
 The allowlist is derived from [ACCESS-MATRIX.md](ACCESS-MATRIX.md). It governs
 post-authentication routing only. Memberstack gated content and Xano endpoint
@@ -83,7 +131,15 @@ Each error also dispatches `starters:v3-auth-route-error` on `window` with
 `detail.code`. For browser-console diagnostics, the script exposes
 `window.StartersV3AuthRouter` with `activePlanIds`, `memberRole`,
 `memberRoleError`, `roleHome`, `localPath`, `destinationFor`, `hasCompletedQuiz`,
-and `brandFreeHome`.
+and `brandFreeHome`, plus the funnel helpers `stagingHost`,
+`diagnosticsEnabled`, `onboardingStateFrom`, `onboardingFunnelState`,
+`onboardingPath`, `buildProfilePath`, and `checkBudgetMs`.
+
+The funnel never produces a `data-auth-route-error`; it fails open instead. It
+narrates each decision to the console (which state was found, where routing
+goes) only on staging: `*.webflow.io`, `localhost`, `127.0.0.1`,
+`*.trycloudflare.com`, or with `window.STARTERS_DEBUG === true`. Production
+stays silent apart from the configuration errors in the table above.
 
 ## Release Gate
 
@@ -93,5 +149,11 @@ and `brandFreeHome`.
 - Run `node --test v3/auth-route.test.js`.
 - Verify login with `next=/dashboard` for Talent, paid Brand, Test Brand, and
   Brand Free in both incomplete-quiz and completed-quiz states.
+- Verify the three Talent funnel states on staging with the console open:
+  a member with no `freelancers_v3` row lands on `/build-profile/select-profile`,
+  a member with `onboarding_done` false lands on `/starter-onboarding` even with
+  `?next=/messages`, and a finished member still honors `?next=`.
+- Confirm a Brand login logs no funnel lines and issues no request to
+  `api:KZf7nFnk` in the network panel.
 - Run the full staging matrix behind the Webflow password.
 - Do not publish custom domains until the separate production go signal.
