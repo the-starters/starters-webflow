@@ -256,8 +256,10 @@
       if (enabled) {
         if (element.tagName === 'A') {
           element.setAttribute('href', STRIPE_DASHBOARD_URL)
+          element.removeAttribute('tabindex')
+        } else {
+          element.setAttribute('tabindex', '0')
         }
-        element.removeAttribute('tabindex')
       } else {
         element.removeAttribute('href')
         element.setAttribute('tabindex', '-1')

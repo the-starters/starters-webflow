@@ -150,12 +150,14 @@ test('the authored Earnings div redirects only after it is enabled', () => {
 
   try {
     api.setEarningsAccess([earnings], false)
+    assert.equal(earnings.getAttribute('tabindex'), '-1')
     assert.equal(api.handleEarningsClick(earnings, event), false)
     assert.equal(event.prevented, true)
     assert.deepEqual(destinations, [])
 
     event.prevented = false
     api.setEarningsAccess([earnings], true)
+    assert.equal(earnings.getAttribute('tabindex'), '0')
     assert.equal(api.handleEarningsClick(earnings, event), true)
     assert.equal(event.prevented, true)
     assert.deepEqual(destinations, ['https://dashboard.stripe.com/'])
