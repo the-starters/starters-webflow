@@ -18,9 +18,6 @@ function loadModule({
   hasWrapper = true,
   withInstance = true,
   withSetParam = true,
-  // Drop URLSearchParams from the realm to prove the override degrades to null
-  // instead of throwing out of the queue callback.
-  withUrlSearchParams = true,
   // Instance state seen at arm() time: 'loading' is the normal case (the fetch
   // wf-xano started in init() is still in flight); 'success'/'error' mean a
   // render already happened without the transform.
@@ -122,7 +119,9 @@ function loadModule({
       },
     },
   }
-  if (withUrlSearchParams) sandbox.URLSearchParams = URLSearchParams
+  // Present as it is in a browser. Nothing in the module reads it any more — the
+  // query-string member override is gone — so no test toggles it off.
+  sandbox.URLSearchParams = URLSearchParams
   // Mirrors the real API object, which exposes its instance list.
   if (instanceList) api.instances = instanceList
   sandbox.window = sandbox
@@ -1133,24 +1132,6 @@ test('names an unkeyed instance rather than printing undefined', () => {
   assert.match(mod.infos[0], /armed 1 instance\(s\): "\(unkeyed\)"/)
 })
 
-test('?ms= drives every instance, each reloading independently', () => {
-  const mod = loadModule({ instances: TWO_FORMS, search: '?ms=mem_bogus' })
-  mod.drain()
-  const [full, consult] = mod.instanceList
-  assert.deepEqual(full.own.params, [['memberstack_id', 'mem_bogus']])
-  assert.deepEqual(consult.own.params, [['memberstack_id', 'mem_bogus']])
-  assert.deepEqual(full.own.refreshes, [], 'setParam already reloads')
-  assert.deepEqual(consult.own.refreshes, [])
-})
-
-test('announces the ?ms= preview once, with the instance count', () => {
-  const mod = loadModule({ instances: TWO_FORMS, search: '?ms=mem_bogus' })
-  mod.drain()
-  assert.equal(mod.warnings.length, 1, 'one line, not one per instance')
-  assert.match(mod.warnings[0], /previewing member "mem_bogus" from \?ms= \(staging only\) on 2 instance\(s\)/)
-  assert.match(mod.warnings[0], /each reloads separately/)
-})
-
 test('the settled-state belt applies per instance', () => {
   const mod = loadModule({ instances: TWO_FORMS, status: 'success' })
   mod.drain()
@@ -1166,9 +1147,11 @@ test('targetInstances is exposed and re-runnable against a live API object', () 
   assert.equal(list(mod.api.targetInstances(null)).length, 0)
 })
 
-/* --------------------- staging-only ?ms= override --------------------- */
-
-const overrideOf = (options) => loadModule(options).api.memberOverride()
+/* ------------------ staging host gate (console diagnostics) ---------------- *
+ * stagingHost() has ONE job now: deciding whether warn()/note() print. It used to
+ * also gate a query-string member-preview override, which is gone — the endpoint
+ * is authenticated and Xano derives the member from the token (2026-07-31).
+ * -------------------------------------------------------------------------- */
 
 test('stagingHost accepts webflow.io, localhost and cloudflared tunnels only', () => {
   const accepted = [
@@ -1185,8 +1168,9 @@ test('stagingHost accepts webflow.io, localhost and cloudflared tunnels only', (
   const rejected = [
     'thestarters.com',
     'www.thestarters.com',
-    // Lookalikes: the unanchored regex the sibling modules use would pass these,
-    // which is tolerable for a console.warn and NOT for a data-read capability.
+    // Lookalikes: the unanchored regex the sibling modules use would pass these.
+    // The anchored form is kept even now that only logging rides on it — a
+    // lookalike host has no business making the page chatty.
     'notwebflow.io',
     'evil-trycloudflare.com',
     'webflow.io.attacker.test',
@@ -1198,106 +1182,59 @@ test('stagingHost accepts webflow.io, localhost and cloudflared tunnels only', (
   })
 })
 
-test('production never honors ?ms=, whatever the query string says', () => {
-  assert.equal(overrideOf({ hostname: 'thestarters.com', search: '?ms=mem_someone_else' }), null)
-  assert.equal(overrideOf({ hostname: 'www.thestarters.com', search: '?ms=mem_someone_else' }), null)
-})
+/* ----------------- no query-string param plumbing (regression) ------------- *
+ * REMOVED 2026-07-31: the `?ms=<memberstack_id>` staging tester. Xano now derives
+ * the member from the user_v3 token and IGNORES a client-supplied
+ * `memberstack_id`, so the override changed nothing while still logging as though
+ * it had. These guard the removal: the module must set NO request param from the
+ * URL, on any host, and must not narrate a preview that is not happening.
+ * -------------------------------------------------------------------------- */
 
-// The override reads another member's record, so the logging escape hatch must
-// not double as an access escape hatch.
-test('STARTERS_DEBUG does not unlock the override in production', () => {
-  const mod = loadModule({
-    hostname: 'thestarters.com',
-    search: '?ms=mem_someone_else',
-    debug: true,
+test('sets no request param from the query string, on staging or production', () => {
+  const cases = [
+    { search: '?ms=mem_someone_else' },
+    { search: '?ms=mem_someone_else', hostname: 'thestarters.com' },
+    { search: '?ms=mem_someone_else', hostname: 'localhost' },
+    // STARTERS_DEBUG turns logging on; it must not turn plumbing on.
+    { search: '?ms=mem_someone_else', hostname: 'thestarters.com', debug: true },
+    { search: '?a=1&ms=mem_x&b=2' },
+    { search: '?other=1' },
+  ]
+  cases.forEach((options) => {
+    const mod = loadModule({ instances: TWO_FORMS, ...options })
+    mod.drain()
+    assert.deepEqual(mod.params, [], JSON.stringify(options))
+    assert.deepEqual(
+      mod.instanceList.map((i) => i.own.params),
+      [[], []],
+      'no instance may be handed a param',
+    )
+    assert.equal(mod.hooks.beforeRender.length, 2, 'both lists still armed')
   })
-  assert.equal(mod.api.memberOverride(), null)
+})
+
+test('never warns about previewing a member', () => {
+  const mod = loadModule({ instances: TWO_FORMS, search: '?ms=mem_bogus' })
   mod.drain()
-  assert.deepEqual(mod.params, [], 'no setParam call may reach the instance')
+  assert.deepEqual(mod.warnings, [], 'nothing is overridden, so there is nothing to announce')
+  assert.equal(mod.infos.length, 1, 'only the normal "armed N instance(s)" line')
+  assert.match(mod.infos[0], /armed 2 instance\(s\)/)
 })
 
-test('a staging host with ?ms= returns that member id', () => {
-  assert.equal(
-    overrideOf({ hostname: 'the-starters-3-0.webflow.io', search: '?ms=mem_cms4ovj4t0dp60tmoe1rn0swl' }),
-    'mem_cms4ovj4t0dp60tmoe1rn0swl',
-  )
-  assert.equal(overrideOf({ hostname: 'localhost', search: '?ms=mem_bogus' }), 'mem_bogus')
-  assert.equal(
-    overrideOf({ hostname: 'function-robot-chain-bless.trycloudflare.com', search: '?ms=mem_x' }),
-    'mem_x',
-  )
-})
-
-test('a staging host with no ms param returns null', () => {
-  assert.equal(overrideOf({ search: '' }), null)
-  assert.equal(overrideOf({ search: '?' }), null)
-  assert.equal(overrideOf({ search: '?other=1&msx=2' }), null)
-})
-
-test('picks ms out of a multi-parameter query, in any position', () => {
-  assert.equal(overrideOf({ search: '?a=1&ms=mem_x&b=2' }), 'mem_x')
-  assert.equal(overrideOf({ search: '?ms=mem_x&ms=mem_y' }), 'mem_x', 'first wins, like URLSearchParams.get')
-})
-
-test('a blank or whitespace-only ms value is treated as absent', () => {
-  assert.equal(overrideOf({ search: '?ms=' }), null)
-  assert.equal(overrideOf({ search: '?ms' }), null)
-  assert.equal(overrideOf({ search: '?ms=%20%20' }), null)
-})
-
-test('surrounding whitespace is trimmed off a pasted id', () => {
-  assert.equal(overrideOf({ search: '?ms=%20mem_x%20' }), 'mem_x')
-})
-
-test('a malformed query string cannot throw out of the override', () => {
-  assert.equal(overrideOf({ search: '?%' }), null)
-  // URLSearchParams is lenient rather than throwing: a truncated percent escape
-  // decodes to U+FFFD and the dangling part is left as written. Whatever comes
-  // out is only ever sent back as a query param, so a junk id simply misses and
-  // the empty state shows.
-  assert.equal(overrideOf({ search: '?ms=%E0%A4%A' }), '�%A')
-  assert.equal(overrideOf({ search: '???&&&==' }), null)
-})
-
-test('degrades to null when the realm has no URLSearchParams', () => {
-  const mod = loadModule({ search: '?ms=mem_x', withUrlSearchParams: false })
-  assert.equal(mod.api.memberOverride(), null)
-  mod.drain()
-  assert.equal(mod.hooks.beforeRender.length, 1, 'the transform must still be registered')
-  assert.deepEqual(mod.params, [])
-})
-
-test('an override calls setParam and skips the refresh belt (setParam reloads)', () => {
+test('the settled-state belt runs whatever the query string says', () => {
   const mod = loadModule({ search: '?ms=mem_bogus', status: 'success' })
   mod.drain()
-  assert.deepEqual(mod.params, [['memberstack_id', 'mem_bogus']])
-  assert.deepEqual(mod.refreshes, [], 'setParam already reloads — two GETs for one paint otherwise')
-  assert.equal(mod.hooks.beforeRender.length, 1, 'the hook is registered BEFORE the reload is triggered')
-})
-
-test('an override announces itself on staging and stays quiet in production', () => {
-  const staging = loadModule({ search: '?ms=mem_bogus' })
-  staging.drain()
-  assert.equal(staging.warnings.length, 1)
-  assert.match(staging.warnings[0], /previewing member "mem_bogus" from \?ms=/)
-
-  const prod = loadModule({ hostname: 'thestarters.com', search: '?ms=mem_bogus' })
-  prod.drain()
-  assert.deepEqual(prod.warnings, [])
-})
-
-test('no override leaves the normal settled-state belt intact', () => {
-  const mod = loadModule({ search: '?other=1', status: 'success' })
-  mod.drain()
   assert.deepEqual(mod.params, [])
-  assert.equal(mod.refreshes.length, 1)
+  assert.equal(mod.refreshes.length, 1, 'the repaint belt is no longer skipped for an override')
+  assert.equal(mod.hooks.beforeRender.length, 1, 'the hook is registered before the refetch')
 })
 
-test('falls back to the belt when the library predates setParam', () => {
+test('works against a library with no setParam at all', () => {
   const mod = loadModule({ search: '?ms=mem_bogus', status: 'success', withSetParam: false })
   mod.drain()
   assert.deepEqual(mod.params, [])
-  assert.equal(mod.refreshes.length, 1, 'better a correct repaint of the default member than nothing')
+  assert.equal(mod.refreshes.length, 1)
+  assert.equal(mod.hooks.beforeRender.length, 1)
 })
 
 /* -------------------------------- boot -------------------------------- */
@@ -1333,7 +1270,7 @@ test('a duplicate load does not register the hook twice', () => {
   assert.equal(mod.hooks.beforeRender.length, 1)
 })
 
-test('exposes the transform and the override decision for console debugging', () => {
+test('exposes the transform and the instance selection for console debugging', () => {
   const mod = loadModule()
   assert.deepEqual(Object.keys(mod.api).sort(), [
     'categoryName',
@@ -1341,7 +1278,6 @@ test('exposes the transform and the override decision for console debugging', ()
     'htmlToText',
     'instanceMatches',
     'joinLocation',
-    'memberOverride',
     'normalizeType',
     'orderByRefs',
     'parseRoles',
