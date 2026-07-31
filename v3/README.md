@@ -774,6 +774,108 @@ Run its focused test with:
 node --test v3/onboarding-profile-preview.test.js
 ```
 
+## Xano grabber (live value mirror)
+
+`xano-grabber/xano-grabber.js` copies a value that is **already rendered** in one
+place into every element that shares its `wf-xano-grab-id`. It exists because
+wf-xano binds one template per wrapper and a value can only be bound inside the
+wrapper that fetched it: a hero band outside that wrapper has no instance of its
+own, and giving it one means a second GET of the same endpoint and a second render
+to keep in sync. Mirroring the rendered DOM value costs no request and cannot
+disagree with what the user is already looking at. The Designer owns all markup;
+the script writes exactly two things — `textContent` on a non-IMG landing, and
+`src` (after `removeAttribute('srcset')`, wf-xano's own order) on an IMG landing.
+
+The full attribute table, the onboarding photo checklist and the debug overlay
+columns live in
+[xano-grabber/XANO-GRABBER-WIRING.md](xano-grabber/XANO-GRABBER-WIRING.md). The
+short version: `wf-xano-grab-element="source"` / `="landing"` plus a shared
+`wf-xano-grab-id`; add `wf-xano-grab-list` on a source container and
+`wf-xano-grab-list-container` + a `wf-xano-grab-element="list-item"` child on the
+landing for list mode; `wf-xano-grab-item` on a landing picks one record. There is
+no `wf-xano-grab-type` override in v1, so an IMG source into a text landing is
+reported as a `MISMATCH` rather than sitting silently gated.
+
+Two rules carry the whole design. **Real-content gating**: an empty or
+`data:`/`blob:` value never mirrors, so the landing keeps the placeholder the
+Designer authored. **Never-revert**: once a landing holds a real value, only
+another real value replaces it. Both are forced by how wf-xano re-renders —
+`load()` removes every `[wf-xano-item]` clone *before* the fetch starts, so for
+the whole width of a refresh there is no source element on the page at all, and a
+member with no photo fires no mutation whatsoever. For the same reason a source is
+a **descriptor**, re-resolved by attribute on every pass, never a cached node; and
+descendants of `[wf-xano-element="template"]` are never sources, because the
+template keeps its authored `data:` placeholder for the page's whole life and
+precedes its clones in DOM order.
+
+List mode mirrors container-to-container. Items are the source container's
+`[wf-xano-item]` children when any child carries the marker — which is what keeps
+wf-xano's `loader`/`empty` state blocks, living *inside* the container, from being
+mirrored as cards ("Loading team…" as a team member was the finding that shaped
+this). Leaf text slots pair by index and **unfilled slots are blanked**, so
+Designer lorem cannot leak to production; an item with no image, or one still
+holding a `data:` placeholder, leaves the clone's authored avatar in place and the
+img is never hidden. Clones are cleared only on a *confirmed* empty — a visible
+`wf-xano-element="empty"` block on the source container — never on the transient
+clear that precedes every fetch.
+
+When one id has several rendered sources (the normal case, since the source
+attribute is authored on the template and every clone inherits it) the first
+source whose **computed display chain is visible** wins, with DOM order as the
+tie-break: the onboarding page keeps both form blocks in the DOM and switches them
+with inline `display`, so plain first-in-DOM would mirror the hidden form's card.
+`wf-xano-grab-item` on the landing overrides that — `#2` is a 1-based index into
+the rendered sources (it shifts with sort/filter, which is the "featured = first"
+pattern), anything else matches a card's `data-wf-xano-id`. Two landings can
+therefore mirror two different records of one list.
+
+Re-renders are followed by **one body-level MutationObserver**
+(`childList` + `subtree`, plus `attributes` filtered to `src`, `srcset`, `style`,
+`class`, `wf-xano-item`, `data-wf-xano-id`, `data-wf-xano-bound-value`), because
+wf-xano dispatches no document-level render event and no instance-created event,
+and sources and landings may share no wf-xano ancestor. `childList` does double
+duty — it catches new clones *and* text writes, since a `textContent` assignment
+replaces the text node; `characterData` is pointless against this library.
+Re-scans coalesce through `setTimeout(…, 0)`, never `requestAnimationFrame`,
+which is throttled to zero in the hidden pane this repo QAs in. The loop guard is
+three-part and all three parts are load-bearing: records whose target is inside a
+landing or one of our clones are ignored, every write is compared against the last
+value written there, and `takeRecords()` drops the echo at the end of each pass.
+A `WfXano.push()` belt subscribes to `results`/`error` when wf-xano is present,
+but it is strictly optional — the observer alone is sufficient, and the module
+works on a page with no wf-xano at all.
+
+`?xano-grab` on a staging host renders a pairing overlay: per grab-id, sources
+found, landings found, state (`REAL` / `GATED` / `WAITING` / `MISMATCH` /
+`ITEM NOT FOUND` / `ERROR`), list item counts, each candidate's
+`data-wf-xano-id` (which is where you read the value for `wf-xano-grab-item`),
+duplicate sources, orphans, and the pass counters. It needs the param **and** the
+staging host: it prints record ids, so `STARTERS_DEBUG` does not unlock it — that
+flag only re-enables the console warnings. Warnings are printed once per distinct
+problem, and the orphan ones wait out a 3 s grace window, because at
+`DOMContentLoaded` nothing has rendered yet and warning immediately would flag
+every healthy page.
+
+Install one deferred tag on the page (it is inert wherever the grammar is absent),
+pinned to a tag, next to a pinned wf-xano:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/wf-xano@v0.28.0/wf-xano.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@vX.Y.Z/v3/xano-grabber/xano-grabber.js"></script>
+```
+
+Script tag order does not matter: this file only ever pushes into
+`window.WfXano`, which both shapes of that global defer correctly. Never branch on
+`Array.isArray` and call the arm function directly — wf-xano assigns
+`window.WfXano = {api}` at module scope before `boot()` creates any instance, and
+that branch was a real shipped bug in a sibling module.
+
+Run its focused test with:
+
+```sh
+node --test v3/xano-grabber/xano-grabber.test.js
+```
+
 ## Scheduling auth
 
 `scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and
