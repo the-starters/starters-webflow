@@ -1189,7 +1189,11 @@ Give every Connect or Complete setup control
 `data-stripe-connect-action="refresh"`. A single in-flight guard is shared
 across every start and refresh control in the dashboard, so a second click on
 any control is ignored while a start or status request is resolving. Start
-accepts only an HTTPS `connect.stripe.com` URL before redirecting.
+posts the dashboard `return_url` plus an explicit `callback_url` —
+`/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
+URL built against the exact V3 callback instead of falling back to its legacy
+V2 default. It accepts only an HTTPS `connect.stripe.com` URL before
+redirecting.
 
 The dashboard calls `status/v3` immediately. `connected:false` selects
 `disconnected`; `connected:true` with `charges_enabled:false` selects
@@ -1224,9 +1228,8 @@ in the query string. Every other host or a missing flag keeps the production
 flow unchanged. Like the OAuth parameters, `stripe_connect_sandbox` is stripped
 from the visible URL before network work.
 
-In sandbox mode `start` posts to `/stripe_connect/sandbox/start/v3` with the
-dashboard `return_url` plus an explicit `callback_url` built from
-`/stripe-connect-callback`, and the exchange posts to
+In sandbox mode `start` posts the same `return_url` and `callback_url` to
+`/stripe_connect/sandbox/start/v3`, and the exchange posts to
 `/stripe_connect/sandbox/oauth_exchange/v3`. Both sandbox endpoints stay
 Bearer-authenticated the same way as the production ones; the Xano exchange
 uses the test secret key and performs no database write.
