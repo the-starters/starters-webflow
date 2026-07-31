@@ -1,7 +1,14 @@
 # V3 Onboarding Profile Preview Wiring
 
-Status: Implementation on branch `feat/onboarding-profile-preview`; not merged, not
-tagged, not installed in Webflow yet.
+Status: Shipped and installed on the `starter-onboarding` page (script pinned
+`@v1.59.35`). The [Xano auth flip](#xano-auth-flip-done-2026-07-31) landed
+2026-07-31, and the staging `?ms=` member-preview tester was
+[removed](#removed-staging-tester-msmemberstack_id) with it — that removal is
+pending a tag (the first one after `v1.59.35`).
+
+Known open regression: the page has **no loader, empty, or error state elements**
+— they were lost when the card was componentized. See
+[Missing state elements](#missing-state-elements-open-regression).
 
 `v3/onboarding-profile-preview.js` renders the freelancer's **own** profile as a
 profile-preview card on the onboarding completion page of
@@ -22,11 +29,10 @@ skeleton loader.
 
 ## What it does
 
-- Fetches `GET api:KZf7nFnk/starters_onboarding/get_freelancers?memberstack_id=…`
-  through wf-xano, with `wf-xano-auth="none"` and a **hardcoded demo member id**
-  for the demo phase (`mem_cms4ovj4t0dp60tmoe1rn0swl`). See
-  [Xano auth flip](#xano-auth-flip-required-before-real-users) — this is not
-  shippable to real members as-is.
+- Fetches `GET api:KZf7nFnk/starters_onboarding/get_freelancers` through wf-xano
+  with `wf-xano-auth="memberstack"`. **No `memberstack_id` is sent** — Xano derives
+  the member from the `user_v3` auth token and ignores the param if one is supplied
+  anyway. See [Xano auth flip](#xano-auth-flip-done-2026-07-31).
 - Unwraps the response envelope. The endpoint answers
   `{"freelancer": [ <one record> ]}`; wf-xano's `normalize()` sees an object, not
   an array, and takes its single-object branch, so `items[0]` is the whole body
@@ -44,8 +50,9 @@ skeleton loader.
 - Static, unconditional: the green **Available** pill.
 - Static placeholder: `0 (0 Reviews)`, with a `TODO` in the markup to bind a real
   average rating once the reviews collection exists.
-- Loader skeleton, empty state, and error state all ship in the markup, so the
-  card never flashes empty or broken.
+- Loader skeleton, empty state, and error state ship in the **structure embed**
+  below — but they are **not on the live page** any more, see
+  [Missing state elements](#missing-state-elements-open-regression).
 
 The `Bio` flattening is text-only by construction: the result goes back to
 wf-xano, whose binds assign `textContent`. Nothing is ever inserted as HTML, so
@@ -89,18 +96,17 @@ still armed if it ever reappears.
 ### Per-form wrapper attributes
 
 Put **all of these** on each form block's root element (the `onboarding_form`
-section itself). Both forms get the same source, method, auth, per-page, and
-param — only the instance key and the `if-state` differ.
+section itself). Both forms get the same source, method, auth, and per-page — only
+the instance key and the `if-state` differ.
 
 | Attribute | Full form | Consult form |
 | --- | --- | --- |
 | `wf-xano-element` | `wrapper` | `wrapper` |
 | `wf-xano-instance` | `onboarding-preview-full` | `onboarding-preview-consult` |
-| `wf-xano-source` | `https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers`<br>…or a variant such as `…/get_freelancers_test` (see [Endpoint name variants](#endpoint-name-variants)) | *(same as the full form)* |
+| `wf-xano-source` | `https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers` (a suffixed variant also arms — see [Endpoint name variants](#endpoint-name-variants)) | *(same as the full form)* |
 | `wf-xano-method` | `GET` | `GET` |
-| `wf-xano-auth` | `none` (until the [auth flip](#xano-auth-flip-required-before-real-users)) | *(same)* |
+| `wf-xano-auth` | `memberstack` (since the [auth flip](#xano-auth-flip-done-2026-07-31)) | *(same)* |
 | `wf-xano-per-page` | `1` | `1` |
-| `wf-xano-param-memberstack_id` | `mem_cms4ovj4t0dp60tmoe1rn0swl` (demo phase) | *(same)* |
 | `wf-xano-if-state` | `data.items.0.profile_type_30 !== consult` | `data.items.0.profile_type_30 === consult` |
 | `wf-xano-display` | the form's real display (`block`/`flex`/`grid`) | same for that form |
 
@@ -118,9 +124,11 @@ Then:
 
 ### Endpoint name variants
 
-The endpoint name is **in flux**, and the script is built for that. It currently
-reads `starters_onboarding/get_freelancers_test` — a temporary secret-gated mirror —
-and a `get_freelancers_secure` may follow.
+The endpoint name has been **in flux**, and the script is built for that. Both
+wrappers are back on the plain `starters_onboarding/get_freelancers` as of
+2026-07-31 (the auth flip made the temporary secret-gated `get_freelancers_test`
+mirror unnecessary; deleting that endpoint in Xano is still outstanding). The
+tolerance below stays — a `get_freelancers_secure` or another mirror may follow.
 
 The script arms on a **segment prefix**, not an exact name: `starters_onboarding`
 must start a path segment and `get_freelancers` must start the next, after which
@@ -551,9 +559,9 @@ The wf-xano tag is pinned to **`@v0.28.0`**, and should stay pinned. If the page
 currently loads `wf-xano@latest`, swap it for the pinned URL: `@latest` follows
 that repo's newest tag, so a library release could change this card's rendering
 without anyone touching this page. The card's contract with the library is narrow
-but real — the `beforeRender` hook, `normalize()`'s single-object branch,
-`setParam()`, and the `wf-xano-if-state` projection the form blocks rely on — and
-v0.28.0 is the version it was verified against.
+but real — the `beforeRender` hook, `normalize()`'s single-object branch, and the
+`wf-xano-if-state` projection the form blocks rely on — and v0.28.0 is the version
+it was verified against.
 
 After publishing, check the console. On production the only expected log is
 `[wf-xano] initialized 2 list(s)` — one per form block. If it says `1`, one form is
@@ -735,7 +743,7 @@ to mistype.
 
 It encodes Jerico's "unknown type → full" rule in the grammar itself, with no
 enumeration of types. On an empty result — a member with no freelancer row, a
-bogus `?ms=`, or a first-load fetch error — `data.items` is `[]`, so
+failed auth handshake, or a first-load fetch error — `data.items` is `[]`, so
 `data.items.0.profile_type_30` is `undefined`, and:
 
 - consult block: `String(undefined) === 'consult'` → `"undefined" === "consult"` → **false**, stays hidden.
@@ -785,9 +793,10 @@ WfXano.get('onboarding-preview-full').getState().data.items[0].profile_type_30
 WfXano.instances.map((i) => [i.key, i.getState().data.items[0] && i.getState().data.items[0].profile_type_30])
 ```
 
-`?ms=<memberstack_id>` with a member of the other type is the end-to-end check on
-staging: both instances reload and re-project, so the forms swap along with their
-cards.
+The end-to-end check is **signing in as a member of the other type** on staging:
+both instances fetch that member's record and re-project, so the forms swap along
+with their cards. There is no longer a query-string shortcut for this — the
+endpoint is authenticated and the member comes from the token.
 
 ## Script URLs
 
@@ -855,61 +864,48 @@ armed, because the library emits no "instance created" event. Nothing on this pa
 does that. If something ever does, `WfXano.push(…)` again after the late init is
 the fix.
 
-## Staging tester: `?ms=<memberstack_id>`
+## REMOVED staging tester: `?ms=<memberstack_id>`
 
-Append `?ms=<memberstack_id>` to the page URL to render **that** member's card
-instead of the one in `wf-xano-param-memberstack_id`. It exists so QA can check a
-real profile — or the empty state — without that member's login:
+**Gone from the script as of 2026-07-31**, in the first tag after `v1.59.35`.
 
-```txt
-https://the-starters-3-0.webflow.io/<onboarding-page>?ms=mem_cms4ovj4t0dp60tmoe1rn0swl
-https://the-starters-3-0.webflow.io/<onboarding-page>?ms=mem_definitely_bogus   # empty state
-```
+It appended `?ms=<memberstack_id>` to the page URL to render *that* member's card
+without their login, by calling `instance.setParam('memberstack_id', <id>)` on
+every instance. It was staging-gated and never honored in production.
 
-Rules, all enforced in `v3/onboarding-profile-preview.js`:
+The [auth flip](#xano-auth-flip-done-2026-07-31) made it **inert but not silent**:
+the server derives the member from the token and ignores the param, so the card
+kept rendering the signed-in member's own record while the console still logged
+`previewing member "<id>" from ?ms= (staging only)` — a QA trap worse than no
+tester at all. Jerico's call was to remove it entirely rather than keep dead
+plumbing. The removal covers `memberOverride()`, the `override` argument through
+`arm()`/`armInstance()`, the `setParam` early-return branch, and the
+`memberOverride` export.
 
-- **Staging only.** Honored on `*.webflow.io`, `localhost`, `127.0.0.1`, and
-  `*.trycloudflare.com`. On `thestarters.com` the parameter is ignored outright,
-  so a link with `?ms=` in it is inert in production.
-- **`STARTERS_DEBUG` does not unlock it.** That flag turns console logging on,
-  including in production; it deliberately has no effect on this override.
-- **Blank means absent.** `?ms=`, `?ms`, and a whitespace-only value all fall back
-  to the page's own parameter. A pasted id is trimmed.
-- Applied with `instance.setParam('memberstack_id', <id>)`, which sets the param,
-  resets to page 1, and reloads. The `beforeRender` hook is registered before that
-  reload is triggered, and the settled-state `refresh()` belt is skipped when an
-  override is in play — otherwise one paint would cost two GETs.
-- **It drives every instance.** With one wrapper per form block, `?ms=` sets the
-  param on all of them, and each reloads independently. So a plain load makes **2**
-  GETs of the endpoint (one per form) and a `?ms=` load makes **4** — two initial,
-  two reloads. That is the accepted cost of per-form templates; it is a staging-only
-  path and a 1-row response.
-- It announces itself once in the console on staging, with the count:
-  `[starters onboarding-preview] previewing member "<id>" from ?ms= (staging only) on 2 instance(s) — each reloads separately.`
+**QA another member by signing in as them.** `stagingHost()` is still exported and
+still gates the console diagnostics; it no longer gates any data read.
 
-**This goes inert after the Xano auth flip, by design.** It works today only
-because the endpoint still trusts a client-supplied `memberstack_id`. Once the
-server derives the member from the auth token (below), the parameter is ignored
-server-side and `?ms=` silently stops changing anything — the override is not a
-hole that survives the fix, and the code needs no follow-up edit. At that point
-QA previews another member by logging in as them.
+## Xano auth flip (DONE 2026-07-31)
 
-## Xano auth flip (required before real users)
+Before the flip, the endpoint was public and returned private fields (email,
+phone, rates, reviewer emails) to anyone who knew or guessed a `memberstack_id`,
+with the demo id visible in the page source. **Both parts below are applied.** The
+record of what was done is kept because it documents the endpoint's current
+contract, and because the Xano-side steps are the ones to re-check if the response
+ever regresses.
 
-Until the flip, the endpoint is public and returns private fields (email, phone,
-rates, reviewer emails) to anyone who knows or guesses a `memberstack_id` — and
-the demo id is visible in the page source and the Network panel. Treat this as
-required before the page reaches real members, not as a nice-to-have.
-
-### Part 1 — Xano changes (apply by hand in the Xano UI)
+### Part 1 — Xano changes (applied by hand in the Xano UI)
 
 - **Workspace / API group:** `api:KZf7nFnk` (`starters_onboarding`)
 - **Endpoint:** `GET /starters_onboarding/get_freelancers`
-- **Current behaviour (verified 2026-07-30):** no authentication. A tokenless
-  `GET` with any `memberstack_id` returns that member's full freelancer record,
-  including `Email`, `Phone`, `Hourly_Rate`, rate fields, and the `Reviewers`
-  object with reviewer email addresses. A bogus id returns `{"freelancer":[]}`
-  with HTTP 200.
+- **Current behaviour (since 2026-07-31):** requires a `user_v3` auth token. The
+  member is derived from the token; a client-supplied `memberstack_id` is ignored.
+- **Pre-flip behaviour, for the record (verified 2026-07-30):** no authentication.
+  A tokenless `GET` with any `memberstack_id` returned that member's full
+  freelancer record, including `Email`, `Phone`, `Hourly_Rate`, rate fields, and
+  the `Reviewers` object with reviewer email addresses. A bogus id returned
+  `{"freelancer":[]}` with HTTP 200.
+
+The steps as applied:
 
 1. **Turn on authentication** for the endpoint (*Settings* → **Requires
    Authentication**), against the same auth table the rest of the platform's
@@ -936,10 +932,10 @@ required before the page reaches real members, not as a nice-to-have.
    `Profile_Photo_Demo`. Rates, `Reviewers`, `Email`, `Phone`, Algolia sync
    fields, and Webflow ids are sent to the browser today for no reason.
 
-Verification after the change:
+Verification (re-run these if the response ever looks wrong again):
 
 ```sh
-# Must now fail (401/403), with and without the old param:
+# Must fail (401/403), with and without the old param:
 curl -i "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers"
 curl -i "https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers?memberstack_id=mem_cms4ovj4t0dp60tmoe1rn0swl"
 
@@ -952,11 +948,12 @@ curl -i -H "Authorization: Bearer <XANO_TOKEN>" \
 The third call is the important one. If it returns someone else's record, step 2
 or 3 is incomplete.
 
-### Part 2 — the wrapper flip
+### Part 2 — the wrapper flip (applied)
 
 Two attributes on **each** form-block wrapper (every element carrying
-`wf-xano-element="wrapper"` — not the embeds inside them). Markup, CSS, the form-block
-attributes, and the script are all untouched:
+`wf-xano-element="wrapper"` — not the embeds inside them). Markup, CSS, the
+form-block attributes, and the script were all untouched by this — the response
+shape did not change, which was the point:
 
 ```diff
    wf-xano-source="https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starters_onboarding/get_freelancers"
@@ -988,12 +985,35 @@ Both must already be true on the onboarding page (see wf-xano `docs/usage.md` §
 3. **`wf-xano-source` stays a full HTTPS URL,** so `xanoBase` is not required
    here. Authenticated requests over plain `http://` are refused by the library.
 
-Behaviour changes to expect after the flip: logged out, the trade-token handshake
-fails and the card's error state shows (decide whether that copy is right if the
-page can be reached logged out); the demo id disappears from the page source;
-account switching clears and reloads the card automatically. Test in this order —
-logged in with a completed profile, logged in with no freelancer row (empty
-state), logged out, and an endpoint failure.
+Behaviour after the flip: the demo id is gone from the page source, and account
+switching clears and reloads the card automatically. Test in this order — logged in
+with a completed profile, logged in with no freelancer row, logged out, and an
+endpoint failure.
+
+**Logged out, expect a blank slot, not an error card.** The trade-token handshake
+fails and wf-xano enters its error state, but there is no error element on the page
+to show for it — see [Missing state elements](#missing-state-elements-open-regression).
+The same is true of the empty and loading states. The earlier note here (asking
+whether the error copy reads right for a logged-out visitor) is moot until those
+elements exist again.
+
+### Missing state elements (open regression)
+
+The live page has **no** `wf-xano-element="loader"`, `="empty"`, or `="error"`
+element. They exist in the
+[structure embed](#structure-embed-one-copy-per-form-block) but were lost when
+the card was componentized, so wf-xano's state transitions have nothing to reveal:
+
+- **loading** — no skeleton; the slot is blank until the first render lands.
+- **empty** (a member with no freelancer row) — blank slot.
+- **error** (logged out, auth handshake failure, endpoint down) — blank slot, no
+  message and no retry affordance.
+
+The state **classes** still land on each form block
+(`is-wf-xano-loading` / `-error` / `-empty`), so the states are observable in the
+DOM and any CSS keyed off those ancestors still applies — only the authored
+elements are missing. Restoring them is a Designer/embed task, not a script
+change; nothing in `v3/onboarding-profile-preview.js` needs to move.
 
 ## Roles and categories: resolve the refs in Xano
 
@@ -1108,9 +1128,13 @@ document.querySelector('[wf-xano-item] .stp-pp__name').textContent   // rendered
 document.querySelectorAll('.stp-pp__card')[1]                        // fragile — do not
 ```
 
-The same applies to the loader, empty, error, and form-block elements: they are
-all present in the DOM at all times and switched with inline `display`, so
-presence proves nothing. Check computed visibility, not existence.
+The same applies to the form-block elements: they are present in the DOM at all
+times and switched with inline `display`, so presence proves nothing. Check
+computed visibility, not existence. The loader, empty, and error elements behave
+that way *in the structure embed* — but on the live page they are absent
+altogether, so there a query for them returning nothing is the
+[known regression](#missing-state-elements-open-regression), not a mis-scoped
+selector.
 
 A second scoping trap now that each form block is the wrapper: the state classes
 (`is-wf-xano-loading`, `is-wf-xano-error`, `is-wf-xano-empty`) land on **the form
@@ -1130,10 +1154,11 @@ rule in the structure embed does.
   `splitRoles`, `joinLocation`, and `unwrap` for console debugging. The transform
   is pure, so each piece can be checked against a real `Bio` or `Roles` string
   without reloading.
-- The same object exposes `stagingHost()` and `memberOverride()`, which answer
-  "why is `?ms=` doing nothing here" in one call: `stagingHost()` is `false` on
-  production, and `memberOverride()` returns the id actually being honored (or
-  `null`).
+- The same object exposes `stagingHost()`, which answers "why am I not seeing these
+  console lines" in one call — it is `false` on production, where logging needs
+  `window.STARTERS_DEBUG = true` instead. It gates logging and nothing else;
+  `memberOverride()` is gone with the
+  [removed tester](#removed-staging-tester-msmemberstack_id).
 - It also exposes the instance-selection surface, which answers "which lists did
   this arm, and why not that one":
 
@@ -1199,28 +1224,33 @@ Or serve it through the tunnel (`./dev-tunnel.sh` from `starters-git/`) at
 `https://<tunnel>/local-demos/onboarding-profile-preview-harness.html`, which
 exercises the exact script URL a Webflow staging page would load.
 
-`?ms=<memberstack_id>` works here too — `localhost`, `127.0.0.1`, and the tunnel
-host all count as staging. The harness has no override logic of its own, so the
-code path it exercises is the same one a Webflow staging page runs. A `file://`
-open is **not** a staging host, so serve the page rather than double-clicking it.
+`localhost`, `127.0.0.1`, and the tunnel host all count as staging hosts, so the
+console diagnostics print here. A `file://` open is **not** a staging host, so
+serve the page rather than double-clicking it. Note the harness hits the **live,
+now-authenticated** endpoint: without a Memberstack session and `authBase` it gets
+the auth failure path, which is a useful thing to eyeball but is not the
+happy-path check.
 
 ## Release gate
 
 - Run `node --test v3/onboarding-profile-preview.test.js`.
-- QA through the dev tunnel first (card renders the test record with name, photo,
-  role chips, plain-text bio, joined location, static reviews and pill; zero
-  console errors; `?ms=mem_definitely_bogus` shows the empty state; `?ms=` with
-  the real test id renders that card), then land it: branch → PR → merge on
-  GitHub → semver tag → verify the jsDelivr URL returns 200.
+- QA through the dev tunnel first, **signed in** on a staging page: the card
+  renders the signed-in member's record with name, photo, role chips, plain-text
+  bio, joined location, static reviews and pill, and zero console errors. Then land
+  it: branch → PR → merge on GitHub → semver tag → verify the jsDelivr URL returns
+  200.
+- Confirm the console prints **no** `previewing member …` line and that no request
+  in the Network panel carries a `memberstack_id` query param.
 - Confirm the page's wf-xano tag is the pinned `@v0.28.0` URL, not `@latest`.
 - Confirm exactly **two** elements carry `wf-xano-element="wrapper"` — the two form
   blocks — and that `hero-app_inner` carries none. The console should say
   `initialized 2 list(s)` and `armed 2 instance(s)`.
 - Confirm each form block contains exactly one `wf-xano-element="template"`.
-- Form-block check: the full block shows for the test record
-  (`profile_type_30 = "full"`) with its own card rendered, the consult block stays
-  hidden, and on `?ms=mem_definitely_bogus` the full block still shows (the
-  `!== consult` fallback) with its card showing the empty state.
+- Form-block check: the full block shows for a `profile_type_30 = "full"` member
+  with its own card rendered and the consult block stays hidden; signing in as a
+  `consult` member swaps them. On an empty result the full block still shows (the
+  `!== consult` fallback) — with a blank card slot, not an empty state, until the
+  [state elements](#missing-state-elements-open-regression) are restored.
 - Standard exposure scan before tagging: no `api.airtable.com`, no
   `hook.us1.make.com`, no `pat…` PAT patterns. This module calls nothing itself —
   the only URLs in the deliverable are the jsDelivr wf-xano tag and the Xano

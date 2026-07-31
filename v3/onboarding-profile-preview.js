@@ -54,8 +54,7 @@
  * `starters_onboarding/get_freelancers` (or a suffixed variant of it, such as the
  * temporary `get_freelancers_test`), not one instance by name (the legacy key
  * `onboarding-self-preview` is still honored for a rolled-back page). Two
- * wrappers means two GETs of the same endpoint on load; that is accepted, and it
- * is the reason the ?ms= override reloads twice.
+ * wrappers means two GETs of the same endpoint on load; that is accepted.
  *
  * LIMITATION, deliberately not engineered around: arming happens once, in the
  * queued callback that runs after wf-xano's boot() has created every instance
@@ -65,13 +64,13 @@
  * re-running the queue callback (`WfXano.push(...)`) after the late init is the
  * fix.
  *
- * STAGING-ONLY TESTER: `?ms=<memberstack_id>` on the page URL previews another
- * member's card, so QA does not need that member's login. Honored only on
- * `*.webflow.io`, `localhost`/`127.0.0.1`, and `*.trycloudflare.com` — never on
- * the production domain, and never unlocked by `STARTERS_DEBUG`. It works today
- * only because the endpoint still trusts a client-supplied `memberstack_id`;
- * after the Xano auth flip the server derives the member from the token and
- * ignores the param, so the override goes inert by itself.
+ * AUTHENTICATED ENDPOINT (as of 2026-07-31): the wrappers carry
+ * `wf-xano-auth="memberstack"` and Xano derives the member from the user_v3 auth
+ * token, ignoring any client-supplied `memberstack_id`. The card therefore always
+ * shows the signed-in member's own record and there is no client-side way to
+ * preview a different one — which is why the old staging query-string
+ * member-override tester was removed rather than kept: the flip left it inert
+ * while it still logged as if it worked. QA another member by signing in as them.
  *
  * ALWAYS go through `WfXano.push()`, never call arm() directly on
  * `window.WfXano`. Both shapes of that global expose push() and both defer
@@ -86,7 +85,7 @@
  * form-block wrappers it has. The wf-xano wrapper attributes live on each FORM
  * BLOCK, which contains its own structure embed. See
  * v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md for the per-form attribute table, the
- * form-block switching, the tune-ables, and the Xano auth flip.
+ * form-block switching, and the tune-ables.
  */
 ;(function () {
   'use strict'
@@ -130,12 +129,15 @@
   }
 
   // Staging, local, or a cloudflared dev tunnel — never the production domain.
+  // Its one job is gating the console diagnostics below.
   //
   // Tighter than the loose `/webflow\.io$|^localhost$|trycloudflare\.com$/` the
-  // sibling v3 modules use, on purpose: there it only gates a console.warn,
-  // whereas here it also gates the ?ms= member override below, which reads
-  // another member's record. Anchoring the dots means a lookalike domain like
-  // "notwebflow.io" or "evil-trycloudflare.com" cannot pass for staging.
+  // sibling v3 modules use, and KEPT that way now that it only gates logging: the
+  // anchored dots mean a lookalike domain like "notwebflow.io" or
+  // "evil-trycloudflare.com" cannot pass for staging and make the page chatty. It
+  // was originally this strict because it also gated a member-preview override
+  // that read another member's record; that override is gone (the endpoint is
+  // authenticated now), and there is no reason to loosen what is left.
   function stagingHost() {
     var host = location.hostname
     return /(\.|^)webflow\.io$/.test(host) ||
@@ -146,8 +148,8 @@
   // Same shape as the sibling v3 modules: loud on staging/local/tunnel, silent
   // in production unless explicitly asked. A missing instance renders a
   // plausible-looking card, so this bug class is invisible without the warning.
-  // STARTERS_DEBUG belongs HERE and not in stagingHost() — it may turn logging
-  // on in production, and must never unlock the member override.
+  // STARTERS_DEBUG belongs HERE and not in stagingHost(): it turns logging on in
+  // production, and stagingHost() stays a pure host test.
   function diagnostic() {
     return stagingHost() || window.STARTERS_DEBUG
   }
@@ -471,26 +473,6 @@
     return [out]
   }
 
-  // STAGING-ONLY TESTER: `?ms=<memberstack_id>` on the page URL previews any
-  // member's card, so QA does not need that member's login. Returns null in
-  // production, whatever the query string says — the page's own hardcoded param
-  // is the only id honored there.
-  //
-  // This is a stopgap that exists because the endpoint currently trusts a
-  // client-supplied `memberstack_id`. After the Xano auth flip (see the wiring
-  // doc) the server derives the member from the auth token and ignores the
-  // param, so this override goes inert on its own rather than becoming a hole.
-  function memberOverride() {
-    if (!stagingHost()) return null
-    try {
-      var value = new URLSearchParams(location.search).get('ms')
-      value = value == null ? '' : String(value).trim()
-      return value.length ? value : null
-    } catch (e) {
-      return null // no URLSearchParams, or a query string it refuses to parse
-    }
-  }
-
   /* --------------------------- instance selection -------------------------- *
    * The page has ONE WRAPPER PER FORM BLOCK, each containing its own card
    * template, because the two profile types want different card layouts and
@@ -544,17 +526,8 @@
     return found
   }
 
-  function armInstance(instance, override) {
+  function armInstance(instance) {
     instance.on('beforeRender', unwrap)
-
-    if (override && typeof instance.setParam === 'function') {
-      // setParam sets the param, resets to page 1, and reloads (wf-xano
-      // docs/api.md). That reload subsumes the settled-state belt below, so
-      // return early — running both would fire two GETs for one paint. Each
-      // instance reloads independently.
-      instance.setParam('memberstack_id', override)
-      return
-    }
 
     var state = typeof instance.getState === 'function' ? instance.getState() : null
     // Only true if something booted wf-xano before this file ran, i.e. a render
@@ -578,16 +551,8 @@
       return
     }
 
-    var override = memberOverride()
-    // Announced once rather than per instance; the count is the interesting part.
-    if (override) {
-      warn(
-        'previewing member "' + override + '" from ?ms= (staging only) on ' +
-          instances.length + ' instance(s) — each reloads separately.',
-      )
-    }
     instances.forEach(function (instance) {
-      armInstance(instance, override)
+      armInstance(instance)
     })
     note(
       'armed ' + instances.length + ' instance(s): ' +
@@ -619,9 +584,8 @@
     deSlug: deSlug,
     joinLocation: joinLocation,
     unwrap: unwrap,
-    // Answers "why is/isn't ?ms= doing anything here" without reading the source.
+    // Answers "why am I (not) seeing the console diagnostics here" in one call.
     stagingHost: stagingHost,
-    memberOverride: memberOverride,
     // Answers "which lists did this arm, and why not that one".
     // targetInstances(WfXano) re-runs the selection against the live library.
     sourceMatches: sourceMatches,
