@@ -247,6 +247,38 @@ test('build-profile onboarding pages are Talent only', () => {
   }
 })
 
+test('/starters-onboarding is guarded Talent only', () => {
+  const { api } = loadGuard()
+  assert.equal(api.isGuardedPath('/starters-onboarding'), true)
+  assert.equal(api.redirectTargetFor(TALENT, '/starters-onboarding'), '')
+  assert.equal(api.redirectTargetFor(BRAND_PAID, '/starters-onboarding'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(TEST_BRAND, '/starters-onboarding'), '/brand-dashboard')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/starters-onboarding'), '/quiz')
+})
+
+test('a logged-out visitor to /starters-onboarding is sent to login and can return', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/starters-onboarding',
+    member: null,
+  })
+  await flush()
+  assert.equal(
+    location.replaced,
+    '/login?next=' + encodeURIComponent('/starters-onboarding'),
+  )
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+})
+
+test('redirects a Brand session away from /starters-onboarding to its own default', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/starters-onboarding',
+    member: BRAND_PAID,
+  })
+  await flush()
+  assert.equal(location.replaced, '/brand-dashboard')
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+})
+
 test('cross-family Talent and Brand plans fail closed as conflicting', () => {
   const { api } = loadGuard()
   const multi = {
