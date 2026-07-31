@@ -174,8 +174,10 @@
     return xanoTokenPromise
   }
 
-  async function post(path, payload) {
-    const token = await xanoToken()
+  async function post(path, payload, allowAuthRetry) {
+    const retryOnAuthFailure = allowAuthRetry !== false
+    const tokenPromise = xanoToken()
+    const token = await tokenPromise
     const response = await global.fetch(XANO_BASE + path, {
       method: 'POST',
       headers: {
@@ -184,6 +186,10 @@
       },
       body: JSON.stringify(payload),
     })
+    if (response.status === 401 && retryOnAuthFailure) {
+      if (xanoTokenPromise === tokenPromise) xanoTokenPromise = null
+      return post(path, payload, false)
+    }
     const data = await response.json().catch(function () {
       return null
     })
@@ -439,6 +445,9 @@
     EXCHANGE_PATH,
     START_PATH,
     STATUS_PATH,
+    __resetXanoToken: function () {
+      xanoTokenPromise = null
+    },
     callbackParams,
     currentMemberId,
     exchangeCode,

@@ -180,6 +180,82 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
   }
 })
 
+test('a stale Xano token triggers one re-trade and retry on 401', async () => {
+  const previous = {
+    fetch: global.fetch,
+    memberstack: global.$memberstackDom,
+  }
+  const requests = []
+  let trades = 0
+  let statusAttempts = 0
+  api.__resetXanoToken()
+  global.$memberstackDom = { getMemberCookie: async () => 'ms-cookie' }
+  global.fetch = async (url, options) => {
+    requests.push({ url, options })
+    if (String(url).includes('/auth/trade-token/v3')) {
+      trades += 1
+      return response({ authToken: 'xano-token-' + trades })
+    }
+    statusAttempts += 1
+    if (statusAttempts === 1) {
+      return response({ error: 'expired token' }, { ok: false, status: 401 })
+    }
+    return response({ connected: true, charges_enabled: true })
+  }
+
+  try {
+    const status = await api.fetchStatus()
+    assert.equal(status.charges_enabled, true)
+    assert.equal(statusAttempts, 2, 'the request is retried exactly once')
+    assert.equal(trades, 2, 'a fresh token is traded after the 401')
+    const statusRequests = requests.filter((request) =>
+      String(request.url).includes('/stripe_connect/status/v3'),
+    )
+    assert.equal(
+      statusRequests[0].options.headers.Authorization,
+      'Bearer xano-token-1',
+    )
+    assert.equal(
+      statusRequests[1].options.headers.Authorization,
+      'Bearer xano-token-2',
+      'the retry uses the freshly traded token',
+    )
+  } finally {
+    global.fetch = previous.fetch
+    global.$memberstackDom = previous.memberstack
+    api.__resetXanoToken()
+  }
+})
+
+test('a persistent 401 rejects without retrying forever', async () => {
+  const previous = {
+    fetch: global.fetch,
+    memberstack: global.$memberstackDom,
+  }
+  let statusAttempts = 0
+  api.__resetXanoToken()
+  global.$memberstackDom = { getMemberCookie: async () => 'ms-cookie' }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    statusAttempts += 1
+    return response({ error: 'expired token' }, { ok: false, status: 401 })
+  }
+
+  try {
+    await assert.rejects(
+      () => api.fetchStatus(),
+      /status\/v3 failed \(401\)/,
+    )
+    assert.equal(statusAttempts, 2, 'retried once, then gives up')
+  } finally {
+    global.fetch = previous.fetch
+    global.$memberstackDom = previous.memberstack
+    api.__resetXanoToken()
+  }
+})
+
 test('callback strips OAuth params and exchanges for the live member session', async () => {
   const previous = {
     document: global.document,
