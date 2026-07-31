@@ -50,7 +50,7 @@ view it; any other authenticated role is redirected to its default.
 | `/build-profile/select-profile` | Talent |
 | `/build-profile/full-profile` | Talent |
 | `/build-profile/consult` | Talent |
-| `/starters-onboarding` | Talent |
+| `/starter-onboarding` | Talent |
 | `/opportunities-freelancer-view` | Talent |
 | `/messages` | Talent, Brand paid |
 | `/opportunities/<slug>` | Talent, Brand paid |
@@ -131,7 +131,7 @@ every route in its page table:
 - `/starter-dashboard`, `/starter-edit-profile`, `/opportunities-freelancer-view`
 - `/dashboard` canonical role-router utility page
 - `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`
-- `/starters-onboarding`
+- `/starter-onboarding`
 - `/favorites` (including its trailing-slash URL)
 - `/messages`
 - `/opportunities` merged-feed page (including its trailing-slash URL)

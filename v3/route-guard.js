@@ -112,7 +112,7 @@
     '/build-profile/select-profile': ['talent'],
     '/build-profile/full-profile': ['talent'],
     '/build-profile/consult': ['talent'],
-    '/starters-onboarding': ['talent'],
+    '/starter-onboarding': ['talent'],
   }
 
   // Single-segment opportunity detail pages (/opportunities/<slug>) are shared
