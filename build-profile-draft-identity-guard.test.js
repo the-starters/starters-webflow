@@ -59,6 +59,7 @@ function createEnvironment({ memberId, sharedValues = new Map(), pendingMember =
     localStorage: window.localStorage,
     resolveMember,
     sharedValues,
+    window,
   }
 }
 
@@ -153,6 +154,67 @@ test('waitForMember restores a member-scoped draft on first page load without a 
   assert.equal(restored, 'saved-draft')
   assert.deepEqual(seenMember, { id: 'mem_current' })
   assert.equal(result, 'callback-return')
+})
+
+test('a later authored waitForMember stays gated behind identity and restores the scoped draft on first callback', async () => {
+  const sharedValues = new Map([
+    ['ts:build_profile:member:mem_current', 'saved-draft'],
+  ])
+  const environment = createEnvironment({
+    memberId: 'mem_current',
+    pendingMember: true,
+    sharedValues,
+  })
+
+  // Authored Webflow code loads after the head guard and installs its own
+  // waitForMember. That assignment must not escape the identity gate.
+  let delegateThis = 'not-run'
+  const authored = function (callback) {
+    delegateThis = this
+    return callback(environment.guard.memberId)
+  }
+  environment.window.waitForMember = authored
+
+  // The page-global still resolves to the guard wrapper, not the raw authored fn.
+  assert.notEqual(environment.window.waitForMember, authored)
+
+  let restored = 'not-run'
+  let seenArg = 'not-run'
+  const gated = environment.window.waitForMember((member) => {
+    seenArg = member
+    restored = environment.localStorage.getItem('build_profile')
+    return 'authored-return'
+  })
+
+  environment.resolveMember({ data: { id: 'mem_current' } })
+  const result = await gated
+
+  assert.equal(environment.guard.status, 'ready')
+  assert.equal(restored, 'saved-draft')
+  assert.equal(seenArg, 'mem_current')
+  assert.equal(delegateThis, environment.window)
+  assert.equal(result, 'authored-return')
+})
+
+test('a later authored waitForMember still completes anonymous sessions', async () => {
+  const environment = createEnvironment({ memberId: null, pendingMember: true })
+
+  environment.window.waitForMember = function (callback) {
+    return callback(environment.guard.memberId)
+  }
+
+  let seenArg = 'not-run'
+  const gated = environment.window.waitForMember((member) => {
+    seenArg = member
+    return 'anon-return'
+  })
+
+  environment.resolveMember({ data: null })
+  const result = await gated
+
+  assert.equal(environment.guard.status, 'anonymous')
+  assert.equal(seenArg, null)
+  assert.equal(result, 'anon-return')
 })
 
 test('waitForMember completes anonymous sessions with a null member and no draft', async () => {
