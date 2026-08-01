@@ -676,8 +676,11 @@ node build-profile-wiring-audit.js \
 ```
 
 The audit fails for duplicate/unpinned engines, a missing Xano endpoint or
-`[form-submit]` control, or a native-submit-only
-authoritative handler.
+`[form-submit]` control, a native-submit-only
+authoritative handler, or a draft identity guard that is missing, duplicated,
+unpinned, `async`/`defer`, or placed after the first legacy `build_profile`
+storage access (it must load synchronously ahead of any authored draft code —
+see below).
 
 Run its focused test with:
 
