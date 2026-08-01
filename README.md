@@ -649,3 +649,30 @@ api.airtable.com
 hook.us1.make.com
 Airtable PAT-style values such as pat...
 ```
+
+# Build-profile Videsigns wiring audit
+
+`/build-profile/full-profile` and `/build-profile/consult` must each load exactly one
+Videsigns multistep engine. The approved source is the repository mirror at a pinned
+semver tag:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@vX.Y.Z/vendor/videsigns-multi-step.js"></script>
+```
+
+Do not also load `videsigns/webflow-tools`, and do not restore
+`utils/multi-step-failover.js`. The Videsigns engine completes through a synthetic
+click on `[form-submit]`; each page's authoritative Xano writer must therefore keep
+its direct `[form-submit]` click handler instead of relying only on a native form
+`submit` event.
+
+After an authenticated fetch of both published pages, run:
+
+```sh
+node build-profile-wiring-audit.js \
+  /build-profile/full-profile /path/to/full-profile.html \
+  /build-profile/consult /path/to/consult.html
+```
+
+The audit fails for duplicate/unpinned engines, the obsolete failover loader, a
+missing Xano endpoint, or a native-submit-only authoritative handler.
