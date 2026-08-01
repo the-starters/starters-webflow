@@ -303,7 +303,7 @@ function defaultAvailability() {
 function defaultRoutes(overridesMap = {}) {
   const routes = {
     '/starter/update_availability/v3': () => ({ status: 200, body: { id: 1 } }),
-    '/starter/get_by_memberstack': () => ({
+    '/starter/get_by_memberstack/v3': () => ({
       status: 200,
       body: {
         id: 1,
@@ -314,23 +314,23 @@ function defaultRoutes(overridesMap = {}) {
         nylas_calendar_id: 'cal-1',
       },
     }),
-    '/starter/set_timezone': () => ({ status: 200, body: { timezone: 'Asia/Manila' } }),
-    '/starter/clear_calendar_data': () => ({ status: 200, body: { id: 1 } }),
-    '/nylas_configurations/get_all': () => ({
+    '/starter/set_timezone/v3': () => ({ status: 200, body: { timezone: 'Asia/Manila' } }),
+    '/starter/clear_calendar_data/v3': () => ({ status: 200, body: { id: 1 } }),
+    '/nylas_configurations/get_all/v3': () => ({
       status: 200,
       body: [
         { config_id: 'cfg-free', grant_id: 'grant-1', is_paid: false },
         { config_id: 'cfg-paid', grant_id: 'grant-1', is_paid: true },
       ],
     }),
-    '/scheduler/configurations/create': () => ({ status: 200, body: { response: { status: 200 } } }),
-    '/scheduler/configurations/update': () => ({ status: 200, body: { response: { status: 200 } } }),
-    '/scheduler/configurations/delete': () => ({ status: 200, body: { response: { status: 200 } } }),
+    '/scheduler/configurations/create/v3': () => ({ status: 200, body: { response: { status: 200 } } }),
+    '/scheduler/configurations/update/v3': () => ({ status: 200, body: { response: { status: 200 } } }),
+    '/scheduler/configurations/delete/v3': () => ({ status: 200, body: { response: { status: 200 } } }),
     '/grants/oauth/v3': () => ({
       status: 200,
       body: { response: { result: { data: { url: 'https://nylas.example/oauth' } } } },
     }),
-    '/grants/create_virtual_account': () => ({
+    '/grants/create_virtual_account/v3': () => ({
       status: 200,
       body: { response: { result: { data: { id: 'vgrant-1', email: 'virtual@example.com' } } } },
     }),
@@ -339,11 +339,11 @@ function defaultRoutes(overridesMap = {}) {
       status: 200,
       body: { grant_id: 'grant-9', email: 'g@example.com', calendar_id: 'g@example.com' },
     }),
-    '/grants/create_virtual_calendar': () => ({
+    '/grants/create_virtual_calendar/v3': () => ({
       status: 200,
       body: { response: { result: { data: { id: 'vcal-1' } } } },
     }),
-    '/grants/delete': () => ({ status: 200, body: {} }),
+    '/grants/delete/v3': () => ({ status: 200, body: {} }),
   }
   return { ...routes, ...overridesMap }
 }
@@ -535,7 +535,7 @@ test('bootstraps a saved schedule: ready state, configs read, cards rendered', a
   await settle()
 
   assert.equal(result.status(), 'ready')
-  const configsCall = result.calls.find((c) => c.path === '/nylas_configurations/get_all')
+  const configsCall = result.calls.find((c) => c.path === '/nylas_configurations/get_all/v3')
   assert.deepEqual(configsCall.body, { grant_id: 'grant-1' })
   assert.equal(result.dom.list.children.length, 1)
   assert.equal(
@@ -590,7 +590,7 @@ test('form submit writes the authenticated member id and reaches the success ste
   assert.equal(update.body.availability.items.general.start, '10:00')
 
   const configUpdates = result.calls.filter(
-    (c) => c.path === '/scheduler/configurations/update',
+    (c) => c.path === '/scheduler/configurations/update/v3',
   )
   assert.equal(configUpdates.length, 2)
   assert.deepEqual(
@@ -671,7 +671,7 @@ test('choosing own-calendar clears grant data and lands on success-calendar', as
   result.clickAction(result.dom.buttons.managerSubmit)
   await settle()
 
-  const clear = result.calls.find((c) => c.path === '/starter/clear_calendar_data')
+  const clear = result.calls.find((c) => c.path === '/starter/clear_calendar_data/v3')
   assert.deepEqual(clear.body, { member_id: 'member-a' })
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, null)
@@ -692,7 +692,7 @@ test('own-calendar prefers the page bookings-aware clearGrantData composite', as
 
   assert.deepEqual(composite, [{ memberId: 'member-a', grantId: 'grant-1' }])
   assert.equal(
-    result.calls.filter((c) => c.path === '/starter/clear_calendar_data').length,
+    result.calls.filter((c) => c.path === '/starter/clear_calendar_data/v3').length,
     0,
   )
 })
@@ -708,16 +708,16 @@ test('choosing platform creates the virtual calendar chain and configs', async (
   await settle()
 
   const paths = result.calls.map((c) => c.path)
-  const accountIndex = paths.indexOf('/grants/create_virtual_account')
+  const accountIndex = paths.indexOf('/grants/create_virtual_account/v3')
   const addIndex = paths.indexOf('/grants/add_virtual/v3')
-  const calendarIndex = paths.indexOf('/grants/create_virtual_calendar')
+  const calendarIndex = paths.indexOf('/grants/create_virtual_calendar/v3')
   assert.ok(accountIndex > -1 && addIndex > accountIndex && calendarIndex > addIndex)
 
   const add = result.calls[addIndex]
   assert.deepEqual(add.body, { grant_id: 'vgrant-1', member_id: 'member-a' })
 
   // No paid-call rate is resolvable, so only the free config is created.
-  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create')
+  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.match(creates[0].body.in_config_name, /^Free Consultation Call/)
   for (const create of creates) assert.equal(create.body.grant_id, 'vgrant-1')
@@ -734,7 +734,7 @@ test('platform setup failure shows config-request-error and writes nothing', asy
     availability,
     storage: TZ_CACHED,
     routes: {
-      '/grants/create_virtual_account': () => ({ status: 500, body: { message: 'nope' } }),
+      '/grants/create_virtual_account/v3': () => ({ status: 500, body: { message: 'nope' } }),
     },
   })
   await settle()
@@ -761,9 +761,9 @@ test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virt
   await settle()
 
   const paths = result.calls.map((c) => c.path)
-  assert.ok(paths.indexOf('/starter/clear_calendar_data') > -1)
-  const accountIndex = paths.indexOf('/grants/create_virtual_account')
-  const calendarIndex = paths.indexOf('/grants/create_virtual_calendar')
+  assert.ok(paths.indexOf('/starter/clear_calendar_data/v3') > -1)
+  const accountIndex = paths.indexOf('/grants/create_virtual_account/v3')
+  const calendarIndex = paths.indexOf('/grants/create_virtual_calendar/v3')
   assert.ok(accountIndex > -1 && calendarIndex > accountIndex)
 
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
@@ -817,7 +817,7 @@ test('a stored paid rate restores the free+paid config pair', async () => {
   result.clickAction(result.dom.buttons.managerSubmit)
   await settle()
 
-  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create')
+  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 2)
   const paid = creates.find((c) => /^Paid Consultation Call/.test(c.body.in_config_name))
   assert.ok(paid, 'expected a paid configuration')
@@ -829,7 +829,7 @@ test('config update rejection lands on config-request-error', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,
     routes: {
-      '/scheduler/configurations/update': () => ({
+      '/scheduler/configurations/update/v3': () => ({
         status: 200,
         body: { response: { status: 400 } },
       }),
@@ -866,7 +866,7 @@ test('removing an override returns its days to the general schedule', async () =
   assert.deepEqual(update.body.availability.items.general.days, [1, 2, 3])
   assert.equal(update.body.availability.items['ov-1'], undefined)
   assert.equal(
-    result.calls.filter((c) => c.path === '/scheduler/configurations/update').length,
+    result.calls.filter((c) => c.path === '/scheduler/configurations/update/v3').length,
     2,
   )
 })
@@ -883,7 +883,7 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
     storage: TZ_CACHED,
     routes: {
       // A freshly connected grant has no Nylas configurations yet.
-      '/nylas_configurations/get_all': () => ({ status: 200, body: [] }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
     },
   })
   await settle()
@@ -894,7 +894,7 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
 
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, 'calendar')
-  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create')
+  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.equal(creates[0].body.grant_id, 'grant-9')
   assert.equal(result.dom.steps.default.style.display, 'block')
@@ -925,7 +925,7 @@ test('returning from the calendar OAuth round trip records the calendar manager'
     search: '?calendar=google',
     storage: TZ_CACHED,
     routes: {
-      '/nylas_configurations/get_all': () => ({ status: 200, body: [] }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
     },
   })
   await settle()
@@ -935,7 +935,7 @@ test('returning from the calendar OAuth round trip records the calendar manager'
   assert.equal(update.body.availability.manager, 'calendar')
   // Rate-less starter: only the free config is created on the OAuth return.
   assert.equal(
-    result.calls.filter((c) => c.path === '/scheduler/configurations/create').length,
+    result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
     1,
   )
   assert.equal(result.historyCalls.length, 1)
@@ -984,7 +984,7 @@ test('falls back to Memberstack grant fields when the row has none', async () =>
     member,
     storage: TZ_CACHED,
     routes: {
-      '/starter/get_by_memberstack': () => ({
+      '/starter/get_by_memberstack/v3': () => ({
         status: 200,
         body: { id: 1, timezone: 'Asia/Manila', availability: defaultAvailability() },
       }),
@@ -992,7 +992,7 @@ test('falls back to Memberstack grant fields when the row has none', async () =>
   })
   await settle()
 
-  const configsCall = result.calls.find((c) => c.path === '/nylas_configurations/get_all')
+  const configsCall = result.calls.find((c) => c.path === '/nylas_configurations/get_all/v3')
   assert.deepEqual(configsCall.body, { grant_id: 'ms-grant-2' })
 })
 
@@ -1000,7 +1000,7 @@ test('a grant-less save still lands back on the default step', async () => {
   const result = loadWriter({
     storage: TZ_CACHED,
     routes: {
-      '/starter/get_by_memberstack': () => ({
+      '/starter/get_by_memberstack/v3': () => ({
         status: 200,
         body: { id: 1, timezone: 'Asia/Manila', availability: defaultAvailability() },
       }),
@@ -1026,7 +1026,7 @@ test('a grant-less save still lands back on the default step', async () => {
 test('resolves and persists the timezone through authenticated endpoints', async () => {
   const result = loadWriter({
     routes: {
-      '/starter/get_by_memberstack': () => ({
+      '/starter/get_by_memberstack/v3': () => ({
         status: 200,
         body: { id: 1, timezone: '', availability: defaultAvailability() },
       }),
@@ -1034,7 +1034,7 @@ test('resolves and persists the timezone through authenticated endpoints', async
   })
   await settle()
 
-  const setCall = result.calls.find((c) => c.path === '/starter/set_timezone')
+  const setCall = result.calls.find((c) => c.path === '/starter/set_timezone/v3')
   assert.equal(setCall.body.member_id, 'member-a')
   assert.ok(setCall.body.timezone.length > 0)
   assert.equal(result.storage.get('starter-timezone:member-a'), 'Asia/Manila')

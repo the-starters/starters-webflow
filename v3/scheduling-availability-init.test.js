@@ -162,7 +162,7 @@ test('keeps actions hidden when the page scheduling reader is missing', async ()
   assert.equal(result.events[0].type, 'starterSchedulingAvailabilityError')
 })
 
-test('uses the authenticated legacy reader without calling the broken page helper', async () => {
+test('uses the authenticated V3 reader without calling the broken page helper', async () => {
   let request
   let pageReaderCalls = 0
   const result = loadInitializer({
@@ -177,7 +177,7 @@ test('uses the authenticated legacy reader without calling the broken page helpe
   })
   await settle()
 
-  assert.match(request.url, /\/api:tCpV3oqd\/starter\/get_by_memberstack$/)
+  assert.match(request.url, /\/api:tCpV3oqd\/starter\/get_by_memberstack\/v3$/)
   assert.equal(request.init.method, 'POST')
   assert.deepEqual(JSON.parse(request.init.body), { member_id: 'member-a' })
   assert.equal(pageReaderCalls, 0)
@@ -371,7 +371,7 @@ test('reads an allowlisted test member on the Webflow staging hostname', async (
   await settle()
 
   assert.equal(calls.length, 1)
-  assert.match(calls[0].url, /\/api:tCpV3oqd\/starter\/get_by_memberstack$/)
+  assert.match(calls[0].url, /\/api:tCpV3oqd\/starter\/get_by_memberstack\/v3$/)
   assert.deepEqual(JSON.parse(calls[0].init.body), { member_id: ALLOWED_TEST_MEMBER })
   assert.equal(result.update.style.display, 'flex')
   assert.equal(result.events[0].type, 'starterSchedulingAvailabilityReady')
@@ -492,7 +492,7 @@ test('never reuses the authenticated member cache for an override read', async (
   assert.deepEqual(authenticatedCache.availability.items, { general: {} })
 })
 
-test('an override read issues only the legacy read call — no write payloads', async () => {
+test('an override read issues only the V3 read call, with no write payloads', async () => {
   const calls = []
   loadInitializer({
     search: `?test_member_id=${ALLOWED_TEST_MEMBER}`,
@@ -508,10 +508,10 @@ test('an override read issues only the legacy read call — no write payloads', 
   await settle()
 
   assert.equal(calls.length, 1)
-  assert.match(calls[0].url, /\/api:tCpV3oqd\/starter\/get_by_memberstack$/)
+  assert.match(calls[0].url, /\/api:tCpV3oqd\/starter\/get_by_memberstack\/v3$/)
   for (const call of calls) {
     assert.ok(
-      /\/starter\/get_by_memberstack$/.test(call.url),
+      /\/starter\/get_by_memberstack\/v3$/.test(call.url),
       'overridden ID must never reach a non-read endpoint',
     )
   }

@@ -335,7 +335,7 @@
   // so relying on it left sandbox members grant-less in the writer.
   async function readStarterRecord() {
     try {
-      const starter = await xanoPost('/starter/get_by_memberstack', {
+      const starter = await xanoPost('/starter/get_by_memberstack/v3', {
         member_id: await writeMemberId(),
       })
       return starter && typeof starter === 'object' && !Array.isArray(starter) ? starter : null
@@ -360,7 +360,7 @@
         resolved = starter.timezone
       }
       if (!resolved) {
-        const updated = await xanoPost('/starter/set_timezone', {
+        const updated = await xanoPost('/starter/set_timezone/v3', {
           member_id: await writeMemberId(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
         })
@@ -393,7 +393,7 @@
 
   async function getConfigs(id) {
     try {
-      const response = await xanoPost('/nylas_configurations/get_all', { grant_id: id })
+      const response = await xanoPost('/nylas_configurations/get_all/v3', { grant_id: id })
       if (!Array.isArray(response) || !response.length) return null
       return response
     } catch (error) {
@@ -514,7 +514,7 @@
 
     try {
       const res = await xanoPost(
-        '/scheduler/configurations/' + (isUpdate ? 'update' : 'create'),
+        '/scheduler/configurations/' + (isUpdate ? 'update/v3' : 'create/v3'),
         payload,
       )
       if (res && res.response && res.response.status === 200) return true
@@ -561,7 +561,7 @@
     const result = { status: 400, grant_id: null, email: null, calendar_id: null }
     let account = null
     try {
-      const accountResponse = await xanoPost('/grants/create_virtual_account', {
+      const accountResponse = await xanoPost('/grants/create_virtual_account/v3', {
         member_id: memberId,
       })
       account = accountResponse && accountResponse.response && accountResponse.response.result
@@ -580,7 +580,7 @@
       })
       if (!grantAdded) return result
 
-      const calendarResponse = await xanoPost('/grants/create_virtual_calendar', {
+      const calendarResponse = await xanoPost('/grants/create_virtual_calendar/v3', {
         grant_id: virtualGrantId,
         member_id: memberId,
       })
@@ -607,11 +607,11 @@
       await window.clearGrantData(memberId, currentGrantId)
       return
     }
-    await xanoPost('/starter/clear_calendar_data', { member_id: memberId })
+    await xanoPost('/starter/clear_calendar_data/v3', { member_id: memberId })
     const currentConfigs = (await getConfigs(currentGrantId)) || []
     for (const config of currentConfigs) {
       try {
-        await xanoPost('/scheduler/configurations/delete', {
+        await xanoPost('/scheduler/configurations/delete/v3', {
           grant_id: config.grant_id,
           configuration_id: config.config_id,
         })
@@ -620,7 +620,7 @@
       }
     }
     try {
-      await xanoPost('/grants/delete', { in_grant_id: currentGrantId })
+      await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
     } catch (error) {
       console.warn('[scheduling-writer] grant delete failed:', error && error.message)
     }

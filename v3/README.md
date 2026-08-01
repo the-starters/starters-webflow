@@ -912,34 +912,29 @@ Current safety boundary:
 
 - Runs only on `the-starters-3-0.webflow.io`.
 - Does not change V2 or either V3 custom domain.
-- Authenticates paths beginning with `/api:tCpV3oqd/scheduler/configurations/` or
-  `/api:tCpV3oqd/calendars/get_availabilities`, plus the exact
-  `/api:tCpV3oqd/starter/get_by_memberstack` path, on the configured Xano origin.
+- Authenticates only the explicit reviewed `/v3` scheduling routes on the
+  configured Xano origin. It does not use a group-wide prefix allowlist.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code.
-- Transparently wraps the two scheduling path families and exact legacy starter
-  endpoint while legacy inline Webflow callers are migrated.
+- Transparently wraps reviewed direct `/v3` requests while the stage adapter
+  migrates legacy component callers.
 - Installs synchronously and takes ownership from the legacy bridge in
   `opportunities-3.0.js` regardless of script order.
 
 Maintenance rule: new `api:tCpV3oqd` scheduling calls should use
 `window.xanoAuthFetch`. Keep endpoint scope explicit; do not turn this into a
-blanket credential injector. The availability-writer endpoints
-(`starter/update_availability/v3`, `starter/set_timezone`,
-`starter/clear_calendar_data`, `grants/oauth`, `grants/create_virtual_account`,
-`grants/create_virtual_calendar`, `grants/add_virtual`, `grants/delete`,
-`nylas_configurations/get_all`) are listed as exact paths for
-`scheduling-availability-writer.js`.
+blanket credential injector. Every route used by the stage adapter and
+availability modules must be listed as an exact `/v3` path.
 
 Public helpers:
 
 - `window.xanoAuthFetch(input, init)` accepts the same inputs as `fetch`, adds
-  Bearer authentication for the scoped scheduling paths and exact legacy starter
-  endpoint, and rejects if initial token acquisition fails. Calls outside that scope
-  and calls with an existing `Authorization` header pass through unchanged.
+  Bearer authentication for scoped V3 scheduling paths and rejects if initial
+  token acquisition fails. Calls outside that scope and calls with an existing
+  `Authorization` header pass through unchanged.
 - `window.getXanoAuthToken({ forceRefresh: true })` returns the cached,
   member-scoped token or explicitly replaces it. The options argument is
   optional.
@@ -954,6 +949,42 @@ Run the focused test with:
 
 ```sh
 node v3/scheduling-auth.test.js
+```
+
+## Scheduling V3 stage adapter
+
+`scheduling-v3-stage.js` is the stage-only compatibility layer for the existing
+Webflow scheduling component. It installs only on these exact staging paths:
+
+- `/starter-dashboard---availability-stage`
+- `/brand-dashboard---availability-stage`
+- `/messages-stage`
+
+It does not install on `detail_hire` or on either custom production domain. The
+adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
+preserves request method, body, headers, and query parameters, and sends the
+rewritten request through `window.xanoAuthFetch`.
+
+The boundary is fail-closed:
+
+- `booking_record/get_with_filters` and its held `/v3` draft are blocked.
+- `notetaker/get_transcription` is blocked because it is an arbitrary-URL
+  authenticated-header proxy.
+- Any other unclassified `api:tCpV3oqd` scheduling route is blocked with HTTP
+  `410` before a network request is made.
+- Only the approved legacy Stripe customer, intent, setup-intent, and
+  payment-method provider routes pass through temporarily.
+
+`scheduling-v3-stage-component.html` is the draft loader for a cloned Webflow
+component used only by the three stage pages. Do not replace the shared `Call
+Scheduling - Global Code` component while the live `detail_hire` template still
+uses it. Release the Git files first, then create and install the clone in a
+separate approved Webflow change.
+
+Run the focused test with:
+
+```sh
+node v3/scheduling-v3-stage.test.js
 ```
 
 ## Booking-stage availability initializer
@@ -971,7 +1002,7 @@ availability, accepts the legacy scheduling availability shape
 (`{ items, manager? }`), and treats a V3 starter without a legacy scheduling row
 as a first-time setup instead of leaving both controls hidden. It also selects
 the correct initial modal step.
-The initializer reads `/api:tCpV3oqd/starter/get_by_memberstack` through
+The initializer reads `/api:tCpV3oqd/starter/get_by_memberstack/v3` through
 `window.xanoAuthFetch`, safely treating a JSON `null` response as a first-time
 V3 starter. It falls back to the page-provided
 `window.getStarterByMemberId(memberId)` only when the auth helper is unavailable.
@@ -1013,6 +1044,7 @@ Webflow staging loader:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-auth.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-v3-stage.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-availability-init.js"></script>
 ```
 
@@ -1140,7 +1172,8 @@ Deliberately NOT ported from the legacy inline writer:
 - the bookings list machinery — the writer delegates to the page embed's
   `window.generateBookingsList` / bookings-aware `window.clearGrantData` when
   present, and otherwise falls back to a minimal authenticated grant clear
-  (`starter/clear_calendar_data` + configuration deletes + `grants/delete`).
+  (`starter/clear_calendar_data/v3` + configuration deletes through `/v3` +
+  `grants/delete/v3`).
 - One deliberate behavior fix: a failed configuration update no longer falls
   through to the `success` step (legacy phantom-success bug).
 
@@ -1151,6 +1184,11 @@ memberstack_id-keyed endpoints; the legacy airtable_id-keyed
 `grants/oauth`/`grants/add`/`grants/add_virtual` remain untouched for V2. The
 OAuth return is handled by `v3/connect-success.js` via `grants/add/v3`
 (server-side code exchange + persist in one call).
+
+All other writer reads and writes now use their reviewed `/v3` routes:
+`starter/get_by_memberstack`, `starter/set_timezone`,
+`starter/clear_calendar_data`, `nylas_configurations/get_all`, configuration
+create/update/delete, virtual-account/calendar creation, and grant deletion.
 
 Paid-call rate: resolved from the form's `#price` input
 (`data-rate`/value, Designer-bound like V2) with the shared `paid_call_rate`
