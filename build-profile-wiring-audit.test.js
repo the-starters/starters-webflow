@@ -73,6 +73,50 @@ test('a native-submit-only Xano owner fails behind the Videsigns synthetic click
   assert.match(result.findings.join('\n'), /\[form-submit\] click path/)
 })
 
+test('an unrelated [form-submit] click handler plus a native-submit-only Xano writer fails', () => {
+  const html = `
+    ${pinnedEngine}
+    <form build-profile-form>
+      <a form-submit="" href="#">Submit your profile</a>
+    </form>
+    <script>
+      const ENDPOINT_URL = 'https://example.test/build_profile/starter/update'
+      const formSubmit = form.querySelector('[form-submit]')
+      formSubmit.addEventListener('click', () => {
+        showSpinner()
+      })
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault()
+        await xanoAuthFetch(ENDPOINT_URL, { method: 'POST' })
+      })
+    </script>
+  `
+  const result = auditBuildProfileHtml('/build-profile/full-profile', html)
+
+  assert.equal(result.ok, false)
+  assert.match(result.findings.join('\n'), /\[form-submit\] click path/)
+})
+
+test('a renamed control and endpoint variable still pass when co-located', () => {
+  const html = `
+    ${pinnedEngine}
+    <form build-profile-form>
+      <a form-submit="" href="#">Submit your profile</a>
+    </form>
+    <script>
+      const saveUrl = 'https://example.test/build_profile/starter/update'
+      const submitControl = form.querySelector('[form-submit]')
+      submitControl.addEventListener('click', async (event) => {
+        event.preventDefault()
+        await xanoAuthFetch(saveUrl, { method: 'POST' })
+      })
+    </script>
+  `
+  const result = auditBuildProfileHtml('/build-profile/consult', html)
+
+  assert.equal(result.ok, true, result.findings.join('; '))
+})
+
 test('the obsolete failover loader fails the audit', () => {
   const html = `${pageHtml()}
     <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.49/utils/multi-step-failover.js"></script>`
