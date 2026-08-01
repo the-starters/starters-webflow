@@ -260,6 +260,34 @@ test('availability-writer endpoints are authenticated', async () => {
   for (const header of authHeaders) assert.equal(header, 'Bearer xano-a')
 })
 
+test('non-stage staging consumers retain their previous legacy auth coverage', async () => {
+  const LEGACY_PATHS = [
+    '/api:tCpV3oqd/calendars/get_availabilities',
+    '/api:tCpV3oqd/scheduler/configurations/create',
+    '/api:tCpV3oqd/scheduler/configurations/delete',
+    '/api:tCpV3oqd/scheduler/configurations/get_all',
+    '/api:tCpV3oqd/scheduler/configurations/update',
+    '/api:tCpV3oqd/scheduler/configurations/update_v2',
+    '/api:tCpV3oqd/starter/get_by_memberstack',
+  ]
+  const authHeaders = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-a' })
+    }
+    authHeaders.push(request.headers.get('Authorization'))
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  for (const path of LEGACY_PATHS) {
+    await window.xanoAuthFetch(XANO_ORIGIN + path, { method: 'POST', body: '{}' })
+  }
+
+  assert.equal(authHeaders.length, LEGACY_PATHS.length)
+  for (const header of authHeaders) assert.equal(header, 'Bearer xano-a')
+})
+
 test('writer endpoint list does not blanket-authenticate the scheduling group', async () => {
   let tradeCount = 0
   let receivedRequest

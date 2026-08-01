@@ -914,6 +914,10 @@ Current safety boundary:
 - Does not change V2 or either V3 custom domain.
 - Authenticates only the explicit reviewed `/v3` scheduling routes on the
   configured Xano origin. It does not use a group-wide prefix allowlist.
+- Temporarily retains the exact legacy configuration, availability, and Starter
+  paths that this shared module authenticated before the stage adapter existed.
+  This prevents a release-time regression on non-stage staging consumers; the
+  stage adapter intercepts those paths first on its three approved pages.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
@@ -972,6 +976,9 @@ The boundary is fail-closed:
   authenticated-header proxy.
 - Any other unclassified `api:tCpV3oqd` scheduling route is blocked with HTTP
   `410` before a network request is made.
+- `calendars/get_availabilities` remains deliberately unmapped and therefore
+  blocked on the three stage pages because its payload has not been proven
+  compatible with `scheduler/get_availability/v3`.
 - Only the approved legacy Stripe customer, intent, setup-intent, and
   payment-method provider routes pass through temporarily.
 

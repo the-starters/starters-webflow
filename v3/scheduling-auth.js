@@ -53,6 +53,18 @@
     '/api:tCpV3oqd/starter/set_timezone/v3',
     '/api:tCpV3oqd/starter/update_availability/v3',
   ]
+  // Temporary backwards compatibility for staging pages that already load
+  // this shared auth module but do not yet load scheduling-v3-stage.js. The
+  // stage adapter intercepts these paths first on its three approved pages.
+  const LEGACY_COMPATIBILITY_PATHS = [
+    '/api:tCpV3oqd/calendars/get_availabilities',
+    '/api:tCpV3oqd/scheduler/configurations/create',
+    '/api:tCpV3oqd/scheduler/configurations/delete',
+    '/api:tCpV3oqd/scheduler/configurations/get_all',
+    '/api:tCpV3oqd/scheduler/configurations/update',
+    '/api:tCpV3oqd/scheduler/configurations/update_v2',
+    '/api:tCpV3oqd/starter/get_by_memberstack',
+  ]
 
   const originalFetch = legacyBridgeInstalled
     ? window.__tsSchedulingAuthOriginalFetch
@@ -74,7 +86,10 @@
     try {
       const url = new URL(rawUrl, window.location.href)
       if (url.origin !== XANO_ORIGIN) return null
-      return AUTHENTICATED_PATHS.indexOf(url.pathname) !== -1
+      return (
+        AUTHENTICATED_PATHS.indexOf(url.pathname) !== -1 ||
+        LEGACY_COMPATIBILITY_PATHS.indexOf(url.pathname) !== -1
+      )
         ? url
         : null
     } catch (error) {
