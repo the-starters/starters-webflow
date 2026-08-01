@@ -16,25 +16,54 @@
 
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const TRADE_TOKEN_PATH = '/api:g1vmSLWh/auth/trade-token/v3'
+  // Keep this exact. The stage adapter owns legacy-to-V3 routing; this bridge
+  // only adds credentials to reviewed authenticated endpoints.
   const AUTHENTICATED_PATHS = [
-    { path: '/api:tCpV3oqd/scheduler/configurations/', prefix: true },
-    { path: '/api:tCpV3oqd/calendars/get_availabilities', prefix: true },
-    { path: '/api:tCpV3oqd/starter/get_by_memberstack', prefix: false },
-    // Availability-writer endpoints (v3/scheduling-availability-writer.js).
-    // Keep this an explicit endpoint list — not an /api:tCpV3oqd/ prefix.
-    { path: '/api:tCpV3oqd/starter/update_availability/v3', prefix: false },
-    { path: '/api:tCpV3oqd/starter/set_timezone', prefix: false },
-    { path: '/api:tCpV3oqd/starter/clear_calendar_data', prefix: false },
-    { path: '/api:tCpV3oqd/grants/oauth/v3', prefix: false },
-    { path: '/api:tCpV3oqd/grants/create_virtual_account', prefix: false },
-    { path: '/api:tCpV3oqd/grants/create_virtual_calendar', prefix: false },
-    { path: '/api:tCpV3oqd/grants/add_virtual/v3', prefix: false },
-    // grants/add/v3 is called by the availability writer when the OAuth
-    // return (?code&state) lands back on the Booking-stage page; it exchanges
-    // the code and persists the grant server-side in one call.
-    { path: '/api:tCpV3oqd/grants/add/v3', prefix: false },
-    { path: '/api:tCpV3oqd/grants/delete', prefix: false },
-    { path: '/api:tCpV3oqd/nylas_configurations/get_all', prefix: false },
+    '/api:tCpV3oqd/booking/cancel/v3',
+    '/api:tCpV3oqd/booking/live/cancel/v3',
+    '/api:tCpV3oqd/booking/confirm/v3',
+    '/api:tCpV3oqd/booking/decline/v3',
+    '/api:tCpV3oqd/booking/reschedule/v3',
+    '/api:tCpV3oqd/booking_record/archive/v3',
+    '/api:tCpV3oqd/booking_record/get/v3',
+    '/api:tCpV3oqd/booking_record/get_one/v3',
+    '/api:tCpV3oqd/booking_record/payment_method_confirm/v3',
+    '/api:tCpV3oqd/booking_record/update_paid_booking_price/v3',
+    '/api:tCpV3oqd/booking_record/update_payment_status/v3',
+    '/api:tCpV3oqd/booking_record/update_reschedule/v3',
+    '/api:tCpV3oqd/brands/customer/get/v3',
+    '/api:tCpV3oqd/brands/update/customer_id/v3',
+    '/api:tCpV3oqd/brands/update/payment_method/v3',
+    '/api:tCpV3oqd/grants/add/v3',
+    '/api:tCpV3oqd/grants/add_virtual/v3',
+    '/api:tCpV3oqd/grants/create_virtual_account/v3',
+    '/api:tCpV3oqd/grants/create_virtual_calendar/v3',
+    '/api:tCpV3oqd/grants/delete/v3',
+    '/api:tCpV3oqd/grants/oauth/v3',
+    '/api:tCpV3oqd/notetaker/get_media/v3',
+    '/api:tCpV3oqd/nylas_configurations/get_all/v3',
+    '/api:tCpV3oqd/nylas_configurations/get_one/v3',
+    '/api:tCpV3oqd/scheduler/configurations/create/v3',
+    '/api:tCpV3oqd/scheduler/configurations/delete/v3',
+    '/api:tCpV3oqd/scheduler/configurations/update/v3',
+    '/api:tCpV3oqd/scheduler/get_availability/v3',
+    '/api:tCpV3oqd/starter/clear_calendar_data/v3',
+    '/api:tCpV3oqd/starter/get_by_memberstack/v3',
+    '/api:tCpV3oqd/starter/get_charges_enabled/v3',
+    '/api:tCpV3oqd/starter/set_timezone/v3',
+    '/api:tCpV3oqd/starter/update_availability/v3',
+  ]
+  // Temporary backwards compatibility for staging pages that already load
+  // this shared auth module but do not yet load scheduling-v3-stage.js. The
+  // stage adapter intercepts these paths first on its three approved pages.
+  const LEGACY_COMPATIBILITY_PATHS = [
+    '/api:tCpV3oqd/calendars/get_availabilities',
+    '/api:tCpV3oqd/scheduler/configurations/create',
+    '/api:tCpV3oqd/scheduler/configurations/delete',
+    '/api:tCpV3oqd/scheduler/configurations/get_all',
+    '/api:tCpV3oqd/scheduler/configurations/update',
+    '/api:tCpV3oqd/scheduler/configurations/update_v2',
+    '/api:tCpV3oqd/starter/get_by_memberstack',
   ]
 
   const originalFetch = legacyBridgeInstalled
@@ -57,11 +86,10 @@
     try {
       const url = new URL(rawUrl, window.location.href)
       if (url.origin !== XANO_ORIGIN) return null
-      return AUTHENTICATED_PATHS.some(function (authenticatedPath) {
-        return authenticatedPath.prefix
-          ? url.pathname.startsWith(authenticatedPath.path)
-          : url.pathname === authenticatedPath.path
-      })
+      return (
+        AUTHENTICATED_PATHS.indexOf(url.pathname) !== -1 ||
+        LEGACY_COMPATIBILITY_PATHS.indexOf(url.pathname) !== -1
+      )
         ? url
         : null
     } catch (error) {

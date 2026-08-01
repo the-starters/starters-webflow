@@ -1,0 +1,17 @@
+<!--
+  DRAFT ONLY: stage-isolated replacement for the shared
+  "Call Scheduling - Global Code" component.
+
+  Add this as the FIRST Code Embed in a clone of the existing component, before
+  its scheduling logic embeds. Keep the cloned UI and logic embeds intact.
+  Do not edit the shared component while detail_hire still consumes it. Release
+  these files first so @latest resolves to the reviewed tag.
+
+  Auth and routing load synchronously so even immediately executed cloned code
+  cannot issue a legacy request before the adapter owns window.fetch. The
+  availability UI modules can remain deferred.
+-->
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-v3-stage.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-availability-init.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-availability-writer.js"></script>

@@ -235,12 +235,11 @@ node --test opportunities-form-contract.test.js opportunities-create-auth.test.j
 
 ## V3 Staging Scheduling Authentication
 
-On `the-starters-3-0.webflow.io` only, `v3/scheduling-auth.js` authenticates plain
-`fetch()` requests whose Xano path starts with
-`/api:tCpV3oqd/scheduler/configurations/` or
-`/api:tCpV3oqd/calendars/get_availabilities`, plus the exact
-`/api:tCpV3oqd/starter/get_by_memberstack` path. It maintains a member-scoped token
-cache, adds `Authorization: Bearer <token>` without
+On `the-starters-3-0.webflow.io` only, `v3/scheduling-auth.js` authenticates the
+explicit reviewed V3 scheduling endpoint allowlist. It temporarily retains the
+previous legacy availability/configuration/starter paths as exact compatibility
+entries for staging pages that do not yet load the stage adapter. It maintains a
+member-scoped token cache, adds `Authorization: Bearer <token>` without
 changing the effective request method, body, or other options, and supports string,
 `URL`, and `Request` inputs. Requests that already provide `Authorization`, other Xano
 API groups, other origins, `thestarters.com`, and `www.thestarters.com` pass through
@@ -261,10 +260,19 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 ```
 
+For the three scheduling stage pages, `v3/scheduling-v3-stage.js` installs an
+exact hostname/path-gated compatibility adapter. It rewrites reviewed legacy
+calls to V3 and sends them through `window.xanoAuthFetch`, blocks #1553,
+transcription, `calendars/get_availabilities`, and every other unclassified
+scheduling route, and retains only the approved legacy Stripe provider calls.
+Use `v3/scheduling-v3-stage-component.html` as the first Code Embed in a clone
+of the existing scheduling component. The shared component used by
+`detail_hire` remains unchanged.
+
 ### Booking-stage availability controls
 
-On the same staging hostname, `v3/scheduling-availability-init.js` reads the legacy
-starter endpoint through `window.xanoAuthFetch`, preserving the authenticated request
+On the same staging hostname, `v3/scheduling-availability-init.js` reads the V3
+starter scheduling endpoint through `window.xanoAuthFetch`, preserving the authenticated request
 and retry protections. A successful JSON `null` confirms first-time setup; a saved
 legacy schedule reveals `[update-availability]`, while failed or malformed responses
 leave both controls hidden. The page's `getStarterByMemberId(memberId)` helper is used

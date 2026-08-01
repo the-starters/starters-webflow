@@ -2,8 +2,8 @@
   'use strict'
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
-  const LEGACY_STARTER_ENDPOINT =
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/starter/get_by_memberstack'
+  const STARTER_ENDPOINT =
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/starter/get_by_memberstack/v3'
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const CACHE_TTL_MS = 5 * 60 * 1000
   const STATUS_ATTRIBUTE = 'data-scheduling-availability-init'
@@ -89,16 +89,16 @@
 
   async function readStarter(memberId) {
     if (typeof window.xanoAuthFetch === 'function') {
-      const response = await window.xanoAuthFetch(LEGACY_STARTER_ENDPOINT, {
+      const response = await window.xanoAuthFetch(STARTER_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ member_id: memberId }),
       })
       const starter = await response.json().catch(function () {
-        throw new Error('Legacy scheduling reader returned invalid JSON')
+        throw new Error('V3 scheduling reader returned invalid JSON')
       })
       if (!response.ok) {
-        throw new Error('Legacy scheduling reader failed (' + response.status + ')')
+        throw new Error('V3 scheduling reader failed (' + response.status + ')')
       }
       if (starter === null) return null
       if (
@@ -106,7 +106,7 @@
         Array.isArray(starter) ||
         !Object.prototype.hasOwnProperty.call(starter, 'availability')
       ) {
-        throw new Error('Legacy scheduling reader returned invalid data')
+        throw new Error('V3 scheduling reader returned invalid data')
       }
       return starter
     }
