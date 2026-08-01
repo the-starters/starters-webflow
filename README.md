@@ -660,8 +660,9 @@ semver tag:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@vX.Y.Z/vendor/videsigns-multi-step.js"></script>
 ```
 
-Do not also load `videsigns/webflow-tools`, and do not restore
-`utils/multi-step-failover.js`. The Videsigns engine completes through a synthetic
+Do not also load `videsigns/webflow-tools`. The legacy
+`utils/multi-step-failover.js` probe may remain while it is a no-op in the presence
+of the pinned mirror; it is not an engine. The Videsigns engine completes through a synthetic
 click on `[form-submit]`; each page's authoritative Xano writer must therefore keep
 its direct `[form-submit]` click handler instead of relying only on a native form
 `submit` event.
@@ -674,8 +675,8 @@ node build-profile-wiring-audit.js \
   /build-profile/consult /path/to/consult.html
 ```
 
-The audit fails for duplicate/unpinned engines, the obsolete failover loader, a
-missing Xano endpoint or `[form-submit]` control, or a native-submit-only
+The audit fails for duplicate/unpinned engines, a missing Xano endpoint or
+`[form-submit]` control, or a native-submit-only
 authoritative handler.
 
 Run its focused test with:
