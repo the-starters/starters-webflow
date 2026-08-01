@@ -100,12 +100,25 @@ transitions, security requirements, and the production-cutover constraint.
 ## Talent application intake
 
 `talent-application.js` owns the apply-form submission on
-`/freelancer-application/step-1`. It listens in capture phase so it runs before
-Webflow's delegated submit handler and the multistep library's final-submit
-behavior. It deliberately suppresses the native Webflow submission because
-Zapier is no longer the application intake path, then posts JSON to Xano's
-`talent/application/create` endpoint. Xano owns the authoritative application
-row and mirrors it to the Airtable review table server-side.
+`/freelancer-application/step-1`. Videsigns' multistep library calls jQuery's
+synthetic `form.submit()` from its final "Complete" click handler, so a native
+`submit` capture listener never sees that event. The script therefore listens
+in capture phase two ways: a `click` listener on the multistep submit control
+(`[data-form="submit-btn"], [data-form-ms="submit-btn"]`) intercepts the final
+click before the library can fall through to Webflow's native form API, and a
+`submit` listener still catches real native submits such as pressing Enter. Both
+run before Webflow's delegated submit handler. It deliberately suppresses the
+native Webflow submission because Zapier is no longer the application intake
+path, then posts JSON to Xano's `talent/application/create` endpoint. Xano owns
+the authoritative application row and mirrors it to the Airtable review table
+server-side.
+
+Native constraint validation is preserved before the script takes ownership of
+the submit: it calls `reportValidity` on the first invalid control, but only for
+visible controls, so required-but-hidden Webflow fields (the non-selected
+consult/full-profile pair, inactive steps) cannot silently block Complete with
+an unshowable error. When a visible field is invalid the submission is aborted
+and the native validation UI is shown.
 
 Install the script on step 1 only:
 
@@ -118,6 +131,9 @@ Webflow contract:
 - Keep `application-form` on the form itself:
   `<form application-form>`. Generated IDs and styling classes are not selector
   fallbacks.
+- Keep the multistep Complete control's `data-form="submit-btn"` (or
+  `data-form-ms="submit-btn"`) attribute. The capture-phase click listener keys
+  off it to intercept the final step before the multistep library submits.
 - Keep the form inside its `.w-form` wrapper with a `.w-form-fail` block. A
   failed request reveals that block and re-enables the submit control for retry.
 - Set the form's `data-redirect` to `/freelancer-application/step-2`. The
