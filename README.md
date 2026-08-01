@@ -650,7 +650,7 @@ hook.us1.make.com
 Airtable PAT-style values such as pat...
 ```
 
-# Build-profile Videsigns wiring audit
+## Build-profile Videsigns wiring audit
 
 `/build-profile/full-profile` and `/build-profile/consult` must each load exactly one
 Videsigns multistep engine. The approved source is the repository mirror at a pinned
@@ -675,4 +675,11 @@ node build-profile-wiring-audit.js \
 ```
 
 The audit fails for duplicate/unpinned engines, the obsolete failover loader, a
-missing Xano endpoint, or a native-submit-only authoritative handler.
+missing Xano endpoint or `[form-submit]` control, or a native-submit-only
+authoritative handler.
+
+Run its focused test with:
+
+```sh
+node --test build-profile-wiring-audit.test.js
+```
