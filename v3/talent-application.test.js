@@ -19,6 +19,12 @@ function makeForm(entries, attrs = {}, selects = {}) {
     getAttribute(name) {
       return this.attrs[name] ?? null
     },
+    checkValidity() {
+      return this.attrs.valid !== false
+    },
+    reportValidity() {
+      this.reportedInvalid = true
+    },
     closest() {
       return { querySelector: (sel) => (sel === '.w-form-fail' ? failEl : null) }
     },
@@ -78,6 +84,25 @@ function submitEvent(form) {
   }
 }
 
+function multistepClickEvent(form) {
+  const submitControl = {
+    closest(selector) {
+      if (selector === 'form[application-form]') return form
+      if (
+        selector ===
+        '[data-form="submit-btn"], [data-form-ms="submit-btn"]'
+      ) {
+        return this
+      }
+      return null
+    },
+  }
+  return {
+    ...submitEvent(submitControl),
+    target: submitControl,
+  }
+}
+
 const FULL_ENTRIES = [
   ['first-name', 'Jane'],
   ['last-name', 'Doe'],
@@ -103,12 +128,18 @@ test('maps full-profile fields and redirects on success', async () => {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 42 }) })
     },
   })
-  assert.equal(listeners.length, 1)
-  assert.equal(listeners[0].capture, true)
+  assert.equal(listeners.length, 2)
+  assert.deepEqual(
+    listeners.map(({ type, capture }) => ({ type, capture })),
+    [
+      { type: 'click', capture: true },
+      { type: 'submit', capture: true },
+    ],
+  )
 
   const form = makeForm(FULL_ENTRIES, { 'data-redirect': '/freelancer-application/step-2' })
   const event = submitEvent(form)
-  listeners[0].handler(event)
+  listeners.find(({ type }) => type === 'submit').handler(event)
   assert.equal(event.prevented, true)
   assert.equal(event.stopped, true)
 
@@ -143,7 +174,7 @@ test('consult-only coalesces the consult role/rate pair', async () => {
     if (k === 'rate-consult') return [k, '250.00']
     return [k, v]
   })
-  listeners[0].handler(submitEvent(makeForm(entries)))
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(makeForm(entries)))
   await tick()
   await tick()
 
@@ -157,7 +188,7 @@ test('failure shows the fail block and allows retry', async () => {
     fetchImpl: () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) }),
   })
   const form = makeForm(FULL_ENTRIES)
-  listeners[0].handler(submitEvent(form))
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
   await tick()
   await tick()
   await tick()
@@ -181,7 +212,7 @@ test('resolves country/state select indexes to option text', async () => {
     state: makeSelect([{ value: '', textContent: 'Select state' }, { value: '3', textContent: 'Metro Manila' }], 1),
     city: makeSelect([{ value: '', textContent: 'Select city' }, { value: 'Manila', textContent: 'Manila' }], 1),
   })
-  listeners[0].handler(submitEvent(form))
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
   await tick()
   await tick()
 
@@ -198,7 +229,54 @@ test('ignores forms without the application-form attribute', () => {
   const form = makeForm([], {})
   form.matches = () => false
   const event = submitEvent(form)
-  listeners[0].handler(event)
+  listeners.find(({ type }) => type === 'submit').handler(event)
   assert.equal(event.prevented, false)
+  assert.equal(fetched, false)
+})
+
+test('captures the multistep Complete click before Webflow native submission', async () => {
+  const calls = []
+  let webflowSubmitted = false
+  const { listeners, assigned } = load({
+    fetchImpl: (url, options) => {
+      calls.push({ url, options })
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 88 }) })
+    },
+  })
+  const form = makeForm(FULL_ENTRIES, {
+    'data-redirect': '/freelancer-application/step-2',
+  })
+  const event = multistepClickEvent(form)
+
+  listeners.find(({ type }) => type === 'click').handler(event)
+  if (!event.stopped) webflowSubmitted = true
+
+  assert.equal(event.prevented, true)
+  assert.equal(event.stopped, true)
+  assert.equal(webflowSubmitted, false)
+  assert.equal(calls.length, 1)
+
+  await tick()
+  await tick()
+
+  assert.deepEqual(assigned, ['/freelancer-application/step-2'])
+})
+
+test('leaves invalid multistep clicks to the existing validation UI', () => {
+  let fetched = false
+  const { listeners } = load({
+    fetchImpl: () => {
+      fetched = true
+      return Promise.resolve()
+    },
+  })
+  const form = makeForm(FULL_ENTRIES, { valid: false })
+  const event = multistepClickEvent(form)
+
+  listeners.find(({ type }) => type === 'click').handler(event)
+
+  assert.equal(event.prevented, false)
+  assert.equal(event.stopped, false)
+  assert.equal(form.reportedInvalid, true)
   assert.equal(fetched, false)
 })
