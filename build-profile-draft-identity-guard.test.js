@@ -196,6 +196,74 @@ test('a later authored waitForMember stays gated behind identity and restores th
   assert.equal(result, 'authored-return')
 })
 
+test('an authored wrapper around the captured global restores the draft once without a microtask loop', async () => {
+  const sharedValues = new Map([
+    ['ts:build_profile:member:mem_current', 'saved-draft'],
+  ])
+  const environment = createEnvironment({
+    memberId: 'mem_current',
+    pendingMember: true,
+    sharedValues,
+  })
+
+  // Authored Webflow code extends, rather than replaces, the head guard's global
+  // by capturing it first and delegating through the captured reference. This
+  // wrap pattern must terminate at the guard's gated default, not re-enter it.
+  const orig = environment.window.waitForMember
+  environment.window.waitForMember = function (callback) {
+    return orig(callback)
+  }
+
+  let restored = 'not-run'
+  let seenMember = 'not-run'
+  let callbackCalls = 0
+  const gated = environment.window.waitForMember((member) => {
+    callbackCalls += 1
+    seenMember = member
+    restored = environment.localStorage.getItem('build_profile')
+    return 'wrapped-return'
+  })
+
+  environment.resolveMember({ data: { id: 'mem_current' } })
+  const result = await gated
+
+  // A recursive delegate would keep scheduling microtasks and never settle, so
+  // draining the queue here proves termination as well as single invocation.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(environment.guard.status, 'ready')
+  assert.equal(callbackCalls, 1)
+  assert.equal(restored, 'saved-draft')
+  assert.deepEqual(seenMember, { id: 'mem_current' })
+  assert.equal(result, 'wrapped-return')
+})
+
+test('a doubly-wrapped authored waitForMember still resolves once through the backward chain', async () => {
+  const environment = createEnvironment({ memberId: 'mem_current', pendingMember: true })
+
+  const origOne = environment.window.waitForMember
+  environment.window.waitForMember = function (callback) {
+    return origOne(callback)
+  }
+  const origTwo = environment.window.waitForMember
+  environment.window.waitForMember = function (callback) {
+    return origTwo(callback)
+  }
+
+  let callbackCalls = 0
+  const gated = environment.window.waitForMember((member) => {
+    callbackCalls += 1
+    return member
+  })
+
+  environment.resolveMember({ data: { id: 'mem_current' } })
+  const result = await gated
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(callbackCalls, 1)
+  assert.deepEqual(result, { id: 'mem_current' })
+})
+
 test('a later authored waitForMember still completes anonymous sessions', async () => {
   const environment = createEnvironment({ memberId: null, pendingMember: true })
 

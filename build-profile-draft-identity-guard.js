@@ -40,7 +40,6 @@
   let scopedKey = ''
   let pendingValue = null
   let pendingRemoval = false
-  let authoredDelegate = null
   let resolveReady
 
   const ready = new Promise((resolve) => {
@@ -102,22 +101,41 @@
     }
   }
 
-  // Defer an authored callback until identity resolution completes so its first
-  // legacy read already sees the member-scoped draft. Resolves in every terminal
-  // state (ready, anonymous, blocked); anonymous/blocked simply pass a null
-  // member and let the gated read return null, so the page still initializes.
-  function waitForMember(callback) {
-    const self = this
-    const invocationArgs = arguments
+  // Default gated behavior: once identity resolution completes, hand the resolved
+  // member data to the authored callback. This is terminal — it never dispatches
+  // back through the page-global, so any authored code that calls the reference
+  // it captured before overwriting the global always terminates. Resolves in
+  // every terminal state (ready, anonymous, blocked); anonymous and blocked simply
+  // pass a null member and let the gated read return null, so the page still
+  // initializes.
+  function gatedDefault(callback) {
     return ready.then(function () {
-      if (
-        typeof authoredDelegate === 'function' &&
-        authoredDelegate !== waitForMember
-      ) {
-        return authoredDelegate.apply(self, invocationArgs)
-      }
       return typeof callback === 'function' ? callback(memberData) : memberData
     })
+  }
+
+  // Wrap an authored waitForMember so its own member-initialization semantics run
+  // only after identity resolves. Each assignment snapshots the entry authored
+  // code captured before it, so successive overwrites (including the wrap pattern
+  // `const orig = window.waitForMember; window.waitForMember = cb => orig(cb)`)
+  // form a finite backward chain terminating at gatedDefault, never a cycle.
+  function gateAuthored(authored) {
+    return function gatedAuthoredEntry() {
+      const self = this
+      const invocationArgs = arguments
+      return ready.then(function () {
+        return authored.apply(self, invocationArgs)
+      })
+    }
+  }
+
+  let publicEntry = gatedDefault
+
+  if (
+    typeof window.waitForMember === 'function' &&
+    window.waitForMember !== gatedDefault
+  ) {
+    publicEntry = gateAuthored(window.waitForMember)
   }
 
   window.__TS_BUILD_PROFILE_DRAFT_GUARD__ = Object.freeze({
@@ -131,31 +149,24 @@
     whenReady() {
       return ready
     },
-    waitForMember,
+    waitForMember: gatedDefault,
   })
-
-  if (
-    typeof window.waitForMember === 'function' &&
-    window.waitForMember !== waitForMember
-  ) {
-    authoredDelegate = window.waitForMember
-  }
 
   try {
     Object.defineProperty(window, 'waitForMember', {
       configurable: true,
       enumerable: true,
       get() {
-        return waitForMember
+        return publicEntry
       },
       set(next) {
-        if (typeof next === 'function' && next !== waitForMember) {
-          authoredDelegate = next
+        if (typeof next === 'function' && next !== publicEntry) {
+          publicEntry = gateAuthored(next)
         }
       },
     })
   } catch (error) {
-    window.waitForMember = waitForMember
+    window.waitForMember = gatedDefault
   }
 
   // The legacy value has no owner proof. Never migrate it into a member scope.
