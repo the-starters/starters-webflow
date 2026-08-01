@@ -769,6 +769,33 @@ test('a free Brand is redirected to the configured upgrade target', async () => 
   assert.equal(loaded.calls.mounted.length, 0)
 })
 
+test('an upgrade override on the nested carrier is honored, not dropped', async () => {
+  // Webflow publishes messages-profile-upgrade onto the clickable_link carrier,
+  // the same place the other messages-profile-* attributes land, while the modal
+  // trigger is the outer button_main-wrap wrapper.
+  const carrier = starterTrigger({ [UPGRADE_ATTRIBUTE]: '/pricing' })
+  const wrapper = trigger({ tagName: 'DIV' })
+  wrapper.querySelector = (selector) => {
+    if (selector === BUTTON_SELECTOR || selector === 'a') return carrier
+    return null
+  }
+  wrapper.contains = (element) => element === carrier
+
+  const loaded = load({
+    triggers: [carrier],
+    modalTriggers: [wrapper],
+    member: { id: VIEWER_ID },
+    role: 'brand-free',
+  })
+  await settle()
+
+  wrapper.click()
+  await settle()
+
+  assert.deepEqual(loaded.navigations, ['/pricing'])
+  assert.equal(loaded.calls.mounted.length, 0)
+})
+
 test('a free Brand click never opens the modal', async () => {
   const element = starterTrigger({ [UPGRADE_ATTRIBUTE]: '/pricing' })
   const loaded = load({

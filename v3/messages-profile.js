@@ -317,7 +317,7 @@
     var container = chatContainer()
     var configured = container ? text(container.getAttribute(UPGRADE_ATTRIBUTE)) : ''
     if (!configured) {
-      triggers().some(function (element) {
+      identityCarriers().some(function (element) {
         configured = text(element.getAttribute(UPGRADE_ATTRIBUTE))
         return !!configured
       })
