@@ -684,3 +684,30 @@ Run its focused test with:
 ```sh
 node --test build-profile-wiring-audit.test.js
 ```
+
+### Draft identity guard `waitForMember` contract
+
+`build-profile-draft-identity-guard.js` loads synchronously in the page head and
+routes the legacy `build_profile` localStorage key to a member-scoped physical key.
+Reads of the legacy key return `null` until the stable Memberstack member ID
+resolves, so a load-time draft restore that reads synchronously would race that
+window and never repopulate the member's own draft. Any authored draft restore
+must therefore run inside the guard's `waitForMember` gate — exposed both as
+`window.waitForMember` and as `window.__TS_BUILD_PROFILE_DRAFT_GUARD__.waitForMember`:
+
+```js
+waitForMember(function (member) {
+  // identity has resolved; the legacy read now returns the member-scoped draft
+  const draft = localStorage.getItem('build_profile')
+  // …repopulate the form
+})
+```
+
+The gate resolves in every terminal state (`ready`, `anonymous`, `blocked`),
+passing the resolved member (or `null`) and returning a promise for the callback's
+return value, so anonymous and blocked sessions still initialize with an empty
+form. Run its focused test with:
+
+```sh
+node --test build-profile-draft-identity-guard.test.js
+```

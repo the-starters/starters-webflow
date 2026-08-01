@@ -7,6 +7,13 @@
  * until the current stable member ID is known. This guard preserves the legacy
  * page contract while routing it to a member-scoped physical key.
  *
+ * Because reads of the legacy key return null until identity resolves, any
+ * load-time draft restore must run through the `waitForMember` gate this guard
+ * installs (exposed on the frozen guard object and as the `window.waitForMember`
+ * page-global). The gate defers the authored callback until identity resolution
+ * completes, so the first legacy read inside it already sees the member-scoped
+ * draft and never races the resolving window.
+ *
  * Load synchronously in the page head, before the authored form scripts.
  */
 ;(function installBuildProfileDraftIdentityGuard(window) {
@@ -29,6 +36,7 @@
 
   let status = 'resolving'
   let memberId = ''
+  let memberData = null
   let scopedKey = ''
   let pendingValue = null
   let pendingRemoval = false
@@ -93,6 +101,16 @@
     }
   }
 
+  // Defer an authored callback until identity resolution completes so its first
+  // legacy read already sees the member-scoped draft. Resolves in every terminal
+  // state (ready, anonymous, blocked); anonymous/blocked simply pass a null
+  // member and let the gated read return null, so the page still initializes.
+  function waitForMember(callback) {
+    return ready.then(function () {
+      return typeof callback === 'function' ? callback(memberData) : memberData
+    })
+  }
+
   window.__TS_BUILD_PROFILE_DRAFT_GUARD__ = Object.freeze({
     version: VERSION,
     get status() {
@@ -104,7 +122,12 @@
     whenReady() {
       return ready
     },
+    waitForMember,
   })
+
+  if (typeof window.waitForMember !== 'function') {
+    window.waitForMember = waitForMember
+  }
 
   // The legacy value has no owner proof. Never migrate it into a member scope.
   nativeRemoveItem.call(localStorage, LEGACY_KEY)
@@ -135,12 +158,14 @@
       memberId = String(response?.data?.id || response?.id || '').trim()
 
       if (!memberId) {
+        memberData = null
         pendingValue = null
         pendingRemoval = false
         finish('anonymous')
         return
       }
 
+      memberData = response?.data || response || null
       scopedKey = `${SCOPED_PREFIX}${memberId}`
       status = 'ready'
 

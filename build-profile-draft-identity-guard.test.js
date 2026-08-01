@@ -124,3 +124,51 @@ test('anonymous sessions cannot persist a build-profile draft', async () => {
   assert.equal(environment.localStorage.getItem('build_profile'), null)
   assert.equal(environment.sharedValues.size, 0)
 })
+
+test('waitForMember restores a member-scoped draft on first page load without a race', async () => {
+  const sharedValues = new Map([
+    ['ts:build_profile:member:mem_current', 'saved-draft'],
+  ])
+  const environment = createEnvironment({
+    memberId: 'mem_current',
+    pendingMember: true,
+    sharedValues,
+  })
+
+  // A load-time read before identity resolves must not leak or restore anything.
+  assert.equal(environment.localStorage.getItem('build_profile'), null)
+
+  let restored = 'not-run'
+  let seenMember = 'not-run'
+  const gated = environment.guard.waitForMember((member) => {
+    seenMember = member
+    restored = environment.localStorage.getItem('build_profile')
+    return 'callback-return'
+  })
+
+  environment.resolveMember({ data: { id: 'mem_current' } })
+  const result = await gated
+
+  assert.equal(environment.guard.status, 'ready')
+  assert.equal(restored, 'saved-draft')
+  assert.deepEqual(seenMember, { id: 'mem_current' })
+  assert.equal(result, 'callback-return')
+})
+
+test('waitForMember completes anonymous sessions with a null member and no draft', async () => {
+  const environment = createEnvironment({ memberId: null, pendingMember: true })
+
+  let seenMember = 'not-run'
+  let restored = 'not-run'
+  const gated = environment.guard.waitForMember((member) => {
+    seenMember = member
+    restored = environment.localStorage.getItem('build_profile')
+  })
+
+  environment.resolveMember({ data: null })
+  await gated
+
+  assert.equal(environment.guard.status, 'anonymous')
+  assert.equal(seenMember, null)
+  assert.equal(restored, null)
+})
