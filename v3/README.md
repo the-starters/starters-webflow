@@ -332,8 +332,10 @@ every profile ships the same starter's id. Bind `Profile Photo Xano` rather than
 `Profile Photo`: the latter is an Image field and is not reliably offered for
 attribute binding, while the former is PlainText holding the durable Xano vault
 URL. `messages-profile-upgrade` is a static path, not a binding, and goes on the
-chat container or any trigger. Give the container a height in the Designer; a
-zero-height box renders a zero-height chat.
+chat container or the identity carrier — the same nested `clickable_link` that
+holds the other `messages-profile-*` attributes — not the outer modal-trigger
+wrapper. Give the container a height in the Designer; a zero-height box renders a
+zero-height chat.
 
 Keep `href="/messages"` on an anchor trigger. The module rewrites it to
 `/messages?with=<memberstack id>`, which the `/messages` deep link in

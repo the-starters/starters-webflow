@@ -308,8 +308,11 @@
    * Where a free Brand goes instead of the chat: `/quiz-results` once they have
    * completed the quiz, `/quiz` until then — i.e. route-guard's brandFreeHome,
    * which reads the Memberstack `starter-quiz` custom field. An explicit
-   * `messages-profile-upgrade` on the chat container or a trigger overrides
-   * both, for when a real upgrade page exists.
+   * `messages-profile-upgrade` on the chat container or an identity carrier
+   * overrides both, for when a real upgrade page exists. It is read from the
+   * carriers, not the outer modal-trigger wrappers, because Webflow publishes it
+   * on the same nested `clickable_link` as the other `messages-profile-*`
+   * attributes.
    * @param {object} member
    * @returns {string}
    */
@@ -680,9 +683,12 @@
         return
       }
 
-      // Only anchors can carry a fallback destination. Writing href onto a
-      // wrapper div would be meaningless, and writing it onto an anchor nested
-      // in a modal trigger is exactly what used to hijack the click.
+      // Only anchors can carry a fallback destination, so the href goes on the
+      // trigger anchor or, for a Webflow wrapper, its nested `clickable_link`.
+      // Writing href onto a wrapper div would be meaningless. Nesting it inside a
+      // modal trigger used to hijack the click; it is safe here only because this
+      // module always suppresses the click, so the deep link fires solely as the
+      // no-JavaScript fallback.
       var fallbackAnchor =
         String(element.tagName || '').toUpperCase() === 'A'
           ? element
