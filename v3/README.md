@@ -289,9 +289,11 @@ if (trigger.tagName === "A") e.preventDefault()
 
 There the match is the wrapping DIV, so the inner anchor's href wins and the page
 navigates away while the modal is still opening. Because this module takes the
-click instead, `data-modal-trigger` is optional and the identity attributes may
-sit on either the wrapper or the anchor; put them wherever is convenient in the
-Designer. It still listens for modal.js's `modal-open` event, and a
+outer wrapper's click instead, the CMS identity attributes may sit on its nested
+`clickable_link`, which is where Webflow publishes attributes configured on the
+Button component. Responsive copies of the same Message component inherit the
+page's one valid CMS identity, because a `/hire/<slug>` page represents exactly
+one starter. It still listens for modal.js's `modal-open` event, and a
 `?modal-id=<id>` URL mounts the chat with no click involved. Load the modal embed as usual,
 and load `route-guard.js` too if you want the role rules to apply, since the role
 comes from `StartersV3RouteGuard.memberRole`.
@@ -330,8 +332,10 @@ every profile ships the same starter's id. Bind `Profile Photo Xano` rather than
 `Profile Photo`: the latter is an Image field and is not reliably offered for
 attribute binding, while the former is PlainText holding the durable Xano vault
 URL. `messages-profile-upgrade` is a static path, not a binding, and goes on the
-chat container or any trigger. Give the container a height in the Designer; a
-zero-height box renders a zero-height chat.
+chat container or the identity carrier — the same nested `clickable_link` that
+holds the other `messages-profile-*` attributes — not the outer modal-trigger
+wrapper. Give the container a height in the Designer; a zero-height box renders a
+zero-height chat.
 
 Keep `href="/messages"` on an anchor trigger. The module rewrites it to
 `/messages?with=<memberstack id>`, which the `/messages` deep link in
@@ -371,10 +375,12 @@ An empty CMS field renders an empty attribute, which is exactly the hidden-trigg
 path, so those profiles simply show no button until they are backfilled, with no
 code change needed afterwards.
 
-On staging the module also names any element that opens this modal but carries
-no `messages-profile-message`, since each of those is a Message button that would
-open a chat with nobody. A profile page usually has several (hero, sticky nav,
-mobile CTA) and every one of them needs the attributes.
+On staging the module warns when the page has no usable
+`messages-profile-message` identity at all. A profile page usually has several
+Message controls (hero, sticky nav, mobile CTA), but Webflow may publish the CMS
+attributes only on one nested `clickable_link`; the controller arms every
+wrapper from that page identity. The warning therefore indicates a missing CMS
+binding or backfill, not an unbound responsive copy.
 
 Triggers injected after `DOMContentLoaded` are out of scope; call
 `window.StartersMessagesProfile.apply()` after injecting one. Warnings name the

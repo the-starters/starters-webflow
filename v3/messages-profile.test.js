@@ -667,6 +667,62 @@ test('a div trigger still takes the click and opens the modal', async () => {
   assert.equal(loaded.calls.mounted.length, 1)
 })
 
+test('Webflow wrapper inherits identity from its nested clickable link', async () => {
+  const carrier = starterTrigger()
+  const wrapper = trigger({ tagName: 'DIV' })
+  wrapper.querySelector = (selector) => {
+    if (selector === BUTTON_SELECTOR || selector === 'a') return carrier
+    return null
+  }
+  wrapper.contains = (element) => element === carrier
+
+  const loaded = load({
+    triggers: [carrier],
+    modalTriggers: [wrapper],
+    member: { id: VIEWER_ID },
+    role: 'brand-paid',
+  })
+  await settle()
+
+  const event = wrapper.click()
+  await settle()
+
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(carrier.getAttribute('href'), '/messages?with=' + STARTER_ID)
+  assert.equal(loaded.opened.length, 1)
+  assert.equal(loaded.calls.mounted.length, 1)
+})
+
+test('responsive Message copy inherits the page identity', async () => {
+  const carrier = starterTrigger()
+  const primary = trigger({ tagName: 'DIV' })
+  primary.querySelector = (selector) => {
+    if (selector === BUTTON_SELECTOR || selector === 'a') return carrier
+    return null
+  }
+  primary.contains = (element) => element === carrier
+  const sticky = trigger({ tagName: 'DIV' })
+
+  const loaded = load({
+    triggers: [carrier],
+    modalTriggers: [primary, sticky],
+    member: { id: VIEWER_ID },
+    role: 'brand-paid',
+  })
+  await settle()
+
+  sticky.click()
+  await settle()
+
+  assert.equal(loaded.opened.length, 1)
+  assert.equal(loaded.calls.mounted.length, 1)
+  assert.equal(
+    loaded.warnings.filter((w) => /carry no messages-profile-message/.test(w))
+      .length,
+    0,
+  )
+})
+
 test('unwired Message buttons are called out by class name', async () => {
   const unwired = {
     tagName: 'DIV',
@@ -677,7 +733,7 @@ test('unwired Message buttons are called out by class name', async () => {
     closest: () => null,
   }
   const { warnings } = load({
-    triggers: [starterTrigger()],
+    triggers: [],
     modalTriggers: [unwired],
   })
 
@@ -707,6 +763,33 @@ test('a free Brand is redirected to the configured upgrade target', async () => 
   await settle()
 
   loaded.openModal()
+  await settle()
+
+  assert.deepEqual(loaded.navigations, ['/pricing'])
+  assert.equal(loaded.calls.mounted.length, 0)
+})
+
+test('an upgrade override on the nested carrier is honored, not dropped', async () => {
+  // Webflow publishes messages-profile-upgrade onto the clickable_link carrier,
+  // the same place the other messages-profile-* attributes land, while the modal
+  // trigger is the outer button_main-wrap wrapper.
+  const carrier = starterTrigger({ [UPGRADE_ATTRIBUTE]: '/pricing' })
+  const wrapper = trigger({ tagName: 'DIV' })
+  wrapper.querySelector = (selector) => {
+    if (selector === BUTTON_SELECTOR || selector === 'a') return carrier
+    return null
+  }
+  wrapper.contains = (element) => element === carrier
+
+  const loaded = load({
+    triggers: [carrier],
+    modalTriggers: [wrapper],
+    member: { id: VIEWER_ID },
+    role: 'brand-free',
+  })
+  await settle()
+
+  wrapper.click()
   await settle()
 
   assert.deepEqual(loaded.navigations, ['/pricing'])
