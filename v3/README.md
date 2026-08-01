@@ -991,6 +991,17 @@ not replace the shared `Call Scheduling - Global Code` component while the live
 `detail_hire` template still uses it. Release the Git files first, then create
 and install the clone in a separate approved Webflow change.
 
+Runtime contract:
+
+- `data-scheduling-v3-stage` on the document root reports `ready` once the
+  adapter owns `window.fetch`, or `auth-unavailable` when a mapped route is
+  reached before `window.xanoAuthFetch` exists (the request is then blocked).
+  The attribute is not set on pages where the adapter does not install.
+- `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
+  three installed stage paths) and `routeMap` (the legacy-to-`/v3` route map).
+- `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
+  `window.fetch` for provider and non-scheduling passthrough.
+
 Run the focused test with:
 
 ```sh
