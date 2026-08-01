@@ -6,12 +6,29 @@ const { setImmediate: tick } = require('node:timers/promises')
 
 const source = fs.readFileSync(require.resolve('./talent-application.js'), 'utf8')
 
-function makeForm(entries, attrs = {}, selects = {}) {
+function makeField({ valid = true, visible = true, willValidate = true } = {}) {
+  return {
+    willValidate,
+    offsetParent: visible ? {} : null,
+    getClientRects() {
+      return visible ? [{}] : []
+    },
+    checkValidity() {
+      return valid
+    },
+    reportValidity() {
+      this.reported = true
+    },
+  }
+}
+
+function makeForm(entries, attrs = {}, selects = {}, elements) {
   const failEl = { style: { display: 'none' } }
   return {
     entries,
     attrs,
     failEl,
+    elements,
     __startersSubmitting: undefined,
     matches(selector) {
       return selector === 'form[application-form]'
@@ -278,5 +295,51 @@ test('leaves invalid multistep clicks to the existing validation UI', () => {
   assert.equal(event.prevented, false)
   assert.equal(event.stopped, false)
   assert.equal(form.reportedInvalid, true)
+  assert.equal(fetched, false)
+})
+
+test('ignores required-but-hidden fields when validating visible controls', async () => {
+  const calls = []
+  const { listeners, assigned } = load({
+    fetchImpl: (url, options) => {
+      calls.push({ url, options })
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 55 }) })
+    },
+  })
+  const hiddenRequired = makeField({ valid: false, visible: false })
+  const form = makeForm(
+    FULL_ENTRIES,
+    { 'data-redirect': '/freelancer-application/step-2' },
+    {},
+    [makeField({ valid: true, visible: true }), hiddenRequired],
+  )
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+  await tick()
+  await tick()
+
+  assert.equal(hiddenRequired.reported, undefined)
+  assert.equal(calls.length, 1)
+  assert.deepEqual(assigned, ['/freelancer-application/step-2'])
+})
+
+test('blocks and reports the first invalid visible control', () => {
+  let fetched = false
+  const { listeners } = load({
+    fetchImpl: () => {
+      fetched = true
+      return Promise.resolve()
+    },
+  })
+  const invalidVisible = makeField({ valid: false, visible: true })
+  const form = makeForm(FULL_ENTRIES, {}, {}, [
+    makeField({ valid: true, visible: true }),
+    invalidVisible,
+    makeField({ valid: false, visible: false }),
+  ])
+  const event = submitEvent(form)
+  listeners.find(({ type }) => type === 'submit').handler(event)
+
+  assert.equal(event.prevented, false)
+  assert.equal(invalidVisible.reported, true)
   assert.equal(fetched, false)
 })

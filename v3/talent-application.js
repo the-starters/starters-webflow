@@ -91,6 +91,38 @@
     }
   }
 
+  function isFieldVisible(el) {
+    if (el.offsetParent !== null) return true
+    if (typeof el.getClientRects === 'function') {
+      var rects = el.getClientRects()
+      return !!(rects && rects.length)
+    }
+    return true
+  }
+
+  function reportValidityForVisible(form) {
+    if (!form.elements || typeof form.elements.length !== 'number') {
+      if (form.checkValidity && !form.checkValidity()) {
+        if (form.reportValidity) form.reportValidity()
+        return false
+      }
+      return true
+    }
+    var firstInvalid = null
+    for (var i = 0; i < form.elements.length; i++) {
+      var el = form.elements[i]
+      if (!el || typeof el.checkValidity !== 'function') continue
+      if (el.willValidate === false) continue
+      if (!isFieldVisible(el)) continue
+      if (!el.checkValidity() && !firstInvalid) firstInvalid = el
+    }
+    if (firstInvalid) {
+      if (firstInvalid.reportValidity) firstInvalid.reportValidity()
+      return false
+    }
+    return true
+  }
+
   function redirectTarget(form) {
     return (
       form.getAttribute('data-redirect') ||
@@ -105,11 +137,10 @@
     // The multistep library normally owns its validation UI. Because its
     // synthetic jQuery submit bypasses native capture listeners, we intercept
     // its final click first; preserve native constraint validation before
-    // taking ownership of that click.
-    if (form.checkValidity && !form.checkValidity()) {
-      if (form.reportValidity) form.reportValidity()
-      return
-    }
+    // taking ownership of that click. Only the visible controls are checked so
+    // required-but-hidden Webflow fields (the non-selected consult/full pair,
+    // inactive steps) cannot silently block Complete with an unshowable error.
+    if (!reportValidityForVisible(form)) return
 
     event.preventDefault()
     event.stopImmediatePropagation()
