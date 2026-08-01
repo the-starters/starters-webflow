@@ -11,6 +11,9 @@ const VIDESIGNS_ENGINE_RE =
 const PINNED_STARTERS_ENGINE_RE =
   /^https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@v\d+\.\d+\.\d+\/vendor\/videsigns-multi-step\.js$/
 
+const DRAFT_IDENTITY_GUARD_SRC_RE =
+  /^https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@(?:v\d+\.\d+\.\d+|[0-9a-f]{7,40})\/build-profile-draft-identity-guard\.js$/
+
 const AUTHORITATIVE_ENDPOINT_RE = /build_profile\/starter\/update/
 
 const FORM_SUBMIT_SELECTOR_RE =
@@ -116,6 +119,26 @@ function auditBuildProfileHtml(pagePath, html) {
     )
   } else if (!PINNED_STARTERS_ENGINE_RE.test(engineSources[0])) {
     findings.push(`engine must use the pinned Starters mirror, found: ${engineSources[0]}`)
+  }
+
+  const guardTags = [...html.matchAll(/<script\b([^>]*\bsrc=["']([^"']*build-profile-draft-identity-guard\.js)["'][^>]*)><\/script>/gi)]
+  if (guardTags.length !== 1) {
+    findings.push(`expected exactly one build-profile draft identity guard, found ${guardTags.length}`)
+  } else {
+    const [, attributes, source] = guardTags[0]
+    if (!DRAFT_IDENTITY_GUARD_SRC_RE.test(source)) {
+      findings.push(`draft identity guard must use a pinned Starters asset, found: ${source}`)
+    }
+    if (/\b(?:async|defer)\b/i.test(attributes)) {
+      findings.push('draft identity guard must load synchronously before authored form scripts')
+    }
+
+    const firstLegacyDraftAccess = html.search(
+      /localStorage\.(?:getItem|setItem|removeItem)\(\s*['"`]build_profile['"`]/,
+    )
+    if (firstLegacyDraftAccess !== -1 && guardTags[0].index > firstLegacyDraftAccess) {
+      findings.push('draft identity guard must appear before the first legacy build_profile storage access')
+    }
   }
 
   const hasAuthoritativeEndpoint = AUTHORITATIVE_ENDPOINT_RE.test(html)

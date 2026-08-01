@@ -9,7 +9,10 @@ const {
 const pinnedEngine =
   '<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.49/vendor/videsigns-multi-step.js"></script>'
 
-function pageHtml({ engines = pinnedEngine, submitOwner = 'click' } = {}) {
+const pinnedDraftGuard =
+  '<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@abcdef1234567890/build-profile-draft-identity-guard.js"></script>'
+
+function pageHtml({ engines = pinnedEngine, guard = pinnedDraftGuard, submitOwner = 'click' } = {}) {
   const handler =
     submitOwner === 'click'
       ? `
@@ -27,6 +30,7 @@ function pageHtml({ engines = pinnedEngine, submitOwner = 'click' } = {}) {
       `
 
   return `
+    ${guard}
     ${engines}
     <form build-profile-form>
       <a form-submit="" href="#">Submit your profile</a>
@@ -37,6 +41,30 @@ function pageHtml({ engines = pinnedEngine, submitOwner = 'click' } = {}) {
     </script>
   `
 }
+
+test('a missing, deferred, or late identity guard fails the audit', () => {
+  const missing = auditBuildProfileHtml(
+    '/build-profile/full-profile',
+    pageHtml({ guard: '' }),
+  )
+  assert.equal(missing.ok, false)
+  assert.match(missing.findings.join('\n'), /exactly one build-profile draft identity guard/)
+
+  const deferred = auditBuildProfileHtml(
+    '/build-profile/full-profile',
+    pageHtml({ guard: pinnedDraftGuard.replace('<script ', '<script defer ') }),
+  )
+  assert.equal(deferred.ok, false)
+  assert.match(deferred.findings.join('\n'), /must load synchronously/)
+
+  const lateHtml = pageHtml({ guard: '' }).replace(
+    '</form>',
+    `</form><script>localStorage.getItem('build_profile')</script>${pinnedDraftGuard}`,
+  )
+  const late = auditBuildProfileHtml('/build-profile/consult', lateHtml)
+  assert.equal(late.ok, false)
+  assert.match(late.findings.join('\n'), /must appear before/)
+})
 
 test('both build-profile workflows accept one pinned mirror and a direct Xano click owner', () => {
   for (const pagePath of BUILD_PROFILE_PAGES) {
@@ -99,6 +127,7 @@ test('an unrelated [form-submit] click handler plus a native-submit-only Xano wr
 
 test('a renamed control and endpoint variable still pass when co-located', () => {
   const html = `
+    ${pinnedDraftGuard}
     ${pinnedEngine}
     <form build-profile-form>
       <a form-submit="" href="#">Submit your profile</a>
@@ -119,6 +148,7 @@ test('a renamed control and endpoint variable still pass when co-located', () =>
 
 test('the published qs helper and delegated click writer pass the audit', () => {
   const html = `
+    ${pinnedDraftGuard}
     ${pinnedEngine}
     <form build-profile-form>
       <a form-submit="" href="#">Submit your profile</a>
