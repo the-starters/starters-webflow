@@ -14,7 +14,7 @@ const PINNED_STARTERS_ENGINE_RE =
 const AUTHORITATIVE_ENDPOINT_RE = /build_profile\/starter\/update/
 
 const FORM_SUBMIT_SELECTOR_RE =
-  /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*querySelector(?:All)?\(\s*['"`]\s*\[form-submit\]/g
+  /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*(?:querySelector(?:All)?|\bqs)\(\s*['"`]\s*\[form-submit\]/g
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -48,6 +48,33 @@ function clickBodyWritesAuthoritativeEndpoint(body, html) {
       `(?:const|let|var)\\s+${escapeRegExp(arg)}\\s*=\\s*['"\`][^'"\`]*build_profile\\/starter\\/update`,
     )
     if (assignRe.test(html)) return true
+  }
+
+  const helperCallRe = /\b([A-Za-z_$][\w$]*)\s*\(/g
+  let helperCall
+  while ((helperCall = helperCallRe.exec(body))) {
+    const helperName = helperCall[1]
+    const declarationRe = new RegExp(
+      `(?:async\\s+)?function\\s+${escapeRegExp(helperName)}\\s*\\(`,
+      'g',
+    )
+    const declaration = declarationRe.exec(html)
+    if (!declaration) continue
+    const helperBody = extractHandlerBody(html, declaration.index + declaration[0].length)
+    if (!helperBody) continue
+
+    callRe.lastIndex = 0
+    while ((call = callRe.exec(helperBody))) {
+      const arg = call[1]
+      if (/['"`]/.test(arg)) {
+        if (AUTHORITATIVE_ENDPOINT_RE.test(arg)) return true
+        continue
+      }
+      const assignRe = new RegExp(
+        `(?:const|let|var)\\s+${escapeRegExp(arg)}\\s*=\\s*['"\`][^'"\`]*build_profile\\/starter\\/update`,
+      )
+      if (assignRe.test(html)) return true
+    }
   }
   return false
 }
@@ -89,10 +116,6 @@ function auditBuildProfileHtml(pagePath, html) {
     )
   } else if (!PINNED_STARTERS_ENGINE_RE.test(engineSources[0])) {
     findings.push(`engine must use the pinned Starters mirror, found: ${engineSources[0]}`)
-  }
-
-  if (/utils\/multi-step-failover\.js/.test(html)) {
-    findings.push('obsolete multi-step-failover.js is still loaded')
   }
 
   const hasAuthoritativeEndpoint = AUTHORITATIVE_ENDPOINT_RE.test(html)

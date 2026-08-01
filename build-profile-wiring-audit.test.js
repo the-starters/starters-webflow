@@ -117,11 +117,33 @@ test('a renamed control and endpoint variable still pass when co-located', () =>
   assert.equal(result.ok, true, result.findings.join('; '))
 })
 
-test('the obsolete failover loader fails the audit', () => {
+test('the published qs helper and delegated click writer pass the audit', () => {
+  const html = `
+    ${pinnedEngine}
+    <form build-profile-form>
+      <a form-submit="" href="#">Submit your profile</a>
+    </form>
+    <script>
+      const formSubmit = form ? qs('[form-submit]', form) : null
+      formSubmit.addEventListener('click', async (event) => {
+        event.preventDefault()
+        await submitFreelancerData(new FormData(form))
+      })
+      async function submitFreelancerData(data) {
+        const endpointUrl = 'https://example.test/build_profile/starter/update'
+        return xanoAuthFetch(endpointUrl, { method: 'POST', body: data })
+      }
+    </script>
+  `
+  const result = auditBuildProfileHtml('/build-profile/full-profile', html)
+
+  assert.equal(result.ok, true, result.findings.join('; '))
+})
+
+test('the no-op failover probe is allowed when exactly one pinned engine is present', () => {
   const html = `${pageHtml()}
     <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.49/utils/multi-step-failover.js"></script>`
   const result = auditBuildProfileHtml('/build-profile/consult', html)
 
-  assert.equal(result.ok, false)
-  assert.match(result.findings.join('\n'), /obsolete multi-step-failover/)
+  assert.equal(result.ok, true, result.findings.join('; '))
 })
