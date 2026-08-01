@@ -177,8 +177,41 @@
     }
   }
 
-  function triggers() {
+  function identityCarriers() {
     return Array.prototype.slice.call(document.querySelectorAll(BUTTON_SELECTOR))
+  }
+
+  /**
+   * The clickable Message controls. Webflow puts CMS-bound attributes on the
+   * nested `a.clickable_link`, while `data-modal-trigger` lives on the outer
+   * `div.button_main-wrap`. Prefer those outer controls so capture-phase click
+   * ownership also covers the nested anchor. A standalone bound anchor remains
+   * supported for simpler Designer markup and for the honest deep-link fallback.
+   */
+  function triggers() {
+    var carriers = identityCarriers()
+    var id = modalId()
+    if (!id) return carriers
+
+    var modalTriggers = Array.prototype.slice.call(
+      document.querySelectorAll('[data-modal-trigger="' + id + '"]'),
+    )
+    if (!modalTriggers.length) return carriers
+
+    var standalone = carriers.filter(function (carrier) {
+      return !modalTriggers.some(function (trigger) {
+        if (trigger === carrier) return true
+        if (typeof trigger.contains === 'function' && trigger.contains(carrier)) {
+          return true
+        }
+        return (
+          typeof trigger.querySelector === 'function' &&
+          trigger.querySelector(BUTTON_SELECTOR) === carrier
+        )
+      })
+    })
+
+    return modalTriggers.concat(standalone)
   }
 
   /**
@@ -189,7 +222,7 @@
    */
   function pageIdentity() {
     var found = null
-    triggers().some(function (element) {
+    identityCarriers().some(function (element) {
       var identity = identityFrom(element)
       if (!identity.id) return false
       found = identity
@@ -627,11 +660,15 @@
    */
   function decorate() {
     var armed = []
+    var fallbackIdentity = pageIdentity()
 
     triggers().forEach(function (element) {
-      var identity = identityFrom(element)
+      var carrier = element.hasAttribute(MEMBER_ATTRIBUTE)
+        ? element
+        : element.querySelector(BUTTON_SELECTOR) || element.closest(BUTTON_SELECTOR)
+      var identity = carrier ? identityFrom(carrier) : fallbackIdentity
 
-      if (!identity.id) {
+      if (!identity || !identity.id) {
         hide(element)
         warn(
           'no usable Memberstack id for slug="' +
@@ -646,9 +683,13 @@
       // Only anchors can carry a fallback destination. Writing href onto a
       // wrapper div would be meaningless, and writing it onto an anchor nested
       // in a modal trigger is exactly what used to hijack the click.
-      if (String(element.tagName || '').toUpperCase() === 'A') {
+      var fallbackAnchor =
+        String(element.tagName || '').toUpperCase() === 'A'
+          ? element
+          : element.querySelector('a')
+      if (fallbackAnchor) {
         try {
-          element.setAttribute('href', deepLinkPath(identity.id))
+          fallbackAnchor.setAttribute('href', deepLinkPath(identity.id))
         } catch (error) {}
       }
 
@@ -679,6 +720,12 @@
   function warnAboutUnwiredTriggers() {
     var id = modalId()
     if (!id) return
+
+    // A /hire/<slug> page represents one starter. One valid CMS identity is a
+    // safe page-level fallback for responsive copies of the same Message
+    // component, even when Webflow publishes their bound values on only one
+    // nested clickable_link.
+    if (pageIdentity()) return
 
     var unwired = Array.prototype.slice
       .call(document.querySelectorAll('[data-modal-trigger="' + id + '"]'))
