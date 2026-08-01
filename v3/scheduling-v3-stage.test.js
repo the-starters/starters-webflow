@@ -5,6 +5,10 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./scheduling-v3-stage.js'), 'utf8')
 const authSource = fs.readFileSync(require.resolve('./scheduling-auth.js'), 'utf8')
+const componentSource = fs.readFileSync(
+  require.resolve('./scheduling-v3-stage-component.html'),
+  'utf8',
+)
 const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const API_BASE = `${XANO_ORIGIN}/api:tCpV3oqd/`
 
@@ -66,6 +70,23 @@ test('installs only on the three explicit staging pages', () => {
     assert.equal(window.__tsSchedulingV3Stage, true)
     assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
   }
+})
+
+test('component loader installs auth and routing synchronously before cloned logic', () => {
+  const tags = [...componentSource.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)]
+  assert.deepEqual(
+    tags.map((match) => match[1].split('/').at(-1)),
+    [
+      'scheduling-auth.js',
+      'scheduling-v3-stage.js',
+      'scheduling-availability-init.js',
+      'scheduling-availability-writer.js',
+    ],
+  )
+  assert.doesNotMatch(tags[0][0], /\bdefer\b/)
+  assert.doesNotMatch(tags[1][0], /\bdefer\b/)
+  assert.match(tags[2][0], /\bdefer\b/)
+  assert.match(tags[3][0], /\bdefer\b/)
 })
 
 test('does not install on the live profile component or production domains', () => {

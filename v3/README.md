@@ -976,10 +976,13 @@ The boundary is fail-closed:
   payment-method provider routes pass through temporarily.
 
 `scheduling-v3-stage-component.html` is the draft loader for a cloned Webflow
-component used only by the three stage pages. Do not replace the shared `Call
-Scheduling - Global Code` component while the live `detail_hire` template still
-uses it. Release the Git files first, then create and install the clone in a
-separate approved Webflow change.
+component used only by the three stage pages. Add it as the clone's first Code
+Embed, before the cloned scheduling logic embeds, and keep the cloned UI and
+logic intact. Auth and route ownership load synchronously so immediate legacy
+code cannot race the adapter; the availability UI modules remain deferred. Do
+not replace the shared `Call Scheduling - Global Code` component while the live
+`detail_hire` template still uses it. Release the Git files first, then create
+and install the clone in a separate approved Webflow change.
 
 Run the focused test with:
 
