@@ -60,12 +60,13 @@ function loadStage(options = {}) {
   return { attributes, authenticatedRequests, nativeFetch, nativeRequests, window }
 }
 
-test('installs only on the four explicit staging pages', () => {
+test('installs only on the five explicit staging pages', () => {
   for (const pathname of [
     '/starter-dashboard---availability-stage',
     '/brand-dashboard---availability-stage',
     '/messages-stage',
     '/hire-stage',
+    '/hire/jp-dionisio',
   ]) {
     const { attributes, window } = loadStage({ pathname })
     assert.equal(window.__tsSchedulingV3Stage, true)
@@ -108,6 +109,16 @@ test('keeps the isolated Hire stage separate from the live CMS profile path', ()
   const liveTemplate = loadStage({ pathname: '/detail_hire' })
   assert.equal(liveTemplate.window.__tsSchedulingV3Stage, undefined)
   assert.equal(liveTemplate.window.fetch, liveTemplate.nativeFetch)
+})
+
+test('installs on only the approved Test Talent Hire profile path', () => {
+  const testProfile = loadStage({ pathname: '/hire/jp-dionisio' })
+  assert.equal(testProfile.window.__tsSchedulingV3Stage, true)
+  assert.equal(testProfile.attributes['data-scheduling-v3-stage'], 'ready')
+
+  const otherProfile = loadStage({ pathname: '/hire/sabina-rahaman' })
+  assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
+  assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
 })
 
 test('maps every reviewed legacy route to an authenticated V3 request', async () => {
