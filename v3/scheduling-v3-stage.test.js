@@ -23,6 +23,7 @@ function loadStage(options = {}) {
   const nativeRequests = []
   const authenticatedRequests = []
   const attributes = {}
+  const intervals = []
   const nativeFetch = async (request) => {
     nativeRequests.push(request)
     return response({ native: true })
@@ -39,10 +40,17 @@ function loadStage(options = {}) {
     xanoAuthFetch: options.withoutAuth ? undefined : xanoAuthFetch,
     MEMBER: options.brandMemberstackId ? { id: options.brandMemberstackId } : undefined,
     starter_memberstack_id: options.starterMemberstackId,
+    setInterval(callback) {
+      intervals.push({ callback, cleared: false })
+      return intervals.length - 1
+    },
+    clearInterval(id) {
+      intervals[id].cleared = true
+    },
   }
   const document = {
     querySelectorAll() {
-      return []
+      return options.schedulerElements || []
     },
     documentElement: {
       setAttribute(name, value) {
@@ -62,7 +70,7 @@ function loadStage(options = {}) {
     window,
   })
 
-  return { attributes, authenticatedRequests, nativeFetch, nativeRequests, window }
+  return { attributes, authenticatedRequests, intervals, nativeFetch, nativeRequests, window }
 }
 
 test('installs only on the five explicit staging pages', () => {
@@ -121,6 +129,28 @@ test('does not attach booking identity outside the isolated Hire canary', () => 
 
   assert.equal(window.StarterSchedulingV3Stage.injectBookingIdentity(scheduler), false)
   assert.equal(scheduler.bookingInfo, '{}')
+})
+
+test('retries identity injection when booking data and member IDs arrive asynchronously', () => {
+  const scheduler = {}
+  const { intervals, window } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    schedulerElements: [scheduler],
+  })
+
+  assert.equal(intervals.length, 1)
+  intervals[0].callback()
+  assert.equal(intervals[0].cleared, false)
+
+  window.MEMBER = { id: 'brand-member' }
+  window.starter_memberstack_id = 'starter-member'
+  scheduler.bookingInfo = JSON.stringify({ additionalFields: {} })
+  intervals[0].callback()
+
+  const bookingInfo = JSON.parse(scheduler.bookingInfo)
+  assert.equal(bookingInfo.additionalFields.brand_memberstack_id.value, 'brand-member')
+  assert.equal(bookingInfo.additionalFields.starter_memberstack_id.value, 'starter-member')
+  assert.equal(intervals[0].cleared, true)
 })
 
 test('component loader installs auth and routing synchronously before cloned logic', () => {

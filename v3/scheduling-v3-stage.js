@@ -140,24 +140,44 @@
   }
 
   function installSchedulerIdentityObserver() {
-    if (activePath !== '/hire/jp-dionisio' || typeof MutationObserver !== 'function') return
+    if (activePath !== '/hire/jp-dionisio') return
 
-    if (document.querySelectorAll) {
-      document.querySelectorAll('nylas-scheduling').forEach(injectBookingIdentity)
+    function injectAvailableSchedulers() {
+      if (!document.querySelectorAll) return false
+      let injected = false
+      document.querySelectorAll('nylas-scheduling').forEach((scheduler) => {
+        if (injectBookingIdentity(scheduler)) injected = true
+      })
+      return injected
     }
 
-    const observer = new MutationObserver((records) => {
-      for (const record of records) {
-        for (const node of record.addedNodes || []) {
-          if (!node || node.nodeType !== 1) continue
-          if (node.matches && node.matches('nylas-scheduling')) injectBookingIdentity(node)
-          if (node.querySelectorAll) {
-            node.querySelectorAll('nylas-scheduling').forEach(injectBookingIdentity)
+    injectAvailableSchedulers()
+
+    if (typeof MutationObserver === 'function') {
+      const observer = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.addedNodes || []) {
+            if (!node || node.nodeType !== 1) continue
+            if (node.matches && node.matches('nylas-scheduling')) injectBookingIdentity(node)
+            if (node.querySelectorAll) {
+              node.querySelectorAll('nylas-scheduling').forEach(injectBookingIdentity)
+            }
           }
         }
-      }
-    })
-    observer.observe(document.documentElement, { childList: true, subtree: true })
+      })
+      observer.observe(document.documentElement, { childList: true, subtree: true })
+    }
+
+    if (typeof window.setInterval === 'function') {
+      let attempts = 0
+      const retryId = window.setInterval(() => {
+        attempts += 1
+        const injected = injectAvailableSchedulers()
+        if ((injected || attempts >= 120) && typeof window.clearInterval === 'function') {
+          window.clearInterval(retryId)
+        }
+      }, 250)
+    }
   }
 
   async function stageFetch(input, init) {
