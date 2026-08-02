@@ -60,11 +60,12 @@ function loadStage(options = {}) {
   return { attributes, authenticatedRequests, nativeFetch, nativeRequests, window }
 }
 
-test('installs only on the three explicit staging pages', () => {
+test('installs only on the four explicit staging pages', () => {
   for (const pathname of [
     '/starter-dashboard---availability-stage',
     '/brand-dashboard---availability-stage',
     '/messages-stage',
+    '/hire-stage',
   ]) {
     const { attributes, window } = loadStage({ pathname })
     assert.equal(window.__tsSchedulingV3Stage, true)
@@ -97,6 +98,16 @@ test('does not install on the live profile component or production domains', () 
   const production = loadStage({ hostname: 'www.thestarters.com' })
   assert.equal(production.window.__tsSchedulingV3Stage, undefined)
   assert.equal(production.window.fetch, production.nativeFetch)
+})
+
+test('keeps the isolated Hire stage separate from the live CMS profile path', () => {
+  const stage = loadStage({ pathname: '/hire-stage' })
+  assert.equal(stage.window.__tsSchedulingV3Stage, true)
+  assert.equal(stage.attributes['data-scheduling-v3-stage'], 'ready')
+
+  const liveTemplate = loadStage({ pathname: '/detail_hire' })
+  assert.equal(liveTemplate.window.__tsSchedulingV3Stage, undefined)
+  assert.equal(liveTemplate.window.fetch, liveTemplate.nativeFetch)
 })
 
 test('maps every reviewed legacy route to an authenticated V3 request', async () => {
