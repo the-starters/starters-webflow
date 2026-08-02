@@ -153,32 +153,46 @@
       return allInjected
     }
 
-    injectAvailableSchedulers()
+    let retryId = null
 
-    if (typeof MutationObserver === 'function') {
-      const observer = new MutationObserver((records) => {
-        for (const record of records) {
-          for (const node of record.addedNodes || []) {
-            if (!node || node.nodeType !== 1) continue
-            if (node.matches && node.matches('nylas-scheduling')) injectBookingIdentity(node)
-            if (node.querySelectorAll) {
-              node.querySelectorAll('nylas-scheduling').forEach(injectBookingIdentity)
-            }
-          }
-        }
-      })
-      observer.observe(document.documentElement, { childList: true, subtree: true })
-    }
-
-    if (typeof window.setInterval === 'function') {
+    function startRetryLoop() {
+      if (retryId !== null || typeof window.setInterval !== 'function') return
       let attempts = 0
-      const retryId = window.setInterval(() => {
+      retryId = window.setInterval(() => {
         attempts += 1
         const allInjected = injectAvailableSchedulers()
         if ((allInjected || attempts >= 120) && typeof window.clearInterval === 'function') {
           window.clearInterval(retryId)
+          retryId = null
         }
       }, 250)
+    }
+
+    if (!injectAvailableSchedulers()) startRetryLoop()
+
+    if (typeof MutationObserver === 'function') {
+      const observer = new MutationObserver((records) => {
+        let needsRetry = false
+        for (const record of records) {
+          for (const node of record.addedNodes || []) {
+            if (!node || node.nodeType !== 1) continue
+            if (
+              node.matches &&
+              node.matches('nylas-scheduling') &&
+              !injectBookingIdentity(node)
+            ) {
+              needsRetry = true
+            }
+            if (node.querySelectorAll) {
+              node.querySelectorAll('nylas-scheduling').forEach((scheduler) => {
+                if (!injectBookingIdentity(scheduler)) needsRetry = true
+              })
+            }
+          }
+        }
+        if (needsRetry) startRetryLoop()
+      })
+      observer.observe(document.documentElement, { childList: true, subtree: true })
     }
   }
 
