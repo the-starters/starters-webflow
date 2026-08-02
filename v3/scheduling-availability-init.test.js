@@ -152,6 +152,28 @@ test('shows Connect Calendar for the empty endpoint 1583 V3 projection', async (
   assert.equal(result.events[0].detail.source, 'default')
 })
 
+test('shows Connect Calendar after timezone bootstrap creates an empty availability row', async () => {
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability: {},
+        timezone: 'Asia/Manila',
+        nylas_grant_id: '',
+        nylas_grant_email: '',
+        nylas_calendar_id: '',
+      }),
+    }),
+  })
+  await settle()
+
+  assert.equal(result.init.style.display, 'flex')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'init')
+  assert.equal(result.events[0].detail.source, 'default')
+})
+
 test('rejects an empty availability array when grant data already exists', async () => {
   const result = loadInitializer({
     xanoAuthFetch: async () => ({
@@ -159,6 +181,25 @@ test('rejects an empty availability array when grant data already exists', async
       status: 200,
       json: async () => ({
         availability: [],
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.update.style.display, 'none')
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+})
+
+test('rejects an empty availability object when grant data already exists', async () => {
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability: {},
         nylas_grant_id: 'grant-existing',
         nylas_calendar_id: 'calendar-existing',
       }),

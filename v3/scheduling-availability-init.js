@@ -55,10 +55,16 @@
   }
 
   function isFirstTimeV3Projection(starter) {
+    const availability = starter && starter.availability
+    const isEmptyAvailability =
+      (Array.isArray(availability) && availability.length === 0) ||
+      (availability &&
+        typeof availability === 'object' &&
+        !Array.isArray(availability) &&
+        Object.keys(availability).length === 0)
     return Boolean(
       starter &&
-        Array.isArray(starter.availability) &&
-        starter.availability.length === 0 &&
+        isEmptyAvailability &&
         !starter.nylas_grant_id &&
         !starter.nylas_calendar_id,
     )
@@ -182,10 +188,11 @@
     }
     if (starter === null || isFirstTimeV3Projection(starter)) {
       // New V3 starters do not necessarily have an availability_v3 row yet.
-      // Endpoint 1583 projects that state as availability=[] with blank grant
-      // fields, while older readers may still return null. Both are first-time
-      // setup states. A non-empty array or an array paired with grant data stays
-      // invalid so malformed existing scheduling records do not fail open.
+      // Endpoint 1583 projects that state as availability=[] before the row
+      // exists and availability={} after timezone bootstrap creates it. Both
+      // use blank grant fields; older readers may still return null. A non-empty
+      // container or an empty one paired with grant data stays invalid so a
+      // malformed existing scheduling record does not fail open.
       return { availability: { items: {}, manager: null }, source: 'default' }
     }
 
