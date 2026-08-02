@@ -121,6 +121,45 @@ test('installs on only the approved Test Talent Hire profile path', () => {
   assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
 })
 
+test('uses Brand-safe discovery reads only on the approved real Hire canary', async () => {
+  const hire = loadStage({ pathname: '/hire/jp-dionisio' })
+  const messages = loadStage({ pathname: '/messages-stage' })
+
+  assert.equal(
+    hire.window.StarterSchedulingV3Stage.routeMap['starter/get_by_memberstack'],
+    'starter/get_booking_profile/v3',
+  )
+  assert.equal(
+    hire.window.StarterSchedulingV3Stage.routeMap['nylas_configurations/get_all'],
+    'nylas_configurations/get_bookable/v3',
+  )
+  assert.equal(
+    messages.window.StarterSchedulingV3Stage.routeMap['starter/get_by_memberstack'],
+    'starter/get_by_memberstack/v3',
+  )
+  assert.equal(
+    messages.window.StarterSchedulingV3Stage.routeMap['nylas_configurations/get_all'],
+    'nylas_configurations/get_all/v3',
+  )
+
+  await hire.window.fetch(`${API_BASE}starter/get_by_memberstack`, {
+    method: 'POST',
+    body: JSON.stringify({ member_id: 'test-talent' }),
+  })
+  await hire.window.fetch(`${API_BASE}nylas_configurations/get_all`, {
+    method: 'POST',
+    body: JSON.stringify({ grant_id: 'test-grant' }),
+  })
+
+  assert.deepEqual(
+    hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
+    [
+      '/api:tCpV3oqd/starter/get_booking_profile/v3',
+      '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
+    ],
+  )
+})
+
 test('maps every reviewed legacy route to an authenticated V3 request', async () => {
   const { authenticatedRequests, window } = loadStage()
   const routeMap = window.StarterSchedulingV3Stage.routeMap

@@ -973,6 +973,14 @@ adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
 preserves request method, body, headers, and query parameters, and sends the
 rewritten request through `window.xanoAuthFetch`.
 
+On the exact `/hire/jp-dionisio` canary only, the two public booking-discovery
+reads use Brand-safe contracts instead of Talent-owner contracts:
+`starter/get_booking_profile/v3` returns only the Starter row ID and calendar
+grant, while `nylas_configurations/get_bookable/v3` returns the bookable
+configuration metadata. Other stage pages continue to use the self-only
+`starter/get_by_memberstack/v3` and grant-owner-only
+`nylas_configurations/get_all/v3` routes.
+
 The boundary is fail-closed:
 
 - `booking_record/get_with_filters` and its held `/v3` draft are blocked.

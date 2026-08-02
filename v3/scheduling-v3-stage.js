@@ -48,17 +48,27 @@
     'starter/set_timezone': 'starter/set_timezone/v3',
     'starter/update_availability': 'starter/update_availability/v3',
   }
-  const V3_TARGETS = new Set(Object.values(V3_PATHS))
+  const HIRE_BOOKING_PATHS = {
+    'nylas_configurations/get_all': 'nylas_configurations/get_bookable/v3',
+    'starter/get_by_memberstack': 'starter/get_booking_profile/v3',
+  }
   const LEGACY_PROVIDER_PATH = /^stripe\/(?:live\/)?(?:customer|payment_intent|payment_method|setup_intent)(?:\/|$)/
 
   function normalizedPagePath() {
     return window.location.pathname.replace(/\/+$/, '') || '/'
   }
 
+  const activePath = normalizedPagePath()
   if (window.location.hostname !== STAGING_HOST) return
-  if (STAGE_PATHS.indexOf(normalizedPagePath()) === -1) return
+  if (STAGE_PATHS.indexOf(activePath) === -1) return
   if (window.__tsSchedulingV3Stage) return
   window.__tsSchedulingV3Stage = true
+
+  const activeRouteMap = Object.freeze({
+    ...V3_PATHS,
+    ...(activePath === '/hire/jp-dionisio' ? HIRE_BOOKING_PATHS : {}),
+  })
+  const activeV3Targets = new Set(Object.values(activeRouteMap))
 
   const originalFetch = window.fetch.bind(window)
 
@@ -99,7 +109,7 @@
     const scheduling = schedulingRoute(request)
     if (!scheduling) return originalFetch(request)
 
-    const target = V3_PATHS[scheduling.route]
+    const target = activeRouteMap[scheduling.route]
     if (target) {
       if (typeof window.xanoAuthFetch !== 'function') {
         setStatus('auth-unavailable')
@@ -109,7 +119,7 @@
       return window.xanoAuthFetch(requestAt(request, scheduling.url))
     }
 
-    if (V3_TARGETS.has(scheduling.route)) {
+    if (activeV3Targets.has(scheduling.route)) {
       if (typeof window.xanoAuthFetch !== 'function') {
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
@@ -126,7 +136,7 @@
   window.__tsSchedulingV3StageOriginalFetch = originalFetch
   window.StarterSchedulingV3Stage = Object.freeze({
     paths: STAGE_PATHS.slice(),
-    routeMap: Object.freeze({ ...V3_PATHS }),
+    routeMap: activeRouteMap,
   })
   setStatus('ready')
   console.info('[scheduling-v3-stage] installed')
