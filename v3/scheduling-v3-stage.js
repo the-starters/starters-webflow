@@ -157,15 +157,13 @@
 
     function startRetryLoop() {
       if (retryId !== null || typeof window.setInterval !== 'function') return
-      let attempts = 0
       retryId = window.setInterval(() => {
-        attempts += 1
         const allInjected = injectAvailableSchedulers()
-        if ((allInjected || attempts >= 120) && typeof window.clearInterval === 'function') {
+        if (allInjected && typeof window.clearInterval === 'function') {
           window.clearInterval(retryId)
           retryId = null
         }
-      }, 250)
+      }, 500)
     }
 
     if (!injectAvailableSchedulers()) startRetryLoop()

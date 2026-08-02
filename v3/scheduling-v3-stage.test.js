@@ -171,6 +171,17 @@ test('retries identity injection when booking data and member IDs arrive asynchr
   assert.equal(intervals[0].cleared, true)
 })
 
+test('does not time out while a hidden scheduler is waiting to initialize', () => {
+  const scheduler = {}
+  const { intervals } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    schedulerElements: [scheduler],
+  })
+
+  for (let attempt = 0; attempt < 121; attempt += 1) intervals[0].callback()
+  assert.equal(intervals[0].cleared, false)
+})
+
 test('keeps retrying until every scheduler has stable identity', () => {
   const readyScheduler = { bookingInfo: JSON.stringify({ additionalFields: {} }) }
   const slowScheduler = {}
