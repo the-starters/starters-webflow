@@ -23,6 +23,8 @@ function loadStage(options = {}) {
   const nativeRequests = []
   const authenticatedRequests = []
   const attributes = {}
+  const intervals = []
+  const mutationObservers = []
   const nativeFetch = async (request) => {
     nativeRequests.push(request)
     return response({ native: true })
@@ -37,18 +39,39 @@ function loadStage(options = {}) {
     location: { hostname, pathname, href: `https://${hostname}${pathname}` },
     fetch: nativeFetch,
     xanoAuthFetch: options.withoutAuth ? undefined : xanoAuthFetch,
+    MEMBER: options.brandMemberstackId ? { id: options.brandMemberstackId } : undefined,
+    starter_memberstack_id: options.starterMemberstackId,
+    setInterval(callback) {
+      intervals.push({ callback, cleared: false })
+      return intervals.length - 1
+    },
+    clearInterval(id) {
+      intervals[id].cleared = true
+    },
   }
   const document = {
+    querySelectorAll() {
+      return options.schedulerElements || []
+    },
     documentElement: {
       setAttribute(name, value) {
         attributes[name] = value
       },
     },
   }
+  class MutationObserver {
+    constructor(callback) {
+      this.callback = callback
+      mutationObservers.push(this)
+    }
+
+    observe() {}
+  }
 
   vm.runInNewContext(source, {
     console: { info() {}, warn() {} },
     document,
+    MutationObserver: options.withMutationObserver ? MutationObserver : undefined,
     Object,
     Request,
     Response,
@@ -57,7 +80,15 @@ function loadStage(options = {}) {
     window,
   })
 
-  return { attributes, authenticatedRequests, nativeFetch, nativeRequests, window }
+  return {
+    attributes,
+    authenticatedRequests,
+    intervals,
+    mutationObservers,
+    nativeFetch,
+    nativeRequests,
+    window,
+  }
 }
 
 test('installs only on the five explicit staging pages', () => {
@@ -72,6 +103,146 @@ test('installs only on the five explicit staging pages', () => {
     assert.equal(window.__tsSchedulingV3Stage, true)
     assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
   }
+})
+
+test('adds stable Brand and Starter IDs to the approved Hire booking payload', () => {
+  const { window } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    brandMemberstackId: 'brand-member',
+    starterMemberstackId: 'starter-member',
+  })
+  const scheduler = {
+    bookingInfo: JSON.stringify({
+      primaryParticipant: { name: 'Brand', email: 'brand@example.com' },
+      additionalFields: {
+        unique_id: { value: 'payment-correlation-id', type: 'text' },
+        from_stage: { value: 'true', type: 'text' },
+      },
+    }),
+  }
+
+  assert.equal(window.StarterSchedulingV3Stage.injectBookingIdentity(scheduler), true)
+  const bookingInfo = JSON.parse(scheduler.bookingInfo)
+  assert.deepEqual(bookingInfo.additionalFields.brand_memberstack_id, {
+    value: 'brand-member',
+    type: 'text',
+    readOnly: true,
+  })
+  assert.deepEqual(bookingInfo.additionalFields.starter_memberstack_id, {
+    value: 'starter-member',
+    type: 'text',
+    readOnly: true,
+  })
+  assert.equal(bookingInfo.additionalFields.unique_id.value, 'payment-correlation-id')
+  assert.equal(bookingInfo.additionalFields.from_stage.value, 'true')
+})
+
+test('does not attach booking identity outside the isolated Hire canary', () => {
+  const { window } = loadStage({
+    pathname: '/messages-stage',
+    brandMemberstackId: 'brand-member',
+    starterMemberstackId: 'starter-member',
+  })
+  const scheduler = { bookingInfo: '{}' }
+
+  assert.equal(window.StarterSchedulingV3Stage.injectBookingIdentity(scheduler), false)
+  assert.equal(scheduler.bookingInfo, '{}')
+})
+
+test('retries identity injection when booking data and member IDs arrive asynchronously', () => {
+  const scheduler = {}
+  const { intervals, window } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    schedulerElements: [scheduler],
+  })
+
+  assert.equal(intervals.length, 1)
+  intervals[0].callback()
+  assert.equal(intervals[0].cleared, false)
+
+  window.MEMBER = { id: 'brand-member' }
+  window.starter_memberstack_id = 'starter-member'
+  scheduler.bookingInfo = JSON.stringify({ additionalFields: {} })
+  intervals[0].callback()
+
+  const bookingInfo = JSON.parse(scheduler.bookingInfo)
+  assert.equal(bookingInfo.additionalFields.brand_memberstack_id.value, 'brand-member')
+  assert.equal(bookingInfo.additionalFields.starter_memberstack_id.value, 'starter-member')
+  assert.equal(intervals[0].cleared, true)
+})
+
+test('does not time out while a hidden scheduler is waiting to initialize', () => {
+  const scheduler = {}
+  const { intervals } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    schedulerElements: [scheduler],
+  })
+
+  for (let attempt = 0; attempt < 121; attempt += 1) intervals[0].callback()
+  assert.equal(intervals[0].cleared, false)
+})
+
+test('keeps retrying until every scheduler has stable identity', () => {
+  const readyScheduler = { bookingInfo: JSON.stringify({ additionalFields: {} }) }
+  const slowScheduler = {}
+  const { intervals } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    brandMemberstackId: 'brand-member',
+    starterMemberstackId: 'starter-member',
+    schedulerElements: [readyScheduler, slowScheduler],
+  })
+
+  intervals[0].callback()
+  assert.equal(intervals[0].cleared, false)
+
+  slowScheduler.bookingInfo = JSON.stringify({ additionalFields: {} })
+  intervals[0].callback()
+
+  assert.equal(
+    JSON.parse(readyScheduler.bookingInfo).additionalFields.brand_memberstack_id.value,
+    'brand-member',
+  )
+  assert.equal(
+    JSON.parse(slowScheduler.bookingInfo).additionalFields.starter_memberstack_id.value,
+    'starter-member',
+  )
+  assert.equal(intervals[0].cleared, true)
+})
+
+test('restarts retrying for a scheduler added after the first loop completed', () => {
+  const schedulerElements = [
+    { bookingInfo: JSON.stringify({ additionalFields: {} }) },
+  ]
+  const { intervals, mutationObservers } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    brandMemberstackId: 'brand-member',
+    starterMemberstackId: 'starter-member',
+    schedulerElements,
+    withMutationObserver: true,
+  })
+  assert.equal(intervals.length, 0)
+
+  const lateScheduler = {
+    nodeType: 1,
+    matches(selector) {
+      return selector === 'nylas-scheduling'
+    },
+    querySelectorAll() {
+      return []
+    },
+  }
+  schedulerElements.push(lateScheduler)
+  mutationObservers[0].callback([{ addedNodes: [lateScheduler] }])
+  assert.equal(intervals.length, 1)
+
+  lateScheduler.bookingInfo = JSON.stringify({ additionalFields: {} })
+  intervals[0].callback()
+
+  assert.equal(
+    JSON.parse(lateScheduler.bookingInfo).additionalFields.brand_memberstack_id.value,
+    'brand-member',
+  )
+  assert.equal(intervals[0].cleared, true)
 })
 
 test('component loader installs auth and routing synchronously before cloned logic', () => {
