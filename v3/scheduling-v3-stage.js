@@ -144,11 +144,13 @@
 
     function injectAvailableSchedulers() {
       if (!document.querySelectorAll) return false
-      let injected = false
-      document.querySelectorAll('nylas-scheduling').forEach((scheduler) => {
-        if (injectBookingIdentity(scheduler)) injected = true
+      const schedulers = Array.from(document.querySelectorAll('nylas-scheduling'))
+      if (!schedulers.length) return false
+      let allInjected = true
+      schedulers.forEach((scheduler) => {
+        if (!injectBookingIdentity(scheduler)) allInjected = false
       })
-      return injected
+      return allInjected
     }
 
     injectAvailableSchedulers()
@@ -172,8 +174,8 @@
       let attempts = 0
       const retryId = window.setInterval(() => {
         attempts += 1
-        const injected = injectAvailableSchedulers()
-        if ((injected || attempts >= 120) && typeof window.clearInterval === 'function') {
+        const allInjected = injectAvailableSchedulers()
+        if ((allInjected || attempts >= 120) && typeof window.clearInterval === 'function') {
           window.clearInterval(retryId)
         }
       }, 250)

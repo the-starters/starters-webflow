@@ -153,6 +153,33 @@ test('retries identity injection when booking data and member IDs arrive asynchr
   assert.equal(intervals[0].cleared, true)
 })
 
+test('keeps retrying until every scheduler has stable identity', () => {
+  const readyScheduler = { bookingInfo: JSON.stringify({ additionalFields: {} }) }
+  const slowScheduler = {}
+  const { intervals } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    brandMemberstackId: 'brand-member',
+    starterMemberstackId: 'starter-member',
+    schedulerElements: [readyScheduler, slowScheduler],
+  })
+
+  intervals[0].callback()
+  assert.equal(intervals[0].cleared, false)
+
+  slowScheduler.bookingInfo = JSON.stringify({ additionalFields: {} })
+  intervals[0].callback()
+
+  assert.equal(
+    JSON.parse(readyScheduler.bookingInfo).additionalFields.brand_memberstack_id.value,
+    'brand-member',
+  )
+  assert.equal(
+    JSON.parse(slowScheduler.bookingInfo).additionalFields.starter_memberstack_id.value,
+    'starter-member',
+  )
+  assert.equal(intervals[0].cleared, true)
+})
+
 test('component loader installs auth and routing synchronously before cloned logic', () => {
   const tags = [...componentSource.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)]
   assert.deepEqual(
