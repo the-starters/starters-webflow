@@ -54,6 +54,16 @@
     }
   }
 
+  function isFirstTimeV3Projection(starter) {
+    return Boolean(
+      starter &&
+        Array.isArray(starter.availability) &&
+        starter.availability.length === 0 &&
+        !starter.nylas_grant_id &&
+        !starter.nylas_calendar_id,
+    )
+  }
+
   function cacheKey(memberId) {
     return CACHE_PREFIX + memberId
   }
@@ -170,9 +180,12 @@
       error.code = 'MEMBER_SCOPE_CHANGED'
       throw error
     }
-    if (starter === null) {
-      // New V3 starters do not necessarily have a legacy scheduling row yet.
-      // Treat that as a first-time setup state instead of leaving both controls hidden.
+    if (starter === null || isFirstTimeV3Projection(starter)) {
+      // New V3 starters do not necessarily have an availability_v3 row yet.
+      // Endpoint 1583 projects that state as availability=[] with blank grant
+      // fields, while older readers may still return null. Both are first-time
+      // setup states. A non-empty array or an array paired with grant data stays
+      // invalid so malformed existing scheduling records do not fail open.
       return { availability: { items: {}, manager: null }, source: 'default' }
     }
 
