@@ -37,8 +37,13 @@ function loadStage(options = {}) {
     location: { hostname, pathname, href: `https://${hostname}${pathname}` },
     fetch: nativeFetch,
     xanoAuthFetch: options.withoutAuth ? undefined : xanoAuthFetch,
+    MEMBER: options.brandMemberstackId ? { id: options.brandMemberstackId } : undefined,
+    starter_memberstack_id: options.starterMemberstackId,
   }
   const document = {
+    querySelectorAll() {
+      return []
+    },
     documentElement: {
       setAttribute(name, value) {
         attributes[name] = value
@@ -72,6 +77,50 @@ test('installs only on the five explicit staging pages', () => {
     assert.equal(window.__tsSchedulingV3Stage, true)
     assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
   }
+})
+
+test('adds stable Brand and Starter IDs to the approved Hire booking payload', () => {
+  const { window } = loadStage({
+    pathname: '/hire/jp-dionisio',
+    brandMemberstackId: 'brand-member',
+    starterMemberstackId: 'starter-member',
+  })
+  const scheduler = {
+    bookingInfo: JSON.stringify({
+      primaryParticipant: { name: 'Brand', email: 'brand@example.com' },
+      additionalFields: {
+        unique_id: { value: 'payment-correlation-id', type: 'text' },
+        from_stage: { value: 'true', type: 'text' },
+      },
+    }),
+  }
+
+  assert.equal(window.StarterSchedulingV3Stage.injectBookingIdentity(scheduler), true)
+  const bookingInfo = JSON.parse(scheduler.bookingInfo)
+  assert.deepEqual(bookingInfo.additionalFields.brand_memberstack_id, {
+    value: 'brand-member',
+    type: 'text',
+    readOnly: true,
+  })
+  assert.deepEqual(bookingInfo.additionalFields.starter_memberstack_id, {
+    value: 'starter-member',
+    type: 'text',
+    readOnly: true,
+  })
+  assert.equal(bookingInfo.additionalFields.unique_id.value, 'payment-correlation-id')
+  assert.equal(bookingInfo.additionalFields.from_stage.value, 'true')
+})
+
+test('does not attach booking identity outside the isolated Hire canary', () => {
+  const { window } = loadStage({
+    pathname: '/messages-stage',
+    brandMemberstackId: 'brand-member',
+    starterMemberstackId: 'starter-member',
+  })
+  const scheduler = { bookingInfo: '{}' }
+
+  assert.equal(window.StarterSchedulingV3Stage.injectBookingIdentity(scheduler), false)
+  assert.equal(scheduler.bookingInfo, '{}')
 })
 
 test('component loader installs auth and routing synchronously before cloned logic', () => {

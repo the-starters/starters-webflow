@@ -104,6 +104,62 @@
     return new Request(url.href, request)
   }
 
+  function injectBookingIdentity(scheduler) {
+    if (activePath !== '/hire/jp-dionisio' || !scheduler) return false
+
+    const brandMemberstackId = window.MEMBER && window.MEMBER.id
+    const starterMemberstackId = window.starter_memberstack_id
+    if (!brandMemberstackId || !starterMemberstackId) return false
+
+    const serialized = typeof scheduler.bookingInfo === 'string'
+    let bookingInfo = scheduler.bookingInfo
+    if (serialized) {
+      try {
+        bookingInfo = JSON.parse(bookingInfo)
+      } catch (error) {
+        console.warn('[scheduling-v3-stage] could not parse scheduler booking identity')
+        return false
+      }
+    }
+    if (!bookingInfo || typeof bookingInfo !== 'object') return false
+
+    bookingInfo.additionalFields = bookingInfo.additionalFields || {}
+    bookingInfo.additionalFields.brand_memberstack_id = {
+      value: brandMemberstackId,
+      type: 'text',
+      readOnly: true,
+    }
+    bookingInfo.additionalFields.starter_memberstack_id = {
+      value: starterMemberstackId,
+      type: 'text',
+      readOnly: true,
+    }
+
+    scheduler.bookingInfo = serialized ? JSON.stringify(bookingInfo) : bookingInfo
+    return true
+  }
+
+  function installSchedulerIdentityObserver() {
+    if (activePath !== '/hire/jp-dionisio' || typeof MutationObserver !== 'function') return
+
+    if (document.querySelectorAll) {
+      document.querySelectorAll('nylas-scheduling').forEach(injectBookingIdentity)
+    }
+
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes || []) {
+          if (!node || node.nodeType !== 1) continue
+          if (node.matches && node.matches('nylas-scheduling')) injectBookingIdentity(node)
+          if (node.querySelectorAll) {
+            node.querySelectorAll('nylas-scheduling').forEach(injectBookingIdentity)
+          }
+        }
+      }
+    })
+    observer.observe(document.documentElement, { childList: true, subtree: true })
+  }
+
   async function stageFetch(input, init) {
     const request = new Request(input, init)
     const scheduling = schedulingRoute(request)
@@ -137,7 +193,9 @@
   window.StarterSchedulingV3Stage = Object.freeze({
     paths: STAGE_PATHS.slice(),
     routeMap: activeRouteMap,
+    injectBookingIdentity: injectBookingIdentity,
   })
+  installSchedulerIdentityObserver()
   setStatus('ready')
   console.info('[scheduling-v3-stage] installed')
 })()
