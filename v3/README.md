@@ -963,6 +963,7 @@ Webflow scheduling component. It installs only on these exact staging paths:
 - `/starter-dashboard---availability-stage`
 - `/brand-dashboard---availability-stage`
 - `/messages-stage`
+- `/hire-stage`
 
 It does not install on `detail_hire` or on either custom production domain. The
 adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
@@ -977,13 +978,13 @@ The boundary is fail-closed:
 - Any other unclassified `api:tCpV3oqd` scheduling route is blocked with HTTP
   `410` before a network request is made.
 - `calendars/get_availabilities` remains deliberately unmapped and therefore
-  blocked on the three stage pages because its payload has not been proven
+  blocked on the four stage pages because its payload has not been proven
   compatible with `scheduler/get_availability/v3`.
 - Only the approved legacy Stripe customer, intent, setup-intent, and
   payment-method provider routes pass through temporarily.
 
 `scheduling-v3-stage-component.html` is the draft loader for a cloned Webflow
-component used only by the three stage pages. Add it as the clone's first Code
+component used only by the four stage pages. Add it as the clone's first Code
 Embed, before the cloned scheduling logic embeds, and keep the cloned UI and
 logic intact. Auth and route ownership load synchronously so immediate legacy
 code cannot race the adapter; the availability UI modules remain deferred. Do
@@ -998,7 +999,7 @@ Runtime contract:
   reached before `window.xanoAuthFetch` exists (the request is then blocked).
   The attribute is not set on pages where the adapter does not install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
-  three installed stage paths) and `routeMap` (the legacy-to-`/v3` route map).
+  four installed stage paths) and `routeMap` (the legacy-to-`/v3` route map).
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 

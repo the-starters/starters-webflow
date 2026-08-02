@@ -260,7 +260,7 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 ```
 
-For the three scheduling stage pages, `v3/scheduling-v3-stage.js` installs an
+For the four scheduling stage pages, `v3/scheduling-v3-stage.js` installs an
 exact hostname/path-gated compatibility adapter. It rewrites reviewed legacy
 calls to V3 and sends them through `window.xanoAuthFetch`, blocks #1553,
 transcription, `calendars/get_availabilities`, and every other unclassified
