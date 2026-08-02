@@ -235,6 +235,64 @@ test('the real auth bridge authorizes every mapped V3 target', async () => {
   assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
 })
 
+test('the real auth bridge authorizes the Brand-safe Hire discovery overrides', async () => {
+  const requests = []
+  const window = {
+    location: {
+      hostname: 'the-starters-3-0.webflow.io',
+      pathname: '/hire/jp-dionisio',
+      href: 'https://the-starters-3-0.webflow.io/hire/jp-dionisio',
+    },
+    fetch: async (request) => {
+      const url = typeof request === 'string' ? request : request.url
+      if (url.includes('/auth/trade-token/v3')) {
+        return response({ authToken: 'xano-canary' })
+      }
+      requests.push(request)
+      return response({ ok: true })
+    },
+    setTimeout() {},
+    $memberstackDom: {
+      getMemberCookie: async () => 'memberstack-canary',
+      onAuthChange() {},
+    },
+  }
+  const context = {
+    console: { info() {}, warn() {} },
+    document: { documentElement: { setAttribute() {} } },
+    Headers,
+    Object,
+    Request,
+    Response,
+    Set,
+    URL,
+    window,
+  }
+  vm.runInNewContext(authSource, context)
+  vm.runInNewContext(source, context)
+
+  await window.fetch(`${API_BASE}starter/get_by_memberstack`, {
+    method: 'POST',
+    body: JSON.stringify({ member_id: 'test-talent' }),
+  })
+  await window.fetch(`${API_BASE}nylas_configurations/get_all`, {
+    method: 'POST',
+    body: JSON.stringify({ grant_id: 'test-grant' }),
+  })
+
+  assert.equal(requests.length, 2)
+  assert.deepEqual(
+    requests.map((request) => new URL(request.url).pathname),
+    [
+      '/api:tCpV3oqd/starter/get_booking_profile/v3',
+      '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
+    ],
+  )
+  for (const request of requests) {
+    assert.equal(request.headers.get('Authorization'), 'Bearer xano-canary')
+  }
+})
+
 test('routes direct reviewed V3 calls through the auth bridge', async () => {
   const { authenticatedRequests, window } = loadStage()
 
