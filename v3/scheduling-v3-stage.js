@@ -7,6 +7,7 @@
     '/brand-dashboard---availability-stage',
     '/messages-stage',
     '/hire-stage',
+    '/hire/jp-dionisio',
   ]
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_PREFIX = '/api:tCpV3oqd/'
