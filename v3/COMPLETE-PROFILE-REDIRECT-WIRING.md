@@ -44,8 +44,13 @@ would have produced, in one navigation instead of two, with no login form flashi
 at an already-authenticated member.
 
 The destinations are therefore identical to the `/login` bounce by construction,
-not by coincidence: `v3/complete-profile-redirect.test.js` asserts each one equals
-`window.StartersV3RouteGuard.roleHome(member)` rather than hard-coding it.
+not by coincidence: every navigation assertion in
+`v3/complete-profile-redirect.test.js` keys on
+`window.StartersV3RouteGuard.roleHome(member)` rather than on a path literal. The
+literals appear in exactly one test, which pins the contract's answers to the
+paths documented here — so if the guard ever moves a role home, that single test
+is what fails and names the change, instead of a dozen navigation tests going red
+against a module that did the right thing.
 
 ## The Memberstack group contract this assumes
 
@@ -53,11 +58,17 @@ Access to `/complete-profile` is **not** this module's job and never becomes it.
 The page is gated by the Memberstack `restrict-pages` gated content group, which
 must be configured as:
 
-| Setting | Required value |
+| Setting | Value as typed in the Memberstack dashboard |
 | --- | --- |
 | URL rule | STARTS WITH `complete-profile` |
 | Access | **All Members** |
-| Access Denied URL | `/login` |
+| Access Denied URL | `login` |
+
+Both URL fields in this table are the dashboard's own slug form, **without a
+leading slash** — that is what you type into Memberstack. The resulting
+destination a denied visitor's browser lands on is the path `/login`, and
+Memberstack gets there by calling `window.location.replace('/login')`. Wherever
+the prose below names `/login`, it means that destination, not the field value.
 
 **Access must be "All Members", not the paid-Brand plan.** That is the part the
 2026-08-03 evening decision changed. An earlier design had the group kick every
@@ -131,7 +142,7 @@ paid Brand and it will never break the page.
 ## Webflow install
 
 1. Confirm the `restrict-pages` group for this page is set to access **All
-   Members** with Access Denied URL `/login` (table above). The role branches
+   Members** with Access Denied URL `login` (table above). The role branches
    cannot run for a member Memberstack refuses to let onto the page.
 2. Add the hidden `data-ms-member="completed-brand-profile"` input to the
    Complete-profile form. Without it the paid-Brand branch is a no-op; the other

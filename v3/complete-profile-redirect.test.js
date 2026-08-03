@@ -137,6 +137,21 @@ function loadModule(options = {}) {
     },
   }
 
+  // A recording tripwire rather than an absent global. An undefined `fetch`
+  // proves only that the harness never defined one; a fetch that records its
+  // arguments and then throws proves the module actually abstained, and fails
+  // loudly and traceably the day someone adds a request to this "no network"
+  // module.
+  const fetches = []
+  function tripwireFetch(url, init) {
+    fetches.push({ url, init })
+    throw new Error(
+      'complete-profile-redirect must make no network request (fetch ' +
+        url +
+        ')',
+    )
+  }
+
   const window = {
     CustomEvent: class CustomEvent {
       constructor(name, init) {
@@ -148,6 +163,7 @@ function loadModule(options = {}) {
     URLSearchParams,
     dispatchEvent() {},
     location,
+    fetch: tripwireFetch,
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
     setInterval: clock.setInterval,
@@ -155,9 +171,6 @@ function loadModule(options = {}) {
   }
   if (options.debug) window.STARTERS_DEBUG = true
 
-  // This module makes no network call at all, so `fetch` is deliberately absent
-  // from the harness window: a request would throw rather than be silently
-  // stubbed, which is the assertion "no network" wants.
   function memberstackFor(member) {
     return {
       getCurrentMember: async () => {
@@ -207,6 +220,10 @@ function loadModule(options = {}) {
     Date: FakeDate,
     URL,
     URLSearchParams,
+    // The same tripwire as a bare global, so an unqualified `fetch(...)` is
+    // recorded too rather than dying as a ReferenceError with no trace of who
+    // called it.
+    fetch: tripwireFetch,
     CustomEvent: window.CustomEvent,
     console: {
       info: (message) => logs.info.push(message),
@@ -241,11 +258,20 @@ function loadModule(options = {}) {
   if (options.roleHomeMissing && window.StartersV3RouteGuard) {
     delete window.StartersV3RouteGuard.roleHome
   }
+  // A contract that answers the role question and then draws a blank on the home
+  // question — a `roleHome` present but returning nothing for a role the same
+  // object just named. Unreachable with today's guard (ROLE_DEFAULTS covers all
+  // three roles) but the contract is a foreign object at runtime, so the module's
+  // guard against it needs a way in.
+  if (options.roleHomeReturnsNull && window.StartersV3RouteGuard) {
+    window.StartersV3RouteGuard.roleHome = () => null
+  }
   vm.runInContext(source, context)
 
   return {
     api: window.StartersCompleteProfileRedirect,
     clock,
+    fetches,
     guard: window.StartersV3RouteGuard,
     guardAttributes,
     location,
@@ -255,7 +281,38 @@ function loadModule(options = {}) {
   }
 }
 
+/**
+ * The destination the real route-guard contract names for a member, read from one
+ * throwaway load of the guard source.
+ *
+ * Every navigation assertion for the free-Brand and Talent branches keys on this
+ * rather than on a path literal, because the point of those branches is contract
+ * reuse: the module must produce whatever `roleHome()` produces, so a guard that
+ * moves a role home has to move these tests with it instead of turning them red.
+ * The literals are pinned to the contract in exactly one place — the test
+ * immediately below — which is the only place a wrong expectation should be able
+ * to hide.
+ */
+const CONTRACT = loadModule({ pathname: '/other' }).guard
+function contractHome(member) {
+  return CONTRACT.roleHome(member)
+}
+
 // --- Pure helpers -------------------------------------------------------------
+
+test('the guard contract names the destinations the rest of this file expects', () => {
+  // The one place a path literal and the contract meet. Everything downstream
+  // asserts against contractHome(), so if the guard's role homes ever change this
+  // single test is what fails and says so.
+  assert.equal(contractHome(TALENT), STARTER_DASHBOARD)
+  assert.equal(contractHome(BRAND_FREE), QUIZ)
+  assert.equal(contractHome(BRAND_FREE_DONE), QUIZ_RESULTS)
+  assert.equal(contractHome(brandPaid('yes')), DASHBOARD)
+  // No home for a member the contract cannot place, which is why the module
+  // treats a null role as "stay" rather than as a destination.
+  assert.equal(contractHome(UNMAPPED), null)
+  assert.equal(contractHome(CONFLICTED), null)
+})
 
 test('exactly both slash forms of /complete-profile are in scope', () => {
   const { api } = loadModule({ pathname: '/other' })
@@ -274,9 +331,13 @@ test('no redirect destination is itself a scoped page (no loop)', () => {
   const { api } = loadModule({ pathname: '/other' })
   assert.equal(api.isCompleteProfilePath(api.dashboardPath), false)
   assert.equal(api.dashboardPath, DASHBOARD)
-  // Every destination the role branches can produce, from the guard contract
-  // rather than from this test's own idea of them.
-  for (const destination of [STARTER_DASHBOARD, QUIZ, QUIZ_RESULTS]) {
+  // Every destination the role branches can actually produce, enumerated from the
+  // guard contract rather than from this test's own idea of them — a new role home
+  // that happened to be this page would fail here without anyone remembering to
+  // add it to a list.
+  for (const member of [TALENT, BRAND_FREE, BRAND_FREE_DONE]) {
+    const destination = contractHome(member)
+    assert.ok(destination, member.id)
     assert.equal(api.isCompleteProfilePath(destination), false, destination)
   }
 })
@@ -415,7 +476,7 @@ test('a Talent member goes straight to the Starter dashboard, no /login hop', as
   const { location } = loadModule({ member: TALENT })
   await flush()
   await flush()
-  assert.equal(location.replaced, STARTER_DASHBOARD)
+  assert.equal(location.replaced, contractHome(TALENT))
   // The point of the branch: the member is never sent to the login form to be
   // bounced from there.
   assert.notEqual(location.replaced, '/login')
@@ -425,20 +486,23 @@ test('a free Brand who has not taken the quiz goes to the quiz', async () => {
   const { location } = loadModule({ member: BRAND_FREE })
   await flush()
   await flush()
-  assert.equal(location.replaced, QUIZ)
+  assert.equal(location.replaced, contractHome(BRAND_FREE))
+  assert.notEqual(location.replaced, '/login')
 })
 
 test('a free Brand who has taken the quiz goes to the quiz results', async () => {
   const { location } = loadModule({ member: BRAND_FREE_DONE })
   await flush()
   await flush()
-  assert.equal(location.replaced, QUIZ_RESULTS)
+  assert.equal(location.replaced, contractHome(BRAND_FREE_DONE))
+  assert.notEqual(location.replaced, '/login')
 })
 
 test('the free-Brand and Talent destinations are the guard contract, not a copy', async () => {
   // The whole reason this module borrows roleHome() instead of reimplementing
   // ROLE_DEFAULTS and the quiz-funnel rule: if the guard ever moves a role home,
-  // this page must follow without an edit here.
+  // this page must follow without an edit here. Asserted against the guard object
+  // from the same load, so not even a stale CONTRACT could mask a divergence.
   for (const member of [TALENT, BRAND_FREE, BRAND_FREE_DONE]) {
     const { api, guard, location } = loadModule({ pathname: '/other', member })
     const expected = guard.roleHome(member)
@@ -453,12 +517,7 @@ test('the paid-Brand completion field is ignored for the other two roles', async
   // A stray `completed-brand-profile` value on a Talent or free-Brand member is
   // meaningless — it is a paid-Brand form marker — and must not divert them to
   // the Brand dashboard.
-  const cases = [
-    [TALENT, STARTER_DASHBOARD],
-    [BRAND_FREE, QUIZ],
-    [BRAND_FREE_DONE, QUIZ_RESULTS],
-  ]
-  for (const [member, expected] of cases) {
+  for (const member of [TALENT, BRAND_FREE, BRAND_FREE_DONE]) {
     const withField = Object.assign({}, member, {
       customFields: Object.assign({}, member.customFields, {
         [DONE_FIELD]: 'yes',
@@ -467,7 +526,10 @@ test('the paid-Brand completion field is ignored for the other two roles', async
     const { location } = loadModule({ member: withField })
     await flush()
     await flush()
-    assert.equal(location.replaced, expected, member.id)
+    // Still the contract's answer for the member, and specifically not the paid
+    // Brand's dashboard.
+    assert.equal(location.replaced, contractHome(withField), member.id)
+    assert.notEqual(location.replaced, DASHBOARD, member.id)
   }
 })
 
@@ -487,12 +549,19 @@ test('an unmapped and a cross-role conflicted member are left untouched', async 
 })
 
 test('every role decision still costs exactly one member lookup and no network call', async () => {
-  for (const member of [TALENT, BRAND_FREE_DONE, brandPaid('yes')]) {
-    const { lookups, window } = loadModule({ member })
+  for (const member of [
+    TALENT,
+    BRAND_FREE,
+    BRAND_FREE_DONE,
+    brandPaid('yes'),
+  ]) {
+    const { fetches, lookups } = loadModule({ member })
     await flush()
     await flush()
     assert.equal(lookups.length, 1, member.id)
-    assert.equal(window.fetch, undefined, member.id)
+    // The harness DOES define `fetch` — a recording tripwire that throws — so an
+    // empty list is the module abstaining, not the global being absent.
+    assert.deepEqual(fetches, [], member.id)
   }
 })
 
@@ -544,6 +613,44 @@ test('a guard that cannot name role homes counts as no contract at all', async (
   assert.equal(paid.location.replaced, undefined)
 })
 
+test('a contract that names a role but no home for it leaves the page alone', async () => {
+  // Not reachable with today's guard — ROLE_DEFAULTS covers all three roles, and
+  // the test above pins that — but `roleHome` is a foreign object's method at
+  // runtime and this module is also a documented staging probe, so the arm is kept
+  // and exercised rather than trusted. The alternative is location.replace(null).
+  const { location, logs } = loadModule({
+    roleHomeReturnsNull: true,
+    member: TALENT,
+  })
+  await flush()
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.ok(
+    logs.warn.some((line) => line.includes('has no home in the route guard')),
+    'expected a staging warning naming the role with no home',
+  )
+  // The exported probe answers the same way instead of throwing.
+  const probe = loadModule({
+    pathname: '/other',
+    roleHomeReturnsNull: true,
+    member: TALENT,
+  })
+  assert.equal(probe.api.roleHome(TALENT), null)
+  assert.equal(await probe.api.completeProfileDestination(), null)
+
+  // And production stays silent about it, like every other fail-open path.
+  const production = loadModule({
+    hostname: 'www.thestarters.com',
+    roleHomeReturnsNull: true,
+    member: TALENT,
+  })
+  await flush()
+  await flush()
+  assert.equal(production.location.replaced, undefined)
+  assert.deepEqual(production.logs.warn, [])
+  assert.deepEqual(production.logs.info, [])
+})
+
 test('waits for a late Memberstack before deciding', async () => {
   const { location, clock } = loadModule({
     delayedMember: brandPaid('yes'),
@@ -585,14 +692,30 @@ test('a malformed member response leaves the page alone', async () => {
 })
 
 test('the decision costs exactly one member lookup and no network call', async () => {
-  const { location, lookups, window } = loadModule({ member: brandPaid('yes') })
+  const { fetches, location, lookups, window } = loadModule({
+    member: brandPaid('yes'),
+  })
   await flush()
   await flush()
   assert.equal(location.replaced, DASHBOARD)
   assert.equal(lookups.length, 1)
-  // `fetch` is absent from the harness window on purpose: a request would have
-  // thrown instead of being stubbed.
-  assert.equal(window.fetch, undefined)
+  // The tripwire is installed, both on the window and as a bare global, and
+  // recorded nothing — which is what "no network" has to mean here. Asserting the
+  // global is merely undefined would only have proved the harness never made one.
+  assert.equal(typeof window.fetch, 'function')
+  assert.deepEqual(fetches, [])
+})
+
+test('the fetch tripwire really does catch a request', () => {
+  // Guards the guard: if this ever stopped recording, the "no network" assertions
+  // above would pass vacuously again, which is the exact failure they replaced.
+  const { fetches, window } = loadModule({ pathname: '/other' })
+  assert.throws(() =>
+    window.fetch('https://example.test/x', { method: 'POST' }),
+  )
+  assert.equal(fetches.length, 1)
+  assert.equal(fetches[0].url, 'https://example.test/x')
+  assert.equal(fetches[0].init.method, 'POST')
 })
 
 test('the decision half can be called by hand without navigating', async () => {
@@ -606,19 +729,20 @@ test('the decision half can be called by hand without navigating', async () => {
   const notDone = loadModule({ pathname: '/other', member: brandPaid('  ') })
   assert.equal(await notDone.api.completeProfileDestination(), null)
 
-  // The role branches are callable the same way, and still do not navigate.
-  const cases = [
-    [TALENT, STARTER_DASHBOARD],
-    [BRAND_FREE, QUIZ],
-    [BRAND_FREE_DONE, QUIZ_RESULTS],
-    [UNMAPPED, null],
-    [CONFLICTED, null],
-  ]
-  for (const [member, expected] of cases) {
+  // The role branches are callable the same way, and still do not navigate. The
+  // expected answer is the contract's, including the null for a member it cannot
+  // place.
+  for (const member of [
+    TALENT,
+    BRAND_FREE,
+    BRAND_FREE_DONE,
+    UNMAPPED,
+    CONFLICTED,
+  ]) {
     const probe = loadModule({ pathname: '/other', member })
     assert.equal(
       await probe.api.completeProfileDestination(),
-      expected,
+      contractHome(member),
       member.id,
     )
     assert.equal(probe.location.replaced, undefined, member.id)
@@ -664,20 +788,19 @@ test('diagnostics are staging-only unless STARTERS_DEBUG opts in', () => {
 })
 
 test('production logs nothing while still redirecting correctly', async () => {
-  const cases = [
-    [brandPaid('yes'), DASHBOARD],
-    [TALENT, STARTER_DASHBOARD],
-    [BRAND_FREE, QUIZ],
-    [BRAND_FREE_DONE, QUIZ_RESULTS],
-  ]
-  for (const [member, expected] of cases) {
+  for (const member of [
+    brandPaid('yes'),
+    TALENT,
+    BRAND_FREE,
+    BRAND_FREE_DONE,
+  ]) {
     const { location, logs } = loadModule({
       hostname: 'www.thestarters.com',
       member,
     })
     await flush()
     await flush()
-    assert.equal(location.replaced, expected, member.id)
+    assert.equal(location.replaced, contractHome(member), member.id)
     assert.deepEqual(logs.info, [], member.id)
     assert.deepEqual(logs.warn, [], member.id)
     assert.deepEqual(logs.error, [], member.id)

@@ -31,8 +31,9 @@
  *
  * WHAT THIS MODULE IS STILL NOT. It is not the page's access gate and it never
  * sends anyone TO this page. Access to /complete-profile is owned entirely by the
- * Memberstack `restrict-pages` gated content group (URL rule STARTS
- * `complete-profile`, access "All Members", Access Denied URL `login`), and
+ * Memberstack `restrict-pages` gated content group — URL rule STARTS
+ * `complete-profile`, access "All Members", Access Denied URL `login` (the
+ * dashboard field's slug form; a denied visitor lands on the path /login) — and
  * v3/route-guard.js deliberately does not list the page in PAGE_ROLES — two
  * owners would mean two logged-out destinations for one URL, and Memberstack's
  * protectPages() wins that race from cached group data anyway. The logged-out
@@ -169,12 +170,21 @@
     return contract
   }
 
-  function memberRole(member) {
+  /**
+   * The contract, or null plus one staging warning. Both borrows below go through
+   * here so the "no usable guard" answer is worded and logged in exactly one
+   * place — an install-order mistake reads the same whichever half asked first.
+   */
+  function contractOrWarn() {
     var contract = roleContract()
-    if (!contract) {
-      warn('route guard role contract unavailable; leaving the page alone.')
-      return null
-    }
+    if (contract) return contract
+    warn('route guard role contract unavailable; leaving the page alone.')
+    return null
+  }
+
+  function memberRole(member) {
+    var contract = contractOrWarn()
+    if (!contract) return null
     return contract.memberRole(member)
   }
 
@@ -185,11 +195,8 @@
    * home, this page follows automatically.
    */
   function roleHome(member) {
-    var contract = roleContract()
-    if (!contract) {
-      warn('route guard role contract unavailable; leaving the page alone.')
-      return null
-    }
+    var contract = contractOrWarn()
+    if (!contract) return null
     return contract.roleHome(member) || null
   }
 

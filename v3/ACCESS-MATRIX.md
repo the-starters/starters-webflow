@@ -164,7 +164,9 @@ one route-level rule that page needs.
 
 > **`/complete-profile` access is Memberstack's, not the guard's (decision
 > 2026-08-03):** The `restrict-pages` gated content group carries a URL rule STARTS
-> `complete-profile` with Access Denied URL `login`, so Memberstack is the sole
+> `complete-profile` with Access Denied URL `login` — both dashboard fields take
+> the slug form without a leading slash, and a denied visitor lands on the path
+> `/login` — so Memberstack is the sole
 > owner of this page's gating and `route-guard.js` deliberately does not list it in
 > `PAGE_ROLES` or `LOGGED_OUT_DESTINATIONS`. Two owners would mean two logged-out
 > destinations for the same URL, and the guard's would lose: Memberstack's
@@ -286,7 +288,7 @@ separate owner:
 | Logged-in role bounce off `/quiz-results` and `/all-starters` | `v3/route-guard.js` `ROLE_BOUNCE_PAGES` | Implemented 2026-08-03; sitewide install already covers it, staging pass pending. Logged-out visitors stay with their page controllers |
 | `/quiz` logged-in role redirects | `quiz-main/quiz-redirect.js` (page-scoped) | Talent bounce added 2026-08-03, not `?retake=`-escapable; `/quiz` is outside all three guard tables |
 | Per-page logged-out destinations for the build-profile funnel | `v3/route-guard.js` `LOGGED_OUT_DESTINATIONS` | Implemented 2026-08-03; staging pass pending |
-| `/complete-profile` access (logged-out kick only) | Memberstack `restrict-pages` gated group (URL rule STARTS `complete-profile`, access **All Members**, Access Denied URL `login`) | Settled 2026-08-03: sole owner, permanently outside `route-guard.js` and `auth-route.js`. Amended the same evening: access must be "All Members" so the page-scoped module in the row below can route logged-in members of every role instead of a `/login` bounce doing it |
+| `/complete-profile` access (logged-out kick only) | Memberstack `restrict-pages` gated group (dashboard field values: URL rule STARTS `complete-profile`, access **All Members**, Access Denied URL `login` — no leading slash in either field; denied visitors land on the path `/login`) | Settled 2026-08-03: sole owner, permanently outside `route-guard.js` and `auth-route.js`. Amended the same evening: access must be "All Members" so the page-scoped module in the row below can route logged-in members of every role instead of a `/login` bounce doing it |
 | Logged-in role routing on `/complete-profile` | `v3/complete-profile-redirect.js` (page-scoped; Memberstack `completed-brand-profile` field plus the guard's `memberRole`/`roleHome`, no network call) | Implemented 2026-08-03, role branches added the same evening; needs the hidden `data-ms-member` input plus one page-level Webflow embed, see [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md). Paid-Brand branch is inert until the input starts writing the field; the free-Brand and Talent branches are live immediately. Access control stays with the gated group in the row above |
 | Talent funnel position on `/build-profile/*` | `v3/build-profile-redirect.js` (page-scoped, Xano `get_freelancers`) | Implemented 2026-08-03; needs three page-level Webflow embeds, see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md) |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |

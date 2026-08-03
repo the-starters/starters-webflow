@@ -107,7 +107,8 @@ than silently dropping a `next`.
 
 `/complete-profile` briefly lived in this table on 2026-08-03 and was removed the
 same day. Memberstack is now its sole gate: the `restrict-pages` gated content
-group carries a URL rule STARTS `complete-profile` with redirect `login`. Two
+group carries a URL rule STARTS `complete-profile` with Access Denied URL
+`login` (dashboard slug form; the destination is the path `/login`). Two
 owners would mean two logged-out destinations for one URL, and the guard's would
 lose anyway — Memberstack's `protectPages()` calls
 `window.location.replace('/login')` from cached group data before the guard has
