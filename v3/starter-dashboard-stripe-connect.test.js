@@ -315,6 +315,65 @@ test('a pending Connect Stripe action is visibly and fully disabled', () => {
   assert.equal(connect.disabled, false)
 })
 
+test('both start paths apply pending state to the Connect Stripe tile', () => {
+  const connect = new FakeElement()
+  const actionListButton = new FakeElement('BUTTON')
+  connect.setAttribute('tabindex', '0')
+
+  ;[connect, actionListButton].forEach((initiator) => {
+    api.setStartPending(initiator, connect, true)
+
+    assert.equal(connect.getAttribute('aria-busy'), 'true')
+    assert.equal(connect.getAttribute('aria-disabled'), 'true')
+    assert.equal(connect.getAttribute('tabindex'), '-1')
+    assert.equal(connect.classList.contains('is-disabled'), true)
+    assert.equal(initiator.getAttribute('aria-busy'), 'true')
+
+    api.setStartPending(initiator, connect, false)
+    assert.equal(connect.getAttribute('tabindex'), '0')
+    assert.equal(connect.getAttribute('aria-disabled'), 'false')
+  })
+})
+
+test('the exclusive start guard latches only after a successful redirect', async () => {
+  const successfulRunner = api.createExclusiveRunner()
+  let successfulRuns = 0
+
+  assert.equal(
+    await successfulRunner(() => {
+      successfulRuns += 1
+      return true
+    }, true),
+    true,
+  )
+  assert.equal(
+    await successfulRunner(() => {
+      successfulRuns += 1
+      return true
+    }, true),
+    null,
+  )
+  assert.equal(successfulRuns, 1)
+
+  const failedRunner = api.createExclusiveRunner()
+  let failedRuns = 0
+  assert.equal(
+    await failedRunner(() => {
+      failedRuns += 1
+      return false
+    }, true),
+    false,
+  )
+  assert.equal(
+    await failedRunner(() => {
+      failedRuns += 1
+      return true
+    }, true),
+    true,
+  )
+  assert.equal(failedRuns, 2)
+})
+
 test('earnings opens Stripe only while charges are enabled', () => {
   const earnings = new FakeElement('A')
   earnings.setAttribute('href', '#')
