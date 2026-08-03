@@ -369,15 +369,38 @@
 
   function setProjectLoadMoreState(controls, state, memory) {
     const snapshot = state || {}
+    const query = snapshot.query || {}
+    const params = query.params || {}
+    const previousQuery = memory.lastSuccessQuery
+    const sameParams =
+      previousQuery &&
+      Object.keys(params).length === Object.keys(previousQuery.params).length &&
+      Object.keys(params).every(function (key) {
+        return params[key] === previousQuery.params[key]
+      })
+    if (snapshot.status === 'loading') {
+      memory.appendRequest = Boolean(
+        sameParams && Number(query.page) === Number(previousQuery.page) + 1,
+      )
+    }
     if (snapshot.status === 'success') {
       memory.hasMore = Boolean(snapshot.data && snapshot.data.hasMore)
+      memory.lastSuccessQuery = {
+        page: Number(query.page) || 1,
+        params: Object.assign({}, params),
+      }
+      memory.appendRequest = false
     }
     if (snapshot.status === 'idle' || snapshot.status === 'destroyed') {
       memory.hasMore = false
+      memory.lastSuccessQuery = null
+      memory.appendRequest = false
     }
     const loading = snapshot.status === 'loading'
     const error = snapshot.status === 'error'
-    const visible = memory.hasMore && (loading || error || snapshot.status === 'success')
+    const visible =
+      memory.hasMore &&
+      (snapshot.status === 'success' || ((loading || error) && memory.appendRequest))
     controls.forEach(function (control) {
       show(control, visible)
       control.setAttribute('data-opp-loading', loading ? 'true' : 'false')
@@ -393,7 +416,11 @@
     if (!instance || !instance.root || typeof instance.subscribe !== 'function') return
     const controls = findProjectLoadMore(instance.root)
     if (!controls.length) return
-    const memory = { hasMore: false }
+    const memory = {
+      appendRequest: false,
+      hasMore: false,
+      lastSuccessQuery: null,
+    }
 
     // The authored project control predates wf-xano's load-more grammar.
     // Keep the Designer-owned element, but give it canonical append behavior.
@@ -422,6 +449,8 @@
       instance.on('stateChange', function (change) {
         if (!change || change.reason !== 'auth:change') return
         memory.hasMore = false
+        memory.lastSuccessQuery = null
+        memory.appendRequest = false
         setProjectLoadMoreState(controls, { status: 'idle' }, memory)
       })
     }

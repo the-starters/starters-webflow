@@ -507,7 +507,11 @@ test('project Show more appends the next page and hides when exhausted', () => {
     },
     subscribe(selector, handler) {
       subscriber = (state) => handler(selector(state))
-      subscriber({ status: 'success', data: { hasMore: false } })
+      subscriber({
+        status: 'success',
+        data: { hasMore: false },
+        query: { page: 1, params: {} },
+      })
     },
   }
 
@@ -519,23 +523,89 @@ test('project Show more appends the next page and hides when exhausted', () => {
   assert.equal(control.attributes.role, 'button')
   assert.equal(control.attributes.tabindex, '0')
 
-  subscriber({ status: 'success', data: { hasMore: true } })
+  subscriber({
+    status: 'success',
+    data: { hasMore: true },
+    query: { page: 1, params: { status: 'active' } },
+  })
   assert.equal(control.hidden, false)
   assert.equal(control.attributes['aria-disabled'], 'false')
   listeners.click({ preventDefault() {} })
   assert.equal(loads, 1)
 
-  subscriber({ status: 'loading', data: { hasMore: true } })
+  subscriber({
+    status: 'loading',
+    data: { hasMore: true },
+    query: { page: 2, params: { status: 'active' } },
+  })
   assert.equal(control.hidden, false)
   assert.equal(control.attributes['data-opp-loading'], 'true')
   listeners.click({ preventDefault() {} })
   assert.equal(loads, 1)
 
-  subscriber({ status: 'success', data: { hasMore: false } })
+  subscriber({
+    status: 'error',
+    data: { hasMore: true },
+    query: { page: 1, params: { status: 'active' } },
+  })
+  assert.equal(control.hidden, false)
+  assert.equal(control.attributes['aria-disabled'], 'false')
+  listeners.click({ preventDefault() {} })
+  assert.equal(loads, 2)
+
+  subscriber({
+    status: 'success',
+    data: { hasMore: false },
+    query: { page: 2, params: { status: 'active' } },
+  })
   assert.equal(control.hidden, true)
   assert.equal(control.attributes['aria-disabled'], 'true')
 
-  subscriber({ status: 'success', data: { hasMore: true } })
+  subscriber({
+    status: 'success',
+    data: { hasMore: true },
+    query: { page: 1, params: { status: 'active' } },
+  })
   stateChange({ reason: 'auth:change' })
   assert.equal(control.hidden, true)
+})
+
+test('project Show more hides after a replacement filter request fails', () => {
+  const control = element()
+  const memory = {
+    appendRequest: false,
+    hasMore: false,
+    lastSuccessQuery: null,
+  }
+
+  api.setProjectLoadMoreState(
+    [control],
+    {
+      status: 'success',
+      data: { hasMore: true },
+      query: { page: 1, params: { status: 'active' } },
+    },
+    memory,
+  )
+  api.setProjectLoadMoreState(
+    [control],
+    {
+      status: 'loading',
+      data: { hasMore: true },
+      query: { page: 1, params: { status: 'completed' } },
+    },
+    memory,
+  )
+  api.setProjectLoadMoreState(
+    [control],
+    {
+      status: 'error',
+      data: { hasMore: false },
+      query: { page: 1, params: { status: 'completed' } },
+    },
+    memory,
+  )
+
+  assert.equal(control.hidden, true)
+  assert.equal(control.attributes['aria-disabled'], 'true')
 })
