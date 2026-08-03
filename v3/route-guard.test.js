@@ -1144,6 +1144,345 @@ test('a role-bounce page on an unapproved host is untouched', async () => {
   assert.deepEqual(attributes, {})
 })
 
+// --- Homepage-only bounce overrides (2026-08-03) -------------------------------
+
+function inactivePlan(planId) {
+  // CANCELED is the status Memberstack is expected to report; the predicate is
+  // deliberately status-agnostic, which the unit cases below pin down.
+  return { active: false, status: 'CANCELED', planId }
+}
+
+// Sub-kind 1: paid Brand cancelled, the older free-Brand plan still live. Today
+// this resolves to brand-free, so without the override it would be pushed into
+// the quiz funnel.
+const CANCELLED_WITH_FREE = {
+  id: 'm-cancelled-with-free',
+  planConnections: [
+    inactivePlan('pln_new-paid-plan-463h04ph'),
+    plan('pln_free-plan-f6kn0dxz'),
+  ],
+}
+
+// Sub-kind 2: paid Brand cancelled and nothing active at all. Today this is
+// unmapped-plan, so without the override the member would just sit on the
+// homepage while the console logged a plan-configuration error.
+const CANCELLED_NO_PLANS = {
+  id: 'm-cancelled-no-plans',
+  planConnections: [inactivePlan('pln_new-paid-plan-463h04ph')],
+}
+
+// The test-brand plan ID counts exactly the same as the production one.
+const CANCELLED_TEST_BRAND = {
+  id: 'm-cancelled-test-brand',
+  planConnections: [inactivePlan('pln_dorxata-test-brand-plan-777r02pa')],
+}
+
+test('the cancelled-paid-Brand predicate covers both sub-kinds and both plan IDs', () => {
+  const { api } = loadGuard()
+  assert.equal(api.hasCancelledPaidBrandPlan(CANCELLED_WITH_FREE), true)
+  assert.equal(api.hasCancelledPaidBrandPlan(CANCELLED_NO_PLANS), true)
+  assert.equal(api.hasCancelledPaidBrandPlan(CANCELLED_TEST_BRAND), true)
+  // Any inactive shape counts, not just the CANCELED status string.
+  assert.equal(
+    api.hasCancelledPaidBrandPlan({
+      id: 'm-past-due',
+      planConnections: [
+        { active: false, status: 'PAST_DUE', planId: 'pln_new-paid-plan-463h04ph' },
+      ],
+    }),
+    true,
+  )
+  assert.equal(
+    api.hasCancelledPaidBrandPlan({
+      id: 'm-bare-inactive',
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph' }],
+    }),
+    true,
+  )
+})
+
+test('a member who never paid for Brand is never cancelled', () => {
+  const { api } = loadGuard()
+  for (const member of [TALENT, BRAND_FREE, FREE_DONE, UNMAPPED]) {
+    assert.equal(api.hasCancelledPaidBrandPlan(member), false, member.id)
+  }
+  assert.equal(api.hasCancelledPaidBrandPlan({ id: 'm-empty', planConnections: [] }), false)
+  assert.equal(api.hasCancelledPaidBrandPlan({ id: 'm-none' }), false)
+  assert.equal(api.hasCancelledPaidBrandPlan(null), false)
+  // An inactive plan that was never a paid Brand one is irrelevant.
+  assert.equal(
+    api.hasCancelledPaidBrandPlan({
+      id: 'm-lapsed-free',
+      planConnections: [inactivePlan('pln_free-plan-f6kn0dxz')],
+    }),
+    false,
+  )
+})
+
+test('an active paid Brand is not cancelled even alongside an inactive paid one', () => {
+  const { api } = loadGuard()
+  // The re-subscribed case: an old cancelled connection plus a live one. The
+  // live connection settles it, in either array order.
+  const resubscribed = {
+    id: 'm-resubscribed',
+    planConnections: [
+      inactivePlan('pln_new-paid-plan-463h04ph'),
+      plan('pln_dorxata-test-brand-plan-777r02pa'),
+    ],
+  }
+  const resubscribedReversed = {
+    id: 'm-resubscribed-reversed',
+    planConnections: [...resubscribed.planConnections].reverse(),
+  }
+  assert.equal(api.hasCancelledPaidBrandPlan(resubscribed), false)
+  assert.equal(api.hasCancelledPaidBrandPlan(resubscribedReversed), false)
+  assert.equal(api.hasCancelledPaidBrandPlan(BRAND_PAID), false)
+  assert.equal(api.hasCancelledPaidBrandPlan(TEST_BRAND), false)
+  // Still a paid Brand everywhere, override or not.
+  assert.equal(api.bounceTargetFor(resubscribed, null, '/'), '/brand-dashboard')
+  // The unverified cancel-at-period-end grace window resolves here: while the
+  // connection still reports active the member keeps full paid-Brand access.
+  assert.equal(api.memberRole(resubscribed), 'brand-paid')
+})
+
+test('a cancelled paid Brand is sent to /all-starters from the homepage only', () => {
+  const { api } = loadGuard()
+  for (const member of [CANCELLED_WITH_FREE, CANCELLED_NO_PLANS, CANCELLED_TEST_BRAND]) {
+    assert.equal(api.bounceTargetFor(member, null, '/'), '/all-starters', member.id)
+  }
+})
+
+test('the other three bounce pages keep their pre-override behaviour for a cancelled member', () => {
+  const { api } = loadGuard()
+  for (const pathname of ['/login', '/starter-login', '/sign-up']) {
+    // Sub-kind 1 still resolves brand-free and still goes to the quiz funnel.
+    assert.equal(api.bounceTargetFor(CANCELLED_WITH_FREE, null, pathname), '/quiz', pathname)
+    // Sub-kind 2 is still unmapped and still stays where it is, with a
+    // console-only error.
+    assert.equal(api.bounceTargetFor(CANCELLED_NO_PLANS, null, pathname), null, pathname)
+  }
+})
+
+test('a valid explicit next outranks the cancelled rule on the homepage', () => {
+  const { api } = loadGuard()
+  // Deep-link intent wins. /about is unguarded, which is the only kind of next
+  // sub-kind 2 can honour — it has no role for the allowlist test.
+  assert.equal(api.bounceTargetFor(CANCELLED_WITH_FREE, '/about', '/'), '/about')
+  assert.equal(api.bounceTargetFor(CANCELLED_NO_PLANS, '/about', '/'), '/about')
+  // A next this member may not view is not "valid", so the cancelled rule still
+  // decides rather than handing them a page they would be bounced off again.
+  assert.equal(api.bounceTargetFor(CANCELLED_WITH_FREE, '/messages', '/'), '/all-starters')
+  // Neither is an off-origin or bounce-page next.
+  assert.equal(
+    api.bounceTargetFor(CANCELLED_WITH_FREE, 'https://attacker.example/x', '/'),
+    '/all-starters',
+  )
+  assert.equal(api.bounceTargetFor(CANCELLED_WITH_FREE, '/login', '/'), '/all-starters')
+})
+
+test('a free Brand with no quiz stays on the homepage instead of being sent to /quiz', () => {
+  const { api } = loadGuard()
+  // '' is the stay signal, distinct from the null "cannot resolve" answer.
+  assert.equal(api.bounceTargetFor(BRAND_FREE, null, '/'), '')
+  assert.equal(
+    api.bounceTargetFor({ id: 'm-blank', planConnections: [plan('pln_free-plan-f6kn0dxz')], customFields: { 'starter-quiz': '   ' } }, null, '/'),
+    '',
+  )
+  // Quiz done: unchanged, the results page is a real destination now.
+  assert.equal(api.bounceTargetFor(FREE_DONE, null, '/'), '/quiz-results')
+  // A valid next still outranks the stay rule.
+  assert.equal(api.bounceTargetFor(BRAND_FREE, '/about', '/'), '/about')
+})
+
+test('the stay rule is homepage-only — the login pages still send a free Brand to /quiz', () => {
+  const { api } = loadGuard()
+  for (const pathname of ['/login', '/starter-login', '/sign-up']) {
+    assert.equal(api.bounceTargetFor(BRAND_FREE, null, pathname), '/quiz', pathname)
+    assert.equal(api.bounceTargetFor(FREE_DONE, null, pathname), '/quiz-results', pathname)
+  }
+})
+
+test('the homepage overrides leave guarded-page wrong-role redirects alone', () => {
+  const { api } = loadGuard()
+  // Guarded pages keep using brandFreeHome, so a not-yet-quizzed free Brand is
+  // still sent to /quiz off a page it may not view. The overrides live in the
+  // bounce path only.
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/brand-dashboard'), '/quiz')
+  assert.equal(api.redirectTargetFor(BRAND_FREE, '/messages'), '/quiz')
+  assert.equal(api.redirectTargetFor(FREE_DONE, '/brand-dashboard'), '/quiz-results')
+  // Sub-kind 1 is brand-free on a guarded page, exactly as before.
+  assert.equal(api.redirectTargetFor(CANCELLED_WITH_FREE, '/brand-dashboard'), '/quiz')
+  // Sub-kind 2 still surfaces the unmapped error on a guarded page rather than
+  // being quietly moved to /all-starters.
+  assert.equal(api.redirectTargetFor(CANCELLED_NO_PLANS, '/brand-dashboard'), null)
+})
+
+test('cancelled outranks the stay rule when both would apply', () => {
+  const { api } = loadGuard()
+  // A cancelled Brand whose free plan is live and who never took the quiz
+  // matches BOTH homepage rules. Cancelled wins: they already paid, so the quiz
+  // funnel is the wrong ask and /all-starters is the useful page.
+  assert.equal(api.memberRole(CANCELLED_WITH_FREE), 'brand-free')
+  assert.equal(api.hasCompletedQuiz(CANCELLED_WITH_FREE), false)
+  assert.equal(api.bounceTargetFor(CANCELLED_WITH_FREE, null, '/'), '/all-starters')
+})
+
+test('a role-less member on the homepage follows a valid deep link', () => {
+  const { api } = loadGuard()
+  // Deliberate widening, ratified 2026-08-03. Before the homepage overrides,
+  // bounceTargetFor bailed on !role before any ?next= was examined, so an
+  // unmapped member never reached the validation. Precedence rule 1 now applies
+  // to everyone on '/': deep-link intent does not depend on plan state.
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/all-starters', '/'), '/all-starters')
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/about', '/'), '/about')
+  // Only unguarded pages can match — there is no role for the allowlist test, so
+  // a guarded next is still refused and the member stays.
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/messages', '/'), null)
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/dashboard', '/'), null)
+  // Same for an off-origin or bounce-page next.
+  assert.equal(api.bounceTargetFor(UNMAPPED, 'https://attacker.example/x', '/'), null)
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/login', '/'), null)
+  // No next at all: unchanged, the member simply stays.
+  assert.equal(api.bounceTargetFor(UNMAPPED, null, '/'), null)
+  // Homepage-only: the other three bounce pages still bail on !role first, so a
+  // deep link there is never even looked at.
+  for (const pathname of ['/login', '/starter-login', '/sign-up']) {
+    assert.equal(api.bounceTargetFor(UNMAPPED, '/about', pathname), null, pathname)
+  }
+})
+
+test('a role-less member follows a homepage deep link at runtime', async () => {
+  const followed = loadGuard({
+    pathname: '/',
+    search: '?next=%2Fabout',
+    member: UNMAPPED,
+  })
+  await flush()
+  assert.equal(followed.location.replaced, '/about')
+
+  // Without a usable next the same member is left completely untouched.
+  const stayed = loadGuard({ pathname: '/', member: UNMAPPED })
+  await flush()
+  assert.equal(stayed.location.replaced, undefined)
+  assert.deepEqual(stayed.attributes, {})
+})
+
+test('an unmapped member who never paid still just stays on the homepage', () => {
+  const { api } = loadGuard()
+  assert.equal(api.bounceTargetFor(UNMAPPED, null, '/'), null)
+  const conflict = {
+    id: 'm-conflict-home',
+    planConnections: [
+      plan('pln_dorxata-test-free-plan-dvcg0k8o'),
+      plan('pln_new-paid-plan-463h04ph'),
+    ],
+  }
+  assert.equal(api.bounceTargetFor(conflict, null, '/'), null)
+})
+
+test('every other role is unaffected on the homepage', () => {
+  const { api } = loadGuard()
+  assert.equal(api.bounceTargetFor(BRAND_PAID, null, '/'), '/brand-dashboard')
+  assert.equal(api.bounceTargetFor(TEST_BRAND, null, '/'), '/brand-dashboard')
+  assert.equal(api.bounceTargetFor(TALENT, null, '/'), '/starter-dashboard')
+})
+
+test('/all-starters is a terminus for a cancelled member, so the redirect cannot loop', () => {
+  const { api } = loadGuard()
+  for (const member of [CANCELLED_WITH_FREE, CANCELLED_NO_PLANS]) {
+    const target = api.bounceTargetFor(member, null, '/')
+    assert.equal(target, '/all-starters', member.id)
+    // /all-starters is a role-bounce page, not a guarded one, so it never forces
+    // a login. Sub-kind 1 is an allowed brand-free (and the page does not
+    // enforce quiz state); sub-kind 2 is unmapped, which the role bounce leaves
+    // untouched by design. Either way the member stays.
+    assert.notEqual(api.roleBounceTargetFor(member, target), '/all-starters')
+    assert.equal(api.isGuardedPath(target), false)
+    assert.equal(api.isMemberBouncePage(target), false)
+  }
+  assert.equal(api.roleBounceTargetFor(CANCELLED_WITH_FREE, '/all-starters'), '')
+  // null is the role bounce's "stay silently" answer, not a redirect.
+  assert.equal(api.roleBounceTargetFor(CANCELLED_NO_PLANS, '/all-starters'), null)
+})
+
+test('a cancelled paid Brand on the homepage is redirected to /all-starters at runtime', async () => {
+  for (const member of [CANCELLED_WITH_FREE, CANCELLED_NO_PLANS]) {
+    const { location, attributes, events } = loadGuard({ pathname: '/', member })
+    await flush()
+    assert.equal(location.replaced, '/all-starters', member.id)
+    assert.equal(attributes['data-route-guard'], 'redirecting')
+    assert.ok(events.some((e) => e.name === 'starters:v3-route-guard-redirecting'))
+  }
+})
+
+test('a cancelled paid Brand then stays on /all-starters at runtime', async () => {
+  for (const member of [CANCELLED_WITH_FREE, CANCELLED_NO_PLANS]) {
+    const { location, attributes, events } = loadGuard({
+      pathname: '/all-starters',
+      member,
+    })
+    await flush()
+    assert.equal(location.replaced, undefined, member.id)
+    // A role-bounce page sets no attributes unless it is redirecting.
+    assert.deepEqual(attributes, {})
+    assert.deepEqual(events, [])
+  }
+})
+
+test('a cancelled paid Brand on the homepage honours a valid ?next= at runtime', async () => {
+  const { location } = loadGuard({
+    pathname: '/',
+    search: '?next=%2Fabout',
+    member: CANCELLED_WITH_FREE,
+  })
+  await flush()
+  assert.equal(location.replaced, '/about')
+})
+
+test('a cancelled paid Brand on /login keeps todays behaviour at runtime', async () => {
+  const funnelled = loadGuard({ pathname: '/login', member: CANCELLED_WITH_FREE })
+  await flush()
+  assert.equal(funnelled.location.replaced, '/quiz')
+
+  const stranded = loadGuard({ pathname: '/login', member: CANCELLED_NO_PLANS })
+  await flush()
+  assert.equal(stranded.location.replaced, undefined)
+  assert.deepEqual(stranded.attributes, {})
+})
+
+test('a free Brand with no quiz is left completely untouched on the homepage at runtime', async () => {
+  const { location, attributes, events } = loadGuard({
+    pathname: '/',
+    member: BRAND_FREE,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  // The stay must be invisible: no redirect, and no attribute or event either,
+  // exactly like a logged-out visitor.
+  assert.deepEqual(attributes, {})
+  assert.deepEqual(events, [])
+})
+
+test('a quiz-done free Brand is still sent to /quiz-results from the homepage at runtime', async () => {
+  const { location } = loadGuard({ pathname: '/', member: FREE_DONE })
+  await flush()
+  assert.equal(location.replaced, '/quiz-results')
+})
+
+test('a free Brand with no quiz is still sent to /quiz from the login pages at runtime', async () => {
+  for (const pathname of ['/login', '/starter-login', '/sign-up']) {
+    const { location } = loadGuard({ pathname, member: BRAND_FREE })
+    await flush()
+    assert.equal(location.replaced, '/quiz', pathname)
+  }
+})
+
+test('an active paid Brand on the homepage is still sent to /brand-dashboard at runtime', async () => {
+  const { location } = loadGuard({ pathname: '/', member: BRAND_PAID })
+  await flush()
+  assert.equal(location.replaced, '/brand-dashboard')
+})
+
 // --- Release marker -----------------------------------------------------------
 
 test('the header @release marker matches the exported release property', () => {

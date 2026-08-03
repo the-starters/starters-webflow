@@ -1,7 +1,7 @@
 /**
  * /quiz entry redirect.
  *
- * @release v1.59.77
+ * @release v1.59.78
  *
  * Page-scoped controller for the quiz funnel entry. /quiz is deliberately
  * outside every table in v3/route-guard.js (see v3/ACCESS-MATRIX.md), so this

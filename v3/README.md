@@ -217,9 +217,19 @@ both login pages, and `/sign-up` are not in the route table — they must keep
 working untouched for signed-out visitors, since they are the pre-signup funnel
 itself — but a member the guard can positively identify and map to a role is sent
 away from them, to a validated `?next=` when one is present and otherwise to the
-role home. Every inconclusive case (logged out, Memberstack unavailable, unmapped
-plan, cross-role conflict) leaves the page completely alone, with no error
-attribute and no `checking` stamp. **Per-page logged-out destinations:** the three
+role home. Logged out, Memberstack unavailable, and cross-role conflict leave the
+page completely alone, with no error attribute and no `checking` stamp, and so
+does an unmapped plan on the two login pages and `/sign-up`. The homepage alone
+carries two overrides added later the same day. A member who cancelled a paid
+Brand plan goes to `/all-starters`, whether their older free plan is still live or
+nothing is active at all — that second case is an unmapped plan which would
+otherwise have stayed, and an unmapped plan with no cancelled paid Brand behind it
+still does stay. And a free Brand who has not finished the quiz stays on `/`
+instead of being pushed to `/quiz`, which is where the login pages still send
+them. A valid `?next=` outranks both overrides; on `/` it is honoured even for a
+member with no mapped role, since deep-link intent does not depend on plan state.
+`ROUTE-GUARD-WIRING.md` has the exact precedence and the cancelled-plan
+definition. **Per-page logged-out destinations:** the three
 build-profile pages send a logged-out visitor to `/` instead of `/login?next=`,
 because they are entered from marketing flows where a login form would ask a
 stranger to authenticate into a funnel step they have no account for yet.

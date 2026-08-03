@@ -57,7 +57,7 @@ one route-level rule that page needs.
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
-| `/` (homepage) | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
+| `/` (homepage) | Stay until the quiz is done, then `/quiz-results` | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce plus two homepage-only overrides (decision 2026-08-03, see [Homepage overrides](#homepage-overrides)): a cancelled paid Brand goes to `/all-starters`, and a free Brand who has not completed the quiz stays here instead of being sent to `/quiz`. A valid `?next=` outranks both. Logged-out visitors untouched |
 | `/login` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
 | `/starter-login` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
 | `/sign-up` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
@@ -212,6 +212,48 @@ one route-level rule that page needs.
 > allowed snapshot resolves, the latest valid snapshot follows the normal
 > fail-closed redirect or unmapped-plan error.
 
+### Homepage overrides
+
+Two rules apply on `/` and on no other page (decision by Jerico 2026-08-03).
+They live in `bounceTargetFor`'s homepage branch in `v3/route-guard.js`, so
+`/login`, `/starter-login`, `/sign-up`, every guarded-page wrong-role redirect,
+and all of `auth-route.js` login routing keep the behavior recorded in the table
+above, unchanged. The reasoning is that a member who has just landed on a login
+form still wants the funnel they were sent through, whereas the homepage is
+where someone browses back to later.
+
+Precedence on `/`, highest first:
+
+1. **A valid explicit `?next=`.** Same validation as everywhere else
+   (same-origin, not a bounce page, and either unguarded or allowed for this
+   member's role). Deep-link intent beats both rules below.
+2. **A cancelled paid Brand → `/all-starters`.** This overrides both the
+   free-Brand quiz-funnel fallback and the unmapped-plan stay-with-an-error
+   outcome. `/all-starters` is a role-bounce page that admits both Brand tiers
+   regardless of quiz state and leaves unmapped members untouched, so the
+   member lands there and stays — a one-hop terminus, asserted in
+   `v3/route-guard.test.js`.
+3. **A free Brand who has not completed the quiz stays put.** No redirect and
+   no `data-route-guard` attribute at all, exactly like a logged-out visitor.
+   Once the quiz is done they go to `/quiz-results` as before.
+
+**Definition of a cancelled paid Brand** (`hasCancelledPaidBrandPlan`, exported
+on `window.StartersV3RouteGuard`): the member's `planConnections` contain at
+least one paid-Brand connection (`pln_new-paid-plan-463h04ph` or
+`pln_dorxata-test-brand-plan-777r02pa`) that is **not** active by the shared
+rule `connection.active === true || connection.status === 'ACTIVE'`, **and** no
+paid-Brand connection that **is** active. Both sub-kinds count: the member whose
+older free plan is still active (resolves `brand-free` today) and the member
+with no active plans at all (unmapped today). `CANCELED` is the expected
+inactive status, but the predicate never reads the status string, so any
+inactive paid connection counts.
+
+> **Unverified:** the exact Memberstack payload during a cancel-at-period-end
+> grace window. While the paid connection still reports active the predicate
+> returns false and the member correctly remains a paid Brand with full access,
+> which is the fail-safe direction. The member reads as cancelled only once
+> Memberstack flips that connection inactive.
+
 ## Enforcement layers
 
 The route allowlist is not the security boundary by itself. Each concern has a
@@ -235,7 +277,8 @@ separate owner:
 | `/starter-edit-profile` environment write mode | `profile-image-auth-shim.js` exact Live-host allowlist | Implemented; non-Live hosts block known mutations and preserve reads |
 | `/admin/talent-applications` staff access and private application records | Xano `admin/session` and talent-admin endpoint authorization | Parked, preparation-only staging Code Component; outside the member-plan route matrix; not production-ready and has not been imported into Webflow, published, tagged, or deployed |
 | Mutations and private records | Xano authorization using authenticated member and role | Profile, Companies, and Portfolio mutations receive `user_v3` Bearer auth from `profile-image-auth-shim.js`; ownership must be enforced server-side |
-| Paid-then-cancelled behavior | Memberstack subscription lifecycle + application role resolution | Decision required |
+| Paid-then-cancelled behavior | `v3/route-guard.js` `hasCancelledPaidBrandPlan` + the homepage branch of `bounceTargetFor` | Settled 2026-08-03: homepage-only. A cancelled paid Brand visiting `/` is sent to `/all-starters`; everywhere else the member keeps whatever their active plans resolve to today (free-Brand quiz funnel, or the unmapped-plan error when nothing is active). Role resolution itself is unchanged — the predicate reads `planConnections` directly and never invents a fourth role. See [Homepage overrides](#homepage-overrides) |
+| Not-yet-quizzed free Brand on the homepage | `v3/route-guard.js` homepage branch of `bounceTargetFor` | Settled 2026-08-03: a free Brand with an empty `starter-quiz` field stays on `/` instead of being pushed to `/quiz`. Homepage only — the login pages and `/sign-up` still send them to `/quiz`, and guarded pages still use `brandFreeHome` |
 
 `Allow` on `/opportunities/<slug>` is the route guard's role-level decision, not
 brand ownership authorization. After a paid brand enters either that route or the
@@ -247,8 +290,12 @@ enforces the underlying ownership boundary.
 
 ## Open decisions
 
-- Define the exact role/state for a paid Brand whose subscription is cancelled;
-  do not infer it from a display name.
+- (Settled 2026-08-03, recorded in [Homepage overrides](#homepage-overrides) and
+  the enforcement-layer row above: a paid Brand whose subscription is cancelled
+  is detected structurally by `hasCancelledPaidBrandPlan` reading
+  `planConnections` — never inferred from a plan display name — and the only
+  behavior attached to it is the homepage redirect to `/all-starters`. No fourth
+  application role was introduced, and no page outside `/` changed.)
 - (Settled 2026-08-03, recorded in the route-level and enforcement-layer sections
   above: `/quiz` stays outside all three guard tables with its page controller as
   the sole owner of its member redirects, and `/quiz-results` and `/all-starters`

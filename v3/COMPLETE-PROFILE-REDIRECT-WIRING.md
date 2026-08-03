@@ -85,7 +85,7 @@ and it will never break the page.
 2. Add one deferred page-level tag on `/complete-profile`, and nowhere else:
 
    ```html
-   <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.77/v3/complete-profile-redirect.js" defer></script>
+   <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.78/v3/complete-profile-redirect.js" defer></script>
    ```
 
 3. Load it AFTER the sitewide `v3/route-guard.js`, which owns the role contract
@@ -94,7 +94,7 @@ and it will never break the page.
 4. Do not install it on `/brand-dashboard` — that is this module's destination, and
    the path scope refuses it anyway.
 5. Pin the embed to the same tag as the route-guard release it shipped with
-   (`v1.59.77`), the way the sibling redirect embeds are pinned.
+   (`v1.59.78`), the way the sibling redirect embeds are pinned.
 
 No page markup is required beyond the hidden input. The module has no spinner and
 no error state: it either navigates away or leaves the page alone, so there is
