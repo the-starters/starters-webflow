@@ -293,10 +293,13 @@
     }
 
     // The Designer-authored card is a cloning source, not a user-facing row.
-    // Hide it whenever the rendered list becomes visible, then remove those
-    // attributes from each generated card.
+    // Hide it whenever the rendered list becomes visible. Use an inline
+    // display override as well as the semantic attributes because authored
+    // Designer CSS can override the browser's default `[hidden]` rule.
+    const templateDisplay = template.style.display
     template.setAttribute('hidden', '')
     template.setAttribute('aria-hidden', 'true')
+    template.style.display = 'none'
 
     const avails = availability.items
     list.innerHTML = ''
@@ -315,6 +318,7 @@
       card.removeAttribute('availability-template')
       card.removeAttribute('hidden')
       card.removeAttribute('aria-hidden')
+      card.style.display = templateDisplay
       card.setAttribute('availability-item', '')
       card.dataset.id = id
 
