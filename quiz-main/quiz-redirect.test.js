@@ -145,8 +145,15 @@ test('a Talent + paid Brand member keeps the paid outcome and its retake hatch',
     )
 })
 
-test('the header carries a well-formed @release marker', () => {
+test('the header carries the current release marker', () => {
     // This controller exports no window API, so there is no `release` property
     // to compare against — the marker is the only version signal it has.
-    assert.match(source, /^ \* @release v\d+\.\d+\.\d+$/m)
+    //
+    // Pinned to the exact string rather than just the shape (tightened
+    // 2026-08-03): a format-only assertion let this file sit at an older version
+    // while its v3 siblings were bumped, and nothing failed. Bump the literal
+    // below in the same commit that bumps the markers.
+    const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+    assert.ok(marker, 'no "@release vX.Y.Z" line in the quiz-redirect.js header')
+    assert.equal(marker[1], 'v1.59.77')
 })
