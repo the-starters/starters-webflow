@@ -1,47 +1,66 @@
 /**
- * /complete-profile — paid-Brand completion redirect.
+ * /complete-profile — role routing for a page that belongs to exactly one role.
  *
- * @release v1.59.78
+ * @release v1.59.81
  *
- * ONE job: keep a paid Brand who has already finished the Complete-profile form
- * from re-entering it. Completion is a durable signal on the member object — the
- * Memberstack custom field `completed-brand-profile`, written by a hidden
- * `data-ms-member` input on the form itself — so this check costs no network
- * request at all:
+ * ONE job: put every MAPPED member who lands on /complete-profile where they
+ * actually belong, without a hop through /login. The page is a paid-Brand form,
+ * so only a paid Brand who has not finished it has any reason to be here:
  *
- *   - field empty, whitespace-only, or absent → STAY. This is exactly who the
- *     page is for.
- *   - field carries any real value            → /brand-dashboard
+ *   - paid Brand, `completed-brand-profile` empty/whitespace/absent → STAY. This
+ *     is exactly who the page is for.
+ *   - paid Brand, field carries any real value                     → /brand-dashboard
+ *   - free Brand                                                   → its guard home
+ *     (the quiz funnel: /quiz-results once `starter-quiz` is set, else /quiz)
+ *   - Talent                                                       → /starter-dashboard
  *
- * WHAT THIS MODULE IS NOT. It is not the page's access gate and it never sends
- * anyone TO this page. Access to /complete-profile is owned entirely by the
- * Memberstack `restrict-pages` gated content group (URL rule STARTS
- * `complete-profile`, redirect `login`), and v3/route-guard.js deliberately does
- * not list the page in PAGE_ROLES — two owners would mean two logged-out
- * destinations for one URL, and Memberstack's protectPages() wins that race from
- * cached group data anyway. A member without group access is kicked to /login and
- * forwarded on by the guard's member-bounce pages. Everything except the one
- * positive paid-Brand "already done" answer is therefore somebody else's job, and
- * this module does nothing in those cases rather than race another layer to a
- * different destination.
+ * Completion is a durable signal on the member object — the Memberstack custom
+ * field `completed-brand-profile`, written by a hidden `data-ms-member` input on
+ * the form itself — and the role and the other two destinations come from the
+ * guard contract already in memory, so the whole decision still costs ZERO
+ * network requests beyond the one getCurrentMember() call.
  *
- * ROLE SCOPE: paid Brand only, and the role comes from the sitewide
- * v3/route-guard.js contract (window.StartersV3RouteGuard) rather than a second
- * copy of the plan-ID table — the same borrow v3/auth-route.js and
+ * WHY THE ROLE BRANCHES EXIST (decision 2026-08-03 evening). Until this release a
+ * free Brand or a Talent member who reached /complete-profile was left on a form
+ * they can neither fill in nor submit, and the only way out was a manual trip to
+ * /login so the guard's member-home bounce could forward them. That hop is
+ * pointless: this module already holds the member object and the guard's own
+ * roleHome() answer, so it sends them straight to their home instead. Same
+ * destinations the /login bounce would have produced, one navigation instead of
+ * two, and no login form flashing at an already-authenticated member.
+ *
+ * WHAT THIS MODULE IS STILL NOT. It is not the page's access gate and it never
+ * sends anyone TO this page. Access to /complete-profile is owned entirely by the
+ * Memberstack `restrict-pages` gated content group — URL rule STARTS
+ * `complete-profile`, access "All Members", Access Denied URL `login` (the
+ * dashboard field's slug form; a denied visitor lands on the path /login) — and
+ * v3/route-guard.js deliberately does not list the page in PAGE_ROLES — two
+ * owners would mean two logged-out destinations for one URL, and Memberstack's
+ * protectPages() wins that race from cached group data anyway. The logged-out
+ * kick is therefore Memberstack's, not this module's, and this module never
+ * touches a visitor it cannot positively identify.
+ *
+ * ROLE CONTRACT: the role, and the free-Brand and Talent destinations, all come
+ * from the sitewide v3/route-guard.js contract (window.StartersV3RouteGuard —
+ * memberRole plus roleHome) rather than a second copy of the plan-ID table or of
+ * ROLE_DEFAULTS — the same borrow v3/auth-route.js and
  * v3/build-profile-redirect.js make. If the guard is missing or loaded late the
- * role reads as null and this module stays put, so install it AFTER
+ * contract reads as unavailable and this module stays put, so install it AFTER
  * route-guard.js.
  *
- * INERT UNTIL THE FIELD IS WRITTEN. `completed-brand-profile` exists on the
- * member object but nothing wrote to it before 2026-08-03, so every member reads
- * as not-done until they submit the form once with the hidden input in place.
- * That is the safe direction: the page keeps working exactly as authored, and the
- * redirect switches itself on member by member as the field starts landing.
+ * INERT UNTIL THE FIELD IS WRITTEN (paid Brand only). `completed-brand-profile`
+ * exists on the member object but nothing wrote to it before 2026-08-03, so every
+ * paid Brand reads as not-done until they submit the form once with the hidden
+ * input in place. That is the safe direction: the page keeps working exactly as
+ * authored for the role it is for, and the completion redirect switches itself on
+ * member by member as the field starts landing. The free-Brand and Talent
+ * branches depend on no new field and are live immediately.
  *
- * FAIL-OPEN, EVERYWHERE. Logged out, Memberstack missing or slow, no role
- * contract, a non-paid-Brand role, a member lookup that throws, an unreadable
- * member object: every one of those leaves the page exactly as authored. Only one
- * positive, unambiguous answer ever redirects. This is funnel UX and never a
+ * FAIL-OPEN ON EVERY UNCERTAIN ANSWER. Logged out, Memberstack missing or slow,
+ * no role contract, an unmapped or cross-role conflicted plan set, a role whose
+ * home the guard cannot name, a member lookup that throws, an unreadable member
+ * object: every one of those leaves the page exactly as authored. Only a
+ * positive, unambiguous role answer ever redirects. This is funnel UX and never a
  * security boundary — Memberstack gated content and Xano endpoint authorization
  * remain the enforced layers.
  *
@@ -134,23 +153,51 @@
 
   /**
    * route-guard.js is loaded sitewide before page controllers and owns the stable
-   * plan-ID role contract. Reusing its exported API — exactly as
-   * v3/build-profile-redirect.js does — keeps this module from carrying a second
-   * copy of the plan table that could drift.
+   * plan-ID role contract AND the per-role home table. Reusing its exported API —
+   * exactly as v3/build-profile-redirect.js does — keeps this module from carrying
+   * a second copy of either, which is the only way the free-Brand quiz-funnel rule
+   * (/quiz-results once `starter-quiz` is set, else /quiz) can stay in one place.
+   *
+   * Both halves are required together: a contract that can name a role but not its
+   * home would let this module identify a Talent member and then have nowhere to
+   * send them, so the whole thing reads as unavailable and the page is left alone.
    */
   function roleContract() {
     var contract = window.StartersV3RouteGuard
-    if (!contract || typeof contract.memberRole !== 'function') return null
+    if (!contract) return null
+    if (typeof contract.memberRole !== 'function') return null
+    if (typeof contract.roleHome !== 'function') return null
     return contract
   }
 
-  function memberRole(member) {
+  /**
+   * The contract, or null plus one staging warning. Both borrows below go through
+   * here so the "no usable guard" answer is worded and logged in exactly one
+   * place — an install-order mistake reads the same whichever half asked first.
+   */
+  function contractOrWarn() {
     var contract = roleContract()
-    if (!contract) {
-      warn('route guard role contract unavailable; leaving the page alone.')
-      return null
-    }
+    if (contract) return contract
+    warn('route guard role contract unavailable; leaving the page alone.')
+    return null
+  }
+
+  function memberRole(member) {
+    var contract = contractOrWarn()
+    if (!contract) return null
     return contract.memberRole(member)
+  }
+
+  /**
+   * The guard's own answer for "where does this member live?" — /starter-dashboard
+   * for Talent, and for a free Brand the quiz funnel decided by the `starter-quiz`
+   * marker. Deliberately not reimplemented here; if the guard ever changes a role
+   * home, this page follows automatically.
+   */
+  function roleHome(member) {
+    var contract = contractOrWarn()
+    if (!contract) return null
+    return contract.roleHome(member) || null
   }
 
   /* -------------------------------- completion ------------------------------- */
@@ -203,7 +250,9 @@
   /**
    * The destination this member belongs at, or null to stay. Separated from the
    * navigation itself so it can be called by hand on staging without the page
-   * changing underneath the console.
+   * changing underneath the console. It answers for all three roles now, not just
+   * the paid-Brand completion case: /brand-dashboard, the free-Brand quiz funnel,
+   * or /starter-dashboard.
    */
   async function completeProfileDestination() {
     var memberstack = await waitForMemberstack()
@@ -226,26 +275,55 @@
       return null
     }
 
-    // Paid Brand only. Talent, a free Brand, and an unmapped or conflicted
-    // member are all somebody else's problem: the gated group decides whether
-    // they may see this page at all, and nothing here should second-guess it.
+    // An unmapped or cross-role conflicted plan set resolves to null here, and
+    // that stays untouched: the gated group already decided this member may see
+    // the page, and guessing a home for a member whose plans do not add up would
+    // be worse than the form they cannot submit. memberRole() has already warned
+    // if the contract itself was missing.
     var role = memberRole(member)
-    if (role !== 'brand-paid') {
-      note('role "' + role + '" is not paid Brand; no completion check.')
+    if (!role) {
+      note('no mapped role for this member; leaving the page alone.')
       return null
     }
 
-    if (!hasCompletedBrandProfile(member)) {
-      note(
-        '"' +
-          DONE_FIELD +
-          '" is not set; this page is exactly where the member belongs.',
+    // The one role the page was authored for, and the only role whose answer can
+    // be "stay".
+    if (role === 'brand-paid') {
+      if (!hasCompletedBrandProfile(member)) {
+        note(
+          '"' +
+            DONE_FIELD +
+            '" is not set; this page is exactly where the member belongs.',
+        )
+        return null
+      }
+      note('"' + DONE_FIELD + '" is set; sending to ' + DASHBOARD_PATH + '.')
+      return DASHBOARD_PATH
+    }
+
+    // Talent and free Brand: this form is not theirs and never will be, so send
+    // them to the home the guard would have sent them to after a /login hop —
+    // /starter-dashboard for Talent, the quiz funnel for a free Brand — and skip
+    // the hop. `completed-brand-profile` is not consulted for either role; it is a
+    // paid-Brand form marker and a stray value on the wrong role means nothing.
+    var home = roleHome(member)
+    if (!home) {
+      warn(
+        'role "' +
+          role +
+          '" has no home in the route guard contract; leaving the page alone.',
       )
       return null
     }
 
-    note('"' + DONE_FIELD + '" is set; sending to ' + DASHBOARD_PATH + '.')
-    return DASHBOARD_PATH
+    note(
+      'role "' +
+        role +
+        '" does not belong on this page; sending to ' +
+        home +
+        '.',
+    )
+    return home
   }
 
   async function redirectPastCompleteProfile() {
@@ -260,12 +338,19 @@
   window.StartersCompleteProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/complete-profile-redirect.test.js drift guard asserts they match.
-    release: 'v1.59.78',
+    release: 'v1.59.81',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isCompleteProfilePath: isCompleteProfilePath,
     diagnosticsEnabled: diagnosticsEnabled,
     hasCompletedBrandProfile: hasCompletedBrandProfile,
+    // The two contract borrows, exported so a staging session can ask "what role
+    // does the guard think I am, and where does it think I live?" without
+    // reproducing the decision by hand.
+    memberRole: memberRole,
+    roleHome: roleHome,
+    // Answers for all three roles: /brand-dashboard, the free-Brand quiz funnel,
+    // or /starter-dashboard. null means stay.
     completeProfileDestination: completeProfileDestination,
     redirectPastCompleteProfile: redirectPastCompleteProfile,
     completeProfilePaths: COMPLETE_PROFILE_PATHS.slice(),

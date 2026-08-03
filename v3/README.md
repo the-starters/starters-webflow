@@ -248,25 +248,31 @@ both leave it alone rather than compete for the same URL with a different
 destination. The member-home bounce pages forward whoever arrives at `/login` that
 way to their role home. See [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 
-## Complete-profile completion redirect
+## Complete-profile role routing
 
-`complete-profile-redirect.js` keeps a paid Brand who has already finished the
-Complete-profile form from re-entering it, and does nothing else. Completion is the
-Memberstack member custom field `completed-brand-profile`, written by a hidden
-`data-ms-member` input on the form itself, so the check costs no network request at
-all: a real value sends the member to `/brand-dashboard`, and an absent, empty, or
-whitespace-only one leaves them on the page. Truthiness is the same rule the guard
-applies to the `starter-quiz` marker.
+`complete-profile-redirect.js` puts every mapped member who lands on
+`/complete-profile` where they belong, with no hop through `/login`. The page is a
+paid-Brand form, so a paid Brand stays until the Memberstack member custom field
+`completed-brand-profile` carries a real value and then goes to `/brand-dashboard`;
+a free Brand goes to its quiz-funnel home (`/quiz-results` once `starter-quiz` is
+set, else `/quiz`) and a Talent member to `/starter-dashboard`. The field is written
+by a hidden `data-ms-member` input on the form itself and the two other
+destinations come from the guard's own `roleHome()`, so the whole decision costs no
+network request at all. Field truthiness is the same rule the guard applies to the
+`starter-quiz` marker, and it is consulted for the paid-Brand branch only.
 
-Access to the page stays Memberstack's — the `restrict-pages` gated group above,
-not this module, decides who may load it — and the role comes from the route
-guard's exported contract, so Talent, a free Brand, an unmapped or conflicted
-member, a logged-out visitor, a missing contract, and a lookup that throws are all
-left untouched. Two properties are deliberate: it is inert until the hidden input
-starts writing the field, and members who completed the form before the field
-existed read as not-done until they resubmit once. Needs that input plus one
-page-level embed installed after the guard; see
-[COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
+The role branches replaced the paid-only design on the evening of 2026-08-03: the
+other two roles used to sit on a form they cannot submit until they manually went to
+`/login` for the member-home bounce. Their cost is that the `restrict-pages` gated
+group must be set to access **All Members** — access to the page stays
+Memberstack's, and the logged-out kick with it, but a logged-in member of any role
+has to be allowed to load the page for this module to route them. Unmapped and
+conflicted members, logged-out visitors, a missing or half-loaded role contract, and
+a lookup that throws are all left untouched. Two properties are deliberate: the
+paid-Brand branch is inert until the hidden input starts writing the field, and
+members who completed the form before the field existed read as not-done until they
+resubmit once. Needs that input plus one page-level embed installed after the guard;
+see [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
 ## Build-profile funnel redirect
 
