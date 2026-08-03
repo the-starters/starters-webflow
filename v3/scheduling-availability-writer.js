@@ -1,8 +1,8 @@
 ;(function () {
   'use strict'
 
-  // Writer counterpart to scheduling-availability-init.js for the renamed
-  // `Starter Dashboard - Booking stage` page. Ports the legacy V2 availability
+  // Writer counterpart to scheduling-availability-init.js for the scheduling
+  // Starter dashboards. Ports the legacy V2 availability
   // writer flow (form submit, manager selection, Nylas scheduler configuration
   // create/update, timezone set, OAuth grant redirect) against the same
   // Webflow `availability-step` markup, with the loader and success/error
@@ -19,6 +19,9 @@
   //   via guarded window.generateBookingsList / window.clearGrantData).
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
+  const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
+  const PRODUCTION_PATH = '/starter-dashboard'
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_BASE = XANO_ORIGIN + '/api:tCpV3oqd'
   const STATUS_ATTRIBUTE = 'data-scheduling-availability-writer'
@@ -28,8 +31,14 @@
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const PAID_RATE_STORAGE_KEY = 'paid_call_rate'
+  const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
+  const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
 
-  if (window.location.hostname !== STAGING_HOST) return
+  const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
+  const isStagingHost = window.location.hostname === STAGING_HOST
+  const isApprovedProductionPath =
+    PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
+  if (!isStagingHost && !isApprovedProductionPath) return
   if (window.__tsSchedulingAvailabilityWriter) return
   window.__tsSchedulingAvailabilityWriter = true
 
@@ -43,6 +52,7 @@
   let grantCalendarId = null
   let activeManager = null
   let timezone = null
+  let timezonePersisted = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -89,6 +99,46 @@
       throw memberScopeChangedError()
     }
     return member.id
+  }
+
+  function oauthRedirectUri() {
+    return isStagingHost
+      ? 'https://' + STAGING_HOST + STAGING_OAUTH_PATH
+      : 'https://' + window.location.hostname + PRODUCTION_PATH
+  }
+
+  function rememberOAuthIntent(memberId, redirectUri) {
+    try {
+      window.sessionStorage.setItem(
+        OAUTH_INTENT_PREFIX + memberId,
+        JSON.stringify({ createdAt: Date.now(), redirectUri: redirectUri }),
+      )
+    } catch (error) {
+      /* storage unavailable */
+    }
+  }
+
+  function consumeOAuthIntent(memberId) {
+    const redirectUri = oauthRedirectUri()
+    if (isStagingHost) return { redirectUri: redirectUri }
+    const key = OAUTH_INTENT_PREFIX + memberId
+    try {
+      const raw = window.sessionStorage.getItem(key)
+      window.sessionStorage.removeItem(key)
+      const intent = raw ? JSON.parse(raw) : null
+      if (
+        intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.redirectUri === redirectUri
+      ) {
+        return intent
+      }
+      return null
+    } catch (error) {
+      return null
+    }
   }
 
   async function xanoPost(path, payload) {
@@ -310,6 +360,7 @@
   }
 
   async function updateAvail() {
+    await ensureTimezone()
     const memberId = await writeMemberId()
     // The /v3 endpoint UPSERTS: new V3 starters have no legacy scheduling row,
     // so the first save creates it (seeded server-side from the auth user).
@@ -345,26 +396,28 @@
     }
   }
 
-  async function resolveTimezone(starterRecord) {
-    try {
-      const cached = window.localStorage.getItem(TIMEZONE_CACHE_PREFIX + sessionMemberId)
-      if (cached) return cached
-    } catch (error) {
-      /* storage unavailable */
-    }
-
+  async function resolveTimezone(starterRecord, allowWrite) {
     let resolved = null
     try {
       const starter = starterRecord
       if (starter && typeof starter.timezone === 'string' && starter.timezone.trim() !== '') {
         resolved = starter.timezone
+        timezonePersisted = true
       }
       if (!resolved) {
+        try {
+          resolved = window.localStorage.getItem(TIMEZONE_CACHE_PREFIX + sessionMemberId)
+        } catch (error) {
+          /* storage unavailable */
+        }
+      }
+      if (allowWrite && !timezonePersisted) {
         const updated = await xanoPost('/starter/set_timezone/v3', {
           member_id: await writeMemberId(),
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+          timezone: resolved || Intl.DateTimeFormat().resolvedOptions().timeZone || '',
         })
         resolved = updated && updated.timezone ? updated.timezone : null
+        timezonePersisted = Boolean(resolved)
       }
     } catch (error) {
       console.warn('[scheduling-writer] timezone resolution failed:', error && error.message)
@@ -385,6 +438,13 @@
       if (timezone) el.textContent = 'Your timezone is - ' + timezone
       else el.style.display = 'none'
     })
+  }
+
+  async function ensureTimezone() {
+    if (!timezone || !timezonePersisted) timezone = await resolveTimezone(null, true)
+    if (!timezone || !timezonePersisted) throw new Error('Timezone is unavailable')
+    renderTimezone()
+    return timezone
   }
 
   /* ------------------------------------------------------------------ */
@@ -431,6 +491,7 @@
   }
 
   async function setupConfigs(type, isUpdate, configId) {
+    await ensureTimezone()
     const isPaidCall = type === 'paid'
     const openHours = getAvailArray()
     const price = isPaidCall ? String(resolvePaidRate()) : '0'
@@ -558,6 +619,7 @@
   /* ------------------------------------------------------------------ */
 
   async function createVirtualCalendarFlow(memberId) {
+    await ensureTimezone()
     const result = { status: 400, grant_id: null, email: null, calendar_id: null }
     let account = null
     try {
@@ -601,6 +663,7 @@
 
   async function clearGrant(memberId, currentGrantId) {
     if (!currentGrantId) return
+    await ensureTimezone()
     // Prefer the page's bookings-aware composite (declines pending bookings and
     // repaints booking cards) when the dashboard embed provides it.
     if (typeof window.clearGrantData === 'function') {
@@ -886,9 +949,12 @@
         // grants/add/v3 callback is keyed on memberstack_id — the state IS the
         // authenticated member id, never a client-editable value.
         const memberId = await writeMemberId()
+        await ensureTimezone()
+        const redirectUri = oauthRedirectUri()
         const response = await xanoPost('/grants/oauth/v3', {
           in_state: memberId,
           in_provider: 'google',
+          in_redirect_uri: redirectUri,
         })
         const url =
           response &&
@@ -897,6 +963,7 @@
           response.response.result.data &&
           response.response.result.data.url
         if (!url) throw new Error('grants/oauth returned no URL')
+        rememberOAuthIntent(memberId, redirectUri)
         window.open(url, '_blank')
         switchStep('reload-page')
       } catch (error) {
@@ -1036,6 +1103,8 @@
       const member = await currentMember()
       sessionMemberId = member.id
       memberFields = member.customFields || {}
+      timezone = null
+      timezonePersisted = false
 
       availability = await availabilityFromInitializer()
 
@@ -1072,11 +1141,11 @@
         }
       }
 
-      timezone = await resolveTimezone(starterRecord)
+      timezone = await resolveTimezone(starterRecord, isStagingHost)
       renderTimezone()
 
       const urlParams = new URLSearchParams(window.location.search)
-      let connectedCalendar = urlParams.get('calendar') || null
+      let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
 
       // OAuth return lands directly on this page (?code&state) — no separate
       // connect-success page. grants/add/v3 exchanges the code and persists
@@ -1094,12 +1163,18 @@
         )
         try {
           const memberId = await writeMemberId()
-          if (oauthState && oauthState !== memberId) {
+          if (!oauthState || oauthState !== memberId) {
             throw new Error('OAuth state does not match the logged-in member')
           }
+          const oauthIntent = consumeOAuthIntent(memberId)
+          if (!oauthIntent) {
+            throw new Error('OAuth return was not initiated by this session')
+          }
+          await ensureTimezone()
           const grant = await xanoPost('/grants/add/v3', {
             code: oauthCode,
             member_id: memberId,
+            in_redirect_uri: oauthIntent.redirectUri,
           })
           if (!(grant && grant.grant_id)) {
             throw new Error('grants/add/v3 returned no grant')
@@ -1120,7 +1195,7 @@
 
       if (grantId) {
         configs = (await getConfigs(grantId)) || []
-        if (!configs.length && !connectedCalendar) {
+        if (isStagingHost && !configs.length && !connectedCalendar) {
           await createConfigPair()
           refreshConfigsSoon(500)
         }

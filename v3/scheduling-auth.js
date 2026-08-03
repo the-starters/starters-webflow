@@ -3,7 +3,11 @@
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
-  const PRODUCTION_PATHS = new Set(['/hire/jp-dionisio'])
+  const PRODUCTION_PATHS = new Set([
+    '/hire/jp-dionisio',
+    '/starter-dashboard',
+    '/brand-dashboard',
+  ])
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const isStagingHost = window.location.hostname === STAGING_HOST
   const isApprovedProductionPath =
@@ -63,7 +67,7 @@
   // Temporary backwards compatibility for staging pages that already load
   // this shared auth module but do not yet load scheduling-v3-stage.js. The
   // stage adapter intercepts these paths first on its five approved staging
-  // paths and exact production canary.
+  // paths and exact production surfaces.
   const LEGACY_COMPATIBILITY_PATHS = [
     '/api:tCpV3oqd/calendars/get_availabilities',
     '/api:tCpV3oqd/scheduler/configurations/create',

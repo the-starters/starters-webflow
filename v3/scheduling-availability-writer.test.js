@@ -357,6 +357,7 @@ function loadWriter(options = {}) {
   const events = []
   const warnings = []
   const storage = new Map(Object.entries(options.storage || {}))
+  const sessionStorage = new Map(Object.entries(options.sessionStorage || {}))
 
   const member = options.member === undefined ? MEMBER_A() : options.member
   let activeMember = member
@@ -405,12 +406,17 @@ function loadWriter(options = {}) {
     location: {
       hostname: options.hostname || 'the-starters-3-0.webflow.io',
       search: options.search || '',
-      pathname: '/starter-dashboard---availability-stage',
-      origin: 'https://the-starters-3-0.webflow.io',
+      pathname: options.pathname || '/starter-dashboard---availability-stage',
+      origin: options.origin || 'https://the-starters-3-0.webflow.io',
     },
     localStorage: {
       getItem: (key) => (storage.has(key) ? storage.get(key) : null),
       setItem: (key, value) => storage.set(key, String(value)),
+    },
+    sessionStorage: {
+      getItem: (key) => (sessionStorage.has(key) ? sessionStorage.get(key) : null),
+      setItem: (key, value) => sessionStorage.set(key, String(value)),
+      removeItem: (key) => sessionStorage.delete(key),
     },
     history: {
       replaceState: (...args) => historyCalls.push(args),
@@ -482,6 +488,7 @@ function loadWriter(options = {}) {
     harness,
     historyCalls,
     opened,
+    sessionStorage,
     status,
     storage,
     timers,
@@ -500,10 +507,20 @@ const TZ_CACHED = { 'starter-timezone:member-a': 'Asia/Manila' }
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
 
-test('does not install outside V3 Webflow staging', () => {
-  const result = loadWriter({ hostname: 'www.thestarters.com' })
+test('does not install on an unapproved production path', () => {
+  const result = loadWriter({
+    hostname: 'www.thestarters.com',
+    pathname: '/brand-dashboard',
+  })
   assert.equal(result.window.StarterSchedulingAvailabilityWriter, undefined)
   assert.equal(result.status(), null)
+})
+
+test('installs on the canonical Starter dashboard across both production hosts', () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const result = loadWriter({ hostname, pathname: '/starter-dashboard' })
+    assert.equal(typeof result.window.StarterSchedulingAvailabilityWriter.initialize, 'function')
+  }
 })
 
 test('marks pages without an availability form as not applicable', async () => {
@@ -785,7 +802,12 @@ test('pre-redirect sends the authenticated member id as OAuth state', async () =
   await settle()
 
   const oauth = result.calls.find((c) => c.path === '/grants/oauth/v3')
-  assert.deepEqual(oauth.body, { in_state: 'member-a', in_provider: 'google' })
+  assert.deepEqual(oauth.body, {
+    in_state: 'member-a',
+    in_provider: 'google',
+    in_redirect_uri:
+      'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
+  })
   assert.deepEqual(result.opened, [{ url: 'https://nylas.example/oauth', target: '_blank' }])
   assert.equal(result.dom.steps['reload-page'].style.display, 'block')
 })
@@ -802,6 +824,43 @@ test('pre-redirect aborts when the member session changed', async () => {
   assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
   assert.equal(result.opened.length, 0)
   assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+})
+
+test('production pre-redirect persists timezone and uses the canonical host', async () => {
+  const result = loadWriter({
+    hostname: 'www.thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://www.thestarters.com',
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: '',
+          availability: defaultAvailability(),
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/starter/set_timezone/v3').length, 0)
+  result.clickAction(result.dom.buttons.preRedirect)
+  result.flushTimers()
+  await settle()
+
+  const paths = result.calls.map((c) => c.path)
+  const timezoneIndex = paths.indexOf('/starter/set_timezone/v3')
+  const oauthIndex = paths.indexOf('/grants/oauth/v3')
+  assert.ok(timezoneIndex > -1 && oauthIndex > timezoneIndex)
+  assert.deepEqual(result.calls[oauthIndex].body, {
+    in_state: 'member-a',
+    in_provider: 'google',
+    in_redirect_uri: 'https://www.thestarters.com/starter-dashboard',
+  })
 })
 
 test('a stored paid rate restores the free+paid config pair', async () => {
@@ -889,7 +948,12 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
   await settle()
 
   const add = result.calls.find((c) => c.path === '/grants/add/v3')
-  assert.deepEqual(add.body, { code: 'abc123', member_id: 'member-a' })
+  assert.deepEqual(add.body, {
+    code: 'abc123',
+    member_id: 'member-a',
+    in_redirect_uri:
+      'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
+  })
   assert.ok(result.historyCalls.length >= 1, 'code/state stripped from the URL')
 
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
@@ -915,6 +979,91 @@ test('an OAuth state for a different member aborts the exchange without writing'
     ),
   )
   assert.equal(result.status(), 'ready')
+})
+
+test('an OAuth code without state aborts the exchange without writing', async () => {
+  const result = loadWriter({
+    search: '?code=abc123',
+    storage: TZ_CACHED,
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.ok(
+    result.events.some(
+      (e) => e.type === 'starterSchedulingWriteError' && e.detail.action === 'oauth-connect',
+    ),
+  )
+})
+
+test('passive production initialization performs no scheduling writes', async () => {
+  const result = loadWriter({
+    hostname: 'www.thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://www.thestarters.com',
+    search: '?code=abc123&state=member-a&calendar=google',
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: '',
+          availability: defaultAvailability(),
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  const writePaths = new Set([
+    '/starter/set_timezone/v3',
+    '/starter/update_availability/v3',
+    '/scheduler/configurations/create/v3',
+    '/scheduler/configurations/update/v3',
+    '/scheduler/configurations/delete/v3',
+    '/grants/add/v3',
+  ])
+  assert.deepEqual(
+    result.calls.filter((call) => writePaths.has(call.path)),
+    [],
+  )
+})
+
+test('production OAuth return writes only with a recent session intent', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?code=abc123&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  const add = result.calls.find((c) => c.path === '/grants/add/v3')
+  assert.deepEqual(add.body, {
+    code: 'abc123',
+    member_id: 'member-a',
+    in_redirect_uri: 'https://thestarters.com/starter-dashboard',
+  })
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 1)
+  assert.equal(
+    result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
+    1,
+  )
+  assert.equal(result.sessionStorage.size, 0)
 })
 
 test('returning from the calendar OAuth round trip records the calendar manager', async () => {
@@ -1021,6 +1170,41 @@ test('a grant-less save still lands back on the default step', async () => {
     0,
   )
   assert.equal(result.dom.steps.default.style.display, 'block')
+})
+
+test('production availability save persists timezone only after submit', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: '',
+          availability: defaultAvailability(),
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/starter/set_timezone/v3').length, 0)
+  result.dom.fields.days[0].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  const setCall = result.calls.find((c) => c.path === '/starter/set_timezone/v3')
+  const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
+  assert.equal(setCall.body.member_id, 'member-a')
+  assert.equal(update.body.in_timezone, 'Asia/Manila')
 })
 
 test('resolves and persists the timezone through authenticated endpoints', async () => {

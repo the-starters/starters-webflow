@@ -71,7 +71,9 @@ Do not discard local changes unless the user explicitly asks.
   and blocks known edit mutations on non-Live hosts
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
-- `v3/scheduling-availability-init.js` — staging-only booking-stage availability control initializer
+- `v3/scheduling-availability-init.js` — scheduling availability control
+  initializer; see `v3/README.md` for its authoritative host, path, and safety
+  boundary
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`, including `?with=<memberstack id>` deep links that open (creating if needed) the one-on-one conversation with that member
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
@@ -273,31 +275,9 @@ remains unchanged.
 
 ### Booking-stage availability controls
 
-On the same staging hostname, `v3/scheduling-availability-init.js` reads the V3
-starter scheduling endpoint through `window.xanoAuthFetch`, preserving the authenticated request
-and retry protections. A successful JSON `null` confirms first-time setup; a saved
-legacy schedule reveals `[update-availability]`, while failed or malformed responses
-leave both controls hidden. The page's `getStarterByMemberId(memberId)` helper is used
-only when the auth helper is unavailable. The initializer selects the corresponding
-`[availability-step]` and retains its five-minute member-scoped saved-availability
-cache and member revalidation. Load it after the auth bridge on the renamed
-`Starter Dashboard - Booking stage` page; it does not write scheduling data or run on
-the custom domains.
-
-For staging QA, an allowlisted Memberstack Test-Data member can be selected with
-`?test_member_id=<memberstack_member_id>`. This changes only the member whose saved
-availability is read and rendered; the logged-in tester still supplies the Bearer
-authentication, and the override is never used for writes. Remove this temporary
-override before enabling the initializer on either custom production domain. See
-`v3/README.md` for its validation, cache, status-marker, and removal contracts.
-
-```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-auth.js"></script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-availability-init.js"></script>
-```
-
-See `v3/README.md` for the full markup, status, event, cache, and public-helper
-contracts.
+The authoritative host/path boundary, loader order, staging QA override,
+authenticated read/write rules, and runtime contracts for the scheduling
+availability controls live in [`v3/README.md`](v3/README.md#booking-stage-availability-initializer).
 
 ## Opportunities 3.0 Merged Feed
 

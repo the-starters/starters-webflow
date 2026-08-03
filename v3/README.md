@@ -911,15 +911,15 @@ script tag instead of carrying a duplicate copy in page head/footer code.
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
-- On the V3 custom domains, runs only on `/hire/jp-dionisio`; all other paths
-  remain inert.
+- On the V3 custom domains, runs only on `/hire/jp-dionisio`,
+  `/starter-dashboard`, and `/brand-dashboard`; all other paths remain inert.
 - Authenticates only the explicit reviewed `/v3` scheduling routes on the
   configured Xano origin. It does not use a group-wide prefix allowlist.
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
   This prevents a release-time regression on non-stage staging consumers; the
   stage adapter intercepts those paths first on its five approved staging paths
-  and exact production canary.
+  and three exact production surfaces.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
@@ -968,11 +968,12 @@ scheduling component. It installs on these exact staging paths:
 - `/hire-stage`
 - `/hire/jp-dionisio`
 
-The fifth path is the existing approved Test Talent CMS item. That same exact
-path, `/hire/jp-dionisio`, is also enabled on `thestarters.com` and
-`www.thestarters.com`; every `*-stage` path remains staging-host only. The
-adapter does not install on any other `/hire/*` item or on `detail_hire`. The
-adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
+The fifth path is the existing approved Test Talent CMS item. The exact paths
+`/hire/jp-dionisio`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
+`thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
+staging-host only. The adapter does not install on any other `/hire/*` item or
+on `detail_hire`. The adapter maps the reviewed legacy scheduling paths to
+their exact `/v3` routes,
 preserves request method, body, headers, and query parameters, and sends the
 rewritten request through `window.xanoAuthFetch`.
 
@@ -980,7 +981,7 @@ On the exact `/hire/jp-dionisio` canary only, the two public booking-discovery
 reads use Brand-safe contracts instead of Talent-owner contracts:
 `starter/get_booking_profile/v3` returns only the Starter row ID and calendar
 grant, while `nylas_configurations/get_bookable/v3` returns the bookable
-configuration metadata. Other stage pages continue to use the self-only
+configuration metadata. Every other installed surface uses the self-only
 `starter/get_by_memberstack/v3` and grant-owner-only
 `nylas_configurations/get_all/v3` routes.
 
@@ -992,20 +993,21 @@ The boundary is fail-closed:
 - Any other unclassified `api:tCpV3oqd` scheduling route is blocked with HTTP
   `410` before a network request is made.
 - `calendars/get_availabilities` remains deliberately unmapped and therefore
-blocked on the five stage pages because its payload has not been proven
-  compatible with `scheduler/get_availability/v3`.
+  blocked on every installed scheduling surface because its payload has not
+  been proven compatible with `scheduler/get_availability/v3`.
 - Only the approved legacy Stripe customer, intent, setup-intent, and
   payment-method provider routes pass through temporarily.
 
-`scheduling-v3-stage-component.html` is the draft loader for a cloned Webflow
-component used only by the four non-template stage pages. Add it as the clone's first Code
-Embed, before the cloned scheduling logic embeds, and keep the cloned UI and
-logic intact. Auth and route ownership load synchronously so immediate legacy
-code cannot race the adapter; the availability UI modules remain deferred. Do
+`scheduling-v3-stage-component.html` is the loader for the isolated cloned
+Webflow component used by the stage surfaces and canonical dashboards. Keep it
+as the clone's first Code Embed, before the cloned scheduling logic embeds, and
+keep the cloned UI and logic intact. Auth and route ownership load synchronously
+so immediate legacy code cannot race the adapter; the availability UI modules
+remain deferred. Do
 not replace the shared `Call Scheduling - Global Code` component while the live
-`detail_hire` template still uses it. Release the Git files first, then create
-and install the clone in a separate approved Webflow change. Do not publish
-either custom production domain without the user's final approval.
+`detail_hire` template still uses it. The isolated clone is installed on the
+stage surfaces and both canonical dashboards; releases update its Git-owned
+files through the reviewed semver tag and jsDelivr purge flow.
 
 Runtime contract:
 
@@ -1015,7 +1017,8 @@ Runtime contract:
   The attribute is not set on pages where the adapter does not install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
   five installed stage paths), `productionPaths` (the exact production Hire
-  canary), and `routeMap` (the legacy-to-`/v3` route map).
+  canary and canonical dashboards), and `routeMap` (the legacy-to-`/v3` route
+  map).
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 
@@ -1028,15 +1031,17 @@ node v3/scheduling-v3-stage.test.js
 ## Booking-stage availability initializer
 
 `scheduling-availability-init.js` restores the V2 visibility contract used by
-the renamed `Starter Dashboard - Booking stage` page. Published CSS hides both
-Calendar Settings controls; this initializer resolves the logged-in member's
-saved scheduling availability and reveals exactly one:
+the staging booking page and canonical `/starter-dashboard`. Published CSS
+hides both Calendar Settings controls; this initializer resolves the logged-in
+member's saved scheduling availability and reveals exactly one:
 
 - `[init-availability]` for first-time setup;
 - `[update-availability]` for an existing saved schedule.
 
-It is staging-hostname-only, uses a five-minute member-scoped local cache for saved
-availability, accepts the legacy scheduling availability shape
+It installs on the Webflow staging hostname and on the exact
+`/starter-dashboard` path at `thestarters.com` and `www.thestarters.com`. It
+uses a five-minute member-scoped local cache for saved availability, accepts
+the legacy scheduling availability shape
 (`{ items, manager? }`), and treats a V3 starter without a legacy scheduling row
 as a first-time setup instead of leaving both controls hidden. It also selects
 the correct initial modal step.
@@ -1078,13 +1083,8 @@ Runtime contract:
 This module intentionally owns initialization and visibility only. The writer
 flow lives in `scheduling-availability-writer.js` (below).
 
-Webflow staging loader:
-
-```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-auth.js"></script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-v3-stage.js"></script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/scheduling-availability-init.js"></script>
-```
+The authoritative loader order and release URLs live in
+`scheduling-v3-stage-component.html`.
 
 Temporary staging QA override (`?test_member_id=`):
 
@@ -1112,11 +1112,9 @@ Temporary staging QA override (`?test_member_id=`):
   override ID as `memberId`.
 - Cached availability stays member-scoped: the override ID gets its own
   five-minute cache entry and never reuses the authenticated member's cache.
-- ⛔ **LAUNCH BLOCKER**: remove the override (`TEST_MEMBER_*` constants,
-  `resolveTestMemberOverride`, and this section) before enabling this script
-  on `thestarters.com` / `www.thestarters.com`. It is independently
-  hostname-gated as defense in depth, but must not ship to the custom
-  production domains.
+- The override remains independently staging-host gated. On both custom
+  production domains, `test_member_id` is inert and the canonical dashboard
+  always reads the authenticated Memberstack member.
 
 Run its focused test with:
 
@@ -1127,25 +1125,21 @@ node v3/scheduling-availability-init.test.js
 ## Booking-stage availability writer
 
 `scheduling-availability-writer.js` is the versioned port of the legacy V2
-availability writer for the same page: availability form submit, manager
-selection (platform-managed virtual calendar vs the member's own calendar),
-Nylas scheduler configuration create/update, timezone set, and the calendar
-OAuth grant redirect — with the loader (`[data-custom-loader]`) and the
-success/error modal steps restored. It loads after `scheduling-auth.js` and
-`scheduling-availability-init.js`:
-
-```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-availability-init.js"></script>
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-availability-writer.js"></script>
-```
-
-(`@latest` resolves the highest semver tag — releases go through the
-`webflow-cdn-release` tag + purge pipeline.)
+availability writer for the staging booking page and canonical Starter
+dashboard: availability form submit, manager selection (platform-managed
+virtual calendar vs the member's own calendar), Nylas scheduler configuration
+create/update, timezone set, and the calendar OAuth grant redirect — with the
+loader (`[data-custom-loader]`) and the success/error modal steps restored. It
+loads after `scheduling-auth.js` and `scheduling-availability-init.js`; the
+authoritative four-script order and release URLs live in
+`scheduling-v3-stage-component.html`. Releases use the reviewed semver tag and
+jsDelivr purge pipeline.
 
 Safety boundary:
 
-- Staging-hostname-only, same as the other two modules.
+- Installs on the Webflow staging hostname and only the exact
+  `/starter-dashboard` path on both production hosts. It stays inert on the
+  production `/brand-dashboard` and all production Hire profiles.
 - Hard-requires `window.xanoAuthFetch`; without it the writer disables itself
   (`data-scheduling-availability-writer="missing-auth"`) instead of falling
   back to unauthenticated writes.
@@ -1216,17 +1210,22 @@ Deliberately NOT ported from the legacy inline writer:
   through to the `success` step (legacy phantom-success bug).
 
 V3 endpoint contract (no Airtable row keys anywhere): the writer calls
-`grants/oauth/v3` with `in_state: <authenticated member id>` and
-`grants/add_virtual/v3` with `{ grant_id, member_id }`. Both are new
+`grants/oauth/v3` with `in_state: <authenticated member id>` and an
+allowlisted `in_redirect_uri`, and sends that same URI to `grants/add/v3`; it
+calls `grants/add_virtual/v3` with `{ grant_id, member_id }`. Both are new
 memberstack_id-keyed endpoints; the legacy airtable_id-keyed
 `grants/oauth`/`grants/add`/`grants/add_virtual` remain untouched for V2. The
-OAuth return is handled by `v3/connect-success.js` via `grants/add/v3`
+OAuth return is handled by the availability writer via `grants/add/v3`
 (server-side code exchange + persist in one call).
 
 All other writer reads and writes now use their reviewed `/v3` routes:
 `starter/get_by_memberstack`, `starter/set_timezone`,
 `starter/clear_calendar_data`, `nylas_configurations/get_all`, configuration
 create/update/delete, virtual-account/calendar creation, and grant deletion.
+On the approved production dashboard, bootstrap remains read-only: a missing
+row timezone is persisted through `starter/set_timezone/v3` only when the
+member submits an availability or calendar action. A member-scoped cached
+timezone can supply that value, but does not count as canonical persistence.
 
 Paid-call rate: resolved from the form's `#price` input
 (`data-rate`/value, Designer-bound like V2) with the shared `paid_call_rate`
@@ -1255,15 +1254,16 @@ node v3/scheduling-availability-writer.test.js
 ## Calendar OAuth return (no separate page)
 
 There is no `/connect-success` page in V3. `grants/oauth/v3` redirects the
-OAuth tab straight back to the Booking-stage page with `?code&state`, and the
-availability writer handles the return during bootstrap: it strips the params
-from the URL, verifies `state` (set server-side from the caller's Bearer
-token) against the logged-in member, exchanges + persists the grant through
-`grants/add/v3` (one authenticated call; the code exchange happens in Xano),
-and then continues the normal `?calendar` connect flow. The original tab shows
-the modal's `reload-page` step, matching the legacy UX. Booking
-confirmation/reschedule/cancel links baked into scheduler configurations also
-point at this page, where the bookings embed owns `booking_ref` handling.
+OAuth tab to the same approved Starter scheduling page with `?code&state`, and
+the availability writer handles the return during bootstrap: it strips the
+params from the URL, verifies `state` (set server-side from the caller's Bearer
+token) against the logged-in member, and on production requires a recent,
+member-scoped session intent with the exact redirect URI before it exchanges
+and persists the grant through `grants/add/v3` (one authenticated call; the
+code exchange happens in Xano). It then continues the normal connect flow. The
+original tab shows the modal's `reload-page` step, matching the legacy UX.
+Booking confirmation/reschedule/cancel links baked into scheduler configurations
+also point at this page, where the bookings embed owns `booking_ref` handling.
 
 Xano endpoints (created 2026-07-21, group `api:tCpV3oqd`, all Bearer-required
 via `auth = "user_v3"` with token-member == `member_id` preconditions,
@@ -1284,9 +1284,14 @@ inputs whose names match table columns — an optional `timezone` input, when
 absent, silently wiped the stored timezone on every edit. Endpoint inputs must
 avoid column names (hence `in_timezone`).
 
-⚠ The OAuth `redirect_uri` in endpoints 1456/1457 is pinned to the published
-slug `/starter-dashboard---availability-stage`. If the page rename ships with
-a new slug, update both endpoints in the same change.
+Endpoints 1456/1457 accept the same `in_redirect_uri` for authorization and
+code exchange, and reject values outside the exact allowlist:
+`https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage`,
+`https://thestarters.com/starter-dashboard`, and
+`https://www.thestarters.com/starter-dashboard`. The browser derives these
+values only from the approved host and path; both endpoints must use the same
+value or the OAuth provider rejects the exchange.
+
 ## Starter Dashboard points and rank tile
 
 `starter-dashboard-points.js` binds Designer-owned dashboard markup to the
