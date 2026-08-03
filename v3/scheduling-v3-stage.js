@@ -13,7 +13,7 @@
     '/hire/jp-dionisio',
   ]
   const PRODUCTION_PATHS = [
-    '/hire/jp-dionisio',
+    '/hire/jp-test',
     '/starter-dashboard',
     '/brand-dashboard',
   ]
@@ -72,12 +72,15 @@
   const isProductionPath =
     PRODUCTION_HOSTS.has(activeHost) && PRODUCTION_PATHS.includes(activePath)
   if (!isStagingPath && !isProductionPath) return
+  const isHireBookingPath =
+    (activeHost === STAGING_HOST && activePath === '/hire/jp-dionisio') ||
+    (PRODUCTION_HOSTS.has(activeHost) && activePath === '/hire/jp-test')
   if (window.__tsSchedulingV3Stage) return
   window.__tsSchedulingV3Stage = true
 
   const activeRouteMap = Object.freeze({
     ...V3_PATHS,
-    ...(activePath === '/hire/jp-dionisio' ? HIRE_BOOKING_PATHS : {}),
+    ...(isHireBookingPath ? HIRE_BOOKING_PATHS : {}),
   })
   const activeV3Targets = new Set(Object.values(activeRouteMap))
 
@@ -116,7 +119,7 @@
   }
 
   function injectBookingIdentity(scheduler) {
-    if (activePath !== '/hire/jp-dionisio' || !scheduler) return false
+    if (!isHireBookingPath || !scheduler) return false
 
     const brandMemberstackId = window.MEMBER && window.MEMBER.id
     const starterMemberstackId = window.starter_memberstack_id
@@ -151,7 +154,7 @@
   }
 
   function installSchedulerIdentityObserver() {
-    if (activePath !== '/hire/jp-dionisio') return
+    if (!isHireBookingPath) return
 
     function injectAvailableSchedulers() {
       if (!document.querySelectorAll) return false

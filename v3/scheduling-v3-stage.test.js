@@ -280,7 +280,7 @@ test('does not install on the live profile component or unrelated production pat
 test('installs only on the approved Hire canary and canonical dashboards across both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
-      '/hire/jp-dionisio',
+      '/hire/jp-test',
       '/starter-dashboard',
       '/brand-dashboard',
     ]) {
@@ -289,10 +289,33 @@ test('installs only on the approved Hire canary and canonical dashboards across 
       assert.equal(approved.attributes['data-scheduling-v3-stage'], 'ready')
     }
 
-    const otherProfile = loadStage({ hostname, pathname: '/hire/sabina-rahaman' })
-    assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
-    assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+    for (const pathname of ['/hire/sabina-rahaman', '/hire/jp-dionisio']) {
+      const otherProfile = loadStage({ hostname, pathname })
+      assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
+      assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+    }
   }
+})
+
+test('adds stable booking identity on the exact production Live JP Hire route', () => {
+  const { window } = loadStage({
+    hostname: 'www.thestarters.com',
+    pathname: '/hire/jp-test',
+    brandMemberstackId: 'live-brand-member',
+    starterMemberstackId: 'live-starter-member',
+  })
+  const scheduler = { bookingInfo: JSON.stringify({ additionalFields: {} }) }
+
+  assert.equal(window.StarterSchedulingV3Stage.injectBookingIdentity(scheduler), true)
+  const bookingInfo = JSON.parse(scheduler.bookingInfo)
+  assert.equal(
+    bookingInfo.additionalFields.brand_memberstack_id.value,
+    'live-brand-member',
+  )
+  assert.equal(
+    bookingInfo.additionalFields.starter_memberstack_id.value,
+    'live-starter-member',
+  )
 })
 
 test('keeps the isolated Hire stage separate from the live CMS profile path', () => {
