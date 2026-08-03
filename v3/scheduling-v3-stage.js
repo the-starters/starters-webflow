@@ -17,6 +17,7 @@
     '/starter-dashboard',
     '/brand-dashboard',
   ]
+  const BLOCKED_PRODUCTION_PATHS = ['/hire/jp-dionisio']
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_PREFIX = '/api:tCpV3oqd/'
   const STATUS_ATTRIBUTE = 'data-scheduling-v3-stage'
@@ -68,6 +69,12 @@
 
   const activePath = normalizedPagePath()
   const activeHost = window.location.hostname
+  const isBlockedProductionPath =
+    PRODUCTION_HOSTS.has(activeHost) && BLOCKED_PRODUCTION_PATHS.includes(activePath)
+  if (isBlockedProductionPath) {
+    installBlockedRoute()
+    return
+  }
   const isStagingPath = activeHost === STAGING_HOST && STAGE_PATHS.includes(activePath)
   const isProductionPath =
     PRODUCTION_HOSTS.has(activeHost) && PRODUCTION_PATHS.includes(activePath)
@@ -101,6 +108,25 @@
         { status: 410, headers: { 'Content-Type': 'application/json' } },
       ),
     )
+  }
+
+  function installBlockedRoute() {
+    setStatus('disabled')
+    if (window.__tsSchedulingV3InertRoute) return
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = async function (input, init) {
+      const request = new Request(input, init)
+      const scheduling = schedulingRoute(request)
+      if (!scheduling) return originalFetch(request)
+      return new Response(
+        JSON.stringify({
+          code: 'SCHEDULING_V3_ROUTE_DISABLED',
+          message: 'Scheduling is disabled on this profile.',
+        }),
+        { status: 410, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    window.__tsSchedulingV3InertRoute = true
   }
 
   function schedulingRoute(request) {

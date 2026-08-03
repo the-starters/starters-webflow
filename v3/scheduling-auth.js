@@ -8,10 +8,20 @@
     '/starter-dashboard',
     '/brand-dashboard',
   ])
+  const BLOCKED_PRODUCTION_PATHS = new Set(['/hire/jp-dionisio'])
+  const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
+  const API_PREFIX = '/api:tCpV3oqd/'
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const isStagingHost = window.location.hostname === STAGING_HOST
+  const isBlockedProductionPath =
+    PRODUCTION_HOSTS.has(window.location.hostname) &&
+    BLOCKED_PRODUCTION_PATHS.has(activePath)
   const isApprovedProductionPath =
     PRODUCTION_HOSTS.has(window.location.hostname) && PRODUCTION_PATHS.has(activePath)
+  if (isBlockedProductionPath) {
+    installBlockedRoute()
+    return
+  }
   if (!isStagingHost && !isApprovedProductionPath) return
   const legacyBridgeInstalled =
     window.__tsSchedulingAuthBridgeOwner === 'opportunities-3.0'
@@ -23,7 +33,6 @@
   }
   window.__tsSchedulingAuthBridgePending = true
 
-  const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const TRADE_TOKEN_PATH = '/api:g1vmSLWh/auth/trade-token/v3'
   // Keep this exact. The stage adapter owns legacy-to-V3 routing; this bridge
   // only adds credentials to reviewed authenticated endpoints.
@@ -77,6 +86,31 @@
     '/api:tCpV3oqd/scheduler/configurations/update_v2',
     '/api:tCpV3oqd/starter/get_by_memberstack',
   ]
+
+  function installBlockedRoute() {
+    if (window.__tsSchedulingV3InertRoute) return
+    const originalFetch = window.fetch.bind(window)
+    window.fetch = async function (input, init) {
+      const request = new Request(input, init)
+      let url
+      try {
+        url = new URL(request.url, window.location.href)
+      } catch (error) {
+        return originalFetch(request)
+      }
+      if (url.origin !== XANO_ORIGIN || !url.pathname.startsWith(API_PREFIX)) {
+        return originalFetch(request)
+      }
+      return new Response(
+        JSON.stringify({
+          code: 'SCHEDULING_V3_ROUTE_DISABLED',
+          message: 'Scheduling is disabled on this profile.',
+        }),
+        { status: 410, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    window.__tsSchedulingV3InertRoute = true
+  }
 
   const originalFetch = legacyBridgeInstalled
     ? window.__tsSchedulingAuthOriginalFetch

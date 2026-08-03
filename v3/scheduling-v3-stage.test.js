@@ -277,7 +277,7 @@ test('does not install on the live profile component or unrelated production pat
   assert.equal(production.window.fetch, production.nativeFetch)
 })
 
-test('installs only on the approved Hire canary and canonical dashboards across both production hosts', () => {
+test('installs only on the approved Hire canary and canonical dashboards across both production hosts', async () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
       '/hire/jp-test',
@@ -289,12 +289,67 @@ test('installs only on the approved Hire canary and canonical dashboards across 
       assert.equal(approved.attributes['data-scheduling-v3-stage'], 'ready')
     }
 
-    for (const pathname of ['/hire/sabina-rahaman', '/hire/jp-dionisio']) {
-      const otherProfile = loadStage({ hostname, pathname })
-      assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
-      assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
-    }
+    const otherProfile = loadStage({ hostname, pathname: '/hire/sabina-rahaman' })
+    assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
+    assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+
+    const protectedProfile = loadStage({ hostname, pathname: '/hire/jp-dionisio' })
+    assert.equal(protectedProfile.window.__tsSchedulingV3InertRoute, true)
+    assert.equal(protectedProfile.window.__tsSchedulingV3Stage, undefined)
+    assert.equal(protectedProfile.window.StarterSchedulingV3Stage, undefined)
+    assert.equal(protectedProfile.attributes['data-scheduling-v3-stage'], 'disabled')
+    const blocked = await protectedProfile.window.fetch(
+      `${API_BASE}starter/get_by_memberstack`,
+    )
+    assert.equal(blocked.status, 410)
+    assert.equal((await blocked.json()).code, 'SCHEDULING_V3_ROUTE_DISABLED')
+    assert.equal(protectedProfile.nativeRequests.length, 0)
+    assert.equal(protectedProfile.authenticatedRequests.length, 0)
   }
+})
+
+test('keeps the protected production Test profile inert with both synchronous scripts', async () => {
+  const requests = []
+  const attributes = {}
+  const window = {
+    location: {
+      hostname: 'www.thestarters.com',
+      pathname: '/hire/jp-dionisio',
+      href: 'https://www.thestarters.com/hire/jp-dionisio',
+    },
+    fetch: async (request) => {
+      requests.push(request)
+      return response({ native: true })
+    },
+    setTimeout() {},
+  }
+  const context = {
+    console: { info() {}, warn() {} },
+    document: {
+      documentElement: {
+        setAttribute(name, value) {
+          attributes[name] = value
+        },
+      },
+    },
+    Object,
+    Request,
+    Response,
+    Set,
+    URL,
+    window,
+  }
+
+  vm.runInNewContext(authSource, context)
+  vm.runInNewContext(source, context)
+
+  assert.equal(window.__tsSchedulingV3InertRoute, true)
+  assert.equal(window.xanoAuthFetch, undefined)
+  assert.equal(window.StarterSchedulingV3Stage, undefined)
+  assert.equal(attributes['data-scheduling-v3-stage'], 'disabled')
+  const blocked = await window.fetch(`${API_BASE}nylas_configurations/get_all`)
+  assert.equal(blocked.status, 410)
+  assert.equal(requests.length, 0)
 })
 
 test('adds stable booking identity on the exact production Live JP Hire route', () => {

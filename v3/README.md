@@ -974,7 +974,10 @@ The seventh path is the existing approved Test Talent CMS item. The exact paths
 `/hire/jp-test`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
 `thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
 staging-host only. The adapter does not install on any other `/hire/*` item or
-on `detail_hire`. The adapter maps the reviewed legacy scheduling paths to
+on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
+both synchronous scripts: scheduling-group requests return HTTP `410` without
+installing authentication, discovery overrides, or booking identity. The
+adapter maps the reviewed legacy scheduling paths to
 their exact `/v3` routes,
 preserves request method, body, headers, and query parameters, and sends the
 rewritten request through `window.xanoAuthFetch`.
