@@ -133,3 +133,16 @@
     transform: rotate(45deg);
     opacity: 1;
   }
+
+  [data-block='explore-sub-item'] > .explore_item_wr::after {
+    content: '';
+    flex: none;
+    width: 0.5rem;
+    height: 0.5rem;
+    margin-left: 12px;
+    margin-right: 8px;
+    border-right: 2px solid currentColor;
+    border-top: 2px solid currentColor;
+    transform: rotate(45deg);
+    opacity: 1;
+  }
