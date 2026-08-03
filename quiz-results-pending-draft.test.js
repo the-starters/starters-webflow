@@ -24,9 +24,10 @@ const readyPredicateSource = sliceSource(
  * Builds the sessionStorage-reading half of the controller in a sandbox, on top
  * of a fake session store that records every removeItem call.
  */
-function getPendingQuizApi(storedValue) {
+function getPendingQuizApi(storedValue, savedMemberQuiz) {
     const store = new Map()
     const removals = []
+    const writes = []
     const logs = []
 
     if (storedValue !== undefined) {
@@ -38,6 +39,7 @@ function getPendingQuizApi(storedValue) {
             return store.has(key) ? store.get(key) : null
         },
         setItem(key, value) {
+            writes.push([key, value])
             store.set(key, value)
         },
         removeItem(key) {
@@ -56,12 +58,34 @@ function getPendingQuizApi(storedValue) {
                 '    /**\n     * Reads the pending quiz payload saved before Memberstack signup.',
                 'function getUrlListValues(',
             ),
-            '({ getPendingQuiz, parsePendingQuiz, isPendingQuizReady })',
+            sliceSource(
+                'async function getPendingQuizFromMemberstack()',
+                'function compactSelectionItems(',
+            ),
+            '({',
+            '  getPendingQuiz,',
+            '  getPendingQuizFromMemberstack,',
+            '  parsePendingQuiz,',
+            '  isPendingQuizReady,',
+            '})',
         ].join('\n'),
-        { String, logs, sessionStorage },
+        {
+            String,
+            Date,
+            JSON,
+            logs,
+            sessionStorage,
+            waitForMemberstack: async () =>
+                savedMemberQuiz === undefined ? null : {},
+            getExistingMemberJson: async () => ({
+                starterQuiz: savedMemberQuiz,
+            }),
+            getCurrentMemberData: async () => ({ id: 'mem_test' }),
+            getMemberCustomFields: () => ({}),
+        },
     )
 
-    return { api, store, removals, logs }
+    return { api, store, removals, writes, logs }
 }
 
 /**
@@ -182,6 +206,62 @@ test('malformed and absent payloads behave exactly as before', () => {
 
     assert.equal(empty.api.getPendingQuiz(), null)
     assert.deepEqual(empty.removals, [])
+})
+
+// The one behavior change this fix newly makes reachable, ratified as
+// acceptable: a LOGGED-IN member holding only a draft used to stop at the draft
+// (and render nothing); now the draft is ignored, so the boot flow continues to
+// getPendingQuizFromMemberstack(), whose pre-existing setItem caches the saved
+// answers under the same key. The draft is therefore SUPERSEDED by a fresher
+// payload, not deleted, and the replacement still carries `updatedAt` — which is
+// the field quiz-loader.js turns into its skip-on-refresh run id.
+test('a logged-in member with only a draft gets their saved answers cached over it', async () => {
+    const savedMemberQuiz = {
+        status: 'ready',
+        updatedAt: '2026-08-02T09:00:00.000Z',
+        completedAt: '2026-08-02T09:00:00.000Z',
+        categoryIds: ['paid-media'],
+    }
+    const { api, store, removals, writes } = getPendingQuizApi(
+        draftPayload,
+        savedMemberQuiz,
+    )
+
+    assert.equal(api.getPendingQuiz(), null, 'the draft must be ignored first')
+
+    const memberPendingQuiz = await api.getPendingQuizFromMemberstack()
+
+    assert.ok(memberPendingQuiz, 'the saved member payload should be returned')
+    assert.deepEqual(Array.from(memberPendingQuiz.categoryIds), ['paid-media'])
+
+    // Replaced, not merely removed: exactly one write, to the same key, and the
+    // key still holds a payload afterwards.
+    assert.deepEqual(removals, [], 'the key must never be removed')
+    assert.equal(writes.length, 1)
+    assert.equal(writes[0][0], 'starterQuizPending')
+
+    const stored = JSON.parse(store.get('starterQuizPending'))
+
+    assert.notEqual(
+        store.get('starterQuizPending'),
+        draftPayload,
+        'the stored draft should have been superseded',
+    )
+    assert.equal(stored.status, 'ready')
+    assert.equal(stored.updatedAt, savedMemberQuiz.updatedAt)
+    assert.ok(
+        stored.updatedAt,
+        'the replacement must keep updatedAt for the quiz-loader run id',
+    )
+    assert.ok(stored.memberstackSavedAt, 'the save marker should be stamped')
+
+    // The comment at the setItem site records why this overwrite is acceptable.
+    const loaderSource = sliceSource(
+        'async function getPendingQuizFromMemberstack()',
+        'function compactSelectionItems(',
+    )
+
+    assert.match(loaderSource, /quiz-loader\.js keeps deriving/)
 })
 
 test('the ready predicate tolerates casing and stray whitespace', () => {

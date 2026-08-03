@@ -5166,6 +5166,13 @@
                 pendingQuiz.memberstackSavedAt = new Date().toISOString()
             }
 
+            // Caches the member's saved answers under the same key the funnel
+            // uses. A logged-in member holding only a draft now reaches this
+            // point (getPendingQuiz() ignores drafts), so this replaces that
+            // draft rather than adding to it. Ratified as acceptable: the
+            // replacement is a fresher payload that still carries `updatedAt`,
+            // so quiz-loader.js keeps deriving a valid skip-on-refresh run id
+            // from this key — the draft is superseded, never simply removed.
             sessionStorage.setItem(
                 pendingQuizStorageKey,
                 JSON.stringify(pendingQuiz),

@@ -143,5 +143,5 @@ Run the focused quiz tests, including the form-selector contract regression,
 with:
 
 ```sh
-node --test quiz-main/*.test.js quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js
+node --test quiz-main/*.test.js quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js
 ```
