@@ -91,10 +91,12 @@ function loadStage(options = {}) {
   }
 }
 
-test('installs on the five explicit staging pages', () => {
+test('installs on the seven explicit staging pages', () => {
   for (const pathname of [
     '/starter-dashboard---availability-stage',
     '/brand-dashboard---availability-stage',
+    '/starter-dashboard',
+    '/brand-dashboard',
     '/messages-stage',
     '/hire-stage',
     '/hire/jp-dionisio',

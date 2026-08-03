@@ -918,7 +918,7 @@ Current safety boundary:
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
   This prevents a release-time regression on non-stage staging consumers; the
-  stage adapter intercepts those paths first on its five approved staging paths
+  stage adapter intercepts those paths first on its seven approved staging paths
   and three exact production surfaces.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
@@ -964,11 +964,13 @@ scheduling component. It installs on these exact staging paths:
 
 - `/starter-dashboard---availability-stage`
 - `/brand-dashboard---availability-stage`
+- `/starter-dashboard`
+- `/brand-dashboard`
 - `/messages-stage`
 - `/hire-stage`
 - `/hire/jp-dionisio`
 
-The fifth path is the existing approved Test Talent CMS item. The exact paths
+The seventh path is the existing approved Test Talent CMS item. The exact paths
 `/hire/jp-dionisio`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
 `thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
 staging-host only. The adapter does not install on any other `/hire/*` item or
@@ -1016,7 +1018,7 @@ Runtime contract:
   reached before `window.xanoAuthFetch` exists (the request is then blocked).
   The attribute is not set on pages where the adapter does not install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
-  five installed stage paths), `productionPaths` (the exact production Hire
+  seven installed stage paths), `productionPaths` (the exact production Hire
   canary and canonical dashboards), and `routeMap` (the legacy-to-`/v3` route
   map).
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
