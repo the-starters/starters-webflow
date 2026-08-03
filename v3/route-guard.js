@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.77
+ * @release v1.59.78
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
  * /login and /auth-route, so a logged-in member can still reach another role's
@@ -18,7 +18,9 @@
  *   - bounce an already-logged-in member off the four public entry pages in
  *     MEMBER_BOUNCE_PAGES (homepage, both login pages, signup) to a validated
  *     `?next=` or their role home, while leaving logged-out visitors there
- *     completely alone,
+ *     completely alone — with two homepage-only overrides on '/' (see
+ *     homepageBounceOverride): a cancelled paid Brand goes to /all-starters,
+ *     and a free Brand who has not taken the quiz stays put,
  *   - send a logged-in member whose role does not belong on one of the
  *     ROLE_BOUNCE_PAGES (/quiz-results, /all-starters) to that member's role
  *     home, again leaving logged-out visitors completely alone,
@@ -223,14 +225,66 @@
     '/build-profile/consult': '/',
   }
 
+  // The single shared definition of "this plan connection currently counts".
+  // Everything that reads planConnections goes through it, so the active test
+  // cannot drift between role resolution and the cancelled-plan predicate.
+  function isActiveConnection(connection) {
+    return connection.active === true || connection.status === 'ACTIVE'
+  }
+
+  function planConnectionsOf(member) {
+    return member && member.planConnections ? member.planConnections : []
+  }
+
   function activePlanIds(member) {
-    return (member && member.planConnections ? member.planConnections : [])
-      .filter(function (connection) {
-        return connection.active === true || connection.status === 'ACTIVE'
-      })
+    return planConnectionsOf(member)
+      .filter(isActiveConnection)
       .map(function (connection) {
         return connection.planId
       })
+  }
+
+  // Derived from PLAN_ROLES rather than a second hard-coded ID list, so adding a
+  // paid Brand plan to the map above is enough to teach the cancelled predicate
+  // about it.
+  function isPaidBrandPlanId(planId) {
+    return PLAN_ROLES[planId] === 'brand-paid'
+  }
+
+  /**
+   * A member who has paid for Brand at some point and does not have a live paid
+   * Brand connection now (decision by Jerico 2026-08-03).
+   *
+   * True when at least one paid-Brand plan connection exists and is NOT active
+   * by isActiveConnection, AND no paid-Brand connection is active. Both
+   * real-world sub-kinds satisfy it: the member whose older free-Brand plan is
+   * still active (roleResolution says brand-free) and the member left with no
+   * active plans at all (roleResolution says unmapped-plan). That is why the
+   * only caller checks this BEFORE the role lookup — the second sub-kind has no
+   * role to key off.
+   *
+   * `CANCELED` is the expected inactive Memberstack status, but the predicate
+   * deliberately does not look at the status string: any inactive paid-Brand
+   * connection counts, so a `PAST_DUE` or `EXPIRED` shape needs no code change.
+   *
+   * Unverified: the exact Memberstack payload during a cancel-at-period-end
+   * grace window. While the paid connection still reports active, this returns
+   * false and the member correctly remains a paid Brand with full access — the
+   * fail-safe direction. Only once Memberstack flips that connection inactive
+   * does the member read as cancelled.
+   */
+  function hasCancelledPaidBrandPlan(member) {
+    var connections = planConnectionsOf(member)
+    var hasInactivePaidBrand = false
+    for (var i = 0; i < connections.length; i++) {
+      var connection = connections[i]
+      if (!connection || !isPaidBrandPlanId(connection.planId)) continue
+      // Any live paid connection settles it: this member is still a paid Brand,
+      // whatever else has lapsed alongside it.
+      if (isActiveConnection(connection)) return false
+      hasInactivePaidBrand = true
+    }
+    return hasInactivePaidBrand
   }
 
   /**
@@ -405,32 +459,91 @@
   }
 
   /**
-   * Where a signed-in member on a MEMBER_BOUNCE_PAGES page belongs.
-   *
-   * '' -> stay (never returned today, kept for symmetry with redirectTargetFor)
-   * a path string -> redirect there
-   * null -> unmapped or conflicted; stay silently, this is a public page
+   * The `?next=` half of bounceTargetFor: the local path to honour, or null when
+   * this member has no usable `next`.
    *
    * A `?next=` survives when it is same-origin AND either allowed for this
    * member's role or on a page the guard does not police at all — the second
    * case is what lets a member be returned to a public marketing page they were
    * reading before they signed in. A `next` pointing back at a bounce page is
-   * refused, because honouring it would land the member on a page this very
-   * function is about to bounce them off again.
+   * refused, because honouring it would land the member on a page the bounce is
+   * about to move them off again.
+   *
+   * Extracted so the homepage overrides below can consult the exact same
+   * validation instead of re-deriving it. `role` may be null (an unmapped
+   * member): only the unguarded-page case can then match, which is the same
+   * answer the inline version gave, since indexOf(null) is always -1.
    */
-  function bounceTargetFor(member, requestedNext) {
+  function honouredNext(requestedNext, role) {
+    var next = localPath(requestedNext)
+    var nextPathname = next ? pathnameOf(next) : null
+    if (!nextPathname || isMemberBouncePage(nextPathname)) return null
+    var allowed = pageRolesFor(nextPathname)
+    // Unguarded (null) is honoured as a public page. An empty allowlist —
+    // /dashboard — is not: no role stays there, so it resolves to the role home
+    // exactly as it does in redirectTargetFor and auth-route.js.
+    if (allowed === null) return next
+    if (role && allowed.indexOf(role) !== -1) return next
+    return null
+  }
+
+  /**
+   * Homepage-only bounce overrides (decision by Jerico 2026-08-03).
+   *
+   * Two rules that apply on '/' and on no other page. Every other bounce page
+   * (`/login`, `/starter-login`, `/sign-up`), every guarded-page wrong-role
+   * redirect, and all of auth-route.js login routing are deliberately untouched:
+   * a member who lands on a login form has just authenticated and still wants
+   * their funnel, whereas the homepage is where someone browses back to.
+   *
+   * Precedence, highest first:
+   *
+   *   1. A valid explicit `?next=` — deep-link intent beats both rules.
+   *   2. A cancelled paid Brand goes to '/all-starters'. This overrides BOTH the
+   *      brand-free roleHome fallback (the quiz funnel, which is the wrong ask
+   *      of someone who already paid) AND the unmapped-plan stay-with-an-error
+   *      outcome. Note this outranks rule 3, so a cancelled member whose old
+   *      free plan is still live and who never took the quiz is CANCELLED, not
+   *      a stay.
+   *   3. A free Brand who has not completed the quiz stays on the homepage
+   *      instead of being pushed to '/quiz'. Quiz-done free Brands keep going
+   *      to '/quiz-results'.
+   *
+   * Returns a path to redirect to, '' to stay put, or null when no override
+   * applies and the caller should fall through to the normal bounce.
+   */
+  function homepageBounceOverride(member, requestedNext) {
+    var role = memberRole(member)
+    var next = honouredNext(requestedNext, role)
+    if (next) return next
+    if (hasCancelledPaidBrandPlan(member)) return '/all-starters'
+    if (role === 'brand-free' && !hasCompletedQuiz(member)) return ''
+    return null
+  }
+
+  /**
+   * Where a signed-in member on a MEMBER_BOUNCE_PAGES page belongs.
+   *
+   * '' -> stay (returned only by the homepage not-yet-quizzed free-Brand rule)
+   * a path string -> redirect there
+   * null -> unmapped or conflicted; stay silently, this is a public page
+   *
+   * `pathname` is the bounce page being left. It is required for the
+   * homepage-only overrides to fire at all: called without it (the pure-logic
+   * unit tests, or any future caller that forgets) only the role-home behaviour
+   * that predates them is reachable.
+   */
+  function bounceTargetFor(member, requestedNext, pathname) {
+    if (pathname === '/') {
+      var override = homepageBounceOverride(member, requestedNext)
+      if (override !== null) return override
+    }
+
     var role = memberRole(member)
     if (!role) return null
 
-    var next = localPath(requestedNext)
-    var nextPathname = next ? pathnameOf(next) : null
-    if (nextPathname && !isMemberBouncePage(nextPathname)) {
-      var allowed = pageRolesFor(nextPathname)
-      // Unguarded (null) is honoured as a public page. An empty allowlist —
-      // /dashboard — is not: no role stays there, so it resolves to the role
-      // home exactly as it does in redirectTargetFor and auth-route.js.
-      if (allowed === null || allowed.indexOf(role) !== -1) return next
-    }
+    var next = honouredNext(requestedNext, role)
+    if (next) return next
 
     return roleHome(member)
   }
@@ -603,7 +716,7 @@
     if (!member || !member.id) return
 
     var next = new URLSearchParams(window.location.search).get('next')
-    var target = bounceTargetFor(member, next)
+    var target = bounceTargetFor(member, next, window.location.pathname)
     if (target === null) {
       // A public page is the wrong place to surface a plan-configuration
       // problem, so this is console-only: the member simply stays.
@@ -649,13 +762,14 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/route-guard.test.js drift guard asserts they match.
-    release: 'v1.59.77',
+    release: 'v1.59.78',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,
     memberRoleError: memberRoleError,
     roleHome: roleHome,
     hasCompletedQuiz: hasCompletedQuiz,
+    hasCancelledPaidBrandPlan: hasCancelledPaidBrandPlan,
     brandFreeHome: brandFreeHome,
     pageRolesFor: pageRolesFor,
     isGuardedPath: isGuardedPath,

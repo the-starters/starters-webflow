@@ -159,6 +159,50 @@ Note that `/login` and `/starter-login` are also configured by
 stored value is left behind unconsumed; it is harmless, since it is re-validated
 against the role allowlist at `/auth-route` on the next real login.
 
+### Homepage-only overrides
+
+Two rules apply when the bounce page is `/`, and on no other page (decision by
+Jerico 2026-08-03). They live in the homepage branch of `bounceTargetFor`, which
+is why that function now takes the current pathname as a third argument — called
+without it, only the pre-override role-home behavior is reachable.
+
+| Member on `/` | Action |
+| --- | --- |
+| Valid, permitted `?next=` | Replace with that `next` — deep-link intent outranks both rules below |
+| Cancelled paid Brand (either sub-kind) | Replace with `/all-starters` |
+| Free Brand with no completed quiz | Stay: no redirect, no attribute, no event |
+| Anyone else | Unchanged from the table above |
+
+Rule 2 overrides two different pre-existing outcomes at once. A cancelled member
+whose older free plan is still active resolves to `brand-free` and would have
+been sent into the quiz funnel, which is the wrong ask of someone who already
+paid. A cancelled member with no active plans at all is `unmapped-plan` and would
+have sat on the homepage while the console logged a configuration error. Both now
+land on `/all-starters`.
+
+`hasCancelledPaidBrandPlan` (exported on the window API) is true when
+`planConnections` hold at least one paid-Brand connection
+(`pln_new-paid-plan-463h04ph`, `pln_dorxata-test-brand-plan-777r02pa`) that is
+not active by the same `connection.active === true || connection.status ===
+'ACTIVE'` rule the role resolver uses, and no paid-Brand connection that is
+active. It reads the connection shape, not the plan display name, and not the
+status string — `CANCELED` is merely the expected value, so a `PAST_DUE` or
+`EXPIRED` connection counts without a code change. During a cancel-at-period-end
+grace window the payload is unverified; while the paid connection still reports
+active the member keeps full paid-Brand access, which is the fail-safe direction.
+
+Rule 2 outranks rule 3, so a cancelled Brand with a live free plan and no quiz is
+treated as cancelled, not as a stay. Rule 3 exists so the homepage stops pushing
+a browsing free Brand into `/quiz`; once the quiz is done they go to
+`/quiz-results` exactly as before.
+
+Both rules are scoped to `/`. `/login`, `/starter-login`, and `/sign-up` still
+send a not-yet-quizzed free Brand to `/quiz` and still leave an unmapped
+cancelled member where they are, and guarded-page wrong-role redirects still
+resolve through `brandFreeHome`. `v3/route-guard.test.js` asserts each of those
+explicitly, plus that `/all-starters` is a one-hop terminus for both cancelled
+sub-kinds so the new redirect cannot loop.
+
 ## Member-only role bounce pages
 
 `ROLE_BOUNCE_PAGES` — added 2026-08-03 by Jerico's decision — is the third table
@@ -367,7 +411,7 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.77'
+window.StartersV3RouteGuard.release // -> 'v1.59.78'
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
 window.StartersCompleteProfileRedirect.release
@@ -387,8 +431,12 @@ CDN copy is still in play; purge it with `purge.jsdelivr.net`.
   console checks, plus `waitForSharedOpportunitiesAccess` for the merged-feed
   hydration decision, `isMemberBouncePage`, `bounceTargetFor`, `localPath`,
   and `loggedOutDestinationFor` for the bounce and logged-out-override
-  decisions, and `isRoleBouncePage`, `roleBounceRolesFor`, and
+  decisions, `hasCancelledPaidBrandPlan` for the homepage cancelled-Brand
+  decision, and `isRoleBouncePage`, `roleBounceRolesFor`, and
   `roleBounceTargetFor` for the role-bounce decision.
+- `bounceTargetFor` takes `(member, next, pathname)`. Pass `'/'` as the third
+  argument to exercise the homepage overrides from the console; omit it and only
+  the pre-override role-home path runs.
 - `window.Opp30` exposes `routeGuardActive`, `routeGuardConfigured`,
   `waitForRouteGuardHandoff`, `gateOrRedirect`, `gateByPlan`, `memberPlanRole`,
   `waitForMappedMemberRole`, `hasCompletedQuiz`, `brandFreeHome`, `initMergedOppFeed`,
@@ -417,7 +465,17 @@ CDN copy is still in play; purge it with `purge.jsdelivr.net`.
   `data-route-guard="checking"`.
 - Verify the bounce on all four pages (`/`, `/login`, `/starter-login`,
   `/sign-up`) signed in as Talent, paid Brand, and both Free Brand quiz states,
-  and confirm each one still renders untouched when signed out.
+  and confirm each one still renders untouched when signed out. On `/` the two
+  homepage overrides change two of those cases: a not-yet-quizzed Free Brand must
+  stay with no `<html>` attribute at all, while `/login` and `/starter-login`
+  must still send that same member to `/quiz`.
+- Verify the homepage cancelled-Brand redirect with a Memberstack account whose
+  paid Brand plan is cancelled, in both sub-kinds — free plan still active, and
+  no active plan at all. Both must land on `/all-starters` from `/` and then stay
+  there. Confirm `/login` is unchanged for the same accounts (quiz funnel for the
+  first, stay-put for the second), and check
+  `window.StartersV3RouteGuard.hasCancelledPaidBrandPlan((await
+  $memberstackDom.getCurrentMember()).data)` reads `true` in the console.
 - Verify `/login?next=/messages` bounces a signed-in Talent member to
   `/messages`, and that `/starter-login?next=/brand-dashboard` sends that same
   member to `/starter-dashboard` instead.

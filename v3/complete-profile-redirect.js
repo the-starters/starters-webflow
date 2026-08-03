@@ -1,7 +1,7 @@
 /**
  * /complete-profile — paid-Brand completion redirect.
  *
- * @release v1.59.77
+ * @release v1.59.78
  *
  * ONE job: keep a paid Brand who has already finished the Complete-profile form
  * from re-entering it. Completion is a durable signal on the member object — the
@@ -260,7 +260,7 @@
   window.StartersCompleteProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/complete-profile-redirect.test.js drift guard asserts they match.
-    release: 'v1.59.77',
+    release: 'v1.59.78',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isCompleteProfilePath: isCompleteProfilePath,
