@@ -1109,7 +1109,8 @@ Webflow owns all call-section markup. Each section must provide:
   `[bookings-item-template="<name>"]`, `[bookings-loader="<name>"]`, and
   `[bookings-empty="<name>"]`;
 - optional `[bookings-count]`, `[bookings-load-more]`, and
-  `[booking-filter="<status>"]` controls; and
+  `[booking-filter="<status>"]` controls, with the section's filter controls
+  wrapped by `.tabs-button_component.is-dashboard`; and
 - card value slots using the existing `[booking-element]`, `[label-text]`,
   `[payment-status-wrap]`, and `[brand-status]` attributes.
 
@@ -1119,7 +1120,20 @@ requests and all other rows under calls; Brand keeps one calls list. Legacy card
 action controls are hidden because V3 has no identity-safe mutation handler;
 only a confirmed row with a canonical meeting link exposes its join control.
 Loading, empty, and error displays reuse the authored elements instead of
-generating UI.
+generating UI. The filter wrapper stays hidden during identity resolution and
+on errors, and is shown only when the member's full canonical booking rows for
+that section are non-empty. A selected status that has no matching rows does
+not hide the wrapper, so the member can return to All.
+
+The same controller owns filter-wrapper visibility for the existing wf-xano
+Projects lists keyed `dash-projects` and `dash-brand-projects`. Each instance's
+`.tabs-button_component.is-dashboard` stays hidden until a successful wf-xano
+state proves that the unfiltered canonical list contains at least one item. A
+zero-result status filter does not hide the controls once that full-list state
+is known. When a page loads directly with an empty status filter selected, the
+controller temporarily probes the unfiltered list, restores the selected
+status, and reveals the controls only if that probe found projects. Loading,
+error, missing-instance, unknown-total, and auth-transition states fail closed.
 
 On Brand only, the same resolved Memberstack snapshot paints the existing hero:
 `free-user` and `last-name` populate `.dash-hero_profile-name span`, and

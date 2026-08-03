@@ -232,6 +232,82 @@ test('Starter separates pending requests from calls while Brand keeps one call l
   assert.equal(api.sectionBookings(rows, 'brand', 'calls').length, 3)
 })
 
+test('call filters remain visible when the selected status alone has no matches', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const listeners = {}
+  const allFilter = element({ 'booking-filter': 'all' })
+  const completedFilter = element({ 'booking-filter': 'completed' })
+  allFilter.addEventListener = (name, listener) => {
+    listeners.all = listener
+  }
+  completedFilter.addEventListener = (name, listener) => {
+    listeners.completed = listener
+  }
+  const list = element()
+  const renderedCards = []
+  list.appendChild = (card) => renderedCards.push(card)
+  const template = element({ 'bookings-item-template': 'calls' })
+  template.cloneNode = () => element()
+  const loader = element()
+  const empty = element()
+  const filters = element()
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': loader,
+      '[bookings-empty="calls"]': empty,
+      '.tabs-button_component.is-dashboard': filters,
+    })[selector] || null
+  section.querySelectorAll = (selector) =>
+    selector === '[booking-filter]' ? [allFilter, completedFilter] : []
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [template] : []
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        return { id: 'brand-1', customFields: {} }
+      },
+      onAuthChange() {},
+    },
+    document,
+    location: { pathname: '/brand-dashboard' },
+    xanoAuthFetch: async () => ({
+      ok: true,
+      json: async () => [
+        {
+          booking_id: 'confirmed-call',
+          brand_data: { memberstack_id: 'brand-1' },
+          status: 'confirmed',
+        },
+      ],
+    }),
+  }
+
+  vm.runInNewContext(source, { console: { error() {} }, document, Intl, window })
+  await until(() => root.attributes['data-dashboard-calls-v3'] === 'ready')
+  assert.equal(filters.hidden, false)
+  assert.equal(renderedCards.length, 1)
+
+  listeners.completed({ preventDefault() {} })
+  assert.equal(renderedCards.length, 1)
+  assert.equal(list.hidden, true)
+  assert.equal(empty.hidden, false)
+  assert.equal(filters.hidden, false)
+})
+
 test('project filters hide only after an authoritative unfiltered empty result', () => {
   const memory = { known: false, hasAny: false }
   assert.equal(
