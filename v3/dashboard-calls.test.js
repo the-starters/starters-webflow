@@ -22,6 +22,10 @@ function element(attributes = {}) {
     style: {},
     textContent: '',
     addEventListener() {},
+    appendChild() {},
+    cloneNode() {
+      return element(this.attributes)
+    },
     getAttribute(name) {
       return this.attributes[name] || null
     },
@@ -99,6 +103,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   const loader = element()
   const empty = element()
   const count = element()
+  const filters = element()
   const section = element({ 'bookings-section': 'calls' })
   section.querySelector = (selector) =>
     ({
@@ -107,6 +112,7 @@ test('auth changes clear identity state and stale requests cannot render', async
       '[bookings-loader="calls"]': loader,
       '[bookings-empty="calls"]': empty,
       '[bookings-count]': count,
+      '.tabs-button_component.is-dashboard': filters,
     })[selector] || null
   list.querySelectorAll = (selector) =>
     selector === '[bookings-item-template]' ? [template] : []
@@ -141,7 +147,16 @@ test('auth changes clear identity state and stale requests cannot render', async
     xanoAuthFetch: async (_url, init) => {
       requests.push(JSON.parse(init.body).memberstack_id)
       if (requests.length === 1) return firstResponse.promise
-      return { ok: true, json: async () => [] }
+      return {
+        ok: true,
+        json: async () => [
+          {
+            booking_id: 'member-b-call',
+            brand_data: { memberstack_id: 'member-b' },
+            status: 'confirmed',
+          },
+        ],
+      }
     },
   }
 
@@ -165,6 +180,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   assert.deepEqual(requests, ['member-a', 'member-b'])
   assert.equal(name.textContent, 'Member B')
   assert.equal(company.textContent, 'Company B')
+  assert.equal(filters.hidden, false)
 
   firstResponse.resolve({ ok: true, json: async () => [] })
   await new Promise(setImmediate)
@@ -174,6 +190,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   authChange()
   assert.equal(name.textContent, '')
   assert.equal(company.textContent, '')
+  assert.equal(filters.hidden, true)
   await until(() => root.attributes['data-dashboard-calls-v3'] === 'error')
 })
 
@@ -213,4 +230,245 @@ test('Starter separates pending requests from calls while Brand keeps one call l
     ['active', 'cancelled'],
   )
   assert.equal(api.sectionBookings(rows, 'brand', 'calls').length, 3)
+})
+
+test('call filters remain visible when the selected status alone has no matches', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const listeners = {}
+  const allFilter = element({ 'booking-filter': 'all' })
+  const completedFilter = element({ 'booking-filter': 'completed' })
+  allFilter.addEventListener = (name, listener) => {
+    listeners.all = listener
+  }
+  completedFilter.addEventListener = (name, listener) => {
+    listeners.completed = listener
+  }
+  const list = element()
+  const renderedCards = []
+  list.appendChild = (card) => renderedCards.push(card)
+  const template = element({ 'bookings-item-template': 'calls' })
+  template.cloneNode = () => element()
+  const loader = element()
+  const empty = element()
+  const filters = element()
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': loader,
+      '[bookings-empty="calls"]': empty,
+      '.tabs-button_component.is-dashboard': filters,
+    })[selector] || null
+  section.querySelectorAll = (selector) =>
+    selector === '[booking-filter]' ? [allFilter, completedFilter] : []
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [template] : []
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        return { id: 'brand-1', customFields: {} }
+      },
+      onAuthChange() {},
+    },
+    document,
+    location: { pathname: '/brand-dashboard' },
+    xanoAuthFetch: async () => ({
+      ok: true,
+      json: async () => [
+        {
+          booking_id: 'confirmed-call',
+          brand_data: { memberstack_id: 'brand-1' },
+          status: 'confirmed',
+        },
+      ],
+    }),
+  }
+
+  vm.runInNewContext(source, { console: { error() {} }, document, Intl, window })
+  await until(() => root.attributes['data-dashboard-calls-v3'] === 'ready')
+  assert.equal(filters.hidden, false)
+  assert.equal(renderedCards.length, 1)
+
+  listeners.completed({ preventDefault() {} })
+  assert.equal(renderedCards.length, 1)
+  assert.equal(list.hidden, true)
+  assert.equal(empty.hidden, false)
+  assert.equal(filters.hidden, false)
+})
+
+test('project filters hide only after an authoritative unfiltered empty result', () => {
+  const memory = { known: false, hasAny: false }
+  assert.equal(
+    api.projectFilterVisible(
+      { status: 'success', data: { total: 0 }, query: { params: {} } },
+      memory,
+    ),
+    false,
+  )
+  assert.deepEqual(memory, { known: true, hasAny: false })
+})
+
+test('project filters remain usable when only the selected filter is empty', () => {
+  const memory = { known: false, hasAny: false }
+  assert.equal(
+    api.projectFilterVisible(
+      {
+        status: 'success',
+        data: { total: 2 },
+        query: { params: { status: '*' } },
+      },
+      memory,
+    ),
+    true,
+  )
+  assert.equal(
+    api.projectFilterVisible(
+      {
+        status: 'success',
+        data: { total: 0 },
+        query: { params: { status: 'completed' } },
+      },
+      memory,
+    ),
+    true,
+  )
+})
+
+test('project filters fail closed outside authoritative success states', () => {
+  const memory = { known: true, hasAny: true }
+  assert.equal(api.projectFilterVisible({ status: 'loading' }, memory), false)
+  assert.equal(api.projectFilterVisible({ status: 'error' }, memory), false)
+  assert.equal(api.projectFilterVisible({}, memory), false)
+  assert.equal(
+    api.projectFilterVisible(
+      {
+        status: 'success',
+        data: { total: null },
+        query: { params: { status: 'active' } },
+      },
+      memory,
+    ),
+    false,
+  )
+})
+
+test('a deep-linked empty project filter stays hidden until the full list is known', () => {
+  const memory = { known: false, hasAny: false }
+  assert.equal(
+    api.projectFilterVisible(
+      {
+        status: 'success',
+        data: { total: 0 },
+        query: { params: { status: 'active' } },
+      },
+      memory,
+    ),
+    false,
+  )
+  assert.deepEqual(memory, { known: false, hasAny: false })
+})
+
+test('project filters hide synchronously before wf-xano is available', () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const filters = element()
+  const project = element({ 'wf-xano-instance': 'dash-projects' })
+  project.querySelector = (selector) =>
+    selector === '.tabs-button_component.is-dashboard' ? filters : null
+  const document = {
+    readyState: 'complete',
+    querySelectorAll(selector) {
+      if (selector === '[wf-xano-instance="dash-projects"]') return [project]
+      return []
+    },
+  }
+  const window = {
+    document,
+    location: { pathname: '/starter-dashboard' },
+  }
+
+  vm.runInNewContext(source, { document, Intl, window })
+
+  assert.equal(filters.hidden, true)
+  assert.equal(filters.style.display, 'none')
+  assert.equal(window.WfXano.length, 1)
+})
+
+test('a deep-linked empty filter probes All before becoming visible', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const filters = element()
+  const project = element({ 'wf-xano-instance': 'dash-projects' })
+  project.querySelector = (selector) =>
+    selector === '.tabs-button_component.is-dashboard' ? filters : null
+  const document = {
+    readyState: 'complete',
+    querySelectorAll(selector) {
+      if (selector === '[wf-xano-instance="dash-projects"]') return [project]
+      return []
+    },
+  }
+  const window = {
+    document,
+    location: { pathname: '/starter-dashboard' },
+  }
+  let state = {
+    status: 'success',
+    data: { total: 0 },
+    query: { params: { status: 'active' } },
+  }
+  let subscriber
+  const params = []
+  const instance = {
+    qa: () => [filters],
+    root: project,
+    on() {},
+    setParam(field, value) {
+      params.push([field, value])
+      state = {
+        status: 'loading',
+        data: state.data,
+        query: { params: value ? { [field]: value } : {} },
+      }
+      subscriber(state)
+    },
+    subscribe(selector, handler) {
+      subscriber = (next) => handler(selector(next))
+      subscriber(state)
+    },
+  }
+
+  vm.runInNewContext(source, { document, Intl, Promise, window })
+  window.WfXano[0]({ get: (key) => (key === 'dash-projects' ? instance : null) })
+  await new Promise(setImmediate)
+  assert.deepEqual(params, [['status', '']])
+  assert.equal(filters.hidden, true)
+
+  state = { status: 'success', data: { total: 3 }, query: { params: {} } }
+  subscriber(state)
+  await new Promise(setImmediate)
+  assert.deepEqual(params, [
+    ['status', ''],
+    ['status', 'active'],
+  ])
+  assert.equal(filters.hidden, true)
+
+  state = {
+    status: 'success',
+    data: { total: 0 },
+    query: { params: { status: 'active' } },
+  }
+  subscriber(state)
+  await new Promise(setImmediate)
+  assert.equal(filters.hidden, false)
 })
