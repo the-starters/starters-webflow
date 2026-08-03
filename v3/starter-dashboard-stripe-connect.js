@@ -12,6 +12,7 @@
  *   data-stripe-connect-element="root|loading|disconnected|incomplete|
  *   ready|review|error"
  *   data-stripe-connect-action="start|refresh|earnings"
+ *   data-stripe-connect-earnings-state="disconnected|ready"
  */
 ;(function (global) {
   'use strict'
@@ -40,6 +41,7 @@
   const RETURN_POLL_DELAYS_MS = [0, 750, 1500, 3000, 5000]
   const ELEMENT_ATTR = 'data-stripe-connect-element'
   const ACTION_ATTR = 'data-stripe-connect-action'
+  const EARNINGS_STATE_ATTR = 'data-stripe-connect-earnings-state'
   const STATES = [
     'loading',
     'disconnected',
@@ -268,6 +270,86 @@
     })
   }
 
+  function setConnectAccess(element, enabled) {
+    if (!element) return
+    element.setAttribute('aria-disabled', enabled ? 'false' : 'true')
+    if (element.classList) element.classList.toggle('is-disabled', !enabled)
+    element.setAttribute('role', 'button')
+    element.setAttribute('tabindex', enabled ? '0' : '-1')
+  }
+
+  function resolveEarningsTiles(elements) {
+    const tiles = {
+      all: elements,
+      disconnected: elements.find(function (element) {
+        return element.getAttribute(EARNINGS_STATE_ATTR) === 'disconnected'
+      }),
+      ready: elements.find(function (element) {
+        return element.getAttribute(EARNINGS_STATE_ATTR) === 'ready'
+      }),
+    }
+
+    // The live dashboard originally shipped two authored tiles with the same
+    // action attribute. Preserve that markup contract while allowing explicit
+    // state attributes on new installs.
+    if (elements.length === 2) {
+      if (!tiles.disconnected) {
+        tiles.disconnected = elements.find(function (element) {
+          return (
+            !element.getAttribute(EARNINGS_STATE_ATTR) &&
+            element !== tiles.ready
+          )
+        })
+      }
+      if (!tiles.ready) {
+        tiles.ready = elements.find(function (element) {
+          return (
+            !element.getAttribute(EARNINGS_STATE_ATTR) &&
+            element !== tiles.disconnected
+          )
+        })
+      }
+    } else if (
+      elements.length === 1 &&
+      !tiles.disconnected &&
+      !tiles.ready
+    ) {
+      tiles.ready = elements[0]
+    }
+
+    return tiles
+  }
+
+  function renderEarningsTiles(tiles, view) {
+    const showDisconnected = view === 'disconnected' || view === 'incomplete'
+    const showReady = view === 'ready'
+
+    tiles.all.forEach(function (element) {
+      show(element, false)
+    })
+    setConnectAccess(tiles.disconnected, showDisconnected)
+    setEarningsAccess(tiles.ready ? [tiles.ready] : [], showReady)
+    show(tiles.disconnected, showDisconnected)
+    show(tiles.ready, showReady)
+  }
+
+  function handleConnectClick(element, event, activate) {
+    if (element.getAttribute('aria-disabled') === 'true') {
+      event.preventDefault()
+      return false
+    }
+    event.preventDefault()
+    activate()
+    return true
+  }
+
+  function handleConnectKeydown(element, event, activate) {
+    if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') {
+      return false
+    }
+    return handleConnectClick(element, event, activate)
+  }
+
   function handleEarningsClick(element, event) {
     if (element.getAttribute('aria-disabled') === 'true') {
       event.preventDefault()
@@ -333,20 +415,20 @@
   async function loadDashboardStatus(
     roots,
     returnedFromStripe,
-    earningsLinks = [],
+    earningsTiles = resolveEarningsTiles([]),
   ) {
     renderRoots(roots, 'loading')
-    setEarningsAccess(earningsLinks, false)
+    renderEarningsTiles(earningsTiles, 'loading')
     try {
       const status = await readSettledStatus(returnedFromStripe)
       const view = resolveDashboardView(status, returnedFromStripe)
       renderRoots(roots, view)
-      setEarningsAccess(earningsLinks, status.charges_enabled === true)
+      renderEarningsTiles(earningsTiles, view)
       emit('starterStripeConnectReady', { view, status })
       return status
     } catch (error) {
       renderRoots(roots, 'error')
-      setEarningsAccess(earningsLinks, false)
+      renderEarningsTiles(earningsTiles, 'error')
       emit('starterStripeConnectError', {
         action: 'status',
         message: error.message || 'Stripe Connect status failed',
@@ -395,11 +477,12 @@
     )
     if (!roots.length) return null
 
-    const earningsLinks = Array.prototype.slice.call(
+    const earningsElements = Array.prototype.slice.call(
       global.document.querySelectorAll(actionSelector('earnings')),
     )
+    const earningsTiles = resolveEarningsTiles(earningsElements)
     renderRoots(roots, 'loading')
-    setEarningsAccess(earningsLinks, false)
+    renderEarningsTiles(earningsTiles, 'loading')
 
     let actionPending = false
     function runExclusive(task) {
@@ -414,14 +497,33 @@
 
     try {
       const memberId = await currentMemberId()
-      earningsLinks.forEach(function (link) {
+      if (earningsTiles.ready) {
+        const link = earningsTiles.ready
         link.addEventListener('click', function (event) {
           handleEarningsClick(link, event)
         })
         link.addEventListener('keydown', function (event) {
           handleEarningsKeydown(link, event)
         })
-      })
+      }
+      if (earningsTiles.disconnected) {
+        const connectTile = earningsTiles.disconnected
+        const startFromTile = function (event) {
+          return handleConnectClick(connectTile, event, function () {
+            runExclusive(function () {
+              return handleStart(connectTile, roots, memberId)
+            })
+          })
+        }
+        connectTile.addEventListener('click', startFromTile)
+        connectTile.addEventListener('keydown', function (event) {
+          handleConnectKeydown(connectTile, event, function () {
+            runExclusive(function () {
+              return handleStart(connectTile, roots, memberId)
+            })
+          })
+        })
+      }
       roots.forEach(function (root) {
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
           button.addEventListener('click', function (event) {
@@ -435,7 +537,7 @@
           button.addEventListener('click', function (event) {
             event.preventDefault()
             runExclusive(function () {
-              return loadDashboardStatus(roots, false, earningsLinks)
+              return loadDashboardStatus(roots, false, earningsTiles)
             })
           })
         })
@@ -443,11 +545,11 @@
 
       const returnedFromStripe = returnMarker()
       return runExclusive(function () {
-        return loadDashboardStatus(roots, returnedFromStripe, earningsLinks)
+        return loadDashboardStatus(roots, returnedFromStripe, earningsTiles)
       })
     } catch (error) {
       renderRoots(roots, 'error')
-      setEarningsAccess(earningsLinks, false)
+      renderEarningsTiles(earningsTiles, 'error')
       emit('starterStripeConnectError', {
         action: 'session',
         message: error.message || 'Member session unavailable',
@@ -542,6 +644,8 @@
     currentMemberId,
     exchangeCode,
     fetchStatus,
+    handleConnectClick,
+    handleConnectKeydown,
     handleEarningsClick,
     handleEarningsKeydown,
     isStripeUrl,
@@ -549,6 +653,8 @@
     mountCallback,
     mountDashboard,
     renderRoots,
+    renderEarningsTiles,
+    resolveEarningsTiles,
     resolveDashboardView,
     sandboxMode,
     setEarningsAccess,

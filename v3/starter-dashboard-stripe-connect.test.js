@@ -117,6 +117,168 @@ test('rendering selects authored state without changing its copy', () => {
   assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
 })
 
+test('the two authored earnings tiles resolve to disconnected and ready states', () => {
+  const connect = new FakeElement()
+  const history = new FakeElement()
+
+  const tiles = api.resolveEarningsTiles([connect, history])
+
+  assert.equal(tiles.disconnected, connect)
+  assert.equal(tiles.ready, history)
+})
+
+test('explicit earnings state attributes do not depend on document order', () => {
+  const connect = new FakeElement()
+  const history = new FakeElement()
+  connect.setAttribute('data-stripe-connect-earnings-state', 'disconnected')
+  history.setAttribute('data-stripe-connect-earnings-state', 'ready')
+
+  const tiles = api.resolveEarningsTiles([history, connect])
+
+  assert.equal(tiles.disconnected, connect)
+  assert.equal(tiles.ready, history)
+})
+
+test('partial earnings state wiring assigns only the unlabeled fallback', () => {
+  const labeledConnect = new FakeElement()
+  const unlabeledHistory = new FakeElement()
+  labeledConnect.setAttribute(
+    'data-stripe-connect-earnings-state',
+    'disconnected',
+  )
+
+  const connectTiles = api.resolveEarningsTiles([
+    unlabeledHistory,
+    labeledConnect,
+  ])
+
+  assert.equal(connectTiles.disconnected, labeledConnect)
+  assert.equal(connectTiles.ready, unlabeledHistory)
+
+  const unlabeledConnect = new FakeElement()
+  const labeledHistory = new FakeElement()
+  labeledHistory.setAttribute('data-stripe-connect-earnings-state', 'ready')
+
+  const historyTiles = api.resolveEarningsTiles([
+    labeledHistory,
+    unlabeledConnect,
+  ])
+
+  assert.equal(historyTiles.disconnected, unlabeledConnect)
+  assert.equal(historyTiles.ready, labeledHistory)
+})
+
+test('a lone explicitly disconnected tile is never reused as ready', () => {
+  const connect = new FakeElement()
+  connect.setAttribute('data-stripe-connect-earnings-state', 'disconnected')
+
+  const tiles = api.resolveEarningsTiles([connect])
+
+  assert.equal(tiles.disconnected, connect)
+  assert.equal(tiles.ready, undefined)
+
+  api.renderEarningsTiles(tiles, 'disconnected')
+  assert.equal(connect.hidden, false)
+  assert.equal(connect.getAttribute('aria-disabled'), 'false')
+})
+
+test('exactly one earnings tile is shown for disconnected and ready states', () => {
+  const connect = new FakeElement()
+  const history = new FakeElement()
+  const tiles = api.resolveEarningsTiles([connect, history])
+
+  api.renderEarningsTiles(tiles, 'disconnected')
+
+  assert.equal(connect.hidden, false)
+  assert.equal(connect.style.display, '')
+  assert.equal(connect.getAttribute('aria-disabled'), 'false')
+  assert.equal(connect.getAttribute('tabindex'), '0')
+  assert.equal(history.hidden, true)
+  assert.equal(history.style.display, 'none')
+
+  api.renderEarningsTiles(tiles, 'ready')
+
+  assert.equal(connect.hidden, true)
+  assert.equal(connect.style.display, 'none')
+  assert.equal(history.hidden, false)
+  assert.equal(history.style.display, '')
+  assert.equal(history.getAttribute('aria-disabled'), 'false')
+  assert.equal(history.getAttribute('tabindex'), '0')
+})
+
+test('earnings tiles stay hidden while status is loading or unavailable', () => {
+  const connect = new FakeElement()
+  const history = new FakeElement()
+  const tiles = api.resolveEarningsTiles([connect, history])
+
+  api.renderEarningsTiles(tiles, 'loading')
+  assert.equal(connect.hidden, true)
+  assert.equal(history.hidden, true)
+
+  api.renderEarningsTiles(tiles, 'error')
+  assert.equal(connect.hidden, true)
+  assert.equal(history.hidden, true)
+})
+
+test('the disconnected earnings tile activates only while enabled', () => {
+  const connect = new FakeElement()
+  let activations = 0
+  const event = {
+    prevented: false,
+    preventDefault() {
+      this.prevented = true
+    },
+  }
+
+  connect.setAttribute('aria-disabled', 'true')
+  assert.equal(
+    api.handleConnectClick(connect, event, () => {
+      activations += 1
+    }),
+    false,
+  )
+  assert.equal(event.prevented, true)
+  assert.equal(activations, 0)
+
+  event.prevented = false
+  connect.setAttribute('aria-disabled', 'false')
+  assert.equal(
+    api.handleConnectClick(connect, event, () => {
+      activations += 1
+    }),
+    true,
+  )
+  assert.equal(event.prevented, true)
+  assert.equal(activations, 1)
+})
+
+test('the disconnected earnings tile supports Enter and Space', () => {
+  const connect = new FakeElement()
+  const keys = []
+  const keydown = (key) => ({
+    key,
+    prevented: false,
+    preventDefault() {
+      this.prevented = true
+    },
+  })
+  connect.setAttribute('aria-disabled', 'false')
+
+  assert.equal(
+    api.handleConnectKeydown(connect, keydown('a'), () => keys.push('a')),
+    false,
+  )
+  assert.equal(
+    api.handleConnectKeydown(connect, keydown('Enter'), () => keys.push('Enter')),
+    true,
+  )
+  assert.equal(
+    api.handleConnectKeydown(connect, keydown(' '), () => keys.push('Space')),
+    true,
+  )
+  assert.deepEqual(keys, ['Enter', 'Space'])
+})
+
 test('earnings opens Stripe only while charges are enabled', () => {
   const earnings = new FakeElement('A')
   earnings.setAttribute('href', '#')
