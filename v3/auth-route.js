@@ -277,10 +277,19 @@
       clearRequestedDestination()
     }
 
+    // Both attributes are required. Memberstack only reads `data-ms-redirect`
+    // from a click listener (it stashes the value in sessionStorage when a click
+    // lands inside the element), so an Enter-key submit never registers the
+    // override and the member falls through to the server-side loginRedirect.
+    // Its email/password submit handler reads the plain `redirect` attribute off
+    // the form directly, which covers Enter-key submits and outranks both the
+    // stored override and the server value. Keep `data-ms-redirect` too: it is
+    // what carries the destination through the click-driven provider flows.
     document
       .querySelectorAll('[data-ms-form="login"], [data-ms-form="signup"]')
       .forEach(function (form) {
         form.setAttribute('data-ms-redirect', ROUTE_PATH)
+        form.setAttribute('redirect', ROUTE_PATH)
       })
   }
 

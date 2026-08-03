@@ -15,7 +15,11 @@ still needs its own staging pass.
 4. Load `v3/auth-route.js` on both `/login` and `/auth-route`.
 5. Do not install either script on V2.
 6. The auth script changes V3 login/signup forms to
-   `data-ms-redirect="/auth-route"`.
+   `data-ms-redirect="/auth-route"`. It also sets a plain
+   `redirect="/auth-route"` attribute on the same forms, because Memberstack only
+   picks up `data-ms-redirect` from a click listener, so an Enter-key submit
+   would otherwise skip `/auth-route` entirely and use the server-side plan
+   redirect.
 
 The router runs only on `the-starters-3-0.webflow.io`, `thestarters.com`, and
 `www.thestarters.com`, and only at those two exact paths. Keep the shared

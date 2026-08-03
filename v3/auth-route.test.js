@@ -83,11 +83,19 @@ function jsonResponse(body, { ok = true, status = 200 } = {}) {
 
 function loadRouter(options = {}) {
   const attributes = {}
-  const form = {
-    setAttribute(name, value) {
-      attributes[name] = value
-    },
+  // One record per matched form so a test can tell the login form apart from the
+  // signup form; both also write into the shared `attributes` bag the older
+  // assertions read.
+  const formAttributes = { login: {}, signup: {} }
+  function makeForm(kind) {
+    return {
+      setAttribute(name, value) {
+        formAttributes[kind][name] = value
+        attributes[name] = value
+      },
+    }
   }
+  const forms = [makeForm('login'), makeForm('signup')]
   const storage = new Map()
   if (options.storedDestination) {
     storage.set('thestarters:v3-auth-next', options.storedDestination)
@@ -211,7 +219,7 @@ function loadRouter(options = {}) {
       },
     },
     querySelectorAll() {
-      return [form]
+      return forms
     },
   }
 
@@ -244,6 +252,7 @@ function loadRouter(options = {}) {
     api: window.StartersV3AuthRouter,
     aborted,
     attributes,
+    formAttributes,
     clock,
     fetchCalls,
     location,
@@ -644,6 +653,15 @@ test('V3 login form overrides shared Memberstack redirects with auth route', () 
 
   assert.equal(attributes['data-ms-redirect'], '/auth-route')
   assert.equal(storage.get('thestarters:v3-auth-next'), '/messages')
+})
+
+test('login and signup forms carry the plain redirect attribute for Enter-key submits', () => {
+  const { formAttributes } = loadRouter({ pathname: '/login' })
+
+  assert.equal(formAttributes.login['data-ms-redirect'], '/auth-route')
+  assert.equal(formAttributes.login.redirect, '/auth-route')
+  assert.equal(formAttributes.signup['data-ms-redirect'], '/auth-route')
+  assert.equal(formAttributes.signup.redirect, '/auth-route')
 })
 
 test('login form redirect is configured when session storage writes fail', () => {
