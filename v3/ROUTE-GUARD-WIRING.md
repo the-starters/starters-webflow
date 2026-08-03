@@ -282,7 +282,7 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.73'
+window.StartersV3RouteGuard.release // -> 'v1.59.74'
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
 ```
