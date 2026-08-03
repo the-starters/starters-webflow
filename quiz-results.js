@@ -1,8 +1,13 @@
 /**
  * Quiz results page controller.
  *
+ * @release v1.59.79
+ *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
+ *   quiz-main.js writes that key continuously as `status: 'draft'` (including
+ *   once on /quiz load), and only promotes it to `status: 'ready'` when the
+ *   visitor finishes the quiz, so a draft payload is not results data here.
  *
  * Outputs:
  * - Renders quiz results into optional Webflow elements.
@@ -55,6 +60,39 @@
             ['marketing-strategy-brand'],
         ],
     ])
+
+    /**
+     * Decides whether a saved quiz payload is finished enough for this page to
+     * treat it as results data.
+     *
+     * quiz-main.js saves `sessionStorage.starterQuizPending` with
+     * `status: 'draft'` on /quiz load, on every answer change and on every back
+     * step, and only re-saves it with `status: 'ready'` immediately before
+     * signup, before the auth-provider hand-off, and before a logged-in
+     * retaker is sent here. So a `draft` payload means "somebody looked at the
+     * quiz", never "somebody completed the quiz", and it must not keep a
+     * visitor parked on /quiz-results.
+     *
+     * A payload with no `status` at all keeps its pre-existing "usable"
+     * answer. Every known writer sets the field: quiz-main.js has written it
+     * since the controller's first release, and
+     * createMemberstackStarterQuizPayload() below defaults it to 'ready' for
+     * the member-JSON copy. A status-less payload therefore means an old
+     * Memberstack/custom-field record, not a draft, and downgrading it would
+     * bounce members who really do have saved answers.
+     *
+     * @param {object | null | undefined} pendingQuiz Saved quiz payload.
+     * @returns {boolean} True when the payload may drive the results page.
+     */
+    function isPendingQuizReady(pendingQuiz) {
+        if (!pendingQuiz || typeof pendingQuiz !== 'object') return false
+
+        const status = String(pendingQuiz.status || '')
+            .trim()
+            .toLowerCase()
+
+        return !status || status === 'ready'
+    }
 
     /**
      * Checks whether starter quiz debug logging is enabled.
@@ -199,9 +237,33 @@
     }
 
     function getStoredLearnContentPendingQuiz() {
-        return parseLearnContentJson(
+        const storedPendingQuiz = parseLearnContentJson(
             window.sessionStorage?.getItem(pendingQuizStorageKey),
         )
+
+        // Same predicate as the main controller, on purpose. A draft never
+        // renders results here, so it must not seed the LearnContent filters or
+        // publish window.selectedCategory* either: those globals would describe
+        // selections this page is never going to show, and on the logged-out
+        // path the visitor is about to be sent back to /quiz. The key itself is
+        // left in place for quiz-main.js and quiz-loader.js.
+        if (storedPendingQuiz && !isPendingQuizReady(storedPendingQuiz)) {
+            if (isDebugLoggingEnabled()) {
+                console.log(
+                    '[Starter Quiz Funnel]',
+                    '[results]',
+                    'ignoring draft pending quiz for LearnContent filters',
+                    {
+                        status: storedPendingQuiz.status,
+                        pendingQuizStorageKey,
+                    },
+                )
+            }
+
+            return null
+        }
+
+        return storedPendingQuiz
     }
 
     function getLearnContentCategoryFilterValues(category) {
@@ -1508,7 +1570,17 @@
     /**
      * Reads the pending quiz payload saved before Memberstack signup.
      *
-     * @returns {object | null} Pending quiz payload, or null when unavailable.
+     * A draft payload counts as "no pending quiz": merely browsing /quiz leaves
+     * one behind, and treating it as data used to strand a logged-out visitor on
+     * an empty results page instead of letting redirectVisitorWithoutResults()
+     * send them to /quiz. Returning null here also lets an authenticated member
+     * fall through to their saved Memberstack answers unchanged.
+     *
+     * The sessionStorage key is deliberately NOT removed. quiz-loader.js derives
+     * its skip-on-refresh run id from the payload's `updatedAt`, and the draft is
+     * the funnel's own in-progress record; this page only has to ignore it.
+     *
+     * @returns {object | null} Usable pending quiz payload, or null.
      */
     function getPendingQuiz() {
         const savedRaw = sessionStorage.getItem(pendingQuizStorageKey)
@@ -1521,6 +1593,18 @@
                 savedRaw,
                 pendingQuizStorageKey,
             })
+            return null
+        }
+
+        if (!isPendingQuizReady(pendingQuiz)) {
+            logQuizFlow(
+                'ignoring unfinished pending quiz from sessionStorage; payload kept',
+                {
+                    status: pendingQuiz.status,
+                    updatedAt: pendingQuiz.updatedAt,
+                    pendingQuizStorageKey,
+                },
+            )
             return null
         }
 
@@ -5371,7 +5455,10 @@
         syncLearnContentFilters(pendingQuiz, 'resolved')
         renderTestModeControls(pendingQuiz)
 
-        if (pendingQuiz.status && pendingQuiz.status !== 'ready') {
+        // Defence in depth, sharing getPendingQuiz()'s predicate so the two
+        // cannot drift: the sessionStorage source is already filtered, but a
+        // Memberstack-sourced or test payload still reaches this point.
+        if (!isPendingQuizReady(pendingQuiz)) {
             logQuizFlow('pending quiz is not ready; results save skipped', {
                 status: pendingQuiz.status,
             })
