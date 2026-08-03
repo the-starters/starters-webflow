@@ -89,6 +89,90 @@ function getPendingQuizApi(storedValue, savedMemberQuiz) {
 }
 
 /**
+ * Builds the logged-out stale-cache reset on top of the same fake session store,
+ * plus the sessionStorage reader, so a removal can be checked by what the boot
+ * flow sees next rather than by the call alone.
+ *
+ * @param {object} options Harness options.
+ * @param {string} [options.storedValue] Raw sessionStorage payload.
+ * @param {object|null} [options.member] Value of getCurrentMember()'s `data`.
+ * @param {boolean} [options.omitMemberData] Answer without a `data` property.
+ * @param {boolean} [options.memberstackMissing] Never resolve Memberstack.
+ * @param {boolean} [options.memberstackThrows] Reject getCurrentMember().
+ */
+function getLogoutResetApi(options = {}) {
+    const store = new Map()
+    const removals = []
+    const writes = []
+    const logs = []
+    const memberstackWaits = []
+
+    if (options.storedValue !== undefined) {
+        store.set('starterQuizPending', options.storedValue)
+    }
+
+    const sessionStorage = {
+        getItem(key) {
+            return store.has(key) ? store.get(key) : null
+        },
+        setItem(key, value) {
+            writes.push([key, value])
+            store.set(key, value)
+        },
+        removeItem(key) {
+            removals.push(key)
+            store.delete(key)
+        },
+    }
+
+    const api = vm.runInNewContext(
+        [
+            "const pendingQuizStorageKey = 'starterQuizPending'",
+            "function normalize(value) { return String(value || '').trim() }",
+            'function logQuizFlow(message, data) { logs.push([message, data]) }',
+            readyPredicateSource,
+            sliceSource(
+                '    /**\n     * Reads the pending quiz payload saved before Memberstack signup.',
+                'function getUrlListValues(',
+            ),
+            sliceSource(
+                'async function resolveMemberstackAuthState()',
+                '/**\n     * When the results page has no usable quiz data',
+            ),
+            '({',
+            '  clearMemberCachedPendingQuizWhenLoggedOut,',
+            '  isMemberCachedPendingQuiz,',
+            '  resolveMemberstackAuthState,',
+            '  getPendingQuiz,',
+            '})',
+        ].join('\n'),
+        {
+            logs,
+            sessionStorage,
+            waitForMemberstack: async () => {
+                memberstackWaits.push(true)
+
+                if (options.memberstackMissing) return null
+
+                return {
+                    async getCurrentMember() {
+                        if (options.memberstackThrows) {
+                            throw new Error('Memberstack unreachable')
+                        }
+
+                        return options.omitMemberData
+                            ? {}
+                            : { data: options.member ?? null }
+                    },
+                }
+            },
+        },
+    )
+
+    return { api, store, removals, writes, logs, memberstackWaits }
+}
+
+/**
  * Real payload captured from a logged-out visitor who only browsed /quiz
  * (staging, 2026-08-03). quiz-main.js saves this shape on /quiz load.
  */
@@ -108,6 +192,33 @@ const readyPayload = JSON.stringify({
     status: 'ready',
     updatedAt: '2026-08-03T12:40:00.000Z',
     completedAt: '2026-08-03T12:40:00.000Z',
+})
+
+/**
+ * Shape of the payload captured previewing results to a LOGGED-OUT visitor on
+ * /quiz-results (staging, 2026-08-03): a member cache written four days earlier,
+ * still `ready`, still carrying full recommendations. Only the marker and the
+ * dates matter here, so the ~439KB of recommendation data is elided.
+ */
+const memberCachePayload = JSON.stringify({
+    categories: [{ id: 'paid-media', label: 'Paid Media' }],
+    subcategories: [],
+    resultSlug: 'paid-media',
+    status: 'ready',
+    updatedAt: '2026-07-30T04:12:44.101Z',
+    completedAt: '2026-07-30T04:12:44.101Z',
+    memberstackSavedAt: '2026-07-30T04:12:51.880Z',
+    recommendedFreelancerIds: ['starter_1', 'starter_2'],
+})
+
+const draftMemberCachePayload = JSON.stringify({
+    categories: [],
+    subcategories: [],
+    resultSlug: null,
+    status: 'draft',
+    updatedAt: '2026-07-30T04:10:00.000Z',
+    completedAt: null,
+    memberstackSavedAt: '2026-07-30T04:10:02.000Z',
 })
 
 test('a draft payload counts as no pending quiz', () => {
@@ -299,6 +410,226 @@ test('the early LearnContent read ignores drafts through the same predicate', ()
         /removeItem/,
         'the LearnContent read must not clear the stored payload',
     )
+})
+
+// The second half of the same key's contract: this controller also writes
+// starterQuizPending as a cache of a logged-in member's answers, and nothing
+// cleared it on logout, so a stale `ready` payload kept previewing a member's
+// results to the next (logged-out) visitor.
+test('a logged-out visitor stops inheriting a member cache', async () => {
+    const { api, store, removals } = getLogoutResetApi({
+        storedValue: memberCachePayload,
+        member: null,
+    })
+
+    assert.equal(await api.clearMemberCachedPendingQuizWhenLoggedOut(), true)
+
+    // Assert the removal by value, not just by the call: the boot flow has to
+    // see an absent key so it falls through to the /quiz redirect.
+    assert.deepEqual(removals, ['starterQuizPending'])
+    assert.equal(store.has('starterQuizPending'), false)
+    assert.equal(api.getPendingQuiz(), null)
+})
+
+// The sacred case. A visitor who finished the quiz before signing up owns this
+// payload; quiz-main.js writes it without a memberstackSavedAt marker, and it
+// must keep previewing results exactly as it does today.
+test('a genuine pre-signup payload is kept and costs no Memberstack round-trip', async () => {
+    const { api, store, removals, memberstackWaits } = getLogoutResetApi({
+        storedValue: readyPayload,
+        member: null,
+    })
+
+    assert.equal(await api.clearMemberCachedPendingQuizWhenLoggedOut(), false)
+    assert.deepEqual(removals, [])
+    assert.equal(store.get('starterQuizPending'), readyPayload)
+    assert.deepEqual(
+        memberstackWaits,
+        [],
+        'an unmarked payload must short-circuit before waiting on Memberstack',
+    )
+
+    const pendingQuiz = api.getPendingQuiz()
+
+    assert.ok(pendingQuiz, 'the pre-signup preview must still find its payload')
+    assert.equal(pendingQuiz.status, 'ready')
+})
+
+test('a logged-in member keeps their own cached answers', async () => {
+    const { api, store, removals } = getLogoutResetApi({
+        storedValue: memberCachePayload,
+        member: { id: 'mem_test' },
+    })
+
+    assert.equal(await api.clearMemberCachedPendingQuizWhenLoggedOut(), false)
+    assert.deepEqual(removals, [])
+    assert.equal(store.get('starterQuizPending'), memberCachePayload)
+    assert.ok(api.getPendingQuiz(), 'the member still renders their results')
+})
+
+// Same positive-resolution discipline as redirectVisitorWithoutResults(): only a
+// Memberstack answer that positively says "no member" may delete anything.
+test('an unresolved Memberstack removes nothing', async () => {
+    const missing = getLogoutResetApi({
+        storedValue: memberCachePayload,
+        memberstackMissing: true,
+    })
+
+    assert.equal(
+        await missing.api.clearMemberCachedPendingQuizWhenLoggedOut(),
+        false,
+    )
+    assert.deepEqual(missing.removals, [])
+    assert.equal(missing.store.get('starterQuizPending'), memberCachePayload)
+    assert.ok(
+        missing.logs.some(([message]) =>
+            message.includes('auth state unresolved'),
+        ),
+        `no unresolved log line; got ${JSON.stringify(missing.logs)}`,
+    )
+
+    // A response with no `data` property is "could not tell", never "logged out".
+    const dataless = getLogoutResetApi({
+        storedValue: memberCachePayload,
+        omitMemberData: true,
+    })
+
+    assert.equal(
+        await dataless.api.clearMemberCachedPendingQuizWhenLoggedOut(),
+        false,
+    )
+    assert.deepEqual(dataless.removals, [])
+
+    const throwing = getLogoutResetApi({
+        storedValue: memberCachePayload,
+        memberstackThrows: true,
+    })
+
+    assert.equal(
+        await throwing.api.clearMemberCachedPendingQuizWhenLoggedOut(),
+        false,
+    )
+    assert.deepEqual(throwing.removals, [])
+    assert.equal(
+        throwing.store.get('starterQuizPending'),
+        memberCachePayload,
+        'a thrown auth check must leave the payload alone',
+    )
+})
+
+// The two rules compose: drafts are ignored in every auth state, and a member
+// cache is cleared when the visitor is logged out — including a draft one.
+test('a logged-out draft member cache is cleared as well', async () => {
+    const { api, store, removals } = getLogoutResetApi({
+        storedValue: draftMemberCachePayload,
+        member: {},
+    })
+
+    assert.equal(await api.clearMemberCachedPendingQuizWhenLoggedOut(), true)
+    assert.deepEqual(removals, ['starterQuizPending'])
+    assert.equal(store.has('starterQuizPending'), false)
+})
+
+test('the cleared cache is reported through the flow diagnostics', async () => {
+    const { api, logs } = getLogoutResetApi({
+        storedValue: memberCachePayload,
+        member: null,
+    })
+
+    await api.clearMemberCachedPendingQuizWhenLoggedOut()
+
+    const cleared = logs.find(([message]) =>
+        message.includes('member-cached pending quiz; cleared'),
+    )
+
+    assert.ok(cleared, `no clear log line; got ${JSON.stringify(logs)}`)
+    assert.equal(cleared[1].memberstackSavedAt, '2026-07-30T04:12:51.880Z')
+    assert.equal(cleared[1].status, 'ready')
+})
+
+test('the member-cache marker is the whole discriminator', async () => {
+    const { api } = getLogoutResetApi()
+
+    assert.equal(
+        api.isMemberCachedPendingQuiz({ memberstackSavedAt: '2026-07-30' }),
+        true,
+    )
+    assert.equal(api.isMemberCachedPendingQuiz({ status: 'ready' }), false)
+    assert.equal(
+        api.isMemberCachedPendingQuiz({ memberstackSavedAt: '  ' }),
+        false,
+    )
+    assert.equal(api.isMemberCachedPendingQuiz(null), false)
+    assert.equal(api.isMemberCachedPendingQuiz([]), false)
+
+    // An absent key never reaches the marker check at all.
+    const empty = getLogoutResetApi({ member: null })
+
+    assert.equal(
+        await empty.api.clearMemberCachedPendingQuizWhenLoggedOut(),
+        false,
+    )
+    assert.deepEqual(empty.removals, [])
+    assert.deepEqual(empty.memberstackWaits, [])
+})
+
+// The discriminator only holds while quiz-main.js stays out of the marker
+// business. Pin that: if savePendingQuiz() ever stamps memberstackSavedAt, the
+// pre-signup funnel starts looking like a member cache and this fix would bounce
+// genuine visitors.
+test('the pre-signup writer never stamps the member-cache marker', () => {
+    const quizMainSource = fs.readFileSync(
+        require.resolve('./quiz-main/quiz-main.js'),
+        'utf8',
+    )
+
+    assert.doesNotMatch(quizMainSource, /memberstackSavedAt/)
+})
+
+test('the boot flow clears the stale cache before it reads the key', () => {
+    const bootSource = sliceSource(
+        'async function initResultsPage()',
+        'const taxonomyCompatibility',
+    )
+    const clearIndex = bootSource.indexOf(
+        'await clearMemberCachedPendingQuizWhenLoggedOut()',
+    )
+    const readIndex = bootSource.indexOf('getPendingQuiz() ||')
+
+    assert.notEqual(clearIndex, -1, 'the boot flow must run the stale-cache reset')
+    assert.ok(
+        clearIndex < readIndex,
+        'the reset has to land before the sessionStorage read',
+    )
+    // Test mode supplies its own payload from the URL, so it must not be touched.
+    assert.match(
+        bootSource,
+        /if \(!testPendingQuiz\) \{\n\s+await clearMemberCachedPendingQuizWhenLoggedOut\(\)/,
+    )
+})
+
+test('the reset and the no-data redirect share one auth resolver', () => {
+    const redirectSource = sliceSource(
+        'async function redirectVisitorWithoutResults()',
+        '/**\n     * Loads a saved quiz payload from Memberstack.',
+    )
+
+    assert.match(redirectSource, /await resolveMemberstackAuthState\(\)/)
+    assert.doesNotMatch(
+        redirectSource,
+        /hasOwnProperty/,
+        'the redirect must not re-implement the auth resolution it shares',
+    )
+
+    const resetSource = sliceSource(
+        '/**\n     * Clears a member-cached pending quiz once Memberstack',
+        '/**\n     * When the results page has no usable quiz data',
+    )
+
+    assert.match(resetSource, /await resolveMemberstackAuthState\(\)/)
+    // The one removal in this file has to record why deleting the key cannot
+    // strand quiz-loader.js, which derives its run id from the same payload.
+    assert.match(resetSource, /quiz-loader\.js derives its\n\s+\* skip-on-refresh/)
 })
 
 test('the header carries a well-formed release marker', () => {

@@ -141,8 +141,13 @@ The controller only accepts a finished quiz payload. `quiz-main.js` saves
 on `/quiz` load, so browsing the quiz alone leaves a payload behind; the results
 page ignores a `draft` (without deleting it, because `quiz-loader.js` reads the
 same key's `updatedAt`) and falls through to the saved-quiz lookup and the
-`/quiz` redirect. Run the focused Algolia-config, taxonomy, saved-answer
-fallback, and draft-payload regressions with:
+`/quiz` redirect. The results page also caches a logged-in member's saved answers
+under that same key, stamped with `memberstackSavedAt`; because `sessionStorage`
+outlives logout, such a cached payload is deleted as soon as Memberstack
+positively reports the visitor as logged out, so nobody inherits the previous
+member's results, while an unmarked pre-signup payload is always kept and still
+previews. Run the focused Algolia-config, taxonomy, saved-answer fallback, and
+draft-payload regressions with:
 
 ```sh
 node --test quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js

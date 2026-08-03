@@ -74,6 +74,14 @@ that shape only comes from older Memberstack records. `/quiz-results` ignores th
 draft without deleting it, because `quiz-loader.js` derives its skip-on-refresh
 run id from the same key's `updatedAt`.
 
+`quiz-results.js` also re-uses the key to cache a logged-in member's saved
+answers, adding a `memberstackSavedAt` marker that `savePendingQuiz()` here never
+writes. Since `sessionStorage` survives logout, `/quiz-results` deletes a marked
+payload as soon as Memberstack positively reports the visitor as logged out
+(never when Memberstack is merely unavailable), so a signed-out browser stops
+previewing the previous member's results; an unmarked pre-signup payload is left
+alone and still previews.
+
 Saved Memberstack answers are restored whenever a logged-in member with a
 non-empty `starterQuiz` object reaches `/quiz`; `?retake=true` controls only the
 entry redirect. The restore checks matching boxes without clearing existing
