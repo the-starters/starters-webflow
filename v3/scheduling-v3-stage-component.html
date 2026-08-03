@@ -5,7 +5,7 @@
   Keep this as the FIRST Code Embed in the cloned component, before its
   scheduling logic embeds. Keep the cloned UI and logic embeds intact.
   Do not edit the shared component while detail_hire still consumes it. Release
-  these files first so @latest resolves to the reviewed tag.
+  these files through a reviewed semver tag, then purge and verify @latest.
 
   Auth and routing load synchronously so even immediately executed cloned code
   cannot issue a legacy request before the adapter owns window.fetch. The
