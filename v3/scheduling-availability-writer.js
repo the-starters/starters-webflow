@@ -983,9 +983,9 @@
     switchStep('pre-redirect')
     setTimeout(async function () {
       try {
-        // The OAuth `state` round-trips to the V3 connect-success page, whose
-        // grants/add/v3 callback is keyed on memberstack_id — the state IS the
-        // authenticated member id, never a client-editable value.
+        // OAuth returns to this same dashboard. Xano derives `state` from the
+        // authenticated member id; the callback must round-trip that exact
+        // value and a recent same-session intent before any grant write.
         const memberId = await writeMemberId()
         await ensureTimezone()
         const redirectUri = oauthRedirectUri()

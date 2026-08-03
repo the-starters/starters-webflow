@@ -1084,7 +1084,7 @@ test('production hosted OAuth callback verifies and persists the returned grant'
     availability,
     search:
       '?success=true&grant_id=hosted-grant-9&email=callback%40example.com&provider=google&state=member-a',
-    storage: TZ_CACHED,
+    storage: { ...TZ_CACHED, paid_call_rate: '150' },
     sessionStorage: {
       'starter-scheduling-oauth-intent:member-a': JSON.stringify({
         createdAt: Date.now(),
@@ -1106,10 +1106,10 @@ test('production hosted OAuth callback verifies and persists the returned grant'
   })
   assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 1)
-  assert.equal(
-    result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
-    1,
-  )
+  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
+  assert.equal(creates.length, 2)
+  assert.ok(creates.some((c) => c.body.in_config_name === 'Free Consultation Call - 30min'))
+  assert.ok(creates.some((c) => c.body.in_config_name === 'Paid Consultation Call - 60min - $150'))
 })
 
 test('OAuth callback is stripped before bootstrap failure and retained for retry', async () => {
@@ -1202,6 +1202,31 @@ test('hosted OAuth callback without a recent production intent performs no write
 
   assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+})
+
+test('hosted OAuth callback with an expired production intent performs no writes', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now() - 15 * 60 * 1000 - 1,
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(
+    result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
+    0,
+  )
+  assert.equal(result.sessionStorage.size, 0)
 })
 
 test('returning from the calendar OAuth round trip records the calendar manager', async () => {
