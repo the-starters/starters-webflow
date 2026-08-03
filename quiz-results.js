@@ -1,13 +1,18 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.79
+ * @release v1.59.80
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
  *   quiz-main.js writes that key continuously as `status: 'draft'` (including
  *   once on /quiz load), and only promotes it to `status: 'ready'` when the
  *   visitor finishes the quiz, so a draft payload is not results data here.
+ *   This controller also re-writes the same key as a cache of a logged-in
+ *   member's saved answers, stamped with `memberstackSavedAt`. Because
+ *   sessionStorage outlives logout, such a cache is dropped as soon as
+ *   Memberstack positively reports the visitor as logged out; an unmarked
+ *   pre-signup payload is always kept and still previews results.
  *
  * Outputs:
  * - Renders quiz results into optional Webflow elements.
@@ -5088,6 +5093,174 @@
     }
 
     /**
+     * Positively resolves Memberstack's auth state for this page load.
+     *
+     * Every uncertain outcome answers `resolved: false` — Memberstack never
+     * loaded, the DOM package has no getCurrentMember(), the response carries no
+     * `data` property at all, or the call threw. Callers must therefore never
+     * read "we could not tell" as "logged out", which is the discipline the
+     * no-data redirect has always followed and the stale-cache reset below
+     * depends on just as much.
+     *
+     * @returns {Promise<{resolved: boolean, isLoggedOut: boolean, member: any, error?: unknown}>}
+     *   Resolved auth state.
+     */
+    async function resolveMemberstackAuthState() {
+        try {
+            const memberstack = await waitForMemberstack()
+
+            if (
+                !memberstack ||
+                typeof memberstack.getCurrentMember !== 'function'
+            ) {
+                return { resolved: false, isLoggedOut: false, member: undefined }
+            }
+
+            const response = await memberstack.getCurrentMember()
+            const hasMemberData =
+                response &&
+                typeof response === 'object' &&
+                Object.prototype.hasOwnProperty.call(response, 'data')
+
+            if (!hasMemberData) {
+                return { resolved: false, isLoggedOut: false, member: undefined }
+            }
+
+            const member = response.data
+            const isLoggedOut =
+                member == null ||
+                (typeof member === 'object' &&
+                    !Array.isArray(member) &&
+                    !member.id)
+
+            return { resolved: true, isLoggedOut, member }
+        } catch (error) {
+            return {
+                resolved: false,
+                isLoggedOut: false,
+                member: undefined,
+                error,
+            }
+        }
+    }
+
+    /**
+     * Tells a member-side cache apart from the funnel's own pre-signup record.
+     *
+     * `memberstackSavedAt` is stamped only by this controller, and only for a
+     * logged-in member: getPendingQuizFromMemberstack() adds it to the payload it
+     * caches out of member JSON, createMemberstackStarterQuizPayload() writes it
+     * into the member-JSON copy itself, and initResultsPage() stamps it after a
+     * successful Memberstack save. quiz-main.js's savePendingQuiz() — the only
+     * pre-signup writer — never writes the field: its payload is exactly
+     * `categories`, `subcategories`, `resultSlug`, `status`, `updatedAt`,
+     * `completedAt`. The marker is therefore proof of a member cache, and its
+     * absence protects the pre-signup preview.
+     *
+     * The marker is read type-safely, the same way hasStarterQuizCompletionMarker()
+     * reads its custom field, because normalize() is `(value || '').trim()` with no
+     * String() coercion and sessionStorage is visitor-writable: a marker that
+     * survived a JSON round-trip as a number, or was tampered with, would throw a
+     * TypeError here and take the whole boot flow down with it. Any truthy
+     * non-string value still counts as a member cache — only this controller ever
+     * writes the field, so anything in it means the payload came through the
+     * member path, and treating it as a cache is also the safer default: the worst
+     * case is one redirect to /quiz for a logged-out visitor, versus previewing
+     * somebody else's results.
+     *
+     * @param {object | null | undefined} pendingQuiz Stored quiz payload.
+     * @returns {boolean} True when the payload came from a logged-in member.
+     */
+    function isMemberCachedPendingQuiz(pendingQuiz) {
+        if (
+            !pendingQuiz ||
+            typeof pendingQuiz !== 'object' ||
+            Array.isArray(pendingQuiz)
+        ) {
+            return false
+        }
+
+        const marker = pendingQuiz.memberstackSavedAt
+
+        return typeof marker === 'string'
+            ? normalize(marker) !== ''
+            : Boolean(marker)
+    }
+
+    /**
+     * Clears a member-cached pending quiz once Memberstack positively reports the
+     * visitor as logged out.
+     *
+     * sessionStorage survives logout — and Chrome session restore — while nothing
+     * in the logout path touches this key, so a member's cached answers kept
+     * previewing their results to whoever used the browser next. A four-day-old
+     * `status: 'ready'` payload was captured doing exactly that on 2026-08-03.
+     *
+     * Three guards keep the pre-signup funnel untouched:
+     * - no stored payload, or no member-cache marker, returns immediately, before
+     *   any Memberstack round-trip, so a genuine pre-signup preview boots exactly
+     *   as fast as it does today and is never cleared;
+     * - only a POSITIVELY resolved logged-out state clears anything, so an
+     *   unavailable or erroring Memberstack leaves the payload alone; and
+     * - a logged-in member keeps their cache, which is the whole point of it.
+     *
+     * Removing the key is safe here even though quiz-loader.js derives its
+     * skip-on-refresh run id from `parsed(starterQuizPending).updatedAt`: this
+     * branch fires only for a logged-out visitor holding someone else's cache,
+     * who has no legitimate results run to replay — the very next thing that
+     * happens is redirectVisitorWithoutResults() sending them to /quiz.
+     *
+     * This runs first in initResultsPage(), so it is wrapped end to end: anything
+     * unexpected here degrades to today's behavior (payload kept, boot continues)
+     * rather than rejecting out of a fire-and-forget boot call and leaving
+     * quiz-loader.js's overlay up forever. The boot call carries its own
+     * rejection handler as the outer net.
+     *
+     * @returns {Promise<boolean>} True when the stale cache was removed.
+     */
+    async function clearMemberCachedPendingQuizWhenLoggedOut() {
+        try {
+            const storedRaw = sessionStorage.getItem(pendingQuizStorageKey)
+
+            if (!storedRaw) return false
+
+            const storedPendingQuiz = parsePendingQuiz(storedRaw)
+
+            if (!isMemberCachedPendingQuiz(storedPendingQuiz)) return false
+
+            const authState = await resolveMemberstackAuthState()
+
+            if (!authState.resolved) {
+                logQuizFlow(
+                    'auth state unresolved; member-cached pending quiz kept',
+                    { pendingQuizStorageKey },
+                )
+                return false
+            }
+
+            if (!authState.isLoggedOut) return false
+
+            sessionStorage.removeItem(pendingQuizStorageKey)
+            logQuizFlow(
+                'logged-out visitor holding a member-cached pending quiz; cleared',
+                {
+                    pendingQuizStorageKey,
+                    memberstackSavedAt: storedPendingQuiz.memberstackSavedAt,
+                    status: storedPendingQuiz.status,
+                    updatedAt: storedPendingQuiz.updatedAt,
+                },
+            )
+
+            return true
+        } catch (error) {
+            logQuizFlow('stale-cache reset failed; pending quiz left in place', {
+                error,
+            })
+            return false
+        }
+    }
+
+    /**
      * When the results page has no usable quiz data, send a positively resolved
      * visitor back to the quiz. Logged-out visitors start normally. Authenticated
      * members with a completion marker but missing or malformed member JSON are
@@ -5097,42 +5270,37 @@
      * checked before this branch.
      */
     async function redirectVisitorWithoutResults() {
-        try {
-            const memberstack = await waitForMemberstack()
-            if (!memberstack || typeof memberstack.getCurrentMember !== 'function') return
+        // Shares resolveMemberstackAuthState() with the stale-cache reset above so
+        // the two cannot drift on what counts as a positively logged-out visitor.
+        const authState = await resolveMemberstackAuthState()
 
-            const response = await memberstack.getCurrentMember()
-            const hasMemberData =
-                response &&
-                typeof response === 'object' &&
-                Object.prototype.hasOwnProperty.call(response, 'data')
-            const member = hasMemberData ? response.data : undefined
-            const isLoggedOut =
-                hasMemberData &&
-                (member == null || (typeof member === 'object' && !Array.isArray(member) && !member.id))
+        if (!authState.resolved) {
+            logQuizFlow('no-data redirect check unresolved; staying on page', {
+                error: authState.error,
+            })
+            return
+        }
 
-            if (isLoggedOut) {
-                logQuizFlow('logged-out visitor with no quiz data; redirecting to /quiz')
-                window.location.replace('/quiz')
-                return
-            }
+        if (authState.isLoggedOut) {
+            logQuizFlow('logged-out visitor with no quiz data; redirecting to /quiz')
+            window.location.replace('/quiz')
+            return
+        }
 
-            const authenticatedRedirectTarget =
-                getAuthenticatedNoQuizDataRedirectTarget(member)
+        const authenticatedRedirectTarget =
+            getAuthenticatedNoQuizDataRedirectTarget(authState.member)
 
-            if (authenticatedRedirectTarget) {
-                logQuizFlow(
-                    'authenticated member with no usable quiz data; redirecting to quiz',
-                    {
-                        hasCompletionMarker:
-                            hasStarterQuizCompletionMarker(member),
-                        redirectTarget: authenticatedRedirectTarget,
-                    },
-                )
-                window.location.replace(authenticatedRedirectTarget)
-            }
-        } catch (error) {
-            logQuizFlow('no-data redirect check failed; staying on page', { error })
+        if (authenticatedRedirectTarget) {
+            logQuizFlow(
+                'authenticated member with no usable quiz data; redirecting to quiz',
+                {
+                    hasCompletionMarker: hasStarterQuizCompletionMarker(
+                        authState.member,
+                    ),
+                    redirectTarget: authenticatedRedirectTarget,
+                },
+            )
+            window.location.replace(authenticatedRedirectTarget)
         }
     }
 
@@ -5412,6 +5580,15 @@
         logQuizFlow('initialized', { pendingQuizStorageKey })
 
         const testPendingQuiz = getTestPendingQuizFromUrl()
+
+        // Before anything reads the key: a logged-out visitor must not inherit a
+        // previous member's cached answers. This is a no-op unless the stored
+        // payload carries the member-cache marker, so the pre-signup funnel pays
+        // nothing for it. Test mode owns its own payload and is left alone.
+        if (!testPendingQuiz) {
+            await clearMemberCachedPendingQuizWhenLoggedOut()
+        }
+
         const rawPendingQuiz =
             testPendingQuiz ||
             getPendingQuiz() ||
@@ -5583,6 +5760,13 @@
         })
     }
 
-    initResultsPage()
+    // initResultsPage() is fire-and-forget, so any rejection inside it would
+    // otherwise skip every signalQuizResultsReady() call and leave the loading
+    // overlay up for good. Releasing the loader on failure shows the page as it
+    // stands, which beats an indefinite spinner.
+    initResultsPage().catch((error) => {
+        logQuizFlow('results boot failed; releasing the loader', { error })
+        signalQuizResultsReady('boot-error')
+    })
 })
 })()
