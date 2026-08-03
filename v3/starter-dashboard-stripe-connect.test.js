@@ -279,6 +279,42 @@ test('the disconnected earnings tile supports Enter and Space', () => {
   assert.deepEqual(keys, ['Enter', 'Space'])
 })
 
+test('a pending Connect Stripe action is visibly and fully disabled', () => {
+  const connect = new FakeElement()
+  connect.disabled = false
+  connect.setAttribute('data-stripe-connect-earnings-state', 'disconnected')
+  api.renderEarningsTiles(api.resolveEarningsTiles([connect]), 'disconnected')
+
+  api.setActionPending(connect, true)
+
+  assert.equal(connect.getAttribute('aria-busy'), 'true')
+  assert.equal(connect.getAttribute('aria-disabled'), 'true')
+  assert.equal(connect.getAttribute('tabindex'), '-1')
+  assert.equal(connect.classList.contains('is-disabled'), true)
+  assert.equal(connect.style.pointerEvents, 'none')
+  assert.equal(connect.disabled, true)
+
+  let activations = 0
+  const event = { preventDefault() {} }
+  assert.equal(
+    api.handleConnectClick(connect, event, () => {
+      activations += 1
+    }),
+    false,
+  )
+  assert.equal(activations, 0)
+
+  api.setActionPending(connect, false)
+
+  assert.equal(connect.getAttribute('aria-busy'), 'false')
+  assert.equal(connect.getAttribute('aria-disabled'), 'false')
+  assert.equal(connect.getAttribute('tabindex'), '0')
+  assert.equal(connect.getAttribute('data-stripe-connect-pending-tabindex'), null)
+  assert.equal(connect.classList.contains('is-disabled'), false)
+  assert.equal(connect.style.pointerEvents, '')
+  assert.equal(connect.disabled, false)
+})
+
 test('earnings opens Stripe only while charges are enabled', () => {
   const earnings = new FakeElement('A')
   earnings.setAttribute('href', '#')

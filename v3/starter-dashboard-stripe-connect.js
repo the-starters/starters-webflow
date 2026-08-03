@@ -42,6 +42,7 @@
   const ELEMENT_ATTR = 'data-stripe-connect-element'
   const ACTION_ATTR = 'data-stripe-connect-action'
   const EARNINGS_STATE_ATTR = 'data-stripe-connect-earnings-state'
+  const PENDING_TABINDEX_ATTR = 'data-stripe-connect-pending-tabindex'
   const STATES = [
     'loading',
     'disconnected',
@@ -246,8 +247,28 @@
   function setActionPending(button, pending) {
     if (!button) return
     button.setAttribute('aria-busy', pending ? 'true' : 'false')
-    if ('disabled' in button) button.disabled = pending
     button.style.pointerEvents = pending ? 'none' : ''
+    if (button.classList) button.classList.toggle('is-disabled', pending)
+    if ('disabled' in button) button.disabled = pending
+
+    if (pending) {
+      const tabindex = button.getAttribute('tabindex')
+      button.setAttribute(
+        PENDING_TABINDEX_ATTR,
+        tabindex === null ? '' : tabindex,
+      )
+      button.setAttribute('aria-disabled', 'true')
+      button.setAttribute('tabindex', '-1')
+      return
+    }
+
+    const previousTabindex = button.getAttribute(PENDING_TABINDEX_ATTR)
+    if (previousTabindex === '') button.removeAttribute('tabindex')
+    else if (previousTabindex !== null) {
+      button.setAttribute('tabindex', previousTabindex)
+    }
+    button.removeAttribute(PENDING_TABINDEX_ATTR)
+    button.setAttribute('aria-disabled', 'false')
   }
 
   function setEarningsAccess(elements, enabled) {
@@ -657,6 +678,7 @@
     resolveEarningsTiles,
     resolveDashboardView,
     sandboxMode,
+    setActionPending,
     setEarningsAccess,
     setView,
     startConnect,
