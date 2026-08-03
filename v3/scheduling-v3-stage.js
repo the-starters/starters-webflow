@@ -2,6 +2,7 @@
   'use strict'
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const STAGE_PATHS = [
     '/starter-dashboard---availability-stage',
     '/brand-dashboard---availability-stage',
@@ -9,6 +10,7 @@
     '/hire-stage',
     '/hire/jp-dionisio',
   ]
+  const PRODUCTION_PATHS = ['/hire/jp-dionisio']
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_PREFIX = '/api:tCpV3oqd/'
   const STATUS_ATTRIBUTE = 'data-scheduling-v3-stage'
@@ -59,8 +61,11 @@
   }
 
   const activePath = normalizedPagePath()
-  if (window.location.hostname !== STAGING_HOST) return
-  if (STAGE_PATHS.indexOf(activePath) === -1) return
+  const activeHost = window.location.hostname
+  const isStagingPath = activeHost === STAGING_HOST && STAGE_PATHS.includes(activePath)
+  const isProductionPath =
+    PRODUCTION_HOSTS.has(activeHost) && PRODUCTION_PATHS.includes(activePath)
+  if (!isStagingPath && !isProductionPath) return
   if (window.__tsSchedulingV3Stage) return
   window.__tsSchedulingV3Stage = true
 
@@ -226,6 +231,7 @@
   window.__tsSchedulingV3StageOriginalFetch = originalFetch
   window.StarterSchedulingV3Stage = Object.freeze({
     paths: STAGE_PATHS.slice(),
+    productionPaths: PRODUCTION_PATHS.slice(),
     routeMap: activeRouteMap,
     injectBookingIdentity: injectBookingIdentity,
   })

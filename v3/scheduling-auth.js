@@ -1,9 +1,14 @@
 ;(function () {
   'use strict'
 
-  // V3 is not launched on the custom domains yet. Do not expand this guard
-  // without explicit launch approval.
-  if (window.location.hostname !== 'the-starters-3-0.webflow.io') return
+  const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
+  const PRODUCTION_PATHS = new Set(['/hire/jp-dionisio'])
+  const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
+  const isStagingHost = window.location.hostname === STAGING_HOST
+  const isApprovedProductionPath =
+    PRODUCTION_HOSTS.has(window.location.hostname) && PRODUCTION_PATHS.has(activePath)
+  if (!isStagingHost && !isApprovedProductionPath) return
   const legacyBridgeInstalled =
     window.__tsSchedulingAuthBridgeOwner === 'opportunities-3.0'
   if (

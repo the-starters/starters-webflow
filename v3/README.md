@@ -910,8 +910,9 @@ script tag instead of carrying a duplicate copy in page head/footer code.
 
 Current safety boundary:
 
-- Runs only on `the-starters-3-0.webflow.io`.
-- Does not change V2 or either V3 custom domain.
+- Runs across `the-starters-3-0.webflow.io`.
+- On the V3 custom domains, runs only on `/hire/jp-dionisio`; all other paths
+  remain inert.
 - Authenticates only the explicit reviewed `/v3` scheduling routes on the
   configured Xano origin. It does not use a group-wide prefix allowlist.
 - Temporarily retains the exact legacy configuration, availability, and Starter
@@ -932,6 +933,10 @@ Maintenance rule: new `api:tCpV3oqd` scheduling calls should use
 `window.xanoAuthFetch`. Keep endpoint scope explicit; do not turn this into a
 blanket credential injector. Every route used by the stage adapter and
 availability modules must be listed as an exact `/v3` path.
+
+The auth helper installs across the V3 staging host. On the production hosts it
+installs only on the exact approved `/hire/jp-dionisio` canary, matching the
+adapter's production boundary.
 
 Public helpers:
 
@@ -957,8 +962,8 @@ node v3/scheduling-auth.test.js
 
 ## Scheduling V3 stage adapter
 
-`scheduling-v3-stage.js` is the stage-only compatibility layer for the existing
-Webflow scheduling component. It installs only on these exact staging paths:
+`scheduling-v3-stage.js` is the compatibility layer for the existing Webflow
+scheduling component. It installs on these exact staging paths:
 
 - `/starter-dashboard---availability-stage`
 - `/brand-dashboard---availability-stage`
@@ -966,9 +971,10 @@ Webflow scheduling component. It installs only on these exact staging paths:
 - `/hire-stage`
 - `/hire/jp-dionisio`
 
-The fifth path is the existing approved Test Talent CMS item and still requires
-the exact Webflow staging hostname. The adapter does not install on any other
-`/hire/*` item, on `detail_hire`, or on either custom production domain. The
+The fifth path is the existing approved Test Talent CMS item. That same exact
+path, `/hire/jp-dionisio`, is also enabled on `thestarters.com` and
+`www.thestarters.com`; every `*-stage` path remains staging-host only. The
+adapter does not install on any other `/hire/*` item or on `detail_hire`. The
 adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
 preserves request method, body, headers, and query parameters, and sends the
 rewritten request through `window.xanoAuthFetch`.
@@ -1010,7 +1016,8 @@ Runtime contract:
   reached before `window.xanoAuthFetch` exists (the request is then blocked).
   The attribute is not set on pages where the adapter does not install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
-  five installed stage paths) and `routeMap` (the legacy-to-`/v3` route map).
+  five installed stage paths), `productionPaths` (the exact production Hire
+  canary), and `routeMap` (the legacy-to-`/v3` route map).
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 

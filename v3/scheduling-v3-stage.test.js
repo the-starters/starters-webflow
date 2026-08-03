@@ -91,7 +91,7 @@ function loadStage(options = {}) {
   }
 }
 
-test('installs only on the five explicit staging pages', () => {
+test('installs on the five explicit staging pages', () => {
   for (const pathname of [
     '/starter-dashboard---availability-stage',
     '/brand-dashboard---availability-stage',
@@ -262,14 +262,29 @@ test('component loader installs auth and routing synchronously before cloned log
   assert.match(tags[3][0], /\bdefer\b/)
 })
 
-test('does not install on the live profile component or production domains', () => {
+test('does not install on the live profile component or unrelated production paths', () => {
   const publicProfile = loadStage({ pathname: '/detail_hire/example' })
   assert.equal(publicProfile.window.__tsSchedulingV3Stage, undefined)
   assert.equal(publicProfile.window.fetch, publicProfile.nativeFetch)
 
-  const production = loadStage({ hostname: 'www.thestarters.com' })
+  const production = loadStage({
+    hostname: 'www.thestarters.com',
+    pathname: '/messages-stage',
+  })
   assert.equal(production.window.__tsSchedulingV3Stage, undefined)
   assert.equal(production.window.fetch, production.nativeFetch)
+})
+
+test('installs only on the approved Hire canary across both production hosts', () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const approved = loadStage({ hostname, pathname: '/hire/jp-dionisio' })
+    assert.equal(approved.window.__tsSchedulingV3Stage, true)
+    assert.equal(approved.attributes['data-scheduling-v3-stage'], 'ready')
+
+    const otherProfile = loadStage({ hostname, pathname: '/hire/sabina-rahaman' })
+    assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
+    assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+  }
 })
 
 test('keeps the isolated Hire stage separate from the live CMS profile path', () => {
