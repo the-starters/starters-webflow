@@ -22,6 +22,10 @@ function element(attributes = {}) {
     style: {},
     textContent: '',
     addEventListener() {},
+    appendChild() {},
+    cloneNode() {
+      return element(this.attributes)
+    },
     getAttribute(name) {
       return this.attributes[name] || null
     },
@@ -99,6 +103,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   const loader = element()
   const empty = element()
   const count = element()
+  const filters = element()
   const section = element({ 'bookings-section': 'calls' })
   section.querySelector = (selector) =>
     ({
@@ -107,6 +112,7 @@ test('auth changes clear identity state and stale requests cannot render', async
       '[bookings-loader="calls"]': loader,
       '[bookings-empty="calls"]': empty,
       '[bookings-count]': count,
+      '.tabs-button_component.is-dashboard': filters,
     })[selector] || null
   list.querySelectorAll = (selector) =>
     selector === '[bookings-item-template]' ? [template] : []
@@ -141,7 +147,16 @@ test('auth changes clear identity state and stale requests cannot render', async
     xanoAuthFetch: async (_url, init) => {
       requests.push(JSON.parse(init.body).memberstack_id)
       if (requests.length === 1) return firstResponse.promise
-      return { ok: true, json: async () => [] }
+      return {
+        ok: true,
+        json: async () => [
+          {
+            booking_id: 'member-b-call',
+            brand_data: { memberstack_id: 'member-b' },
+            status: 'confirmed',
+          },
+        ],
+      }
     },
   }
 
@@ -165,6 +180,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   assert.deepEqual(requests, ['member-a', 'member-b'])
   assert.equal(name.textContent, 'Member B')
   assert.equal(company.textContent, 'Company B')
+  assert.equal(filters.hidden, false)
 
   firstResponse.resolve({ ok: true, json: async () => [] })
   await new Promise(setImmediate)
@@ -174,6 +190,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   authChange()
   assert.equal(name.textContent, '')
   assert.equal(company.textContent, '')
+  assert.equal(filters.hidden, true)
   await until(() => root.attributes['data-dashboard-calls-v3'] === 'error')
 })
 
@@ -213,4 +230,58 @@ test('Starter separates pending requests from calls while Brand keeps one call l
     ['active', 'cancelled'],
   )
   assert.equal(api.sectionBookings(rows, 'brand', 'calls').length, 3)
+})
+
+test('project filters hide only after an authoritative unfiltered empty result', () => {
+  const memory = { known: false, hasAny: false }
+  assert.equal(
+    api.projectFilterVisible(
+      { status: 'success', data: { total: 0 }, query: { params: {} } },
+      memory,
+    ),
+    false,
+  )
+  assert.deepEqual(memory, { known: true, hasAny: false })
+})
+
+test('project filters remain usable when only the selected filter is empty', () => {
+  const memory = { known: false, hasAny: false }
+  assert.equal(
+    api.projectFilterVisible(
+      {
+        status: 'success',
+        data: { total: 2 },
+        query: { params: { status: '*' } },
+      },
+      memory,
+    ),
+    true,
+  )
+  assert.equal(
+    api.projectFilterVisible(
+      {
+        status: 'success',
+        data: { total: 0 },
+        query: { params: { status: 'completed' } },
+      },
+      memory,
+    ),
+    true,
+  )
+})
+
+test('a deep-linked project filter stays visible until the full list is known', () => {
+  const memory = { known: false, hasAny: false }
+  assert.equal(
+    api.projectFilterVisible(
+      {
+        status: 'success',
+        data: { total: 0 },
+        query: { params: { status: 'active' } },
+      },
+      memory,
+    ),
+    true,
+  )
+  assert.deepEqual(memory, { known: false, hasAny: false })
 })

@@ -15,6 +15,7 @@
   const BOOKINGS_PATH = '/booking_record/get/v3'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const PAGE_SIZE = 6
+  const PROJECT_INSTANCE_KEYS = ['dash-projects', 'dash-brand-projects']
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
     '/starter-dashboard---availability-stage': 'starter',
@@ -242,6 +243,7 @@
       empty: section.querySelector('[bookings-empty="' + name + '"]'),
       count: section.querySelector('[bookings-count]'),
       loadMore: section.querySelector('[bookings-load-more]'),
+      filters: section.querySelector('.tabs-button_component.is-dashboard'),
       rendered: 0,
       filter: 'all',
       rows: [],
@@ -257,6 +259,7 @@
     show(refs.list, false)
     show(refs.empty, false)
     show(refs.loadMore, false)
+    show(refs.filters, false)
     show(refs.loader, true)
     if (refs.count) refs.count.textContent = '0'
   }
@@ -283,6 +286,7 @@
     show(refs.list, rows.length > 0)
     show(refs.empty, rows.length === 0)
     show(refs.loadMore, target < rows.length)
+    show(refs.filters, refs.rows.length > 0)
     if (refs.count) refs.count.textContent = String(refs.rows.length)
     refs.section.setAttribute('data-bookings-state', rows.length ? 'ready' : 'empty')
   }
@@ -309,6 +313,64 @@
       const heading = tile.querySelector('h1,h2,h3,h4,h5,h6')
       const label = clean(heading && heading.textContent).toLowerCase()
       if (label === 'calls' || label === 'call requests') show(tile, false)
+    })
+  }
+
+  function projectFilterIsActive(params) {
+    const status = clean(params && params.status).toLowerCase()
+    return Boolean(status && status !== '*')
+  }
+
+  function projectFilterVisible(state, memory) {
+    const snapshot = state || {}
+    const data = snapshot.data || {}
+    const query = snapshot.query || {}
+    const activeFilter = projectFilterIsActive(query.params)
+    const total = Number(data.total)
+
+    if (snapshot.status === 'success' && Number.isFinite(total)) {
+      if (total > 0) {
+        memory.known = true
+        memory.hasAny = true
+      } else if (!activeFilter) {
+        memory.known = true
+        memory.hasAny = false
+      }
+    }
+
+    // With an active filter and no unfiltered result yet, keep the controls
+    // available: zero matching rows does not prove the whole project list is empty.
+    return memory.known ? memory.hasAny : activeFilter
+  }
+
+  function wireProjectFilters() {
+    const queued = global.WfXano || []
+    global.WfXano = queued
+    if (!queued || typeof queued.push !== 'function') return
+    queued.push(function (wfx) {
+      PROJECT_INSTANCE_KEYS.forEach(function (key) {
+        const instance = wfx && typeof wfx.get === 'function' ? wfx.get(key) : null
+        if (!instance || typeof instance.subscribe !== 'function') return
+        const filters = instance.root.querySelector(
+          '.tabs-button_component.is-dashboard',
+        )
+        if (!filters) return
+        const memory = { known: false, hasAny: false }
+        show(filters, false)
+        if (typeof instance.on === 'function') {
+          instance.on('stateChange', function (change) {
+            if (!change || change.reason !== 'auth:change') return
+            memory.known = false
+            memory.hasAny = false
+            show(filters, false)
+          })
+        }
+        instance.subscribe(function (state) {
+          return state
+        }, function (state) {
+          show(filters, projectFilterVisible(state, memory))
+        })
+      })
     })
   }
 
@@ -361,6 +423,7 @@
       show(section.list, false)
       show(section.empty, false)
       show(section.loadMore, false)
+      show(section.filters, false)
       show(section.loader, true)
       if (section.count) section.count.textContent = '0'
       section.section.setAttribute('data-bookings-state', 'loading')
@@ -372,6 +435,7 @@
     show(refs.loader, false)
     show(refs.list, false)
     show(refs.loadMore, false)
+    show(refs.filters, false)
     show(refs.empty, true)
     text(
       refs.empty,
@@ -415,6 +479,7 @@
     if (!role) return
     if (global.__startersDashboardCallsBooted) return
     global.__startersDashboardCallsBooted = true
+    wireProjectFilters()
 
     const refs = Array.prototype.slice
       .call(document.querySelectorAll('[bookings-section]'))
@@ -463,6 +528,8 @@
     bookingStatus,
     memberOwnsBooking,
     normalizeBooking,
+    projectFilterIsActive,
+    projectFilterVisible,
     roleForPath,
     sectionBookings,
     uniqueBookings,
