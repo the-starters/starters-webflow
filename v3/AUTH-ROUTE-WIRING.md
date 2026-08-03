@@ -12,9 +12,19 @@ still needs its own staging pass.
 3. Load sitewide `v3/route-guard.js` before `v3/auth-route.js`. The auth router
    consumes the guard's exported stable plan-role contract and fails closed if
    that contract is unavailable.
-4. Load `v3/auth-route.js` on both `/login` and `/auth-route`.
-5. Do not install either script on V2.
-6. The auth script changes V3 login/signup forms to
+4. Load `v3/auth-route.js` on `/login`, `/starter-login`, and `/auth-route`.
+5. **New install required (2026-08-03):** `/starter-login` is a real V3 login page
+   with its own `[data-ms-form="login"]` and had no `auth-route.js` embed, so
+   logins from it skipped `/auth-route` entirely and fell through to the shared
+   Memberstack plan redirect. Add the same page-level head embed `/login`
+   already has, pinned to the same tag. This is a page-level embed and does not
+   arrive with a new jsDelivr tag on its own.
+6. Do not add the script to `/sign-up`. `v3/starters-ms-redirect.js` owns signup
+   form redirects through its `starters-ms-redirect` markers and skips any form
+   that already carries a non-empty `redirect` attribute; configuring `/sign-up`
+   here would set that attribute first and silently disable the marker system.
+7. Do not install either script on V2.
+8. The auth script changes V3 login/signup forms to
    `data-ms-redirect="/auth-route"`. It also sets a plain
    `redirect="/auth-route"` attribute on the same forms, because Memberstack only
    picks up `data-ms-redirect` from a click listener, so an Enter-key submit
@@ -22,8 +32,18 @@ still needs its own staging pass.
    redirect.
 
 The router runs only on `the-starters-3-0.webflow.io`, `thestarters.com`, and
-`www.thestarters.com`, and only at those two exact paths. Keep the shared
-Memberstack plan redirects unchanged so V2 retains its existing behavior.
+`www.thestarters.com`, and only at those three exact paths — the two login pages,
+where it rewrites form redirects and stores a `?next=`, and `/auth-route`, where
+it actually routes. Keep the shared Memberstack plan redirects unchanged so V2
+retains its existing behavior.
+
+Both login pages are also member-home bounce pages in `v3/route-guard.js`: a
+member who is *already* signed in is redirected away before they see the form.
+The two mechanisms do not conflict — the guard acts on an existing session, this
+router configures the form for a session about to be created — but note that a
+bounce leaves the `next` this router just stored in session storage unconsumed.
+That is harmless; it is re-validated against the role allowlist at `/auth-route`
+on the next real login.
 
 ## Routing
 
@@ -90,8 +110,8 @@ returning to `/dashboard`, preventing a redirect loop.
 
 | Role | Allowed `next` pathnames |
 | --- | --- |
-| Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/starter-onboarding`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>` |
-| Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
+| Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/starter-onboarding`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>`, `/generate-invoice`, `/generate-invoice/` |
+| Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create`, `/complete-profile`, `/complete-profile/` |
 | Brand free | `/dashboard` (resolved to quiz home), `/all-starters`, `/quiz`, `/quiz-results` |
 
 `/starter-onboarding` is allowlisted for Talent because `v3/route-guard.js`
@@ -137,7 +157,9 @@ Each error also dispatches `starters:v3-auth-route-error` on `window` with
 `memberRoleError`, `roleHome`, `localPath`, `destinationFor`, `hasCompletedQuiz`,
 and `brandFreeHome`, plus the funnel helpers `stagingHost`,
 `diagnosticsEnabled`, `onboardingStateFrom`, `onboardingFunnelState`,
-`onboardingPath`, `buildProfilePath`, and `checkBudgetMs`.
+`onboardingPath`, `buildProfilePath`, and `checkBudgetMs`, the login-page scope
+helpers `isLoginPath` and `loginPaths`, and `release` (the shipping tag; see the
+release-marker convention in [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md)).
 
 The funnel never produces a `data-auth-route-error`; it fails open instead. It
 narrates each decision to the console (which state was found, where routing
@@ -149,6 +171,11 @@ stays silent apart from the configuration errors in the table above.
 
 - Confirm `/auth-route` and its visible error state exist in Webflow.
 - Confirm sitewide `route-guard.js` loads before page-level `auth-route.js`.
+- Confirm the new `/starter-login` embed is installed and pinned to the same tag
+  as the `/login` embed, and that a login from `/starter-login` passes through
+  `/auth-route` rather than the shared plan redirect.
+- Confirm `/sign-up` still has NO `auth-route.js` embed, and that its signup
+  modals still return to their `starters-ms-redirect` marker destinations.
 - Back up page-level code before installing the script.
 - Run `node --test v3/auth-route.test.js`.
 - Verify login with `next=/dashboard` for Talent, paid Brand, Test Brand, and

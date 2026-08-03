@@ -20,7 +20,7 @@ On an approved V3 host, for a page it recognises:
 
 | Member state | Action |
 | --- | --- |
-| Logged out | Replace with `/login?next=<current path+query>` |
+| Logged out | Replace with `/login?next=<current path+query>`, or with the page's `LOGGED_OUT_DESTINATIONS` override where one is configured |
 | Mapped member on `/dashboard` | Replace with the role-specific authored page (or Free Brand quiz home) |
 | Role allowed on this page | Stay immediately; set `html[data-route-guard="allowed"]` |
 | Role not allowed on this page | Replace with that role's own default (never the other role's page) |
@@ -58,6 +58,8 @@ view it; any other authenticated role is redirected to its default.
 | `/messages` | Talent, Brand paid |
 | `/opportunities/<slug>` | Talent, Brand paid |
 | `/favorites` and `/favorites/` | Brand paid |
+| `/generate-invoice` and `/generate-invoice/` | Talent |
+| `/complete-profile` and `/complete-profile/` | Brand paid |
 
 The merged feed lists both `/opportunities` forms explicitly: the exact page
 map would otherwise miss the trailing slash, while the detail prefix requires a
@@ -75,6 +77,66 @@ seconds. A rejected polling lookup is retried within the same deadline, and a
 lookup that never settles is capped by the remaining time. At the deadline, the
 latest valid snapshot follows the normal fail-closed redirect or error. Other
 guarded routes and opportunity detail pages do not use this hydration delay.
+
+`/generate-invoice` and `/complete-profile` were added on 2026-08-03, each with
+its trailing-slash twin for the same reason as `/favorites/`. `/complete-profile`
+is paid-Brand only: a free Brand falls through to its quiz home, and Talent to
+`/starter-dashboard`. Both pages also appear in `auth-route.js`
+`ROLE_DESTINATIONS`, which the guard/router parity test in
+`v3/auth-route.test.js` enforces — a new `PAGE_ROLES` row without the matching
+router entry fails the suite rather than silently dropping a `next`.
+
+## Member-home bounce pages
+
+`MEMBER_BOUNCE_PAGES` — `/`, `/login`, `/starter-login`, `/sign-up` — is a
+separate mechanism from the guarded-pages table above, added 2026-08-03 by
+Jerico's decision. These four paths are deliberately absent from `PAGE_ROLES`,
+because a guarded page forces a login and these are the pre-signup funnel itself.
+
+| Visitor state on a bounce page | Action |
+| --- | --- |
+| Logged out, or Memberstack unavailable | Nothing at all: no redirect, no attribute, no event |
+| Mapped member with a valid, permitted `?next=` | Replace with that `next` |
+| Mapped member otherwise | Replace with the role home (Free Brand: quiz home) |
+| Authenticated but unmapped or cross-role conflicted | Stay, with a `console.error` only — no `data-route-guard-error` |
+
+A `?next=` is honoured only when it is same-origin, free of embedded
+credentials, and either allowed for the member's role or on a page the guard does
+not police at all — the second case is what returns a member to the public page
+they were reading before signing in. Three refusals are deliberate: a `next`
+pointing back at a bounce page (it would bounce again), `/dashboard` (an empty
+allowlist, so it resolves to the role home exactly as `auth-route.js` resolves
+it), and any page the member's role may not view.
+
+Unlike a guarded page, a bounce page never gets the `data-route-guard="checking"`
+stamp. These pages are authored for signed-out visitors and must not depend on
+this script to become visible; the only attribute the bounce ever sets is
+`data-route-guard="redirecting"` on the way out. No role home is itself a bounce
+page, so the bounce cannot loop — `v3/route-guard.test.js` asserts that directly.
+
+Note that `/login` and `/starter-login` are also configured by
+`v3/auth-route.js`, which stores a `?next=` in session storage for the
+`/auth-route` hop. When a signed-in member is bounced off a login page, that
+stored value is left behind unconsumed; it is harmless, since it is re-validated
+against the role allowlist at `/auth-route` on the next real login.
+
+## Per-page logged-out destinations
+
+`LOGGED_OUT_DESTINATIONS` overrides the default `/login?next=<here>` for
+specific guarded paths (decision by Jerico, 2026-08-03):
+
+| Guarded page | Logged-out destination |
+| --- | --- |
+| `/build-profile/select-profile` | `/` |
+| `/build-profile/full-profile` | `/` |
+| `/build-profile/consult` | `/` |
+| `/complete-profile` and `/complete-profile/` | `/` |
+
+Everything else keeps `/login?next=`, which is what makes a deep link survive a
+login. These five are reached from marketing flows rather than from a member's
+bookmark, so a login form would ask a stranger to authenticate into a funnel step
+they have no account for yet; the homepage restarts the funnel properly. The
+override replaces the whole destination, so no `?next=` is preserved for them.
 
 The guard's Brand paid allowance is role-level only. On both
 `/opportunities/<slug>` and the legacy
@@ -141,8 +203,11 @@ every route in its page table:
 - `/starter-onboarding`
 - `/favorites` (including its trailing-slash URL)
 - `/messages`
+- `/generate-invoice`, `/complete-profile` (each including its trailing-slash URL)
 - `/opportunities` merged-feed page (including its trailing-slash URL)
 - `/opportunities/<slug>` collection-template pages
+- `/`, `/login`, `/starter-login`, `/sign-up` — not guarded, but the sitewide
+  install is what lets the member-home bounce run there
 
 With the guard sitewide, opp30 does not double-guard opportunity pages: it uses
 the guard's presence to defer access redirects and validates the same plan-ID
@@ -187,13 +252,47 @@ snapshot with no plan connections; a complete unmapped snapshot does not.
 After the guard allows the route, an unresolved role bails without revealing or
 initializing either role's UI.
 
+## Release markers
+
+Standing convention (Jerico, 2026-08-03), applied to every browser-facing script
+touched by a release:
+
+- The file header comment carries a ` * @release vX.Y.Z` line naming the tag that
+  shipped the change.
+- Where the script exports a window API object, the same value appears as a
+  `release` property on it.
+- The two must stay in sync. Each touched script's test file parses the header
+  marker out of the source and compares it against the exported property, so an
+  edit that updates one and forgets the other fails the suite.
+
+Verify what is actually deployed either way:
+
+```sh
+curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/route-guard.js" \
+  | grep '@release'
+```
+
+```js
+window.StartersV3RouteGuard.release // -> 'v1.59.71'
+window.StartersV3AuthRouter.release
+window.StartersBuildProfileRedirect.release
+```
+
+The marker states the tag that shipped the file's current contents, not the tag
+the browser happened to load it from — a `@latest` URL resolves to the newest
+tag, so the two agree unless a cached copy is being served. A mismatch between
+the console property and the tag you expect is the fastest signal that a stale
+CDN copy is still in play; purge it with `purge.jsdelivr.net`.
+
 ## Diagnostics
 
-- `window.StartersV3RouteGuard` exposes `activePlanIds`, `memberRole`,
+- `window.StartersV3RouteGuard` exposes `release`, `activePlanIds`, `memberRole`,
   `memberRoleError`, `roleResolution`, `roleHome`, `hasCompletedQuiz`,
   `brandFreeHome`, `pageRolesFor`, `isGuardedPath`, and `redirectTargetFor` for
-  console checks, plus
-  `waitForSharedOpportunitiesAccess` for the merged-feed hydration decision.
+  console checks, plus `waitForSharedOpportunitiesAccess` for the merged-feed
+  hydration decision and `isMemberBouncePage`, `bounceTargetFor`, `localPath`,
+  and `loggedOutDestinationFor` for the bounce and logged-out-override
+  decisions.
 - `window.Opp30` exposes `routeGuardActive`, `routeGuardConfigured`,
   `waitForRouteGuardHandoff`, `gateOrRedirect`, `gateByPlan`, `memberPlanRole`,
   `waitForMappedMemberRole`, `hasCompletedQuiz`, `brandFreeHome`, `initMergedOppFeed`,
@@ -213,9 +312,19 @@ initializing either role's UI.
 
 ## Release gate
 
-- Run `node --test v3/route-guard.test.js`.
+- Run `node --test v3/route-guard.test.js`, and `v3/auth-route.test.js` with it:
+  the guard/router parity sweep lives there and is what catches a new
+  `PAGE_ROLES` row whose `ROLE_DESTINATIONS` twin was forgotten.
 - Confirm `/dashboard` has no role page body and hides its neutral content while
   `data-route-guard="checking"`.
+- Verify the bounce on all four pages (`/`, `/login`, `/starter-login`,
+  `/sign-up`) signed in as Talent, paid Brand, and both Free Brand quiz states,
+  and confirm each one still renders untouched when signed out.
+- Verify `/login?next=/messages` bounces a signed-in Talent member to
+  `/messages`, and that `/starter-login?next=/brand-dashboard` sends that same
+  member to `/starter-dashboard` instead.
+- Verify a signed-out visit to each build-profile page and to `/complete-profile`
+  lands on `/` rather than on a login form.
 - Confirm each guarded page has a visible error state.
 - Back up page-level code before installing.
 - Verify `/dashboard`, `/starter-dashboard`, and `/brand-dashboard` for Talent,

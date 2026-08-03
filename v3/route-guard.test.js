@@ -499,3 +499,315 @@ test('sets the checking state synchronously on a guarded page', () => {
   })
   assert.equal(attributes['data-route-guard'], 'checking')
 })
+
+// --- New guarded funnel pages (2026-08-03) ------------------------------------
+
+test('/generate-invoice is guarded Talent only (incl. trailing slash)', () => {
+  const { api } = loadGuard()
+  for (const path of ['/generate-invoice', '/generate-invoice/']) {
+    assert.equal(api.isGuardedPath(path), true, path)
+    assert.equal(api.redirectTargetFor(TALENT, path), '', path)
+    assert.equal(api.redirectTargetFor(BRAND_PAID, path), '/brand-dashboard', path)
+    assert.equal(api.redirectTargetFor(TEST_BRAND, path), '/brand-dashboard', path)
+    assert.equal(api.redirectTargetFor(BRAND_FREE, path), '/quiz', path)
+  }
+})
+
+test('/complete-profile is guarded paid-Brand only (incl. trailing slash)', () => {
+  const { api } = loadGuard()
+  for (const path of ['/complete-profile', '/complete-profile/']) {
+    assert.equal(api.isGuardedPath(path), true, path)
+    assert.equal(api.redirectTargetFor(BRAND_PAID, path), '', path)
+    assert.equal(api.redirectTargetFor(TEST_BRAND, path), '', path)
+    assert.equal(api.redirectTargetFor(TALENT, path), '/starter-dashboard', path)
+    assert.equal(api.redirectTargetFor(BRAND_FREE, path), '/quiz', path)
+  }
+})
+
+test('a logged-out visitor to /generate-invoice keeps the login round trip', async () => {
+  const { location } = loadGuard({ pathname: '/generate-invoice', member: null })
+  await flush()
+  assert.equal(
+    location.replaced,
+    '/login?next=' + encodeURIComponent('/generate-invoice'),
+  )
+})
+
+// --- Per-page logged-out destination overrides --------------------------------
+
+test('the build-profile funnel and /complete-profile send logged-out visitors home', () => {
+  const { api } = loadGuard()
+  for (const path of [
+    '/build-profile/select-profile',
+    '/build-profile/full-profile',
+    '/build-profile/consult',
+    '/complete-profile',
+    '/complete-profile/',
+  ]) {
+    assert.equal(api.loggedOutDestinationFor(path, ''), '/', path)
+    // The override wins over a query string too: there is no ?next= to preserve
+    // when the destination is the homepage.
+    assert.equal(api.loggedOutDestinationFor(path, '?ref=email'), '/', path)
+  }
+})
+
+test('every other guarded page keeps the /login?next= round trip', () => {
+  const { api } = loadGuard()
+  assert.equal(
+    api.loggedOutDestinationFor('/brand-dashboard', ''),
+    '/login?next=' + encodeURIComponent('/brand-dashboard'),
+  )
+  assert.equal(
+    api.loggedOutDestinationFor('/favorites', '?ref=email'),
+    '/login?next=' + encodeURIComponent('/favorites?ref=email'),
+  )
+  // A prototype key must not be mistaken for a configured override.
+  assert.equal(
+    api.loggedOutDestinationFor('constructor', ''),
+    '/login?next=constructor',
+  )
+})
+
+test('a logged-out build-profile visitor is sent to the homepage, not to login', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/build-profile/full-profile',
+    member: null,
+  })
+  await flush()
+  assert.equal(location.replaced, '/')
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+})
+
+test('a logged-out /complete-profile visitor is sent to the homepage', async () => {
+  const { location } = loadGuard({ pathname: '/complete-profile', member: null })
+  await flush()
+  assert.equal(location.replaced, '/')
+})
+
+// --- Member-home bounce pages -------------------------------------------------
+
+test('the four bounce pages are recognised and stay out of PAGE_ROLES', () => {
+  const { api } = loadGuard()
+  for (const path of ['/', '/login', '/starter-login', '/sign-up']) {
+    assert.equal(api.isMemberBouncePage(path), true, path)
+    // Critical: a bounce page must NOT be guarded, or a logged-out visitor
+    // would be forced through a login form to reach the login form.
+    assert.equal(api.isGuardedPath(path), false, path)
+  }
+  for (const path of ['/about', '/quiz', '/login/extra', '/sign-up/thanks']) {
+    assert.equal(api.isMemberBouncePage(path), false, path)
+  }
+})
+
+test('no role home is itself a bounce page (bounce cannot loop)', () => {
+  const { api } = loadGuard()
+  const members = [
+    TALENT,
+    BRAND_PAID,
+    TEST_BRAND,
+    BRAND_FREE,
+    { ...BRAND_FREE, customFields: { 'starter-quiz': '{"status":"ready"}' } },
+  ]
+  for (const member of members) {
+    const home = api.roleHome(member)
+    assert.ok(home, member.id)
+    assert.equal(api.isMemberBouncePage(home), false, home)
+    // And the home must be somewhere the member is actually allowed to be.
+    assert.equal(api.redirectTargetFor(member, home), '', home)
+  }
+})
+
+test('a mapped member on a bounce page resolves to its role home', () => {
+  const { api } = loadGuard()
+  assert.equal(api.bounceTargetFor(TALENT, null), '/starter-dashboard')
+  assert.equal(api.bounceTargetFor(BRAND_PAID, null), '/brand-dashboard')
+  assert.equal(api.bounceTargetFor(TEST_BRAND, null), '/brand-dashboard')
+  assert.equal(api.bounceTargetFor(BRAND_FREE, null), '/quiz')
+  assert.equal(
+    api.bounceTargetFor(
+      { ...BRAND_FREE, customFields: { 'starter-quiz': '{"status":"ready"}' } },
+      null,
+    ),
+    '/quiz-results',
+  )
+})
+
+test('an unmapped or conflicted member gets no bounce target at all', () => {
+  const { api } = loadGuard()
+  const conflict = {
+    id: 'm-conflict',
+    planConnections: [
+      plan('pln_dorxata-test-free-plan-dvcg0k8o'),
+      plan('pln_new-paid-plan-463h04ph'),
+    ],
+  }
+  assert.equal(api.bounceTargetFor(UNMAPPED, null), null)
+  assert.equal(api.bounceTargetFor(conflict, null), null)
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/messages'), null)
+})
+
+test('a bounce honours a next the member is allowed on', () => {
+  const { api } = loadGuard()
+  assert.equal(api.bounceTargetFor(TALENT, '/messages'), '/messages')
+  assert.equal(api.bounceTargetFor(BRAND_PAID, '/favorites'), '/favorites')
+  assert.equal(
+    api.bounceTargetFor(TALENT, '/opportunities/product-designer'),
+    '/opportunities/product-designer',
+  )
+  // Query strings survive; fragments are stripped.
+  assert.equal(api.bounceTargetFor(TALENT, '/messages?thread=7'), '/messages?thread=7')
+  assert.equal(api.bounceTargetFor(TALENT, '/messages#top'), '/messages')
+})
+
+test('a bounce honours a next on an entirely unguarded public page', () => {
+  const { api } = loadGuard()
+  // Not in PAGE_ROLES at all: a public marketing or funnel page the member was
+  // reading before signing in.
+  assert.equal(api.bounceTargetFor(BRAND_FREE, '/all-starters'), '/all-starters')
+  assert.equal(api.bounceTargetFor(TALENT, '/about'), '/about')
+  assert.equal(api.bounceTargetFor(TALENT, '/quiz-results'), '/quiz-results')
+})
+
+test('a bounce refuses a next the member is not allowed on', () => {
+  const { api } = loadGuard()
+  assert.equal(api.bounceTargetFor(TALENT, '/brand-dashboard'), '/starter-dashboard')
+  assert.equal(api.bounceTargetFor(BRAND_FREE, '/messages'), '/quiz')
+  assert.equal(api.bounceTargetFor(BRAND_PAID, '/starter-dashboard'), '/brand-dashboard')
+})
+
+test('a bounce resolves /dashboard to the role home rather than returning to it', () => {
+  const { api } = loadGuard()
+  // /dashboard carries an empty allowlist: no role stays there, so honouring it
+  // as a next would only hand the member to another redirect.
+  assert.equal(api.bounceTargetFor(TALENT, '/dashboard'), '/starter-dashboard')
+  assert.equal(api.bounceTargetFor(BRAND_PAID, '/dashboard/'), '/brand-dashboard')
+})
+
+test('a bounce refuses a next pointing back at a bounce page', () => {
+  const { api } = loadGuard()
+  for (const next of ['/', '/login', '/starter-login', '/sign-up']) {
+    assert.equal(api.bounceTargetFor(TALENT, next), '/starter-dashboard', next)
+  }
+})
+
+test('a bounce refuses an off-origin or credentialed next', () => {
+  const { api } = loadGuard()
+  for (const next of [
+    'https://attacker.example/steal',
+    '//attacker.example/steal',
+    'https://user:pass@the-starters-3-0.webflow.io/messages',
+    'javascript:alert(1)',
+    '',
+    null,
+    undefined,
+    42,
+  ]) {
+    assert.equal(api.bounceTargetFor(TALENT, next), '/starter-dashboard', String(next))
+  }
+})
+
+test('localPath normalises a same-origin next and rejects everything else', () => {
+  const { api } = loadGuard()
+  assert.equal(api.localPath('/messages?a=1#frag'), '/messages?a=1')
+  assert.equal(
+    api.localPath('https://the-starters-3-0.webflow.io/messages'),
+    '/messages',
+  )
+  assert.equal(api.localPath('https://attacker.example/messages'), null)
+  assert.equal(api.localPath(''), null)
+  assert.equal(api.localPath(null), null)
+})
+
+test('a logged-in member on the homepage is bounced to its role home', async () => {
+  const { location, attributes, events } = loadGuard({
+    pathname: '/',
+    member: TALENT,
+  })
+  await flush()
+  assert.equal(location.replaced, '/starter-dashboard')
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+  assert.ok(events.some((e) => e.name === 'starters:v3-route-guard-redirecting'))
+})
+
+test('a logged-in member is bounced off both login pages and the signup page', async () => {
+  for (const pathname of ['/login', '/starter-login', '/sign-up']) {
+    const { location } = loadGuard({ pathname, member: BRAND_PAID })
+    await flush()
+    assert.equal(location.replaced, '/brand-dashboard', pathname)
+  }
+})
+
+test('a bounce reads ?next= off the current URL', async () => {
+  const { location } = loadGuard({
+    pathname: '/login',
+    search: '?next=%2Fmessages%3Fthread%3D7',
+    member: TALENT,
+  })
+  await flush()
+  assert.equal(location.replaced, '/messages?thread=7')
+})
+
+test('a bounce ignores a ?next= the member may not view', async () => {
+  const { location } = loadGuard({
+    pathname: '/starter-login',
+    search: '?next=%2Fbrand-dashboard',
+    member: TALENT,
+  })
+  await flush()
+  assert.equal(location.replaced, '/starter-dashboard')
+})
+
+test('a logged-out visitor is left completely alone on every bounce page', async () => {
+  for (const pathname of ['/', '/login', '/starter-login', '/sign-up']) {
+    const { location, attributes, events } = loadGuard({ pathname, member: null })
+    await flush()
+    assert.equal(location.replaced, undefined, pathname)
+    // No error attribute and no "checking" stamp: these pages are authored for
+    // signed-out visitors and must not depend on this script to be visible.
+    assert.deepEqual(attributes, {}, pathname)
+    assert.deepEqual(events, [], pathname)
+  }
+})
+
+test('a bounce page with no Memberstack at all is left alone', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/',
+    memberstackMissing: true,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.deepEqual(attributes, {})
+})
+
+test('an unmapped member stays on a bounce page with no error UI', async () => {
+  const { location, attributes, events } = loadGuard({
+    pathname: '/',
+    member: UNMAPPED,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  // Deliberately different from a guarded page: no data-route-guard-error on a
+  // public page. The console carries the diagnosis instead.
+  assert.equal(attributes['data-route-guard-error'], undefined)
+  assert.deepEqual(events, [])
+})
+
+test('a bounce page on an unapproved host is untouched', async () => {
+  const { location, attributes } = loadGuard({
+    hostname: 'attacker.example',
+    pathname: '/',
+    member: TALENT,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.deepEqual(attributes, {})
+})
+
+// --- Release marker -----------------------------------------------------------
+
+test('the header @release marker matches the exported release property', () => {
+  const { api } = loadGuard()
+  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+  assert.ok(marker, 'no "@release vX.Y.Z" line in the route-guard.js header')
+  assert.equal(api.release, marker[1])
+})

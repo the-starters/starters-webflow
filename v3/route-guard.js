@@ -1,16 +1,24 @@
 /**
  * V3 protected-route guard.
  *
+ * @release v1.59.71
+ *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
  * /login and /auth-route, so a logged-in member can still reach another role's
  * page by navigating directly (e.g. a Talent session opening /brand-dashboard).
  * This guard closes that gap: install it once sitewide before page controllers
  * and it will
  *
- *   - send logged-out visitors to /login?next=<current path+query>,
+ *   - send logged-out visitors to /login?next=<current path+query>, or to the
+ *     per-page destination in LOGGED_OUT_DESTINATIONS where a funnel page wants
+ *     the homepage instead of a login form,
  *   - route /dashboard to the authenticated member's role-specific home,
  *   - send a logged-in member whose role is not allowed on this page to that
  *     member's role default (never the other role's page),
+ *   - bounce an already-logged-in member off the four public entry pages in
+ *     MEMBER_BOUNCE_PAGES (homepage, both login pages, signup) to a validated
+ *     `?next=` or their role home, while leaving logged-out visitors there
+ *     completely alone,
  *   - leave an authenticated-but-unmapped or cross-role-conflicted member on
  *     the page with an explicit error state instead of silently redirecting,
  *   - do nothing on a page it does not recognise (public/unlisted route).
@@ -34,6 +42,7 @@
   ])
   var LOGIN_PATH = '/login'
   var MEMBERSTACK_TIMEOUT_MS = 10000
+  var LOG_PREFIX = '[v3-route-guard]'
   var SHARED_OPPORTUNITIES_ROLE_TIMEOUT_MS = 2000
   var SHARED_OPPORTUNITIES_ROLE_POLL_MS = 100
 
@@ -113,6 +122,17 @@
     '/build-profile/full-profile': ['talent'],
     '/build-profile/consult': ['talent'],
     '/starter-onboarding': ['talent'],
+    // Talent invoicing (2026-08-03). Both slash forms for the same reason as
+    // /favorites/ and /dashboard/: no prefix rule catches the trailing-slash
+    // twin, so each URL form needs its own entry to route identically.
+    '/generate-invoice': ['talent'],
+    '/generate-invoice/': ['talent'],
+    // Paid-Brand company/profile completion step (2026-08-03). A free Brand
+    // falls through to its quiz home via ROLE_DEFAULTS, and a logged-out
+    // visitor goes to the homepage rather than a login form — see
+    // LOGGED_OUT_DESTINATIONS.
+    '/complete-profile': ['brand-paid'],
+    '/complete-profile/': ['brand-paid'],
   }
 
   // Single-segment opportunity detail pages (/opportunities/<slug>) are shared
@@ -120,6 +140,50 @@
   var PAGE_ROLE_PREFIXES = [
     { prefix: '/opportunities/', roles: ['brand-paid', 'talent'] },
   ]
+
+  /**
+   * Public entry pages an already-signed-in member should never sit on
+   * (decision by Jerico 2026-08-03).
+   *
+   * These are deliberately NOT in PAGE_ROLES. A guarded page forces a login;
+   * these four must keep working exactly as authored for everyone who is not
+   * signed in, because they are the pre-signup funnel itself. The bounce is
+   * therefore a separate, weaker mechanism: it only ever acts on a member it
+   * can positively identify AND map to a role, and every other outcome —
+   * logged out, Memberstack missing or slow, unmapped plan, cross-role
+   * conflict — leaves the page completely untouched, with no error attribute
+   * and no redirect. A signed-out visitor cannot tell the guard is installed.
+   *
+   * Two login pages exist: /login is the canonical V3 form and /starter-login
+   * is the Talent-facing one. Both bounce, and both are also configured by
+   * v3/auth-route.js.
+   */
+  var MEMBER_BOUNCE_PAGES = new Set([
+    '/',
+    '/login',
+    '/starter-login',
+    '/sign-up',
+  ])
+
+  /**
+   * Per-page overrides for where a LOGGED-OUT visitor to a guarded page is
+   * sent, replacing the default /login?next=<here> (decision by Jerico
+   * 2026-08-03).
+   *
+   * The build-profile funnel and /complete-profile are reached from marketing
+   * flows, not from a member's bookmark, so dropping a stranger on a login form
+   * asks them to authenticate into a funnel step they have no account for yet.
+   * The homepage restarts the funnel properly instead. Every other guarded page
+   * keeps the /login?next= round trip, which is what makes a deep link survive
+   * a login.
+   */
+  var LOGGED_OUT_DESTINATIONS = {
+    '/build-profile/select-profile': '/',
+    '/build-profile/full-profile': '/',
+    '/build-profile/consult': '/',
+    '/complete-profile': '/',
+    '/complete-profile/': '/',
+  }
 
   function activePlanIds(member) {
     return (member && member.planConnections ? member.planConnections : [])
@@ -203,9 +267,82 @@
     return roleHome(member)
   }
 
-  function loginPathWithNext() {
-    var next = window.location.pathname + window.location.search
-    return LOGIN_PATH + '?next=' + encodeURIComponent(next)
+  function loginPathWithNext(pathname, search) {
+    return LOGIN_PATH + '?next=' + encodeURIComponent(pathname + (search || ''))
+  }
+
+  /**
+   * Where a logged-out visitor to a guarded page goes: the LOGGED_OUT_DESTINATIONS
+   * override when one exists, else the default login round trip.
+   */
+  function loggedOutDestinationFor(pathname, search) {
+    if (
+      Object.prototype.hasOwnProperty.call(LOGGED_OUT_DESTINATIONS, pathname)
+    ) {
+      return LOGGED_OUT_DESTINATIONS[pathname]
+    }
+    return loginPathWithNext(pathname, search)
+  }
+
+  function isMemberBouncePage(pathname) {
+    return MEMBER_BOUNCE_PAGES.has(pathname)
+  }
+
+  /**
+   * Same-origin normalisation as localPath in v3/auth-route.js: a `?next=` is
+   * only ever honoured as a path on this origin, never as an absolute URL to
+   * somewhere else, and credentials in the URL disqualify it outright.
+   */
+  function localPath(rawValue) {
+    if (!rawValue || typeof rawValue !== 'string') return null
+    try {
+      var url = new URL(rawValue, window.location.origin)
+      if (url.origin !== window.location.origin) return null
+      if (url.username || url.password) return null
+      if (url.hash) url.hash = ''
+      return url.pathname + url.search
+    } catch (error) {
+      return null
+    }
+  }
+
+  function pathnameOf(localDestination) {
+    try {
+      return new URL(localDestination, window.location.origin).pathname
+    } catch (error) {
+      return null
+    }
+  }
+
+  /**
+   * Where a signed-in member on a MEMBER_BOUNCE_PAGES page belongs.
+   *
+   * '' -> stay (never returned today, kept for symmetry with redirectTargetFor)
+   * a path string -> redirect there
+   * null -> unmapped or conflicted; stay silently, this is a public page
+   *
+   * A `?next=` survives when it is same-origin AND either allowed for this
+   * member's role or on a page the guard does not police at all — the second
+   * case is what lets a member be returned to a public marketing page they were
+   * reading before they signed in. A `next` pointing back at a bounce page is
+   * refused, because honouring it would land the member on a page this very
+   * function is about to bounce them off again.
+   */
+  function bounceTargetFor(member, requestedNext) {
+    var role = memberRole(member)
+    if (!role) return null
+
+    var next = localPath(requestedNext)
+    var nextPathname = next ? pathnameOf(next) : null
+    if (nextPathname && !isMemberBouncePage(nextPathname)) {
+      var allowed = pageRolesFor(nextPathname)
+      // Unguarded (null) is honoured as a public page. An empty allowlist —
+      // /dashboard — is not: no role stays there, so it resolves to the role
+      // home exactly as it does in redirectTargetFor and auth-route.js.
+      if (allowed === null || allowed.indexOf(role) !== -1) return next
+    }
+
+    return roleHome(member)
   }
 
   function waitForMemberstack() {
@@ -331,7 +468,12 @@
     var response = await memberstack.getCurrentMember()
     var member = response && response.data
     if (!member || !member.id) {
-      replaceLocation(loginPathWithNext())
+      replaceLocation(
+        loggedOutDestinationFor(
+          window.location.pathname,
+          window.location.search,
+        ),
+      )
       return
     }
 
@@ -354,7 +496,40 @@
     markResolved()
   }
 
+  /**
+   * The MEMBER_BOUNCE_PAGES counterpart to guardCurrentPage().
+   *
+   * Deliberately silent in every inconclusive case. No `data-route-guard`
+   * "checking" stamp either: these pages are authored for signed-out visitors
+   * and must not depend on this script to become visible, so the only attribute
+   * it ever sets here is the "redirecting" one on the way out.
+   */
+  async function bounceMemberHome() {
+    var memberstack = await waitForMemberstack()
+    if (!memberstack) return
+
+    var response = await memberstack.getCurrentMember()
+    var member = response && response.data
+    if (!member || !member.id) return
+
+    var next = new URLSearchParams(window.location.search).get('next')
+    var target = bounceTargetFor(member, next)
+    if (target === null) {
+      // A public page is the wrong place to surface a plan-configuration
+      // problem, so this is console-only: the member simply stays.
+      console.error(
+        LOG_PREFIX + ' Cannot resolve a member home:',
+        memberRoleError(member) || 'unmapped-plan',
+      )
+      return
+    }
+    if (target) replaceLocation(target)
+  }
+
   var api = {
+    // Keep in sync with the @release line in this file's header comment; the
+    // v3/route-guard.test.js drift guard asserts they match.
+    release: 'v1.59.71',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,
@@ -366,10 +541,25 @@
     isGuardedPath: isGuardedPath,
     redirectTargetFor: redirectTargetFor,
     waitForSharedOpportunitiesAccess: waitForSharedOpportunitiesAccess,
+    // Member-home bounce and per-page logged-out overrides.
+    isMemberBouncePage: isMemberBouncePage,
+    bounceTargetFor: bounceTargetFor,
+    localPath: localPath,
+    loggedOutDestinationFor: loggedOutDestinationFor,
   }
   window.StartersV3RouteGuard = api
 
   if (!APPROVED_HOSTS.has(window.location.hostname)) return
+
+  // Checked before the guarded-page test: the bounce pages are intentionally
+  // absent from PAGE_ROLES, so isGuardedPath() would bail out on them.
+  if (isMemberBouncePage(window.location.pathname)) {
+    bounceMemberHome().catch(function (error) {
+      console.error(LOG_PREFIX + ' Unexpected member-bounce failure', error)
+    })
+    return
+  }
+
   // Only spend a Memberstack lookup on pages this guard actually protects.
   if (!isGuardedPath(window.location.pathname)) return
 
