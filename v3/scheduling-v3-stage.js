@@ -6,6 +6,8 @@
   const STAGE_PATHS = [
     '/starter-dashboard---availability-stage',
     '/brand-dashboard---availability-stage',
+    '/starter-dashboard',
+    '/brand-dashboard',
     '/messages-stage',
     '/hire-stage',
     '/hire/jp-dionisio',
