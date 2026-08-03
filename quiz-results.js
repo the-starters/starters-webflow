@@ -5157,6 +5157,17 @@
      * `completedAt`. The marker is therefore proof of a member cache, and its
      * absence protects the pre-signup preview.
      *
+     * The marker is read type-safely, the same way hasStarterQuizCompletionMarker()
+     * reads its custom field, because normalize() is `(value || '').trim()` with no
+     * String() coercion and sessionStorage is visitor-writable: a marker that
+     * survived a JSON round-trip as a number, or was tampered with, would throw a
+     * TypeError here and take the whole boot flow down with it. Any truthy
+     * non-string value still counts as a member cache — only this controller ever
+     * writes the field, so anything in it means the payload came through the
+     * member path, and treating it as a cache is also the safer default: the worst
+     * case is one redirect to /quiz for a logged-out visitor, versus previewing
+     * somebody else's results.
+     *
      * @param {object | null | undefined} pendingQuiz Stored quiz payload.
      * @returns {boolean} True when the payload came from a logged-in member.
      */
@@ -5169,7 +5180,11 @@
             return false
         }
 
-        return normalize(pendingQuiz.memberstackSavedAt) !== ''
+        const marker = pendingQuiz.memberstackSavedAt
+
+        return typeof marker === 'string'
+            ? normalize(marker) !== ''
+            : Boolean(marker)
     }
 
     /**
@@ -5195,41 +5210,54 @@
      * who has no legitimate results run to replay — the very next thing that
      * happens is redirectVisitorWithoutResults() sending them to /quiz.
      *
+     * This runs first in initResultsPage(), so it is wrapped end to end: anything
+     * unexpected here degrades to today's behavior (payload kept, boot continues)
+     * rather than rejecting out of a fire-and-forget boot call and leaving
+     * quiz-loader.js's overlay up forever. The boot call carries its own
+     * rejection handler as the outer net.
+     *
      * @returns {Promise<boolean>} True when the stale cache was removed.
      */
     async function clearMemberCachedPendingQuizWhenLoggedOut() {
-        const storedRaw = sessionStorage.getItem(pendingQuizStorageKey)
+        try {
+            const storedRaw = sessionStorage.getItem(pendingQuizStorageKey)
 
-        if (!storedRaw) return false
+            if (!storedRaw) return false
 
-        const storedPendingQuiz = parsePendingQuiz(storedRaw)
+            const storedPendingQuiz = parsePendingQuiz(storedRaw)
 
-        if (!isMemberCachedPendingQuiz(storedPendingQuiz)) return false
+            if (!isMemberCachedPendingQuiz(storedPendingQuiz)) return false
 
-        const authState = await resolveMemberstackAuthState()
+            const authState = await resolveMemberstackAuthState()
 
-        if (!authState.resolved) {
+            if (!authState.resolved) {
+                logQuizFlow(
+                    'auth state unresolved; member-cached pending quiz kept',
+                    { pendingQuizStorageKey },
+                )
+                return false
+            }
+
+            if (!authState.isLoggedOut) return false
+
+            sessionStorage.removeItem(pendingQuizStorageKey)
             logQuizFlow(
-                'auth state unresolved; member-cached pending quiz kept',
-                { pendingQuizStorageKey },
+                'logged-out visitor holding a member-cached pending quiz; cleared',
+                {
+                    pendingQuizStorageKey,
+                    memberstackSavedAt: storedPendingQuiz.memberstackSavedAt,
+                    status: storedPendingQuiz.status,
+                    updatedAt: storedPendingQuiz.updatedAt,
+                },
             )
+
+            return true
+        } catch (error) {
+            logQuizFlow('stale-cache reset failed; pending quiz left in place', {
+                error,
+            })
             return false
         }
-
-        if (!authState.isLoggedOut) return false
-
-        sessionStorage.removeItem(pendingQuizStorageKey)
-        logQuizFlow(
-            'logged-out visitor holding a member-cached pending quiz; cleared',
-            {
-                pendingQuizStorageKey,
-                memberstackSavedAt: storedPendingQuiz.memberstackSavedAt,
-                status: storedPendingQuiz.status,
-                updatedAt: storedPendingQuiz.updatedAt,
-            },
-        )
-
-        return true
     }
 
     /**
@@ -5732,6 +5760,13 @@
         })
     }
 
-    initResultsPage()
+    // initResultsPage() is fire-and-forget, so any rejection inside it would
+    // otherwise skip every signalQuizResultsReady() call and leave the loading
+    // overlay up for good. Releasing the loader on failure shows the page as it
+    // stands, which beats an indefinite spinner.
+    initResultsPage().catch((error) => {
+        logQuizFlow('results boot failed; releasing the loader', { error })
+        signalQuizResultsReady('boot-error')
+    })
 })
 })()
