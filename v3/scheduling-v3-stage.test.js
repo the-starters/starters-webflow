@@ -25,6 +25,7 @@ function loadStage(options = {}) {
   const attributes = {}
   const intervals = []
   const mutationObservers = []
+  const documentListeners = new Map()
   const nativeFetch = async (request) => {
     nativeRequests.push(request)
     return response({ native: true })
@@ -48,8 +49,14 @@ function loadStage(options = {}) {
     clearInterval(id) {
       intervals[id].cleared = true
     },
+    queueMicrotask(callback) {
+      callback()
+    },
   }
   const document = {
+    addEventListener(name, callback) {
+      documentListeners.set(name, callback)
+    },
     querySelectorAll() {
       return options.schedulerElements || []
     },
@@ -84,12 +91,69 @@ function loadStage(options = {}) {
     attributes,
     authenticatedRequests,
     intervals,
+    documentListeners,
     mutationObservers,
     nativeFetch,
     nativeRequests,
     window,
   }
 }
+
+test('detaches the Nylas element only after the authored success step is ready', () => {
+  let removed = false
+  const success = { style: { display: 'flex' } }
+  const popup = {
+    querySelector(selector) {
+      return selector === '[schedule-step="success"]' ? success : null
+    },
+  }
+  const scheduler = {
+    closest(selector) {
+      if (selector === 'nylas-scheduling') return this
+      if (selector === '[popup-booking]') return popup
+      return null
+    },
+    remove() {
+      removed = true
+    },
+  }
+  const { attributes, documentListeners } = loadStage({
+    hostname: 'thestarters.com',
+    pathname: '/hire/jp-test',
+  })
+
+  documentListeners.get('bookedEventInfo')({
+    detail: { data: { booking_id: 'booking-1' } },
+    target: scheduler,
+  })
+
+  assert.equal(removed, true)
+  assert.equal(attributes['data-scheduling-booked-success'], 'ready')
+})
+
+test('keeps the Nylas element mounted when booking fails or success is not shown', () => {
+  let removed = false
+  const success = { style: { display: 'none' } }
+  const popup = { querySelector: () => success }
+  const scheduler = {
+    closest(selector) {
+      return selector === 'nylas-scheduling' ? this : popup
+    },
+    remove() {
+      removed = true
+    },
+  }
+  const { documentListeners } = loadStage({
+    hostname: 'thestarters.com',
+    pathname: '/hire/jp-test',
+  })
+  const listener = documentListeners.get('bookedEventInfo')
+
+  listener({ detail: { error: 'provider failure' }, target: scheduler })
+  listener({ detail: { data: {} }, target: scheduler })
+
+  assert.equal(removed, false)
+})
 
 test('installs on the seven explicit staging pages', () => {
   for (const pathname of [

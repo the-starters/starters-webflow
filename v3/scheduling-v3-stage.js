@@ -234,6 +234,53 @@
     }
   }
 
+  function installBookedEventSuccessGuard() {
+    if (!isHireBookingPath || typeof document.addEventListener !== 'function') return
+
+    document.addEventListener(
+      'bookedEventInfo',
+      (event) => {
+        if (
+          !event ||
+          !event.detail ||
+          event.detail.error ||
+          !event.detail.data ||
+          !event.detail.data.booking_id
+        ) {
+          return
+        }
+        const scheduler =
+          event.target && event.target.closest
+            ? event.target.closest('nylas-scheduling')
+            : null
+        if (!scheduler) return
+
+        const defer =
+          typeof window.queueMicrotask === 'function'
+            ? window.queueMicrotask.bind(window)
+            : (callback) => Promise.resolve().then(callback)
+        defer(() => {
+          const popup = scheduler.closest && scheduler.closest('[popup-booking]')
+          const success =
+            popup && popup.querySelector
+              ? popup.querySelector('[schedule-step="success"]')
+              : null
+          if (!success || success.style.display === 'none') return
+
+          // The Webflow success step is authoritative after Nylas has returned
+          // a booking. Detaching the now-unused custom element prevents its
+          // queued Stencil patch from racing that external step transition.
+          if (typeof scheduler.remove === 'function') scheduler.remove()
+          document.documentElement.setAttribute(
+            'data-scheduling-booked-success',
+            'ready',
+          )
+        })
+      },
+      true,
+    )
+  }
+
   async function stageFetch(input, init) {
     const request = new Request(input, init)
     const scheduling = schedulingRoute(request)
@@ -271,6 +318,7 @@
     injectBookingIdentity: injectBookingIdentity,
   })
   installSchedulerIdentityObserver()
+  installBookedEventSuccessGuard()
   setStatus('ready')
   console.info('[scheduling-v3-stage] installed')
 })()
