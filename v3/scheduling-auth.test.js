@@ -54,6 +54,7 @@ function loadBridge(nativeFetch, options = {}) {
   vm.runInNewContext(source, {
     Headers,
     Request,
+    Response,
     URL,
     console: { info() {}, warn() {} },
     window,
@@ -82,7 +83,7 @@ test('installs immediately and takes ownership from the opportunities bridge', (
   assert.notEqual(window.fetch, legacyFetch)
 })
 
-test('does not install on an unapproved production path', () => {
+test('does not install on unrelated production Hire paths', () => {
   const nativeFetch = async () => response({})
   const { window } = loadBridge(nativeFetch, {
     hostname: 'www.thestarters.com',
@@ -94,10 +95,35 @@ test('does not install on an unapproved production path', () => {
   assert.equal(window.fetch, nativeFetch)
 })
 
+test('blocks every scheduling request on the protected production Test profile', async () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const requests = []
+    const nativeFetch = async (request) => {
+      requests.push(request)
+      return response({ native: true })
+    }
+    const { window } = loadBridge(nativeFetch, {
+      hostname,
+      pathname: '/hire/jp-dionisio',
+    })
+
+    assert.equal(window.__tsSchedulingV3InertRoute, true)
+    assert.equal(window.__tsSchedulingAuthBridge, undefined)
+    assert.equal(window.xanoAuthFetch, undefined)
+    const blocked = await window.fetch(
+      `${XANO_ORIGIN}/api:tCpV3oqd/stripe/live/payment_intent/get`,
+    )
+    assert.equal(blocked.status, 410)
+    assert.equal((await blocked.json()).code, 'SCHEDULING_V3_ROUTE_DISABLED')
+    await window.fetch('https://example.com/profile-photo.jpg')
+    assert.equal(requests.length, 1)
+  }
+})
+
 test('installs on the approved Hire canary and canonical dashboards across both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
-      '/hire/jp-dionisio',
+      '/hire/jp-test',
       '/starter-dashboard',
       '/brand-dashboard',
     ]) {

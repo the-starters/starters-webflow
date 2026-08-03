@@ -911,7 +911,7 @@ script tag instead of carrying a duplicate copy in page head/footer code.
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
-- On the V3 custom domains, runs only on `/hire/jp-dionisio`,
+- On the V3 custom domains, runs only on `/hire/jp-test`,
   `/starter-dashboard`, and `/brand-dashboard`; all other paths remain inert.
 - Authenticates only the explicit reviewed `/v3` scheduling routes on the
   configured Xano origin. It does not use a group-wide prefix allowlist.
@@ -971,15 +971,18 @@ scheduling component. It installs on these exact staging paths:
 - `/hire/jp-dionisio`
 
 The seventh path is the existing approved Test Talent CMS item. The exact paths
-`/hire/jp-dionisio`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
+`/hire/jp-test`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
 `thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
 staging-host only. The adapter does not install on any other `/hire/*` item or
-on `detail_hire`. The adapter maps the reviewed legacy scheduling paths to
-their exact `/v3` routes,
+on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
+both synchronous scripts: scheduling-group requests return HTTP `410` without
+installing authentication, discovery overrides, or booking identity. The
+adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
 preserves request method, body, headers, and query parameters, and sends the
 rewritten request through `window.xanoAuthFetch`.
 
-On the exact `/hire/jp-dionisio` canary only, the two public booking-discovery
+On the exact production `/hire/jp-test` canary, and on the retained staging-only
+`/hire/jp-dionisio` canary, the two public booking-discovery
 reads use Brand-safe contracts instead of Talent-owner contracts:
 `starter/get_booking_profile/v3` returns only the Starter row ID and calendar
 grant, while `nylas_configurations/get_bookable/v3` returns the bookable
@@ -1016,7 +1019,9 @@ Runtime contract:
 - `data-scheduling-v3-stage` on the document root reports `ready` once the
   adapter owns `window.fetch`, or `auth-unavailable` when a mapped route is
   reached before `window.xanoAuthFetch` exists (the request is then blocked).
-  The attribute is not set on pages where the adapter does not install.
+  On the protected production `/hire/jp-dionisio` profile it reports `disabled`;
+  otherwise, the attribute is not set on pages where the adapter does not
+  install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
   seven installed stage paths), `productionPaths` (the exact production Hire
   canary and canonical dashboards), and `routeMap` (the legacy-to-`/v3` route
