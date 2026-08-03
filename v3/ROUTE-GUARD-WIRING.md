@@ -59,7 +59,6 @@ view it; any other authenticated role is redirected to its default.
 | `/opportunities/<slug>` | Talent, Brand paid |
 | `/favorites` and `/favorites/` | Brand paid |
 | `/generate-invoice` and `/generate-invoice/` | Talent |
-| `/complete-profile` and `/complete-profile/` | Brand paid |
 
 The merged feed lists both `/opportunities` forms explicitly: the exact page
 map would otherwise miss the trailing slash, while the detail prefix requires a
@@ -78,13 +77,24 @@ lookup that never settles is capped by the remaining time. At the deadline, the
 latest valid snapshot follows the normal fail-closed redirect or error. Other
 guarded routes and opportunity detail pages do not use this hydration delay.
 
-`/generate-invoice` and `/complete-profile` were added on 2026-08-03, each with
-its trailing-slash twin for the same reason as `/favorites/`. `/complete-profile`
-is paid-Brand only: a free Brand falls through to its quiz home, and Talent to
-`/starter-dashboard`. Both pages also appear in `auth-route.js`
-`ROLE_DESTINATIONS`, which the guard/router parity test in
-`v3/auth-route.test.js` enforces — a new `PAGE_ROLES` row without the matching
-router entry fails the suite rather than silently dropping a `next`.
+`/generate-invoice` was added on 2026-08-03 with its trailing-slash twin for the
+same reason as `/favorites/`, and appears in `auth-route.js` `ROLE_DESTINATIONS`
+too. The guard/router parity test in `v3/auth-route.test.js` enforces that pair —
+a new `PAGE_ROLES` row without the matching router entry fails the suite rather
+than silently dropping a `next`.
+
+`/complete-profile` briefly lived in this table on 2026-08-03 and was removed the
+same day. Memberstack is now its sole gate: the `restrict-pages` gated content
+group carries a URL rule STARTS `complete-profile` with redirect `login`. Two
+owners would mean two logged-out destinations for one URL, and the guard's would
+lose anyway — Memberstack's `protectPages()` calls
+`window.location.replace('/login')` from cached group data before the guard has
+resolved a member. That redirect carries no `?next=`, so the page is out of
+`ROLE_DESTINATIONS` as well; the member-home bounce pages forward whoever lands
+on `/login` to their role home, which is what completes the routing. Do not
+re-add the page here without revisiting that decision — `v3/route-guard.test.js`
+asserts `pageRolesFor('/complete-profile')` is `null` so the re-add cannot be
+accidental.
 
 ## Member-home bounce pages
 
@@ -130,10 +140,9 @@ specific guarded paths (decision by Jerico, 2026-08-03):
 | `/build-profile/select-profile` | `/` |
 | `/build-profile/full-profile` | `/` |
 | `/build-profile/consult` | `/` |
-| `/complete-profile` and `/complete-profile/` | `/` |
 
 Everything else keeps `/login?next=`, which is what makes a deep link survive a
-login. These five are reached from marketing flows rather than from a member's
+login. These three are reached from marketing flows rather than from a member's
 bookmark, so a login form would ask a stranger to authenticate into a funnel step
 they have no account for yet; the homepage restarts the funnel properly. The
 override replaces the whole destination, so no `?next=` is preserved for them.
@@ -203,7 +212,7 @@ every route in its page table:
 - `/starter-onboarding`
 - `/favorites` (including its trailing-slash URL)
 - `/messages`
-- `/generate-invoice`, `/complete-profile` (each including its trailing-slash URL)
+- `/generate-invoice` (including its trailing-slash URL)
 - `/opportunities` merged-feed page (including its trailing-slash URL)
 - `/opportunities/<slug>` collection-template pages
 - `/`, `/login`, `/starter-login`, `/sign-up` — not guarded, but the sitewide
@@ -273,7 +282,7 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.72'
+window.StartersV3RouteGuard.release // -> 'v1.59.73'
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
 ```
@@ -323,8 +332,11 @@ CDN copy is still in play; purge it with `purge.jsdelivr.net`.
 - Verify `/login?next=/messages` bounces a signed-in Talent member to
   `/messages`, and that `/starter-login?next=/brand-dashboard` sends that same
   member to `/starter-dashboard` instead.
-- Verify a signed-out visit to each build-profile page and to `/complete-profile`
-  lands on `/` rather than on a login form.
+- Verify a signed-out visit to each build-profile page lands on `/` rather than
+  on a login form.
+- Verify a signed-out visit to `/complete-profile` lands on `/login` from
+  Memberstack alone, with no guard attribute on `<html>`, and that a signed-in
+  paid Brand is left on the page.
 - Confirm each guarded page has a visible error state.
 - Back up page-level code before installing.
 - Verify `/dashboard`, `/starter-dashboard`, and `/brand-dashboard` for Talent,

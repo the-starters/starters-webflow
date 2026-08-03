@@ -219,11 +219,17 @@ away from them, to a validated `?next=` when one is present and otherwise to the
 role home. Every inconclusive case (logged out, Memberstack unavailable, unmapped
 plan, cross-role conflict) leaves the page completely alone, with no error
 attribute and no `checking` stamp. **Per-page logged-out destinations:** the three
-build-profile pages and `/complete-profile` send a logged-out visitor to `/`
-instead of `/login?next=`, because they are entered from marketing flows where a
-login form would ask a stranger to authenticate into a funnel step they have no
-account for yet. `/generate-invoice` (Talent) and `/complete-profile` (paid Brand)
-also joined the guarded route table.
+build-profile pages send a logged-out visitor to `/` instead of `/login?next=`,
+because they are entered from marketing flows where a login form would ask a
+stranger to authenticate into a funnel step they have no account for yet.
+`/generate-invoice` (Talent) also joined the guarded route table.
+
+`/complete-profile` was in that table for part of 2026-08-03 and is not any more.
+Memberstack's `restrict-pages` gated group owns the page on its own, redirecting a
+logged-out visitor to `/login` with no `?next=`, so the guard and `auth-route.js`
+both leave it alone rather than compete for the same URL with a different
+destination. The member-home bounce pages forward whoever arrives at `/login` that
+way to their role home. See [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 
 ## Build-profile funnel redirect
 
