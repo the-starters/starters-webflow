@@ -53,6 +53,32 @@
   let activeManager = null
   let timezone = null
   let timezonePersisted = false
+  const oauthCallback = captureOAuthCallback()
+
+  function captureOAuthCallback() {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    const grantId = params.get('grant_id')
+    if (!code && !grantId) return null
+
+    const callback = {
+      code: code,
+      grantId: grantId,
+      state: params.get('state'),
+      success: params.get('success'),
+    }
+    ;['code', 'grant_id', 'email', 'provider', 'state', 'success'].forEach(function (key) {
+      params.delete(key)
+    })
+    const remainingQuery = params.toString()
+    callback.remainingQuery = remainingQuery
+    window.history.replaceState(
+      {},
+      document.title,
+      window.location.pathname + (remainingQuery ? '?' + remainingQuery : ''),
+    )
+    return callback
+  }
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -1156,7 +1182,9 @@
       timezone = await resolveTimezone(starterRecord, isStagingHost)
       renderTimezone()
 
-      const urlParams = new URLSearchParams(window.location.search)
+      const urlParams = new URLSearchParams(
+        oauthCallback ? oauthCallback.remainingQuery : window.location.search,
+      )
       let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
 
       // OAuth returns directly to this page. The classic Nylas flow returns
@@ -1165,26 +1193,16 @@
       // was set by grants/oauth/v3 from the caller's Bearer token and must
       // match the logged-in member. grants/add/v3 performs the authoritative
       // server-side exchange or grant lookup before persisting V3 state.
-      const oauthCode = urlParams.get('code')
-      const oauthGrantId = urlParams.get('grant_id')
-      const oauthSuccess = urlParams.get('success')
-      if (oauthCode || oauthGrantId) {
-        const oauthState = urlParams.get('state')
-        ;['code', 'grant_id', 'email', 'provider', 'state', 'success'].forEach(function (key) {
-          urlParams.delete(key)
-        })
-        const remainingQuery = urlParams.toString()
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname + (remainingQuery ? '?' + remainingQuery : ''),
-        )
+      if (oauthCallback) {
+        const oauthCode = oauthCallback.code
+        const oauthGrantId = oauthCallback.grantId
+        const oauthState = oauthCallback.state
         try {
           const memberId = await writeMemberId()
           if (!oauthState || oauthState !== memberId) {
             throw new Error('OAuth state does not match the logged-in member')
           }
-          if (oauthGrantId && oauthSuccess !== 'true') {
+          if (oauthGrantId && oauthCallback.success !== 'true') {
             throw new Error('Hosted OAuth did not report success')
           }
           const oauthIntent = consumeOAuthIntent(memberId)

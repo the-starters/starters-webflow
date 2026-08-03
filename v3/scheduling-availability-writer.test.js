@@ -1112,6 +1112,43 @@ test('production hosted OAuth callback verifies and persists the returned grant'
   )
 })
 
+test('OAuth callback is stripped before bootstrap failure and retained for retry', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    member: null,
+    search:
+      '?success=true&grant_id=hosted-grant-9&email=callback%40example.com&provider=google&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+
+  assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
+  await settle()
+  assert.equal(result.status(), 'error')
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+
+  result.harness.setActiveMember(MEMBER_A())
+  await result.window.StarterSchedulingAvailabilityWriter.initialize()
+
+  const add = result.calls.find((c) => c.path === '/grants/add/v3')
+  assert.deepEqual(add.body, {
+    in_grant_id: 'hosted-grant-9',
+    member_id: 'member-a',
+    in_redirect_uri: 'https://thestarters.com/starter-dashboard',
+    in_state: 'member-a',
+  })
+})
+
 test('hosted OAuth callback without success strips its query and performs no writes', async () => {
   const result = loadWriter({
     hostname: 'thestarters.com',
