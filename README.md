@@ -72,6 +72,9 @@ Do not discard local changes unless the user explicitly asks.
   and blocks known edit mutations on non-Live hosts
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
+- `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero
+  binder for the V3 dashboards; see `v3/README.md` for its Designer markup,
+  identity, state, and endpoint contracts
 - `v3/scheduling-availability-init.js` — scheduling availability control
   initializer; see `v3/README.md` for its authoritative host, path, and safety
   boundary
