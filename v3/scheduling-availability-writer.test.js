@@ -269,6 +269,7 @@ function buildDom(options) {
   root.appendChild(new El('div', { 'config-initial-element': 'setup-form' }))
 
   const template = new El('div', { 'availability-template': '' })
+  template.style.display = options.templateDisplay
   template.appendChild(new El('div', { 'availability-title': '' }))
   template.appendChild(new El('div', { 'availability-days': '' }))
   template.appendChild(new El('div', { 'availability-time': '' }))
@@ -548,7 +549,7 @@ test('stays read-only while the test_member_id override renders another member',
 })
 
 test('bootstraps a saved schedule: ready state, configs read, cards rendered', async () => {
-  const result = loadWriter({ storage: TZ_CACHED })
+  const result = loadWriter({ storage: TZ_CACHED, templateDisplay: 'flex' })
   await settle()
 
   assert.equal(result.status(), 'ready')
@@ -559,6 +560,11 @@ test('bootstraps a saved schedule: ready state, configs read, cards rendered', a
     result.dom.list.children[0].querySelector('[availability-title]').textContent,
     'General Availability',
   )
+  assert.equal(result.dom.root.querySelector('[availability-template]').hasAttribute('hidden'), true)
+  assert.equal(result.dom.root.querySelector('[availability-template]').style.display, 'none')
+  assert.equal(result.dom.list.children[0].hasAttribute('hidden'), false)
+  assert.equal(result.dom.list.children[0].hasAttribute('aria-hidden'), false)
+  assert.equal(result.dom.list.children[0].style.display, 'flex')
   assert.equal(
     result.dom.root.querySelector('[bookings-wrapper]').style.display,
     'flex',

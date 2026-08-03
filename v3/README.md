@@ -1164,7 +1164,7 @@ switches steps inside it. All **11** step wrappers exist:
 
 | `availability-step` | contents the writer drives |
 | --- | --- |
-| `default` | card list + template (template sits **outside** `[availability-list]`), `availability-create/edit/remove`, `how-to-manage`, `[config-manager-element]` with `change-manager-link` buttons (platform → `how-to-manage`; calendar → `disconnect-confirm` with `data-to="disconnect-calendar"`), `config-initial-element="general"` |
+| `default` | card list + Designer-authored cloning template (template sits **outside** `[availability-list]` and is hidden when rendered cards appear; clones remain visible), `availability-create/edit/remove`, `how-to-manage`, `[config-manager-element]` with `change-manager-link` buttons (platform → `how-to-manage`; calendar → `disconnect-confirm` with `data-to="disconnect-calendar"`), `config-initial-element="general"` |
 | `setup-form` | `[availability-form]` (3 `set-availability-group` wrappers: days/start/end), back → default, `submit` + `[btn-text]`, `config-initial-element="setup-form"`, loader |
 | `how-to-manage` | two `[config-manager]` tiles (platform pre-`is-active`), `manager-submit`, back, loader |
 | `disconnect-calendar` | confirm screen: `disconnect-calendar` action, back, loader |
