@@ -1,8 +1,53 @@
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
 const test = require('node:test')
+const vm = require('node:vm')
 
 global.window = global
 const api = require('./dashboard-calls.js')
+
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+function element(attributes = {}) {
+  return {
+    attributes: { ...attributes },
+    hidden: false,
+    innerHTML: '',
+    style: {},
+    textContent: '',
+    addEventListener() {},
+    getAttribute(name) {
+      return this.attributes[name] || null
+    },
+    querySelector() {
+      return null
+    },
+    querySelectorAll() {
+      return []
+    },
+    remove() {},
+    removeAttribute(name) {
+      delete this.attributes[name]
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = value
+    },
+  }
+}
+
+async function until(predicate) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) return
+    await new Promise(setImmediate)
+  }
+  assert.fail('condition was not reached')
+}
 
 test('activates only canonical V3 dashboard paths', () => {
   assert.equal(api.roleForPath('/starter-dashboard/'), 'starter')
@@ -16,6 +61,120 @@ test('normalizes lifecycle statuses and completed timestamps', () => {
   assert.equal(api.bookingStatus({ status: 'declined' }, now), 'cancelled')
   assert.equal(api.bookingStatus({ status: 'confirmed', end: 1_000 }, now), 'completed')
   assert.equal(api.bookingStatus({ status: 'confirmed', end: 3_000 }, now), 'confirmed')
+})
+
+test('normalizes canonical Unix seconds once while preserving milliseconds', () => {
+  assert.deepEqual(
+    api.normalizeBooking({ booking_id: 'seconds', start: 1_709_645_400, end: '1709649000' }),
+    { booking_id: 'seconds', start: 1_709_645_400_000, end: 1_709_649_000_000 },
+  )
+  assert.deepEqual(
+    api.normalizeBooking({ booking_id: 'milliseconds', start: 1_709_645_400_000 }),
+    { booking_id: 'milliseconds', start: 1_709_645_400_000, end: Number.NaN },
+  )
+})
+
+test('canonical V3 component loader includes the dashboard controller', () => {
+  const loader = fs.readFileSync(
+    require.resolve('./scheduling-v3-stage-component.html'),
+    'utf8',
+  )
+  assert.match(loader, /v3\/dashboard-calls\.js/)
+})
+
+test('auth changes clear identity state and stale requests cannot render', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const firstResponse = deferred()
+  const requests = []
+  let authChange
+  let currentMember = {
+    id: 'member-a',
+    customFields: { 'free-user': 'Member A', company: 'Company A' },
+  }
+  const name = element()
+  const surname = element()
+  const company = element()
+  const list = element()
+  const template = element({ 'bookings-item-template': 'calls' })
+  const loader = element()
+  const empty = element()
+  const count = element()
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': loader,
+      '[bookings-empty="calls"]': empty,
+      '[bookings-count]': count,
+    })[selector] || null
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [template] : []
+  template.cloneNode = () => element()
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    querySelector(selector) {
+      return selector === '.dash-hero_profile-stats > p' ? company : null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[bookings-section]') return [section]
+      if (selector === '.dash-hero_profile-name span') return [name, surname]
+      return []
+    },
+  }
+  const memberstack = {
+    async getCurrentMember() {
+      return currentMember
+    },
+    onAuthChange(listener) {
+      authChange = listener
+    },
+  }
+  const window = {
+    $memberstackDom: memberstack,
+    clearInterval,
+    document,
+    location: { pathname: '/brand-dashboard' },
+    setInterval,
+    xanoAuthFetch: async (_url, init) => {
+      requests.push(JSON.parse(init.body).memberstack_id)
+      if (requests.length === 1) return firstResponse.promise
+      return { ok: true, json: async () => [] }
+    },
+  }
+
+  vm.runInNewContext(source, {
+    console: { error() {} },
+    document,
+    Intl,
+    setInterval,
+    window,
+  })
+  await until(() => requests.length === 1)
+
+  currentMember = {
+    id: 'member-b',
+    customFields: { 'free-user': 'Member B', company: 'Company B' },
+  }
+  authChange()
+  assert.equal(name.textContent, '')
+  assert.equal(company.textContent, '')
+  await until(() => requests.length === 2 && root.attributes['data-dashboard-calls-v3'] === 'ready')
+  assert.deepEqual(requests, ['member-a', 'member-b'])
+  assert.equal(name.textContent, 'Member B')
+  assert.equal(company.textContent, 'Company B')
+
+  firstResponse.resolve({ ok: true, json: async () => [] })
+  await new Promise(setImmediate)
+  assert.equal(name.textContent, 'Member B')
+
+  currentMember = null
+  authChange()
+  assert.equal(name.textContent, '')
+  assert.equal(company.textContent, '')
+  await until(() => root.attributes['data-dashboard-calls-v3'] === 'error')
 })
 
 test('fails closed when the authenticated participant identity is absent or mismatched', () => {

@@ -34,6 +34,19 @@
     return String(value == null ? '' : value).trim()
   }
 
+  function normalizeTimestamp(value) {
+    const timestamp = Number(value)
+    if (!Number.isFinite(timestamp) || timestamp === 0) return timestamp
+    return Math.abs(timestamp) < 1e12 ? timestamp * 1000 : timestamp
+  }
+
+  function normalizeBooking(booking) {
+    return Object.assign({}, booking, {
+      start: normalizeTimestamp(booking && booking.start),
+      end: normalizeTimestamp(booking && booking.end),
+    })
+  }
+
   function bookingStatus(booking, now) {
     const raw = clean(booking && booking.status).toLowerCase()
     if (raw === 'archived') return 'archived'
@@ -309,6 +322,15 @@
     if (company) company.textContent = clean(fields.company)
   }
 
+  function clearBrandHero(role) {
+    if (role !== 'brand') return
+    document.querySelectorAll('.dash-hero_profile-name span').forEach(function (name) {
+      name.textContent = ''
+    })
+    const company = document.querySelector('.dash-hero_profile-stats > p')
+    if (company) company.textContent = ''
+  }
+
   async function fetchBookings(memberId) {
     if (typeof global.xanoAuthFetch !== 'function') {
       throw new Error('Scheduling authentication bridge unavailable')
@@ -327,7 +349,23 @@
     if (!response.ok || !Array.isArray(body)) {
       throw new Error('Canonical bookings request failed')
     }
-    return body
+    return body.map(normalizeBooking)
+  }
+
+  function resetIdentityState(refs, role) {
+    clearBrandHero(role)
+    refs.forEach(function (section) {
+      section.rows = []
+      section.rendered = 0
+      section.list.innerHTML = ''
+      show(section.list, false)
+      show(section.empty, false)
+      show(section.loadMore, false)
+      show(section.loader, true)
+      if (section.count) section.count.textContent = '0'
+      section.section.setAttribute('data-bookings-state', 'loading')
+    })
+    document.documentElement.setAttribute('data-dashboard-calls-v3', 'loading')
   }
 
   function renderFailure(refs) {
@@ -346,6 +384,32 @@
     refs.section.setAttribute('data-bookings-state', 'error')
   }
 
+  async function refreshSession(memberstack, refs, role, generation, currentGeneration) {
+    try {
+      const current = await memberstack.getCurrentMember()
+      if (generation !== currentGeneration()) return
+      const member = current && (current.data || current)
+      const memberId = clean(member && member.id)
+      if (!memberId) throw new Error('Authenticated member unavailable')
+      bindBrandHero(member)
+      const rows = (await fetchBookings(memberId)).filter(function (booking) {
+        return memberOwnsBooking(booking, memberId, role)
+      })
+      if (generation !== currentGeneration()) return
+      refs.forEach(function (section) {
+        section.rows = sectionBookings(rows, role, section.name)
+        renderSection(section, role, true)
+      })
+      document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
+    } catch (error) {
+      if (generation !== currentGeneration()) return
+      clearBrandHero(role)
+      refs.forEach(renderFailure)
+      document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
+      console.error('[dashboard-calls] failed closed:', error && error.message)
+    }
+  }
+
   async function boot() {
     const role = roleForPath(global.location && global.location.pathname)
     if (!role) return
@@ -361,34 +425,44 @@
     refs.forEach(function (section) {
       wireSection(section, role)
     })
+    hideAuthoredDuplicates()
+    resetIdentityState(refs, role)
 
-    try {
-      const memberstack = await waitForMemberstack(MEMBERSTACK_TIMEOUT_MS)
-      if (!memberstack) throw new Error('Memberstack unavailable')
-      const current = await memberstack.getCurrentMember()
-      const member = current && (current.data || current)
-      const memberId = clean(member && member.id)
-      if (!memberId) throw new Error('Authenticated member unavailable')
-      bindBrandHero(member)
-      const rows = (await fetchBookings(memberId)).filter(function (booking) {
-        return memberOwnsBooking(booking, memberId, role)
-      })
-      refs.forEach(function (section) {
-        section.rows = sectionBookings(rows, role, section.name)
-        renderSection(section, role, true)
-      })
-      hideAuthoredDuplicates()
-      document.documentElement.setAttribute('data-dashboard-calls-v3', 'ready')
-    } catch (error) {
+    const memberstack = await waitForMemberstack(MEMBERSTACK_TIMEOUT_MS)
+    if (!memberstack) {
       refs.forEach(renderFailure)
       document.documentElement.setAttribute('data-dashboard-calls-v3', 'error')
-      console.error('[dashboard-calls] failed closed:', error && error.message)
+      console.error('[dashboard-calls] failed closed: Memberstack unavailable')
+      return
     }
+
+    let sessionGeneration = 0
+    const currentGeneration = function () {
+      return sessionGeneration
+    }
+    const restart = function () {
+      sessionGeneration += 1
+      resetIdentityState(refs, role)
+      return refreshSession(
+        memberstack,
+        refs,
+        role,
+        sessionGeneration,
+        currentGeneration,
+      )
+    }
+    if (typeof memberstack.onAuthChange === 'function') {
+      memberstack.onAuthChange(function () {
+        restart()
+      })
+    }
+    await restart()
   }
 
   const api = {
     bookingStatus,
     memberOwnsBooking,
+    normalizeBooking,
     roleForPath,
     sectionBookings,
     uniqueBookings,
