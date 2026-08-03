@@ -500,6 +500,133 @@ test('allows opportunity creation only for paid Brand', () => {
   )
 })
 
+// --- Guard/router parity ------------------------------------------------------
+
+/**
+ * route-guard.js duplicates its tables on purpose (each browser script stands
+ * alone), so the two files can silently drift: the guard sends a logged-out
+ * visitor to /login?next=<guarded path> and the router refuses to hand that
+ * path back, dropping the member on the role home instead. This suite asserts
+ * the round trip closes for every guarded page, not just the ones someone
+ * remembered to list.
+ *
+ * The guard exports `pageRolesFor`/`isGuardedPath` but no way to enumerate
+ * PAGE_ROLES, and a hardcoded copy here would drift exactly like the tables it
+ * is meant to police. So the paths are parsed out of the route-guard source
+ * text and then re-validated through the live `pageRolesFor` API — a new guard
+ * entry is picked up automatically, and a parse that stops matching the real
+ * literal fails loudly rather than silently checking nothing.
+ */
+function parseGuardedRoutes() {
+  const pageRolesBlock = routeGuardSource.match(
+    /var PAGE_ROLES = \{\n([\s\S]*?)\n {2}\}\n/,
+  )
+  assert.ok(pageRolesBlock, 'PAGE_ROLES literal not found in route-guard.js')
+  const exact = [...pageRolesBlock[1].matchAll(/^ {4}'([^']+)': \[([^\]]*)\],$/gm)].map(
+    ([, pathname, roles]) => ({
+      pathname,
+      roles: [...roles.matchAll(/'([^']+)'/g)].map(([, role]) => role),
+    }),
+  )
+
+  const prefixBlock = routeGuardSource.match(
+    /var PAGE_ROLE_PREFIXES = \[\n([\s\S]*?)\n {2}\]\n/,
+  )
+  assert.ok(
+    prefixBlock,
+    'PAGE_ROLE_PREFIXES literal not found in route-guard.js',
+  )
+  const prefixes = [
+    ...prefixBlock[1].matchAll(/\{ prefix: '([^']+)', roles: \[([^\]]*)\] \}/g),
+  ].map(([, prefix, roles]) => ({
+    prefix,
+    roles: [...roles.matchAll(/'([^']+)'/g)].map(([, role]) => role),
+  }))
+
+  return { exact, prefixes }
+}
+
+const memberForRole = {
+  talent: () => ({
+    id: 'member-talent',
+    planConnections: [plan('pln_dorxata-test-free-plan-dvcg0k8o')],
+  }),
+  'brand-paid': () => ({
+    id: 'member-brand-paid',
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }),
+  'brand-free': () => ({
+    id: 'member-brand-free',
+    planConnections: [plan('pln_free-plan-f6kn0dxz')],
+  }),
+}
+
+test('the parsed guarded-route tables match the live route-guard API', () => {
+  const { window } = loadRouter()
+  const guard = window.StartersV3RouteGuard
+  const { exact, prefixes } = parseGuardedRoutes()
+
+  assert.ok(exact.length >= 15, 'parsed too few PAGE_ROLES entries')
+  assert.ok(prefixes.length >= 1, 'parsed no PAGE_ROLE_PREFIXES entries')
+  // Spread the guard's arrays: they are built inside the vm realm, so a strict
+  // deep comparison against a host array fails on the prototype alone.
+  for (const { pathname, roles } of exact) {
+    assert.deepEqual([...guard.pageRolesFor(pathname)], roles, pathname)
+  }
+  for (const { prefix, roles } of prefixes) {
+    assert.deepEqual(
+      [...guard.pageRolesFor(prefix + 'parity-slug')],
+      roles,
+      prefix,
+    )
+  }
+  for (const role of new Set(
+    exact.flatMap((entry) => entry.roles).concat(prefixes.flatMap((p) => p.roles)),
+  )) {
+    assert.ok(memberForRole[role], 'no fixture member for role ' + role)
+  }
+})
+
+test('every guarded page is an allowed post-login next for the roles that may view it', () => {
+  const { api } = loadRouter()
+  const { exact, prefixes } = parseGuardedRoutes()
+
+  // /dashboard and /dashboard/ carry an empty allowlist by design — no role
+  // stays there, and the router special-cases them to the role home — so they
+  // contribute no round trips to assert.
+  for (const pathname of ['/dashboard', '/dashboard/']) {
+    const entry = exact.find((candidate) => candidate.pathname === pathname)
+    assert.ok(entry, pathname + ' missing from PAGE_ROLES')
+    assert.deepEqual(entry.roles, [], pathname + ' is no longer allowlist-empty')
+  }
+
+  let assertions = 0
+  for (const { pathname, roles } of exact) {
+    for (const role of roles) {
+      assert.equal(
+        api.destinationFor(memberForRole[role](), pathname),
+        pathname,
+        role + ' cannot return to ' + pathname + ' after login',
+      )
+      assertions += 1
+    }
+  }
+  // One representative slug per allowed role is enough for the prefix rule; the
+  // exhaustive slug behaviour is covered by the opportunity-detail tests above.
+  for (const { prefix, roles } of prefixes) {
+    for (const role of roles) {
+      const pathname = prefix + 'parity-slug'
+      assert.equal(
+        api.destinationFor(memberForRole[role](), pathname),
+        pathname,
+        role + ' cannot return to ' + pathname + ' after login',
+      )
+      assertions += 1
+    }
+  }
+  assert.ok(assertions >= 15, 'the parity sweep checked suspiciously little')
+})
+
 test('returns no destination for an unmapped plan', () => {
   const { api } = loadRouter()
 

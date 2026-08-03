@@ -1,6 +1,9 @@
 # V3 Route Guard Wiring
 
-Status: Local implementation only; not published
+Status: Installed sitewide on staging (2026-08-03). The staging site
+`the-starters-3-0.webflow.io` loads it from project Custom Code head at jsDelivr
+`@latest`, so a new git tag deploys it without an embed change. The production
+custom-domain publish is still deferred.
 
 Tracking: Jira `INITIATIVE-132`. This router release remains independent from
 the `INITIATIVE-131` points reconciliation and dashboard tile rollout.
@@ -92,7 +95,9 @@ when no test, pending, or saved quiz data exists, `quiz-results.js` redirects to
 `/quiz` only after Memberstack positively reports that the visitor is logged
 out. It stays put if Memberstack is unavailable or errors, and pending
 pre-signup quizzes and test-mode previews never reach this branch. `/all-starters`
-remains excluded until its authenticated-only status is confirmed.
+is excluded permanently (decision 2026-08-03): its gating is Memberstack
+`data-ms-content` on the page plus list/render-level limiting for free Brands,
+never a route-level rule.
 
 ## Webflow install
 
@@ -104,6 +109,8 @@ remains excluded until its authenticated-only status is confirmed.
 3. Give guarded pages an error block keyed by `html[data-route-guard-error]`
    (same visible pattern as `/auth-route`). Optionally pre-hide protected
    content until `html[data-route-guard="allowed"]` to avoid a cross-role flash.
+   The pre-hide CSS remains recommended but was deliberately deferred on
+   2026-08-03; the staging install runs without it.
 4. Create `/dashboard` as a utility page with a neutral loading/error surface.
    Keep `/starter-dashboard` and `/brand-dashboard` unchanged as the actual
    authored dashboards.
@@ -142,10 +149,9 @@ the guard's presence to defer access redirects and validates the same plan-ID
 role only before starting role-specific rendering or requests.
 
 `/quiz`, `/quiz-results`, and `/all-starters` are deliberately outside the
-guard's page table (see the note above the guarded-pages table). Revisit
-`/all-starters` after confirming whether it is authenticated-only;
-both quiz pages keep their page-controller redirects separate from the sitewide
-guard.
+guard's page table (see the note above the guarded-pages table). `/all-starters`
+stays out for good and is gated on the page instead; both quiz pages keep their
+page-controller redirects separate from the sitewide guard.
 
 ## Integration checklist
 
