@@ -1327,6 +1327,46 @@ test('cancelled outranks the stay rule when both would apply', () => {
   assert.equal(api.bounceTargetFor(CANCELLED_WITH_FREE, null, '/'), '/all-starters')
 })
 
+test('a role-less member on the homepage follows a valid deep link', () => {
+  const { api } = loadGuard()
+  // Deliberate widening, ratified 2026-08-03. Before the homepage overrides,
+  // bounceTargetFor bailed on !role before any ?next= was examined, so an
+  // unmapped member never reached the validation. Precedence rule 1 now applies
+  // to everyone on '/': deep-link intent does not depend on plan state.
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/all-starters', '/'), '/all-starters')
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/about', '/'), '/about')
+  // Only unguarded pages can match — there is no role for the allowlist test, so
+  // a guarded next is still refused and the member stays.
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/messages', '/'), null)
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/dashboard', '/'), null)
+  // Same for an off-origin or bounce-page next.
+  assert.equal(api.bounceTargetFor(UNMAPPED, 'https://attacker.example/x', '/'), null)
+  assert.equal(api.bounceTargetFor(UNMAPPED, '/login', '/'), null)
+  // No next at all: unchanged, the member simply stays.
+  assert.equal(api.bounceTargetFor(UNMAPPED, null, '/'), null)
+  // Homepage-only: the other three bounce pages still bail on !role first, so a
+  // deep link there is never even looked at.
+  for (const pathname of ['/login', '/starter-login', '/sign-up']) {
+    assert.equal(api.bounceTargetFor(UNMAPPED, '/about', pathname), null, pathname)
+  }
+})
+
+test('a role-less member follows a homepage deep link at runtime', async () => {
+  const followed = loadGuard({
+    pathname: '/',
+    search: '?next=%2Fabout',
+    member: UNMAPPED,
+  })
+  await flush()
+  assert.equal(followed.location.replaced, '/about')
+
+  // Without a usable next the same member is left completely untouched.
+  const stayed = loadGuard({ pathname: '/', member: UNMAPPED })
+  await flush()
+  assert.equal(stayed.location.replaced, undefined)
+  assert.deepEqual(stayed.attributes, {})
+})
+
 test('an unmapped member who never paid still just stays on the homepage', () => {
   const { api } = loadGuard()
   assert.equal(api.bounceTargetFor(UNMAPPED, null, '/'), null)

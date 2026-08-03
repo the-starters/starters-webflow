@@ -471,8 +471,17 @@
    *
    * Extracted so the homepage overrides below can consult the exact same
    * validation instead of re-deriving it. `role` may be null (an unmapped
-   * member): only the unguarded-page case can then match, which is the same
-   * answer the inline version gave, since indexOf(null) is always -1.
+   * member), in which case only the unguarded-page branch can match: there is no
+   * role for the allowlist test.
+   *
+   * That role-less case is a deliberate widening, not a refactor artefact
+   * (decision 2026-08-03). Before the homepage overrides, bounceTargetFor
+   * returned null on `!role` before any `?next=` was examined, so an unmapped
+   * member never reached this validation at all. On '/' such a member now
+   * follows a valid deep link where they previously stayed — precedence rule 1
+   * applied consistently, since deep-link intent does not depend on plan state.
+   * The other three bounce pages are unaffected: there the `!role` bail still
+   * runs first.
    */
   function honouredNext(requestedNext, role) {
     var next = localPath(requestedNext)
@@ -509,13 +518,16 @@
    *      instead of being pushed to '/quiz'. Quiz-done free Brands keep going
    *      to '/quiz-results'.
    *
+   * `role` and `honoured` are computed once by the caller and passed in, because
+   * the fall-through path needs the identical pair — recomputing them here would
+   * run memberRole and the `?next=` validation twice for every non-override
+   * member on '/'.
+   *
    * Returns a path to redirect to, '' to stay put, or null when no override
    * applies and the caller should fall through to the normal bounce.
    */
-  function homepageBounceOverride(member, requestedNext) {
-    var role = memberRole(member)
-    var next = honouredNext(requestedNext, role)
-    if (next) return next
+  function homepageBounceOverride(member, role, honoured) {
+    if (honoured) return honoured
     if (hasCancelledPaidBrandPlan(member)) return '/all-starters'
     if (role === 'brand-free' && !hasCompletedQuiz(member)) return ''
     return null
@@ -534,15 +546,18 @@
    * that predates them is reachable.
    */
   function bounceTargetFor(member, requestedNext, pathname) {
+    // Computed once and shared with the homepage override below. honouredNext is
+    // side-effect free, so hoisting it above the `!role` bail changes nothing:
+    // that branch discards it anyway.
+    var role = memberRole(member)
+    var next = honouredNext(requestedNext, role)
+
     if (pathname === '/') {
-      var override = homepageBounceOverride(member, requestedNext)
+      var override = homepageBounceOverride(member, role, next)
       if (override !== null) return override
     }
 
-    var role = memberRole(member)
     if (!role) return null
-
-    var next = honouredNext(requestedNext, role)
     if (next) return next
 
     return roleHome(member)

@@ -173,6 +173,15 @@ without it, only the pre-override role-home behavior is reachable.
 | Free Brand with no completed quiz | Stay: no redirect, no attribute, no event |
 | Anyone else | Unchanged from the table above |
 
+Rule 1 applies to every member on `/`, including one the guard cannot map to a
+role at all — a deliberate widening ratified 2026-08-03. Before the overrides,
+`bounceTargetFor` returned early on a missing role and never examined the
+`?next=`, so an unmapped member stayed put no matter what the query string said.
+Deep-link intent does not depend on plan state, so on `/` it is now honoured for
+them too. Only unguarded destinations can match, since there is no role for the
+allowlist test, and the widening is homepage-only: on `/login`,
+`/starter-login`, and `/sign-up` the missing-role bail still runs first.
+
 Rule 2 overrides two different pre-existing outcomes at once. A cancelled member
 whose older free plan is still active resolves to `brand-free` and would have
 been sent into the quiz funnel, which is the wrong ask of someone who already
