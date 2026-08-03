@@ -790,9 +790,22 @@ test('the new funnel pages are allowed next destinations for their own role', ()
     // Not the other role's page: a Brand asking for it lands on its own home.
     assert.equal(api.destinationFor(brandPaid, path), '/brand-dashboard')
   }
+})
+
+// Memberstack's `restrict-pages` gated group owns /complete-profile outright
+// (decision 2026-08-03) and redirects a stranger to /login with no `?next=`, so
+// there is no round trip for the router to close. route-guard.js does not list
+// the page either; the member-home bounce pages pick up whoever lands on /login.
+test('/complete-profile is not an allowed next destination for any role', () => {
+  const { api } = loadRouter()
+  const brandPaid = {
+    id: 'member-brand-paid',
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }
+
   for (const path of ['/complete-profile', '/complete-profile/']) {
-    assert.equal(api.destinationFor(brandPaid, path), path)
-    assert.equal(api.destinationFor(talent, path), '/starter-dashboard')
+    assert.equal(api.destinationFor(brandPaid, path), '/brand-dashboard')
+    assert.equal(api.destinationFor(talentMember(), path), '/starter-dashboard')
   }
 })
 

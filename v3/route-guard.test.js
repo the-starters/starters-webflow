@@ -513,14 +513,22 @@ test('/generate-invoice is guarded Talent only (incl. trailing slash)', () => {
   }
 })
 
-test('/complete-profile is guarded paid-Brand only (incl. trailing slash)', () => {
+// Memberstack's `restrict-pages` gated group owns /complete-profile outright
+// (decision 2026-08-03), so the guard must not claim it: two owners would mean
+// two logged-out destinations, and this table's would be the one that loses the
+// race. Re-adding the page has to be a deliberate edit that trips this test.
+test('/complete-profile is not a guarded path — Memberstack owns it', () => {
   const { api } = loadGuard()
   for (const path of ['/complete-profile', '/complete-profile/']) {
-    assert.equal(api.isGuardedPath(path), true, path)
-    assert.equal(api.redirectTargetFor(BRAND_PAID, path), '', path)
-    assert.equal(api.redirectTargetFor(TEST_BRAND, path), '', path)
-    assert.equal(api.redirectTargetFor(TALENT, path), '/starter-dashboard', path)
-    assert.equal(api.redirectTargetFor(BRAND_FREE, path), '/quiz', path)
+    assert.equal(api.pageRolesFor(path), null, path)
+    assert.equal(api.isGuardedPath(path), false, path)
+    // And no logged-out override survives either: an unguarded page never
+    // reaches that lookup, so a leftover entry would only mislead.
+    assert.equal(
+      api.loggedOutDestinationFor(path, ''),
+      '/login?next=' + encodeURIComponent(path),
+      path,
+    )
   }
 })
 
@@ -535,14 +543,12 @@ test('a logged-out visitor to /generate-invoice keeps the login round trip', asy
 
 // --- Per-page logged-out destination overrides --------------------------------
 
-test('the build-profile funnel and /complete-profile send logged-out visitors home', () => {
+test('the build-profile funnel sends logged-out visitors home', () => {
   const { api } = loadGuard()
   for (const path of [
     '/build-profile/select-profile',
     '/build-profile/full-profile',
     '/build-profile/consult',
-    '/complete-profile',
-    '/complete-profile/',
   ]) {
     assert.equal(api.loggedOutDestinationFor(path, ''), '/', path)
     // The override wins over a query string too: there is no ?next= to preserve
@@ -578,10 +584,14 @@ test('a logged-out build-profile visitor is sent to the homepage, not to login',
   assert.equal(attributes['data-route-guard'], 'redirecting')
 })
 
-test('a logged-out /complete-profile visitor is sent to the homepage', async () => {
-  const { location } = loadGuard({ pathname: '/complete-profile', member: null })
+test('the guard leaves a logged-out /complete-profile visitor alone', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/complete-profile',
+    member: null,
+  })
   await flush()
-  assert.equal(location.replaced, '/')
+  assert.equal(location.replaced, undefined)
+  assert.equal(attributes['data-route-guard'], undefined)
 })
 
 // --- Member-home bounce pages -------------------------------------------------

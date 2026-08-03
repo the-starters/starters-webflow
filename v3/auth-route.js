@@ -1,7 +1,7 @@
 /**
  * V3 login router.
  *
- * @release v1.59.72
+ * @release v1.59.73
  *
  * Install on the V3 login pages (/login and /starter-login) and /auth-route
  * only. Every V3 login form must redirect to /auth-route so shared Memberstack
@@ -196,13 +196,11 @@
       '/opportunities',
       '/opportunities/',
       '/messages',
-      // Paid-Brand completion step, guarded by route-guard.js since
-      // 2026-08-03. A logged-out visitor is sent to the homepage rather than
-      // through /login?next=, so this pair only matters for an explicit
-      // ?next=/complete-profile, but the guard/router parity sweep requires
-      // both slash forms regardless.
-      '/complete-profile',
-      '/complete-profile/',
+      // /complete-profile is deliberately absent (decision 2026-08-03).
+      // Memberstack's `restrict-pages` gated group owns that page outright and
+      // redirects a logged-out visitor to /login with no `?next=`, so there is
+      // no round trip for the router to close and route-guard.js no longer
+      // lists it either.
     ]),
     'brand-free': new Set(['/all-starters', '/quiz', '/quiz-results']),
   }
@@ -550,7 +548,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/auth-route.test.js drift guard asserts they match.
-    release: 'v1.59.72',
+    release: 'v1.59.73',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,

@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.72
+ * @release v1.59.73
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
  * /login and /auth-route, so a logged-in member can still reach another role's
@@ -127,12 +127,13 @@
     // twin, so each URL form needs its own entry to route identically.
     '/generate-invoice': ['talent'],
     '/generate-invoice/': ['talent'],
-    // Paid-Brand company/profile completion step (2026-08-03). A free Brand
-    // falls through to its quiz home via ROLE_DEFAULTS, and a logged-out
-    // visitor goes to the homepage rather than a login form — see
-    // LOGGED_OUT_DESTINATIONS.
-    '/complete-profile': ['brand-paid'],
-    '/complete-profile/': ['brand-paid'],
+    // /complete-profile is deliberately absent (decision 2026-08-03).
+    // Memberstack is its sole gate: the `restrict-pages` gated content group
+    // carries a STARTS-WITH rule for it that redirects to /login. Adding it
+    // back here would create two owners with two different logged-out
+    // destinations, and Memberstack's protectPages() wins the race anyway
+    // because it fires from cached group data. Members who land on /login
+    // without a `?next=` are picked up by the member-home bounce pages.
   }
 
   // Single-segment opportunity detail pages (/opportunities/<slug>) are shared
@@ -170,19 +171,16 @@
    * sent, replacing the default /login?next=<here> (decision by Jerico
    * 2026-08-03).
    *
-   * The build-profile funnel and /complete-profile are reached from marketing
-   * flows, not from a member's bookmark, so dropping a stranger on a login form
-   * asks them to authenticate into a funnel step they have no account for yet.
-   * The homepage restarts the funnel properly instead. Every other guarded page
-   * keeps the /login?next= round trip, which is what makes a deep link survive
-   * a login.
+   * The build-profile funnel is reached from marketing flows, not from a
+   * member's bookmark, so dropping a stranger on a login form asks them to
+   * authenticate into a funnel step they have no account for yet. The homepage
+   * restarts the funnel properly instead. Every other guarded page keeps the
+   * /login?next= round trip, which is what makes a deep link survive a login.
    */
   var LOGGED_OUT_DESTINATIONS = {
     '/build-profile/select-profile': '/',
     '/build-profile/full-profile': '/',
     '/build-profile/consult': '/',
-    '/complete-profile': '/',
-    '/complete-profile/': '/',
   }
 
   function activePlanIds(member) {
@@ -529,7 +527,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/route-guard.test.js drift guard asserts they match.
-    release: 'v1.59.72',
+    release: 'v1.59.73',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,

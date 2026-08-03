@@ -111,13 +111,19 @@ returning to `/dashboard`, preventing a redirect loop.
 | Role | Allowed `next` pathnames |
 | --- | --- |
 | Talent | `/dashboard` (resolved to home), `/starter-dashboard`, `/starter-onboarding`, `/build-profile/select-profile`, `/build-profile/full-profile`, `/build-profile/consult`, `/starter-edit-profile`, `/messages`, `/opportunities`, `/opportunities/`, `/opportunities-freelancer-view`, `/opportunities/<slug>`, `/generate-invoice`, `/generate-invoice/` |
-| Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create`, `/complete-profile`, `/complete-profile/` |
+| Brand paid | `/dashboard` (resolved to home), `/all-starters`, `/brand-dashboard`, `/opportunities`, `/opportunities/`, `/opportunities-brands-view`, `/messages`, `/opportunities/<slug>`, `/opportunities---create` |
 | Brand free | `/dashboard` (resolved to quiz home), `/all-starters`, `/quiz`, `/quiz-results` |
 
 `/starter-onboarding` is allowlisted for Talent because `v3/route-guard.js`
 sends a logged-out visitor there through `/login?next=/starter-onboarding`.
 Without the entry that round trip silently dropped the destination and landed on
 `/starter-dashboard`.
+
+`/complete-profile` is deliberately not allowlisted (decision 2026-08-03).
+Memberstack's `restrict-pages` gated group is the page's sole gate and redirects
+to `/login` with no `?next=`, so there is no round trip for this router to close;
+`v3/route-guard.js` does not list the page either. A paid Brand asking for it as a
+`next` lands on `/brand-dashboard`.
 
 The allowlist is derived from [ACCESS-MATRIX.md](ACCESS-MATRIX.md). It governs
 post-authentication routing only. Memberstack gated content and Xano endpoint
