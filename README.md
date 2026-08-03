@@ -136,6 +136,18 @@ new content can use `creative` and `marketing-strategy-brand`. Categories with
 no Learn records, such as `retention-crm`, stay empty rather than borrowing
 unrelated content.
 
+The controller only accepts a finished quiz payload. `quiz-main.js` saves
+`sessionStorage.starterQuizPending` as a `draft` on every answer change and once
+on `/quiz` load, so browsing the quiz alone leaves a payload behind; the results
+page ignores a `draft` (without deleting it, because `quiz-loader.js` reads the
+same key's `updatedAt`) and falls through to the saved-quiz lookup and the
+`/quiz` redirect. Run the focused Algolia-config, taxonomy, saved-answer
+fallback, and draft-payload regressions with:
+
+```sh
+node --test quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js
+```
+
 ## Opportunities 3.0 URL Identity
 
 Opportunity detail URLs use the Webflow CMS slug as their label, while the immutable

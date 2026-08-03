@@ -58,14 +58,21 @@ step layout and the tab-driven layout. It:
   IDs;
 - switches the start-heading copy between `[data-start-default]` and
   `[data-start-filled]` when either source pre-fills the form;
-- saves `sessionStorage.starterQuizPending` as answers change (`draft`) and
-  before signup or results navigation (`ready`); and
+- saves `sessionStorage.starterQuizPending` as answers change (`draft`, also
+  written once on page load) and before signup or results navigation (`ready`);
+  and
 - sends a logged-in retaker directly from the final quiz step to
   `/quiz-results`, bypassing the signup step.
 
 The pending payload contains `categories`, `subcategories`, an optional
 `resultSlug`, `status`, `updatedAt`, and `completedAt`. `quiz-results.js` owns
-consuming it.
+consuming it, and treats a `draft` payload as no data at all: browsing `/quiz`
+alone leaves a draft behind, so honouring it used to hold a logged-out visitor
+on an empty `/quiz-results` instead of sending them back to the quiz. Only
+`ready` renders. A payload with no `status` field still counts as usable, since
+that shape only comes from older Memberstack records. `/quiz-results` ignores the
+draft without deleting it, because `quiz-loader.js` derives its skip-on-refresh
+run id from the same key's `updatedAt`.
 
 Saved Memberstack answers are restored whenever a logged-in member with a
 non-empty `starterQuiz` object reaches `/quiz`; `?retake=true` controls only the
@@ -136,5 +143,5 @@ Run the focused quiz tests, including the form-selector contract regression,
 with:
 
 ```sh
-node --test quiz-main/*.test.js quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js
+node --test quiz-main/*.test.js quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js
 ```
