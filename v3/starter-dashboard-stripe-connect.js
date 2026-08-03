@@ -42,6 +42,7 @@
   const ELEMENT_ATTR = 'data-stripe-connect-element'
   const ACTION_ATTR = 'data-stripe-connect-action'
   const EARNINGS_STATE_ATTR = 'data-stripe-connect-earnings-state'
+  const PENDING_TABINDEX_ATTR = 'data-stripe-connect-pending-tabindex'
   const STATES = [
     'loading',
     'disconnected',
@@ -246,8 +247,53 @@
   function setActionPending(button, pending) {
     if (!button) return
     button.setAttribute('aria-busy', pending ? 'true' : 'false')
-    if ('disabled' in button) button.disabled = pending
     button.style.pointerEvents = pending ? 'none' : ''
+    if (button.classList) button.classList.toggle('is-disabled', pending)
+    if ('disabled' in button) button.disabled = pending
+
+    if (pending) {
+      const tabindex = button.getAttribute('tabindex')
+      button.setAttribute(
+        PENDING_TABINDEX_ATTR,
+        tabindex === null ? '' : tabindex,
+      )
+      button.setAttribute('aria-disabled', 'true')
+      button.setAttribute('tabindex', '-1')
+      return
+    }
+
+    const previousTabindex = button.getAttribute(PENDING_TABINDEX_ATTR)
+    if (previousTabindex === '') button.removeAttribute('tabindex')
+    else if (previousTabindex !== null) {
+      button.setAttribute('tabindex', previousTabindex)
+    }
+    button.removeAttribute(PENDING_TABINDEX_ATTR)
+    button.setAttribute('aria-disabled', 'false')
+  }
+
+  function setStartPending(button, connectTile, pending) {
+    setActionPending(connectTile, pending)
+    if (button !== connectTile) setActionPending(button, pending)
+  }
+
+  function createExclusiveRunner() {
+    let actionPending = false
+    return function runExclusive(task, latchOnSuccess) {
+      if (actionPending) return Promise.resolve(null)
+      actionPending = true
+      return Promise.resolve()
+        .then(task)
+        .then(
+          function (result) {
+            if (!latchOnSuccess || result !== true) actionPending = false
+            return result
+          },
+          function (error) {
+            actionPending = false
+            throw error
+          },
+        )
+    }
   }
 
   function setEarningsAccess(elements, enabled) {
@@ -443,8 +489,8 @@
     }
   }
 
-  async function handleStart(button, roots, bootMemberId) {
-    setActionPending(button, true)
+  async function handleStart(button, connectTile, roots, bootMemberId) {
+    setStartPending(button, connectTile, true)
     try {
       const activeMemberId = await currentMemberId()
       if (activeMemberId !== bootMemberId) {
@@ -457,8 +503,9 @@
       }
       emit('starterStripeConnectRedirect', { mode: result.mode || '' })
       global.location.assign(result.url)
+      return true
     } catch (error) {
-      setActionPending(button, false)
+      setStartPending(button, connectTile, false)
       renderRoots(roots, 'error')
       emit('starterStripeConnectError', {
         action: 'start',
@@ -468,6 +515,7 @@
         '[starter-dashboard] Unable to start Stripe Connect',
         error,
       )
+      return false
     }
   }
 
@@ -484,16 +532,7 @@
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
 
-    let actionPending = false
-    function runExclusive(task) {
-      if (actionPending) return Promise.resolve(null)
-      actionPending = true
-      return Promise.resolve()
-        .then(task)
-        .finally(function () {
-          actionPending = false
-        })
-    }
+    const runExclusive = createExclusiveRunner()
 
     try {
       const memberId = await currentMemberId()
@@ -511,16 +550,16 @@
         const startFromTile = function (event) {
           return handleConnectClick(connectTile, event, function () {
             runExclusive(function () {
-              return handleStart(connectTile, roots, memberId)
-            })
+              return handleStart(connectTile, connectTile, roots, memberId)
+            }, true)
           })
         }
         connectTile.addEventListener('click', startFromTile)
         connectTile.addEventListener('keydown', function (event) {
           handleConnectKeydown(connectTile, event, function () {
             runExclusive(function () {
-              return handleStart(connectTile, roots, memberId)
-            })
+              return handleStart(connectTile, connectTile, roots, memberId)
+            }, true)
           })
         })
       }
@@ -529,8 +568,13 @@
           button.addEventListener('click', function (event) {
             event.preventDefault()
             runExclusive(function () {
-              return handleStart(button, roots, memberId)
-            })
+              return handleStart(
+                button,
+                earningsTiles.disconnected,
+                roots,
+                memberId,
+              )
+            }, true)
           })
         })
         root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
@@ -641,6 +685,7 @@
       xanoTokenPromise = null
     },
     callbackParams,
+    createExclusiveRunner,
     currentMemberId,
     exchangeCode,
     fetchStatus,
@@ -648,6 +693,7 @@
     handleConnectKeydown,
     handleEarningsClick,
     handleEarningsKeydown,
+    handleStart,
     isStripeUrl,
     loadDashboardStatus,
     mountCallback,
@@ -657,7 +703,9 @@
     resolveEarningsTiles,
     resolveDashboardView,
     sandboxMode,
+    setActionPending,
     setEarningsAccess,
+    setStartPending,
     setView,
     startConnect,
   }

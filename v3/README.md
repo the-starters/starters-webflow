@@ -1413,6 +1413,14 @@ non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
 `role="button"` with `tabindex="0"` and activates from both click and Enter/Space
 so keyboard users can reach its action.
 
+While a Connect or Complete setup request is in flight, the Connect Stripe tile
+and initiating control stay visible but receive `is-disabled`, `aria-disabled="true"`,
+`aria-busy="true"`, `tabindex="-1"`, and blocked pointer events. This provides
+pending feedback and prevents repeat mouse or keyboard activation. If the start
+request fails, the controller restores their prior tab order and active state
+before showing the authored error card. A successful request keeps them pending
+and the shared action guard latched until Stripe navigation unloads the page.
+
 A single in-flight guard is shared
 across every start and refresh control in the dashboard, so a second click on
 any control is ignored while a start or status request is resolving. Start
