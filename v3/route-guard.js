@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.74
+ * @release v1.59.75
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
  * /login and /auth-route, so a logged-in member can still reach another role's
@@ -19,14 +19,19 @@
  *     MEMBER_BOUNCE_PAGES (homepage, both login pages, signup) to a validated
  *     `?next=` or their role home, while leaving logged-out visitors there
  *     completely alone,
+ *   - send a logged-in member whose role does not belong on one of the
+ *     ROLE_BOUNCE_PAGES (/quiz-results, /all-starters) to that member's role
+ *     home, again leaving logged-out visitors completely alone,
  *   - leave an authenticated-but-unmapped or cross-role-conflicted member on
  *     the page with an explicit error state instead of silently redirecting,
  *   - do nothing on a page it does not recognise (public/unlisted route).
  *
  * The plan-ID → role map and guarded page roles derive from the stable access
  * matrix used by v3/auth-route.js and documented in v3/ACCESS-MATRIX.md.
- * /quiz, /quiz-results, and /all-starters remain deliberately unguarded. This
- * guard is a routing/UX boundary only; Memberstack gated content and Xano
+ * /quiz stays outside all three tables (its page controller
+ * quiz-main/quiz-redirect.js owns it), and /quiz-results and /all-starters are
+ * role-bounce pages rather than guarded pages, so neither ever forces a login.
+ * This guard is a routing/UX boundary only; Memberstack gated content and Xano
  * endpoint authorization remain separate, independently enforced layers.
  */
 ;(function () {
@@ -81,12 +86,11 @@
   // load the page; any authenticated role not listed is redirected to its
   // ROLE_DEFAULTS destination. A page absent from both tables is unguarded.
   //
-  // Intentionally excluded pending a product decision: /quiz-results and
-  // /all-starters. The matrix rows for those pages describe logged-in redirect
-  // defaults, not that logged-out access must be blocked, and either may be a
-  // pre-signup funnel entry point. Leaving them out of this table means the
-  // guard never forces a login there even if installed site-wide. Add them here
-  // only after confirming both are authenticated-only in V3 beta.
+  // Intentionally and permanently excluded: /quiz-results and /all-starters.
+  // The matrix rows for those pages describe logged-in redirect defaults, not
+  // that logged-out access must be blocked, and both are reachable pre-signup.
+  // Leaving them out of this table is what keeps the guard from ever forcing a
+  // login there. Their logged-in role rules live in ROLE_BOUNCE_PAGES below.
   var PAGE_ROLES = {
     // Canonical dashboard entry point. No role stays here: the empty allowlist
     // makes every mapped role resolve to its own default while preserving the
@@ -165,6 +169,42 @@
     '/starter-login',
     '/sign-up',
   ])
+
+  /**
+   * Member-only role bounce pages (decision by Jerico 2026-08-03).
+   *
+   * The third page category, and the weakest of the three. Like the guarded
+   * pages it keeps a member off a page their role does not belong on; like the
+   * member-bounce pages it is invisible to everyone else. A logged-out visitor,
+   * a member Memberstack cannot resolve, an unmapped plan, and a cross-role
+   * conflict are all left completely alone: no redirect, no error attribute, no
+   * `checking` stamp. Only a positively identified, role-mapped member is ever
+   * moved, and only ever to their own role home.
+   *
+   * That asymmetry is the whole point. /quiz-results legitimately serves
+   * pre-signup anonymous visitors whose quiz answers are still in
+   * sessionStorage, and quiz-results.js owns that case; /all-starters is a
+   * public browse page whose content is gated by Memberstack `data-ms-content`
+   * rather than by route. Guarding either one would break both.
+   *
+   * `enforceBrandFreeQuizState` adds a /quiz-results-specific second check: an
+   * allowed free Brand still belongs there only once the quiz is done, because
+   * before that their role home is /quiz and the results page has nothing to
+   * show them. /all-starters deliberately does not use it — both Brand tiers
+   * stay regardless of quiz state.
+   */
+  var ROLE_BOUNCE_PAGES = {
+    '/quiz-results': { roles: ['brand-free'], enforceBrandFreeQuizState: true },
+    '/quiz-results/': { roles: ['brand-free'], enforceBrandFreeQuizState: true },
+    '/all-starters': {
+      roles: ['brand-paid', 'brand-free'],
+      enforceBrandFreeQuizState: false,
+    },
+    '/all-starters/': {
+      roles: ['brand-paid', 'brand-free'],
+      enforceBrandFreeQuizState: false,
+    },
+  }
 
   /**
    * Per-page overrides for where a LOGGED-OUT visitor to a guarded page is
@@ -284,6 +324,58 @@
 
   function isMemberBouncePage(pathname) {
     return MEMBER_BOUNCE_PAGES.has(pathname)
+  }
+
+  function roleBounceRuleFor(pathname) {
+    if (!Object.prototype.hasOwnProperty.call(ROLE_BOUNCE_PAGES, pathname)) {
+      return null
+    }
+    return ROLE_BOUNCE_PAGES[pathname]
+  }
+
+  function isRoleBouncePage(pathname) {
+    return roleBounceRuleFor(pathname) !== null
+  }
+
+  // The roles allowed on a role-bounce page, or null when it is not one. Mirrors
+  // pageRolesFor so the two tables read the same way from the console.
+  function roleBounceRolesFor(pathname) {
+    var rule = roleBounceRuleFor(pathname)
+    return rule ? rule.roles.slice() : null
+  }
+
+  // Both slash forms of every path in these tables are listed explicitly, so
+  // this only has to reconcile a role home (never slashed) against the page it
+  // is being compared to (either form).
+  function samePage(a, b) {
+    return trimTrailingSlash(a) === trimTrailingSlash(b)
+  }
+  function trimTrailingSlash(pathname) {
+    return pathname.length > 1 && pathname.charAt(pathname.length - 1) === '/'
+      ? pathname.slice(0, -1)
+      : pathname
+  }
+
+  /**
+   * Where a member on a ROLE_BOUNCE_PAGES page belongs.
+   *
+   * '' -> stay (also the answer for any page that is not a role-bounce page)
+   * a path string -> redirect there
+   * null -> unmapped or conflicted; stay silently, this page is public
+   */
+  function roleBounceTargetFor(member, pathname) {
+    var rule = roleBounceRuleFor(pathname)
+    if (!rule) return '' // page has no role-bounce rule
+    var role = memberRole(member)
+    if (!role) return null // authenticated but no mapped active plan
+    if (rule.roles.indexOf(role) === -1) return roleHome(member)
+    if (rule.enforceBrandFreeQuizState && role === 'brand-free') {
+      var home = brandFreeHome(member)
+      // Quiz not done: home is /quiz, so this page is the wrong one even though
+      // the role is allowed. Quiz done: home IS this page, so stay.
+      if (!samePage(home, pathname)) return home
+    }
+    return ''
   }
 
   /**
@@ -524,10 +616,40 @@
     if (target) replaceLocation(target)
   }
 
+  /**
+   * The ROLE_BOUNCE_PAGES counterpart to guardCurrentPage().
+   *
+   * Silent in exactly the same cases as bounceMemberHome(), and for the same
+   * reason: these pages must render for signed-out visitors without depending on
+   * this script, so the only attribute it ever sets is the "redirecting" one on
+   * the way out.
+   */
+  async function bounceRoleHome() {
+    var memberstack = await waitForMemberstack()
+    if (!memberstack) return
+
+    var response = await memberstack.getCurrentMember()
+    var member = response && response.data
+    if (!member || !member.id) return
+
+    var target = roleBounceTargetFor(member, window.location.pathname)
+    if (target === null) {
+      // Console-only for the same reason as the member bounce: a page that
+      // serves anonymous visitors is the wrong place to surface a
+      // plan-configuration problem. The member simply stays.
+      console.error(
+        LOG_PREFIX + ' Cannot resolve a role home:',
+        memberRoleError(member) || 'unmapped-plan',
+      )
+      return
+    }
+    if (target) replaceLocation(target)
+  }
+
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/route-guard.test.js drift guard asserts they match.
-    release: 'v1.59.74',
+    release: 'v1.59.75',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,
@@ -544,6 +666,10 @@
     bounceTargetFor: bounceTargetFor,
     localPath: localPath,
     loggedOutDestinationFor: loggedOutDestinationFor,
+    // Member-only role bounce (/quiz-results, /all-starters).
+    isRoleBouncePage: isRoleBouncePage,
+    roleBounceRolesFor: roleBounceRolesFor,
+    roleBounceTargetFor: roleBounceTargetFor,
   }
   window.StartersV3RouteGuard = api
 
@@ -558,12 +684,22 @@
     return
   }
 
-  // Only spend a Memberstack lookup on pages this guard actually protects.
-  if (!isGuardedPath(window.location.pathname)) return
+  // Only spend a Memberstack lookup on pages one of the three tables claims.
+  // PAGE_ROLES outranks ROLE_BOUNCE_PAGES: v3/route-guard.test.js asserts the
+  // three tables are disjoint, so this order decides nothing today — but if a
+  // path is ever duplicated by mistake, the stronger gate is the safe winner.
+  if (isGuardedPath(window.location.pathname)) {
+    document.documentElement.setAttribute('data-route-guard', 'checking')
+    guardCurrentPage().catch(function (error) {
+      console.error('[v3-route-guard] Unexpected guard failure', error)
+      showGuardError('unexpected-error')
+    })
+    return
+  }
 
-  document.documentElement.setAttribute('data-route-guard', 'checking')
-  guardCurrentPage().catch(function (error) {
-    console.error('[v3-route-guard] Unexpected guard failure', error)
-    showGuardError('unexpected-error')
-  })
+  if (isRoleBouncePage(window.location.pathname)) {
+    bounceRoleHome().catch(function (error) {
+      console.error(LOG_PREFIX + ' Unexpected role-bounce failure', error)
+    })
+  }
 })()

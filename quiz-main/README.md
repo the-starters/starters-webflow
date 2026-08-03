@@ -22,19 +22,27 @@ bootstrap:
 ## Entry redirect
 
 `quiz-redirect.js` waits up to ten seconds for `$memberstackDom` and handles
-members with active Brand plans:
+members with an active plan. `/quiz` sits outside all three page tables in
+`v3/route-guard.js`, so this controller is the only thing deciding who may not
+sit on it.
 
-| Member state | `/quiz` behavior |
-| --- | --- |
-| Paid Brand (`pln_new-paid-plan-463h04ph`) or Test Brand (`pln_dorxata-test-brand-plan-777r02pa`) | Replace with `/brand-dashboard` |
-| Free Brand (`pln_free-plan-f6kn0dxz`) with a non-empty `starter-quiz` custom field | Replace with `/quiz-results` |
-| Incomplete free Brand, logged-out visitor, or unknown/Talent plan | Stay on `/quiz` |
+| Member state | `/quiz` behavior | `?retake=` |
+| --- | --- | --- |
+| Paid Brand (`pln_new-paid-plan-463h04ph`) or Test Brand (`pln_dorxata-test-brand-plan-777r02pa`) | Replace with `/brand-dashboard` | Suppressed |
+| Talent (`pln_dorxata-test-free-plan-dvcg0k8o`) | Replace with `/starter-dashboard` | Ignored |
+| Free Brand (`pln_free-plan-f6kn0dxz`) with a non-empty `starter-quiz` custom field | Replace with `/quiz-results` | Suppressed |
+| Incomplete free Brand, logged-out visitor, inactive or unknown plan | Stay on `/quiz` | n/a |
 
 Add `?retake=true`, `?retake=1`, or `?retake=yes` to keep an otherwise redirected
-member on the quiz. Retake links must use one of these values. The controller
-also re-evaluates after Memberstack auth changes. Its paid plan IDs match the
-Brand-paid roles in `v3/route-guard.js`, including the Test Brand plan used for
-staging verification.
+Brand on the quiz. Retake links must use one of these values. The Talent bounce
+deliberately ignores the parameter (decision by Jerico 2026-08-03): the hatch
+exists so a Brand can re-run their own quiz, and Talent has no quiz to retake.
+A member holding both Talent and paid Brand plans keeps the paid
+`/brand-dashboard` outcome and its retake hatch — that state is the
+`conflicting-plan-roles` configuration error, and this page is not where it gets
+resolved. The controller also re-evaluates after Memberstack auth changes. Its
+plan IDs match the roles in `v3/route-guard.js`, including the Test Brand plan
+used for staging verification.
 
 ## Main controller
 

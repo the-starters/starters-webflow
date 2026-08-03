@@ -196,22 +196,23 @@ mapped role fails closed with
 [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md) documents the DOM states, events,
 diagnostics, exclusions, and release gate. The guard is a routing/UX layer and
 does not replace Memberstack visibility rules or Xano authorization.
-`/quiz`, `/quiz-results`, and `/all-starters` are intentionally unguarded by
-the route table. `/quiz` is the funnel entry, where
+`/quiz`, `/quiz-results`, and `/all-starters` are intentionally absent from the
+guarded route table, because all three serve pre-signup visitors and a guarded
+page forces a login. `/quiz` is the funnel entry, where
 `quiz-main/quiz-redirect.js` sends a live or Test paid Brand to
-`/brand-dashboard` and a completed free Brand to `/quiz-results`; a recognised
-member can stay by using the `?retake=true` escape hatch. The main quiz
-controller then combines saved Memberstack answers with any homepage-bucket
-selections. See `quiz-main/README.md` for plan scope and page-controller
-wiring. When `/quiz-results` has no test,
+`/brand-dashboard`, a Talent member to `/starter-dashboard`, and a completed free
+Brand to `/quiz-results`; a recognised Brand can stay by using the
+`?retake=true` escape hatch, which the Talent bounce deliberately ignores. The
+main quiz controller then combines saved Memberstack answers with any
+homepage-bucket selections. See `quiz-main/README.md` for plan scope and
+page-controller wiring. When `/quiz-results` has no test,
 pending, or saved quiz data, its page controller returns a positively identified
 logged-out visitor to `/quiz` and sends an authenticated member whose completion
 marker outlived missing or malformed member JSON to
 `/quiz?retake=true&quizDataMissing=1`; pending pre-signup quizzes and Memberstack
-failures do not redirect. `/all-starters` still awaits product confirmation that
-it is not a pre-signup funnel page.
+failures do not redirect.
 
-Two mechanisms were added on 2026-08-03. **Member-home bounce:** the homepage,
+Three mechanisms were added on 2026-08-03. **Member-home bounce:** the homepage,
 both login pages, and `/sign-up` are not in the route table — they must keep
 working untouched for signed-out visitors, since they are the pre-signup funnel
 itself — but a member the guard can positively identify and map to a role is sent
@@ -222,7 +223,13 @@ attribute and no `checking` stamp. **Per-page logged-out destinations:** the thr
 build-profile pages send a logged-out visitor to `/` instead of `/login?next=`,
 because they are entered from marketing flows where a login form would ask a
 stranger to authenticate into a funnel step they have no account for yet.
-`/generate-invoice` (Talent) also joined the guarded route table.
+**Member-only role bounce:** `/quiz-results` and `/all-starters` (both slash
+forms) borrow the member-home bounce's silence and add the guarded pages' role
+test, so a logged-in member whose role does not belong there goes to their role
+home while every other visitor is untouched. Talent leaves both; a free Brand
+stays on both, though on `/quiz-results` only once the quiz is done, since before
+that its role home is `/quiz`. `/generate-invoice` (Talent) also joined the
+guarded route table.
 
 `/complete-profile` was in that table for part of 2026-08-03 and is not any more.
 Memberstack's `restrict-pages` gated group owns the page on its own, redirecting a
