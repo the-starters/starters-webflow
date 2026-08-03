@@ -1218,17 +1218,22 @@ Deliberately NOT ported from the legacy inline writer:
   through to the `success` step (legacy phantom-success bug).
 
 V3 endpoint contract (no Airtable row keys anywhere): the writer calls
-`grants/oauth/v3` with `in_state: <authenticated member id>` and
-`grants/add_virtual/v3` with `{ grant_id, member_id }`. Both are new
+`grants/oauth/v3` with `in_state: <authenticated member id>` and an
+allowlisted `in_redirect_uri`, and sends that same URI to `grants/add/v3`; it
+calls `grants/add_virtual/v3` with `{ grant_id, member_id }`. Both are new
 memberstack_id-keyed endpoints; the legacy airtable_id-keyed
 `grants/oauth`/`grants/add`/`grants/add_virtual` remain untouched for V2. The
-OAuth return is handled by `v3/connect-success.js` via `grants/add/v3`
+OAuth return is handled by the availability writer via `grants/add/v3`
 (server-side code exchange + persist in one call).
 
 All other writer reads and writes now use their reviewed `/v3` routes:
 `starter/get_by_memberstack`, `starter/set_timezone`,
 `starter/clear_calendar_data`, `nylas_configurations/get_all`, configuration
 create/update/delete, virtual-account/calendar creation, and grant deletion.
+On the approved production dashboard, bootstrap remains read-only: a missing
+row timezone is persisted through `starter/set_timezone/v3` only when the
+member submits an availability or calendar action. A member-scoped cached
+timezone can supply that value, but does not count as canonical persistence.
 
 Paid-call rate: resolved from the form's `#price` input
 (`data-rate`/value, Designer-bound like V2) with the shared `paid_call_rate`
@@ -1286,9 +1291,14 @@ inputs whose names match table columns — an optional `timezone` input, when
 absent, silently wiped the stored timezone on every edit. Endpoint inputs must
 avoid column names (hence `in_timezone`).
 
-⚠ The OAuth `redirect_uri` in endpoints 1456/1457 is pinned to the published
-slug `/starter-dashboard---availability-stage`. If the page rename ships with
-a new slug, update both endpoints in the same change.
+Endpoints 1456/1457 accept the same `in_redirect_uri` for authorization and
+code exchange, and reject values outside the exact allowlist:
+`https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage`,
+`https://thestarters.com/starter-dashboard`, and
+`https://www.thestarters.com/starter-dashboard`. The browser derives these
+values only from the approved host and path; both endpoints must use the same
+value or the OAuth provider rejects the exchange.
+
 ## Starter Dashboard points and rank tile
 
 `starter-dashboard-points.js` binds Designer-owned dashboard markup to the

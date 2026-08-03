@@ -19,6 +19,7 @@
   //   via guarded window.generateBookingsList / window.clearGrantData).
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const PRODUCTION_PATH = '/starter-dashboard'
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
@@ -51,6 +52,7 @@
   let grantCalendarId = null
   let activeManager = null
   let timezone = null
+  let timezonePersisted = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -99,11 +101,17 @@
     return member.id
   }
 
-  function rememberOAuthIntent(memberId) {
+  function oauthRedirectUri() {
+    return isStagingHost
+      ? 'https://' + STAGING_HOST + STAGING_OAUTH_PATH
+      : 'https://' + window.location.hostname + PRODUCTION_PATH
+  }
+
+  function rememberOAuthIntent(memberId, redirectUri) {
     try {
       window.sessionStorage.setItem(
         OAUTH_INTENT_PREFIX + memberId,
-        JSON.stringify({ createdAt: Date.now() }),
+        JSON.stringify({ createdAt: Date.now(), redirectUri: redirectUri }),
       )
     } catch (error) {
       /* storage unavailable */
@@ -111,20 +119,25 @@
   }
 
   function consumeOAuthIntent(memberId) {
-    if (isStagingHost) return true
+    const redirectUri = oauthRedirectUri()
+    if (isStagingHost) return { redirectUri: redirectUri }
     const key = OAUTH_INTENT_PREFIX + memberId
     try {
       const raw = window.sessionStorage.getItem(key)
       window.sessionStorage.removeItem(key)
       const intent = raw ? JSON.parse(raw) : null
-      return Boolean(
+      if (
         intent &&
           Number.isFinite(intent.createdAt) &&
           Date.now() - intent.createdAt >= 0 &&
-          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE,
-      )
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE &&
+          intent.redirectUri === redirectUri
+      ) {
+        return intent
+      }
+      return null
     } catch (error) {
-      return false
+      return null
     }
   }
 
@@ -347,6 +360,7 @@
   }
 
   async function updateAvail() {
+    await ensureTimezone()
     const memberId = await writeMemberId()
     // The /v3 endpoint UPSERTS: new V3 starters have no legacy scheduling row,
     // so the first save creates it (seeded server-side from the auth user).
@@ -383,25 +397,27 @@
   }
 
   async function resolveTimezone(starterRecord, allowWrite) {
-    try {
-      const cached = window.localStorage.getItem(TIMEZONE_CACHE_PREFIX + sessionMemberId)
-      if (cached) return cached
-    } catch (error) {
-      /* storage unavailable */
-    }
-
     let resolved = null
     try {
       const starter = starterRecord
       if (starter && typeof starter.timezone === 'string' && starter.timezone.trim() !== '') {
         resolved = starter.timezone
+        timezonePersisted = true
       }
-      if (!resolved && allowWrite) {
+      if (!resolved) {
+        try {
+          resolved = window.localStorage.getItem(TIMEZONE_CACHE_PREFIX + sessionMemberId)
+        } catch (error) {
+          /* storage unavailable */
+        }
+      }
+      if (allowWrite && !timezonePersisted) {
         const updated = await xanoPost('/starter/set_timezone/v3', {
           member_id: await writeMemberId(),
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+          timezone: resolved || Intl.DateTimeFormat().resolvedOptions().timeZone || '',
         })
         resolved = updated && updated.timezone ? updated.timezone : null
+        timezonePersisted = Boolean(resolved)
       }
     } catch (error) {
       console.warn('[scheduling-writer] timezone resolution failed:', error && error.message)
@@ -422,6 +438,13 @@
       if (timezone) el.textContent = 'Your timezone is - ' + timezone
       else el.style.display = 'none'
     })
+  }
+
+  async function ensureTimezone() {
+    if (!timezone || !timezonePersisted) timezone = await resolveTimezone(null, true)
+    if (!timezone || !timezonePersisted) throw new Error('Timezone is unavailable')
+    renderTimezone()
+    return timezone
   }
 
   /* ------------------------------------------------------------------ */
@@ -468,6 +491,7 @@
   }
 
   async function setupConfigs(type, isUpdate, configId) {
+    await ensureTimezone()
     const isPaidCall = type === 'paid'
     const openHours = getAvailArray()
     const price = isPaidCall ? String(resolvePaidRate()) : '0'
@@ -595,6 +619,7 @@
   /* ------------------------------------------------------------------ */
 
   async function createVirtualCalendarFlow(memberId) {
+    await ensureTimezone()
     const result = { status: 400, grant_id: null, email: null, calendar_id: null }
     let account = null
     try {
@@ -638,6 +663,7 @@
 
   async function clearGrant(memberId, currentGrantId) {
     if (!currentGrantId) return
+    await ensureTimezone()
     // Prefer the page's bookings-aware composite (declines pending bookings and
     // repaints booking cards) when the dashboard embed provides it.
     if (typeof window.clearGrantData === 'function') {
@@ -923,9 +949,12 @@
         // grants/add/v3 callback is keyed on memberstack_id — the state IS the
         // authenticated member id, never a client-editable value.
         const memberId = await writeMemberId()
+        await ensureTimezone()
+        const redirectUri = oauthRedirectUri()
         const response = await xanoPost('/grants/oauth/v3', {
           in_state: memberId,
           in_provider: 'google',
+          in_redirect_uri: redirectUri,
         })
         const url =
           response &&
@@ -934,7 +963,7 @@
           response.response.result.data &&
           response.response.result.data.url
         if (!url) throw new Error('grants/oauth returned no URL')
-        rememberOAuthIntent(memberId)
+        rememberOAuthIntent(memberId, redirectUri)
         window.open(url, '_blank')
         switchStep('reload-page')
       } catch (error) {
@@ -1074,6 +1103,8 @@
       const member = await currentMember()
       sessionMemberId = member.id
       memberFields = member.customFields || {}
+      timezone = null
+      timezonePersisted = false
 
       availability = await availabilityFromInitializer()
 
@@ -1135,12 +1166,15 @@
           if (!oauthState || oauthState !== memberId) {
             throw new Error('OAuth state does not match the logged-in member')
           }
-          if (!consumeOAuthIntent(memberId)) {
+          const oauthIntent = consumeOAuthIntent(memberId)
+          if (!oauthIntent) {
             throw new Error('OAuth return was not initiated by this session')
           }
+          await ensureTimezone()
           const grant = await xanoPost('/grants/add/v3', {
             code: oauthCode,
             member_id: memberId,
+            in_redirect_uri: oauthIntent.redirectUri,
           })
           if (!(grant && grant.grant_id)) {
             throw new Error('grants/add/v3 returned no grant')
