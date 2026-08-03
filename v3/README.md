@@ -1141,6 +1141,12 @@ is known. When a page loads directly with an empty status filter selected, the
 controller temporarily probes the unfiltered list, restores the selected
 status, and reveals the controls only if that probe found projects. Loading,
 error, missing-instance, unknown-total, and auth-transition states fail closed.
+The existing Designer-owned project `Show more` control is upgraded to wf-xano
+append pagination: it preserves rendered cards and the active status filter,
+shows its authored loading state while requesting the next canonical page, and
+hides when the response reports no next page. It also stays hidden during
+initial and identity-ambiguous states. Calls use the same visible contract with
+their existing six-row client-side pages.
 
 On Brand only, the same resolved Memberstack snapshot paints the existing hero:
 `free-user` and `last-name` populate `.dash-hero_profile-name span`, and

@@ -347,7 +347,95 @@
     return memory.known && memory.hasAny
   }
 
-  function hideProjectFilters() {
+  function findProjectLoadMore(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return []
+    const canonical = Array.prototype.slice.call(
+      root.querySelectorAll('[wf-xano-element="load-more"]'),
+    )
+    if (canonical.length) return canonical
+    return Array.prototype.slice
+      .call(root.querySelectorAll('.button_main-wrap'))
+      .filter(function (control) {
+        if (
+          typeof control.closest === 'function' &&
+          control.closest('[wf-xano-item], [wf-xano-element="template"]')
+        ) {
+          return false
+        }
+        const label = control.querySelector('.button_main-text')
+        return clean(label && label.textContent).toLowerCase() === 'show more'
+      })
+  }
+
+  function setProjectLoadMoreState(controls, state, memory) {
+    const snapshot = state || {}
+    if (snapshot.status === 'success') {
+      memory.hasMore = Boolean(snapshot.data && snapshot.data.hasMore)
+    }
+    if (snapshot.status === 'idle' || snapshot.status === 'destroyed') {
+      memory.hasMore = false
+    }
+    const loading = snapshot.status === 'loading'
+    const error = snapshot.status === 'error'
+    const visible = memory.hasMore && (loading || error || snapshot.status === 'success')
+    controls.forEach(function (control) {
+      show(control, visible)
+      control.setAttribute('data-opp-loading', loading ? 'true' : 'false')
+      control.setAttribute('aria-busy', loading ? 'true' : 'false')
+      control.setAttribute('aria-disabled', loading || !visible ? 'true' : 'false')
+      if (control.classList) {
+        control.classList.toggle('is-disabled', loading || !visible)
+      }
+    })
+  }
+
+  function wireProjectLoadMore(instance) {
+    if (!instance || !instance.root || typeof instance.subscribe !== 'function') return
+    const controls = findProjectLoadMore(instance.root)
+    if (!controls.length) return
+    const memory = { hasMore: false }
+
+    // The authored project control predates wf-xano's load-more grammar.
+    // Keep the Designer-owned element, but give it canonical append behavior.
+    instance.loadMode = 'more'
+    instance.appendMode = true
+    controls.forEach(function (control) {
+      const wasCanonical = control.getAttribute('wf-xano-element') === 'load-more'
+      control.setAttribute('wf-xano-element', 'load-more')
+      if (!control.getAttribute('role')) control.setAttribute('role', 'button')
+      if (!control.getAttribute('tabindex')) control.setAttribute('tabindex', '0')
+      show(control, false)
+      if (wasCanonical || control.__startersProjectLoadMoreBound) return
+      control.__startersProjectLoadMoreBound = true
+      const activate = function (event) {
+        if (event) event.preventDefault()
+        if (control.getAttribute('aria-disabled') === 'true') return
+        if (typeof instance.loadNext === 'function') instance.loadNext()
+      }
+      control.addEventListener('click', activate)
+      control.addEventListener('keydown', function (event) {
+        if (!event || (event.key !== 'Enter' && event.key !== ' ')) return
+        activate(event)
+      })
+    })
+    if (typeof instance.on === 'function') {
+      instance.on('stateChange', function (change) {
+        if (!change || change.reason !== 'auth:change') return
+        memory.hasMore = false
+        setProjectLoadMoreState(controls, { status: 'idle' }, memory)
+      })
+    }
+    instance.subscribe(
+      function (state) {
+        return state
+      },
+      function (state) {
+        setProjectLoadMoreState(controls, state, memory)
+      },
+    )
+  }
+
+  function hideProjectControls() {
     PROJECT_INSTANCE_KEYS.forEach(function (key) {
       document
         .querySelectorAll('[wf-xano-instance="' + key + '"]')
@@ -358,12 +446,15 @@
               ? root
               : root.querySelector(selector)
           show(filters, false)
+          findProjectLoadMore(root).forEach(function (control) {
+            show(control, false)
+          })
         })
     })
   }
 
   function wireProjectFilters() {
-    hideProjectFilters()
+    hideProjectControls()
     const queued = global.WfXano || []
     global.WfXano = queued
     if (!queued || typeof queued.push !== 'function') return
@@ -371,6 +462,7 @@
       PROJECT_INSTANCE_KEYS.forEach(function (key) {
         const instance = wfx && typeof wfx.get === 'function' ? wfx.get(key) : null
         if (!instance || typeof instance.subscribe !== 'function') return
+        wireProjectLoadMore(instance)
         const selector = '.tabs-button_component.is-dashboard'
         const filters =
           typeof instance.qa === 'function'
@@ -603,8 +695,11 @@
     bookingStatus,
     memberOwnsBooking,
     normalizeBooking,
+    findProjectLoadMore,
     projectFilterIsActive,
     projectFilterVisible,
+    setProjectLoadMoreState,
+    wireProjectLoadMore,
     roleForPath,
     sectionBookings,
     uniqueBookings,
