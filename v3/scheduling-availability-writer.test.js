@@ -1112,8 +1112,8 @@ test('production hosted OAuth callback verifies and persists the returned grant'
   assert.ok(creates.some((c) => c.body.in_config_name === 'Paid Consultation Call - 60min - $150'))
 })
 
-test('OAuth callback is stripped before bootstrap failure and retained for retry', async () => {
-  const result = loadWriter({
+test('OAuth callback is stripped before bootstrap failure and survives a login reload', async () => {
+  const firstLoad = loadWriter({
     hostname: 'thestarters.com',
     pathname: '/starter-dashboard',
     origin: 'https://thestarters.com',
@@ -1132,21 +1132,71 @@ test('OAuth callback is stripped before bootstrap failure and retained for retry
     },
   })
 
-  assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
+  assert.equal(firstLoad.historyCalls.at(-1)[2], '/starter-dashboard')
   await settle()
-  assert.equal(result.status(), 'error')
-  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.equal(firstLoad.status(), 'error')
+  assert.equal(firstLoad.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.ok(firstLoad.sessionStorage.has('starter-scheduling-oauth-callback'))
 
-  result.harness.setActiveMember(MEMBER_A())
-  await result.window.StarterSchedulingAvailabilityWriter.initialize()
+  const secondLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+    storage: TZ_CACHED,
+    sessionStorage: Object.fromEntries(firstLoad.sessionStorage),
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
 
-  const add = result.calls.find((c) => c.path === '/grants/add/v3')
+  const add = secondLoad.calls.find((c) => c.path === '/grants/add/v3')
   assert.deepEqual(add.body, {
     in_grant_id: 'hosted-grant-9',
     member_id: 'member-a',
     in_redirect_uri: 'https://thestarters.com/starter-dashboard',
     in_state: 'member-a',
   })
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+})
+
+test('OAuth callback and intent survive a transient grant save failure', async () => {
+  const sessionStorage = {
+    'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+      createdAt: Date.now(),
+      redirectUri: 'https://thestarters.com/starter-dashboard',
+    }),
+  }
+  const firstLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage,
+    routes: {
+      '/grants/add/v3': () => ({ status: 503, body: { message: 'try again' } }),
+    },
+  })
+  await settle()
+
+  assert.ok(firstLoad.sessionStorage.has('starter-scheduling-oauth-callback'))
+  assert.ok(firstLoad.sessionStorage.has('starter-scheduling-oauth-intent:member-a'))
+
+  const secondLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+    storage: TZ_CACHED,
+    sessionStorage: Object.fromEntries(firstLoad.sessionStorage),
+  })
+  await settle()
+
+  assert.equal(secondLoad.calls.filter((c) => c.path === '/grants/add/v3').length, 1)
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
 })
 
 test('hosted OAuth callback without success strips its query and performs no writes', async () => {

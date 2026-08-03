@@ -32,6 +32,7 @@
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const PAID_RATE_STORAGE_KEY = 'paid_call_rate'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
+  const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
@@ -59,13 +60,42 @@
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
     const grantId = params.get('grant_id')
-    if (!code && !grantId) return null
+    if (!code && !grantId) {
+      try {
+        const raw = window.sessionStorage.getItem(OAUTH_CALLBACK_KEY)
+        const stored = raw ? JSON.parse(raw) : null
+        if (
+          stored &&
+          Number.isFinite(stored.capturedAt) &&
+          Date.now() - stored.capturedAt >= 0 &&
+          Date.now() - stored.capturedAt <= OAUTH_INTENT_MAX_AGE &&
+          (stored.code || stored.grantId)
+        ) {
+          stored.remainingQuery = window.location.search.replace(/^\?/, '')
+          return stored
+        }
+        window.sessionStorage.removeItem(OAUTH_CALLBACK_KEY)
+      } catch (error) {
+        try {
+          window.sessionStorage.removeItem(OAUTH_CALLBACK_KEY)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
+      }
+      return null
+    }
 
     const callback = {
       code: code,
       grantId: grantId,
       state: params.get('state'),
       success: params.get('success'),
+      capturedAt: Date.now(),
+    }
+    try {
+      window.sessionStorage.setItem(OAUTH_CALLBACK_KEY, JSON.stringify(callback))
+    } catch (error) {
+      /* storage unavailable; the in-memory callback can still complete */
     }
     ;['code', 'grant_id', 'email', 'provider', 'state', 'success'].forEach(function (key) {
       params.delete(key)
@@ -78,6 +108,14 @@
       window.location.pathname + (remainingQuery ? '?' + remainingQuery : ''),
     )
     return callback
+  }
+
+  function clearOAuthCallback() {
+    try {
+      window.sessionStorage.removeItem(OAUTH_CALLBACK_KEY)
+    } catch (error) {
+      /* storage unavailable */
+    }
   }
 
   function qs(selector, scope) {
@@ -144,13 +182,12 @@
     }
   }
 
-  function consumeOAuthIntent(memberId) {
+  function readOAuthIntent(memberId) {
     const redirectUri = oauthRedirectUri()
     if (isStagingHost) return { redirectUri: redirectUri }
     const key = OAUTH_INTENT_PREFIX + memberId
     try {
       const raw = window.sessionStorage.getItem(key)
-      window.sessionStorage.removeItem(key)
       const intent = raw ? JSON.parse(raw) : null
       if (
         intent &&
@@ -161,10 +198,28 @@
       ) {
         return intent
       }
+      window.sessionStorage.removeItem(key)
       return null
     } catch (error) {
+      try {
+        window.sessionStorage.removeItem(key)
+      } catch (storageError) {
+        /* storage unavailable */
+      }
       return null
     }
+  }
+
+  function clearOAuthIntent(memberId) {
+    try {
+      window.sessionStorage.removeItem(OAUTH_INTENT_PREFIX + memberId)
+    } catch (error) {
+      /* storage unavailable */
+    }
+  }
+
+  function invalidOAuthCallback(message) {
+    return Object.assign(new Error(message), { code: 'OAUTH_CALLBACK_INVALID' })
   }
 
   async function xanoPost(path, payload) {
@@ -1200,14 +1255,14 @@
         try {
           const memberId = await writeMemberId()
           if (!oauthState || oauthState !== memberId) {
-            throw new Error('OAuth state does not match the logged-in member')
+            throw invalidOAuthCallback('OAuth state does not match the logged-in member')
           }
           if (oauthGrantId && oauthCallback.success !== 'true') {
-            throw new Error('Hosted OAuth did not report success')
+            throw invalidOAuthCallback('Hosted OAuth did not report success')
           }
-          const oauthIntent = consumeOAuthIntent(memberId)
+          const oauthIntent = readOAuthIntent(memberId)
           if (!oauthIntent) {
-            throw new Error('OAuth return was not initiated by this session')
+            throw invalidOAuthCallback('OAuth return was not initiated by this session')
           }
           await ensureTimezone()
           const grantPayload = {
@@ -1221,12 +1276,15 @@
           if (!(grant && grant.grant_id)) {
             throw new Error('grants/add/v3 returned no grant')
           }
+          clearOAuthIntent(memberId)
+          clearOAuthCallback()
           grantId = grant.grant_id
           grantEmail = grant.email || null
           grantCalendarId = grant.calendar_id || null
           connectedCalendar = connectedCalendar || 'google'
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
+          if (error && error.code === 'OAUTH_CALLBACK_INVALID') clearOAuthCallback()
           console.warn('[scheduling-writer] OAuth grant save failed:', error && error.message)
           emit('starterSchedulingWriteError', {
             action: 'oauth-connect',
