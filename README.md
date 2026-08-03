@@ -247,7 +247,9 @@ It maintains a member-scoped token cache, adds `Authorization: Bearer <token>` w
 changing the effective request method, body, or other options, and supports string,
 `URL`, and `Request` inputs. Requests that already provide `Authorization`, other Xano
 API groups, other origins, and calls outside the documented page boundary pass
-through unchanged.
+through unchanged, except that scheduling-group requests on the protected production
+`/hire/jp-dionisio` profile are contained with HTTP `410` as documented in the
+authoritative boundary.
 
 A scheduling `401` clears the cached token, trades the current Memberstack JWT once,
 and retries the same request once. A failed refresh preserves the original `401`.

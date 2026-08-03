@@ -977,8 +977,7 @@ staging-host only. The adapter does not install on any other `/hire/*` item or
 on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
 both synchronous scripts: scheduling-group requests return HTTP `410` without
 installing authentication, discovery overrides, or booking identity. The
-adapter maps the reviewed legacy scheduling paths to
-their exact `/v3` routes,
+adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
 preserves request method, body, headers, and query parameters, and sends the
 rewritten request through `window.xanoAuthFetch`.
 
@@ -1020,7 +1019,9 @@ Runtime contract:
 - `data-scheduling-v3-stage` on the document root reports `ready` once the
   adapter owns `window.fetch`, or `auth-unavailable` when a mapped route is
   reached before `window.xanoAuthFetch` exists (the request is then blocked).
-  The attribute is not set on pages where the adapter does not install.
+  On the protected production `/hire/jp-dionisio` profile it reports `disabled`;
+  otherwise, the attribute is not set on pages where the adapter does not
+  install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
   seven installed stage paths), `productionPaths` (the exact production Hire
   canary and canonical dashboards), and `routeMap` (the legacy-to-`/v3` route
