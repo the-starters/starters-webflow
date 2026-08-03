@@ -959,6 +959,7 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
     member_id: 'member-a',
     in_redirect_uri:
       'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
+    in_state: 'member-a',
   })
   assert.ok(result.historyCalls.length >= 1, 'code/state stripped from the URL')
 
@@ -1063,11 +1064,167 @@ test('production OAuth return writes only with a recent session intent', async (
     code: 'abc123',
     member_id: 'member-a',
     in_redirect_uri: 'https://thestarters.com/starter-dashboard',
+    in_state: 'member-a',
   })
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 1)
   assert.equal(
     result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
     1,
+  )
+  assert.equal(result.sessionStorage.size, 0)
+})
+
+test('production hosted OAuth callback verifies and persists the returned grant', async () => {
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    availability,
+    search:
+      '?success=true&grant_id=hosted-grant-9&email=callback%40example.com&provider=google&state=member-a',
+    storage: { ...TZ_CACHED, paid_call_rate: '150' },
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  const add = result.calls.find((c) => c.path === '/grants/add/v3')
+  assert.deepEqual(add.body, {
+    in_grant_id: 'hosted-grant-9',
+    member_id: 'member-a',
+    in_redirect_uri: 'https://thestarters.com/starter-dashboard',
+    in_state: 'member-a',
+  })
+  assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 1)
+  const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
+  assert.equal(creates.length, 2)
+  assert.ok(creates.some((c) => c.body.in_config_name === 'Free Consultation Call - 30min'))
+  assert.ok(creates.some((c) => c.body.in_config_name === 'Paid Consultation Call - 60min - $150'))
+})
+
+test('OAuth callback is stripped before bootstrap failure and retained for retry', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    member: null,
+    search:
+      '?success=true&grant_id=hosted-grant-9&email=callback%40example.com&provider=google&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+
+  assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
+  await settle()
+  assert.equal(result.status(), 'error')
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+
+  result.harness.setActiveMember(MEMBER_A())
+  await result.window.StarterSchedulingAvailabilityWriter.initialize()
+
+  const add = result.calls.find((c) => c.path === '/grants/add/v3')
+  assert.deepEqual(add.body, {
+    in_grant_id: 'hosted-grant-9',
+    member_id: 'member-a',
+    in_redirect_uri: 'https://thestarters.com/starter-dashboard',
+    in_state: 'member-a',
+  })
+})
+
+test('hosted OAuth callback without success strips its query and performs no writes', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?grant_id=hosted-grant-9&email=x%40example.com&provider=google&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
+})
+
+test('hosted OAuth callback for a different member performs no writes', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?success=true&grant_id=hosted-grant-9&state=member-b',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+})
+
+test('hosted OAuth callback without a recent production intent performs no writes', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    storage: TZ_CACHED,
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+})
+
+test('hosted OAuth callback with an expired production intent performs no writes', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now() - 15 * 60 * 1000 - 1,
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(
+    result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
+    0,
   )
   assert.equal(result.sessionStorage.size, 0)
 })

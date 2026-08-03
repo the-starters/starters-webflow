@@ -1213,12 +1213,14 @@ Deliberately NOT ported from the legacy inline writer:
 
 V3 endpoint contract (no Airtable row keys anywhere): the writer calls
 `grants/oauth/v3` with `in_state: <authenticated member id>` and an
-allowlisted `in_redirect_uri`, and sends that same URI to `grants/add/v3`; it
-calls `grants/add_virtual/v3` with `{ grant_id, member_id }`. Both are new
-memberstack_id-keyed endpoints; the legacy airtable_id-keyed
+allowlisted `in_redirect_uri`, and sends that same URI and state to
+`grants/add/v3`; it calls `grants/add_virtual/v3` with
+`{ grant_id, member_id }`. Both are new memberstack_id-keyed endpoints; the
+legacy airtable_id-keyed
 `grants/oauth`/`grants/add`/`grants/add_virtual` remain untouched for V2. The
 OAuth return is handled by the availability writer via `grants/add/v3`
-(server-side code exchange + persist in one call).
+(server-side code exchange or hosted-grant verification + persist in one
+call).
 
 All other writer reads and writes now use their reviewed `/v3` routes:
 `starter/get_by_memberstack`, `starter/set_timezone`,
@@ -1256,14 +1258,18 @@ node v3/scheduling-availability-writer.test.js
 ## Calendar OAuth return (no separate page)
 
 There is no `/connect-success` page in V3. `grants/oauth/v3` redirects the
-OAuth tab to the same approved Starter scheduling page with `?code&state`, and
-the availability writer handles the return during bootstrap: it strips the
-params from the URL, verifies `state` (set server-side from the caller's Bearer
-token) against the logged-in member, and on production requires a recent,
-member-scoped session intent with the exact redirect URI before it exchanges
-and persists the grant through `grants/add/v3` (one authenticated call; the
-code exchange happens in Xano). It then continues the normal connect flow. The
-original tab shows the modal's `reload-page` step, matching the legacy UX.
+OAuth tab to the same approved Starter scheduling page. The writer accepts both
+the authorization-code return (`?code&state`) and Nylas hosted-auth success
+return (`?success=true&grant_id&email&provider&state`). It captures and strips
+all OAuth parameters before fallible bootstrap work, verifies `state` (set
+server-side from the caller's Bearer token) against the logged-in member, and
+on production requires a recent, member-scoped same-session intent with the
+exact redirect URI. For hosted auth, `success` must be exactly `true`; `email`
+and `provider` are ignored, and only the returned `grant_id` is forwarded as
+callback identity. `grants/add/v3` performs the authoritative server-side code
+exchange or grant verification and persists the result in one authenticated
+call. The writer then continues the existing configuration flow. The original
+tab shows the modal's `reload-page` step, matching the legacy UX.
 Booking confirmation/reschedule/cancel links baked into scheduler configurations
 also point at this page, where the bookings embed owns `booking_ref` handling.
 

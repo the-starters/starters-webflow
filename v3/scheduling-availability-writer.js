@@ -53,6 +53,32 @@
   let activeManager = null
   let timezone = null
   let timezonePersisted = false
+  const oauthCallback = captureOAuthCallback()
+
+  function captureOAuthCallback() {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    const grantId = params.get('grant_id')
+    if (!code && !grantId) return null
+
+    const callback = {
+      code: code,
+      grantId: grantId,
+      state: params.get('state'),
+      success: params.get('success'),
+    }
+    ;['code', 'grant_id', 'email', 'provider', 'state', 'success'].forEach(function (key) {
+      params.delete(key)
+    })
+    const remainingQuery = params.toString()
+    callback.remainingQuery = remainingQuery
+    window.history.replaceState(
+      {},
+      document.title,
+      window.location.pathname + (remainingQuery ? '?' + remainingQuery : ''),
+    )
+    return callback
+  }
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -957,9 +983,9 @@
     switchStep('pre-redirect')
     setTimeout(async function () {
       try {
-        // The OAuth `state` round-trips to the V3 connect-success page, whose
-        // grants/add/v3 callback is keyed on memberstack_id — the state IS the
-        // authenticated member id, never a client-editable value.
+        // OAuth returns to this same dashboard. Xano derives `state` from the
+        // authenticated member id; the callback must round-trip that exact
+        // value and a recent same-session intent before any grant write.
         const memberId = await writeMemberId()
         await ensureTimezone()
         const redirectUri = oauthRedirectUri()
@@ -1156,38 +1182,42 @@
       timezone = await resolveTimezone(starterRecord, isStagingHost)
       renderTimezone()
 
-      const urlParams = new URLSearchParams(window.location.search)
+      const urlParams = new URLSearchParams(
+        oauthCallback ? oauthCallback.remainingQuery : window.location.search,
+      )
       let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
 
-      // OAuth return lands directly on this page (?code&state) — no separate
-      // connect-success page. grants/add/v3 exchanges the code and persists
-      // the grant server-side; `state` was set by grants/oauth/v3 from the
-      // caller's Bearer token and must match the logged-in member.
-      const oauthCode = urlParams.get('code')
-      if (oauthCode) {
-        const oauthState = urlParams.get('state')
-        urlParams.delete('code')
-        urlParams.delete('state')
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname + '?' + urlParams.toString(),
-        )
+      // OAuth returns directly to this page. The classic Nylas flow returns
+      // ?code&state; the hosted-auth success flow returns
+      // ?success=true&grant_id&email&provider&state. In both cases the state
+      // was set by grants/oauth/v3 from the caller's Bearer token and must
+      // match the logged-in member. grants/add/v3 performs the authoritative
+      // server-side exchange or grant lookup before persisting V3 state.
+      if (oauthCallback) {
+        const oauthCode = oauthCallback.code
+        const oauthGrantId = oauthCallback.grantId
+        const oauthState = oauthCallback.state
         try {
           const memberId = await writeMemberId()
           if (!oauthState || oauthState !== memberId) {
             throw new Error('OAuth state does not match the logged-in member')
+          }
+          if (oauthGrantId && oauthCallback.success !== 'true') {
+            throw new Error('Hosted OAuth did not report success')
           }
           const oauthIntent = consumeOAuthIntent(memberId)
           if (!oauthIntent) {
             throw new Error('OAuth return was not initiated by this session')
           }
           await ensureTimezone()
-          const grant = await xanoPost('/grants/add/v3', {
-            code: oauthCode,
+          const grantPayload = {
             member_id: memberId,
             in_redirect_uri: oauthIntent.redirectUri,
-          })
+            in_state: oauthState,
+          }
+          if (oauthCode) grantPayload.code = oauthCode
+          else grantPayload.in_grant_id = oauthGrantId
+          const grant = await xanoPost('/grants/add/v3', grantPayload)
           if (!(grant && grant.grant_id)) {
             throw new Error('grants/add/v3 returned no grant')
           }
@@ -1216,10 +1246,11 @@
       // Returning from the calendar OAuth round trip.
       if (connectedCalendar && !configs.length) {
         urlParams.delete('calendar')
+        const remainingQuery = urlParams.toString()
         window.history.replaceState(
           {},
           document.title,
-          window.location.pathname + '?' + urlParams.toString(),
+          window.location.pathname + (remainingQuery ? '?' + remainingQuery : ''),
         )
         availability.manager = 'calendar'
         await updateAvail()
