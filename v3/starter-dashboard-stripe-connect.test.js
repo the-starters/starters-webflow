@@ -139,6 +139,49 @@ test('explicit earnings state attributes do not depend on document order', () =>
   assert.equal(tiles.ready, history)
 })
 
+test('partial earnings state wiring assigns only the unlabeled fallback', () => {
+  const labeledConnect = new FakeElement()
+  const unlabeledHistory = new FakeElement()
+  labeledConnect.setAttribute(
+    'data-stripe-connect-earnings-state',
+    'disconnected',
+  )
+
+  const connectTiles = api.resolveEarningsTiles([
+    unlabeledHistory,
+    labeledConnect,
+  ])
+
+  assert.equal(connectTiles.disconnected, labeledConnect)
+  assert.equal(connectTiles.ready, unlabeledHistory)
+
+  const unlabeledConnect = new FakeElement()
+  const labeledHistory = new FakeElement()
+  labeledHistory.setAttribute('data-stripe-connect-earnings-state', 'ready')
+
+  const historyTiles = api.resolveEarningsTiles([
+    labeledHistory,
+    unlabeledConnect,
+  ])
+
+  assert.equal(historyTiles.disconnected, unlabeledConnect)
+  assert.equal(historyTiles.ready, labeledHistory)
+})
+
+test('a lone explicitly disconnected tile is never reused as ready', () => {
+  const connect = new FakeElement()
+  connect.setAttribute('data-stripe-connect-earnings-state', 'disconnected')
+
+  const tiles = api.resolveEarningsTiles([connect])
+
+  assert.equal(tiles.disconnected, connect)
+  assert.equal(tiles.ready, undefined)
+
+  api.renderEarningsTiles(tiles, 'disconnected')
+  assert.equal(connect.hidden, false)
+  assert.equal(connect.getAttribute('aria-disabled'), 'false')
+})
+
 test('exactly one earnings tile is shown for disconnected and ready states', () => {
   const connect = new FakeElement()
   const history = new FakeElement()

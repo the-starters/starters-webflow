@@ -293,9 +293,27 @@
     // action attribute. Preserve that markup contract while allowing explicit
     // state attributes on new installs.
     if (elements.length === 2) {
-      if (!tiles.disconnected) tiles.disconnected = elements[0]
-      if (!tiles.ready) tiles.ready = elements[1]
-    } else if (elements.length === 1 && !tiles.ready) {
+      if (!tiles.disconnected) {
+        tiles.disconnected = elements.find(function (element) {
+          return (
+            !element.getAttribute(EARNINGS_STATE_ATTR) &&
+            element !== tiles.ready
+          )
+        })
+      }
+      if (!tiles.ready) {
+        tiles.ready = elements.find(function (element) {
+          return (
+            !element.getAttribute(EARNINGS_STATE_ATTR) &&
+            element !== tiles.disconnected
+          )
+        })
+      }
+    } else if (
+      elements.length === 1 &&
+      !tiles.disconnected &&
+      !tiles.ready
+    ) {
       tiles.ready = elements[0]
     }
 
