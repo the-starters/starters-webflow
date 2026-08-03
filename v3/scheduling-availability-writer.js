@@ -32,6 +32,7 @@
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const PAID_RATE_STORAGE_KEY = 'paid_call_rate'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
+  const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
@@ -59,13 +60,42 @@
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
     const grantId = params.get('grant_id')
-    if (!code && !grantId) return null
+    if (!code && !grantId) {
+      try {
+        const raw = window.sessionStorage.getItem(OAUTH_CALLBACK_KEY)
+        const stored = raw ? JSON.parse(raw) : null
+        if (
+          stored &&
+          Number.isFinite(stored.capturedAt) &&
+          Date.now() - stored.capturedAt >= 0 &&
+          Date.now() - stored.capturedAt <= OAUTH_INTENT_MAX_AGE &&
+          (stored.code || stored.grantId)
+        ) {
+          stored.remainingQuery = window.location.search.replace(/^\?/, '')
+          return stored
+        }
+        window.sessionStorage.removeItem(OAUTH_CALLBACK_KEY)
+      } catch (error) {
+        try {
+          window.sessionStorage.removeItem(OAUTH_CALLBACK_KEY)
+        } catch (storageError) {
+          /* storage unavailable */
+        }
+      }
+      return null
+    }
 
     const callback = {
       code: code,
       grantId: grantId,
       state: params.get('state'),
       success: params.get('success'),
+      capturedAt: Date.now(),
+    }
+    try {
+      window.sessionStorage.setItem(OAUTH_CALLBACK_KEY, JSON.stringify(callback))
+    } catch (error) {
+      /* storage unavailable; the in-memory callback can still complete */
     }
     ;['code', 'grant_id', 'email', 'provider', 'state', 'success'].forEach(function (key) {
       params.delete(key)
@@ -78,6 +108,14 @@
       window.location.pathname + (remainingQuery ? '?' + remainingQuery : ''),
     )
     return callback
+  }
+
+  function clearOAuthCallback() {
+    try {
+      window.sessionStorage.removeItem(OAUTH_CALLBACK_KEY)
+    } catch (error) {
+      /* storage unavailable */
+    }
   }
 
   function qs(selector, scope) {
@@ -1209,6 +1247,7 @@
           if (!oauthIntent) {
             throw new Error('OAuth return was not initiated by this session')
           }
+          clearOAuthCallback()
           await ensureTimezone()
           const grantPayload = {
             member_id: memberId,
@@ -1227,6 +1266,7 @@
           connectedCalendar = connectedCalendar || 'google'
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
+          clearOAuthCallback()
           console.warn('[scheduling-writer] OAuth grant save failed:', error && error.message)
           emit('starterSchedulingWriteError', {
             action: 'oauth-connect',
