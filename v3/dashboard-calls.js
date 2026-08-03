@@ -321,29 +321,49 @@
     return Boolean(status && status !== '*')
   }
 
+  function projectTotal(state) {
+    const value = state && state.data && state.data.total
+    if (value == null || clean(value) === '') return Number.NaN
+    const total = Number(value)
+    return Number.isFinite(total) && total >= 0 ? total : Number.NaN
+  }
+
   function projectFilterVisible(state, memory) {
     const snapshot = state || {}
-    const data = snapshot.data || {}
     const query = snapshot.query || {}
     const activeFilter = projectFilterIsActive(query.params)
-    const total = Number(data.total)
+    const total = projectTotal(snapshot)
 
-    if (snapshot.status === 'success' && Number.isFinite(total)) {
-      if (total > 0) {
-        memory.known = true
-        memory.hasAny = true
-      } else if (!activeFilter) {
-        memory.known = true
-        memory.hasAny = false
-      }
+    if (snapshot.status !== 'success' || !Number.isFinite(total)) return false
+
+    if (total > 0) {
+      memory.known = true
+      memory.hasAny = true
+    } else if (!activeFilter) {
+      memory.known = true
+      memory.hasAny = false
     }
 
-    // With an active filter and no unfiltered result yet, keep the controls
-    // available: zero matching rows does not prove the whole project list is empty.
-    return memory.known ? memory.hasAny : activeFilter
+    return memory.known && memory.hasAny
+  }
+
+  function hideProjectFilters() {
+    PROJECT_INSTANCE_KEYS.forEach(function (key) {
+      document
+        .querySelectorAll('[wf-xano-instance="' + key + '"]')
+        .forEach(function (root) {
+          const selector = '.tabs-button_component.is-dashboard'
+          const filters =
+            typeof root.matches === 'function' && root.matches(selector)
+              ? root
+              : root.querySelector(selector)
+          show(filters, false)
+        })
+    })
   }
 
   function wireProjectFilters() {
+    hideProjectFilters()
     const queued = global.WfXano || []
     global.WfXano = queued
     if (!queued || typeof queued.push !== 'function') return
@@ -351,25 +371,80 @@
       PROJECT_INSTANCE_KEYS.forEach(function (key) {
         const instance = wfx && typeof wfx.get === 'function' ? wfx.get(key) : null
         if (!instance || typeof instance.subscribe !== 'function') return
-        const filters = instance.root.querySelector(
-          '.tabs-button_component.is-dashboard',
-        )
-        if (!filters) return
-        const memory = { known: false, hasAny: false }
-        show(filters, false)
+        const selector = '.tabs-button_component.is-dashboard'
+        const filters =
+          typeof instance.qa === 'function'
+            ? instance.qa(selector)
+            : [instance.root && instance.root.querySelector(selector)].filter(Boolean)
+        if (!filters.length) return
+        const memory = {
+          known: false,
+          hasAny: false,
+          probeAttempted: false,
+          probeStatus: '',
+        }
+        const reveal = function (visible) {
+          filters.forEach(function (filter) {
+            show(filter, visible)
+          })
+        }
+        reveal(false)
         if (typeof instance.on === 'function') {
           instance.on('stateChange', function (change) {
             if (!change || change.reason !== 'auth:change') return
             memory.known = false
             memory.hasAny = false
-            show(filters, false)
+            memory.probeAttempted = false
+            memory.probeStatus = ''
+            reveal(false)
           })
         }
-        instance.subscribe(function (state) {
-          return state
-        }, function (state) {
-          show(filters, projectFilterVisible(state, memory))
-        })
+        let latestState = null
+        let scheduled = false
+        instance.subscribe(
+          function (state) {
+            return state
+          },
+          function (state) {
+            latestState = state
+            if (scheduled) return
+            scheduled = true
+            Promise.resolve().then(function () {
+              scheduled = false
+              const snapshot = latestState || {}
+              const params = (snapshot.query && snapshot.query.params) || {}
+              const activeFilter = projectFilterIsActive(params)
+
+              if (
+                memory.probeStatus &&
+                (snapshot.status === 'error' ||
+                  (snapshot.status === 'success' && !activeFilter))
+              ) {
+                projectFilterVisible(snapshot, memory)
+                const status = memory.probeStatus
+                memory.probeStatus = ''
+                reveal(false)
+                instance.setParam('status', status)
+                return
+              }
+
+              reveal(projectFilterVisible(snapshot, memory))
+              if (
+                snapshot.status === 'success' &&
+                activeFilter &&
+                projectTotal(snapshot) === 0 &&
+                !memory.known &&
+                !memory.probeAttempted &&
+                typeof instance.setParam === 'function'
+              ) {
+                memory.probeAttempted = true
+                memory.probeStatus = clean(params.status)
+                reveal(false)
+                instance.setParam('status', '')
+              }
+            })
+          },
+        )
       })
     })
   }

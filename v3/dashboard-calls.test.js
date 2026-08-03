@@ -270,7 +270,25 @@ test('project filters remain usable when only the selected filter is empty', () 
   )
 })
 
-test('a deep-linked project filter stays visible until the full list is known', () => {
+test('project filters fail closed outside authoritative success states', () => {
+  const memory = { known: true, hasAny: true }
+  assert.equal(api.projectFilterVisible({ status: 'loading' }, memory), false)
+  assert.equal(api.projectFilterVisible({ status: 'error' }, memory), false)
+  assert.equal(api.projectFilterVisible({}, memory), false)
+  assert.equal(
+    api.projectFilterVisible(
+      {
+        status: 'success',
+        data: { total: null },
+        query: { params: { status: 'active' } },
+      },
+      memory,
+    ),
+    false,
+  )
+})
+
+test('a deep-linked empty project filter stays hidden until the full list is known', () => {
   const memory = { known: false, hasAny: false }
   assert.equal(
     api.projectFilterVisible(
@@ -281,7 +299,100 @@ test('a deep-linked project filter stays visible until the full list is known', 
       },
       memory,
     ),
-    true,
+    false,
   )
   assert.deepEqual(memory, { known: false, hasAny: false })
+})
+
+test('project filters hide synchronously before wf-xano is available', () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const filters = element()
+  const project = element({ 'wf-xano-instance': 'dash-projects' })
+  project.querySelector = (selector) =>
+    selector === '.tabs-button_component.is-dashboard' ? filters : null
+  const document = {
+    readyState: 'complete',
+    querySelectorAll(selector) {
+      if (selector === '[wf-xano-instance="dash-projects"]') return [project]
+      return []
+    },
+  }
+  const window = {
+    document,
+    location: { pathname: '/starter-dashboard' },
+  }
+
+  vm.runInNewContext(source, { document, Intl, window })
+
+  assert.equal(filters.hidden, true)
+  assert.equal(filters.style.display, 'none')
+  assert.equal(window.WfXano.length, 1)
+})
+
+test('a deep-linked empty filter probes All before becoming visible', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const filters = element()
+  const project = element({ 'wf-xano-instance': 'dash-projects' })
+  project.querySelector = (selector) =>
+    selector === '.tabs-button_component.is-dashboard' ? filters : null
+  const document = {
+    readyState: 'complete',
+    querySelectorAll(selector) {
+      if (selector === '[wf-xano-instance="dash-projects"]') return [project]
+      return []
+    },
+  }
+  const window = {
+    document,
+    location: { pathname: '/starter-dashboard' },
+  }
+  let state = {
+    status: 'success',
+    data: { total: 0 },
+    query: { params: { status: 'active' } },
+  }
+  let subscriber
+  const params = []
+  const instance = {
+    qa: () => [filters],
+    root: project,
+    on() {},
+    setParam(field, value) {
+      params.push([field, value])
+      state = {
+        status: 'loading',
+        data: state.data,
+        query: { params: value ? { [field]: value } : {} },
+      }
+      subscriber(state)
+    },
+    subscribe(selector, handler) {
+      subscriber = (next) => handler(selector(next))
+      subscriber(state)
+    },
+  }
+
+  vm.runInNewContext(source, { document, Intl, Promise, window })
+  window.WfXano[0]({ get: (key) => (key === 'dash-projects' ? instance : null) })
+  await new Promise(setImmediate)
+  assert.deepEqual(params, [['status', '']])
+  assert.equal(filters.hidden, true)
+
+  state = { status: 'success', data: { total: 3 }, query: { params: {} } }
+  subscriber(state)
+  await new Promise(setImmediate)
+  assert.deepEqual(params, [
+    ['status', ''],
+    ['status', 'active'],
+  ])
+  assert.equal(filters.hidden, true)
+
+  state = {
+    status: 'success',
+    data: { total: 0 },
+    query: { params: { status: 'active' } },
+  }
+  subscriber(state)
+  await new Promise(setImmediate)
+  assert.equal(filters.hidden, false)
 })
