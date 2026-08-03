@@ -151,8 +151,10 @@ test('a logged-out visitor to /favorites is sent to login and can return', async
 
 test('/quiz-results and /all-starters are intentionally NOT guarded', () => {
   const { api } = loadGuard()
-  // Decision 2026-07-23: excluded pending confirmation they are not pre-signup
-  // funnel pages. The guard must never force a login there even if installed.
+  // Permanently excluded from PAGE_ROLES: both are reachable pre-signup, so a
+  // guarded page — which forces a login — would break them. Their logged-in
+  // role rules live in ROLE_BOUNCE_PAGES instead (see the section at the end of
+  // this file), which never touches a logged-out visitor.
   assert.equal(api.isGuardedPath('/quiz-results'), false)
   assert.equal(api.isGuardedPath('/all-starters'), false)
   assert.equal(api.redirectTargetFor(TALENT, '/quiz-results'), '')
@@ -806,6 +808,335 @@ test('a bounce page on an unapproved host is untouched', async () => {
   const { location, attributes } = loadGuard({
     hostname: 'attacker.example',
     pathname: '/',
+    member: TALENT,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.deepEqual(attributes, {})
+})
+
+// --- Member-only role bounce pages --------------------------------------------
+
+const FREE_DONE = {
+  id: 'm-free-done',
+  planConnections: [plan('pln_free-plan-f6kn0dxz')],
+  customFields: { 'starter-quiz': '{"status":"ready"}' },
+}
+
+test('the role-bounce pages are recognised in both slash forms', () => {
+  const { api } = loadGuard()
+  for (const path of [
+    '/quiz-results',
+    '/quiz-results/',
+    '/all-starters',
+    '/all-starters/',
+  ]) {
+    assert.equal(api.isRoleBouncePage(path), true, path)
+    // Critical: a role-bounce page must NOT be guarded. A guarded page sends a
+    // logged-out visitor to a login form, and both of these serve anonymous
+    // visitors by design.
+    assert.equal(api.isGuardedPath(path), false, path)
+    assert.equal(api.isMemberBouncePage(path), false, path)
+  }
+  for (const path of ['/quiz', '/about', '/all-starters/extra', '/']) {
+    assert.equal(api.isRoleBouncePage(path), false, path)
+  }
+  // Spread the guard's arrays: they are built inside the vm realm, so a strict
+  // deep comparison against a host array fails on the prototype alone.
+  assert.deepEqual([...api.roleBounceRolesFor('/quiz-results')], ['brand-free'])
+  assert.deepEqual(
+    [...api.roleBounceRolesFor('/all-starters')],
+    ['brand-paid', 'brand-free'],
+  )
+  assert.equal(api.roleBounceRolesFor('/quiz'), null)
+  // A prototype key must not be mistaken for a configured page.
+  assert.equal(api.isRoleBouncePage('constructor'), false)
+  assert.equal(api.roleBounceTargetFor(TALENT, 'constructor'), '')
+})
+
+/**
+ * The three page tables are three different contracts — force a login, bounce an
+ * identified member off a public entry page, bounce a wrong-role member off a
+ * public content page — and a path in two of them would be served by whichever
+ * boot branch happens to run first. They are parsed out of the source rather
+ * than copied here for the same reason as the auth-route parity sweep: a
+ * hardcoded copy drifts exactly like the tables it is meant to police.
+ */
+function parsePageTables() {
+  const pageRolesBlock = source.match(/var PAGE_ROLES = \{\n([\s\S]*?)\n {2}\}\n/)
+  assert.ok(pageRolesBlock, 'PAGE_ROLES literal not found')
+  const memberBounceBlock = source.match(
+    /var MEMBER_BOUNCE_PAGES = new Set\(\[\n([\s\S]*?)\n {2}\]\)/,
+  )
+  assert.ok(memberBounceBlock, 'MEMBER_BOUNCE_PAGES literal not found')
+  const roleBounceBlock = source.match(
+    /var ROLE_BOUNCE_PAGES = \{\n([\s\S]*?)\n {2}\}\n/,
+  )
+  assert.ok(roleBounceBlock, 'ROLE_BOUNCE_PAGES literal not found')
+
+  return {
+    guarded: [...pageRolesBlock[1].matchAll(/^ {4}'([^']+)': \[/gm)].map(
+      ([, path]) => path,
+    ),
+    memberBounce: [...memberBounceBlock[1].matchAll(/'([^']+)'/g)].map(
+      ([, path]) => path,
+    ),
+    roleBounce: [...roleBounceBlock[1].matchAll(/^ {4}'([^']+)': \{/gm)].map(
+      ([, path]) => path,
+    ),
+  }
+}
+
+test('no path appears in two of the three page tables', () => {
+  const { api } = loadGuard()
+  const { guarded, memberBounce, roleBounce } = parsePageTables()
+
+  // Re-validate the parse through the live API, so a literal that stops
+  // matching fails loudly instead of silently checking an empty list.
+  assert.ok(guarded.length >= 15, 'parsed too few PAGE_ROLES entries')
+  assert.equal(memberBounce.length, 4)
+  assert.equal(roleBounce.length, 4)
+  for (const path of guarded) assert.equal(api.isGuardedPath(path), true, path)
+  for (const path of memberBounce) {
+    assert.equal(api.isMemberBouncePage(path), true, path)
+  }
+  for (const path of roleBounce) {
+    assert.equal(api.isRoleBouncePage(path), true, path)
+  }
+
+  const tables = { guarded, memberBounce, roleBounce }
+  for (const [nameA, nameB] of [
+    ['guarded', 'memberBounce'],
+    ['guarded', 'roleBounce'],
+    ['memberBounce', 'roleBounce'],
+  ]) {
+    const overlap = tables[nameA].filter((path) => tables[nameB].includes(path))
+    assert.deepEqual(overlap, [], `${nameA} and ${nameB} share a path`)
+  }
+})
+
+test('/quiz stays outside all three tables — its page controller owns it', () => {
+  const { api } = loadGuard()
+  for (const path of ['/quiz', '/quiz/']) {
+    assert.equal(api.isGuardedPath(path), false, path)
+    assert.equal(api.isMemberBouncePage(path), false, path)
+    assert.equal(api.isRoleBouncePage(path), false, path)
+  }
+})
+
+test('/quiz-results keeps only a free Brand, and only once the quiz is done', () => {
+  const { api } = loadGuard()
+  for (const path of ['/quiz-results', '/quiz-results/']) {
+    // Done free Brand: this page IS its role home, so it stays.
+    assert.equal(api.roleBounceTargetFor(FREE_DONE, path), '', path)
+    // Free Brand mid-funnel is allowed by role but belongs at /quiz, because
+    // there are no results to show yet.
+    assert.equal(api.roleBounceTargetFor(BRAND_FREE, path), '/quiz', path)
+    // Disallowed roles go to their own home, never the other role's page.
+    assert.equal(api.roleBounceTargetFor(TALENT, path), '/starter-dashboard', path)
+    assert.equal(
+      api.roleBounceTargetFor(BRAND_PAID, path),
+      '/brand-dashboard',
+      path,
+    )
+    assert.equal(
+      api.roleBounceTargetFor(TEST_BRAND, path),
+      '/brand-dashboard',
+      path,
+    )
+  }
+})
+
+test('/all-starters keeps both Brand tiers and bounces only Talent', () => {
+  const { api } = loadGuard()
+  for (const path of ['/all-starters', '/all-starters/']) {
+    assert.equal(api.roleBounceTargetFor(BRAND_PAID, path), '', path)
+    assert.equal(api.roleBounceTargetFor(TEST_BRAND, path), '', path)
+    // No quiz-state enforcement here: a free Brand stays either way, which is
+    // what separates this page from /quiz-results.
+    assert.equal(api.roleBounceTargetFor(BRAND_FREE, path), '', path)
+    assert.equal(api.roleBounceTargetFor(FREE_DONE, path), '', path)
+    assert.equal(api.roleBounceTargetFor(TALENT, path), '/starter-dashboard', path)
+  }
+})
+
+test('an unmapped or conflicted member gets no role-bounce target', () => {
+  const { api } = loadGuard()
+  const conflict = {
+    id: 'm-conflict',
+    planConnections: [
+      plan('pln_dorxata-test-free-plan-dvcg0k8o'),
+      plan('pln_new-paid-plan-463h04ph'),
+    ],
+  }
+  for (const path of ['/quiz-results', '/all-starters']) {
+    assert.equal(api.roleBounceTargetFor(UNMAPPED, path), null, path)
+    assert.equal(api.roleBounceTargetFor(conflict, path), null, path)
+  }
+  // And an untabled page is always a plain stay, even for those members.
+  assert.equal(api.roleBounceTargetFor(UNMAPPED, '/about'), '')
+})
+
+test('no role home is bounced by its own role rule (role bounce cannot loop)', () => {
+  const { api } = loadGuard()
+  for (const member of [TALENT, BRAND_PAID, TEST_BRAND, BRAND_FREE, FREE_DONE]) {
+    const home = api.roleHome(member)
+    assert.ok(home, member.id)
+    assert.equal(api.roleBounceTargetFor(member, home), '', home + ' ' + member.id)
+    assert.equal(api.roleBounceTargetFor(member, home + '/'), '', home + '/')
+  }
+  // The one case where a role home IS a role-bounce page: /quiz-results is the
+  // done free Brand's home, and it is on that page's allowlist, so the rule
+  // resolves to "stay" rather than to a redirect back to itself.
+  assert.equal(api.roleHome(FREE_DONE), '/quiz-results')
+  assert.equal(api.isRoleBouncePage('/quiz-results'), true)
+  assert.equal(api.roleBounceTargetFor(FREE_DONE, '/quiz-results'), '')
+})
+
+test('a role bounce target is never itself bounced again', () => {
+  const { api } = loadGuard()
+  const members = [TALENT, BRAND_PAID, TEST_BRAND, BRAND_FREE, FREE_DONE]
+  for (const path of [
+    '/quiz-results',
+    '/quiz-results/',
+    '/all-starters',
+    '/all-starters/',
+  ]) {
+    for (const member of members) {
+      const target = api.roleBounceTargetFor(member, path)
+      if (target === '') continue
+      // One hop only: whatever the bounce chose must be a place this member is
+      // allowed to sit, under both the guarded table and the role-bounce table.
+      assert.equal(api.roleBounceTargetFor(member, target), '', target)
+      assert.equal(api.redirectTargetFor(member, target), '', target)
+      assert.equal(api.isMemberBouncePage(target), false, target)
+    }
+  }
+})
+
+/**
+ * The member-home bounce still honours a `?next=` to an unguarded page, and
+ * /quiz-results is unguarded, so a Talent member arriving at /login?next=
+ * /quiz-results is handed there and then bounced again by the role rule. That
+ * is two redirects, not a loop: this asserts the chain terminates on a page the
+ * member is allowed to sit on. Left as-is deliberately — teaching
+ * bounceTargetFor about the role-bounce table would change member-bounce
+ * behaviour, which this release does not touch.
+ */
+test('a member bounce handing off to a role-bounce page still terminates', () => {
+  const { api } = loadGuard()
+  const first = api.bounceTargetFor(TALENT, '/quiz-results')
+  assert.equal(first, '/quiz-results')
+  const second = api.roleBounceTargetFor(TALENT, first)
+  assert.equal(second, '/starter-dashboard')
+  assert.equal(api.roleBounceTargetFor(TALENT, second), '')
+  assert.equal(api.redirectTargetFor(TALENT, second), '')
+})
+
+test('a Talent session on /all-starters is bounced to the Talent dashboard', async () => {
+  const { location, attributes, events } = loadGuard({
+    pathname: '/all-starters',
+    member: TALENT,
+  })
+  // No "checking" stamp: this page must render for anonymous visitors without
+  // waiting on the guard.
+  assert.equal(attributes['data-route-guard'], undefined)
+  await flush()
+  assert.equal(location.replaced, '/starter-dashboard')
+  assert.equal(attributes['data-route-guard'], 'redirecting')
+  assert.ok(events.some((e) => e.name === 'starters:v3-route-guard-redirecting'))
+})
+
+test('a mid-funnel free Brand on /quiz-results is sent to the quiz', async () => {
+  const { location } = loadGuard({
+    pathname: '/quiz-results',
+    member: BRAND_FREE,
+  })
+  await flush()
+  assert.equal(location.replaced, '/quiz')
+})
+
+test('a done free Brand is left on /quiz-results untouched', async () => {
+  const { location, attributes, events } = loadGuard({
+    pathname: '/quiz-results',
+    member: FREE_DONE,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  // Not even an "allowed" stamp: a role-bounce page gets no attributes at all
+  // unless it is redirecting.
+  assert.deepEqual(attributes, {})
+  assert.deepEqual(events, [])
+})
+
+test('a paid Brand stays on /all-starters and is bounced off /quiz-results', async () => {
+  const stay = loadGuard({ pathname: '/all-starters', member: BRAND_PAID })
+  await flush()
+  assert.equal(stay.location.replaced, undefined)
+  assert.deepEqual(stay.attributes, {})
+
+  const bounced = loadGuard({ pathname: '/quiz-results', member: BRAND_PAID })
+  await flush()
+  assert.equal(bounced.location.replaced, '/brand-dashboard')
+})
+
+// This is the contract that lets quiz-results.js keep serving pre-signup
+// visitors whose answers are still in sessionStorage. If this test ever fails,
+// that page is broken for everyone who has not signed up yet.
+test('a logged-out visitor is left completely alone on every role-bounce page', async () => {
+  for (const pathname of [
+    '/quiz-results',
+    '/quiz-results/',
+    '/all-starters',
+    '/all-starters/',
+  ]) {
+    const { location, attributes, events } = loadGuard({ pathname, member: null })
+    await flush()
+    assert.equal(location.replaced, undefined, pathname)
+    assert.deepEqual(attributes, {}, pathname)
+    assert.deepEqual(events, [], pathname)
+  }
+})
+
+test('a role-bounce page with no Memberstack at all is left alone', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/quiz-results',
+    memberstackMissing: true,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.deepEqual(attributes, {})
+})
+
+test('an unmapped member stays on a role-bounce page with no error UI', async () => {
+  const { location, attributes, events } = loadGuard({
+    pathname: '/all-starters',
+    member: UNMAPPED,
+  })
+  await flush()
+  assert.equal(location.replaced, undefined)
+  // Deliberately unlike a guarded page: no data-route-guard-error, because a
+  // page that serves anonymous visitors is the wrong place to surface a
+  // plan-configuration problem. The console carries the diagnosis.
+  assert.equal(attributes['data-route-guard-error'], undefined)
+  assert.deepEqual(events, [])
+})
+
+test('a late Memberstack boot still resolves a role bounce', async () => {
+  const { location, attributes } = loadGuard({
+    pathname: '/all-starters',
+    delayedMember: TALENT,
+    memberstackDelayMs: 25,
+  })
+  assert.deepEqual(attributes, {})
+  assert.equal(location.replaced, undefined)
+  await waitFor(() => location.replaced === '/starter-dashboard')
+})
+
+test('a role-bounce page on an unapproved host is untouched', async () => {
+  const { location, attributes } = loadGuard({
+    hostname: 'attacker.example',
+    pathname: '/quiz-results',
     member: TALENT,
   })
   await flush()

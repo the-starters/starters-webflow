@@ -32,17 +32,28 @@ the canonical dashboard router, and direct-page guarding cannot drift.
 
 `auth-route.js` uses this table only when restoring a same-origin `next`
 destination after login. A disallowed destination falls back to the role
-default. `route-guard.js` enforces direct access for every route below except
-`/quiz`, `/quiz-results`, `/all-starters`, and the four member-home bounce pages
-(`/`, `/login`, `/starter-login`, `/sign-up`), which remain outside the sitewide
-guard's page table. The bounce pages are a separate, weaker mechanism — they
-redirect an identified member away but never force a login, so a signed-out
-visitor cannot tell the guard is installed (see the member-home bounce note
-below). The quiz entry is a funnel page; the results-page controller handles its
-logged-out, no-results case without disrupting pre-signup quiz data; and
-`/all-starters` stays outside the guard permanently (decision by Jerico
-2026-08-03) because its gating is not route-level: Memberstack gated content
-(`data-ms-content`) on the page plus list/render-level limiting for free Brands.
+default. `route-guard.js` enforces direct access through three separate page
+tables, and every route below belongs to exactly one of them:
+
+- **`PAGE_ROLES`** — guarded pages. A logged-out visitor is sent to a login form
+  (or to the page's `LOGGED_OUT_DESTINATIONS` override), and a wrong-role member
+  to their own default.
+- **`MEMBER_BOUNCE_PAGES`** — `/`, `/login`, `/starter-login`, `/sign-up`. An
+  identified member is redirected away, but a signed-out visitor cannot tell the
+  guard is installed. See the member-home bounce note below.
+- **`ROLE_BOUNCE_PAGES`** — `/quiz-results`, `/all-starters`. Added 2026-08-03.
+  A logged-in member whose role does not belong there goes to their role home;
+  every other visitor, logged-out included, is left completely alone. See the
+  role-bounce note below.
+
+`/quiz` is in none of them: its page controller `quiz-main/quiz-redirect.js`
+owns it outright, for the same reason `/quiz-results` and `/all-starters` are
+role-bounce rather than guarded pages — all three serve pre-signup visitors, and
+a guarded page forces a login. `/all-starters` in particular will never be a
+guarded page (decision by Jerico 2026-08-03): its content gating is not
+route-level but Memberstack gated content (`data-ms-content`) on the page plus
+list/render-level limiting for free Brands, and the role bounce adds only the
+one route-level rule that page needs.
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
@@ -51,9 +62,9 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 | `/starter-login` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
 | `/sign-up` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
 | `/dashboard` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Canonical authenticated entry only; no dashboard page body lives here |
-| `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default until quiz completion |
-| `/quiz-results` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion |
-| `/all-starters` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return |
+| `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard`, enforced | Free Brand default until quiz completion; page controller enforces all three columns, and the Talent bounce ignores `?retake=` |
+| `/quiz-results` and `/quiz-results/` | Allow once the quiz is done, else `/quiz` | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion; `ROLE_BOUNCE_PAGES` enforces the logged-in columns, `quiz-results.js` still owns every logged-out case |
+| `/all-starters` and `/all-starters/` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return regardless of quiz state; `ROLE_BOUNCE_PAGES` enforces only the Talent bounce |
 | `/favorites` and `/favorites/` | Default quiz home | Allow | Default `/starter-dashboard` | Saved Starters list; paid Brand only, matching Xano #1506's plan 4/5 precondition; both slash forms are allowed paid-Brand `next` destinations so a deep link survives login |
 | `/brand-dashboard` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
 | `/messages` | Default quiz home | Allow | Allow | Free Brand is not allowed |
@@ -71,8 +82,10 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 | `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
 | `/starter-onboarding` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding form; onboarding-done redirect handled by `v3/onboarding-done-redirect.js` (page-scoped), not this guard |
 
-> **Logged-out Quiz Results (updated 2026-07-24):** `/quiz-results` remains
-> outside `route-guard.js`, but `quiz-results.js` redirects a positively
+> **Logged-out Quiz Results (updated 2026-08-03):** `/quiz-results` is a
+> role-bounce page, never a guarded one, so the guard leaves every logged-out
+> visitor there untouched and `quiz-results.js` keeps sole ownership of them.
+> `quiz-results.js` redirects a positively
 > resolved visitor to the quiz when there is no test payload, pending quiz in
 > `sessionStorage`, or saved Memberstack quiz to display. A logged-out visitor
 > goes to `/quiz`; an authenticated member whose `starter-quiz` completion
@@ -84,14 +97,20 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 > the page. Pre-signup visitors with a pending quiz and test-mode previews are
 > unaffected.
 
-> **Quiz entry controller (updated 2026-07-25):** `/quiz` remains outside
-> `route-guard.js`, but `quiz-main/quiz-redirect.js` redirects an active
-> paid Brand—including the Test Brand plan—to `/brand-dashboard` and a
-> completed active production free Brand to `/quiz-results`. `?retake=true`
-> (also `1` or `yes`) bypasses this page-level redirect. Once on `/quiz`, a
-> logged-in member's saved `starterQuiz` answers are combined with any
-> homepage-bucket selections. Unknown, Talent, inactive, and incomplete
-> free-plan members are deliberately unaffected.
+> **Quiz entry controller (updated 2026-08-03):** `/quiz` remains outside all
+> three `route-guard.js` tables, but `quiz-main/quiz-redirect.js` redirects an
+> active paid Brand—including the Test Brand plan—to `/brand-dashboard`, an
+> active Talent member to `/starter-dashboard`, and a completed active
+> production free Brand to `/quiz-results`. `?retake=true` (also `1` or `yes`)
+> bypasses the two Brand redirects but deliberately **not** the Talent one
+> (decision by Jerico 2026-08-03): the retake hatch exists so a Brand can re-run
+> their own quiz, and Talent has no quiz to retake. Once on `/quiz`, a logged-in
+> member's saved `starterQuiz` answers are combined with any homepage-bucket
+> selections. Unknown, inactive, and incomplete free-plan members are
+> deliberately unaffected. A member holding both Talent and paid Brand plans
+> keeps the paid `/brand-dashboard` outcome, including its retake hatch; that
+> state is the `conflicting-plan-roles` configuration error and this page does
+> not try to resolve it.
 
 > **Free Brand default (updated 2026-07-23):** "Default quiz home" in the
 > Brand-free column is conditional — a Brand-free member goes to `/quiz`
@@ -115,6 +134,24 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 > cross-role conflict (that last one is a console message only, because a public
 > page is the wrong place to surface a plan-configuration problem). No role home
 > is itself one of these four pages, so the bounce cannot loop.
+
+> **Member-only role bounce (added 2026-08-03):** `/quiz-results` and
+> `/all-starters` (both slash forms) are `ROLE_BOUNCE_PAGES`. They borrow the
+> member-home bounce's silence contract exactly — a logged-out visitor, a missing
+> or slow Memberstack, an unmapped plan, and a cross-role conflict all leave the
+> page untouched, with no redirect, no error attribute, and no `checking` stamp —
+> and apply the guarded pages' role test to whoever is left: a role-mapped member
+> not on the page's allowlist goes to their own role home. Allowed roles are
+> `brand-free` on `/quiz-results` and both Brand tiers on `/all-starters`, so
+> Talent is the role bounced off both, and a free Brand is the role kept on both.
+> `/quiz-results` carries one extra rule the other page does not: an allowed free
+> Brand belongs there only once the quiz is done, because before that their role
+> home is `/quiz` and there are no results to show. `/all-starters` has no
+> quiz-state rule at all — both Brand tiers stay either way, which is what the
+> `data-ms-content` gating on that page is for. `/quiz-results` is itself the
+> done free Brand's role home and is on its own allowlist, so that resolves to
+> "stay" rather than to a redirect at itself; `route-guard.test.js` asserts that
+> case plus the general rule that no role home is bounced by its own role.
 
 > **Logged-out destination overrides (added 2026-08-03):** Guarded pages normally
 > send a logged-out visitor to `/login?next=<here>` so a deep link survives the
@@ -167,11 +204,13 @@ separate owner:
 | Post-login destination and cross-role redirects | `v3/auth-route.js` consuming the shared contract | Implemented for the routes above |
 | Canonical `/dashboard` role routing and direct protected-page access | `v3/route-guard.js` | Implemented locally; install per [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md); staging matrix pending |
 | Member-home bounce off the homepage, both login pages, and `/sign-up` | `v3/route-guard.js` `MEMBER_BOUNCE_PAGES` | Implemented 2026-08-03; sitewide install already covers it, staging pass pending |
+| Logged-in role bounce off `/quiz-results` and `/all-starters` | `v3/route-guard.js` `ROLE_BOUNCE_PAGES` | Implemented 2026-08-03; sitewide install already covers it, staging pass pending. Logged-out visitors stay with their page controllers |
+| `/quiz` logged-in role redirects | `quiz-main/quiz-redirect.js` (page-scoped) | Talent bounce added 2026-08-03, not `?retake=`-escapable; `/quiz` is outside all three guard tables |
 | Per-page logged-out destinations for the build-profile funnel | `v3/route-guard.js` `LOGGED_OUT_DESTINATIONS` | Implemented 2026-08-03; staging pass pending |
 | `/complete-profile` access | Memberstack `restrict-pages` gated group (URL rule STARTS `complete-profile`, redirect `login`) | Settled 2026-08-03: sole owner, permanently outside `route-guard.js` and `auth-route.js`; the member-home bounce pages complete the routing for a member dumped at `/login` |
 | Talent funnel position on `/build-profile/*` | `v3/build-profile-redirect.js` (page-scoped, Xano `get_freelancers`) | Implemented 2026-08-03; needs three page-level Webflow embeds, see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md) |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
-| `/all-starters` access and free-Brand result limits | Memberstack `data-ms-content` gated content on the page plus list/render-level limiting | Settled 2026-08-03: permanently outside `route-guard.js`, never a route-level rule |
+| `/all-starters` content visibility and free-Brand result limits | Memberstack `data-ms-content` gated content on the page plus list/render-level limiting | Settled 2026-08-03: permanently outside `PAGE_ROLES`. The only route-level rule the page has is the Talent role bounce in the row above; logged-out and both Brand tiers stay |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |
 | `/starter-edit-profile` environment write mode | `profile-image-auth-shim.js` exact Live-host allowlist | Implemented; non-Live hosts block known mutations and preserve reads |
 | `/admin/talent-applications` staff access and private application records | Xano `admin/session` and talent-admin endpoint authorization | Parked, preparation-only staging Code Component; outside the member-plan route matrix; not production-ready and has not been imported into Webflow, published, tagged, or deployed |
@@ -190,11 +229,11 @@ enforces the underlying ownership boundary.
 
 - Define the exact role/state for a paid Brand whose subscription is cancelled;
   do not infer it from a display name.
-- `/quiz` remains unlisted because it is the quiz funnel entry, and its member
-  redirects are owned by the page controller documented above; `/quiz-results`
-  likewise uses its page-controller behavior. (`/all-starters` was settled on
-  2026-08-03 and is recorded in the route-level and enforcement-layer sections
-  above.)
+- (Settled 2026-08-03, recorded in the route-level and enforcement-layer sections
+  above: `/quiz` stays outside all three guard tables with its page controller as
+  the sole owner of its member redirects, and `/quiz-results` and `/all-starters`
+  became role-bounce pages, keeping their page controllers in charge of every
+  logged-out visitor.)
 - Verify Webflow Memberstack gated groups and Xano authorization independently;
   a `Backlog` row in the product sheet is desired behavior, not proof that it is
   live.
