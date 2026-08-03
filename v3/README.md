@@ -238,6 +238,26 @@ both leave it alone rather than compete for the same URL with a different
 destination. The member-home bounce pages forward whoever arrives at `/login` that
 way to their role home. See [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 
+## Complete-profile completion redirect
+
+`complete-profile-redirect.js` keeps a paid Brand who has already finished the
+Complete-profile form from re-entering it, and does nothing else. Completion is the
+Memberstack member custom field `completed-brand-profile`, written by a hidden
+`data-ms-member` input on the form itself, so the check costs no network request at
+all: a real value sends the member to `/brand-dashboard`, and an absent, empty, or
+whitespace-only one leaves them on the page. Truthiness is the same rule the guard
+applies to the `starter-quiz` marker.
+
+Access to the page stays Memberstack's — the `restrict-pages` gated group above,
+not this module, decides who may load it — and the role comes from the route
+guard's exported contract, so Talent, a free Brand, an unmapped or conflicted
+member, a logged-out visitor, a missing contract, and a lookup that throws are all
+left untouched. Two properties are deliberate: it is inert until the hidden input
+starts writing the field, and members who completed the form before the field
+existed read as not-done until they resubmit once. Needs that input plus one
+page-level embed installed after the guard; see
+[COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
+
 ## Build-profile funnel redirect
 
 `build-profile-redirect.js` keeps a Talent member who is already past the

@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.76
+ * @release v1.59.77
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
  * /login and /auth-route, so a logged-in member can still reach another role's
@@ -649,7 +649,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/route-guard.test.js drift guard asserts they match.
-    release: 'v1.59.76',
+    release: 'v1.59.77',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,
@@ -685,9 +685,11 @@
   }
 
   // Only spend a Memberstack lookup on pages one of the three tables claims.
-  // PAGE_ROLES outranks ROLE_BOUNCE_PAGES: v3/route-guard.test.js asserts the
-  // three tables are disjoint, so this order decides nothing today — but if a
-  // path is ever duplicated by mistake, the stronger gate is the safe winner.
+  // The full boot order is member-bounce (above) → guarded pages (here) →
+  // role-bounce (below), i.e. MEMBER_BOUNCE_PAGES is tested first and PAGE_ROLES
+  // outranks only ROLE_BOUNCE_PAGES. v3/route-guard.test.js asserts the three
+  // tables are disjoint, so the order decides nothing today — but if a path is
+  // ever duplicated by mistake, the earlier, stronger gate is the safe winner.
   if (isGuardedPath(window.location.pathname)) {
     document.documentElement.setAttribute('data-route-guard', 'checking')
     guardCurrentPage().catch(function (error) {

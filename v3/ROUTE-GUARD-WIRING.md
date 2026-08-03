@@ -51,9 +51,12 @@ asserts no path appears in two.
 
 At boot the member-bounce test runs first (those paths are absent from
 `PAGE_ROLES`, so the guarded-path test would bail on them), then the guarded-page
-test, then the role-bounce test. Because the tables are disjoint that order
-decides nothing today; it is the safe failure mode if a path is ever duplicated
-by mistake, since the strongest gate wins.
+test, then the role-bounce test — so `PAGE_ROLES` outranks only `ROLE_BOUNCE_PAGES`,
+and the strength ordering in the table above is not the boot ordering. Because the
+tables are disjoint that order decides nothing today; if a path were ever
+duplicated by mistake the earlier branch would win, which is why the two tables
+that can force a login or a redirect for the widest set of visitors are tested
+before the weakest one.
 
 ## Guarded pages
 
@@ -114,6 +117,13 @@ on `/login` to their role home, which is what completes the routing. Do not
 re-add the page here without revisiting that decision — `v3/route-guard.test.js`
 asserts `pageRolesFor('/complete-profile')` is `null` so the re-add cannot be
 accidental.
+
+What the page did gain on 2026-08-03 is a page-scoped module rather than a table
+entry: `v3/complete-profile-redirect.js` sends a paid Brand whose
+`completed-brand-profile` member field is set on to `/brand-dashboard`, and does
+nothing for anyone else. It reads the guard's role contract and adds no access
+rule, so the division above is unchanged — see
+[COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
 ## Member-home bounce pages
 
@@ -357,9 +367,10 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.76'
+window.StartersV3RouteGuard.release // -> 'v1.59.77'
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
+window.StartersCompleteProfileRedirect.release
 ```
 
 The marker states the tag that shipped the file's current contents, not the tag
