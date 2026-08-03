@@ -3,75 +3,125 @@
 Status: Implemented locally 2026-08-03, not yet installed. Needs one page-level
 Webflow embed; it does not arrive with a jsDelivr tag on its own.
 
-`v3/complete-profile-redirect.js` keeps a paid Brand who has already finished the
-Complete-profile form from re-entering it. Completion is a durable signal on the
-member object — the Memberstack custom field `completed-brand-profile` — so unlike
-its `/build-profile/*` sibling this module makes **no network request at all**:
-the answer is already in the member Memberstack hands back.
+`v3/complete-profile-redirect.js` puts every **mapped** member who lands on
+`/complete-profile` where they actually belong. The page is a paid-Brand form, so
+the only visitor with a reason to be there is a paid Brand who has not finished it
+yet. Everyone else mapped goes straight to their own home, with **no hop through
+`/login`**.
 
-## What this module is not
-
-It is not the page's access gate, and it never sends anyone **to** this page.
-Access to `/complete-profile` belongs entirely to the Memberstack `restrict-pages`
-gated content group (URL rule STARTS `complete-profile`, redirect `login`), and
-`v3/route-guard.js` deliberately does not list the page in `PAGE_ROLES` — two
-owners would mean two logged-out destinations for one URL, and Memberstack's
-`protectPages()` wins that race from cached group data before the guard resolves a
-member. A member without group access is dropped on `/login` with no `?next=`, and
-the guard's member-home bounce pages forward them to their role home from there.
-
-That division is why this module's scope is a single positive answer: an already
-completed paid Brand. Every other visitor is somebody else's, and it does nothing
-for them rather than race another layer to a different destination.
-`v3/route-guard.test.js` asserts `pageRolesFor('/complete-profile')` is `null`, and
-`v3/complete-profile-redirect.test.js` asserts the same thing from this side, so
-the layering cannot drift silently.
+Every input is already on the member object Memberstack hands back — the custom
+field `completed-brand-profile` for completion, the plan connections for the role —
+so unlike its `/build-profile/*` sibling this module makes **no network request at
+all** beyond the one `getCurrentMember()` call.
 
 ## What it does
 
-Paid Brand members only, on `/complete-profile` and `/complete-profile/` only:
+On `/complete-profile` and `/complete-profile/` only, on the approved hosts only:
 
-| `completed-brand-profile` | Action |
+| Member | Action |
 | --- | --- |
-| Any trimmed non-empty string, or any non-string truthy value | Replace with `/brand-dashboard` |
-| Empty string, whitespace-only, `false`, `0`, `null` | Stay — this page is exactly where the member belongs |
-| Field absent, or `customFields` absent entirely | Stay |
-| Talent, free Brand, unmapped, or cross-role conflicted member | Stay, untouched |
-| Logged out, Memberstack missing or slow, no role contract, lookup throws | Stay, untouched |
+| Paid Brand, `completed-brand-profile` any trimmed non-empty string or any non-string truthy value | Replace with `/brand-dashboard` |
+| Paid Brand, empty string, whitespace-only, `false`, `0`, `null`, field absent, or `customFields` absent | **Stay** — this page is exactly where the member belongs |
+| Free Brand, `starter-quiz` not set | Replace with `/quiz` |
+| Free Brand, `starter-quiz` set | Replace with `/quiz-results` |
+| Talent | Replace with `/starter-dashboard` |
+| Unmapped plan set, or a cross-role conflicted one (Talent + Brand) | Stay, untouched |
+| Logged out, Memberstack missing or slow, no role contract, a role the guard cannot name a home for, lookup throws, malformed member | Stay, untouched |
 
-The bias is deliberately toward staying. Re-showing a completed form is a harmless
-annoyance; sending a member away from a form they still have to fill in is not.
+The free-Brand and Talent rows are new as of the **2026-08-03 evening decision**
+and replace the earlier paid-Brand-only design, in which those two roles were left
+sitting on a form they can neither fill in nor submit. The bias for the paid Brand
+is still deliberately toward staying: re-showing a completed form is a harmless
+annoyance, sending a member away from a form they still have to fill in is not.
 
-The role comes from the sitewide `v3/route-guard.js` contract
-(`window.StartersV3RouteGuard.memberRole`), never from a second copy of the plan
-table — the same borrow `v3/auth-route.js` and `v3/build-profile-redirect.js` make.
-If the guard is missing or loaded after this module, the role reads as null and the
-page renders untouched, which is why install order matters.
+### Why there is no `/login` hop
+
+Before this release the only way a free Brand or a Talent member got off this page
+was a manual trip to `/login`, where the guard's member-home bounce would forward
+them. That hop is pointless — this module already holds the member object *and* the
+guard's own `roleHome()` answer, so it produces exactly the destination the bounce
+would have produced, in one navigation instead of two, with no login form flashing
+at an already-authenticated member.
+
+The destinations are therefore identical to the `/login` bounce by construction,
+not by coincidence: `v3/complete-profile-redirect.test.js` asserts each one equals
+`window.StartersV3RouteGuard.roleHome(member)` rather than hard-coding it.
+
+## The Memberstack group contract this assumes
+
+Access to `/complete-profile` is **not** this module's job and never becomes it.
+The page is gated by the Memberstack `restrict-pages` gated content group, which
+must be configured as:
+
+| Setting | Required value |
+| --- | --- |
+| URL rule | STARTS WITH `complete-profile` |
+| Access | **All Members** |
+| Access Denied URL | `/login` |
+
+**Access must be "All Members", not the paid-Brand plan.** That is the part the
+2026-08-03 evening decision changed. An earlier design had the group kick every
+non-paid member itself; this module now routes them, and it can only do that if
+Memberstack lets them load the page in the first place. If the group is narrowed to
+the paid plan later, the free-Brand and Talent branches become dead code and those
+members go back to bouncing through `/login` — which still works, just worse.
+
+The division of labour that stays fixed:
+
+- **Logged out is Memberstack's.** The gated group calls
+  `window.location.replace('/login')` from cached group data before this module (or
+  the route guard) has resolved a member, so it wins that race regardless. This
+  module never touches a visitor it cannot positively identify.
+- **`route-guard.js` deliberately does not list the page** in `PAGE_ROLES` or
+  `LOGGED_OUT_DESTINATIONS`. Two owners would mean two logged-out destinations for
+  one URL. Because the Memberstack kick carries no `?next=`, the page is absent
+  from `auth-route.js`'s `ROLE_DESTINATIONS` too — there is no round trip to close.
+- `v3/route-guard.test.js` asserts `pageRolesFor('/complete-profile')` is `null`,
+  and `v3/complete-profile-redirect.test.js` asserts the same thing from this side
+  plus that a live guard booting on this path stamps nothing and redirects nobody,
+  so the layering cannot drift silently.
+
+## The role contract
+
+The role **and** the free-Brand and Talent destinations both come from the sitewide
+`v3/route-guard.js` export (`window.StartersV3RouteGuard.memberRole` and
+`.roleHome`), never from a second copy of the plan table or of `ROLE_DEFAULTS` —
+the same borrow `v3/auth-route.js` and `v3/build-profile-redirect.js` make. That is
+what keeps the free-Brand quiz-funnel rule (`/quiz-results` once `starter-quiz` is
+set, else `/quiz`) in exactly one place.
+
+Both halves are required together. A contract that can name a role but not its home
+counts as **no contract at all**: identifying a Talent member and then having
+nowhere to send them would be worse than doing nothing, so the module leaves the
+page alone and warns on staging. This is also why install order matters — if the
+guard is missing or loaded after this module, nothing happens.
 
 ## The `completed-brand-profile` field contract
 
-The field is a Memberstack member custom field, read straight off
-`member.customFields['completed-brand-profile']`. Its truthiness rule is a
-deliberate copy of the `starter-quiz` rule `route-guard.js` uses in
-`hasCompletedQuiz`: a string counts only once trimmed non-empty, and a non-string
-truthy value counts as set (Memberstack has been seen to return a boolean for
-checkbox-backed fields, and a form that wrote *something* should not be re-run
-because the something was not a string).
+Read straight off `member.customFields['completed-brand-profile']`, and consulted
+**for the paid-Brand branch only** — a stray value on a Talent or free-Brand member
+is meaningless, because it is a paid-Brand form marker, and must not divert them to
+the Brand dashboard. Its truthiness rule is a deliberate copy of the `starter-quiz`
+rule `route-guard.js` uses in `hasCompletedQuiz`: a string counts only once trimmed
+non-empty, and a non-string truthy value counts as set (Memberstack has been seen
+to return a boolean for checkbox-backed fields, and a form that wrote *something*
+should not be re-run because the something was not a string).
 
 **Who writes it:** a hidden input inside the Complete-profile form, added in the
 Webflow Designer, carrying `data-ms-member="completed-brand-profile"`. Memberstack
 writes the field to the member on form submit — there is no Xano hop and no script
 in this repo that writes it. If that input is missing or misspelled, nothing writes
-the field and this module is permanently inert (see below); it will never redirect
-and it will never break the page.
+the field and the paid-Brand branch is permanently inert; it will never redirect a
+paid Brand and it will never break the page.
 
 **Two properties worth stating plainly:**
 
-- **Inert until the field is written.** The field existed on the member object
-  before 2026-08-03 but nothing ever wrote to it, so *every* member reads as
-  not-done until they submit the form once with the hidden input in place. The
-  redirect switches itself on member by member as the field starts landing, and
-  until then the page behaves exactly as it does today.
+- **The paid-Brand branch is inert until the field is written.** The field existed
+  on the member object before 2026-08-03 but nothing ever wrote to it, so *every*
+  paid Brand reads as not-done until they submit the form once with the hidden input
+  in place. That branch switches itself on member by member as the field starts
+  landing. The free-Brand and Talent branches depend on no new field and are live
+  as soon as the embed is.
 - **Members who completed before the field existed read as not-done.** There is no
   backfill. A paid Brand who finished this form weeks ago still has an empty field,
   so they will be shown the form again and will only stop seeing it after they
@@ -80,21 +130,26 @@ and it will never break the page.
 
 ## Webflow install
 
-1. Add the hidden `data-ms-member="completed-brand-profile"` input to the
-   Complete-profile form first. Without it the embed below is a no-op.
-2. Add one deferred page-level tag on `/complete-profile`, and nowhere else:
+1. Confirm the `restrict-pages` group for this page is set to access **All
+   Members** with Access Denied URL `/login` (table above). The role branches
+   cannot run for a member Memberstack refuses to let onto the page.
+2. Add the hidden `data-ms-member="completed-brand-profile"` input to the
+   Complete-profile form. Without it the paid-Brand branch is a no-op; the other
+   two branches work regardless.
+3. Add one deferred page-level tag on `/complete-profile`, and nowhere else:
 
    ```html
-   <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.78/v3/complete-profile-redirect.js" defer></script>
+   <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.81/v3/complete-profile-redirect.js" defer></script>
    ```
 
-3. Load it AFTER the sitewide `v3/route-guard.js`, which owns the role contract
+4. Load it AFTER the sitewide `v3/route-guard.js`, which owns the role contract
    this module reads. The guard is already in project head code, so a page-level
    body or head embed on this page satisfies the order.
-4. Do not install it on `/brand-dashboard` — that is this module's destination, and
-   the path scope refuses it anyway.
-5. Pin the embed to the same tag as the route-guard release it shipped with
-   (`v1.59.78`), the way the sibling redirect embeds are pinned.
+5. Do not install it on any destination page — `/brand-dashboard`,
+   `/starter-dashboard`, `/quiz`, `/quiz-results`. The path scope refuses them
+   anyway, and the test suite asserts no destination is itself a scoped page.
+6. Pin the embed to the same tag as the route-guard release it shipped with
+   (`v1.59.81`), the way the sibling redirect embeds are pinned.
 
 No page markup is required beyond the hidden input. The module has no spinner and
 no error state: it either navigates away or leaves the page alone, so there is
@@ -104,33 +159,42 @@ nothing to author.
 
 `window.StartersCompleteProfileRedirect` exposes `release`, `allowedHost`,
 `stagingHost`, `isCompleteProfilePath`, `diagnosticsEnabled`,
-`hasCompletedBrandProfile`, `completeProfileDestination`,
-`redirectPastCompleteProfile`, `completeProfilePaths`, `dashboardPath`, and
-`doneField`.
+`hasCompletedBrandProfile`, `memberRole`, `roleHome`,
+`completeProfileDestination`, `redirectPastCompleteProfile`,
+`completeProfilePaths`, `dashboardPath`, and `doneField`.
 
-`completeProfileDestination()` is the read-and-decide half and is safe to call by
-hand on staging: it returns `/brand-dashboard` or `null` without navigating.
-`hasCompletedBrandProfile(member)` answers the field question for any member object
-you already have, which is the fastest way to confirm the hidden input actually
-wrote something.
+- `completeProfileDestination()` is the read-and-decide half and is safe to call by
+  hand on staging: it returns `/brand-dashboard`, `/quiz`, `/quiz-results`,
+  `/starter-dashboard`, or `null` (stay) **without navigating**.
+- `memberRole(member)` and `roleHome(member)` are the two guard-contract borrows,
+  exported so a staging session can ask "what role does the guard think I am, and
+  where does it think I live?" without reproducing the decision by hand.
+- `hasCompletedBrandProfile(member)` answers the field question for any member
+  object you already have, which is the fastest way to confirm the hidden input
+  actually wrote something.
 
 Diagnostics narrate every decision on staging only — `*.webflow.io`, `localhost`,
 `127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`. Production
-is completely silent, including on every fail-open path.
+is completely silent, on the role redirects and on every fail-open path alike.
 
 ## Release gate
 
 - Run `node --test v3/complete-profile-redirect.test.js`, and the whole `v3/` suite
   with it.
 - Confirm the sitewide route guard loads before this embed on the page.
-- On staging with the console open, verify both paid-Brand states: a member with an
-  empty `completed-brand-profile` stays on the page and the form works, and a member
-  with the field set lands on `/brand-dashboard`.
+- Confirm the `restrict-pages` group access is **All Members** before testing the
+  role branches; with the paid plan selected they are unreachable by construction.
+- On staging with the console open, verify all four mapped outcomes: a paid Brand
+  with an empty `completed-brand-profile` stays and the form works; a paid Brand
+  with the field set lands on `/brand-dashboard`; a Talent session lands on
+  `/starter-dashboard`; a free Brand lands on `/quiz` before taking the quiz and on
+  `/quiz-results` after.
+- Verify the free-Brand and Talent trips are a **single** navigation — `/login`
+  should never appear in the history for them.
 - Submit the form once as a paid Brand with an empty field, then revisit the page:
   the second visit should redirect. That single round trip is the only real proof
   the hidden input is wired.
-- Confirm a Talent session and a free-Brand session are untouched and log nothing,
-  and that a signed-out visit is still handled by Memberstack's gated group
+- Confirm a signed-out visit is still handled by Memberstack's gated group
   (`/login`, no `?next=`) rather than by this module.
 - Confirm the page issues no new network request because of this module — it makes
   none.

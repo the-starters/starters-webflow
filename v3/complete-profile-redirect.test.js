@@ -14,7 +14,11 @@ const routeGuardSource = fs.readFileSync(
 
 const COMPLETE_PROFILE = '/complete-profile'
 const DASHBOARD = '/brand-dashboard'
+const STARTER_DASHBOARD = '/starter-dashboard'
+const QUIZ = '/quiz'
+const QUIZ_RESULTS = '/quiz-results'
 const DONE_FIELD = 'completed-brand-profile'
+const QUIZ_FIELD = 'starter-quiz'
 
 function plan(planId) {
   return { active: true, planId }
@@ -27,6 +31,13 @@ const TALENT = {
 const BRAND_FREE = {
   id: 'm-brand-free',
   planConnections: [plan('pln_free-plan-f6kn0dxz')],
+}
+// A free Brand who has already taken the quiz, so the guard's brandFreeHome()
+// resolves to /quiz-results rather than /quiz.
+const BRAND_FREE_DONE = {
+  id: 'm-brand-free-done',
+  planConnections: [plan('pln_free-plan-f6kn0dxz')],
+  customFields: { [QUIZ_FIELD]: 'answers-json' },
 }
 const UNMAPPED = { id: 'm-unknown', planConnections: [plan('pln_unknown')] }
 const CONFLICTED = {
@@ -225,6 +236,11 @@ function loadModule(options = {}) {
     vm.runInContext(routeGuardSource, context)
     location.pathname = pathname
   }
+  // A half-contract: the guard is present and can name a role but cannot name its
+  // home. Reproduces an older guard build being cached in front of this module.
+  if (options.roleHomeMissing && window.StartersV3RouteGuard) {
+    delete window.StartersV3RouteGuard.roleHome
+  }
   vm.runInContext(source, context)
 
   return {
@@ -254,10 +270,15 @@ test('exactly both slash forms of /complete-profile are in scope', () => {
   assert.equal(api.isCompleteProfilePath('/'), false)
 })
 
-test('the redirect destination is not itself a scoped page (no loop)', () => {
+test('no redirect destination is itself a scoped page (no loop)', () => {
   const { api } = loadModule({ pathname: '/other' })
   assert.equal(api.isCompleteProfilePath(api.dashboardPath), false)
   assert.equal(api.dashboardPath, DASHBOARD)
+  // Every destination the role branches can produce, from the guard contract
+  // rather than from this test's own idea of them.
+  for (const destination of [STARTER_DASHBOARD, QUIZ, QUIZ_RESULTS]) {
+    assert.equal(api.isCompleteProfilePath(destination), false, destination)
+  }
 })
 
 test('host gate covers production, staging, local, and dev tunnels but not lookalikes', () => {
@@ -390,10 +411,71 @@ test('does not run on a page outside /complete-profile', async () => {
 
 // --- Role scope ---------------------------------------------------------------
 
-test('Talent, a free Brand, an unmapped and a conflicted member are all untouched', async () => {
-  for (const member of [TALENT, BRAND_FREE, UNMAPPED, CONFLICTED]) {
-    // The completion field is set on every one of them, so only the role check
-    // can be what keeps them on the page.
+test('a Talent member goes straight to the Starter dashboard, no /login hop', async () => {
+  const { location } = loadModule({ member: TALENT })
+  await flush()
+  await flush()
+  assert.equal(location.replaced, STARTER_DASHBOARD)
+  // The point of the branch: the member is never sent to the login form to be
+  // bounced from there.
+  assert.notEqual(location.replaced, '/login')
+})
+
+test('a free Brand who has not taken the quiz goes to the quiz', async () => {
+  const { location } = loadModule({ member: BRAND_FREE })
+  await flush()
+  await flush()
+  assert.equal(location.replaced, QUIZ)
+})
+
+test('a free Brand who has taken the quiz goes to the quiz results', async () => {
+  const { location } = loadModule({ member: BRAND_FREE_DONE })
+  await flush()
+  await flush()
+  assert.equal(location.replaced, QUIZ_RESULTS)
+})
+
+test('the free-Brand and Talent destinations are the guard contract, not a copy', async () => {
+  // The whole reason this module borrows roleHome() instead of reimplementing
+  // ROLE_DEFAULTS and the quiz-funnel rule: if the guard ever moves a role home,
+  // this page must follow without an edit here.
+  for (const member of [TALENT, BRAND_FREE, BRAND_FREE_DONE]) {
+    const { api, guard, location } = loadModule({ pathname: '/other', member })
+    const expected = guard.roleHome(member)
+    assert.ok(expected, member.id)
+    assert.equal(api.roleHome(member), expected, member.id)
+    assert.equal(await api.completeProfileDestination(), expected, member.id)
+    assert.equal(location.replaced, undefined, member.id)
+  }
+})
+
+test('the paid-Brand completion field is ignored for the other two roles', async () => {
+  // A stray `completed-brand-profile` value on a Talent or free-Brand member is
+  // meaningless — it is a paid-Brand form marker — and must not divert them to
+  // the Brand dashboard.
+  const cases = [
+    [TALENT, STARTER_DASHBOARD],
+    [BRAND_FREE, QUIZ],
+    [BRAND_FREE_DONE, QUIZ_RESULTS],
+  ]
+  for (const [member, expected] of cases) {
+    const withField = Object.assign({}, member, {
+      customFields: Object.assign({}, member.customFields, {
+        [DONE_FIELD]: 'yes',
+      }),
+    })
+    const { location } = loadModule({ member: withField })
+    await flush()
+    await flush()
+    assert.equal(location.replaced, expected, member.id)
+  }
+})
+
+test('an unmapped and a cross-role conflicted member are left untouched', async () => {
+  for (const member of [UNMAPPED, CONFLICTED]) {
+    // The completion field is set on both, so neither the role branch nor the
+    // completion check can be what keeps them on the page — only the deliberate
+    // "no mapped role" fail-open.
     const withField = Object.assign({}, member, {
       customFields: { [DONE_FIELD]: 'yes' },
     })
@@ -401,6 +483,16 @@ test('Talent, a free Brand, an unmapped and a conflicted member are all untouche
     await flush()
     await flush()
     assert.equal(location.replaced, undefined, member.id)
+  }
+})
+
+test('every role decision still costs exactly one member lookup and no network call', async () => {
+  for (const member of [TALENT, BRAND_FREE_DONE, brandPaid('yes')]) {
+    const { lookups, window } = loadModule({ member })
+    await flush()
+    await flush()
+    assert.equal(lookups.length, 1, member.id)
+    assert.equal(window.fetch, undefined, member.id)
   }
 })
 
@@ -414,17 +506,42 @@ test('a logged-out visitor is left alone; Memberstack gating owns that case', as
 })
 
 test('a missing route-guard role contract stays put instead of guessing', async () => {
+  // Every role, not just the paid Brand: without the contract this module has no
+  // opinion about anybody.
+  for (const member of [brandPaid('yes'), TALENT, BRAND_FREE_DONE]) {
+    const { location, logs } = loadModule({
+      roleContractMissing: true,
+      member,
+    })
+    await flush()
+    await flush()
+    assert.equal(location.replaced, undefined, member.id)
+    assert.ok(
+      logs.warn.some((line) => line.includes('role contract unavailable')),
+      'expected a staging warning about the missing contract',
+    )
+  }
+})
+
+test('a guard that cannot name role homes counts as no contract at all', async () => {
+  // Half a contract is not a contract: identifying a Talent member and then having
+  // nowhere to send them must fail open, not throw and not guess /starter-dashboard
+  // from a local copy.
   const { location, logs } = loadModule({
-    roleContractMissing: true,
-    member: brandPaid('yes'),
+    roleHomeMissing: true,
+    member: TALENT,
   })
   await flush()
   await flush()
   assert.equal(location.replaced, undefined)
-  assert.ok(
-    logs.warn.some((line) => line.includes('role contract unavailable')),
-    'expected a staging warning about the missing contract',
-  )
+  assert.ok(logs.warn.some((line) => line.includes('role contract unavailable')))
+
+  // The paid-Brand branch is disabled by the same rule, so the module cannot act
+  // on a partially loaded guard in either direction.
+  const paid = loadModule({ roleHomeMissing: true, member: brandPaid('yes') })
+  await flush()
+  await flush()
+  assert.equal(paid.location.replaced, undefined)
 })
 
 test('waits for a late Memberstack before deciding', async () => {
@@ -488,6 +605,35 @@ test('the decision half can be called by hand without navigating', async () => {
 
   const notDone = loadModule({ pathname: '/other', member: brandPaid('  ') })
   assert.equal(await notDone.api.completeProfileDestination(), null)
+
+  // The role branches are callable the same way, and still do not navigate.
+  const cases = [
+    [TALENT, STARTER_DASHBOARD],
+    [BRAND_FREE, QUIZ],
+    [BRAND_FREE_DONE, QUIZ_RESULTS],
+    [UNMAPPED, null],
+    [CONFLICTED, null],
+  ]
+  for (const [member, expected] of cases) {
+    const probe = loadModule({ pathname: '/other', member })
+    assert.equal(
+      await probe.api.completeProfileDestination(),
+      expected,
+      member.id,
+    )
+    assert.equal(probe.location.replaced, undefined, member.id)
+  }
+})
+
+test('the exported role helpers answer without navigating', async () => {
+  const { api, location } = loadModule({ pathname: '/other', member: TALENT })
+  assert.equal(api.memberRole(TALENT), 'talent')
+  assert.equal(api.memberRole(BRAND_FREE), 'brand-free')
+  assert.equal(api.memberRole(brandPaid('yes')), 'brand-paid')
+  assert.equal(api.memberRole(UNMAPPED), null)
+  assert.equal(api.memberRole(CONFLICTED), null)
+  assert.equal(api.roleHome(UNMAPPED), null)
+  assert.equal(location.replaced, undefined)
 })
 
 test('no timer outlives the decision', async () => {
@@ -518,23 +664,33 @@ test('diagnostics are staging-only unless STARTERS_DEBUG opts in', () => {
 })
 
 test('production logs nothing while still redirecting correctly', async () => {
-  const { location, logs } = loadModule({
-    hostname: 'www.thestarters.com',
-    member: brandPaid('yes'),
-  })
-  await flush()
-  await flush()
-  assert.equal(location.replaced, DASHBOARD)
-  assert.deepEqual(logs.info, [])
-  assert.deepEqual(logs.warn, [])
-  assert.deepEqual(logs.error, [])
+  const cases = [
+    [brandPaid('yes'), DASHBOARD],
+    [TALENT, STARTER_DASHBOARD],
+    [BRAND_FREE, QUIZ],
+    [BRAND_FREE_DONE, QUIZ_RESULTS],
+  ]
+  for (const [member, expected] of cases) {
+    const { location, logs } = loadModule({
+      hostname: 'www.thestarters.com',
+      member,
+    })
+    await flush()
+    await flush()
+    assert.equal(location.replaced, expected, member.id)
+    assert.deepEqual(logs.info, [], member.id)
+    assert.deepEqual(logs.warn, [], member.id)
+    assert.deepEqual(logs.error, [], member.id)
+  }
 })
 
 test('production stays silent on the fail-open paths too', async () => {
   for (const options of [
     { memberLookupRejects: true },
     { roleContractMissing: true },
-    { member: TALENT },
+    { roleHomeMissing: true, member: TALENT },
+    { member: UNMAPPED },
+    { member: CONFLICTED },
     { member: null },
   ]) {
     const { logs } = loadModule(
