@@ -38,7 +38,8 @@ function loadBridge(nativeFetch, options = {}) {
   const window = {
     location: {
       hostname: options.hostname || 'the-starters-3-0.webflow.io',
-      href: `https://${options.hostname || 'the-starters-3-0.webflow.io'}/test`,
+      pathname: options.pathname || '/test',
+      href: `https://${options.hostname || 'the-starters-3-0.webflow.io'}${options.pathname || '/test'}`,
     },
     fetch: options.bridgeFetch || nativeFetch,
     setTimeout() {},
@@ -81,13 +82,29 @@ test('installs immediately and takes ownership from the opportunities bridge', (
   assert.notEqual(window.fetch, legacyFetch)
 })
 
-test('does not install outside V3 Webflow staging', () => {
+test('does not install on an unapproved production path', () => {
   const nativeFetch = async () => response({})
-  const { window } = loadBridge(nativeFetch, { hostname: 'www.thestarters.com' })
+  const { window } = loadBridge(nativeFetch, {
+    hostname: 'www.thestarters.com',
+    pathname: '/hire/sabina-rahaman',
+  })
 
   assert.equal(window.__tsSchedulingAuthBridge, undefined)
   assert.equal(window.xanoAuthFetch, undefined)
   assert.equal(window.fetch, nativeFetch)
+})
+
+test('installs on the approved Hire canary across both production hosts', () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const nativeFetch = async () => response({})
+    const { window } = loadBridge(nativeFetch, {
+      hostname,
+      pathname: '/hire/jp-dionisio',
+    })
+
+    assert.equal(window.__tsSchedulingAuthBridgeOwner, 'scheduling-auth')
+    assert.equal(typeof window.xanoAuthFetch, 'function')
+  }
 })
 
 test('authorized scheduling requests pass through without Memberstack', async () => {

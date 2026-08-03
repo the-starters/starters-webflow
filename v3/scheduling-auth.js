@@ -1,9 +1,14 @@
 ;(function () {
   'use strict'
 
-  // V3 is not launched on the custom domains yet. Do not expand this guard
-  // without explicit launch approval.
-  if (window.location.hostname !== 'the-starters-3-0.webflow.io') return
+  const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
+  const PRODUCTION_PATHS = new Set(['/hire/jp-dionisio'])
+  const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
+  const isStagingHost = window.location.hostname === STAGING_HOST
+  const isApprovedProductionPath =
+    PRODUCTION_HOSTS.has(window.location.hostname) && PRODUCTION_PATHS.has(activePath)
+  if (!isStagingHost && !isApprovedProductionPath) return
   const legacyBridgeInstalled =
     window.__tsSchedulingAuthBridgeOwner === 'opportunities-3.0'
   if (
@@ -57,7 +62,8 @@
   ]
   // Temporary backwards compatibility for staging pages that already load
   // this shared auth module but do not yet load scheduling-v3-stage.js. The
-  // stage adapter intercepts these paths first on its three approved pages.
+  // stage adapter intercepts these paths first on its five approved staging
+  // paths and exact production canary.
   const LEGACY_COMPATIBILITY_PATHS = [
     '/api:tCpV3oqd/calendars/get_availabilities',
     '/api:tCpV3oqd/scheduler/configurations/create',
