@@ -1396,22 +1396,22 @@ Give every Connect or Complete setup control
 `data-stripe-connect-action="refresh"`. The hero has two authored Earnings
 tiles, both with `data-stripe-connect-action="earnings"`: mark the Connect
 Stripe tile with `data-stripe-connect-earnings-state="disconnected"` and the
-Payment history tile with `data-stripe-connect-earnings-state="ready"`. The
-controller shows exactly one tile after the authenticated status read. A
-disconnected or incomplete account gets the enabled Connect Stripe tile, which
-starts the same guarded OAuth/onboarding flow as the action-list CTA. A status
-with `charges_enabled:true` gets the enabled Payment history tile, pointed to
-`https://dashboard.stripe.com/`. A status or session failure disables it again.
-During loading, review, or error states both tiles stay hidden so stale state is
-never shown. For the original live markup, where both tiles predate the explicit
-state attribute, the controller preserves the authored two-tile order (Connect
-first, Payment history second). This keeps the V3 link independent of the legacy
+Payment history and payouts tile with
+`data-stripe-connect-earnings-state="ready"`. The controller shows exactly one
+tile after the authenticated status read. A disconnected or incomplete account
+gets the enabled Connect Stripe tile, which starts the same guarded
+OAuth/onboarding flow as the action-list CTA. A status with
+`charges_enabled:true` gets the enabled Payment history and payouts tile,
+pointed to `https://dashboard.stripe.com/`. During loading, review, error, or
+session-failure states both tiles stay hidden so stale state is never shown. For
+the original live markup, where both tiles predate the explicit state attribute,
+the controller preserves the authored two-tile order (Connect first, Payment
+history and payouts second). This keeps the V3 link independent of the legacy
 Make redirect while preserving Stripe as the earnings UI for the connected
-Standard account. The action works on either a native anchor or an authored
-non-anchor tile (e.g. a `div`); when
-enabled, a non-anchor tile is exposed as `role="button"` with `tabindex="0"` and
-activates from both click and Enter/Space so keyboard users can reach the
-dashboard.
+Standard account. Both actions work on either a native anchor or an authored
+non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
+`role="button"` with `tabindex="0"` and activates from both click and Enter/Space
+so keyboard users can reach its action.
 
 A single in-flight guard is shared
 across every start and refresh control in the dashboard, so a second click on
