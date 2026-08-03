@@ -1,9 +1,11 @@
 /**
  * V3 login router.
  *
- * Install on the V3 /login and /auth-route pages only. The V3 login form must
- * redirect to /auth-route so shared Memberstack plan redirects can remain
- * unchanged for V2.
+ * @release v1.59.71
+ *
+ * Install on the V3 login pages (/login and /starter-login) and /auth-route
+ * only. Every V3 login form must redirect to /auth-route so shared Memberstack
+ * plan redirects can remain unchanged for V2.
  *
  * Talent members additionally get an onboarding-funnel check here, because
  * /auth-route is the one page every Talent login passes through. The product
@@ -33,7 +35,20 @@
     'thestarters.com',
     'www.thestarters.com',
   ])
+  // The canonical login page, and the only one this router ever CONSTRUCTS a
+  // URL for (the logged-out bounce off /auth-route).
   var LOGIN_PATH = '/login'
+  // Every page that carries a V3 login form and therefore needs its redirect
+  // rewritten. /starter-login is the Talent-facing form; it is a real page with
+  // its own [data-ms-form="login"] and was previously left on the shared
+  // Memberstack plan redirect, skipping /auth-route entirely.
+  //
+  // /sign-up is deliberately ABSENT. v3/starters-ms-redirect.js owns signup-form
+  // redirects through its `starters-ms-redirect` markers (per-page return
+  // destinations for the signup modals) and skips any form that already carries
+  // a non-empty `redirect`. Adding /sign-up here would set that attribute first
+  // and silently disable the marker system.
+  var LOGIN_PATHS = ['/login', '/starter-login']
   var ROUTE_PATH = '/auth-route'
   var DASHBOARD_PATH = '/dashboard'
   var ONBOARDING_PATH = '/starter-onboarding'
@@ -163,6 +178,10 @@
       '/opportunities-freelancer-view',
       '/opportunities',
       '/opportunities/',
+      // Talent invoicing, guarded by route-guard.js as Talent-only since
+      // 2026-08-03. Both slash forms, matching the guard's two page entries.
+      '/generate-invoice',
+      '/generate-invoice/',
     ]),
     'brand-paid': new Set([
       '/all-starters',
@@ -177,6 +196,13 @@
       '/opportunities',
       '/opportunities/',
       '/messages',
+      // Paid-Brand completion step, guarded by route-guard.js since
+      // 2026-08-03. A logged-out visitor is sent to the homepage rather than
+      // through /login?next=, so this pair only matters for an explicit
+      // ?next=/complete-profile, but the guard/router parity sweep requires
+      // both slash forms regardless.
+      '/complete-profile',
+      '/complete-profile/',
     ]),
     'brand-free': new Set(['/all-starters', '/quiz', '/quiz-results']),
   }
@@ -266,6 +292,10 @@
     var destination = requestedDestination()
     clearRequestedDestination()
     return destination
+  }
+
+  function isLoginPath(pathname) {
+    return LOGIN_PATHS.indexOf(pathname) !== -1
   }
 
   function configureLoginForms() {
@@ -518,6 +548,9 @@
   }
 
   var api = {
+    // Keep in sync with the @release line in this file's header comment; the
+    // v3/auth-route.test.js drift guard asserts they match.
+    release: 'v1.59.71',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,
@@ -534,11 +567,13 @@
     onboardingPath: ONBOARDING_PATH,
     buildProfilePath: BUILD_PROFILE_PATH,
     checkBudgetMs: ONBOARDING_CHECK_BUDGET_MS,
+    isLoginPath: isLoginPath,
+    loginPaths: LOGIN_PATHS.slice(),
   }
   window.StartersV3AuthRouter = api
 
   if (!APPROVED_HOSTS.has(window.location.hostname)) return
-  if (window.location.pathname === LOGIN_PATH) {
+  if (isLoginPath(window.location.pathname)) {
     configureLoginForms()
     return
   }

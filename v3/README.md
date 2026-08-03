@@ -211,6 +211,40 @@ marker outlived missing or malformed member JSON to
 failures do not redirect. `/all-starters` still awaits product confirmation that
 it is not a pre-signup funnel page.
 
+Two mechanisms were added on 2026-08-03. **Member-home bounce:** the homepage,
+both login pages, and `/sign-up` are not in the route table — they must keep
+working untouched for signed-out visitors, since they are the pre-signup funnel
+itself — but a member the guard can positively identify and map to a role is sent
+away from them, to a validated `?next=` when one is present and otherwise to the
+role home. Every inconclusive case (logged out, Memberstack unavailable, unmapped
+plan, cross-role conflict) leaves the page completely alone, with no error
+attribute and no `checking` stamp. **Per-page logged-out destinations:** the three
+build-profile pages and `/complete-profile` send a logged-out visitor to `/`
+instead of `/login?next=`, because they are entered from marketing flows where a
+login form would ask a stranger to authenticate into a funnel step they have no
+account for yet. `/generate-invoice` (Talent) and `/complete-profile` (paid Brand)
+also joined the guarded route table.
+
+## Build-profile funnel redirect
+
+`build-profile-redirect.js` keeps a Talent member who is already past the
+Build-profile step from re-entering it. On the three `/build-profile/*` pages it
+performs the same Xano `get_freelancers` read `auth-route.js` performs at login,
+but on page entry, which is what covers an arrival from a bookmark, the back
+button, or a stale link rather than a fresh session. No freelancer record means
+the member stays, since that is who the page is for; a record with
+`onboarding_done` not `true` goes to `/starter-onboarding`, and a finished record
+to `/starter-dashboard`.
+
+The role comes from the sitewide route guard's exported contract rather than a
+second copy of the plan table, so a Brand, unmapped, or logged-out visitor costs
+no Xano round trip — the guard has already handled them. Everything else fails
+open on a 4-second overall budget with a shared `AbortController`: a missing role
+contract, a rejected trade, an HTTP error, a malformed envelope, or a browser
+without `fetch` all leave the page exactly as authored. It needs three page-level
+embeds installed after the guard; see
+[BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md).
+
 ## Signup redirect marker
 
 `starters-ms-redirect.js` lets a signup modal redirect back to the page it was

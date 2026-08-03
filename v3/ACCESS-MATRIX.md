@@ -33,8 +33,12 @@ the canonical dashboard router, and direct-page guarding cannot drift.
 `auth-route.js` uses this table only when restoring a same-origin `next`
 destination after login. A disallowed destination falls back to the role
 default. `route-guard.js` enforces direct access for every route below except
-`/quiz`, `/quiz-results`, and `/all-starters`, which remain outside the sitewide
-guard. The quiz entry is a funnel page; the results-page controller handles its
+`/quiz`, `/quiz-results`, `/all-starters`, and the four member-home bounce pages
+(`/`, `/login`, `/starter-login`, `/sign-up`), which remain outside the sitewide
+guard's page table. The bounce pages are a separate, weaker mechanism — they
+redirect an identified member away but never force a login, so a signed-out
+visitor cannot tell the guard is installed (see the member-home bounce note
+below). The quiz entry is a funnel page; the results-page controller handles its
 logged-out, no-results case without disrupting pre-signup quiz data; and
 `/all-starters` stays outside the guard permanently (decision by Jerico
 2026-08-03) because its gating is not route-level: Memberstack gated content
@@ -42,6 +46,10 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
+| `/` (homepage) | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
+| `/login` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
+| `/starter-login` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce, honouring a valid `?next=`; logged-out visitors untouched |
+| `/sign-up` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
 | `/dashboard` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Canonical authenticated entry only; no dashboard page body lives here |
 | `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default until quiz completion |
 | `/quiz-results` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion |
@@ -56,9 +64,11 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 | `/opportunities---create` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
 | `/starter-dashboard` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
 | `/starter-edit-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
-| `/build-profile/select-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
-| `/build-profile/full-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
-| `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding |
+| `/generate-invoice` and `/generate-invoice/` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only; both slash forms are guarded and are allowed Talent `next` destinations |
+| `/complete-profile` and `/complete-profile/` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only; a logged-out visitor goes to `/`, not to `/login?next=` |
+| `/build-profile/select-profile` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
+| `/build-profile/full-profile` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
+| `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
 | `/starter-onboarding` | Default quiz home | Default `/brand-dashboard` | Allow | Talent onboarding form; onboarding-done redirect handled by `v3/onboarding-done-redirect.js` (page-scoped), not this guard |
 
 > **Logged-out Quiz Results (updated 2026-07-24):** `/quiz-results` remains
@@ -91,6 +101,40 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 > `route-guard.js` owns this via the exported `brandFreeHome(member)` /
 > `hasCompletedQuiz(member)` contract. `auth-route.js` reuses that contract.
 
+> **Member-home bounce (added 2026-08-03):** The homepage, both login pages, and
+> `/sign-up` are NOT guarded pages — they stay exactly as authored for anyone who
+> is not signed in, because they are the pre-signup funnel itself. What
+> `route-guard.js` adds there is a one-way bounce for a member it can positively
+> identify and map to a role: that member is sent to a validated `?next=` if one
+> is present, else to the role home. A `?next=` survives only when it is
+> same-origin and either allowed for the member's role or on a page the guard does
+> not police at all; a `next` pointing back at one of these four pages is refused,
+> and `/dashboard` resolves to the role home rather than being handed back. Every
+> inconclusive case leaves the page untouched with no error attribute and no
+> redirect: logged out, Memberstack missing or slow, unmapped plan, or a
+> cross-role conflict (that last one is a console message only, because a public
+> page is the wrong place to surface a plan-configuration problem). No role home
+> is itself one of these four pages, so the bounce cannot loop.
+
+> **Logged-out destination overrides (added 2026-08-03):** Guarded pages normally
+> send a logged-out visitor to `/login?next=<here>` so a deep link survives the
+> login. The build-profile funnel and `/complete-profile` override that to `/`
+> (Jerico's decision, 2026-08-03): they are reached from marketing flows rather
+> than from a member's bookmark, so a stranger on a login form is being asked to
+> authenticate into a funnel step they have no account for yet. The homepage
+> restarts the funnel properly instead. Every other guarded page keeps the login
+> round trip.
+
+> **Talent build-profile funnel check (added 2026-08-03):** On the three
+> `/build-profile/*` pages, `v3/build-profile-redirect.js` asks Xano where the
+> signed-in Talent member actually is in the funnel, using the same
+> `get_freelancers` read `auth-route.js` performs at login. No freelancer record
+> means the member stays — that is who the page is for. A record with
+> `onboarding_done` not `true` goes to `/starter-onboarding`; a finished record
+> goes to `/starter-dashboard`. It is Talent-only and fails open on every other
+> outcome, so it never contradicts the route guard's own decision, and it runs
+> after the guard has already handled Brand, unmapped, and logged-out visitors.
+
 > **Merged-feed plan hydration (updated 2026-07-28):** On `/opportunities` and
 > `/opportunities/`, `route-guard.js` immediately allows a mapped Talent or
 > paid-Brand snapshot. Before applying a denial, it gives Memberstack up to two
@@ -109,6 +153,9 @@ separate owner:
 | Stable plan-role resolution | `v3/route-guard.js` exported contract | Implemented; cross-family conflicts fail closed |
 | Post-login destination and cross-role redirects | `v3/auth-route.js` consuming the shared contract | Implemented for the routes above |
 | Canonical `/dashboard` role routing and direct protected-page access | `v3/route-guard.js` | Implemented locally; install per [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md); staging matrix pending |
+| Member-home bounce off the homepage, both login pages, and `/sign-up` | `v3/route-guard.js` `MEMBER_BOUNCE_PAGES` | Implemented 2026-08-03; sitewide install already covers it, staging pass pending |
+| Per-page logged-out destinations for the build-profile funnel and `/complete-profile` | `v3/route-guard.js` `LOGGED_OUT_DESTINATIONS` | Implemented 2026-08-03; staging pass pending |
+| Talent funnel position on `/build-profile/*` | `v3/build-profile-redirect.js` (page-scoped, Xano `get_freelancers`) | Implemented 2026-08-03; needs three page-level Webflow embeds, see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md) |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
 | `/all-starters` access and free-Brand result limits | Memberstack `data-ms-content` gated content on the page plus list/render-level limiting | Settled 2026-08-03: permanently outside `route-guard.js`, never a route-level rule |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |

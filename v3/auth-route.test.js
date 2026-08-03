@@ -712,6 +712,90 @@ test('does not change login forms on an unapproved hostname', () => {
   assert.equal(attributes['data-ms-redirect'], undefined)
 })
 
+// --- Multiple login pages (2026-08-03) ----------------------------------------
+
+test('both V3 login pages are in scope and nothing else is', () => {
+  const { api } = loadRouter()
+  // Spread it: the array is built inside the vm realm, so a strict deep
+  // comparison against a host array fails on the prototype alone.
+  assert.deepEqual([...api.loginPaths], ['/login', '/starter-login'])
+  assert.equal(api.isLoginPath('/login'), true)
+  assert.equal(api.isLoginPath('/starter-login'), true)
+  // /sign-up is deliberately excluded: v3/starters-ms-redirect.js owns signup
+  // form redirects through its own markers and skips any form that already
+  // carries a non-empty `redirect`, so configuring it here would disable that.
+  assert.equal(api.isLoginPath('/sign-up'), false)
+  assert.equal(api.isLoginPath('/auth-route'), false)
+  assert.equal(api.isLoginPath('/login/'), false)
+  assert.equal(api.isLoginPath('/starter-login/extra'), false)
+})
+
+test('/starter-login forms are configured exactly like /login', () => {
+  const { formAttributes } = loadRouter({ pathname: '/starter-login' })
+
+  for (const kind of ['login', 'signup']) {
+    assert.equal(formAttributes[kind]['data-ms-redirect'], '/auth-route', kind)
+    assert.equal(formAttributes[kind].redirect, '/auth-route', kind)
+  }
+})
+
+test('/starter-login stores a valid next for the /auth-route hop', () => {
+  const { storage } = loadRouter({
+    pathname: '/starter-login',
+    search: '?next=%2Fmessages',
+  })
+
+  assert.equal(storage.get('thestarters:v3-auth-next'), '/messages')
+})
+
+test('/starter-login clears an abandoned stored destination when next is invalid', () => {
+  const { storage } = loadRouter({
+    pathname: '/starter-login',
+    search: '?next=https%3A%2F%2Fevil.example%2Fsteal',
+    storedDestination: '/messages',
+  })
+
+  assert.equal(storage.has('thestarters:v3-auth-next'), false)
+})
+
+test('/starter-login does not route; it only configures forms', async () => {
+  const { location } = loadRouter({
+    pathname: '/starter-login',
+    member: talentMember(),
+  })
+
+  await flush()
+  assert.equal(location.replaced, undefined)
+})
+
+test('does not change /starter-login forms on an unapproved hostname', () => {
+  const { attributes } = loadRouter({
+    hostname: 'attacker.example',
+    pathname: '/starter-login',
+  })
+
+  assert.equal(attributes['data-ms-redirect'], undefined)
+})
+
+test('the new funnel pages are allowed next destinations for their own role', () => {
+  const { api } = loadRouter()
+  const talent = talentMember()
+  const brandPaid = {
+    id: 'member-brand-paid',
+    planConnections: [plan('pln_new-paid-plan-463h04ph')],
+  }
+
+  for (const path of ['/generate-invoice', '/generate-invoice/']) {
+    assert.equal(api.destinationFor(talent, path), path)
+    // Not the other role's page: a Brand asking for it lands on its own home.
+    assert.equal(api.destinationFor(brandPaid, path), '/brand-dashboard')
+  }
+  for (const path of ['/complete-profile', '/complete-profile/']) {
+    assert.equal(api.destinationFor(brandPaid, path), path)
+    assert.equal(api.destinationFor(talent, path), '/starter-dashboard')
+  }
+})
+
 test('auth route sends a paid Brand to the confirmed V3 Brand dashboard', async () => {
   const { location } = loadRouter({
     pathname: '/auth-route',
@@ -1114,4 +1198,23 @@ test('auth route fails safely when the shared role contract is missing', async (
     attributes['data-auth-route-error'],
     'role-contract-unavailable',
   )
+})
+
+// --- Release marker -----------------------------------------------------------
+
+test('the header @release marker matches the exported release property', () => {
+  const { api } = loadRouter()
+  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+  assert.ok(marker, 'no "@release vX.Y.Z" line in the auth-route.js header')
+  assert.equal(api.release, marker[1])
+})
+
+test('every script in this release carries the same release marker', () => {
+  // A release that updates several files must stamp them all identically, or the
+  // "which version is loaded?" console check answers differently per script.
+  const guardMarker = routeGuardSource.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+  const routerMarker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+  assert.ok(guardMarker, 'no @release line in route-guard.js')
+  assert.ok(routerMarker, 'no @release line in auth-route.js')
+  assert.equal(guardMarker[1], routerMarker[1])
 })
