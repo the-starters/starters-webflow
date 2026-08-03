@@ -559,6 +559,9 @@ test('bootstraps a saved schedule: ready state, configs read, cards rendered', a
     result.dom.list.children[0].querySelector('[availability-title]').textContent,
     'General Availability',
   )
+  assert.equal(result.dom.root.querySelector('[availability-template]').hasAttribute('hidden'), true)
+  assert.equal(result.dom.list.children[0].hasAttribute('hidden'), false)
+  assert.equal(result.dom.list.children[0].hasAttribute('aria-hidden'), false)
   assert.equal(
     result.dom.root.querySelector('[bookings-wrapper]').style.display,
     'flex',

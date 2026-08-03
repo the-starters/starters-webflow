@@ -292,6 +292,12 @@
       return
     }
 
+    // The Designer-authored card is a cloning source, not a user-facing row.
+    // Hide it whenever the rendered list becomes visible, then remove those
+    // attributes from each generated card.
+    template.setAttribute('hidden', '')
+    template.setAttribute('aria-hidden', 'true')
+
     const avails = availability.items
     list.innerHTML = ''
     overrides = []
@@ -307,6 +313,8 @@
 
       const card = template.cloneNode(true)
       card.removeAttribute('availability-template')
+      card.removeAttribute('hidden')
+      card.removeAttribute('aria-hidden')
       card.setAttribute('availability-item', '')
       card.dataset.id = id
 
