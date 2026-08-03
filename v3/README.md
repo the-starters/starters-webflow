@@ -1261,15 +1261,25 @@ There is no `/connect-success` page in V3. `grants/oauth/v3` redirects the
 OAuth tab to the same approved Starter scheduling page. The writer accepts both
 the authorization-code return (`?code&state`) and Nylas hosted-auth success
 return (`?success=true&grant_id&email&provider&state`). It captures and strips
-all OAuth parameters before fallible bootstrap work, verifies `state` (set
-server-side from the caller's Bearer token) against the logged-in member, and
-on production requires a recent, member-scoped same-session intent with the
-exact redirect URI. For hosted auth, `success` must be exactly `true`; `email`
-and `provider` are ignored, and only the returned `grant_id` is forwarded as
-callback identity. `grants/add/v3` performs the authoritative server-side code
-exchange or grant verification and persists the result in one authenticated
-call. The writer then continues the existing configuration flow. The original
-tab shows the modal's `reload-page` step, matching the legacy UX.
+all OAuth parameters before fallible bootstrap work. The callback fields needed
+for validation (`code` or `grant_id`, `state`, and `success`) stay in that tab's
+`sessionStorage` for at most 15 minutes so a reload after Memberstack login, or
+a transient grant-save failure, can resume the same handoff. The writer clears
+the saved callback and member-scoped intent only after `grants/add/v3` succeeds,
+or clears the callback immediately when validation fails; expired or malformed
+state is also discarded. Provider access tokens are never stored in the
+browser, and the returned `email` and `provider` are neither retained nor
+trusted.
+
+Before persisting anything, the writer verifies `state` (set server-side from
+the caller's Bearer token) against the logged-in member and, on production,
+requires a recent, member-scoped same-session intent with the exact redirect
+URI. For hosted auth, `success` must be exactly `true`, and only the returned
+`grant_id` is forwarded as callback identity. `grants/add/v3` performs the
+authoritative server-side code exchange or grant verification and persists the
+result in one authenticated call. The writer then continues the existing
+configuration flow. The original tab shows the modal's `reload-page` step,
+matching the legacy UX.
 Booking confirmation/reschedule/cancel links baked into scheduler configurations
 also point at this page, where the bookings embed owns `booking_ref` handling.
 
