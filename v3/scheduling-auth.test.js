@@ -94,16 +94,19 @@ test('does not install on an unapproved production path', () => {
   assert.equal(window.fetch, nativeFetch)
 })
 
-test('installs on the approved Hire canary across both production hosts', () => {
+test('installs on the approved Hire canary and canonical dashboards across both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
-    const nativeFetch = async () => response({})
-    const { window } = loadBridge(nativeFetch, {
-      hostname,
-      pathname: '/hire/jp-dionisio',
-    })
+    for (const pathname of [
+      '/hire/jp-dionisio',
+      '/starter-dashboard',
+      '/brand-dashboard',
+    ]) {
+      const nativeFetch = async () => response({})
+      const { window } = loadBridge(nativeFetch, { hostname, pathname })
 
-    assert.equal(window.__tsSchedulingAuthBridgeOwner, 'scheduling-auth')
-    assert.equal(typeof window.xanoAuthFetch, 'function')
+      assert.equal(window.__tsSchedulingAuthBridgeOwner, 'scheduling-auth')
+      assert.equal(typeof window.xanoAuthFetch, 'function')
+    }
   }
 })
 

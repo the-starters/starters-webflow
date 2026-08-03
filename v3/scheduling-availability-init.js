@@ -2,6 +2,8 @@
   'use strict'
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
+  const PRODUCTION_PATH = '/starter-dashboard'
   const STARTER_ENDPOINT =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd/starter/get_by_memberstack/v3'
   const CACHE_PREFIX = 'starter-scheduling-availability:'
@@ -12,14 +14,18 @@
   // it never bypasses Bearer auth or server ownership checks, and must never
   // be used for profile or scheduling writes. Allowlist Memberstack Test-Data
   // sandbox QA members only — never live member IDs.
-  // ⛔ LAUNCH BLOCKER: remove this override before enabling the script on the
-  // custom production domains (thestarters.com / www.thestarters.com).
+  // The override must remain independently staging-host gated. Production
+  // dashboard reads always use the authenticated Memberstack member.
   const TEST_MEMBER_PARAM = 'test_member_id'
   const TEST_MEMBER_ALLOWLIST = ['mem_sb_cmqhuaxn80d270sseeo74fn7i']
   const TEST_MEMBER_ID_PATTERN = /^mem_(?:sb_)?[a-z0-9]{10,64}$/
   const TEST_MEMBER_ATTRIBUTE = 'data-scheduling-test-member'
 
-  if (window.location.hostname !== STAGING_HOST) return
+  const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
+  const isStagingHost = window.location.hostname === STAGING_HOST
+  const isApprovedProductionPath =
+    PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
+  if (!isStagingHost && !isApprovedProductionPath) return
   if (window.__tsSchedulingAvailabilityInit) return
   window.__tsSchedulingAvailabilityInit = true
 

@@ -60,6 +60,7 @@ function loadInitializer(options = {}) {
   const window = {
     location: {
       hostname: options.hostname || 'the-starters-3-0.webflow.io',
+      pathname: options.pathname || '/starter-dashboard---availability-stage',
       search: options.search || '',
     },
     memberReady: Promise.resolve(member),
@@ -106,10 +107,20 @@ async function settle() {
   await new Promise(setImmediate)
 }
 
-test('does not install outside V3 Webflow staging', () => {
-  const result = loadInitializer({ hostname: 'www.thestarters.com' })
+test('does not install on an unapproved production path', () => {
+  const result = loadInitializer({
+    hostname: 'www.thestarters.com',
+    pathname: '/brand-dashboard',
+  })
   assert.equal(result.window.StarterSchedulingAvailability, undefined)
   assert.deepEqual(result.init.style, {})
+})
+
+test('installs on the canonical Starter dashboard across both production hosts', () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const result = loadInitializer({ hostname, pathname: '/starter-dashboard' })
+    assert.equal(typeof result.window.StarterSchedulingAvailability.initialize, 'function')
+  }
 })
 
 test('shows Connect Calendar for a new V3 starter without a legacy row', async () => {
@@ -529,14 +540,14 @@ test('ignores a well-formed but non-allowlisted test_member_id', async () => {
   assert.ok(result.warnings.some((entry) => entry.includes('test_member_id')))
 })
 
-test('test_member_id is inert on both custom production domains', () => {
+test('test_member_id is inert on the canonical dashboard across both custom production domains', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     const result = loadInitializer({
       hostname,
+      pathname: '/starter-dashboard',
       search: `?test_member_id=${ALLOWED_TEST_MEMBER}`,
     })
-    assert.equal(result.window.StarterSchedulingAvailability, undefined)
-    assert.deepEqual(result.init.style, {})
+    assert.equal(typeof result.window.StarterSchedulingAvailability.initialize, 'function')
     assert.equal(result.attributes.has('data-scheduling-test-member'), false)
   }
 })

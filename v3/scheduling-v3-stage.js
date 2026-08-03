@@ -10,7 +10,11 @@
     '/hire-stage',
     '/hire/jp-dionisio',
   ]
-  const PRODUCTION_PATHS = ['/hire/jp-dionisio']
+  const PRODUCTION_PATHS = [
+    '/hire/jp-dionisio',
+    '/starter-dashboard',
+    '/brand-dashboard',
+  ]
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_PREFIX = '/api:tCpV3oqd/'
   const STATUS_ATTRIBUTE = 'data-scheduling-v3-stage'

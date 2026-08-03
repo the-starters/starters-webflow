@@ -968,10 +968,11 @@ scheduling component. It installs on these exact staging paths:
 - `/hire-stage`
 - `/hire/jp-dionisio`
 
-The fifth path is the existing approved Test Talent CMS item. That same exact
-path, `/hire/jp-dionisio`, is also enabled on `thestarters.com` and
-`www.thestarters.com`; every `*-stage` path remains staging-host only. The
-adapter does not install on any other `/hire/*` item or on `detail_hire`. The
+The fifth path is the existing approved Test Talent CMS item. The exact paths
+`/hire/jp-dionisio`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
+`thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
+staging-host only. The adapter does not install on any other `/hire/*` item or
+on `detail_hire`. The
 adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
 preserves request method, body, headers, and query parameters, and sends the
 rewritten request through `window.xanoAuthFetch`.
@@ -997,10 +998,10 @@ blocked on the five stage pages because its payload has not been proven
 - Only the approved legacy Stripe customer, intent, setup-intent, and
   payment-method provider routes pass through temporarily.
 
-`scheduling-v3-stage-component.html` is the draft loader for a cloned Webflow
-component used only by the four non-template stage pages. Add it as the clone's first Code
-Embed, before the cloned scheduling logic embeds, and keep the cloned UI and
-logic intact. Auth and route ownership load synchronously so immediate legacy
+`scheduling-v3-stage-component.html` is the loader for the isolated cloned
+Webflow component used by the stage surfaces and canonical dashboards. Keep it
+as the clone's first Code Embed, before the cloned scheduling logic embeds, and
+keep the cloned UI and logic intact. Auth and route ownership load synchronously so immediate legacy
 code cannot race the adapter; the availability UI modules remain deferred. Do
 not replace the shared `Call Scheduling - Global Code` component while the live
 `detail_hire` template still uses it. Release the Git files first, then create
@@ -1015,7 +1016,8 @@ Runtime contract:
   The attribute is not set on pages where the adapter does not install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
   five installed stage paths), `productionPaths` (the exact production Hire
-  canary), and `routeMap` (the legacy-to-`/v3` route map).
+  canary and canonical dashboards), and `routeMap` (the legacy-to-`/v3` route
+  map).
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 

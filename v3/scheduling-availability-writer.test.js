@@ -405,8 +405,8 @@ function loadWriter(options = {}) {
     location: {
       hostname: options.hostname || 'the-starters-3-0.webflow.io',
       search: options.search || '',
-      pathname: '/starter-dashboard---availability-stage',
-      origin: 'https://the-starters-3-0.webflow.io',
+      pathname: options.pathname || '/starter-dashboard---availability-stage',
+      origin: options.origin || 'https://the-starters-3-0.webflow.io',
     },
     localStorage: {
       getItem: (key) => (storage.has(key) ? storage.get(key) : null),
@@ -500,10 +500,20 @@ const TZ_CACHED = { 'starter-timezone:member-a': 'Asia/Manila' }
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
 
-test('does not install outside V3 Webflow staging', () => {
-  const result = loadWriter({ hostname: 'www.thestarters.com' })
+test('does not install on an unapproved production path', () => {
+  const result = loadWriter({
+    hostname: 'www.thestarters.com',
+    pathname: '/brand-dashboard',
+  })
   assert.equal(result.window.StarterSchedulingAvailabilityWriter, undefined)
   assert.equal(result.status(), null)
+})
+
+test('installs on the canonical Starter dashboard across both production hosts', () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const result = loadWriter({ hostname, pathname: '/starter-dashboard' })
+    assert.equal(typeof result.window.StarterSchedulingAvailabilityWriter.initialize, 'function')
+  }
 })
 
 test('marks pages without an availability form as not applicable', async () => {

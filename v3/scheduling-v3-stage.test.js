@@ -275,11 +275,17 @@ test('does not install on the live profile component or unrelated production pat
   assert.equal(production.window.fetch, production.nativeFetch)
 })
 
-test('installs only on the approved Hire canary across both production hosts', () => {
+test('installs only on the approved Hire canary and canonical dashboards across both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
-    const approved = loadStage({ hostname, pathname: '/hire/jp-dionisio' })
-    assert.equal(approved.window.__tsSchedulingV3Stage, true)
-    assert.equal(approved.attributes['data-scheduling-v3-stage'], 'ready')
+    for (const pathname of [
+      '/hire/jp-dionisio',
+      '/starter-dashboard',
+      '/brand-dashboard',
+    ]) {
+      const approved = loadStage({ hostname, pathname })
+      assert.equal(approved.window.__tsSchedulingV3Stage, true)
+      assert.equal(approved.attributes['data-scheduling-v3-stage'], 'ready')
+    }
 
     const otherProfile = loadStage({ hostname, pathname: '/hire/sabina-rahaman' })
     assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)

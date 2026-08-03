@@ -1,8 +1,8 @@
 ;(function () {
   'use strict'
 
-  // Writer counterpart to scheduling-availability-init.js for the renamed
-  // `Starter Dashboard - Booking stage` page. Ports the legacy V2 availability
+  // Writer counterpart to scheduling-availability-init.js for the scheduling
+  // Starter dashboards. Ports the legacy V2 availability
   // writer flow (form submit, manager selection, Nylas scheduler configuration
   // create/update, timezone set, OAuth grant redirect) against the same
   // Webflow `availability-step` markup, with the loader and success/error
@@ -19,6 +19,8 @@
   //   via guarded window.generateBookingsList / window.clearGrantData).
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
+  const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
+  const PRODUCTION_PATH = '/starter-dashboard'
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_BASE = XANO_ORIGIN + '/api:tCpV3oqd'
   const STATUS_ATTRIBUTE = 'data-scheduling-availability-writer'
@@ -29,7 +31,11 @@
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const PAID_RATE_STORAGE_KEY = 'paid_call_rate'
 
-  if (window.location.hostname !== STAGING_HOST) return
+  const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
+  const isStagingHost = window.location.hostname === STAGING_HOST
+  const isApprovedProductionPath =
+    PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
+  if (!isStagingHost && !isApprovedProductionPath) return
   if (window.__tsSchedulingAvailabilityWriter) return
   window.__tsSchedulingAvailabilityWriter = true
 
