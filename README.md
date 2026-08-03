@@ -69,7 +69,8 @@ Do not discard local changes unless the user explicitly asks.
   Memberstack-derived `user_v3` Bearer auth to profile, Companies, and Portfolio
   mutations, enables `/starter-edit-profile` writes only on the exact Live hosts,
   and blocks known edit mutations on non-Live hosts
-- `v3/scheduling-auth.js` — availability and scheduling authentication bridge; staging-wide, plus the exact production `/hire/jp-dionisio` canary
+- `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
+  see `v3/README.md` for its authoritative host and path boundary
 - `v3/scheduling-availability-init.js` — staging-only booking-stage availability control initializer
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`, including `?with=<memberstack id>` deep links that open (creating if needed) the one-on-one conversation with that member
@@ -235,15 +236,16 @@ node --test opportunities-form-contract.test.js opportunities-create-auth.test.j
 
 ## V3 Scheduling Authentication
 
-On `the-starters-3-0.webflow.io`, plus the exact `/hire/jp-dionisio` path on
-`thestarters.com` and `www.thestarters.com`, `v3/scheduling-auth.js` authenticates
-the explicit reviewed V3 scheduling endpoint allowlist. It temporarily retains the
-previous legacy availability/configuration/starter paths as exact compatibility
-entries for staging pages that do not yet load the stage adapter. It maintains a
-member-scoped token cache, adds `Authorization: Bearer <token>` without
+`v3/scheduling-auth.js` authenticates the explicit reviewed V3 scheduling endpoint
+allowlist. Its authoritative host and path boundary is documented in the
+[`v3/README.md` scheduling section](v3/README.md#scheduling-auth). It temporarily
+retains the previous legacy availability/configuration/starter paths as exact
+compatibility entries for staging pages that do not yet load the stage adapter.
+It maintains a member-scoped token cache, adds `Authorization: Bearer <token>` without
 changing the effective request method, body, or other options, and supports string,
 `URL`, and `Request` inputs. Requests that already provide `Authorization`, other Xano
-API groups, other origins, and every unapproved production path pass through unchanged.
+API groups, other origins, and calls outside the documented page boundary pass
+through unchanged.
 
 A scheduling `401` clears the cached token, trades the current Memberstack JWT once,
 and retries the same request once. A failed refresh preserves the original `401`.
@@ -252,24 +254,22 @@ acquisition fails; direct `window.xanoAuthFetch()` callers receive that error in
 Network failures remain fetch rejections. A Memberstack account change invalidates both
 token acquisition and in-flight scheduling responses with `MEMBER_SCOPE_CHANGED`.
 
-Load `v3/scheduling-auth.js` with `defer` on the approved pages that own availability
-or scheduling calls. It installs before Memberstack is ready and supersedes the legacy
+Load `v3/scheduling-auth.js` with `defer` on the pages approved in that boundary.
+It installs before Memberstack is ready and supersedes the legacy
 compatibility bridge in `opportunities-3.0.js` in either script order.
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 ```
 
-For the four scheduling stage pages and the exact `/hire/jp-dionisio` Hire
-profile on the V3 staging and production hosts, `v3/scheduling-v3-stage.js`
-installs an exact hostname/path-gated compatibility adapter. It rewrites reviewed legacy
-calls to V3 and sends them through `window.xanoAuthFetch`, blocks #1553,
+`v3/scheduling-v3-stage.js` installs an exact hostname/path-gated compatibility
+adapter on the pages listed in the authoritative V3 scheduling boundary. It
+rewrites reviewed legacy calls to V3 and sends them through `window.xanoAuthFetch`, blocks #1553,
 transcription, `calendars/get_availabilities`, and every other unclassified
 scheduling route, and retains only the approved legacy Stripe provider calls.
 Use `v3/scheduling-v3-stage-component.html` as the first Code Embed in a clone
-of the existing scheduling component. Every `*-stage` path remains staging-only,
-all other `/hire/*` profiles remain inert, and the shared component used by
-`detail_hire` remains unchanged.
+of the existing scheduling component. The shared component used by `detail_hire`
+remains unchanged.
 
 ### Booking-stage availability controls
 

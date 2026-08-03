@@ -918,7 +918,8 @@ Current safety boundary:
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
   This prevents a release-time regression on non-stage staging consumers; the
-  stage adapter intercepts those paths first on its three approved pages.
+  stage adapter intercepts those paths first on its five approved staging paths
+  and exact production canary.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
@@ -933,10 +934,6 @@ Maintenance rule: new `api:tCpV3oqd` scheduling calls should use
 `window.xanoAuthFetch`. Keep endpoint scope explicit; do not turn this into a
 blanket credential injector. Every route used by the stage adapter and
 availability modules must be listed as an exact `/v3` path.
-
-The auth helper installs across the V3 staging host. On the production hosts it
-installs only on the exact approved `/hire/jp-dionisio` canary, matching the
-adapter's production boundary.
 
 Public helpers:
 
@@ -1007,7 +1004,8 @@ logic intact. Auth and route ownership load synchronously so immediate legacy
 code cannot race the adapter; the availability UI modules remain deferred. Do
 not replace the shared `Call Scheduling - Global Code` component while the live
 `detail_hire` template still uses it. Release the Git files first, then create
-and install the clone in a separate approved Webflow change.
+and install the clone in a separate approved Webflow change. Do not publish
+either custom production domain without the user's final approval.
 
 Runtime contract:
 

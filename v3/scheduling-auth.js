@@ -62,7 +62,8 @@
   ]
   // Temporary backwards compatibility for staging pages that already load
   // this shared auth module but do not yet load scheduling-v3-stage.js. The
-  // stage adapter intercepts these paths first on its three approved pages.
+  // stage adapter intercepts these paths first on its five approved staging
+  // paths and exact production canary.
   const LEGACY_COMPATIBILITY_PATHS = [
     '/api:tCpV3oqd/calendars/get_availabilities',
     '/api:tCpV3oqd/scheduler/configurations/create',
