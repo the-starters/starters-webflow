@@ -36,7 +36,9 @@ default. `route-guard.js` enforces direct access for every route below except
 `/quiz`, `/quiz-results`, and `/all-starters`, which remain outside the sitewide
 guard. The quiz entry is a funnel page; the results-page controller handles its
 logged-out, no-results case without disrupting pre-signup quiz data; and
-`/all-starters` still awaits confirmation that it is authenticated-only.
+`/all-starters` stays outside the guard permanently (decision by Jerico
+2026-08-03) because its gating is not route-level: Memberstack gated content
+(`data-ms-content`) on the page plus list/render-level limiting for free Brands.
 
 | Route | Brand free | Brand paid | Talent | Router behavior |
 | --- | --- | --- | --- | --- |
@@ -44,7 +46,7 @@ logged-out, no-results case without disrupting pre-signup quiz data; and
 | `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default until quiz completion |
 | `/quiz-results` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion |
 | `/all-starters` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return |
-| `/favorites` and `/favorites/` | Default quiz home | Allow | Default `/starter-dashboard` | Saved Starters list; paid Brand only, matching Xano #1506's plan 4/5 precondition |
+| `/favorites` and `/favorites/` | Default quiz home | Allow | Default `/starter-dashboard` | Saved Starters list; paid Brand only, matching Xano #1506's plan 4/5 precondition; both slash forms are allowed paid-Brand `next` destinations so a deep link survives login |
 | `/brand-dashboard` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
 | `/messages` | Default quiz home | Allow | Allow | Free Brand is not allowed |
 | `/opportunities` and `/opportunities/` | Default quiz home | Allow | Allow | Merged feed; both URL forms are guarded |
@@ -108,7 +110,7 @@ separate owner:
 | Post-login destination and cross-role redirects | `v3/auth-route.js` consuming the shared contract | Implemented for the routes above |
 | Canonical `/dashboard` role routing and direct protected-page access | `v3/route-guard.js` | Implemented locally; install per [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md); staging matrix pending |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
-| Free Brand blurred/limited All Starters results | Page/list rendering and data response | Not enforced by the router |
+| `/all-starters` access and free-Brand result limits | Memberstack `data-ms-content` gated content on the page plus list/render-level limiting | Settled 2026-08-03: permanently outside `route-guard.js`, never a route-level rule |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |
 | `/starter-edit-profile` environment write mode | `profile-image-auth-shim.js` exact Live-host allowlist | Implemented; non-Live hosts block known mutations and preserve reads |
 | `/admin/talent-applications` staff access and private application records | Xano `admin/session` and talent-admin endpoint authorization | Parked, preparation-only staging Code Component; outside the member-plan route matrix; not production-ready and has not been imported into Webflow, published, tagged, or deployed |
@@ -127,11 +129,11 @@ enforces the underlying ownership boundary.
 
 - Define the exact role/state for a paid Brand whose subscription is cancelled;
   do not infer it from a display name.
-- Confirm whether `/all-starters` is authenticated-only. Until then, the route
-  guard leaves it unlisted and does not force logged-out visitors to `/login`.
-  `/quiz` remains unlisted because it is the quiz funnel entry, and
-  its member redirects are owned by the page controller documented above;
-  `/quiz-results` likewise uses its page-controller behavior.
+- `/quiz` remains unlisted because it is the quiz funnel entry, and its member
+  redirects are owned by the page controller documented above; `/quiz-results`
+  likewise uses its page-controller behavior. (`/all-starters` was settled on
+  2026-08-03 and is recorded in the route-level and enforcement-layer sections
+  above.)
 - Verify Webflow Memberstack gated groups and Xano authorization independently;
   a `Backlog` row in the product sheet is desired behavior, not proof that it is
   live.

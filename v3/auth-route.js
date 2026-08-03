@@ -167,6 +167,12 @@
     'brand-paid': new Set([
       '/all-starters',
       '/brand-dashboard',
+      // route-guard.js guards the Saved Starters list as paid-Brand only and
+      // sends a logged-out visitor through /login?next=/favorites, so the round
+      // trip only closes if the router is willing to hand that path back. Both
+      // slash forms, matching the guard's two page entries.
+      '/favorites',
+      '/favorites/',
       '/opportunities-brands-view',
       '/opportunities',
       '/opportunities/',
