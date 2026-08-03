@@ -30,6 +30,8 @@
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
   const PAID_RATE_STORAGE_KEY = 'paid_call_rate'
+  const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
+  const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
 
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const isStagingHost = window.location.hostname === STAGING_HOST
@@ -95,6 +97,35 @@
       throw memberScopeChangedError()
     }
     return member.id
+  }
+
+  function rememberOAuthIntent(memberId) {
+    try {
+      window.sessionStorage.setItem(
+        OAUTH_INTENT_PREFIX + memberId,
+        JSON.stringify({ createdAt: Date.now() }),
+      )
+    } catch (error) {
+      /* storage unavailable */
+    }
+  }
+
+  function consumeOAuthIntent(memberId) {
+    if (isStagingHost) return true
+    const key = OAUTH_INTENT_PREFIX + memberId
+    try {
+      const raw = window.sessionStorage.getItem(key)
+      window.sessionStorage.removeItem(key)
+      const intent = raw ? JSON.parse(raw) : null
+      return Boolean(
+        intent &&
+          Number.isFinite(intent.createdAt) &&
+          Date.now() - intent.createdAt >= 0 &&
+          Date.now() - intent.createdAt <= OAUTH_INTENT_MAX_AGE,
+      )
+    } catch (error) {
+      return false
+    }
   }
 
   async function xanoPost(path, payload) {
@@ -351,7 +382,7 @@
     }
   }
 
-  async function resolveTimezone(starterRecord) {
+  async function resolveTimezone(starterRecord, allowWrite) {
     try {
       const cached = window.localStorage.getItem(TIMEZONE_CACHE_PREFIX + sessionMemberId)
       if (cached) return cached
@@ -365,7 +396,7 @@
       if (starter && typeof starter.timezone === 'string' && starter.timezone.trim() !== '') {
         resolved = starter.timezone
       }
-      if (!resolved) {
+      if (!resolved && allowWrite) {
         const updated = await xanoPost('/starter/set_timezone/v3', {
           member_id: await writeMemberId(),
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
@@ -903,6 +934,7 @@
           response.response.result.data &&
           response.response.result.data.url
         if (!url) throw new Error('grants/oauth returned no URL')
+        rememberOAuthIntent(memberId)
         window.open(url, '_blank')
         switchStep('reload-page')
       } catch (error) {
@@ -1078,11 +1110,11 @@
         }
       }
 
-      timezone = await resolveTimezone(starterRecord)
+      timezone = await resolveTimezone(starterRecord, isStagingHost)
       renderTimezone()
 
       const urlParams = new URLSearchParams(window.location.search)
-      let connectedCalendar = urlParams.get('calendar') || null
+      let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
 
       // OAuth return lands directly on this page (?code&state) — no separate
       // connect-success page. grants/add/v3 exchanges the code and persists
@@ -1100,8 +1132,11 @@
         )
         try {
           const memberId = await writeMemberId()
-          if (oauthState && oauthState !== memberId) {
+          if (!oauthState || oauthState !== memberId) {
             throw new Error('OAuth state does not match the logged-in member')
+          }
+          if (!consumeOAuthIntent(memberId)) {
+            throw new Error('OAuth return was not initiated by this session')
           }
           const grant = await xanoPost('/grants/add/v3', {
             code: oauthCode,
@@ -1126,7 +1161,7 @@
 
       if (grantId) {
         configs = (await getConfigs(grantId)) || []
-        if (!configs.length && !connectedCalendar) {
+        if (isStagingHost && !configs.length && !connectedCalendar) {
           await createConfigPair()
           refreshConfigsSoon(500)
         }

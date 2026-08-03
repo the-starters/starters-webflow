@@ -357,6 +357,7 @@ function loadWriter(options = {}) {
   const events = []
   const warnings = []
   const storage = new Map(Object.entries(options.storage || {}))
+  const sessionStorage = new Map(Object.entries(options.sessionStorage || {}))
 
   const member = options.member === undefined ? MEMBER_A() : options.member
   let activeMember = member
@@ -411,6 +412,11 @@ function loadWriter(options = {}) {
     localStorage: {
       getItem: (key) => (storage.has(key) ? storage.get(key) : null),
       setItem: (key, value) => storage.set(key, String(value)),
+    },
+    sessionStorage: {
+      getItem: (key) => (sessionStorage.has(key) ? sessionStorage.get(key) : null),
+      setItem: (key, value) => sessionStorage.set(key, String(value)),
+      removeItem: (key) => sessionStorage.delete(key),
     },
     history: {
       replaceState: (...args) => historyCalls.push(args),
@@ -482,6 +488,7 @@ function loadWriter(options = {}) {
     harness,
     historyCalls,
     opened,
+    sessionStorage,
     status,
     storage,
     timers,
@@ -925,6 +932,83 @@ test('an OAuth state for a different member aborts the exchange without writing'
     ),
   )
   assert.equal(result.status(), 'ready')
+})
+
+test('an OAuth code without state aborts the exchange without writing', async () => {
+  const result = loadWriter({
+    search: '?code=abc123',
+    storage: TZ_CACHED,
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.ok(
+    result.events.some(
+      (e) => e.type === 'starterSchedulingWriteError' && e.detail.action === 'oauth-connect',
+    ),
+  )
+})
+
+test('passive production initialization performs no scheduling writes', async () => {
+  const result = loadWriter({
+    hostname: 'www.thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://www.thestarters.com',
+    search: '?code=abc123&state=member-a&calendar=google',
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: '',
+          availability: defaultAvailability(),
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  const writePaths = new Set([
+    '/starter/set_timezone/v3',
+    '/starter/update_availability/v3',
+    '/scheduler/configurations/create/v3',
+    '/scheduler/configurations/update/v3',
+    '/scheduler/configurations/delete/v3',
+    '/grants/add/v3',
+  ])
+  assert.deepEqual(
+    result.calls.filter((call) => writePaths.has(call.path)),
+    [],
+  )
+})
+
+test('production OAuth return writes only with a recent session intent', async () => {
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?code=abc123&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({ createdAt: Date.now() }),
+    },
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 1)
+  assert.equal(
+    result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3').length,
+    1,
+  )
+  assert.equal(result.sessionStorage.size, 0)
 })
 
 test('returning from the calendar OAuth round trip records the calendar manager', async () => {
