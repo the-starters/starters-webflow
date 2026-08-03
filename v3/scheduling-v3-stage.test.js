@@ -318,6 +318,7 @@ test('component loader installs auth and routing synchronously before cloned log
     [
       'scheduling-auth.js',
       'scheduling-v3-stage.js',
+      'dashboard-calls.js',
       'scheduling-availability-init.js',
       'scheduling-availability-writer.js',
     ],
@@ -326,6 +327,7 @@ test('component loader installs auth and routing synchronously before cloned log
   assert.doesNotMatch(tags[1][0], /\bdefer\b/)
   assert.match(tags[2][0], /\bdefer\b/)
   assert.match(tags[3][0], /\bdefer\b/)
+  assert.match(tags[4][0], /\bdefer\b/)
 })
 
 test('does not install on the live profile component or unrelated production paths', () => {

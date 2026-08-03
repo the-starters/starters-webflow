@@ -1024,6 +1024,15 @@ configuration metadata. Every other installed surface uses the self-only
 `starter/get_by_memberstack/v3` and grant-owner-only
 `nylas_configurations/get_all/v3` routes.
 
+Those two approved Hire booking surfaces also contain the post-booking Nylas
+DOM race. After a successful `bookedEventInfo` event includes a `booking_id`,
+the adapter waits for the Designer-authored `[schedule-step="success"]` inside
+the same `[popup-booking]` to be visible, then detaches only that popup's
+`nylas-scheduling` element. Failed or incomplete events and a hidden or missing
+success step leave the scheduler mounted. A completed handoff stamps
+`data-scheduling-booked-success="ready"` on the document root. This listener is
+not installed on either dashboard or any other scheduling surface.
+
 The boundary is fail-closed:
 
 - `booking_record/get_with_filters` and its held `/v3` draft are blocked.
@@ -1041,8 +1050,8 @@ The boundary is fail-closed:
 Webflow component used by the stage surfaces and canonical dashboards. Keep it
 as the clone's first Code Embed, before the cloned scheduling logic embeds, and
 keep the cloned UI and logic intact. Auth and route ownership load synchronously
-so immediate legacy code cannot race the adapter; the availability UI modules
-remain deferred. Do
+so immediate legacy code cannot race the adapter; the dashboard and availability
+UI modules remain deferred. Do
 not replace the shared `Call Scheduling - Global Code` component while the live
 `detail_hire` template still uses it. The isolated clone is installed on the
 stage surfaces and both canonical dashboards; releases update its Git-owned
@@ -1067,6 +1076,64 @@ Run the focused test with:
 
 ```sh
 node v3/scheduling-v3-stage.test.js
+```
+
+## Dashboard call sections
+
+`dashboard-calls.js` binds the Designer-authored call sections on the exact
+`/starter-dashboard`, `/brand-dashboard`, and their two availability-stage
+paths. It is inert everywhere else. Load it through
+`scheduling-v3-stage-component.html`, after the synchronous scheduling auth and
+stage adapter; that loader is the authoritative script order.
+
+The controller obtains the current Memberstack member, reads
+`booking_record/get/v3` through `window.xanoAuthFetch` with that member's ID,
+and then independently requires the returned row's role-specific
+`starter_data.memberstack_id` or `brand_data.memberstack_id` to match. A missing
+session, unavailable auth bridge, malformed response, or absent/mismatched
+participant identity fails closed. An auth change immediately clears rendered
+identity data and booking rows; a response started under the prior session can
+never repaint the page.
+
+Webflow owns all call-section markup. Each section must provide:
+
+- `[bookings-section="calls"]` and, on Starter, optionally
+  `[bookings-section="requests"]`;
+- a matching `[bookings-list="<name>"]`,
+  `[bookings-item-template="<name>"]`, `[bookings-loader="<name>"]`, and
+  `[bookings-empty="<name>"]`;
+- optional `[bookings-count]`, `[bookings-load-more]`, and
+  `[booking-filter="<status>"]` controls; and
+- card value slots using the existing `[booking-element]`, `[label-text]`,
+  `[payment-status-wrap]`, and `[brand-status]` attributes.
+
+The script clones the authored item template in pages of six, deduplicates by
+canonical booking ID, and sorts newest first. Starter pending rows appear under
+requests and all other rows under calls; Brand keeps one calls list. Legacy card
+action controls are hidden because V3 has no identity-safe mutation handler;
+only a confirmed row with a canonical meeting link exposes its join control.
+Loading, empty, and error displays reuse the authored elements instead of
+generating UI.
+
+On Brand only, the same resolved Memberstack snapshot paints the existing hero:
+`free-user` and `last-name` populate `.dash-hero_profile-name span`, and
+`company` populates `.dash-hero_profile-stats > p`. Those values clear before
+every session refresh and on any failure, so another member's projection cannot
+survive an auth transition.
+
+Runtime contract:
+
+- `data-dashboard-calls-v3` on the document root reports `loading`, `ready`, or
+  `error`.
+- Each valid section reports `data-bookings-state="loading"`, `ready`, `empty`,
+  or `error`.
+- Designer-authored duplicate dashboard tiles whose heading is exactly `Calls`
+  or `Call Requests` are hidden when they do not carry `[bookings-section]`.
+
+Run its focused test with:
+
+```sh
+node --test v3/dashboard-calls.test.js
 ```
 
 ## Booking-stage availability initializer
@@ -1172,7 +1239,7 @@ virtual calendar vs the member's own calendar), Nylas scheduler configuration
 create/update, timezone set, and the calendar OAuth grant redirect — with the
 loader (`[data-custom-loader]`) and the success/error modal steps restored. It
 loads after `scheduling-auth.js` and `scheduling-availability-init.js`; the
-authoritative four-script order and release URLs live in
+authoritative script order and release URLs live in
 `scheduling-v3-stage-component.html`. Releases use the reviewed semver tag and
 jsDelivr purge pipeline.
 
