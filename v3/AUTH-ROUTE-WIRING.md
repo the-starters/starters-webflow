@@ -1,8 +1,10 @@
 # V3 Auth Route Wiring
 
 Status: Live. Verified on 2026-07-31 loading on `/login` from jsDelivr
-`@latest`. The Talent onboarding funnel described below is the newest change and
-still needs its own staging pass.
+`@latest`. The Talent funnel check described below moved to the
+`get_build_profile_status` endpoint on 2026-08-04; that migration and the
+`/starter-login` embed both still need a staging pass. The embeds are page-level
+and pinned, so a new tag does not reach the site on its own — bump both embeds.
 
 ## Webflow
 
@@ -59,42 +61,86 @@ Brand Free plus paid Brand is a valid same-family upgrade state and resolves to
 paid Brand. Talent plus either Brand role is a cross-family conflict and remains
 on the utility page with `conflicting-plan-roles`.
 
-## Talent onboarding funnel
+## Talent funnel position
 
-The product flow is Apply, then Build profile (which creates the Xano
-`freelancers_v3` row before the member has an account session), then Login, then
-Onboarding, then Dashboard. `/auth-route` is the one page every Talent login
-passes through, so the router asks Xano where in that flow the member actually
-is and routes accordingly.
+The product flow is Apply, then Build profile, then Login, then Onboarding, then
+Dashboard. `/auth-route` is the one page every Talent login passes through, so the
+router asks Xano where in that flow the member actually is and routes accordingly.
 
 The check runs for the Talent role only. Brand paid, Brand free, unmapped, and
 conflicted members never trigger a Xano request.
 
-| Freelancer record state | Destination |
+### The funnel-status endpoint
+
+```
+GET api:KZf7nFnk/starters_onboarding/get_build_profile_status
+Authorization: Bearer <token from the trade-token flow>
+```
+
+No inputs. The member is derived from the bearer token, and the endpoint answers
+401 without a valid one. Same API group and auth table (`user_v3`) as
+`get_freelancers`.
+
+```json
+{
+  "has_record": true,
+  "build_profile_done": true,
+  "onboarding_done": false,
+  "profile_type": "Full",
+  "platform_status": "…"
+}
+```
+
+`build_profile_done` is true only when a `freelancers_v3` row exists **and** its
+`profile_type_30` column is non-empty. That column is stamped by
+`build_profile/starter/update` when the form is submitted, so it is the first
+signal that means "the member actually finished this step".
+
+**Why it replaced the old read (2026-08-04).** The router used to read
+`get_freelancers` and treat "a row came back" as "past Build profile". The row is
+created before the member finishes the form, so that test was wrong for anyone
+who started and abandoned it: **282 of 955 `freelancers_v3` rows carry an empty
+`profile_type_30`**, and all 282 of those members were being routed on to
+`/starter-onboarding` instead of back to the step they had not completed.
+
+Two more facts from the same full-table pass, both worth knowing before QA:
+`onboarding_done` is true on **zero** rows today, so the third row of the table
+below is currently unexercised in production data, and `profile_type` has only
+ever been `"Full"` so far. `has_record` is returned but deliberately unread — it
+is precisely the signal that caused the bug.
+
+### Routing table
+
+| Funnel status | Destination |
 | --- | --- |
-| No `freelancers_v3` row (empty or missing `freelancer` array) | `/build-profile/select-profile` |
-| Row exists, `onboarding_done` is not `true` | `/starter-onboarding`, which wins over any `?next=` or stored destination |
-| Row exists, `onboarding_done === true` | Normal routing: the validated `next`, else the role home |
-| Any Xano failure, or the check exceeds its 4 second budget | Normal routing (fail open) |
+| `build_profile_done` false (whether or not `has_record`) | `/build-profile/select-profile` |
+| `build_profile_done` true, `onboarding_done` not `true` | `/starter-onboarding`, which wins over any `?next=` or stored destination |
+| `build_profile_done` true, `onboarding_done === true` | Normal routing: the validated `next`, else the role home |
+| Any Xano failure, an unreadable body, or the check exceeding its 4 second budget | Normal routing (fail open) |
 
 The requested destination is consumed before the check runs, so a `next` that
-loses to `/starter-onboarding` is dropped rather than replayed on the next
-login. Only a literal `true` reads as done; a missing field or an unreadable
-record counts as not done, which sends the member into onboarding rather than
-past it.
+loses to the funnel is dropped rather than replayed on the next login.
+
+The body is read strictly in both directions, and here the strictness matters
+because the three answers route three different ways while only "inconclusive"
+fails open. Only a literal `false` on `build_profile_done` earns the
+`/build-profile/select-profile` redirect; anything else non-`true` (missing,
+null, a string) is a body the router does not understand, so the standard
+destination wins. Only a literal `true` on `onboarding_done` reads as onboarded,
+so a missing or odd value biases toward sending the member into onboarding rather
+than past it.
 
 Reads use the same trade-token flow as the sibling V3 modules: the Memberstack
 JWT from `getMemberCookie()` is traded at `api:g1vmSLWh/auth/trade-token/v3` for
-a Xano token, which authorizes
-`api:KZf7nFnk/starters_onboarding/get_freelancers` as a bearer. The response
-envelope is `{"freelancer": [ <record> ]}`.
+a Xano token, which authorizes the status endpoint as a bearer.
 
 The 4 second budget is one overall deadline for the trade plus the read, not a
 per-request timeout, because the member is looking at a blank hop page while it
 runs. On expiry the shared `AbortController` cancels the in-flight request and
-routing continues as if the check had never happened. Every other failure path
-behaves the same way: logged out of Memberstack, a rejected trade, an HTTP
-error, a malformed envelope, or a browser without `fetch`.
+routing continues as if the check had never happened. Fail-open is unchanged by
+the endpoint migration, and every other failure path behaves the same way: logged
+out of Memberstack, a rejected trade, a 401, a 500, an unparseable body, a body
+without a boolean `build_profile_done`, or a browser without `fetch`.
 
 This is funnel UX, not a security boundary. `/starter-onboarding` itself remains
 guarded by `v3/route-guard.js`, and `v3/onboarding-done-redirect.js` still
@@ -162,10 +208,14 @@ Each error also dispatches `starters:v3-auth-route-error` on `window` with
 `window.StartersV3AuthRouter` with `activePlanIds`, `memberRole`,
 `memberRoleError`, `roleHome`, `localPath`, `destinationFor`, `hasCompletedQuiz`,
 and `brandFreeHome`, plus the funnel helpers `stagingHost`,
-`diagnosticsEnabled`, `onboardingStateFrom`, `onboardingFunnelState`,
+`diagnosticsEnabled`, `funnelStateFrom`, `onboardingFunnelState`,
 `onboardingPath`, `buildProfilePath`, and `checkBudgetMs`, the login-page scope
 helpers `isLoginPath` and `loginPaths`, and `release` (the shipping tag; see the
 release-marker convention in [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md)).
+
+`funnelStateFrom` replaced `onboardingStateFrom` in v1.59.82: it takes a status
+body rather than a freelancer envelope and answers `'build-profile'`,
+`'onboarding'`, `'done'`, or `'unknown'`.
 
 The funnel never produces a `data-auth-route-error`; it fails open instead. It
 narrates each decision to the console (which state was found, where routing
@@ -186,10 +236,19 @@ stays silent apart from the configuration errors in the table above.
 - Run `node --test v3/auth-route.test.js`.
 - Verify login with `next=/dashboard` for Talent, paid Brand, Test Brand, and
   Brand Free in both incomplete-quiz and completed-quiz states.
-- Verify the three Talent funnel states on staging with the console open:
-  a member with no `freelancers_v3` row lands on `/build-profile/select-profile`,
-  a member with `onboarding_done` false lands on `/starter-onboarding` even with
-  `?next=/messages`, and a finished member still honors `?next=`.
+- Verify the four Talent funnel states on staging with the console open: a member
+  with no row lands on `/build-profile/select-profile`, a member **with** a row
+  whose `profile_type_30` is empty also lands there (the 282-member case, and the
+  reason for the 2026-08-04 migration), a member with `build_profile_done` true
+  and `onboarding_done` false lands on `/starter-onboarding` even with
+  `?next=/messages`, and a fully finished member still honors `?next=`.
+- The fully-finished row cannot be reached with today's data —
+  `onboarding_done` is true on zero rows — so exercise it by calling
+  `window.StartersV3AuthRouter.funnelStateFrom({build_profile_done: true,
+  onboarding_done: true})` and confirming it answers `'done'`, or by flipping the
+  column on a test row.
+- Confirm the network panel shows `get_build_profile_status` and no
+  `get_freelancers` request from `/auth-route`.
 - Confirm a Brand login logs no funnel lines and issues no request to
   `api:KZf7nFnk` in the network panel.
 - Run the full staging matrix behind the Webflow password.

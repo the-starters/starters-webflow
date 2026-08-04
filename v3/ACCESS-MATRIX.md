@@ -214,15 +214,27 @@ one route-level rule that page needs.
 > fails open, so it never contradicts the gated group's decision. Wiring:
 > [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
-> **Talent build-profile funnel check (added 2026-08-03):** On the three
-> `/build-profile/*` pages, `v3/build-profile-redirect.js` asks Xano where the
-> signed-in Talent member actually is in the funnel, using the same
-> `get_freelancers` read `auth-route.js` performs at login. No freelancer record
-> means the member stays — that is who the page is for. A record with
-> `onboarding_done` not `true` goes to `/starter-onboarding`; a finished record
-> goes to `/starter-dashboard`. It is Talent-only and fails open on every other
-> outcome, so it never contradicts the route guard's own decision, and it runs
-> after the guard has already handled Brand, unmapped, and logged-out visitors.
+> **Talent funnel-position check (added 2026-08-03, endpoint migrated
+> 2026-08-04):** On the three `/build-profile/*` pages,
+> `v3/build-profile-redirect.js` asks Xano where the signed-in Talent member
+> actually is in the funnel, using the same
+> `starters_onboarding/get_build_profile_status` read `auth-route.js` performs at
+> login. `build_profile_done` false means the member stays — that is who the page
+> is for. `build_profile_done` true with `onboarding_done` not `true` goes to
+> `/starter-onboarding`; both true goes to `/starter-dashboard`. It is Talent-only
+> and fails open on every other outcome, so it never contradicts the route guard's
+> own decision, and it runs after the guard has already handled Brand, unmapped,
+> and logged-out visitors.
+>
+> `build_profile_done` requires a `freelancers_v3` row **and** a non-empty
+> `profile_type_30` (stamped on Build-profile submit). It replaced a plain
+> row-exists test because 282 of 955 rows carry an empty `profile_type_30` — those
+> members had merely started the form, and were being pushed out of a step they
+> had not finished. The same signal drives the login-time fork in `auth-route.js`,
+> so both entry points now agree: `build_profile_done` false sends a Talent member
+> to `/build-profile/select-profile` at login and keeps them there on page entry.
+> Note that `onboarding_done` is true on zero rows today, so the
+> `/starter-dashboard` leg of both checks is unexercised by production data.
 
 > **Merged-feed plan hydration (updated 2026-07-28):** On `/opportunities` and
 > `/opportunities/`, `route-guard.js` immediately allows a mapped Talent or
@@ -290,7 +302,8 @@ separate owner:
 | Per-page logged-out destinations for the build-profile funnel | `v3/route-guard.js` `LOGGED_OUT_DESTINATIONS` | Implemented 2026-08-03; staging pass pending |
 | `/complete-profile` access (logged-out kick only) | Memberstack `restrict-pages` gated group (dashboard field values: URL rule STARTS `complete-profile`, access **All Members**, Access Denied URL `login` — no leading slash in either field; denied visitors land on the path `/login`) | Settled 2026-08-03: sole owner, permanently outside `route-guard.js` and `auth-route.js`. Amended the same evening: access must be "All Members" so the page-scoped module in the row below can route logged-in members of every role instead of a `/login` bounce doing it |
 | Logged-in role routing on `/complete-profile` | `v3/complete-profile-redirect.js` (page-scoped; Memberstack `completed-brand-profile` field plus the guard's `memberRole`/`roleHome`, no network call) | Implemented 2026-08-03, role branches added the same evening; needs the hidden `data-ms-member` input plus one page-level Webflow embed, see [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md). Paid-Brand branch is inert until the input starts writing the field; the free-Brand and Talent branches are live immediately. Access control stays with the gated group in the row above |
-| Talent funnel position on `/build-profile/*` | `v3/build-profile-redirect.js` (page-scoped, Xano `get_freelancers`) | Implemented 2026-08-03; needs three page-level Webflow embeds, see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md) |
+| Talent funnel position on `/build-profile/*` | `v3/build-profile-redirect.js` (page-scoped, Xano `get_build_profile_status`) | Implemented 2026-08-03, migrated off the row-exists signal 2026-08-04; needs three page-level Webflow embeds, see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md) |
+| Talent funnel position at login | `v3/auth-route.js` (Xano `get_build_profile_status`, Talent only) | Live since 2026-07-31, migrated off the row-exists signal 2026-08-04; the `/login` and `/auth-route` embeds are pinned page-level code and need bumping, see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
 | `/all-starters` content visibility and free-Brand result limits | Memberstack `data-ms-content` gated content on the page plus list/render-level limiting | Settled 2026-08-03: permanently outside `PAGE_ROLES`. The only route-level rule the page has is the Talent role bounce in the row above; logged-out and both Brand tiers stay |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |

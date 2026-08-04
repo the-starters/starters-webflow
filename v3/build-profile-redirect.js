@@ -1,17 +1,28 @@
 /**
  * /build-profile/* — funnel-position redirect.
  *
- * @release v1.59.81
+ * @release v1.59.82
  *
  * ONE job: keep a Talent member who is PAST the Build-profile step from
- * re-entering it. The product flow is Apply → Build profile (creates the Xano
- * freelancers_v3 row) → Login → Onboarding → Dashboard, so the answer to "does
- * this member still belong on this page" is the same freelancer record
+ * re-entering it. The product flow is Apply → Build profile (stamps the Xano
+ * freelancers_v3 row's `profile_type_30` on submit) → Login → Onboarding →
+ * Dashboard, and the funnel position comes from the lean status endpoint
  * v3/auth-route.js reads at login:
  *
- *   - no freelancers_v3 row      → STAY. This is exactly who the page is for.
- *   - row, onboarding not done   → /starter-onboarding
- *   - row, onboarding done       → /starter-dashboard
+ *   GET api:KZf7nFnk/starters_onboarding/get_build_profile_status
+ *   → {has_record, build_profile_done, onboarding_done, profile_type,
+ *      platform_status}
+ *
+ *   - build_profile_done false → STAY. This is exactly who the page is for.
+ *   - done, not onboarded      → /starter-onboarding
+ *   - done and onboarded       → /starter-dashboard
+ *
+ * `build_profile_done` is the STRICTER signal that replaced "a freelancers_v3
+ * row exists" on 2026-08-04: the row is created before the member finishes the
+ * form, and `profile_type_30` is only stamped on submit. 282 of 955 rows carry
+ * an empty `profile_type_30`, so the old row-exists read pushed those 282
+ * members out of a funnel step they had not actually completed. A member who
+ * abandoned Build profile now correctly STAYS here to finish it.
  *
  * This is the page-scoped counterpart to the funnel check in
  * v3/auth-route.js. That one runs once, at login, on the one page every Talent
@@ -54,7 +65,10 @@
   var XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
   var XANO_ONBOARDING_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
   var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
-  var GET_FREELANCERS_PATH = '/starters_onboarding/get_freelancers'
+  // The lean funnel-status read. No inputs: the member is derived from the
+  // bearer token, exactly like the get_freelancers read it replaced.
+  var BUILD_PROFILE_STATUS_PATH =
+    '/starters_onboarding/get_build_profile_status'
 
   // Exactly the three authored Build-profile steps. Matches the three
   // Talent-only entries in route-guard.js PAGE_ROLES; like those, no
@@ -80,13 +94,15 @@
   var MEMBERSTACK_TIMEOUT_MS = 8000
   var MEMBERSTACK_POLL_MS = 100
 
-  // One OVERALL deadline for the token trade plus the record read, not a
+  // One OVERALL deadline for the token trade plus the status read, not a
   // per-request timeout — the same shape and budget as the login-time check in
   // v3/auth-route.js. Past it the check is abandoned and the page renders.
   var FUNNEL_CHECK_BUDGET_MS = 4000
 
-  var FUNNEL_NO_RECORD = 'no-record'
-  var FUNNEL_NOT_DONE = 'not-done'
+  // Funnel POSITION, not a record shape: where the member actually is in Apply →
+  // Build profile → Onboarding → Dashboard. Same four values as v3/auth-route.js.
+  var FUNNEL_BUILD_PROFILE = 'build-profile'
+  var FUNNEL_ONBOARDING = 'onboarding'
   var FUNNEL_DONE = 'done'
   var FUNNEL_UNKNOWN = 'unknown'
 
@@ -267,32 +283,40 @@
   /* --------------------------------- funnel --------------------------------- */
 
   /**
-   * `{"freelancer": [ <one record> ]}`, and an empty envelope for a member who
-   * never completed Build profile. Only a literal `true` counts as done. An
-   * unreadable record lands on "not done", which sends the member into
-   * onboarding rather than past it — the same bias as v3/auth-route.js.
+   * `{has_record, build_profile_done, onboarding_done, profile_type,
+   * platform_status}` → a funnel position. Strict on purpose, and in both
+   * directions:
+   *
+   *   - only a literal `false` on `build_profile_done` means "still building".
+   *     Anything else non-`true` (missing, null, a string) is a body this module
+   *     does not understand, so it reads UNKNOWN rather than guessing.
+   *   - only a literal `true` on `onboarding_done` counts as onboarded, so a
+   *     missing or odd value biases toward onboarding rather than past it — the
+   *     same bias v3/auth-route.js applies.
+   *
+   * On this page UNKNOWN and BUILD_PROFILE happen to share an outcome (stay),
+   * but they are kept distinct because the login-time twin routes them apart.
    */
-  function onboardingStateFrom(payload) {
-    var records = payload && payload.freelancer
-    if (!Array.isArray(records) || records.length === 0) return FUNNEL_NO_RECORD
-    var record = records[0]
-    if (!record) return FUNNEL_NOT_DONE
-    return record.onboarding_done === true ? FUNNEL_DONE : FUNNEL_NOT_DONE
+  function funnelStateFrom(payload) {
+    if (!payload || typeof payload !== 'object') return FUNNEL_UNKNOWN
+    if (payload.build_profile_done === false) return FUNNEL_BUILD_PROFILE
+    if (payload.build_profile_done !== true) return FUNNEL_UNKNOWN
+    return payload.onboarding_done === true ? FUNNEL_DONE : FUNNEL_ONBOARDING
   }
 
   async function readFunnelState(memberstack, signal) {
     var token = await tradeForXanoToken(memberstack, signal)
     var response = await window.fetch(
-      XANO_ONBOARDING_BASE + GET_FREELANCERS_PATH,
+      XANO_ONBOARDING_BASE + BUILD_PROFILE_STATUS_PATH,
       { headers: { Authorization: 'Bearer ' + token }, signal: signal },
     )
     if (!response.ok) {
-      throw new Error('get_freelancers responded ' + response.status)
+      throw new Error('get_build_profile_status responded ' + response.status)
     }
     var data = await response.json().catch(function () {
       return null
     })
-    return onboardingStateFrom(data)
+    return funnelStateFrom(data)
   }
 
   /**
@@ -355,16 +379,24 @@
     }
 
     var state = await funnelState(memberstack)
-    if (state === FUNNEL_NO_RECORD) {
-      note('no freelancer record; this page is exactly where the member belongs.')
+    if (state === FUNNEL_BUILD_PROFILE) {
+      note(
+        'build profile not finished; this page is exactly where the member belongs.',
+      )
       return null
     }
-    if (state === FUNNEL_NOT_DONE) {
-      note('record exists, onboarding not done; sending to ' + ONBOARDING_PATH + '.')
+    if (state === FUNNEL_ONBOARDING) {
+      note(
+        'build profile done, onboarding not done; sending to ' +
+          ONBOARDING_PATH +
+          '.',
+      )
       return ONBOARDING_PATH
     }
     if (state === FUNNEL_DONE) {
-      note('record exists, onboarding done; sending to ' + DASHBOARD_PATH + '.')
+      note(
+        'build profile and onboarding done; sending to ' + DASHBOARD_PATH + '.',
+      )
       return DASHBOARD_PATH
     }
 
@@ -384,12 +416,12 @@
   window.StartersBuildProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/build-profile-redirect.test.js drift guard asserts they match.
-    release: 'v1.59.81',
+    release: 'v1.59.82',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isBuildProfilePath: isBuildProfilePath,
     diagnosticsEnabled: diagnosticsEnabled,
-    onboardingStateFrom: onboardingStateFrom,
+    funnelStateFrom: funnelStateFrom,
     funnelState: funnelState,
     funnelDestination: funnelDestination,
     redirectPastBuildProfile: redirectPastBuildProfile,
