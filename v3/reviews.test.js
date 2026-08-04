@@ -147,6 +147,8 @@ test('replaces the legacy projection with sanitized Xano review cards', () => {
   assert.equal(card.getAttribute('data-review-id'), '42')
   assert.equal(card.childNodes[1].textContent, '<img src=x onerror=alert(1)> Great work')
   assert.equal(card.childNodes[0].childNodes[0].childNodes.length, 5)
+  assert.equal(card.childNodes[0].childNodes[0].getAttribute('role'), 'img')
+  assert.equal(card.childNodes[0].childNodes[0].getAttribute('aria-label'), '5 out of 5 stars')
   assert.equal(card.childNodes[0].childNodes[1].childNodes[0].textContent, 'Verified Review')
   assert.equal(card.childNodes[2].childNodes[0].textContent, 'Acme')
   assert.equal(card.childNodes[2].childNodes[1].textContent, 'Verified brand')

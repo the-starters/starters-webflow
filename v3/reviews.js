@@ -127,9 +127,10 @@
 
       var stars = documentObject.createElement('div')
       stars.className = 'profile-review-v3_stars'
-      stars.setAttribute('aria-label', String(Number(review && review.rating) || 0) + ' out of 5 stars')
-      stars.style.cssText = 'display:flex;align-items:center;gap:2px;'
       var roundedRating = Math.max(0, Math.min(5, Math.round(Number(review && review.rating) || 0)))
+      stars.setAttribute('role', 'img')
+      stars.setAttribute('aria-label', String(roundedRating) + ' out of 5 stars')
+      stars.style.cssText = 'display:flex;align-items:center;gap:2px;'
       for (var starIndex = 1; starIndex <= 5; starIndex += 1) {
         appendIcon(documentObject, stars, starIndex <= roundedRating ? 'star-fill' : 'star', '')
       }

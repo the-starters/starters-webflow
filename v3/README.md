@@ -1521,9 +1521,15 @@ value or the OAuth provider rejects the exchange.
 
 `reviews.js` is the prepared browser adapter for completed-project reviews on
 the Brand dashboard and approved reviews on public `/hire/{slug}` profiles.
-Production Webflow activation is paused: do not install or publish the script,
-and do not enable any points, ranking, rank-projector, or `rank_status` write as
-part of this integration.
+Production Webflow activation is approved for the Brand dashboard and public
+`/hire/{slug}` profiles. Load the GitHub-owned adapter from jsDelivr after the
+authored Webflow surfaces and wf-xano runtime, then publish those exact Webflow
+surfaces. Do not enable any points, ranking, rank-projector, or `rank_status`
+write as part of this integration.
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/reviews.js"></script>
+```
 
 Webflow Designer owns the Brand review form and the public Reviews section. The
 adapter does not generate either surface. On the Brand side, author the review
