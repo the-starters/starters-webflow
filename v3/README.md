@@ -1517,6 +1517,68 @@ code exchange, and reject values outside the exact allowlist:
 values only from the approved host and path; both endpoints must use the same
 value or the OAuth provider rejects the exchange.
 
+## V3 reviews frontend
+
+`reviews.js` is the prepared browser adapter for completed-project reviews on
+the Brand dashboard and approved reviews on public `/hire/{slug}` profiles.
+Production Webflow activation is paused: do not install or publish the script,
+and do not enable any points, ranking, rank-projector, or `rank_status` write as
+part of this integration.
+
+Webflow Designer owns the Brand review form and the public Reviews section. The
+adapter does not generate either surface. On the Brand side, author the review
+form as native Webflow HTML with `data-review-form-v3` on the `form`, retain the
+`dash-brand-projects` wf-xano instance, and configure its wf-xano form name as
+`project-review`. The form must include the endpoint's normal review fields plus
+these authored controls:
+
+| Control | Contract |
+| --- | --- |
+| Project identifier | `wf-xano-field="project_id"` |
+| Hidden idempotency key | `wf-xano-field="idempotency_key"` |
+
+The adapter writes a new `review-ui:{project_id}:{random}` key to the hidden
+control in capture phase for every submit. Xano remains authoritative for
+completed-project eligibility, one-review enforcement, idempotent replay,
+moderation, points, reversals, aggregates, and ranking. A successful wf-xano
+`project-review` submission emits the document event
+`starters:review-submitted`; it does not perform a second write.
+
+On the public profile, use one wf-xano wrapper with
+`wf-xano-instance="starter-reviews"` and `data-reviews-v3`. The adapter derives
+the decoded slug only from the canonical `/hire/{slug}` path and sets
+`wf-xano-param-starter_slug` before wf-xano boots. Inside the authored section,
+use `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate
+values and `data-reviews-v3-list` for the card target. The Xano response is the
+authority and must expose only approved reviews. Its canonical envelope is:
+
+```json
+{
+  "reviews": [],
+  "aggregate": {
+    "review_count": 0,
+    "average_rating": 0
+  }
+}
+```
+
+The adapter also accepts `items` for the review array, `aggregates` for the
+aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
+recalculated from a paginated review list. The authored Reviews section is
+shown only when the approved review array is non-empty; zero aggregate values
+are still painted when it is empty. Cards are constructed with DOM nodes and
+`textContent` only, so brand names and review text are never interpreted as
+HTML. The adapter contains no Airtable or Make integration and no private token
+or direct authenticated fetch path.
+
+Run the focused checks with:
+
+```sh
+node --check v3/reviews.js
+node --check v3/reviews.test.js
+node --test v3/reviews.test.js
+```
+
 ## Starter Dashboard points and rank tile
 
 `starter-dashboard-points.js` binds Designer-owned dashboard markup to the
