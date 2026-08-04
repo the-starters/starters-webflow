@@ -112,5 +112,5 @@ test('the header carries the current release marker', () => {
     // signal. Bump the literal in the same commit that bumps the marker.
     const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
     assert.ok(marker, 'no "@release vX.Y.Z" line in the quiz-main.js header')
-    assert.equal(marker[1], 'v1.59.83')
+    assert.equal(marker[1], 'v1.59.84')
 })
