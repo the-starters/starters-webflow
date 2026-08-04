@@ -63,7 +63,7 @@ one route-level rule that page needs.
 | `/sign-up` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
 | `/dashboard` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Canonical authenticated entry only; no dashboard page body lives here |
 | `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard`, enforced | Free Brand default until quiz completion; page controller enforces all three columns, and the Talent bounce ignores `?retake=` |
-| `/quiz-results` and `/quiz-results/` | Allow once the quiz is done, else `/quiz` | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion; `ROLE_BOUNCE_PAGES` enforces the logged-in columns, `quiz-results.js` still owns every logged-out case |
+| `/quiz-results` and `/quiz-results/` | Allow once the quiz is done — either the `starter-quiz` field **or** a `ready` `sessionStorage.starterQuizPending` payload — else `/quiz` | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion; `ROLE_BOUNCE_PAGES` enforces the logged-in columns, `quiz-results.js` still owns every logged-out case. The pending-payload half is the post-signup exception (see [the note below](#post-signup-pending-quiz)): the field is written by this page *after* it renders, so the field alone cannot be the gate |
 | `/all-starters` and `/all-starters/` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return regardless of quiz state; `ROLE_BOUNCE_PAGES` enforces only the Talent bounce |
 | `/favorites` and `/favorites/` | Default quiz home | Allow | Default `/starter-dashboard` | Saved Starters list; paid Brand only, matching Xano #1506's plan 4/5 precondition; both slash forms are allowed paid-Brand `next` destinations so a deep link survives login |
 | `/brand-dashboard` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
@@ -119,6 +119,10 @@ one route-level rule that page needs.
 > a missing, empty, or whitespace-only value is not complete.
 > `route-guard.js` owns this via the exported `brandFreeHome(member)` /
 > `hasCompletedQuiz(member)` contract. `auth-route.js` reuses that contract.
+> That contract is unchanged by the 2026-08-04 fix: the field stays the only
+> signal for *where a free Brand is sent*. The extra pending-payload signal
+> applies solely to *whether a free Brand may stay on `/quiz-results`* — see
+> [Post-signup pending quiz](#post-signup-pending-quiz).
 
 > **Member-home bounce (added 2026-08-03):** The homepage, both login pages, and
 > `/sign-up` are NOT guarded pages — they stay exactly as authored for anyone who
@@ -152,6 +156,32 @@ one route-level rule that page needs.
 > done free Brand's role home and is on its own allowlist, so that resolves to
 > "stay" rather than to a redirect at itself; `route-guard.test.js` asserts that
 > case plus the general rule that no role home is bounced by its own role.
+
+> <a id="post-signup-pending-quiz"></a>
+> **Post-signup pending quiz (regression fix 2026-08-04):** the `/quiz-results`
+> quiz-state rule reads **two** completion signals, not one. `quiz-main.js` saves
+> the finished answers to `sessionStorage.starterQuizPending` as `ready`,
+> Memberstack signs the visitor up and redirects them to `/quiz-results`, and
+> `quiz-results.js` writes the `starter-quiz` custom field only *after* it renders
+> there. So a brand-new member's field is always empty for a moment, and gating on
+> the field alone bounced them off the very page that was about to save it —
+> reproduced on staging as "complete quiz → sign up → land on `/quiz-results` →
+> instantly thrown to `/quiz`", looping on retry and sticking only on the attempt
+> where the Memberstack save won the race. That behaviour shipped in v1.59.76.
+> `enforceBrandFreeQuizState` now also accepts a `ready` pending payload
+> (`hasReadyPendingQuiz()`), which is the same signal `quiz-results.js` renders
+> from and is about to persist. The guard reads that key and never writes or
+> clears it, because `quiz-loader/quiz-loader.js` derives its skip-on-refresh run
+> id from the payload's `updatedAt`. Only an explicit `ready` counts: a `draft`
+> payload, a payload with no `status`, malformed JSON, and blocked or absent
+> storage all fall back to the `/quiz` bounce, so a genuine never-took-the-quiz
+> free Brand is still sent to the quiz. The exception is confined to this one
+> branch — the wrong-role bounces still move a paid Brand and a Talent member off
+> `/quiz-results` regardless of `sessionStorage`, and `brandFreeHome()`,
+> `roleHome()`, the guarded-page redirects, the member-home bounce, and the
+> homepage overrides all still read the durable field only. `quiz-main/
+> quiz-redirect.js` carries the mirror-image helper for `/quiz` (v1.59.84); the
+> two copies are deliberate, since neither script can import from the other.
 
 > **Logged-out destination overrides (added 2026-08-03):** Guarded pages normally
 > send a logged-out visitor to `/login?next=<here>` so a deep link survives the
@@ -297,7 +327,7 @@ separate owner:
 | Post-login destination and cross-role redirects | `v3/auth-route.js` consuming the shared contract | Implemented for the routes above |
 | Canonical `/dashboard` role routing and direct protected-page access | `v3/route-guard.js` | Implemented locally; install per [ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md); staging matrix pending |
 | Member-home bounce off the homepage, both login pages, and `/sign-up` | `v3/route-guard.js` `MEMBER_BOUNCE_PAGES` | Implemented 2026-08-03; sitewide install already covers it, staging pass pending |
-| Logged-in role bounce off `/quiz-results` and `/all-starters` | `v3/route-guard.js` `ROLE_BOUNCE_PAGES` | Implemented 2026-08-03; sitewide install already covers it, staging pass pending. Logged-out visitors stay with their page controllers |
+| Logged-in role bounce off `/quiz-results` and `/all-starters` | `v3/route-guard.js` `ROLE_BOUNCE_PAGES` | Implemented 2026-08-03; sitewide install already covers it, staging pass pending. Logged-out visitors stay with their page controllers. The `/quiz-results` quiz-state rule was fixed 2026-08-04 to accept a `ready` pending payload as well as the `starter-quiz` field — see [Post-signup pending quiz](#post-signup-pending-quiz) |
 | `/quiz` logged-in role redirects | `quiz-main/quiz-redirect.js` (page-scoped) | Talent bounce added 2026-08-03, not `?retake=`-escapable; `/quiz` is outside all three guard tables |
 | Per-page logged-out destinations for the build-profile funnel | `v3/route-guard.js` `LOGGED_OUT_DESTINATIONS` | Implemented 2026-08-03; staging pass pending |
 | `/complete-profile` access (logged-out kick only) | Memberstack `restrict-pages` gated group (dashboard field values: URL rule STARTS `complete-profile`, access **All Members**, Access Denied URL `login` — no leading slash in either field; denied visitors land on the path `/login`) | Settled 2026-08-03: sole owner, permanently outside `route-guard.js` and `auth-route.js`. Amended the same evening: access must be "All Members" so the page-scoped module in the row below can route logged-in members of every role instead of a `/login` bounce doing it |
