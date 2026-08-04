@@ -655,7 +655,35 @@
             return null
         }
 
-        if (!parsed || typeof parsed !== 'object') return null
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return null
+        }
+
+        // This key is shared with quiz-results.js, which stamps
+        // `memberstackSavedAt` onto a logged-in member's cached answers. That
+        // cache survives logout in the same tab, so accepting it as a draft would
+        // restore one member's answers for whoever opens /quiz next, and
+        // rewriting it through savePendingQuiz() — which never emits the marker —
+        // would erase the very field quiz-results.js needs to clear it. Member
+        // answers belong to restoreQuizFromMemberJson(), which resolves the
+        // current member first. See isMemberCachedPendingQuiz() in quiz-results.js.
+        //
+        // Read the marker the same type-safe way that function does: normalize()
+        // here is also `(value || '').trim()` with no String() coercion, and
+        // sessionStorage is visitor-writable, so a tampered or numeric marker must
+        // not throw and take the whole boot flow down.
+        const memberCacheMarker = parsed.memberstackSavedAt
+        const isMemberCachedPayload =
+            typeof memberCacheMarker === 'string'
+                ? normalize(memberCacheMarker) !== ''
+                : Boolean(memberCacheMarker)
+
+        if (isMemberCachedPayload) {
+            logQuizFlow('ignored member-cached answers at the draft boundary', {
+                pendingQuizStorageKey,
+            })
+            return null
+        }
 
         const readIds = (entries) =>
             (Array.isArray(entries) ? entries : [])

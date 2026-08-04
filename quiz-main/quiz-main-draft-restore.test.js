@@ -230,6 +230,90 @@ test('a malformed draft falls back to the seed instead of throwing', () => {
     assert.equal(harness.logs.includes('homepage seed path ran'), true)
 })
 
+// starterQuizPending is shared with quiz-results.js, which stamps
+// memberstackSavedAt onto a logged-in member's cached answers and relies on that
+// marker to clear them once Memberstack reports the visitor logged out (a
+// four-day-old ready payload was caught previewing one member's results to the
+// next browser user on 2026-08-03). sessionStorage survives logout in the same
+// tab, so the draft reader must not treat that cache as this visitor's draft:
+// doing so would restore another member's answers AND, once boot re-saved the
+// payload without the marker, destroy the field the cleanup depends on.
+const memberCacheOf = (marker) =>
+    JSON.stringify({
+        categories: [{ id: 'retail-marketplace', label: 'Retail & Marketplace' }],
+        subcategories: [],
+        resultSlug: null,
+        status: 'ready',
+        updatedAt: '2026-07-31T00:00:00.000Z',
+        completedAt: '2026-07-31T00:00:00.000Z',
+        memberstackSavedAt: marker,
+    })
+
+test('a member-cached payload is not treated as this visitor\'s draft', () => {
+    const harness = setup({
+        storage: {
+            starterQuizPending: memberCacheOf('2026-07-31T00:00:00.000Z'),
+        },
+        categoryIds: ['paid-media', 'retail-marketplace'],
+    })
+
+    assert.equal(harness.api.getDraftQuizSelection(), null)
+    assert.equal(harness.api.restoreQuizSelections(), false)
+    assert.deepEqual(
+        harness.checkedIds(),
+        [],
+        "another member's answers must never be restored on /quiz",
+    )
+})
+
+test('a truthy non-string marker still counts as a member cache', () => {
+    // normalize() does not coerce, and sessionStorage is visitor-writable, so a
+    // marker that survived a round trip as a number must be rejected, not throw.
+    for (const marker of [1754006400000, true, { at: 'x' }]) {
+        const harness = setup({
+            storage: { starterQuizPending: memberCacheOf(marker) },
+            categoryIds: ['paid-media', 'retail-marketplace'],
+        })
+
+        assert.equal(
+            harness.api.getDraftQuizSelection(),
+            null,
+            `marker ${JSON.stringify(marker)} should read as a member cache`,
+        )
+    }
+})
+
+test('an empty or absent marker is still an ordinary pre-signup draft', () => {
+    // savePendingQuiz() never writes the field, so its absence is the normal
+    // funnel case and must keep working.
+    for (const marker of ['', '   ', null, undefined]) {
+        const harness = setup({
+            storage: { starterQuizPending: memberCacheOf(marker) },
+            categoryIds: ['paid-media', 'retail-marketplace'],
+        })
+
+        assert.equal(harness.api.restoreQuizSelections(), true)
+        assert.deepEqual(harness.checkedIds(), ['retail-marketplace'])
+    }
+})
+
+test('a member cache falls back to the homepage seed rather than blocking prefill', () => {
+    const harness = setup({
+        storage: {
+            quizSelectedCategories: JSON.stringify(['retail-marketplace']),
+            starterQuizPending: memberCacheOf('2026-07-31T00:00:00.000Z'),
+        },
+        categoryIds: ['paid-media', 'retail-marketplace'],
+    })
+
+    assert.equal(harness.api.restoreQuizSelections(), false)
+    assert.equal(harness.logs.includes('homepage seed path ran'), true)
+})
+
+// The matching half of this contract — that savePendingQuiz() never *stamps*
+// memberstackSavedAt — is owned by quiz-results-pending-draft.test.js, next to the
+// discriminator that depends on it. Not duplicated here.
+
 test('the homepage seed is cleared once, so clearing every answer cannot replay it', () => {
     // Without this, unchecking everything left an empty draft and the seed came
     // back on the next load.
