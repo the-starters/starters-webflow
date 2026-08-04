@@ -357,12 +357,20 @@
 
   var documentObject = global.document
   if (!documentObject) return
-  configureProfileRoot(documentObject, global.location && global.location.pathname)
+  var configuredProfileRoot = configureProfileRoot(documentObject, global.location && global.location.pathname)
   bindReviewFormToSingleProject(documentObject)
   installReviewFormKeys(documentObject, global.crypto)
 
   var queued = global.WfXano || []
   global.WfXano = queued
+  // Site-level wf-xano can finish booting before this page-level loader runs.
+  // In that order it has already skipped the Reviews wrapper because the
+  // authored template did not exist yet. Re-run initialization for only this
+  // configured root after supplying the hidden template; init() is idempotent
+  // for roots that were already initialized.
+  if (configuredProfileRoot && queued && typeof queued.init === 'function') {
+    queued.init(configuredProfileRoot)
+  }
   if (queued && typeof queued.push === 'function') {
     queued.push(function (wfx) {
       wireInstances(wfx, documentObject)
