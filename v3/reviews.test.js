@@ -61,11 +61,12 @@ function documentFixture() {
 function load(options = {}) {
   const document = options.document || documentFixture()
   const callbacks = []
+  const wfx = options.wfx || callbacks
   const window = {
     document,
     location: { pathname: options.pathname || '/not-a-profile' },
     crypto: options.crypto || { randomUUID: () => 'uuid-123' },
-    WfXano: callbacks,
+    WfXano: wfx,
     CustomEvent: class CustomEvent { constructor(name, init) { this.type = name; this.detail = init.detail } },
     Uint32Array,
     Math,
@@ -88,6 +89,19 @@ test('configures the public wrapper with a slug before wf-xano boot', () => {
   assert.equal(fixture.root.getAttribute('wf-xano-param-starter_slug'), 'elvis-p')
   assert.equal(fixture.root.childNodes[0].getAttribute('wf-xano-element'), 'template')
   assert.equal(fixture.root.childNodes[0].hidden, true)
+})
+
+test('initializes the profile wrapper when wf-xano already booted', () => {
+  const fixture = documentFixture()
+  const initialized = []
+  const callbacks = []
+  const wfx = {
+    init(root) { initialized.push(root) },
+    push(callback) { callbacks.push(callback) },
+  }
+  load({ document: fixture, pathname: '/hire/elvis-p', wfx })
+  assert.deepEqual(initialized, [fixture.root])
+  assert.equal(callbacks.length, 1)
 })
 
 test('sets a fresh stable-project idempotency key in capture phase', () => {

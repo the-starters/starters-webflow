@@ -1578,10 +1578,13 @@ event `starters:review-submitted`; it does not perform a second write.
 On the public profile, use one wf-xano wrapper with
 `wf-xano-instance="starter-reviews"` and `data-reviews-v3`. The adapter derives
 the decoded slug only from the canonical `/hire/{slug}` path and sets
-`wf-xano-param-starter_slug` before wf-xano boots. When the wrapper has no
-authored `wf-xano-element="template"`, the adapter adds a hidden, aria-hidden
-placeholder so wf-xano can initialize; review cards are rendered only into the
-separate `data-reviews-v3-list` target. Inside the authored section, use
+`wf-xano-param-starter_slug` before initializing the wrapper. When the wrapper
+has no authored `wf-xano-element="template"`, the adapter adds a hidden,
+aria-hidden placeholder so wf-xano can initialize. If site-level wf-xano has
+already booted and skipped that formerly incomplete wrapper, the adapter calls
+the runtime's idempotent `init()` for only this configured root. Review cards
+are rendered only into the separate `data-reviews-v3-list` target. Inside the
+authored section, use
 `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate values
 and `data-reviews-v3-list` for the card target. The Xano response is the
 authority and must expose only approved reviews. Its canonical envelope is:
