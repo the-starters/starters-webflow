@@ -1,7 +1,7 @@
 /**
  * Memberstack plan dates — render a member's plan/billing dates into the page.
  *
- * @release v1.59.89
+ * @release v1.59.90
  *
  * ONE job: find every element carrying `ms-form-pause-date`, resolve the named
  * date off the logged-in Memberstack member, and write it as text formatted
@@ -761,7 +761,7 @@
   window.StartersPlanDates = {
     // Keep in sync with the @release line in this file's header comment; the
     // account-settings/plan-dates.test.js drift guard asserts they match.
-    release: 'v1.59.89',
+    release: 'v1.59.90',
     // Every key here is either a staging console check or a seam the test suite
     // drives directly, and all of them are listed in account-settings/README.md —
     // an earlier revision exported 27 keys while documenting 8, including a
