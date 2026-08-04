@@ -227,15 +227,16 @@ one route-level rule that page needs.
 > cost is the "All Members" requirement on the gated group above; narrow that group
 > to the paid plan again and these branches become dead code.
 >
-> `completed-brand-profile` is written last by `brand-account-controller.js`;
-> the hidden Designer input (`data-ms-member="completed-brand-profile"`) remains the native field contract, so completion
-> costs no network request to read — the chosen option for this decision
-> (2026-08-03) was the hidden-input write rather than a Xano flag. Truthiness is
+> `completed-brand-profile` is written last through Memberstack by
+> `brand-account-controller.js`; the hidden Designer input
+> (`data-ms-member="completed-brand-profile"`) remains the native field contract,
+> while the redirect reads the member object already in memory and makes no
+> network request. Truthiness is
 > the same rule as the `starter-quiz` marker: a string counts once trimmed
 > non-empty, a non-string truthy value counts as set, and an absent, empty, or
 > whitespace-only value means stay. It is consulted for the paid-Brand branch only;
 > a stray value on another role means nothing. Two consequences are deliberate: the
-> paid-Brand branch is inert until the input starts writing, and members who
+> paid-Brand branch is inert until the controller writes the field, and members who
 > completed the form before the field existed read as not-done until they resubmit
 > once (there is no backfill). The free-Brand and Talent branches need no new field
 > and are live as soon as the embed is. Unmapped, cross-role conflicted, and
