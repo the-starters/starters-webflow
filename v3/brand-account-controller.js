@@ -205,9 +205,14 @@
   }
 
   async function sendResetPasswordEmailOnce(form, client, email) {
-    var attemptedEmail = passwordEmailAttempts.get(form)
-    if (attemptedEmail === email) return { attempted: false }
-    passwordEmailAttempts.set(form, email)
+    var normalizedEmail = trim(email).toLowerCase()
+    var attemptedEmails = passwordEmailAttempts.get(form)
+    if (!attemptedEmails) {
+      attemptedEmails = new Set()
+      passwordEmailAttempts.set(form, attemptedEmails)
+    }
+    if (attemptedEmails.has(normalizedEmail)) return { attempted: false }
+    attemptedEmails.add(normalizedEmail)
 
     if (typeof client.sendMemberResetPasswordEmail !== 'function') {
       var unavailable = new Error('Password setup email is unavailable.')
@@ -217,7 +222,7 @@
 
     try {
       await withTimeout(function () {
-        return client.sendMemberResetPasswordEmail({ email: email })
+        return client.sendMemberResetPasswordEmail({ email: normalizedEmail })
       })
       return { attempted: true }
     } catch (error) {

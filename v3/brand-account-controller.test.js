@@ -678,9 +678,9 @@ test('Build Account does not retry an ambiguously acknowledged email on the same
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
-test('Account Security does not retry an ambiguous email send after auth changed', async () => {
+test('Account Security suppresses an A-B-A replay after ambiguous email sends', async () => {
   let deliveries = 0
-  const securityForm = makeForm('security', { email: 'next@example.com' })
+  const securityForm = makeForm('security', { email: 'a@example.com' })
   const environment = loadController({
     buildForm: null,
     securityForm,
@@ -694,13 +694,17 @@ test('Account Security does not retry an ambiguous email send after auth changed
 
   securityForm.submitEvent()
   await settle()
+  securityForm.inputs.get('[data-ms-member="email"]').value = 'B@EXAMPLE.COM'
+  securityForm.submitEvent()
+  await settle()
+  securityForm.inputs.get('[data-ms-member="email"]').value = ' A@EXAMPLE.COM '
   securityForm.submitEvent()
   await settle()
 
-  assert.equal(deliveries, 1)
+  assert.equal(deliveries, 2)
   assert.equal(
     environment.calls.filter((call) => call.method === 'updateMemberAuth').length,
-    1,
+    3,
   )
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
