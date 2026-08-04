@@ -229,21 +229,43 @@ test('the day is not zero-padded in the default format', () => {
   assert.equal(api.formatDate('2000-01-05T00:00:00Z'), 'Jan 5, 2000')
 })
 
-test('format presets each render their own shape', () => {
+test('there is exactly one output shape and no way to ask for another', () => {
   const { api } = load()
   const jan10 = '2000-01-10T00:00:00Z'
-  assert.equal(api.formatDate(jan10, 'medium'), 'Jan 10, 2000')
-  assert.equal(api.formatDate(jan10, 'long'), 'January 10, 2000')
-  assert.equal(api.formatDate(jan10, 'numeric'), '01/10/2000')
-  assert.equal(api.formatDate(jan10, 'iso'), '2000-01-10')
+  assert.equal(api.formatDate(jan10), 'Jan 10, 2000')
+  // The removed `-format` presets used to arrive as extra arguments. Any caller
+  // still passing them must get the one shape, not a silent second format.
+  assert.equal(api.formatDate(jan10, 'long'), 'Jan 10, 2000')
+  assert.equal(api.formatDate(jan10, 'iso'), 'Jan 10, 2000')
 })
 
-test('formatting defaults to UTC so the printed day equals the billing day', () => {
+test('formatting is UTC and cannot be overridden per element', () => {
   const { api } = load()
-  // 2000-01-10T02:00Z is still Jan 9 in Los Angeles; UTC must win by default.
+  // 2000-01-10T02:00Z is still Jan 9 in Los Angeles; UTC must win, always.
   const instant = '2000-01-10T02:00:00Z'
   assert.equal(api.formatDate(instant), 'Jan 10, 2000')
-  assert.equal(api.formatDate(instant, 'medium', 'America/Los_Angeles'), 'Jan 9, 2000')
+  assert.equal(
+    api.formatDate(instant, 'medium', 'America/Los_Angeles'),
+    'Jan 10, 2000',
+    'a zone override must not be honoured — it desynced addMonths from formatting'
+  )
+})
+
+test('next-billing and resumes-at stay in the same zone as each other', () => {
+  // The regression the `-tz` removal fixes: 2026-03-01T00:00Z formatted in
+  // America/Los_Angeles printed "Feb 28" beside a one-month "Mar 31" — 31 days
+  // for a one-month choice. Both fields must agree on the calendar.
+  const { api } = load()
+  const m = member([
+    Object.assign({}, PAID, {
+      payment: Object.assign({}, PAID.payment, { nextBillingDate: Date.UTC(2026, 2, 1) / 1000 }),
+    }),
+  ])
+  assert.equal(api.formatDate(api.resolveField(m, 'next-billing')), 'Mar 1, 2026')
+  assert.equal(
+    api.formatDate(api.resolveField(m, 'resumes-at', { pauseMonths: 1 })),
+    'Apr 1, 2026'
+  )
 })
 
 /* ------------------------------- addMonths -------------------------------- */
@@ -270,12 +292,13 @@ test('addMonths returns null for an unresolvable date or count', () => {
   assert.equal(api.addMonths('2026-01-01T00:00:00Z', 'abc'), null)
 })
 
-test('daysBetween reports the real pause length, not a nominal 30', () => {
+test('a clamped month is not a fixed number of days', () => {
+  // Worth stating even without a daysBetween helper (removed as dead code): a
+  // "one month" pause is 31 days from Aug 20 and 28 from Feb 1.
   const { api } = load()
-  const next = '2026-08-20T00:00:00Z'
-  assert.equal(api.daysBetween(next, api.addMonths(next, 1)), 31)
-  assert.equal(api.daysBetween('2026-02-01T00:00:00Z', api.addMonths('2026-02-01T00:00:00Z', 1)), 28)
-  assert.equal(api.daysBetween(null, next), null)
+  const span = (from) => (api.addMonths(from, 1).getTime() - new Date(from).getTime()) / 86400000
+  assert.equal(span('2026-08-20T00:00:00Z'), 31)
+  assert.equal(span('2026-02-01T00:00:00Z'), 28)
 })
 
 /* ---------------------------- plan connections ---------------------------- */
@@ -323,10 +346,11 @@ test('inactive connections are never picked', () => {
   assert.equal(api.pickConnection(member([cancelled])), null)
 })
 
-test('a pinned planId that is absent reports nothing rather than the wrong plan', () => {
+test('pickConnection ignores a second argument (the removed planId pin)', () => {
+  // `ms-form-pause-id` was cut as unrequested. A stale caller passing a plan id
+  // must not silently change which connection is read.
   const { api } = load()
-  assert.equal(api.pickConnection(member([FREE, PAID]), 'pln_paid').id, 'con_paid')
-  assert.equal(api.pickConnection(member([FREE, PAID]), 'pln_missing'), null)
+  assert.equal(api.pickConnection(member([FREE, PAID]), 'pln_free').id, 'con_paid')
 })
 
 test('no member and no connections both resolve to null', () => {
@@ -340,13 +364,15 @@ test('no member and no connections both resolve to null', () => {
 test('each field resolves off the paid connection', () => {
   const { api } = load()
   const m = member([FREE, PAID])
+  // Array.from: the module's arrays are built inside the vm realm, so their
+  // prototype is not this realm's Array and strict deepEqual rejects them.
+  assert.deepEqual(Array.from(api.fields), ['signup', 'next-billing', 'resumes-at'])
   assert.equal(api.formatDate(api.resolveField(m, 'signup')), 'Jan 10, 2000')
-  assert.equal(api.formatDate(api.resolveField(m, 'last-billing')), 'Jul 20, 2026')
   assert.equal(api.formatDate(api.resolveField(m, 'next-billing')), 'Aug 20, 2026')
   assert.equal(
     api.formatDate(api.resolveField(m, 'resumes-at', { pauseMonths: 1 })),
     'Sep 20, 2026',
-    'resumes-at is anchored on next-billing, not on signup'
+    'resumes-at defaults to the next-billing anchor'
   )
 })
 
@@ -359,35 +385,24 @@ test('resumes-at is anchored on next-billing and not on the signup date', () => 
   assert.notEqual(resumes, 'Feb 10, 2000')
 })
 
-test('a free-only member has no billing dates but still has a signup date', () => {
+test('a free-only member has no billing date but still has a signup date', () => {
   const { api } = load()
   const m = member([FREE])
   assert.equal(api.formatDate(api.resolveField(m, 'signup')), 'Jan 10, 2000')
   assert.equal(api.resolveField(m, 'next-billing'), null)
-  assert.equal(api.resolveField(m, 'last-billing'), null)
   assert.equal(api.resolveField(m, 'resumes-at', { pauseMonths: 1 }), null)
 })
 
-test('cancel-at resolves when present and stays empty when the key is absent', () => {
-  const { api } = load()
-  const withCancel = Object.assign({}, PAID, {
-    payment: Object.assign({}, PAID.payment, { cancelAtDate: Date.UTC(2026, 8, 1) / 1000 }),
-  })
-  assert.equal(api.formatDate(api.resolveField(member([withCancel]), 'cancel-at')), 'Sep 1, 2026')
-
-  // `cancelAtDate` is the one field name not confirmed against Memberstack's
-  // published response, so an absent key must read as "no date" (null) and NOT
-  // as "unknown field" (undefined) — otherwise staging warns about a typo the
-  // author never made. Guards the orNull() coercion in resolveField.
-  assert.equal(api.resolveField(member([PAID]), 'cancel-at'), null)
-})
-
-test('an absent cancel-at renders the empty text without a bogus typo warning', () => {
+test('an absent date renders the empty text without a bogus typo warning', () => {
+  // A member with no paid connection legitimately has no next-billing date. That
+  // must read as "no date" (null), never as "unknown field" (undefined), or
+  // staging warns the author about a misspelling they never made. Guards orNull().
   const { api, warnings } = load({ hostname: 'localhost' })
-  const el = target('cancel-at')
-  api.renderElement(el, member([PAID]))
+  assert.equal(api.resolveField(member([FREE]), 'next-billing'), null)
+  const el = target('next-billing')
+  api.renderElement(el, member([FREE]))
   assert.equal(el.textContent, '—')
-  assert.deepEqual(warnings, [], 'a member who simply is not cancelling is not an authoring error')
+  assert.deepEqual(warnings, [], 'a member on a free plan is not an authoring error')
 })
 
 test('an unknown field name is distinguishable from a genuinely absent date', () => {
@@ -428,10 +443,14 @@ test('config attributes are inherited from an ancestor wrapper', () => {
   const { api } = load()
   const wrapper = new El('div')
     .setAttribute('ms-form-pause-months', '3')
-    .setAttribute('ms-form-pause-format', 'long')
+    .setAttribute('ms-form-pause-empty', 'not available')
   const el = wrapper.append(target('resumes-at'))
   api.renderElement(el, member([PAID]))
-  assert.equal(el.textContent, 'November 20, 2026')
+  assert.equal(el.textContent, 'Nov 20, 2026')
+
+  const freeEl = wrapper.append(target('resumes-at'))
+  api.renderElement(freeEl, member([FREE]))
+  assert.equal(freeEl.textContent, 'not available', 'the wrapper empty text is inherited too')
 })
 
 test('an attribute on the element beats the same one on the wrapper', () => {
@@ -442,11 +461,63 @@ test('an attribute on the element beats the same one on the wrapper', () => {
   assert.equal(el.textContent, 'Sep 20, 2026')
 })
 
-test('ms-form-pause-id pins the element to one plan connection', () => {
+/* ------------------------------ resumes-at anchor ------------------------- */
+
+test('the literal ask — signup + N months — is reachable', () => {
+  // The originating request was "signup date + 1 month if they pause for one
+  // month". An earlier revision hardcoded the next-billing anchor and left no
+  // way to express this at all. ms-form-pause-anchor="signup" restores it.
   const { api } = load()
-  const el = target('next-billing').setAttribute('ms-form-pause-id', 'pln_free')
-  api.renderElement(el, member([FREE, PAID]))
-  assert.equal(el.textContent, '—', 'the free plan has no billing date')
+  const el = target('resumes-at')
+    .setAttribute('ms-form-pause-anchor', 'signup')
+    .setAttribute('ms-form-pause-months', '1')
+  api.renderElement(el, member([PAID]))
+  assert.equal(el.textContent, 'Feb 10, 2000', 'signup Jan 10 2000 + 1 month')
+})
+
+test('the anchor defaults to next-billing and is inherited from a wrapper', () => {
+  const { api } = load()
+  const plain = target('resumes-at')
+  api.renderElement(plain, member([PAID]))
+  assert.equal(plain.textContent, 'Sep 20, 2026', 'default anchor')
+
+  const wrapper = new El('div').setAttribute('ms-form-pause-anchor', 'signup')
+  const inherited = wrapper.append(target('resumes-at'))
+  api.renderElement(inherited, member([PAID]))
+  assert.equal(inherited.textContent, 'Feb 10, 2000')
+})
+
+test('a signup anchor is the only one that resolves for a free-plan member', () => {
+  const { api } = load()
+  const free = member([FREE])
+
+  const onNextBilling = target('resumes-at')
+  api.renderElement(onNextBilling, free)
+  assert.equal(onNextBilling.textContent, '—', 'no paid connection, no next-billing')
+
+  const onSignup = target('resumes-at').setAttribute('ms-form-pause-anchor', 'signup')
+  api.renderElement(onSignup, free)
+  assert.equal(onSignup.textContent, 'Feb 10, 2000')
+})
+
+test('an unknown anchor warns on staging and falls back to next-billing', () => {
+  const { api, warnings } = load({ hostname: 'localhost' })
+  const el = target('resumes-at').setAttribute('ms-form-pause-anchor', 'subscription-start')
+  api.renderElement(el, member([PAID]))
+  assert.equal(el.textContent, 'Sep 20, 2026')
+  assert.ok(
+    warnings.some((w) => w.includes('ms-form-pause-anchor') && w.includes('next-billing')),
+    'expected an anchor warning naming the fallback, got: ' + JSON.stringify(warnings)
+  )
+  assert.deepEqual(Array.from(api.anchors), ['next-billing', 'signup'])
+})
+
+test('the anchor composes with a radio-chosen pause length', () => {
+  const page = pauseGroupPage(2) // 3 months checked
+  page.out.setAttribute('ms-form-pause-anchor', 'signup')
+  const { api } = load({ root: page.root })
+  api.renderAll(member([PAID]))
+  assert.equal(page.out.textContent, 'Apr 10, 2000', 'signup Jan 10 2000 + 3 months')
 })
 
 test('a bad pause value falls back to one month and warns on staging', () => {
@@ -579,6 +650,72 @@ test('parseMonths reads a bare count and a unit-suffixed one alike', () => {
   for (const junk of [null, undefined, '', 'months', 'abc']) {
     assert.equal(api.parseMonths(junk), null, JSON.stringify(String(junk)))
   }
+})
+
+test('a blank Designer Value falls back to the label text', () => {
+  // Webflow only emits a radio's `value` when the author fills Radio Settings ->
+  // Value. A group whose options merely READ "1/2/3 months" reports "" or "on",
+  // which used to be indistinguishable from "nothing chosen": the date stuck on
+  // the default and a reveal wrapper stayed permanently invisible, silently.
+  for (const blank of ['', 'on']) {
+    const root = new El('div')
+    const wrapper = root.append(new El('div')).setAttribute('ms-form-pause-input', '')
+    const r = radio('pause', blank, true)
+    r.label.textContent = '3 months'
+    wrapper.append(r.label)
+    const out = root.append(target('resumes-at'))
+
+    const { api } = load({ root })
+    api.renderAll(member([PAID]))
+    assert.equal(out.textContent, 'Nov 20, 2026', 'value=' + JSON.stringify(blank))
+  }
+})
+
+test('the label fallback still ignores an UNCHECKED option', () => {
+  const root = new El('div')
+  const wrapper = root.append(new El('div')).setAttribute('ms-form-pause-input', '')
+  const r = radio('pause', '', false)
+  r.label.textContent = '3 months'
+  wrapper.append(r.label)
+  const out = root.append(target('resumes-at'))
+
+  const { api } = load({ root })
+  api.renderAll(member([PAID]))
+  assert.equal(out.textContent, 'Sep 20, 2026', 'nothing chosen: the default, not the label')
+})
+
+test('a selected control with no month count anywhere warns by name', () => {
+  const root = new El('div')
+  const wrapper = root.append(new El('div')).setAttribute('ms-form-pause-input', '')
+  const r = radio('pause', '', true)
+  r.label.textContent = 'Pause my membership'
+  wrapper.append(r.label)
+  const out = root.append(target('resumes-at'))
+
+  const { api, warnings } = load({ root, hostname: 'localhost' })
+  api.renderAll(member([PAID]))
+  assert.equal(out.textContent, 'Sep 20, 2026', 'falls back to one month')
+  assert.ok(
+    warnings.some((w) => w.includes('ms-form-pause-input') && w.includes('no month count')),
+    'expected an authoring warning, got: ' + JSON.stringify(warnings)
+  )
+})
+
+test('a blank-value group still reveals its wrapper via the label fallback', () => {
+  // End-to-end version of the silent-blank failure: with ms-form-pause-reveal the
+  // old behaviour left the sentence invisible forever with nothing in the console.
+  const root = new El('div')
+  const groupWrapper = root.append(new El('div')).setAttribute('ms-form-pause-input', '')
+  const r = radio('pause', '', true)
+  r.label.textContent = '2 months'
+  groupWrapper.append(r.label)
+  const wrapper = root.append(new El('div')).setAttribute('ms-form-pause-reveal', '')
+  const date = wrapper.append(target('resumes-at'))
+
+  const { api } = load({ root })
+  api.renderAll(member([PAID]))
+  assert.equal(date.textContent, 'Oct 20, 2026')
+  assert.equal(wrapper.classList.contains('is-ms-form-pause-shown'), true)
 })
 
 /** A wrapper-marked 1/2/3-month radio group plus a resumes-at output. */

@@ -27,27 +27,57 @@ required:
 | `ms-form-pause-input` | The radio-group wrapper, **or** each input | No | — | Marks the control the member uses to choose the pause length. `resumes-at` re-renders on every `change` |
 | `ms-form-pause-reveal` | A wrapper around the whole sentence | No | — | Keeps the block hidden until the member picks an option **and** every date inside resolves. Needs the paired CSS rule below |
 | `ms-form-pause-months` | The date element or any ancestor | No | `1` | Static pause length in months. Used when no marked control is checked, so the date is never blank before the member picks |
-| `ms-form-pause-format` | The date element or any ancestor | No | `medium` | Date shape: `medium` (`Jan 10, 2000`), `long` (`January 10, 2000`), `numeric` (`01/10/2000`), `iso` (`2000-01-10`) |
+| `ms-form-pause-anchor` | The date element or any ancestor | No | `next-billing` | What `resumes-at` counts from: `next-billing` or `signup` |
 | `ms-form-pause-empty` | The date element or any ancestor | No | `—` | Text rendered when the date cannot be resolved — logged out, free plan, failed lookup. Never `Invalid Date`, never a stale value |
-| `ms-form-pause-id` | The date element or any ancestor | No | — | Pins the read to one Memberstack `planId` instead of auto-picking the member's paid connection. A `planId` that matches nothing renders the empty text rather than the wrong plan |
-| `ms-form-pause-tz` | The date element or any ancestor | No | `UTC` | IANA timezone used for formatting. Change it only for a block that must show wall-clock time in a fixed business zone; see the UTC note below |
 
 Everything except `ms-form-pause-date` and `ms-form-pause-input` is read from the
 element **or any ancestor**, so one wrapper can configure a whole block. An
 attribute on the element itself beats the same one on a wrapper.
+
+The contract is deliberately this small. A `-format` attribute with four date
+presets, a `-tz` zone override, and a `-id` plan pin all shipped in an earlier
+revision and were cut: nothing needed them, and `-tz` actively contradicted the
+month arithmetic (see the UTC note). Add one back the day a page needs it.
 
 ### Values for `ms-form-pause-date`
 
 | Value | Source | Notes |
 | --- | --- | --- |
 | `signup` | `member.createdAt` | The signup date, **not** the subscription start. A member who joined free in January and upgraded in June still reads January |
-| `last-billing` | `payment.lastBillingDate` | Start of the current billing period |
 | `next-billing` | `payment.nextBillingDate` | End of the current period; the paid-through date |
-| `cancel-at` | `payment.cancelAtDate` | Set only when cancel-at-period-end is on. Field name unconfirmed — see the note below |
-| `resumes-at` | `next-billing` + pause length | The date billing restarts after the pause. Pause length comes from `ms-form-pause-input` or `ms-form-pause-months` |
+| `resumes-at` | anchor + pause length | The date billing restarts. Anchor from `ms-form-pause-anchor`, length from `ms-form-pause-input` or `ms-form-pause-months` |
 
-Only `signup` works on a free-plan member; every `payment.*` field is legitimately
-absent there (Memberstack sends `payment: null`) and renders the empty text.
+Only `signup` resolves for a free-plan member: Memberstack sends `payment: null`
+there, so `next-billing` renders the empty text, and `resumes-at` does too unless
+its anchor is `signup`.
+
+Every field name here is confirmed against Memberstack's published response
+example, which lists `amount`, `currency`, `status`, `lastBillingDate`, and
+`nextBillingDate` on `payment`, plus `createdAt` on the member. Keep it that way.
+An earlier revision shipped a `cancel-at` field reading `payment.cancelAtDate` — a
+key absent from that example, so it could only ever have rendered the empty text.
+A `last-billing` field also shipped unused. Verify a key exists on a real member
+before adding a field for it.
+
+### Choosing what `resumes-at` counts from
+
+```html
+<!-- default: the paid-through date -->
+<span ms-form-pause-date="resumes-at">—</span>
+
+<!-- a month from when they joined -->
+<span ms-form-pause-date="resumes-at" ms-form-pause-anchor="signup">—</span>
+```
+
+`next-billing` is the default because a member pausing on the 20th of a cycle that
+renews on the 1st would otherwise ride unpaid days or be charged mid-pause — the
+paid-through date is the end of the period they already bought, which is what
+Stripe's `pause_collection.resumes_at` means.
+
+That default is a recommendation, not a restriction. `signup` answers a different
+and legitimate question, and it is the **only** anchor that resolves for a member
+with no paid connection. An earlier revision hardcoded the next-billing anchor and
+left no way to express signup + N at all; the default was right, its shape was not.
 
 A three-month pause block, configured once on the wrapper:
 
@@ -149,11 +179,24 @@ Install it in Page Settings -> Custom Code -> Footer, **after** the Memberstack
 script:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.89/account-settings/plan-dates.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/account-settings/plan-dates.js"></script>
 ```
 
-Pin the tag rather than using `@latest`, matching the other V3 embeds, and bump
-the version here whenever this module ships a fix.
+`@latest` is the default the repo README asks for, so a later release reaches the
+page without another Webflow edit. Remember `@latest` resolves to the newest
+**tag**, not the newest commit — a merge without a tag keeps serving the previous
+release.
+
+Pin a specific `@vX.Y.Z` instead only when this page must not move on its own, and
+accept the trade: every fix then needs a Webflow edit as well as a tag. This
+module ships as `@release v1.59.88` (see the header comment and the exported
+`release` property, which a test asserts match). **Do not paste a pinned URL
+naming a tag that does not exist yet** — pin after the tag is cut, and verify with:
+
+```sh
+curl -fsS -o /dev/null -w '%{http_code}\n' \
+  "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.88/account-settings/plan-dates.js"
+```
 
 **This module does not pause anything.** It only reads and prints. Pausing a
 subscription needs the Stripe secret key, so it cannot happen in the browser — it
@@ -161,17 +204,18 @@ belongs behind a Xano endpoint that calls Stripe `pause_collection` with
 `resumes_at`. Installing this script before that endpoint exists is safe; the
 dates simply render.
 
-`resumes-at` is anchored on `next-billing` and never on `signup`. A member who
-pauses on the 20th with a cycle that renews on the 1st would, under "signup plus
-one month", either ride 11 unpaid days or be charged mid-pause. The paid-through
-date is the end of the period they already bought, so the pause starts there.
-That is also what Stripe's `pause_collection.resumes_at` means.
+Dates format in UTC, and that is **not** configurable. Memberstack returns billing
+dates as instants, and rendering an instant in the viewer's local zone moves the
+calendar day for everyone west of UTC — a member in Los Angeles would read a
+renewal one day before the one they are billed on.
 
-Dates format in UTC by default because Memberstack returns billing dates as
-instants. Rendering an instant in the viewer's local zone moves the calendar day
-for everyone west of UTC, so a member in Los Angeles would read a renewal one day
-before the one they are billed on. Override `ms-form-pause-tz` only for a block
-that must show wall-clock time in a fixed business zone.
+A per-block `ms-form-pause-tz` override existed and was removed rather than fixed,
+because month arithmetic runs on UTC calendar fields and the override made the two
+fields disagree: `nextBillingDate` of `2026-03-01T00:00:00Z` in
+`America/Los_Angeles` printed `next-billing` as **Feb 28, 2026** beside a one-month
+`resumes-at` of **Mar 31, 2026** — 31 days shown for a one-month choice. If a fixed
+business zone is ever genuinely needed, the arithmetic has to move into that zone
+in the same change. Do not reintroduce the attribute on its own.
 
 Month arithmetic clamps the day: Jan 31 plus one month is Feb 28, Feb 29 in a
 leap year, and Aug 31 plus one month is Sep 30. Plain `setMonth` overflows Jan 31
@@ -187,9 +231,7 @@ passed straight to `new Date()` renders in January 1970.
 The plan connection is auto-picked as the first **active** connection that
 carries a `payment` object, then any active connection. A member can hold both a
 free and a paid connection (see `navbar-embeds/memberstack/free-paid-anon.js`)
-and only the paid one has billing dates, so "first connection" is never safe. A
-`ms-form-pause-id` that matches nothing renders the empty text rather than falling
-back to the wrong plan.
+and only the paid one has billing dates, so "first connection" is never safe.
 
 Fail-quiet everywhere. A logged-out visitor, a free-only member, a `payment:
 null` connection, a failed `getCurrentMember`, or Memberstack never appearing all
@@ -197,24 +239,49 @@ render the `ms-form-pause-empty` text — never a stale date and never
 `Invalid Date`. A page with no `[ms-form-pause-date]` element never calls
 Memberstack at all.
 
-One field name here is **not** confirmed against Memberstack's published response
-example, which lists `amount`, `currency`, `status`, `lastBillingDate`, and
-`nextBillingDate`: `payment.cancelAtDate`. Where that key is absent, `cancel-at`
-renders the empty text, which is the correct failure. Confirm it against a real
-cancel-at-period-end member before shipping UI that depends on it.
+Diagnostics warn on staging, localhost, and Cloudflare tunnel hosts, or with
+`window.STARTERS_DEBUG === true`; production stays silent. What warns: an unknown
+`ms-form-pause-date` value, an unknown `ms-form-pause-anchor`, a non-numeric
+`ms-form-pause-months`, a **selected** pause control with no month count in its
+value or its label, a failed `getCurrentMember`, and Memberstack never appearing.
 
-Diagnostics (unknown field name, non-numeric pause, unknown format, a failed
-member lookup, Memberstack never appearing) warn on staging, localhost, and
-Cloudflare tunnel hosts, or with `window.STARTERS_DEBUG === true`. Production
-stays silent.
+Deliberately silent: a member with no paid connection, and a group with nothing
+checked yet. Both are ordinary states, not authoring mistakes.
 
-`window.StartersPlanDates` exposes `toDate`, `formatDate`, `addMonths`,
-`daysBetween`, `pickConnection`, `resolveField`, `renderElement`, and `renderAll`
-for console checks on staging.
+### `window.StartersPlanDates`
+
+Every exported key, for staging console checks. An earlier revision exported 27
+keys while documenting 8; if you add one, document it in the same commit.
+
+| Key | Use |
+| --- | --- |
+| `release` | The tag this file ships in; matches the `@release` header |
+| `diagnosticsEnabled()` | Whether this host warns |
+| `toDate(v)` | Normalize Date / ISO / Unix seconds / Unix ms |
+| `formatDate(v)` | `"Jan 10, 2000"`, always UTC |
+| `addMonths(v, n)` | Day-clamping month arithmetic |
+| `parseMonths(raw)` | First integer in a value, or `null` |
+| `pickConnection(member)` | The connection dates are read from |
+| `resolveField(member, field, opts)` | One raw date; `opts` takes `pauseMonths` and `anchor` |
+| `resolvePause(el)` | `{months, fromControl}` for an element |
+| `renderElement(el, member)` | Render one element; returns its text |
+| `renderAll(member)` | Render the page |
+| `rerender()` | Re-render against the member already resolved |
+| `shouldReveal(wrapper, resolved)` | Reveal decision for one wrapper |
+| `applyReveal(resolved)` | Toggle every reveal wrapper |
+| `fields` | `['signup', 'next-billing', 'resumes-at']` |
+| `anchors` | `['next-billing', 'signup']` |
 
 Run its focused test with:
 
 ```sh
 node --test account-settings/plan-dates.test.js
 ```
+
+### A note on the two attribute prefixes in this folder
+
+`plan-dates.js` uses `ms-form-pause-*` and its sibling `msform-cancel-state.js`
+uses `msform-cancel-state-*`. Two dialects in one directory is not deliberate
+design; it is what two features named independently produced. Match whichever
+module you are extending, and prefer converging on one prefix if a third arrives.
 

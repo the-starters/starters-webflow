@@ -1,7 +1,7 @@
 /**
  * Memberstack plan dates — render a member's plan/billing dates into the page.
  *
- * @release v1.59.89
+ * @release v1.59.88
  *
  * ONE job: find every element carrying `ms-form-pause-date`, resolve the named
  * date off the logged-in Memberstack member, and write it as text formatted
@@ -13,18 +13,23 @@
  *
  * Field names accepted by `ms-form-pause-date`:
  *   signup        member.createdAt — the SIGNUP date, not the subscription start
- *   last-billing  payment.lastBillingDate — start of the current billing period
  *   next-billing  payment.nextBillingDate — end of the current billing period
- *   cancel-at     payment.cancelAtDate — set only when cancel-at-period-end is on
- *   resumes-at    next-billing + the pause length (see ms-form-pause-months)
+ *   resumes-at    the anchor date + the pause length (see the two attrs below)
  *
  * Optional attributes, all readable from the element itself or any ancestor
  * (so a wrapper can set them once for a whole block):
- *   ms-form-pause-months="1"       months to add for `resumes-at` (default 1)
- *   ms-form-pause-format="medium"  medium (default) | long | numeric | iso
- *   ms-form-pause-empty="—"        text used when the date cannot be resolved
- *   ms-form-pause-id="pln_abc123"  pin to one plan connection instead of auto-pick
- *   ms-form-pause-tz="UTC"         advanced; see WHY UTC below
+ *   ms-form-pause-months="1"           months to add for `resumes-at` (default 1)
+ *   ms-form-pause-anchor="next-billing" what resumes-at counts from: next-billing
+ *                                       (default) or signup
+ *   ms-form-pause-empty="—"            text used when the date cannot be resolved
+ *
+ * The contract is deliberately this small. A `-format` attribute with four date
+ * presets, a `-tz` override, a `-id` plan pin, and `last-billing` / `cancel-at`
+ * fields all existed and were cut: nothing asked for them, `-tz` actively
+ * contradicted the month arithmetic (see WHY UTC), and `cancel-at` shipped on a
+ * `payment.cancelAtDate` key that is absent from Memberstack's published response
+ * example and so was never confirmed to exist. Add any of them back the day a
+ * page needs one, with the field verified first.
  *
  * HIDING THE WHOLE SENTENCE UNTIL THE MEMBER CHOOSES. Wrap the paragraph — text
  * and inline date together — in `ms-form-pause-reveal`, and paste the paired CSS
@@ -74,6 +79,16 @@
  * reporting whichever option sits first in the DOM rather than the one picked.
  * Radios, checkboxes, `<select>`, and a plain number input all work.
  *
+ * IF THE DESIGNER VALUE IS BLANK, THE LABEL TEXT IS READ INSTEAD. Webflow only
+ * emits a radio's `value` when the author fills in Radio Settings -> Value, so a
+ * group whose options merely *read* "1 month / 2 months / 3 months" reports "" or
+ * "on" to the browser. That used to be indistinguishable from "nothing chosen":
+ * `resumes-at` stuck on the default no matter which option was clicked and, with
+ * `ms-form-pause-reveal`, the sentence stayed permanently invisible with nothing
+ * in the console. Now the control's own label text is parsed as a fallback, and a
+ * selected control with no number anywhere warns on staging by name. Filling in
+ * the Designer Value is still the better authoring habit.
+ *
  * Sources are resolved nearest-first — a marked control inside the closest
  * ancestor that has one, then the document, then the static
  * `ms-form-pause-months`, then one month. Walking up before reading the document
@@ -81,20 +96,34 @@
  * checked yet, the static attribute (or the default) still renders, so the page
  * never shows a blank or broken date before the member touches the form.
  *
- * WHY `resumes-at` IS ANCHORED ON next-billing AND NOT ON signup:
+ * WHY `resumes-at` DEFAULTS TO next-billing, AND WHY signup IS STILL OFFERED:
  * a member who pauses on the 20th with a cycle that renews on the 1st would,
  * under "signup + 1 month", either ride 11 unpaid days or get charged mid-pause.
  * The paid-through date is the end of the period they already bought, so the
- * pause starts there. This mirrors Stripe's own `pause_collection.resumes_at`,
- * which is what has to perform the actual pause — see NOT A PAUSE below.
+ * pause starts there by default. This mirrors Stripe's own
+ * `pause_collection.resumes_at`, which is what has to perform the actual pause —
+ * see NOT A PAUSE below.
  *
- * WHY UTC IS THE DEFAULT TIMEZONE:
+ * That default is a recommendation, not a restriction. `signup` remains
+ * selectable via `ms-form-pause-anchor` because "a month from when they joined"
+ * is a different and legitimate question, and because it is the ONLY anchor that
+ * resolves for a member with no paid connection at all — `next-billing` is null
+ * there, so a signup-anchored `resumes-at` is the only one that can render. An
+ * earlier revision hardcoded the next-billing anchor and left no way to express
+ * signup + N; that was the wrong shape for a default, however good the default.
+ *
+ * WHY EVERY DATE IS FORMATTED IN UTC, WITH NO OVERRIDE:
  * Memberstack hands back billing dates as instants (Unix timestamps). Rendering
  * an instant in the viewer's local zone moves the calendar day for everyone west
  * of UTC, so a member in Los Angeles reads a renewal one day earlier than the
  * one they are actually billed on. Formatting in UTC keeps the printed day equal
- * to the billing day for every viewer. Override per element only if a specific
- * block must show wall-clock time in a fixed business zone.
+ * to the billing day for every viewer. A per-block override existed and was
+ * removed rather than fixed: month arithmetic runs on UTC calendar fields, so a
+ * zone override made the two fields disagree — 2026-03-01T00:00Z in
+ * America/Los_Angeles printed `next-billing` as "Feb 28, 2026" beside a
+ * one-month `resumes-at` of "Mar 31, 2026", 31 days for a one-month choice. If a
+ * fixed business zone is ever genuinely needed, the arithmetic has to move into
+ * that zone at the same time; do not reintroduce the attribute alone.
  *
  * WHY THE TIMESTAMP UNIT IS SNIFFED AND NOT ASSUMED:
  * `createdAt` arrives as an ISO string while the `payment.*` dates arrive as
@@ -109,12 +138,13 @@
  * a Xano endpoint that calls Stripe `pause_collection` with `resumes_at`. This
  * script is safe to install before that endpoint exists; it just shows the dates.
  *
- * UNVERIFIED FIELD: `payment.cancelAtDate` is the one field name here not
- * confirmed against Memberstack's published response example (the docs list
- * amount, currency, status, lastBillingDate, nextBillingDate). `cancel-at`
- * therefore renders the empty text on a member where that key is absent, which
- * is the correct failure. Confirm it against a real cancel-at-period-end member
- * before shipping UI that depends on it.
+ * EVERY FIELD NAME HERE IS CONFIRMED against Memberstack's published response
+ * example, which lists `amount`, `currency`, `status`, `lastBillingDate`, and
+ * `nextBillingDate` on `payment`, plus `createdAt` on the member. Keep it that
+ * way: an earlier revision shipped a `cancel-at` field reading
+ * `payment.cancelAtDate`, a key absent from that example, and it could only ever
+ * have rendered the empty text. Verify a key exists on a real member before
+ * adding a field for it.
  *
  * Re-renders on login/logout without a refresh via onAuthChange, plus a bfcache
  * (pageshow) guard, matching navbar-embeds/memberstack/free-paid-anon.js.
@@ -139,10 +169,8 @@
   var PAUSE_ATTR = 'ms-form-pause-months'
   var PAUSE_INPUT_ATTR = 'ms-form-pause-input'
   var PAUSE_INPUT = '[' + PAUSE_INPUT_ATTR + ']'
-  var FORMAT_ATTR = 'ms-form-pause-format'
+  var ANCHOR_ATTR = 'ms-form-pause-anchor'
   var EMPTY_ATTR = 'ms-form-pause-empty'
-  var PLAN_ID_ATTR = 'ms-form-pause-id'
-  var TZ_ATTR = 'ms-form-pause-tz'
   var REVEAL_ATTR = 'ms-form-pause-reveal'
   var REVEAL = '[' + REVEAL_ATTR + ']'
   var SHOWN_CLASS = 'is-ms-form-pause-shown'
@@ -151,8 +179,8 @@
 
   var DEFAULT_PAUSE_MONTHS = 1
   var DEFAULT_EMPTY = '—'
-  var DEFAULT_TZ = 'UTC'
-  var MS_PER_DAY = 86400000
+  var DEFAULT_ANCHOR = 'next-billing'
+  var ANCHORS = ['next-billing', 'signup']
   var MS_WAIT_MS = 2000
   var MS_POLL_MS = 100
 
@@ -160,11 +188,15 @@
   // year 2286; 1e10 milliseconds is 1970. No billing date falls in the overlap.
   var SECONDS_CEILING = 1e10
 
-  var FORMATS = {
-    medium: { month: 'short', day: 'numeric', year: 'numeric' }, // Jan 10, 2000
-    long: { month: 'long', day: 'numeric', year: 'numeric' }, //    January 10, 2000
-    numeric: { month: '2-digit', day: '2-digit', year: 'numeric' }, // 01/10/2000
-  }
+  // Every date is formatted in UTC, and that is not configurable. Memberstack
+  // returns billing dates as instants, so rendering one in the viewer's local
+  // zone moves the calendar day for everyone west of UTC and a member in Los
+  // Angeles reads a renewal a day before the one they are billed on. A per-block
+  // timezone override existed briefly and was removed: month arithmetic runs on
+  // UTC calendar fields, so a zone override made `next-billing` and `resumes-at`
+  // disagree — 2026-03-01T00:00Z in America/Los_Angeles printed "Feb 28" next to
+  // a one-month "Mar 31". One zone for both is the only self-consistent choice.
+  var TIME_ZONE = 'UTC'
 
   /* ------------------------------ environment ------------------------------ */
 
@@ -221,40 +253,16 @@
     return null
   }
 
-  /** Format a normalized date. Default preset renders "Jan 10, 2000". */
-  function formatDate(value, format, timeZone) {
+  /** Format a normalized date as "Jan 10, 2000". One shape, always UTC. */
+  function formatDate(value) {
     var date = toDate(value)
     if (!date) return ''
-
-    var tz = timeZone || DEFAULT_TZ
-
-    // ISO is a slice, not a locale format: toLocaleDateString has no ISO preset
-    // and en-CA only coincidentally matches it.
-    if (format === 'iso') {
-      var isoParts = isoPartsIn(date, tz)
-      if (!isoParts) return ''
-      return isoParts
-    }
-
-    var options = FORMATS[format] || FORMATS.medium
     return date.toLocaleDateString('en-US', {
-      month: options.month,
-      day: options.day,
-      year: options.year,
-      timeZone: tz,
-    })
-  }
-
-  // YYYY-MM-DD for the given zone, built from en-CA parts (which are already
-  // zero-padded) rather than from toISOString, so a non-UTC tz is honored.
-  function isoPartsIn(date, timeZone) {
-    var text = date.toLocaleDateString('en-CA', {
+      month: 'short',
+      day: 'numeric',
       year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      timeZone: timeZone,
+      timeZone: TIME_ZONE,
     })
-    return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : ''
   }
 
   /**
@@ -277,36 +285,20 @@
     return out
   }
 
-  /** Whole days from a to b, or null if either side is unresolvable. */
-  function daysBetween(a, b) {
-    var from = toDate(a)
-    var to = toDate(b)
-    if (!from || !to) return null
-    return Math.round((to.getTime() - from.getTime()) / MS_PER_DAY)
-  }
-
   /* ----------------------------- member reading ---------------------------- */
 
   /**
-   * Pick the plan connection to read dates from.
-   * Preference order: the pinned planId when given, then the first active
-   * connection that actually carries a `payment` object, then the first active
-   * connection at all. A member can hold both a free and a paid connection
-   * (see navbar-embeds/memberstack/free-paid-anon.js), and only the paid one has
+   * Pick the plan connection to read dates from: the first active connection that
+   * actually carries a `payment` object, then the first active connection at all.
+   * A member can hold both a free and a paid connection (see
+   * navbar-embeds/memberstack/free-paid-anon.js), and only the paid one has
    * billing dates, so "first connection" is never a safe default.
    */
-  function pickConnection(member, planId) {
+  function pickConnection(member) {
     var connections = (member && member.planConnections) || []
     if (!connections.length) return null
 
     var i
-    if (planId) {
-      for (i = 0; i < connections.length; i++) {
-        if (connections[i] && connections[i].planId === planId) return connections[i]
-      }
-      return null // pinned and absent: report nothing rather than the wrong plan
-    }
-
     for (i = 0; i < connections.length; i++) {
       if (connections[i] && connections[i].active && connections[i].payment) return connections[i]
     }
@@ -319,36 +311,49 @@
   /**
    * Collapse an absent key to null. `undefined` is reserved as this module's
    * "that field name is not one I know" signal, so a real member value must
-   * never be able to produce it — otherwise a member simply lacking
-   * `cancelAtDate` would be reported to the author as a misspelled attribute.
+   * never be able to produce it — otherwise a member simply lacking a key would
+   * be reported to the author as a misspelled attribute.
    */
   function orNull(value) {
     return value === undefined ? null : value
   }
 
+  function signupDate(member) {
+    return member ? orNull(member.createdAt) : null
+  }
+
+  function nextBillingDate(member) {
+    var connection = pickConnection(member)
+    var payment = (connection && connection.payment) || null
+    return payment ? orNull(payment.nextBillingDate) : null
+  }
+
   /**
    * Resolve one field name to a raw date value (not yet formatted).
    * Returns null when the member has no such date — a FREE connection has
-   * `payment: null`, so every billing field is legitimately absent there.
+   * `payment: null`, so a billing field is legitimately absent there.
    * Returns undefined ONLY for a field name this module does not implement.
+   *
+   * `resumes-at` adds the pause length to whichever date `opts.anchor` names.
+   * The default is `next-billing`, because a member pausing on the 20th of a
+   * cycle that renews on the 1st would otherwise ride unpaid days or be charged
+   * mid-pause — the paid-through date is the end of the period they already
+   * bought. `signup` is offered because it is a different, legitimate question
+   * ("a month from when they joined"), and because it is the only anchor that
+   * works for a member with no paid connection at all.
    */
   function resolveField(member, field, options) {
     var opts = options || {}
-    var connection = pickConnection(member, opts.planId)
-    var payment = (connection && connection.payment) || null
 
     switch (field) {
       case 'signup':
-        return member ? orNull(member.createdAt) : null
-      case 'last-billing':
-        return payment ? orNull(payment.lastBillingDate) : null
+        return signupDate(member)
       case 'next-billing':
-        return payment ? orNull(payment.nextBillingDate) : null
-      case 'cancel-at':
-        return payment ? orNull(payment.cancelAtDate) : null
+        return nextBillingDate(member)
       case 'resumes-at':
-        if (!payment) return null
-        return addMonths(payment.nextBillingDate, opts.pauseMonths)
+        var anchor = opts.anchor === 'signup' ? signupDate(member) : nextBillingDate(member)
+        if (anchor === null) return null
+        return addMonths(anchor, opts.pauseMonths)
       default:
         return undefined // unknown field: caller warns
     }
@@ -362,13 +367,32 @@
    */
   function inheritedAttr(el, name) {
     var node = el
-    while (node && node.getAttribute) {
-      if (node.hasAttribute && node.hasAttribute(name)) return node.getAttribute(name)
-      var value = node.getAttribute(name)
-      if (value !== null && value !== undefined) return value
+    while (node && typeof node.hasAttribute === 'function') {
+      if (node.hasAttribute(name)) return node.getAttribute(name)
       node = node.parentNode
     }
     return null
+  }
+
+  /**
+   * Elements carrying `attr` within `scope`, INCLUDING `scope` itself.
+   *
+   * The self case is the load-bearing part and is why this is one helper rather
+   * than two inline loops: querySelectorAll is descendants-only, and the node an
+   * upward walk arrives at is exactly the wrapper the author marked. Miss it and
+   * the walk falls through to a common ancestor — which is how an untouched pause
+   * group reported a sibling group's answer, and how a wrapper that is also the
+   * date element counted as governing no dates at all. Both bugs looked correct
+   * on any page with a single group.
+   */
+  function selfAndDescendants(scope, attr) {
+    var found = []
+    if (!scope) return found
+    if (typeof scope.hasAttribute === 'function' && scope.hasAttribute(attr)) found.push(scope)
+    if (typeof scope.querySelectorAll !== 'function') return found
+    var descendants = scope.querySelectorAll('[' + attr + ']')
+    for (var i = 0; i < descendants.length; i++) found.push(descendants[i])
+    return found
   }
 
   /**
@@ -415,6 +439,52 @@
   }
 
   /**
+   * The visible text of the control's own label, used only as a fallback for the
+   * month count. Webflow authors a radio as `<label class="w-radio"><input>
+   * <span>1 month</span></label>` and leaves the input's `value` empty unless the
+   * author fills in Radio Settings -> Value, so the browser reports "" (or "on"
+   * when the attribute is absent entirely) while the count the author typed lives
+   * only in the label. Prefer the closest label, then the parent node.
+   */
+  function labelTextFor(control) {
+    var label = typeof control.closest === 'function' ? control.closest('label') : null
+    var host = label || control.parentNode
+    return host && typeof host.textContent === 'string' ? host.textContent : ''
+  }
+
+  /**
+   * The month count a control is currently expressing, or null.
+   *
+   * A control that IS the member's answer but carries no readable number is an
+   * authoring mistake, not a "nothing chosen" state, and it used to be completely
+   * silent: a group built exactly as described in the docs but with the Designer
+   * Value fields left blank left `resumes-at` stuck on the default and — with
+   * `ms-form-pause-reveal` — the sentence permanently invisible, with nothing in
+   * the console. So fall back to the label text first, and if even that has no
+   * number, say so on staging.
+   */
+  function controlMonths(control) {
+    var expressed = controlValue(control)
+    if (expressed === null || expressed === undefined) return null
+
+    var months = parseMonths(expressed)
+    if (months !== null) return months
+
+    months = parseMonths(labelTextFor(control))
+    if (months !== null) return months
+
+    warn(
+      'a selected ' +
+        PAUSE_INPUT_ATTR +
+        ' control carries no month count (value="' +
+        expressed +
+        '"); set its Designer Value to a number such as "2" or "2 months"',
+      control
+    )
+    return null
+  }
+
+  /**
    * Inspect `scope` for marked pause controls. Three outcomes, all distinct:
    *   null            no marked control here — the caller should keep walking up
    *   {months: n}     a control answered
@@ -426,26 +496,18 @@
    * SIBLING group's checked radio and reports the neighbour's months. On a page
    * with two pause blocks that silently reveals the untouched one.
    *
-   * `scope` ITSELF counts when it carries the attribute. querySelectorAll is
-   * descendants-only, and the wrapper the author marked is exactly the node the
-   * upward walk arrives at — without the self check the walk finds nothing at the
-   * right wrapper and falls through the same way.
+   * `scope` ITSELF counts when it carries the attribute — see selfAndDescendants.
    */
   function pauseScopeIn(scope) {
     if (!scope || typeof scope.querySelectorAll !== 'function') return null
 
-    var candidates = []
-    if (typeof scope.hasAttribute === 'function' && scope.hasAttribute(PAUSE_INPUT_ATTR)) {
-      candidates.push(scope)
-    }
-    var descendants = scope.querySelectorAll(PAUSE_INPUT)
-    for (var d = 0; d < descendants.length; d++) candidates.push(descendants[d])
+    var candidates = selfAndDescendants(scope, PAUSE_INPUT_ATTR)
     if (!candidates.length) return null
 
     for (var i = 0; i < candidates.length; i++) {
       var controls = controlsIn(candidates[i])
       for (var j = 0; j < controls.length; j++) {
-        var months = parseMonths(controlValue(controls[j]))
+        var months = controlMonths(controls[j])
         if (months !== null) return { months: months }
       }
     }
@@ -503,22 +565,22 @@
     return { months: months, fromControl: false }
   }
 
-  function pauseMonthsFor(el) {
-    return resolvePause(el).months
-  }
-
   function emptyTextFor(el) {
     var raw = inheritedAttr(el, EMPTY_ATTR)
     return raw === null ? DEFAULT_EMPTY : raw
   }
 
-  function formatFor(el) {
-    var raw = inheritedAttr(el, FORMAT_ATTR)
-    if (raw === null || String(raw).trim() === '') return 'medium'
+  /** Which date `resumes-at` counts from. Inherited, so a wrapper can set it. */
+  function anchorFor(el) {
+    var raw = inheritedAttr(el, ANCHOR_ATTR)
+    if (raw === null || String(raw).trim() === '') return DEFAULT_ANCHOR
     var name = String(raw).trim().toLowerCase()
-    if (name !== 'iso' && !FORMATS[name]) {
-      warn('unknown ' + FORMAT_ATTR + '="' + raw + '"; using medium')
-      return 'medium'
+    if (ANCHORS.indexOf(name) === -1) {
+      warn(
+        'unknown ' + ANCHOR_ATTR + '="' + raw + '"; using ' + DEFAULT_ANCHOR +
+          ' (accepted: ' + ANCHORS.join(', ') + ')'
+      )
+      return DEFAULT_ANCHOR
     }
     return name
   }
@@ -535,8 +597,8 @@
     }
 
     var raw = resolveField(member, field, {
-      planId: inheritedAttr(el, PLAN_ID_ATTR),
-      pauseMonths: pauseMonthsFor(el),
+      pauseMonths: resolvePause(el).months,
+      anchor: anchorFor(el),
     })
 
     if (raw === undefined) {
@@ -545,7 +607,7 @@
       return ''
     }
 
-    var text = formatDate(raw, formatFor(el), inheritedAttr(el, TZ_ATTR) || DEFAULT_TZ)
+    var text = formatDate(raw)
     el.textContent = text === '' ? empty : text
     return text
   }
@@ -554,20 +616,10 @@
 
   /**
    * Every date element governed by a reveal wrapper: its descendants, plus the
-   * wrapper itself when the author put both attributes on one node. The self case
-   * matters for the same reason it does in pauseMonthsIn — querySelectorAll is
-   * descendants-only, and a wrapper that is also the date element would otherwise
-   * count as having no dates at all and reveal on an unresolved value.
+   * wrapper itself when the author put both attributes on one node.
    */
   function datesUnder(wrapper) {
-    var found = []
-    if (typeof wrapper.hasAttribute === 'function' && wrapper.hasAttribute(TARGET_ATTR)) {
-      found.push(wrapper)
-    }
-    if (typeof wrapper.querySelectorAll !== 'function') return found
-    var descendants = wrapper.querySelectorAll(TARGET)
-    for (var i = 0; i < descendants.length; i++) found.push(descendants[i])
-    return found
+    return selfAndDescendants(wrapper, TARGET_ATTR)
   }
 
   /**
@@ -709,29 +761,27 @@
   window.StartersPlanDates = {
     // Keep in sync with the @release line in this file's header comment; the
     // account-settings/plan-dates.test.js drift guard asserts they match.
-    release: 'v1.59.89',
-    stagingHost: stagingHost,
+    release: 'v1.59.88',
+    // Every key here is either a staging console check or a seam the test suite
+    // drives directly, and all of them are listed in account-settings/README.md —
+    // an earlier revision exported 27 keys while documenting 8, including a
+    // `daysBetween` helper nothing called and a `pauseMonthsFor` that only
+    // forwarded to resolvePause. If you add a key, document it in the same commit.
     diagnosticsEnabled: diagnosticsEnabled,
     toDate: toDate,
     formatDate: formatDate,
     addMonths: addMonths,
-    daysBetween: daysBetween,
+    parseMonths: parseMonths,
     pickConnection: pickConnection,
     resolveField: resolveField,
-    parseMonths: parseMonths,
     resolvePause: resolvePause,
-    pauseMonthsFor: pauseMonthsFor,
-    shouldReveal: shouldReveal,
-    applyReveal: applyReveal,
     renderElement: renderElement,
     renderAll: renderAll,
     rerender: rerender,
-    fields: ['signup', 'last-billing', 'next-billing', 'cancel-at', 'resumes-at'],
-    pauseInputAttr: PAUSE_INPUT_ATTR,
-    revealAttr: REVEAL_ATTR,
-    shownClass: SHOWN_CLASS,
-    defaultPauseMonths: DEFAULT_PAUSE_MONTHS,
-    defaultTimeZone: DEFAULT_TZ,
+    shouldReveal: shouldReveal,
+    applyReveal: applyReveal,
+    fields: ['signup', 'next-billing', 'resumes-at'],
+    anchors: ANCHORS.slice(),
   }
 
   if (document.readyState === 'loading') {
