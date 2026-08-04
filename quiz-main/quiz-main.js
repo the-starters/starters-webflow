@@ -1,6 +1,8 @@
 /**
  * Quiz main page controller.
  *
+ * @release v1.59.83
+ *
  * Initial data sources:
  * - Webflow-rendered category checkboxes from [data-quiz-form="categories"].
  * - Webflow-rendered subcategory items from
@@ -1112,6 +1114,35 @@
         window.location.assign(resultsRedirectPath)
     }
 
+    /**
+     * Gives Memberstack the post-signup destination it actually reads.
+     *
+     * Both attributes are required. Memberstack only reads `data-ms-redirect`
+     * from a click listener (it stashes the value in sessionStorage when a click
+     * lands inside the element), so an Enter-key submit never registers the
+     * override and the new member falls through to the plan redirect — back to
+     * `/quiz`, at step 1, because the `starter-quiz` custom field is not written
+     * until `/quiz-results` runs. Its signup submit handler reads the plain
+     * `redirect` attribute off the form directly, which covers Enter-key submits
+     * and outranks both the stored override and the server value. The Designer
+     * owns `data-ms-redirect` (it is what carries the destination through the
+     * click-driven provider flows), so that one is only filled in when the
+     * markup is missing it — never overwritten.
+     *
+     * @param {HTMLElement | null} form Signup form, when the page has one.
+     * @param {string} redirectPath Post-signup destination.
+     * @returns {void}
+     */
+    function configureSignupRedirect(form, redirectPath) {
+        if (!form) return
+
+        form.setAttribute('redirect', redirectPath)
+
+        if (!form.getAttribute('data-ms-redirect')) {
+            form.setAttribute('data-ms-redirect', redirectPath)
+        }
+    }
+
     categoryInputs.forEach((input) => {
         input.addEventListener('change', function () {
             logQuizFlow('quiz category changed', {
@@ -1215,6 +1246,8 @@
 
         goToNextMainStep()
     })
+
+    configureSignupRedirect(signupForm, resultsRedirectPath)
 
     signupForm?.addEventListener('submit', function () {
         logQuizFlow('signup form submitted; saving ready quiz payload')

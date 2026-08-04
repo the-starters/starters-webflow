@@ -1,7 +1,7 @@
 /**
  * /quiz entry redirect.
  *
- * @release v1.59.78
+ * @release v1.59.83
  *
  * Page-scoped controller for the quiz funnel entry. /quiz is deliberately
  * outside every table in v3/route-guard.js (see v3/ACCESS-MATRIX.md), so this
@@ -29,6 +29,10 @@
     var MEMBERSTACK_MAX_WAIT_MS = 10000
 
     var RETAKE_PARAM = 'retake'
+
+    // Written by quiz-main.js on this page and consumed by quiz-results.js.
+    var PENDING_QUIZ_STORAGE_KEY = 'starterQuizPending'
+    var PENDING_QUIZ_READY_STATUS = 'ready'
 
     /**
      * Detects whether the member is intentionally retaking the quiz.
@@ -129,6 +133,57 @@
     }
 
     /**
+     * Detects a finished-but-unrendered quiz left behind by signup.
+     *
+     * A visitor who completes the quiz and signs up should land on
+     * /quiz-results, but Memberstack can still drop the destination and return
+     * them here (see the redirect contract in quiz-main/README.md). Their
+     * `starter-quiz` custom field is not written until /quiz-results runs, so
+     * hasCompletedQuiz() cannot see the finished attempt — the only evidence is
+     * the `ready` payload quiz-main.js saved just before signup.
+     *
+     * Read-only on purpose: quiz-loader.js derives its skip-on-refresh run id
+     * from this key's `updatedAt` and quiz-results.js renders from the payload,
+     * so it is never cleared or rewritten here.
+     *
+     * Stricter than quiz-results.js's predicate: that page also accepts a
+     * payload with no `status` at all (old Memberstack records), while a bare
+     * `draft` or status-less payload here only proves somebody looked at the
+     * quiz. Leaving them on /quiz is the safe answer, so only an explicit
+     * `ready` moves anyone.
+     *
+     * @returns {boolean}
+     */
+    var hasReadyPendingQuiz = function () {
+        var raw
+        try {
+            var storage = window.sessionStorage
+            if (!storage) return false
+            raw = storage.getItem(PENDING_QUIZ_STORAGE_KEY)
+        } catch (error) {
+            // Blocked storage (privacy modes) reads as "no pending quiz".
+            return false
+        }
+
+        if (!raw) return false
+
+        var payload
+        try {
+            payload = JSON.parse(raw)
+        } catch (error) {
+            // Malformed payload: ignored silently, same as no payload.
+            return false
+        }
+
+        if (!payload || typeof payload !== 'object') return false
+
+        return (
+            String(payload.status || '').trim().toLowerCase() ===
+            PENDING_QUIZ_READY_STATUS
+        )
+    }
+
+    /**
      * @param {object | null | undefined} member
      * @returns {string | null}
      */
@@ -141,6 +196,12 @@
         // how it resolves.
         if (hasActivePaidPlan(member)) return PAID_REDIRECT_PATH
         if (hasActiveTalentPlan(member)) return TALENT_REDIRECT_PATH
+        // Ordered after both bounces so neither destination changes, and before
+        // the plan/custom-field branch below because a member who just signed
+        // up has neither signal yet. ?retake= still wins: the check in
+        // redirectIfMember() suppresses every non-Talent target, so a
+        // deliberate retake can sit here with a stale ready payload.
+        if (hasReadyPendingQuiz()) return FREE_REDIRECT_PATH
         if (hasActiveFreePlan(member) && hasCompletedQuiz(member)) {
             return FREE_REDIRECT_PATH
         }

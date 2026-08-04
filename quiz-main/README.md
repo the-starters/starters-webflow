@@ -26,12 +26,39 @@ members with an active plan. `/quiz` sits outside all three page tables in
 `v3/route-guard.js`, so this controller is the only thing deciding who may not
 sit on it.
 
+The branches are tested in this order, and the first match wins:
+
 | Member state | `/quiz` behavior | `?retake=` |
 | --- | --- | --- |
 | Paid Brand (`pln_new-paid-plan-463h04ph`) or Test Brand (`pln_dorxata-test-brand-plan-777r02pa`) | Replace with `/brand-dashboard` | Suppressed |
 | Talent (`pln_dorxata-test-free-plan-dvcg0k8o`) | Replace with `/starter-dashboard` | Ignored |
+| Any logged-in member whose `sessionStorage.starterQuizPending` payload has `status: 'ready'`, whatever their plan and custom field say | Replace with `/quiz-results` | Suppressed |
 | Free Brand (`pln_free-plan-f6kn0dxz`) with a non-empty `starter-quiz` custom field | Replace with `/quiz-results` | Suppressed |
 | Incomplete free Brand, logged-out visitor, inactive or unknown plan | Stay on `/quiz` | n/a |
+
+### Ready-payload safety net
+
+The `ready`-payload row is a self-healing branch for a signup that came back to
+the wrong page: if Memberstack loses the post-signup destination (see the signup
+redirect contract below), the brand-new member lands on `/quiz` at step 1, and
+`starter-quiz` is no help because `/quiz-results` is what writes it. The `ready`
+payload `quiz-main.js` saved immediately before signup is the only evidence the
+quiz was finished, so it alone moves them. It deliberately does not require a
+plan or the custom field — a member who just signed up has neither yet.
+
+Only an explicit `ready` counts. A `draft` or status-less payload just means
+somebody looked at the quiz, and a malformed payload is ignored silently; all
+three leave the visitor on `/quiz`. This is stricter than `quiz-results.js`,
+which also accepts a status-less payload as usable, because there the fallback
+costs a member their saved answers and here it only costs a redirect. The
+controller never writes or deletes the key: `quiz-loader.js` derives its
+skip-on-refresh run id from the same key's `updatedAt`, and `quiz-results.js`
+renders from the payload.
+
+The branch sits after both the paid-Brand and Talent bounces so neither
+destination changes, and `?retake=` suppresses it like every other Brand
+redirect — a deliberate retake has to be able to sit on `/quiz` with a stale
+`ready` payload still in session.
 
 Add `?retake=true`, `?retake=1`, or `?retake=yes` to keep an otherwise redirected
 Brand on the quiz. Retake links must use one of these values. The Talent bounce
@@ -62,7 +89,31 @@ step layout and the tab-driven layout. It:
   written once on page load) and before signup or results navigation (`ready`);
   and
 - sends a logged-in retaker directly from the final quiz step to
-  `/quiz-results`, bypassing the signup step.
+  `/quiz-results`, bypassing the signup step; and
+- owns the post-signup redirect attributes on the signup form (next section).
+
+### Signup redirect contract
+
+At boot the controller sets `redirect="/quiz-results"` on
+`[data-quiz-form="signup"]`, from the same `resultsRedirectPath` constant the
+logged-in retake redirect uses.
+
+Both attributes have to be there, and they are read by different Memberstack code
+paths. Memberstack picks up `data-ms-redirect` only from a click listener, which
+stashes the value in `sessionStorage["ms-redirect-override"]` when a click lands
+inside the element, so an Enter-key submit never registers the override. Its
+signup submit handler instead reads the plain `redirect` attribute off the form,
+and that value outranks both the stored override and the server-side plan
+redirect. With `data-ms-redirect` alone, an Enter-key signup therefore fell back
+to the plan redirect and returned the brand-new member to `/quiz` at step 1. This
+is the same defect that `configureLoginForms()` in `v3/auth-route.js` fixes for
+the login and signup forms on `/login`, and the fix is the same shape.
+
+`data-ms-redirect` stays the Designer's: it is what carries the destination
+through the click-driven provider flows, so the controller only fills it in when
+the markup has no value at all and never overwrites an authored one. Adding
+`redirect="/quiz-results"` in the Designer as well is harmless — the script
+writes the same value, so the two are idempotent.
 
 The pending payload contains `categories`, `subcategories`, an optional
 `resultSlug`, `status`, `updatedAt`, and `completedAt`. `quiz-results.js` owns
