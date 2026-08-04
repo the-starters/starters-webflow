@@ -320,11 +320,20 @@ test('an empty Memberstack id hides the trigger and names the slug', async () =>
 })
 
 test('a value that is not a Memberstack id hides the trigger', async () => {
-  for (const value of ['{memberstack-id}', '5', 'mem_', 'mem_has-a-hyphen', ' ']) {
+  for (const value of ['{memberstack-id}', '5', 'mem_', 'mem_sb_', 'mem_has-a-hyphen', 'mem_sb_extra_underscore', ' ']) {
     const element = starterTrigger({ [MEMBER_ATTRIBUTE]: value })
     load({ triggers: [element] })
     assert.equal(element.hidden, true, 'rejected: ' + JSON.stringify(value))
   }
+})
+
+test('a Test Mode (sandbox) Memberstack id is accepted like a live id', async () => {
+  const SANDBOX_ID = 'mem_sb_cmqhuaxn80d270sseeo74fn7i'
+  const element = starterTrigger({ [MEMBER_ATTRIBUTE]: SANDBOX_ID })
+  load({ triggers: [element] })
+
+  assert.equal(element.hidden, false)
+  assert.equal(element.getAttribute('href'), '/messages?with=' + SANDBOX_ID)
 })
 
 test('every trigger on the page is wired, not just the first', async () => {

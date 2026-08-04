@@ -30,10 +30,11 @@
   const LOGIN_PATH = '/login'
   const DEEP_LINK_PARAM = 'with'
   const HANDOFF_KEY = 'starters:hire-message-handoff'
-  // Memberstack ids are `mem_` + an alphanumeric cuid. Anything else is a
-  // hand-edited or truncated URL and must not reach TalkJS, which would create a
-  // real user record for it.
-  const MEMBER_ID_PATTERN = /^mem_[A-Za-z0-9]+$/
+  // Memberstack ids are `mem_` + an alphanumeric cuid, with an extra `sb_`
+  // segment for Test Mode (sandbox) members. Anything else is a hand-edited or
+  // truncated URL and must not reach TalkJS, which would create a real user
+  // record for it.
+  const MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
   const CONVERSATION_SOURCE = 'hire-page'
   const FEED_FILTER_ACTIONS = {
     'messages-filter-all': {},
