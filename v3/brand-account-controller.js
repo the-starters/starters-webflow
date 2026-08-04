@@ -12,9 +12,8 @@
  * the completion marker last. Every operation is replay-safe; a failed retry
  * repeats assignments rather than creating another account or Brand row.
  *
- * Changed login emails require Memberstack verification by default. A bounded
- * rollback can disable the send with:
- *   window.StartersBrandAccountConfig = { verifyChangedEmail: false }
+ * Build Account requests a Memberstack reset/set-password email before
+ * completion. Account Security requests one only after changing login email.
  *
  * The Account Security interception is also OFF by default so it cannot race
  * Memberstack's currently published `data-ms-form="profile"` handler. Enable
@@ -197,23 +196,16 @@
       })
     }
 
-    // A prior submit may have changed the address but failed while requesting
-    // verification. Memberstack then returns the new address as unchanged with
-    // `verified: false`; resend before allowing completion instead of silently
-    // skipping the mandatory verification step on replay.
-    var needsVerification = changed || (member && member.verified === false)
-    if (needsVerification && config().verifyChangedEmail !== false) {
-      if (typeof client.sendMemberVerificationEmail !== 'function') {
-        throw new Error('Email verification is unavailable. Contact support.')
-      }
-      // Do not automatically retry email sends: an ambiguous response must not
-      // emit a duplicate verification message.
-      await withTimeout(function () {
-        return client.sendMemberVerificationEmail()
-      })
-    }
+    return { changed: changed, email: email }
+  }
 
-    return { changed: changed, verificationSent: needsVerification }
+  async function sendResetPasswordEmail(client, email) {
+    if (typeof client.sendMemberResetPasswordEmail !== 'function') {
+      throw new Error('Password setup email is unavailable. Contact support.')
+    }
+    return withTimeout(function () {
+      return client.sendMemberResetPasswordEmail({ email: email })
+    })
   }
 
   async function markBuildComplete(client) {
@@ -277,6 +269,7 @@
     // member remains on onboarding and can replay the same idempotent values.
     await updateOrdinaryFields(client, values)
     await updateEmailIfChanged(client, member, values.email)
+    await sendResetPasswordEmail(client, values.email)
     await markBuildComplete(client)
 
     return { memberId: member.id }
@@ -287,7 +280,9 @@
     if (!EMAIL_PATTERN.test(email)) throw new Error('Enter a valid email address.')
     var client = memberstack()
     var member = await currentMember(client)
-    return updateEmailIfChanged(client, member, email)
+    var result = await updateEmailIfChanged(client, member, email)
+    if (result.changed) await sendResetPasswordEmail(client, result.email)
+    return result
   }
 
   function bindForm(form, operation, submitter, redirectOnSuccess) {

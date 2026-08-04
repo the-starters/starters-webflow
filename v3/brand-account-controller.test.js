@@ -126,7 +126,6 @@ function loadController(options = {}) {
   const member = options.member || {
     id: 'mem_sb_brand',
     auth: { email: options.currentEmail || 'old@example.com' },
-    verified: options.verified === undefined ? true : options.verified,
   }
 
   const memberstack = {
@@ -144,13 +143,12 @@ function loadController(options = {}) {
       calls.push({ method: 'updateMemberAuth', payload })
       if (options.updateMemberAuth) return options.updateMemberAuth(payload, calls)
       member.auth.email = payload.email
-      member.verified = false
       return { data: member }
     },
-    async sendMemberVerificationEmail() {
-      calls.push({ method: 'sendMemberVerificationEmail' })
-      if (options.sendMemberVerificationEmail) {
-        return options.sendMemberVerificationEmail(calls)
+    async sendMemberResetPasswordEmail(payload) {
+      calls.push({ method: 'sendMemberResetPasswordEmail', payload })
+      if (options.sendMemberResetPasswordEmail) {
+        return options.sendMemberResetPasswordEmail(payload, calls)
       }
       return { ok: true }
     },
@@ -233,7 +231,7 @@ test('Build Account writes ordinary fields, changed email, then completion in or
       'getCurrentMember',
       'updateMember',
       'updateMemberAuth',
-      'sendMemberVerificationEmail',
+      'sendMemberResetPasswordEmail',
       'updateMember',
     ],
   )
@@ -245,6 +243,7 @@ test('Build Account writes ordinary fields, changed email, then completion in or
     },
   })
   assert.deepEqual(plain(environment.calls[2].payload), { email: 'ada+new@example.com' })
+  assert.deepEqual(plain(environment.calls[3].payload), { email: 'ada+new@example.com' })
   assert.deepEqual(plain(environment.calls[4].payload), {
     customFields: { 'completed-brand-profile': 'true' },
   })
@@ -253,7 +252,7 @@ test('Build Account writes ordinary fields, changed email, then completion in or
   assert.equal(buildForm.submit.disabled, false)
 })
 
-test('unchanged login email skips the auth mutation', async () => {
+test('Build Account sends a reset password email without an unchanged auth mutation', async () => {
   const buildForm = makeForm('build', { email: 'ADA@EXAMPLE.COM' })
   const environment = loadController({ buildForm, currentEmail: 'ada@example.com' })
 
@@ -262,8 +261,9 @@ test('unchanged login email skips the auth mutation', async () => {
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'updateMember'],
+    ['getCurrentMember', 'updateMember', 'sendMemberResetPasswordEmail', 'updateMember'],
   )
+  assert.deepEqual(plain(environment.calls[2].payload), { email: 'ada@example.com' })
 })
 
 test('invalid input performs no Memberstack mutation and exposes the authored error state', async () => {
@@ -366,7 +366,7 @@ test('duplicate submit while the first request is pending is ignored', async () 
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
-test('verification is the default and sends once after a changed email', async () => {
+test('Build Account sends one reset password email after changing auth', async () => {
   const buildForm = makeForm('build', { email: 'verified-next@example.com' })
   const environment = loadController({
     buildForm,
@@ -382,37 +382,23 @@ test('verification is the default and sends once after a changed email', async (
       'getCurrentMember',
       'updateMember',
       'updateMemberAuth',
-      'sendMemberVerificationEmail',
+      'sendMemberResetPasswordEmail',
       'updateMember',
     ],
   )
-})
-
-test('verification can be disabled for a bounded rollback', async () => {
-  const buildForm = makeForm('build', { email: 'rollback-next@example.com' })
-  const environment = loadController({
-    buildForm,
-    currentEmail: 'old@example.com',
-    config: { verifyChangedEmail: false },
+  assert.deepEqual(plain(environment.calls[3].payload), {
+    email: 'verified-next@example.com',
   })
-
-  buildForm.submitEvent()
-  await settle()
-
-  assert.deepEqual(
-    environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'updateMemberAuth', 'updateMember'],
-  )
 })
 
-test('verification failure leaves Build Account incomplete', async () => {
+test('reset password email failure leaves Build Account incomplete', async () => {
   const buildForm = makeForm('build', { email: 'next@example.com' })
-  const sendError = new Error('verification service unavailable')
+  const sendError = new Error('password email service unavailable')
   sendError.status = 503
   const environment = loadController({
     buildForm,
     currentEmail: 'old@example.com',
-    sendMemberVerificationEmail: async () => {
+    sendMemberResetPasswordEmail: async () => {
       throw sendError
     },
   })
@@ -422,7 +408,11 @@ test('verification failure leaves Build Account incomplete', async () => {
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'updateMemberAuth', 'sendMemberVerificationEmail'],
+    ['getCurrentMember', 'updateMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    1,
   )
   assert.equal(
     environment.calls.some(
@@ -431,23 +421,10 @@ test('verification failure leaves Build Account incomplete', async () => {
     false,
   )
   assert.deepEqual(environment.redirects, [])
-})
-
-test('an unchanged but unverified email resends verification before completion', async () => {
-  const buildForm = makeForm('build', { email: 'next@example.com' })
-  const environment = loadController({
-    buildForm,
-    currentEmail: 'next@example.com',
-    verified: false,
-  })
-
-  buildForm.submitEvent()
-  await settle()
-
-  assert.deepEqual(
-    environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'sendMemberVerificationEmail', 'updateMember'],
-  )
+  assert.equal(buildForm.wrapper.fail.style.display, 'block')
+  assert.equal(buildForm.wrapper.failText.textContent, 'password email service unavailable')
+  assert.equal(buildForm.getAttribute('aria-busy'), 'false')
+  assert.equal(buildForm.submit.disabled, false)
 })
 
 test('Account Security interception remains off until explicitly configured', () => {
@@ -473,7 +450,7 @@ test('configured Account Security guard owns the submit and skips an unchanged e
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
-test('configured Account Security changes email and sends verification once', async () => {
+test('configured Account Security changes email and sends reset password email once', async () => {
   const securityForm = makeForm('security', { email: 'next@example.com' })
   const environment = loadController({
     buildForm: null,
@@ -487,8 +464,9 @@ test('configured Account Security changes email and sends verification once', as
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberVerificationEmail'],
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
+  assert.deepEqual(plain(environment.calls[2].payload), { email: 'next@example.com' })
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 

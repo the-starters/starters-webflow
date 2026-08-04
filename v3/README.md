@@ -307,10 +307,13 @@ called from the browser: the existing Memberstack webhook (#1513) mirrors the
 successful member state into `user_v3` and `brands_v3` by stable Memberstack ID.
 
 The same module contains the Account Security email handler, but it is inert
-unless `guardSecurityForm` is explicitly enabled. Changed login emails send a
-Memberstack verification email by default; `verifyChangedEmail: false` is the
-bounded rollback switch. The Account Security gate prevents the controller from
-racing the currently published Memberstack profile form.
+unless `guardSecurityForm` is explicitly enabled. Build Account requests a
+Memberstack reset/set-password email for the final normalized address before
+marking the profile complete. Account Security requests one only when the login
+email changes. The request is not automatically retried, and successful token
+redemption is the ownership proof; the controller does not claim Memberstack
+`verified=true`. The Account Security gate prevents the controller from racing
+the currently published Memberstack profile form.
 
 `../complete-profile-photo.js` binds the native upload button to Memberstack's
 `data-ms-action="profile-image"` behavior. It no longer uploads a Brand image to

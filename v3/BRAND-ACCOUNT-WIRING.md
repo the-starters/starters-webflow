@@ -61,20 +61,16 @@ would still leave `brands_v3` stale.
 
 ## Configuration switches
 
-Email verification is on by default. Account Security ownership remains off:
+Account Security ownership remains off:
 
 ```html
 <script>
   window.StartersBrandAccountConfig = {
-    verifyChangedEmail: true,
     guardSecurityForm: false
   }
 </script>
 ```
 
-- `verifyChangedEmail`: after a changed login email succeeds, call
-  `sendMemberVerificationEmail()`. This is the approved default. Set it to
-  `false` only as a bounded rollback if verification delivery is degraded.
 - `guardSecurityForm`: take capture-phase ownership of
   `#wf-form-Account-Security`. Enable only when removing the competing
   `data-ms-form="profile"` ownership from that form.
@@ -87,11 +83,14 @@ must mirror its `member.updated` payload into `brands_v3`.
 - Invalid authored fields do not call Memberstack.
 - Duplicate submits while one save is running are ignored.
 - Custom-field and email assignments retry once only on timeout, 429, or 5xx.
-- Verification email is never automatically retried because an ambiguous send
-  response could otherwise emit a duplicate email.
-- If an earlier attempt changed the address but failed before verification was
-  confirmed, a replay sees Memberstack's `verified: false` state and requests
-  verification again before allowing the completion marker.
+- Build Account requests a reset/set-password email for the final normalized
+  email after profile and auth updates and before completion is marked.
+- Account Security requests that email only when the login email changes.
+- The email request is never automatically retried because an ambiguous send
+  response could otherwise emit a duplicate email. A failure remains
+  recoverable and leaves Build Account incomplete.
+- Successful password-token redemption is the ownership proof. The controller
+  does not claim Memberstack `verified=true` without separately observed state.
 - `completed-brand-profile` is written last. Any earlier failure leaves the
   member on onboarding for a safe idempotent replay.
 - Error telemetry carries only operation path and HTTP status, never member ID,
@@ -108,7 +107,7 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 4. Change ordinary fields in Account Settings; prove both Xano rows converge.
 5. Attempt an invalid email and an already-used email; prove no completion mark
    and no partial Xano email drift.
-6. Change to the approved canary email; prove one verification message and
+6. Change to the approved canary email; prove one reset/set-password message and
    matching Xano values.
 7. Replay duplicate and out-of-order webhook fixtures; prove no stale overwrite.
 8. Run the read-only reconciliation and require zero unexplained differences.
