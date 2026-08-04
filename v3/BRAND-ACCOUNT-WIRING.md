@@ -10,7 +10,7 @@
 - Xano endpoint #1513 is the single normal Memberstack-to-Xano writer. Browser
   code must not create a competing `brands_v3` writer.
 
-## Published markup contract
+## Native markup contract
 
 The Build Account form remains native Webflow HTML:
 
@@ -55,9 +55,9 @@ On `/complete-profile`, after the sitewide Memberstack and route-guard installs:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/complete-profile-redirect.js"></script>
 ```
 
-Do not publish this frontend install before the matching endpoint #1513 draft is
-published and its Test Mode replay matrix passes. Otherwise Memberstack changes
-would still leave `brands_v3` stale.
+The endpoint #1513 backend replay prerequisite below has passed. Keep the
+frontend install unpublished until the remaining Build/Edit inbox and token-
+redemption canaries pass.
 
 ## Executed endpoint #1513 replay results
 

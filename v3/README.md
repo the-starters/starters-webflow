@@ -297,29 +297,11 @@ embeds installed after the guard; see
 
 ## Brand account create and edit sync
 
-`brand-account-controller.js` owns the Build Account submission on
-`/complete-profile`. It preserves the Designer-authored form, validates the four
-authored fields, suppresses Webflow's native GET submission, updates Memberstack
-custom fields, changes the login email only when necessary, and writes
-`completed-brand-profile` last. Assignments retry once for explicit transient
-failures; duplicate submits collapse behind one in-flight operation. Xano is not
-called from the browser: the existing Memberstack webhook (#1513) mirrors the
-successful member state into `user_v3` and `brands_v3` by stable Memberstack ID.
-
-The same module contains the Account Security email handler, but it is inert
-unless `guardSecurityForm` is explicitly enabled. Build Account requests a
-Memberstack reset/set-password email for the final normalized address before
-marking the profile complete. Account Security requests one only when the login
-email changes. The request is not automatically retried, and successful token
-redemption is the ownership proof; the controller does not claim Memberstack
-`verified=true`. The Account Security gate prevents the controller from racing
-the currently published Memberstack profile form.
-
-`../complete-profile-photo.js` binds the native upload button to Memberstack's
-`data-ms-action="profile-image"` behavior. It no longer uploads a Brand image to
-the Starter-only Xano endpoint. Memberstack owns the image; #1513 mirrors
-`member.profileImage` into `brands_v3.image_link` after its Brand update draft is
-published. Full wiring and test order are in
+`brand-account-controller.js` owns the native Build Account submission, while
+its Account Security interception remains configuration-gated. Memberstack owns
+member state and profile images; published endpoint #1513 mirrors that state to
+Xano without a competing browser writer. The authoritative markup, ordering,
+retry, verification, release-gate, and canary contract is in
 [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md).
 
 ## Build-profile funnel redirect

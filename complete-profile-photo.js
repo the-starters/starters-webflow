@@ -10,8 +10,8 @@
  * Keep the native Webflow element. This module only binds the Memberstack
  * behavior attribute early (deferred scripts execute before DOMContentLoaded),
  * so the Webflow package can discover it without JavaScript-generated form
- * markup. The `member.updated` webhook mirrors `member.profileImage` into
- * `brands_v3.image_link` once the matching Xano draft is published.
+ * markup. Published Xano endpoint #1513 consumes the resulting `member.updated`
+ * webhook and mirrors `member.profileImage` into `brands_v3.image_link`.
  */
 ;(function () {
   'use strict'
