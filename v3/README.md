@@ -1553,9 +1553,12 @@ moderation, points, reversals, aggregates, and ranking. A successful wf-xano
 On the public profile, use one wf-xano wrapper with
 `wf-xano-instance="starter-reviews"` and `data-reviews-v3`. The adapter derives
 the decoded slug only from the canonical `/hire/{slug}` path and sets
-`wf-xano-param-starter_slug` before wf-xano boots. Inside the authored section,
-use `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate
-values and `data-reviews-v3-list` for the card target. The Xano response is the
+`wf-xano-param-starter_slug` before wf-xano boots. When the wrapper has no
+authored `wf-xano-element="template"`, the adapter adds a hidden, aria-hidden
+placeholder so wf-xano can initialize; review cards are rendered only into the
+separate `data-reviews-v3-list` target. Inside the authored section, use
+`data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate values
+and `data-reviews-v3-list` for the card target. The Xano response is the
 authority and must expose only approved reviews. Its canonical envelope is:
 
 ```json
@@ -1572,10 +1575,13 @@ The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
 recalculated from a paginated review list. The authored Reviews section is
 shown only when the approved review array is non-empty; zero aggregate values
-are still painted when it is empty. Cards are constructed with DOM nodes and
-`textContent` only, so brand names and review text are never interpreted as
-HTML. The adapter contains no Airtable or Make integration and no private token
-or direct authenticated fetch path.
+are still painted when it is empty. Approved reviews render as stacked,
+bordered cards with five Bootstrap star icons, a `Verified Review` badge, the
+review text, and reviewer identity from `brand.full_name` with
+`brand.company_name` as its fallback. Cards are constructed with DOM nodes and
+`textContent` only, so reviewer identity and review text are never interpreted
+as HTML. The adapter contains no Airtable or Make integration and no private
+token or direct authenticated fetch path.
 
 Run the focused checks with:
 
