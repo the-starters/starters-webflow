@@ -2,6 +2,8 @@
  * V3 reviews page integration.
  *
  * Designer owns every review form control and the public Reviews section. This module only:
+ *   - binds the authored Brand review form to one canonical project result and
+ *     blocks submission when no valid positive numeric project ID is available;
  *   - supplies a fresh idempotency key immediately before an authored review
  *     form is submitted;
  *   - derives the public-profile slug from /hire/{slug} and adds it to the

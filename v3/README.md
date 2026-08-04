@@ -1558,12 +1558,22 @@ these authored controls:
 | Project identifier | `wf-xano-field="project_id"` |
 | Hidden idempotency key | `wf-xano-field="idempotency_key"` |
 
-The adapter writes a new `review-ui:{project_id}:{random}` key to the hidden
-control in capture phase for every submit. Xano remains authoritative for
-completed-project eligibility, one-review enforcement, idempotent replay,
-moderation, points, reversals, aggregates, and ranking. A successful wf-xano
-`project-review` submission emits the document event
-`starters:review-submitted`; it does not perform a second write.
+The adapter binds the authored `project_id` control only when the canonical
+`dash-brand-projects` result contains exactly one project, accepting that
+project's positive numeric `project_id` or `id`. It also supports the already
+rendered `.project_item[data-wf-xano-id]` as a startup and submit-time fallback,
+but only when exactly one such item exists in the Brand projects instance (or,
+when that wrapper is absent, in the document). Zero, multiple, missing, or
+invalid project identities clear the control and block submission before
+wf-xano can send a blank or stale ID. For a valid binding, the adapter
+normalizes the control value, replaces the authored `.review-v3_intro` text
+with `Share your experience after completing this project. Your review will
+appear on the Starter profile after submission.`, and writes a new
+`review-ui:{project_id}:{random}` key in capture phase for every submit. Xano
+remains authoritative for completed-project eligibility, one-review
+enforcement, idempotent replay, moderation, points, reversals, aggregates, and
+ranking. A successful wf-xano `project-review` submission emits the document
+event `starters:review-submitted`; it does not perform a second write.
 
 On the public profile, use one wf-xano wrapper with
 `wf-xano-instance="starter-reviews"` and `data-reviews-v3`. The adapter derives
