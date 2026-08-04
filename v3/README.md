@@ -271,10 +271,14 @@ paid-Brand form, so a paid Brand stays until the Memberstack member custom field
 `completed-brand-profile` carries a real value and then goes to `/brand-dashboard`;
 a free Brand goes to its quiz-funnel home (`/quiz-results` once `starter-quiz` is
 set, else `/quiz`) and a Talent member to `/starter-dashboard`. The field is written
-by a hidden `data-ms-member` input on the form itself and the two other
-destinations come from the guard's own `roleHome()`, so the whole decision costs no
-network request at all. Field truthiness is the same rule the guard applies to the
-`starter-quiz` marker, and it is consulted for the paid-Brand branch only.
+last by `brand-account-controller.js`, after the ordinary Memberstack fields and
+any changed login email succeed. The hidden `data-ms-member` input remains the
+native Designer field contract, while the controller's ordered write prevents a
+partially failed form from falsely marking onboarding complete. The two other
+destinations come from the guard's own `roleHome()`, so the redirect decision
+itself costs no network request. Field truthiness is the same rule the guard
+applies to the `starter-quiz` marker, and it is consulted for the paid-Brand
+branch only.
 
 The role branches replaced the paid-only design on the evening of 2026-08-03: the
 other two roles used to sit on a form they cannot submit until they manually went to
@@ -284,10 +288,36 @@ Memberstack's, and the logged-out kick with it, but a logged-in member of any ro
 has to be allowed to load the page for this module to route them. Unmapped and
 conflicted members, logged-out visitors, a missing or half-loaded role contract, and
 a lookup that throws are all left untouched. Two properties are deliberate: the
-paid-Brand branch is inert until the hidden input starts writing the field, and
+paid-Brand branch is inert until the form controller starts writing the field, and
 members who completed the form before the field existed read as not-done until they
-resubmit once. Needs that input plus one page-level embed installed after the guard;
-see [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
+resubmit once. Needs the native form contract plus the account controller and redirect
+embeds installed after the guard; see
+[BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and
+[COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
+
+## Brand account create and edit sync
+
+`brand-account-controller.js` owns the Build Account submission on
+`/complete-profile`. It preserves the Designer-authored form, validates the four
+authored fields, suppresses Webflow's native GET submission, updates Memberstack
+custom fields, changes the login email only when necessary, and writes
+`completed-brand-profile` last. Assignments retry once for explicit transient
+failures; duplicate submits collapse behind one in-flight operation. Xano is not
+called from the browser: the existing Memberstack webhook (#1513) mirrors the
+successful member state into `user_v3` and `brands_v3` by stable Memberstack ID.
+
+The same module contains the Account Security email handler, but it is inert
+unless `guardSecurityForm` is explicitly enabled. Changed login emails send a
+Memberstack verification email by default; `verifyChangedEmail: false` is the
+bounded rollback switch. The Account Security gate prevents the controller from
+racing the currently published Memberstack profile form.
+
+`../complete-profile-photo.js` binds the native upload button to Memberstack's
+`data-ms-action="profile-image"` behavior. It no longer uploads a Brand image to
+the Starter-only Xano endpoint. Memberstack owns the image; #1513 mirrors
+`member.profileImage` into `brands_v3.image_link` after its Brand update draft is
+published. Full wiring and test order are in
+[BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md).
 
 ## Build-profile funnel redirect
 
