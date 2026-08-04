@@ -152,6 +152,10 @@ function loadController(options = {}) {
       }
       return { ok: true }
     },
+    async sendMemberVerificationEmail(payload) {
+      calls.push({ method: 'sendMemberVerificationEmail', payload })
+      return { ok: true }
+    },
   }
 
   const location = {
@@ -165,6 +169,7 @@ function loadController(options = {}) {
     location,
     $memberstackDom: memberstack,
     StartersBrandAccountConfig: options.config || {},
+    StartersV3RouteGuard: options.routeGuard,
     StartersTrack: {
       track(name, payload) {
         tracked.push({ name, payload })
@@ -468,6 +473,70 @@ test('configured Account Security changes email and sends reset password email o
   )
   assert.deepEqual(plain(environment.calls[2].payload), { email: 'next@example.com' })
   assert.equal(securityForm.wrapper.done.style.display, 'block')
+})
+
+test('Brand-scoped Account Security binds Brand roles and sends only the reset password email', async () => {
+  for (const role of ['brand-free', 'brand-paid']) {
+    const securityForm = makeForm('security', { email: `${role}@example.com` })
+    const environment = loadController({
+      buildForm: null,
+      securityForm,
+      currentEmail: 'old@example.com',
+      config: { guardSecurityForm: 'brand' },
+      routeGuard: { memberRole: () => role },
+    })
+
+    await settle()
+    assert.equal(securityForm.listeners.has('submit'), true)
+
+    securityForm.submitEvent()
+    await settle()
+
+    assert.deepEqual(
+      environment.calls.map((call) => call.method),
+      [
+        'getCurrentMember',
+        'getCurrentMember',
+        'updateMemberAuth',
+        'sendMemberResetPasswordEmail',
+      ],
+    )
+    assert.equal(
+      environment.calls.some((call) => call.method === 'sendMemberVerificationEmail'),
+      false,
+    )
+  }
+})
+
+test('Brand-scoped Account Security leaves Talent and unmapped roles Memberstack-native', async () => {
+  for (const role of ['talent', null]) {
+    const securityForm = makeForm('security')
+    const environment = loadController({
+      buildForm: null,
+      securityForm,
+      config: { guardSecurityForm: 'brand' },
+      routeGuard: { memberRole: () => role },
+    })
+
+    await settle()
+
+    assert.equal(securityForm.listeners.has('submit'), false)
+    assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  }
+})
+
+test('Brand-scoped Account Security does not claim the form without the shared role contract', async () => {
+  const securityForm = makeForm('security')
+  const environment = loadController({
+    buildForm: null,
+    securityForm,
+    config: { guardSecurityForm: 'brand' },
+  })
+
+  await settle()
+
+  assert.equal(securityForm.listeners.has('submit'), false)
+  assert.deepEqual(environment.calls, [])
 })
 
 test('controller does not bind on an unapproved host', () => {

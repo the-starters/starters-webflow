@@ -16,9 +16,11 @@
  * completion. Account Security requests one only after changing login email.
  *
  * The Account Security interception is also OFF by default so it cannot race
- * Memberstack's currently published `data-ms-form="profile"` handler. Enable
- * only after its Designer wiring is intentionally handed to this controller:
- *   window.StartersBrandAccountConfig = { guardSecurityForm: true }
+ * Memberstack's currently published `data-ms-form="profile"` handler. The
+ * sitewide production mode resolves the current member through the canonical
+ * route-guard role contract and claims Brand forms only:
+ *   window.StartersBrandAccountConfig = { guardSecurityForm: 'brand' }
+ * An explicit `true` remains available for isolated page tests.
  */
 ;(function () {
   'use strict'
@@ -327,6 +329,22 @@
     return true
   }
 
+  async function bindBrandSecurityForm(form) {
+    try {
+      var guard = window.StartersV3RouteGuard
+      if (!guard || typeof guard.memberRole !== 'function') return false
+      var member = await currentMember(memberstack())
+      var role = guard.memberRole(member)
+      if (role !== 'brand-free' && role !== 'brand-paid') return false
+      return bindForm(form, 'brand/account/email', submitSecurity, false)
+    } catch (error) {
+      // Fail open to the existing Memberstack-native form when identity or the
+      // shared role contract is unavailable. Do not claim a form whose role we
+      // cannot prove.
+      return false
+    }
+  }
+
   function init() {
     var location = window.location || {}
     if (!allowedHost(location.hostname || '')) return false
@@ -337,11 +355,15 @@
       bound = bindForm(buildForm, 'brand/account/build', submitBuild, true) || bound
     }
 
-    if (config().guardSecurityForm === true) {
+    var securityMode = config().guardSecurityForm
+    if (securityMode === true) {
       var securityForm = document.querySelector(SECURITY_FORM_SELECTOR)
       if (securityForm) {
         bound = bindForm(securityForm, 'brand/account/email', submitSecurity, false) || bound
       }
+    } else if (securityMode === 'brand') {
+      var brandSecurityForm = document.querySelector(SECURITY_FORM_SELECTOR)
+      if (brandSecurityForm) bindBrandSecurityForm(brandSecurityForm)
     }
 
     return bound

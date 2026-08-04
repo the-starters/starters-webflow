@@ -83,19 +83,23 @@ remain required before publishing the frontend install.
 
 ## Configuration switches
 
-Account Security ownership remains off:
+Use Brand-scoped ownership when the controller is installed sitewide:
 
 ```html
 <script>
   window.StartersBrandAccountConfig = {
-    guardSecurityForm: false
+    guardSecurityForm: 'brand'
   }
 </script>
 ```
 
-- `guardSecurityForm`: take capture-phase ownership of
-  `#wf-form-Account-Security`. Enable only when removing the competing
-  `data-ms-form="profile"` ownership from that form.
+- `guardSecurityForm: 'brand'`: resolve the current member through
+  `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
+  `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. Talent,
+  unmapped, conflicted, logged-out, or unreadable identity states retain the
+  existing Memberstack-native handler.
+- `guardSecurityForm: true`: force ownership without a role check. Reserve this
+  for isolated page tests; do not use it in the sitewide production install.
 
 The ordinary Account Profile form remains Memberstack-native. Endpoint #1513
 must mirror its `member.updated` payload into `brands_v3`.
@@ -108,6 +112,8 @@ must mirror its `member.updated` payload into `brands_v3`.
 - Build Account requests a reset/set-password email for the final normalized
   email after profile and auth updates and before completion is marked.
 - Account Security requests that email only when the login email changes.
+- No separate verification email is sent. Successful redemption of the one
+  reset/set-password link is the email-ownership proof.
 - The email request is never automatically retried because an ambiguous send
   response could otherwise emit a duplicate email. A failure remains
   recoverable and leaves Build Account incomplete.
