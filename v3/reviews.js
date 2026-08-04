@@ -62,6 +62,13 @@
     var slug = profileSlug(pathname)
     if (!slug) return null
     root.setAttribute('wf-xano-param-starter_slug', slug)
+    if (!root.querySelector('[wf-xano-element="template"]')) {
+      var template = documentObject.createElement('div')
+      template.setAttribute('wf-xano-element', 'template')
+      template.setAttribute('aria-hidden', 'true')
+      template.hidden = true
+      root.appendChild(template)
+    }
     return root
   }
 

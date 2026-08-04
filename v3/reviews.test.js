@@ -86,6 +86,8 @@ test('configures the public wrapper with a slug before wf-xano boot', () => {
   const fixture = documentFixture()
   load({ document: fixture, pathname: '/hire/elvis-p' })
   assert.equal(fixture.root.getAttribute('wf-xano-param-starter_slug'), 'elvis-p')
+  assert.equal(fixture.root.childNodes[0].getAttribute('wf-xano-element'), 'template')
+  assert.equal(fixture.root.childNodes[0].hidden, true)
 })
 
 test('sets a fresh stable-project idempotency key in capture phase', () => {
