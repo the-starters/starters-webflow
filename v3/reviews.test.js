@@ -105,10 +105,9 @@ test('sets a fresh stable-project idempotency key in capture phase', () => {
   assert.equal(key.getAttribute('value'), key.value)
 })
 
-test('binds the authored embed to the only rendered Xano project', () => {
+test('binds the stationary authored embed from the single canonical Xano result', () => {
   const fixture = documentFixture()
   const { api } = load({ document: fixture })
-  const project = new Element({ 'data-wf-xano-id': '667' })
   const form = new Element()
   const component = new Element()
   const projectInput = new Element()
@@ -117,13 +116,49 @@ test('binds the authored embed to the only rendered Xano project', () => {
   component.children['.review-v3_intro'] = intro
   form.closest = (selector) => selector === '.review-v3_component' ? component : null
   fixture.querySelector = (selector) => selector === 'form[data-review-form-v3]' ? form : null
-  fixture.querySelectorAll = (selector) => selector === '.project_item[data-wf-xano-id]' ? [project] : []
+  fixture.querySelectorAll = (selector) => selector === '.project_item[data-wf-xano-id]'
+    ? [new Element({ 'data-wf-xano-id': '668' }), new Element({ 'data-wf-xano-id': '669' })]
+    : []
 
-  assert.equal(api.bindReviewFormToSingleProject(fixture), true)
+  assert.equal(api.bindReviewFormToSingleProject(fixture, { items: [{ id: 667 }] }), true)
   assert.equal(projectInput.value, '667')
   assert.equal(projectInput.getAttribute('value'), '667')
-  assert.equal(project.childNodes[0], component)
+  assert.equal(component.childNodes.length, 0)
   assert.match(intro.textContent, /appear on the Starter profile/)
+})
+
+test('clears a stale project binding when Xano does not return one project', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture })
+  const form = new Element()
+  const projectInput = new Element({ value: '667' })
+  form.children['[wf-xano-field="project_id"]'] = projectInput
+  fixture.querySelector = (selector) => selector === 'form[data-review-form-v3]' ? form : null
+
+  assert.equal(api.bindReviewFormToSingleProject(fixture, { items: [{ id: 667 }, { id: 668 }] }), false)
+  assert.equal(projectInput.value, '')
+  assert.equal(projectInput.getAttribute('value'), '')
+})
+
+test('prevents review submission when no canonical project is bound', () => {
+  const fixture = documentFixture()
+  load({ document: fixture })
+  const form = new Element()
+  const project = new Element()
+  const key = new Element({ value: 'review-ui:unknown:stale' })
+  let prevented = false
+  let stopped = false
+  form.children['[wf-xano-field="project_id"]'] = project
+  form.children['[wf-xano-field="idempotency_key"]'] = key
+  fixture.listeners.submit.handler({
+    target: form,
+    preventDefault() { prevented = true },
+    stopImmediatePropagation() { stopped = true },
+  })
+
+  assert.equal(prevented, true)
+  assert.equal(stopped, true)
+  assert.equal(key.value, '')
 })
 
 test('paints approved aggregate and reveals the authored section', () => {

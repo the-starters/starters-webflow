@@ -26,6 +26,27 @@
   var REVIEW_FORM = 'form[data-review-form-v3]'
   var REVIEW_KEY = '[wf-xano-field="idempotency_key"]'
 
+  function canonicalProjectId(value) {
+    var projectId = String(value == null ? '' : value).trim()
+    return /^\d+$/.test(projectId) && Number(projectId) > 0 ? projectId : ''
+  }
+
+  function projectItemsFromResult(result) {
+    if (!result || typeof result !== 'object') return null
+    if (Array.isArray(result.items)) return result.items
+    if (result.raw && Array.isArray(result.raw.items)) return result.raw.items
+    if (Array.isArray(result.raw)) return result.raw
+    return null
+  }
+
+  function projectIdFromResult(result) {
+    var items = projectItemsFromResult(result)
+    if (!items || items.length !== 1) return ''
+    var project = items[0]
+    if (!project || typeof project !== 'object') return ''
+    return canonicalProjectId(project.project_id || project.id)
+  }
+
   function profileSlug(pathname) {
     var match = String(pathname || '').match(/^\/hire\/([^/?#]+)\/?$/i)
     if (!match) return ''
@@ -82,33 +103,47 @@
       var keyInput = form.querySelector(REVIEW_KEY)
       var projectInput = form.querySelector('[wf-xano-field="project_id"]')
       if (!keyInput) return
-      if ((!projectInput || !projectInput.value) && bindReviewFormToSingleProject(documentObject)) {
+      if ((!projectInput || !canonicalProjectId(projectInput.value)) && bindReviewFormToSingleProject(documentObject)) {
         projectInput = form.querySelector('[wf-xano-field="project_id"]')
       }
-      keyInput.value = createIdempotencyKey(projectInput && projectInput.value, cryptoObject)
+      var projectId = canonicalProjectId(projectInput && projectInput.value)
+      if (!projectId) {
+        keyInput.value = ''
+        keyInput.setAttribute('value', '')
+        if (event.preventDefault) event.preventDefault()
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+        return
+      }
+      projectInput.value = projectId
+      projectInput.setAttribute('value', projectId)
+      keyInput.value = createIdempotencyKey(projectId, cryptoObject)
       keyInput.setAttribute('value', keyInput.value)
     }, true)
   }
 
-  function bindReviewFormToSingleProject(documentObject) {
+  function bindReviewFormToSingleProject(documentObject, result) {
     if (!documentObject || !documentObject.querySelector || !documentObject.querySelectorAll) return false
     var form = documentObject.querySelector(REVIEW_FORM)
     if (!form) return false
-    var projectItems = documentObject.querySelectorAll('.project_item[data-wf-xano-id]')
-    if (!projectItems || projectItems.length !== 1) return false
-    var projectItem = projectItems[0]
-    var projectId = String(projectItem.getAttribute('data-wf-xano-id') || '').replace(/[^0-9]/g, '')
-    if (!projectId) return false
-
     var projectInput = form.querySelector('[wf-xano-field="project_id"]')
     if (!projectInput) return false
+    var projectId = projectIdFromResult(result)
+    if (!projectId && !result) {
+      var projectRoot = documentObject.querySelector('[wf-xano-instance="' + BRAND_INSTANCE + '"]')
+      var projectItems = (projectRoot || documentObject).querySelectorAll('.project_item[data-wf-xano-id]')
+      if (projectItems && projectItems.length === 1) {
+        projectId = canonicalProjectId(projectItems[0].getAttribute('data-wf-xano-id'))
+      }
+    }
+    if (!projectId) {
+      projectInput.value = ''
+      projectInput.setAttribute('value', '')
+      return false
+    }
     projectInput.value = projectId
     projectInput.setAttribute('value', projectId)
 
     var component = form.closest && form.closest('.review-v3_component')
-    var currentProject = form.closest && form.closest('.project_item[data-wf-xano-id]')
-    if (component && !currentProject && projectItem.appendChild) projectItem.appendChild(component)
-
     var intro = component && component.querySelector && component.querySelector('.review-v3_intro')
     if (intro) intro.textContent = 'Share your experience after completing this project. Your review will appear on the Starter profile after submission.'
     return true
@@ -290,8 +325,8 @@
     var brandProjects = wfx.get(BRAND_INSTANCE)
     if (brandProjects && typeof brandProjects.on === 'function' && !brandProjects.__reviewsV3Wired) {
       brandProjects.__reviewsV3Wired = true
-      brandProjects.on('results', function () {
-        bindReviewFormToSingleProject(documentObject)
+      brandProjects.on('results', function (result) {
+        bindReviewFormToSingleProject(documentObject, result)
       })
       brandProjects.on('formSuccess', function (event) {
         if (!event || String(event.form || '') !== 'project-review') return
@@ -301,12 +336,14 @@
           }))
         }
       })
+      if (brandProjects._lastResult) bindReviewFormToSingleProject(documentObject, brandProjects._lastResult)
     }
   }
 
   var api = {
     profileSlug: profileSlug,
     createIdempotencyKey: createIdempotencyKey,
+    projectIdFromResult: projectIdFromResult,
     configureProfileRoot: configureProfileRoot,
     installReviewFormKeys: installReviewFormKeys,
     bindReviewFormToSingleProject: bindReviewFormToSingleProject,
