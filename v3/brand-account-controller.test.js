@@ -140,6 +140,7 @@ function makeForm(kind = 'build', values = {}) {
 function loadController(options = {}) {
   const buildForm = options.buildForm === null ? null : options.buildForm || makeForm('build')
   const securityForm = options.securityForm || makeForm('security')
+  const signupForm = options.signupForm || null
   const calls = []
   const tracked = []
   const redirects = []
@@ -208,6 +209,7 @@ function loadController(options = {}) {
     querySelector(selector) {
       if (selector === '#wf-form-Complete-Profile-Form') return buildForm
       if (selector === '#wf-form-Account-Security') return securityForm
+      if (selector === '#wf-form-Brand-Signup') return signupForm
       return null
     },
     addEventListener() {},
@@ -232,10 +234,45 @@ function loadController(options = {}) {
     memberstack,
     redirects,
     securityForm,
+    signupForm,
     tracked,
     window,
   }
 }
+
+test('Brand signup uses the Test Brand plan on the Webflow staging hostname', () => {
+  const signupForm = makeElement()
+  signupForm.setAttribute('data-ms-form', 'signup')
+  signupForm.setAttribute('data-ms-plan:add', 'pln_free-plan-f6kn0dxz')
+
+  loadController({ buildForm: null, signupForm })
+
+  assert.equal(
+    signupForm.getAttribute('data-ms-plan:add'),
+    'pln_dorxata-test-brand-plan-777r02pa',
+  )
+})
+
+test('Brand signup keeps the live Brand Free plan on production hostnames', () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const signupForm = makeElement()
+    signupForm.setAttribute('data-ms-form', 'signup')
+    signupForm.setAttribute('data-ms-plan:add', 'pln_dorxata-test-brand-plan-777r02pa')
+
+    loadController({ buildForm: null, hostname, signupForm })
+
+    assert.equal(signupForm.getAttribute('data-ms-plan:add'), 'pln_free-plan-f6kn0dxz')
+  }
+})
+
+test('Brand signup plan guard ignores a form without the Memberstack signup contract', () => {
+  const signupForm = makeElement()
+  signupForm.setAttribute('data-ms-plan:add', 'designer-authored-value')
+
+  loadController({ buildForm: null, signupForm })
+
+  assert.equal(signupForm.getAttribute('data-ms-plan:add'), 'designer-authored-value')
+})
 
 test('Build Account writes ordinary fields, changed email, then completion in order', async () => {
   const buildForm = makeForm('build', {

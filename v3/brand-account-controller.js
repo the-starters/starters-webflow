@@ -36,8 +36,11 @@
     'thestarters.com',
     'www.thestarters.com',
   ]
-  var BUILD_FORM_SELECTOR = '#wf-form-Complete-Profile-Form'
-  var SECURITY_FORM_SELECTOR = '#wf-form-Account-Security'
+ var BUILD_FORM_SELECTOR = '#wf-form-Complete-Profile-Form'
+ var SECURITY_FORM_SELECTOR = '#wf-form-Account-Security'
+  var BRAND_SIGNUP_FORM_SELECTOR = '#wf-form-Brand-Signup'
+  var LIVE_BRAND_PLAN_ID = 'pln_free-plan-f6kn0dxz'
+  var TEST_BRAND_PLAN_ID = 'pln_dorxata-test-brand-plan-777r02pa'
   var OP_TIMEOUT_MS = 15000
   var RETRY_DELAYS_MS = [0, 300]
   var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -54,6 +57,19 @@
       hostname === '127.0.0.1' ||
       /(\.|^)trycloudflare\.com$/.test(hostname || '')
     )
+  }
+
+  function signupPlanForHost(hostname) {
+    return hostname === 'the-starters-3-0.webflow.io'
+      ? TEST_BRAND_PLAN_ID
+      : LIVE_BRAND_PLAN_ID
+  }
+
+  function configureBrandSignupPlan(hostname) {
+    var form = document.querySelector(BRAND_SIGNUP_FORM_SELECTOR)
+    if (!form || form.getAttribute('data-ms-form') !== 'signup') return false
+    form.setAttribute('data-ms-plan:add', signupPlanForHost(hostname))
+    return true
   }
 
   function trim(value) {
@@ -431,7 +447,10 @@
     var location = window.location || {}
     if (!allowedHost(location.hostname || '')) return false
 
-    var bound = false
+    // The same Webflow site serves Memberstack Test Data on its webflow.io
+    // hostname and Live Data on the custom domains. Keep the Designer-authored
+    // live fallback, but align the plan before Memberstack handles signup.
+    var bound = configureBrandSignupPlan(location.hostname || '')
     var buildForm = document.querySelector(BUILD_FORM_SELECTOR)
     if (buildForm) {
       bound = bindForm(buildForm, 'brand/account/build', submitBuild, true) || bound
@@ -452,6 +471,7 @@
     init: init,
     submitBuild: submitBuild,
     submitSecurity: submitSecurity,
+    signupPlanForHost: signupPlanForHost,
     validate: validate,
     retryable: retryable,
   }
