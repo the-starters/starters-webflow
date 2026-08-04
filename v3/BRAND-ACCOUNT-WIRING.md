@@ -1,4 +1,4 @@
-# Brand Account Build And Edit Wiring
+# Brand Signup, Build, And Edit Wiring
 
 ## Authority
 
@@ -11,6 +11,31 @@
   code must not create a competing `brands_v3` writer.
 
 ## Native markup contract
+
+The native Brand signup form remains Designer-authored Webflow HTML. Keep its
+Memberstack signup contract on the form itself:
+
+```html
+<form
+  id="wf-form-Brand-Signup"
+  data-ms-form="signup"
+  data-ms-plan:add="pln_free-plan-f6kn0dxz"
+>
+  <!-- Designer-authored fields and controls -->
+</form>
+```
+
+Before Memberstack handles signup, `brand-account-controller.js` changes only
+the plan attribute for the active Memberstack data mode:
+
+| Host | `data-ms-plan:add` |
+| --- | --- |
+| `the-starters-3-0.webflow.io` (Test Data) | `pln_dorxata-test-brand-plan-777r02pa` |
+| `thestarters.com`, `www.thestarters.com` (Live Data) | `pln_free-plan-f6kn0dxz` |
+
+The live plan remains the Designer-authored fallback. The controller does not
+replace or generate the form, and it leaves an element without
+`data-ms-form="signup"` untouched.
 
 The Build Account form remains native Webflow HTML:
 
@@ -48,10 +73,17 @@ It does not create an image element.
 
 ## Install order
 
-On `/complete-profile`, after the sitewide Memberstack and route-guard installs:
+Install `brand-account-controller.js` sitewide, before Memberstack form
+initialization, so it can align the native signup form with Test or Live Data:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js"></script>
+```
+
+On `/complete-profile`, after the sitewide Memberstack and route-guard installs,
+keep the photo and redirect scripts after that sitewide controller:
+
+```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/complete-profile-photo.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/complete-profile-redirect.js"></script>
 ```
@@ -141,24 +173,30 @@ must mirror its `member.updated` payload into `brands_v3`.
 
 Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 
-1. Existing incomplete Brand submits unchanged email plus ordinary fields.
-2. Read Memberstack, `user_v3`, and `brands_v3` back by Memberstack member ID.
-3. Replay the identical submission; prove one Brand row and unchanged final
+1. On `the-starters-3-0.webflow.io`, confirm the native signup form carries the
+   Test Brand plan before submitting it, then prove the new Test Data member has
+   that plan connection.
+2. On each custom domain, confirm the native signup form still carries the live
+   Brand Free plan. Creating a production member requires the separate approval
+   described below.
+3. Existing incomplete Brand submits unchanged email plus ordinary fields.
+4. Read Memberstack, `user_v3`, and `brands_v3` back by Memberstack member ID.
+5. Replay the identical submission; prove one Brand row and unchanged final
    values.
-4. Change ordinary fields in Account Settings; prove both Xano rows converge.
-5. Attempt an invalid email and an already-used email; prove no completion mark
+6. Change ordinary fields in Account Settings; prove both Xano rows converge.
+7. Attempt an invalid email and an already-used email; prove no completion mark
    and no partial Xano email drift.
-6. Change to the approved canary email; prove one reset/set-password message and
+8. Change to the approved canary email; prove one reset/set-password message and
    matching Xano values.
-7. Simulate an ambiguous Build Account email response after the completion
+9. Simulate an ambiguous Build Account email response after the completion
    write; prove a same-page resubmit performs no second email attempt, preserves
    the completed account, and can continue to the dashboard.
-8. Simulate an ambiguous Account Security email response after the auth
+10. Simulate an ambiguous Account Security email response after the auth
    mutation; prove the saved email remains authoritative and a same-page
    resubmit performs no second email attempt. Prove Forgot Password can issue a
    fresh recovery link when the member explicitly requests one.
-9. Replay duplicate and out-of-order webhook fixtures; prove no stale overwrite.
-10. Run the read-only reconciliation and require zero unexplained differences.
+11. Replay duplicate and out-of-order webhook fixtures; prove no stale overwrite.
+12. Run the read-only reconciliation and require zero unexplained differences.
 
 Production canaries require separate approval for the exact member, email,
 expected message, rollback, and any marketing projection.

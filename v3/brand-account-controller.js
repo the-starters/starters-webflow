@@ -1,17 +1,19 @@
 /**
- * Brand Build Account and guarded email controller.
+ * Brand signup plan, Build Account, and guarded email controller.
  *
  * Authority contract:
  *   - Memberstack owns identity, login email, custom fields, and profile image.
  *   - Xano endpoint #1513 consumes Memberstack webhooks and mirrors successful
  *     state into `user_v3` and `brands_v3` by stable Memberstack member ID.
  *
- * This controller keeps the Designer-authored form intact. It prevents the
- * native Webflow submission, validates the authored fields, updates ordinary
- * Memberstack fields first, updates login email only when it changed, and sets
- * the completion marker as its last durable member write. Durable assignments
- * are replay-safe; a failed retry repeats assignments rather than creating
- * another account or Brand row. The password email is deliberately not retried.
+ * This controller keeps the Designer-authored forms intact. It aligns the
+ * native signup plan with the hostname's Memberstack data mode. On Build
+ * Account, it prevents the native Webflow submission, validates the authored
+ * fields, updates ordinary Memberstack fields first, updates login email only
+ * when it changed, and sets the completion marker as its last durable member
+ * write. Durable assignments are replay-safe; a failed retry repeats
+ * assignments rather than creating another account or Brand row. The password
+ * email is deliberately not retried.
  *
  * Build Account makes the completion marker its last durable member write,
  * then attempts one Memberstack reset/set-password email. Account Security
@@ -36,8 +38,8 @@
     'thestarters.com',
     'www.thestarters.com',
   ]
- var BUILD_FORM_SELECTOR = '#wf-form-Complete-Profile-Form'
- var SECURITY_FORM_SELECTOR = '#wf-form-Account-Security'
+  var BUILD_FORM_SELECTOR = '#wf-form-Complete-Profile-Form'
+  var SECURITY_FORM_SELECTOR = '#wf-form-Account-Security'
   var BRAND_SIGNUP_FORM_SELECTOR = '#wf-form-Brand-Signup'
   var LIVE_BRAND_PLAN_ID = 'pln_free-plan-f6kn0dxz'
   var TEST_BRAND_PLAN_ID = 'pln_dorxata-test-brand-plan-777r02pa'
