@@ -15,10 +15,11 @@
  *   - Talent                                                       → /starter-dashboard
  *
  * Completion is a durable signal on the member object — the Memberstack custom
- * field `completed-brand-profile`, written by a hidden `data-ms-member` input on
- * the form itself — and the role and the other two destinations come from the
- * guard contract already in memory, so the whole decision still costs ZERO
- * network requests beyond the one getCurrentMember() call.
+ * field `completed-brand-profile`, written last by brand-account-controller.js.
+ * The hidden `data-ms-member` input remains the native field contract. The role
+ * and the other two destinations come from the guard contract already in memory,
+ * so the whole decision still costs ZERO network requests beyond the one
+ * getCurrentMember() call.
  *
  * WHY THE ROLE BRANCHES EXIST (decision 2026-08-03 evening). Until this release a
  * free Brand or a Talent member who reached /complete-profile was left on a form
@@ -50,11 +51,11 @@
  *
  * INERT UNTIL THE FIELD IS WRITTEN (paid Brand only). `completed-brand-profile`
  * exists on the member object but nothing wrote to it before 2026-08-03, so every
- * paid Brand reads as not-done until they submit the form once with the hidden
- * input in place. That is the safe direction: the page keeps working exactly as
- * authored for the role it is for, and the completion redirect switches itself on
- * member by member as the field starts landing. The free-Brand and Talent
- * branches depend on no new field and are live immediately.
+ * paid Brand reads as not-done until they submit the form once with the account
+ * controller installed. That is the safe direction: the page keeps working
+ * exactly as authored for the role it is for, and the completion redirect
+ * switches itself on member by member as the field starts landing. The
+ * free-Brand and Talent branches depend on no new field and are live immediately.
  *
  * FAIL-OPEN ON EVERY UNCERTAIN ANSWER. Logged out, Memberstack missing or slow,
  * no role contract, an unmapped or cross-role conflicted plan set, a role whose
