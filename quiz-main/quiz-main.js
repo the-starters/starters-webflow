@@ -1,14 +1,19 @@
 /**
  * Quiz main page controller.
  *
- * @release v1.59.84
+ * @release v1.59.88
  *
  * Initial data sources:
  * - Webflow-rendered category checkboxes from [data-quiz-form="categories"].
  * - Webflow-rendered subcategory items from
  *   [data-quiz-form="subcategories"] [data-category].
  * - Webflow-rendered bucket mapping from [data-quiz-bucket].
- * - sessionStorage.quizSelectedCategories saved by quiz-home.js.
+ * - sessionStorage.starterQuizPending, this session's own answer draft. It is
+ *   restored first and wins over the homepage seed below, so a reload or a
+ *   browser Back/Forward keeps the answers the user actually has.
+ * - sessionStorage.quizSelectedCategories saved by quiz-home.js. A one-time
+ *   seed: it applies only when there is no draft yet, and is cleared on the
+ *   first user edit so it can never outlive the answers it seeded.
  *
  * Outputs:
  * - sessionStorage.starterQuizPending for the post-signup results page.
@@ -144,6 +149,15 @@
     // into the form from Memberstack member JSON (retake prefill).
     let hasRestoredSavedQuiz = false
 
+    // True once this page view rehydrated the form from the user's own saved
+    // draft (starterQuizPending) rather than the homepage bucket seed.
+    let hasRestoredDraft = false
+
+    // True once the homepage bucket seed actually checked something in this page
+    // view. Tracked separately from the sessionStorage key because the key is
+    // cleared as soon as the user edits the quiz.
+    let hasSeededFromHomepage = false
+
     let userTouchedQuiz = false
 
     /**
@@ -197,7 +211,27 @@
 
         if (event.isTrusted && isQuizInput) {
             userTouchedQuiz = true
+            consumeHomepageBucketSeed()
         }
+    }
+
+    /**
+     * Drops the homepage bucket seed once the user edits the quiz themselves.
+     *
+     * The seed is a one-time hand-off from quiz-home.js. Leaving it in
+     * sessionStorage let it outlive the answers it seeded, so clearing every
+     * category (which leaves an empty draft) fell back to replaying it.
+     *
+     * @returns {void}
+     */
+    function consumeHomepageBucketSeed() {
+        if (!sessionStorage.getItem(storageKey)) return
+
+        sessionStorage.removeItem(storageKey)
+
+        logQuizFlow('cleared homepage bucket seed after a user edit', {
+            storageKey,
+        })
     }
 
     categoriesForm.addEventListener('change', markQuizTouchedByUser, true)
@@ -361,13 +395,21 @@
     function syncStartHeading() {
         if (!startHeading) return
 
-        // Show the "pre-filled" heading when either source seeded the quiz:
-        // the homepage bucket selection or a returning member's saved answers.
-        const hasPrefill = getSavedBuckets().length > 0 || hasRestoredSavedQuiz
+        // Show the "pre-filled" heading when any source seeded the quiz: the
+        // homepage bucket selection, a returning member's saved answers, or this
+        // session's own draft. The seeded/draft flags are checked alongside the
+        // storage key because the key is cleared on the first user edit.
+        const hasPrefill =
+            hasSeededFromHomepage ||
+            hasRestoredSavedQuiz ||
+            hasRestoredDraft ||
+            getSavedBuckets().length > 0
 
         logQuizFlow('synced start heading state', {
             hasPrefill,
+            hasSeededFromHomepage,
             hasRestoredSavedQuiz,
+            hasRestoredDraft,
         })
 
         startHeading
@@ -456,6 +498,8 @@
         })
 
         categoriesForm.dispatchEvent(new Event('change', { bubbles: true }))
+
+        if (categoriesToCheck.size) hasSeededFromHomepage = true
 
         logQuizFlow('restored categories from homepage bucket selections', {
             savedBuckets,
@@ -584,6 +628,127 @@
         return true
     }
 
+    /**
+     * Reads the answers this controller last saved for the current session.
+     *
+     * Source: sessionStorage.starterQuizPending, written by savePendingQuiz() on
+     * every answer change. Unlike the homepage bucket seed this is the user's own
+     * live selection, so it is the authority whenever it holds any answer. An
+     * empty payload counts as no draft, which keeps a first arrival on the
+     * homepage-seed path.
+     *
+     * @returns {{categoryIds: string[], subcategoryIds: string[]} | null} Draft answers.
+     */
+    function getDraftQuizSelection() {
+        const savedRaw = sessionStorage.getItem(pendingQuizStorageKey)
+        if (!savedRaw) return null
+
+        let parsed = null
+        try {
+            parsed = JSON.parse(savedRaw)
+        } catch (error) {
+            logQuizFlow('could not parse saved draft answers', {
+                error,
+                savedRaw,
+                pendingQuizStorageKey,
+            })
+            return null
+        }
+
+        if (!parsed || typeof parsed !== 'object') return null
+
+        const readIds = (entries) =>
+            (Array.isArray(entries) ? entries : [])
+                .map((entry) =>
+                    normalize(
+                        entry && typeof entry === 'object' ? entry.id : entry,
+                    ),
+                )
+                .filter(Boolean)
+
+        const categoryIds = readIds(parsed.categories)
+        const subcategoryIds = readIds(parsed.subcategories)
+
+        if (!categoryIds.length && !subcategoryIds.length) return null
+
+        return { categoryIds, subcategoryIds }
+    }
+
+    /**
+     * Rehydrates the form from the user's own saved draft.
+     *
+     * Sets every quiz checkbox to exactly what the draft holds, so an answer the
+     * user cleared stays cleared. That exact match is the point: restoring by
+     * union (the homepage-seed path) silently re-checked a category the user had
+     * just removed whenever the page was reloaded or restored from history.
+     *
+     * @returns {boolean} True when a draft was applied.
+     */
+    function restoreCategoriesFromDraft() {
+        const draft = getDraftQuizSelection()
+        if (!draft) {
+            logQuizFlow('no saved draft answers to restore')
+            return false
+        }
+
+        const draftCategoryIds = new Set(draft.categoryIds)
+        const draftSubcategoryIds = new Set(draft.subcategoryIds)
+
+        categoryInputs.forEach((input) => {
+            setWebflowCheckboxState(
+                input,
+                draftCategoryIds.has(normalize(input.id)),
+            )
+        })
+
+        subcategoryItems.forEach((item) => {
+            const input = getCheckboxInput(item)
+            if (!input) return
+
+            const id =
+                normalize(input.id) ||
+                normalize(input.value) ||
+                normalize(getCheckboxLabel(input))
+
+            setWebflowCheckboxState(
+                input,
+                Boolean(id) && draftSubcategoryIds.has(id),
+            )
+        })
+
+        hasRestoredDraft = true
+
+        categoriesForm.dispatchEvent(new Event('change', { bubbles: true }))
+        subcategoriesForms.forEach((form) => {
+            form.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+
+        logQuizFlow('restored answers from saved draft', {
+            draftCategoryIds: Array.from(draftCategoryIds),
+            draftSubcategoryIds: Array.from(draftSubcategoryIds),
+            selectedCategoryIds: getSelectedCategoryIds(),
+        })
+
+        return true
+    }
+
+    /**
+     * Seeds the form for this page view, draft first.
+     *
+     * The user's own draft wins whenever it holds an answer; the homepage bucket
+     * seed only applies on a first arrival with nothing answered yet. Without
+     * that order a reload or a browser Back/Forward restore replayed the stale
+     * homepage selection over the live answers.
+     *
+     * @returns {boolean} True when the draft (not the homepage seed) was applied.
+     */
+    function restoreQuizSelections() {
+        if (restoreCategoriesFromDraft()) return true
+
+        restoreCategoriesFromStorage()
+
+        return false
+    }
     /**
      * Reads currently selected category IDs from the quiz page checkboxes.
      *
@@ -1268,8 +1433,8 @@
     document.addEventListener('click', skipSignupForLoggedInMember, true)
     detectLoggedInMember()
 
+    restoreQuizSelections()
     syncStartHeading()
-    restoreCategoriesFromStorage()
     clearSubcategoriesForUnselectedCategories()
 
     selectedCategoryIds = getSelectedCategoryIds()
@@ -1320,8 +1485,8 @@
     window.addEventListener('pageshow', function () {
         logQuizFlow('pageshow restore started')
 
+        restoreQuizSelections()
         syncStartHeading()
-        restoreCategoriesFromStorage()
         clearSubcategoriesForUnselectedCategories()
 
         selectedCategoryIds = getSelectedCategoryIds()

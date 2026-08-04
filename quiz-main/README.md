@@ -76,21 +76,52 @@ used for staging verification.
 `quiz-main.js` owns the category/subcategory flow and supports both the custom
 step layout and the tab-driven layout. It:
 
-- reads bucket IDs from `sessionStorage.quizSelectedCategories`, written by
-  `quiz-home.js`;
+- restores this session's own answers first, from the
+  `sessionStorage.starterQuizPending` draft below, setting every checkbox to
+  *exactly* what the draft holds (see the restore-order contract);
+- otherwise reads bucket IDs from `sessionStorage.quizSelectedCategories`,
+  written by `quiz-home.js`;
 - maps those buckets to category checkbox IDs through the hidden
   `[data-quiz-bucket]` CMS list and restores the matching category selections;
+- clears `quizSelectedCategories` on the first trusted user edit, so the seed
+  cannot outlive the answers it seeded;
 - asynchronously reads a logged-in member's saved `starterQuiz` object from
   Memberstack member JSON and restores its matching category and subcategory
   IDs;
 - switches the start-heading copy between `[data-start-default]` and
-  `[data-start-filled]` when either source pre-fills the form;
+  `[data-start-filled]` when any source pre-fills the form;
 - saves `sessionStorage.starterQuizPending` as answers change (`draft`, also
   written once on page load) and before signup or results navigation (`ready`);
   and
 - sends a logged-in retaker directly from the final quiz step to
   `/quiz-results`, bypassing the signup step; and
 - owns the post-signup redirect attributes on the signup form (next section).
+
+### Restore-order contract
+
+`restoreQuizSelections()` runs on boot and again on every `pageshow`, and the
+order is load-bearing:
+
+1. **The session draft wins.** If `starterQuizPending` holds any category or
+   subcategory, `restoreCategoriesFromDraft()` applies it as an exact match, so
+   an answer the user cleared stays cleared.
+2. **The homepage seed is the fallback.** `quizSelectedCategories` applies only
+   when there is no draft yet, i.e. a genuine first arrival. An empty draft
+   payload counts as "no draft", which is what keeps homepage prefill working
+   on a first visit.
+3. **The seed is single-use.** The first trusted edit inside the quiz clears the
+   key, so clearing every answer cannot fall back to replaying it.
+
+⚠️ **Do not restore the homepage seed by union again.** Before v1.59.88,
+`restoreCategoriesFromStorage()` was the only restore path and it *only checked*
+boxes, never unchecked. Combined with a `quizSelectedCategories` key that nothing
+ever updated or cleared, a reload or a browser Back/Forward re-checked a category
+the user had removed (INITIATIVE-136: "Prepopulated Retail & Marketplace when it
+wasn't previously selected"), and a reload replaced their real answers with the
+stale homepage picks. The phantom selection also reached `/quiz-results`, because
+it was written straight back into the `starterQuizPending` payload.
+
+Regression coverage: `quiz-main-draft-restore.test.js`.
 
 ### Signup redirect contract
 
