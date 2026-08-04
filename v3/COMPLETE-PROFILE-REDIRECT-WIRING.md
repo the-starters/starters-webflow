@@ -118,19 +118,20 @@ non-empty, and a non-string truthy value counts as set (Memberstack has been see
 to return a boolean for checkbox-backed fields, and a form that wrote *something*
 should not be re-run because the something was not a string).
 
-**Who writes it:** a hidden input inside the Complete-profile form, added in the
-Webflow Designer, carrying `data-ms-member="completed-brand-profile"`. Memberstack
-writes the field to the member on form submit — there is no Xano hop and no script
-in this repo that writes it. If that input is missing or misspelled, nothing writes
-the field and the paid-Brand branch is permanently inert; it will never redirect a
-paid Brand and it will never break the page.
+**Who writes it:** `brand-account-controller.js`, after ordinary Memberstack
+fields and any changed login email have succeeded. The hidden input inside the
+Complete-profile form remains authored in Webflow with
+`data-ms-member="completed-brand-profile"`, but the controller writes the field
+explicitly so completion cannot race ahead of the other account changes. There
+is no browser-to-Xano completion hop; endpoint #1513 consumes the resulting
+Memberstack webhook.
 
 **Two properties worth stating plainly:**
 
 - **The paid-Brand branch is inert until the field is written.** The field existed
   on the member object before 2026-08-03 but nothing ever wrote to it, so *every*
-  paid Brand reads as not-done until they submit the form once with the hidden input
-  in place. That branch switches itself on member by member as the field starts
+  paid Brand reads as not-done until they submit the form once with the account
+  controller installed. That branch switches itself on member by member as the field starts
   landing. The free-Brand and Talent branches depend on no new field and are live
   as soon as the embed is.
 - **Members who completed before the field existed read as not-done.** There is no
@@ -144,9 +145,10 @@ paid Brand and it will never break the page.
 1. Confirm the `restrict-pages` group for this page is set to access **All
    Members** with Access Denied URL `login` (table above). The role branches
    cannot run for a member Memberstack refuses to let onto the page.
-2. Add the hidden `data-ms-member="completed-brand-profile"` input to the
-   Complete-profile form. Without it the paid-Brand branch is a no-op; the other
-   two branches work regardless.
+2. Preserve the hidden `data-ms-member="completed-brand-profile"` input and
+   install `brand-account-controller.js` using
+   [`BRAND-ACCOUNT-WIRING.md`](BRAND-ACCOUNT-WIRING.md). The controller, not the
+   native Webflow submission, owns the ordered completion write.
 3. Add one deferred page-level tag on `/complete-profile`, and nowhere else:
 
    ```html
@@ -162,7 +164,7 @@ paid Brand and it will never break the page.
 6. Pin the embed to the same tag as the route-guard release it shipped with
    (`v1.59.86`), the way the sibling redirect embeds are pinned.
 
-No page markup is required beyond the hidden input. The module has no spinner and
+No redirect-specific page markup is required beyond the hidden input. The module has no spinner and
 no error state: it either navigates away or leaves the page alone, so there is
 nothing to author.
 
@@ -181,8 +183,8 @@ nothing to author.
   exported so a staging session can ask "what role does the guard think I am, and
   where does it think I live?" without reproducing the decision by hand.
 - `hasCompletedBrandProfile(member)` answers the field question for any member
-  object you already have, which is the fastest way to confirm the hidden input
-  actually wrote something.
+  object you already have, which is the fastest way to confirm the account
+  controller actually wrote something.
 
 Diagnostics narrate every decision on staging only — `*.webflow.io`, `localhost`,
 `127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`. Production
@@ -202,9 +204,10 @@ is completely silent, on the role redirects and on every fail-open path alike.
   `/quiz-results` after.
 - Verify the free-Brand and Talent trips are a **single** navigation — `/login`
   should never appear in the history for them.
-- Submit the form once as a paid Brand with an empty field, then revisit the page:
-  the second visit should redirect. That single round trip is the only real proof
-  the hidden input is wired.
+- Submit the form once as a paid Brand with an empty field, then read Memberstack
+  and both Xano rows by stable member ID before revisiting the page. The second
+  visit should redirect only after all three stores show the expected account
+  values.
 - Confirm a signed-out visit is still handled by Memberstack's gated group
   (`/login`, no `?next=`) rather than by this module.
 - Confirm the page issues no new network request because of this module — it makes
