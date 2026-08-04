@@ -62,6 +62,13 @@
     var slug = profileSlug(pathname)
     if (!slug) return null
     root.setAttribute('wf-xano-param-starter_slug', slug)
+    if (!root.querySelector('[wf-xano-element="template"]')) {
+      var template = documentObject.createElement('div')
+      template.setAttribute('wf-xano-element', 'template')
+      template.setAttribute('aria-hidden', 'true')
+      template.hidden = true
+      root.appendChild(template)
+    }
     return root
   }
 
@@ -94,15 +101,16 @@
     return element
   }
 
-  function formatReviewDate(value) {
-    if (!value) return ''
-    var date = new Date(value)
-    if (!Number.isFinite(date.getTime())) return ''
-    return date.toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    })
+  function appendIcon(documentObject, parent, iconName, label) {
+    var icon = documentObject.createElement('img')
+    icon.className = 'profile-review-v3_icon'
+    icon.src = 'https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/icons/' + iconName + '.svg'
+    icon.alt = label || ''
+    icon.width = 14
+    icon.height = 14
+    icon.style.cssText = 'display:block;width:14px;height:14px;flex:0 0 14px;'
+    parent.appendChild(icon)
+    return icon
   }
 
   function renderProfileReviews(documentObject, items) {
@@ -111,49 +119,70 @@
     if (!target) return false
     var approved = Array.isArray(items) ? items : []
     target.replaceChildren()
+    target.style.cssText = approved.length
+      ? 'display:grid;border:1px solid #d8d9d3;border-radius:3px;overflow:hidden;background:#fff;'
+      : ''
     approved.forEach(function (review) {
       var card = documentObject.createElement('article')
       card.className = 'profile-review-v3_item'
-      card.style.cssText = 'display:grid;gap:10px;padding:24px 0;border-bottom:1px solid #d8d9d3;'
+      card.style.cssText = 'display:grid;gap:22px;padding:24px;border-bottom:1px solid #d8d9d3;background:#fff;'
       card.setAttribute('data-review-id', String(review && review.review_id || ''))
 
       var heading = documentObject.createElement('div')
       heading.className = 'profile-review-v3_card-head'
-      heading.style.cssText = 'display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;'
-      var brand = appendTextElement(
-        documentObject,
-        heading,
-        'div',
-        'profile-review-v3_brand',
-        review && review.brand && review.brand.company_name || 'Verified brand',
-      )
-      brand.style.fontWeight = '600'
-      var published = appendTextElement(
-        documentObject,
-        heading,
-        'time',
-        'profile-review-v3_date',
-        formatReviewDate(review && review.published_at),
-      )
-      published.style.color = '#66705e'
+      heading.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;'
+
+      var stars = documentObject.createElement('div')
+      stars.className = 'profile-review-v3_stars'
+      var roundedRating = Math.max(0, Math.min(5, Math.round(Number(review && review.rating) || 0)))
+      stars.setAttribute('role', 'img')
+      stars.setAttribute('aria-label', String(roundedRating) + ' out of 5 stars')
+      stars.style.cssText = 'display:flex;align-items:center;gap:2px;'
+      for (var starIndex = 1; starIndex <= 5; starIndex += 1) {
+        appendIcon(documentObject, stars, starIndex <= roundedRating ? 'star-fill' : 'star', '')
+      }
+      heading.appendChild(stars)
+
+      var badge = documentObject.createElement('div')
+      badge.className = 'profile-review-v3_badge'
+      badge.style.cssText = 'display:inline-flex;align-items:center;gap:8px;padding:7px 10px;border-radius:3px;background:#445046;color:#fff;font-size:12px;line-height:1;white-space:nowrap;'
+      appendTextElement(documentObject, badge, 'span', 'profile-review-v3_badge-text', 'Verified Review')
+      var check = appendIcon(documentObject, badge, 'check-lg', '')
+      check.style.filter = 'brightness(0) invert(1)'
+      heading.appendChild(badge)
       card.appendChild(heading)
-      var rating = appendTextElement(
-        documentObject,
-        card,
-        'div',
-        'profile-review-v3_rating',
-        String(Number(review && review.rating) || 0) + ' / 5',
-      )
-      rating.style.fontWeight = '700'
-      appendTextElement(
+
+      var reviewText = appendTextElement(
         documentObject,
         card,
         'p',
         'profile-review-v3_text',
         review && review.review_text || '',
       )
+      reviewText.style.cssText = 'margin:0;color:#222;font-size:16px;line-height:1.55;'
+
+      var reviewer = documentObject.createElement('div')
+      reviewer.className = 'profile-review-v3_reviewer'
+      reviewer.style.cssText = 'display:grid;gap:3px;'
+      var reviewerName = review && review.brand && (review.brand.full_name || review.brand.company_name) || 'Verified reviewer'
+      var companyName = review && review.brand && review.brand.company_name || ''
+      var name = appendTextElement(
+        documentObject,
+        reviewer,
+        'div',
+        'profile-review-v3_reviewer-name',
+        reviewerName,
+      )
+      name.style.cssText = 'font-size:14px;font-weight:600;line-height:1.3;'
+      var context = companyName && companyName !== reviewerName ? 'Verified brand @ ' + companyName : 'Verified brand'
+      var meta = appendTextElement(documentObject, reviewer, 'div', 'profile-review-v3_reviewer-meta', context)
+      meta.style.cssText = 'color:#444;font-size:12px;line-height:1.35;'
+      card.appendChild(reviewer)
       target.appendChild(card)
     })
+    if (target.childNodes && target.childNodes.length) {
+      target.childNodes[target.childNodes.length - 1].style.borderBottom = '0'
+    }
     return true
   }
 
