@@ -2,6 +2,8 @@
  * V3 reviews page integration.
  *
  * Designer owns every review form control and the public Reviews section. This module only:
+ *   - binds the authored Brand review form to one canonical project result and
+ *     blocks submission when no valid positive numeric project ID is available;
  *   - supplies a fresh idempotency key immediately before an authored review
  *     form is submitted;
  *   - derives the public-profile slug from /hire/{slug} and adds it to the
@@ -25,6 +27,27 @@
   var PROFILE_LIST = '[data-reviews-v3-list]'
   var REVIEW_FORM = 'form[data-review-form-v3]'
   var REVIEW_KEY = '[wf-xano-field="idempotency_key"]'
+
+  function canonicalProjectId(value) {
+    var projectId = String(value == null ? '' : value).trim()
+    return /^\d+$/.test(projectId) && Number(projectId) > 0 ? projectId : ''
+  }
+
+  function projectItemsFromResult(result) {
+    if (!result || typeof result !== 'object') return null
+    if (Array.isArray(result.items)) return result.items
+    if (result.raw && Array.isArray(result.raw.items)) return result.raw.items
+    if (Array.isArray(result.raw)) return result.raw
+    return null
+  }
+
+  function projectIdFromResult(result) {
+    var items = projectItemsFromResult(result)
+    if (!items || items.length !== 1) return ''
+    var project = items[0]
+    if (!project || typeof project !== 'object') return ''
+    return canonicalProjectId(project.project_id || project.id)
+  }
 
   function profileSlug(pathname) {
     var match = String(pathname || '').match(/^\/hire\/([^/?#]+)\/?$/i)
@@ -82,9 +105,50 @@
       var keyInput = form.querySelector(REVIEW_KEY)
       var projectInput = form.querySelector('[wf-xano-field="project_id"]')
       if (!keyInput) return
-      keyInput.value = createIdempotencyKey(projectInput && projectInput.value, cryptoObject)
+      if ((!projectInput || !canonicalProjectId(projectInput.value)) && bindReviewFormToSingleProject(documentObject)) {
+        projectInput = form.querySelector('[wf-xano-field="project_id"]')
+      }
+      var projectId = canonicalProjectId(projectInput && projectInput.value)
+      if (!projectId) {
+        keyInput.value = ''
+        keyInput.setAttribute('value', '')
+        if (event.preventDefault) event.preventDefault()
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+        return
+      }
+      projectInput.value = projectId
+      projectInput.setAttribute('value', projectId)
+      keyInput.value = createIdempotencyKey(projectId, cryptoObject)
       keyInput.setAttribute('value', keyInput.value)
     }, true)
+  }
+
+  function bindReviewFormToSingleProject(documentObject, result) {
+    if (!documentObject || !documentObject.querySelector || !documentObject.querySelectorAll) return false
+    var form = documentObject.querySelector(REVIEW_FORM)
+    if (!form) return false
+    var projectInput = form.querySelector('[wf-xano-field="project_id"]')
+    if (!projectInput) return false
+    var projectId = projectIdFromResult(result)
+    if (!projectId && !result) {
+      var projectRoot = documentObject.querySelector('[wf-xano-instance="' + BRAND_INSTANCE + '"]')
+      var projectItems = (projectRoot || documentObject).querySelectorAll('.project_item[data-wf-xano-id]')
+      if (projectItems && projectItems.length === 1) {
+        projectId = canonicalProjectId(projectItems[0].getAttribute('data-wf-xano-id'))
+      }
+    }
+    if (!projectId) {
+      projectInput.value = ''
+      projectInput.setAttribute('value', '')
+      return false
+    }
+    projectInput.value = projectId
+    projectInput.setAttribute('value', projectId)
+
+    var component = form.closest && form.closest('.review-v3_component')
+    var intro = component && component.querySelector && component.querySelector('.review-v3_intro')
+    if (intro) intro.textContent = 'Share your experience after completing this project. Your review will appear on the Starter profile after submission.'
+    return true
   }
 
   function setTextAll(documentObject, selector, value) {
@@ -263,6 +327,9 @@
     var brandProjects = wfx.get(BRAND_INSTANCE)
     if (brandProjects && typeof brandProjects.on === 'function' && !brandProjects.__reviewsV3Wired) {
       brandProjects.__reviewsV3Wired = true
+      brandProjects.on('results', function (result) {
+        bindReviewFormToSingleProject(documentObject, result)
+      })
       brandProjects.on('formSuccess', function (event) {
         if (!event || String(event.form || '') !== 'project-review') return
         if (typeof global.CustomEvent === 'function') {
@@ -271,14 +338,17 @@
           }))
         }
       })
+      if (brandProjects._lastResult) bindReviewFormToSingleProject(documentObject, brandProjects._lastResult)
     }
   }
 
   var api = {
     profileSlug: profileSlug,
     createIdempotencyKey: createIdempotencyKey,
+    projectIdFromResult: projectIdFromResult,
     configureProfileRoot: configureProfileRoot,
     installReviewFormKeys: installReviewFormKeys,
+    bindReviewFormToSingleProject: bindReviewFormToSingleProject,
     paintProfile: paintProfile,
     renderProfileReviews: renderProfileReviews,
     wireInstances: wireInstances,
@@ -288,6 +358,7 @@
   var documentObject = global.document
   if (!documentObject) return
   configureProfileRoot(documentObject, global.location && global.location.pathname)
+  bindReviewFormToSingleProject(documentObject)
   installReviewFormKeys(documentObject, global.crypto)
 
   var queued = global.WfXano || []
