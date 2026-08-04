@@ -59,6 +59,28 @@ Do not publish this frontend install before the matching endpoint #1513 draft is
 published and its Test Mode replay matrix passes. Otherwise Memberstack changes
 would still leave `brands_v3` stale.
 
+## Executed endpoint #1513 replay results
+
+The prerequisite backend replay gate passed using redacted Memberstack Test Mode
+evidence. The normalized published endpoint SHA-256 was
+`ed5062608ce2566ad838f64d064c894dd17ca3d4f989f1e06d32a6f70c27e880`. A full
+captured current `member.updated` payload was processed in 270 ms; its exact
+replay returned `skipped_stale_or_replay` in 40 ms, and a fixture one millisecond
+older was also skipped.
+
+Canonical readback found exactly one `user_v3` row and one `brands_v3` row keyed
+by the stable Memberstack member ID, with aligned snapshot fields and equal event
+watermarks. Bounded live-route current, replay, and older calls all returned HTTP
+200; replay and older events were skipped, no duplicate rows were created, and
+zero marketing calls occurred. The immediate 15-minute monitor was healthy. In
+the post-release 30-minute window, eight organic live `member.updated` events and
+three recorded Test Mode canaries all returned HTTP 200 with
+`operationally_healthy=true`.
+
+This satisfies the prerequisite backend replay gate. It does not constitute the
+still-pending frontend Build/Edit inbox and token-redemption canaries, which
+remain required before publishing the frontend install.
+
 ## Configuration switches
 
 Account Security ownership remains off:
