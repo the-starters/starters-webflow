@@ -74,6 +74,7 @@ function makeForm(kind = 'build', values = {}) {
     ['data-redirect', '/brand-dashboard'],
   ])
   const listeners = new Map()
+  let nativeSubmits = 0
   const form = {
     wrapper,
     submit,
@@ -94,6 +95,19 @@ function makeForm(kind = 'build', values = {}) {
     },
     addEventListener(type, listener, capture) {
       listeners.set(type, { listener, capture })
+    },
+    requestSubmit() {
+      nativeSubmits += 1
+      const record = listeners.get('submit')
+      if (record) {
+        record.listener({
+          preventDefault() {},
+          stopImmediatePropagation() {},
+        })
+      }
+    },
+    get nativeSubmits() {
+      return nativeSubmits
     },
     submitEvent() {
       const record = listeners.get('submit')
@@ -158,6 +172,22 @@ function loadController(options = {}) {
     },
   }
 
+  const emailRequests = options.emailRequests || new Map()
+  const passwordEmailIssuer = options.passwordEmailIssuer || (async (request) => {
+    const status = emailRequests.get(request.key)
+    if (request.action === 'prepare') {
+      if (status === 'sent') return { status: 'sent' }
+      if (status === 'pending') return { status: 'pending' }
+      if (!request.required) return { status: 'sent' }
+      emailRequests.set(request.key, 'pending')
+      return { status: 'pending' }
+    }
+    if (status === 'sent') return { status: 'already-sent' }
+    await memberstack.sendMemberResetPasswordEmail({ email: request.email })
+    emailRequests.set(request.key, 'sent')
+    return { status: 'sent' }
+  })
+
   const location = {
     hostname: options.hostname || 'the-starters-3-0.webflow.io',
     pathname: options.pathname || '/complete-profile',
@@ -168,7 +198,10 @@ function loadController(options = {}) {
   const window = {
     location,
     $memberstackDom: memberstack,
-    StartersBrandAccountConfig: options.config || {},
+    StartersBrandAccountConfig: {
+      passwordEmailIssuer,
+      ...(options.config || {}),
+    },
     StartersV3RouteGuard: options.routeGuard,
     StartersTrack: {
       track(name, payload) {
@@ -437,13 +470,14 @@ test('Account Security interception remains off until explicitly configured', ()
   assert.equal(environment.securityForm.listeners.has('submit'), false)
 })
 
-test('configured Account Security guard owns the submit and skips an unchanged email', async () => {
+test('Brand Account Security owns the submit and skips an unchanged email', async () => {
   const securityForm = makeForm('security', { email: 'ada@example.com' })
   const environment = loadController({
     buildForm: null,
     securityForm,
     currentEmail: 'ada@example.com',
-    config: { guardSecurityForm: true },
+    config: { guardSecurityForm: 'brand' },
+    routeGuard: { memberRole: () => 'brand-paid' },
   })
 
   const submission = securityForm.submitEvent()
@@ -451,17 +485,21 @@ test('configured Account Security guard owns the submit and skips an unchanged e
 
   assert.equal(submission.event.prevented, true)
   assert.equal(submission.event.stopped, true)
-  assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'getCurrentMember'],
+  )
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
-test('configured Account Security changes email and sends reset password email once', async () => {
+test('Brand Account Security changes email and sends reset password email once', async () => {
   const securityForm = makeForm('security', { email: 'next@example.com' })
   const environment = loadController({
     buildForm: null,
     securityForm,
     currentEmail: 'old@example.com',
-    config: { guardSecurityForm: true },
+    config: { guardSecurityForm: 'brand' },
+    routeGuard: { memberRole: () => 'brand-paid' },
   })
 
   securityForm.submitEvent()
@@ -469,9 +507,9 @@ test('configured Account Security changes email and sends reset password email o
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
-  assert.deepEqual(plain(environment.calls[2].payload), { email: 'next@example.com' })
+  assert.deepEqual(plain(environment.calls[3].payload), { email: 'next@example.com' })
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
@@ -518,9 +556,11 @@ test('Brand-scoped Account Security leaves Talent and unmapped roles Memberstack
       routeGuard: { memberRole: () => role },
     })
 
+    const submission = securityForm.submitEvent()
     await settle()
 
-    assert.equal(securityForm.listeners.has('submit'), false)
+    assert.equal(submission.event.prevented, true)
+    assert.equal(securityForm.nativeSubmits, 1)
     assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
   }
 })
@@ -533,10 +573,125 @@ test('Brand-scoped Account Security does not claim the form without the shared r
     config: { guardSecurityForm: 'brand' },
   })
 
+  securityForm.submitEvent()
   await settle()
 
-  assert.equal(securityForm.listeners.has('submit'), false)
+  assert.equal(securityForm.nativeSubmits, 1)
   assert.deepEqual(environment.calls, [])
+})
+
+test('Brand-scoped Account Security rechecks role on every submit', async () => {
+  let role = 'brand-paid'
+  const securityForm = makeForm('security', { email: 'next@example.com' })
+  const environment = loadController({
+    buildForm: null,
+    securityForm,
+    config: { guardSecurityForm: 'brand' },
+    routeGuard: { memberRole: () => role },
+  })
+
+  role = 'talent'
+  securityForm.submitEvent()
+  await settle()
+
+  assert.equal(securityForm.nativeSubmits, 1)
+  assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+})
+
+test('Build Account replay uses the durable email request after completion failure', async () => {
+  const emailRequests = new Map()
+  let completionAttempts = 0
+  const environment = loadController({
+    emailRequests,
+    currentEmail: 'old@example.com',
+    updateMember: async (payload) => {
+      if (payload.customFields['completed-brand-profile']) {
+        completionAttempts += 1
+        if (completionAttempts === 1) throw new Error('completion failed')
+      }
+      return { ok: true }
+    },
+  })
+
+  environment.buildForm.submitEvent()
+  await settle()
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.equal(completionAttempts, 2)
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    1,
+  )
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('Build Account replay does not duplicate an ambiguously acknowledged email', async () => {
+  const requests = new Map()
+  let messages = 0
+  let firstAcknowledgement = true
+  const environment = loadController({
+    passwordEmailIssuer: async (request) => {
+      const status = requests.get(request.key)
+      if (request.action === 'prepare') {
+        if (status === 'sent') return { status: 'sent' }
+        requests.set(request.key, 'pending')
+        return { status: 'pending' }
+      }
+      if (status === 'sent') return { status: 'already-sent' }
+      messages += 1
+      requests.set(request.key, 'sent')
+      if (firstAcknowledgement) {
+        firstAcknowledgement = false
+        throw new Error('response lost after delivery')
+      }
+      return { status: 'sent' }
+    },
+  })
+
+  environment.buildForm.submitEvent()
+  await settle()
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.equal(messages, 1)
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('Account Security resumes a prepared email after auth changed', async () => {
+  const requests = new Map()
+  let deliveries = 0
+  const securityForm = makeForm('security', { email: 'next@example.com' })
+  const environment = loadController({
+    buildForm: null,
+    securityForm,
+    config: { guardSecurityForm: 'brand' },
+    routeGuard: { memberRole: () => 'brand-paid' },
+    passwordEmailIssuer: async (request) => {
+      const status = requests.get(request.key)
+      if (request.action === 'prepare') {
+        if (status === 'sent') return { status: 'sent' }
+        if (!status && request.required) requests.set(request.key, 'pending')
+        return { status: requests.has(request.key) ? 'pending' : 'sent' }
+      }
+      deliveries += 1
+      if (deliveries === 1) throw new Error('delivery unavailable')
+      requests.set(request.key, 'sent')
+      return { status: 'sent' }
+    },
+  })
+
+  securityForm.submitEvent()
+  await settle()
+  securityForm.submitEvent()
+  await settle()
+
+  assert.equal(deliveries, 2)
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'updateMemberAuth').length,
+    1,
+  )
+  assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
 test('controller does not bind on an unapproved host', () => {
