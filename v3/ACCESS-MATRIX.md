@@ -227,8 +227,9 @@ one route-level rule that page needs.
 > cost is the "All Members" requirement on the gated group above; narrow that group
 > to the paid plan again and these branches become dead code.
 >
-> `completed-brand-profile` is written last through Memberstack by
-> `brand-account-controller.js`; the hidden Designer input
+> `completed-brand-profile` is the last durable Memberstack write by
+> `brand-account-controller.js`, before its password-email attempt; the hidden
+> Designer input
 > (`data-ms-member="completed-brand-profile"`) remains the native field contract,
 > while the redirect reads the member object already in memory and makes no
 > network request. Truthiness is
@@ -332,7 +333,7 @@ separate owner:
 | `/quiz` logged-in role redirects | `quiz-main/quiz-redirect.js` (page-scoped) | Talent bounce added 2026-08-03, not `?retake=`-escapable; `/quiz` is outside all three guard tables |
 | Per-page logged-out destinations for the build-profile funnel | `v3/route-guard.js` `LOGGED_OUT_DESTINATIONS` | Implemented 2026-08-03; staging pass pending |
 | `/complete-profile` access (logged-out kick only) | Memberstack `restrict-pages` gated group (dashboard field values: URL rule STARTS `complete-profile`, access **All Members**, Access Denied URL `login` — no leading slash in either field; denied visitors land on the path `/login`) | Settled 2026-08-03: sole owner, permanently outside `route-guard.js` and `auth-route.js`. Amended the same evening: access must be "All Members" so the page-scoped module in the row below can route logged-in members of every role instead of a `/login` bounce doing it |
-| Logged-in role routing on `/complete-profile` | `v3/complete-profile-redirect.js` (page-scoped; Memberstack `completed-brand-profile` field plus the guard's `memberRole`/`roleHome`, no network call) | Implemented 2026-08-03, role branches added the same evening; the completion field is now ordered last by `brand-account-controller.js`, see [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md). Paid-Brand branch is inert until the controller writes the field; the free-Brand and Talent branches are live immediately. Access control stays with the gated group in the row above |
+| Logged-in role routing on `/complete-profile` | `v3/complete-profile-redirect.js` (page-scoped; Memberstack `completed-brand-profile` field plus the guard's `memberRole`/`roleHome`, no network call) | Implemented 2026-08-03, role branches added the same evening; the completion field is now the last durable member write by `brand-account-controller.js`, see [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md). Paid-Brand branch is inert until the controller writes the field; the free-Brand and Talent branches are live immediately. Access control stays with the gated group in the row above |
 | Talent funnel position on `/build-profile/*` | `v3/build-profile-redirect.js` (page-scoped, Xano `get_build_profile_status`) | Implemented 2026-08-03, migrated off the row-exists signal 2026-08-04; needs three page-level Webflow embeds, see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md) |
 | Talent funnel position at login | `v3/auth-route.js` (Xano `get_build_profile_status`, Talent only) | Live since 2026-07-31, migrated off the row-exists signal 2026-08-04; the `/login` and `/auth-route` embeds are pinned page-level code and need bumping, see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
