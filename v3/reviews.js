@@ -157,20 +157,47 @@
     return true
   }
 
-  function paintProfile(documentObject, result) {
-    if (!documentObject || !result) return false
-    var raw = result.raw && typeof result.raw === 'object' ? result.raw : null
-    var items = Array.isArray(result.items)
-      ? result.items
+  function firstFiniteValue(source, keys) {
+    if (!source || typeof source !== 'object') return null
+    for (var index = 0; index < keys.length; index += 1) {
+      var candidate = source[keys[index]]
+      if (candidate === null || candidate === undefined || candidate === '') continue
+      var value = Number(candidate)
+      if (Number.isFinite(value)) return value
+    }
+    return null
+  }
+
+  function profileResponse(result) {
+    var raw = result.raw && typeof result.raw === 'object' && !Array.isArray(result.raw)
+      ? result.raw
+      : null
+    var items = raw && Array.isArray(raw.reviews)
+      ? raw.reviews
       : (raw && Array.isArray(raw.items)
         ? raw.items
-        : (raw && Array.isArray(raw.reviews) ? raw.reviews : []))
-    var count = items.length
-    var ratingTotal = items.reduce(function (total, review) {
-      var rating = Number(review && review.rating)
-      return total + (Number.isFinite(rating) ? rating : 0)
-    }, 0)
-    var average = count > 0 ? ratingTotal / count : 0
+        : (Array.isArray(result.items) ? result.items : []))
+    var aggregate = raw && raw.aggregate && typeof raw.aggregate === 'object'
+      ? raw.aggregate
+      : (raw && raw.aggregates && typeof raw.aggregates === 'object'
+        ? raw.aggregates
+        : raw)
+    var count = firstFiniteValue(aggregate, ['review_count', 'approved_review_count', 'count', 'itemsTotal'])
+    var average = firstFiniteValue(aggregate, ['average_rating', 'rating_average', 'average'])
+
+    return {
+      items: items,
+      count: count !== null && count >= 0 ? Math.floor(count) : 0,
+      average: average !== null && average >= 0 ? average : 0,
+    }
+  }
+
+  function paintProfile(documentObject, result) {
+    if (!documentObject || !result) return false
+    var response = profileResponse(result)
+    var items = response.items
+    var count = response.count
+    var average = response.average
     var averageText = Number.isFinite(average) && count > 0
       ? average.toFixed(average % 1 === 0 ? 0 : 1)
       : '0'
@@ -185,9 +212,9 @@
 
     var section = documentObject.querySelector(PROFILE_ROOT)
     if (section) {
-      section.hidden = count === 0
-      section.style.display = count > 0 ? '' : 'none'
-      if (count > 0) section.removeAttribute('data-starters-section-hidden')
+      section.hidden = items.length === 0
+      section.style.display = items.length > 0 ? '' : 'none'
+      if (items.length > 0) section.removeAttribute('data-starters-section-hidden')
       else section.setAttribute('data-starters-section-hidden', '')
     }
     return true

@@ -106,10 +106,15 @@ test('sets a fresh stable-project idempotency key in capture phase', () => {
 test('paints approved aggregate and reveals the authored section', () => {
   const fixture = documentFixture()
   const { api } = load({ document: fixture })
-  assert.equal(api.paintProfile(fixture, { items: [{ rating: 4 }, { rating: 5 }] }), true)
-  assert.equal(fixture.average.textContent, '4.5')
-  assert.equal(fixture.legacyAverage.textContent, '4.5')
-  assert.equal(fixture.count.textContent, '2')
+  const raw = {
+    reviews: [{ review_id: 41, rating: 4 }, { review_id: 42, rating: 5 }],
+    aggregate: { review_count: 12, average_rating: 4.8 },
+  }
+  assert.equal(api.paintProfile(fixture, { raw, items: [raw] }), true)
+  assert.equal(fixture.average.textContent, '4.8')
+  assert.equal(fixture.legacyAverage.textContent, '4.8')
+  assert.equal(fixture.count.textContent, '12')
+  assert.equal(fixture.list.childNodes.length, 2)
   assert.equal(fixture.root.hidden, false)
   assert.equal(fixture.root.style.display, '')
 })
@@ -117,7 +122,9 @@ test('paints approved aggregate and reveals the authored section', () => {
 test('keeps an empty authored reviews section hidden', () => {
   const fixture = documentFixture()
   const { api } = load({ document: fixture })
-  api.paintProfile(fixture, { items: [] })
+  api.paintProfile(fixture, {
+    raw: { reviews: [], aggregate: { review_count: 0, average_rating: 0 } },
+  })
   assert.equal(fixture.average.textContent, '0')
   assert.equal(fixture.count.textContent, '0')
   assert.equal(fixture.root.hidden, true)
@@ -151,6 +158,12 @@ test('wires the profile results event once', () => {
   api.wireInstances(wfx, fixture)
   api.wireInstances(wfx, fixture)
   assert.equal(typeof handlers.results, 'function')
-  handlers.results({ items: [{ rating: 5 }] })
-  assert.equal(fixture.average.textContent, '5')
+  const raw = {
+    reviews: [{ rating: 5 }],
+    aggregate: { review_count: 3, average_rating: 4.7 },
+  }
+  handlers.results({ raw, items: [raw] })
+  assert.equal(fixture.list.childNodes.length, 1)
+  assert.equal(fixture.count.textContent, '3')
+  assert.equal(fixture.average.textContent, '4.7')
 })
