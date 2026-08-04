@@ -75,6 +75,15 @@ The V3 opportunity and Messages guards send logged-out visitors to
 `/login?next=<encoded current path and query>` so the router can restore an
 allowed destination after login.
 
+Talent logins additionally fork on funnel position, read from Xano
+`starters_onboarding/get_build_profile_status`: `build_profile_done` false goes to
+`/build-profile/select-profile`, true with `onboarding_done` not `true` goes to
+`/starter-onboarding` (winning over any stored `next`), and both true routes
+normally. Brand and unmapped members never trigger the call, and every
+inconclusive answer fails open to the standard destination. The signal became
+stricter on 2026-08-04; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
+endpoint contract and the 282-row reason.
+
 ## Talent applications admin
 
 `../code-components/` contains the parked, preparation-only React **Talent
@@ -278,21 +287,29 @@ see [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
 `build-profile-redirect.js` keeps a Talent member who is already past the
 Build-profile step from re-entering it. On the three `/build-profile/*` pages it
-performs the same Xano `get_freelancers` read `auth-route.js` performs at login,
-but on page entry, which is what covers an arrival from a bookmark, the back
-button, or a stale link rather than a fresh session. No freelancer record means
-the member stays, since that is who the page is for; a record with
-`onboarding_done` not `true` goes to `/starter-onboarding`, and a finished record
-to `/starter-dashboard`.
+performs the same Xano `get_build_profile_status` read `auth-route.js` performs at
+login, but on page entry, which is what covers an arrival from a bookmark, the
+back button, or a stale link rather than a fresh session. `build_profile_done`
+false means the member stays, since that is who the page is for; true with
+`onboarding_done` not `true` goes to `/starter-onboarding`, and both true goes to
+`/starter-dashboard`.
+
+`build_profile_done` requires a `freelancers_v3` row **and** a non-empty
+`profile_type_30`, the column Build-profile submit stamps. It replaced a plain
+row-exists test on 2026-08-04 because the row is created before the form is
+finished: 282 of 955 rows carry an empty `profile_type_30`, so those members were
+being pushed out of a step they had never completed. `onboarding_done` is true on
+zero rows today, which leaves the `/starter-dashboard` leg unexercised by
+production data.
 
 The role comes from the sitewide route guard's exported contract rather than a
 second copy of the plan table, so a Brand, unmapped, or logged-out visitor costs
 no Xano round trip — the guard has already handled them. Everything else fails
 open on a 4-second overall budget with a shared `AbortController`: a missing role
-contract, a rejected trade, an HTTP error, a malformed envelope, or a browser
-without `fetch` all leave the page exactly as authored. It needs three page-level
-embeds installed after the guard; see
-[BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md).
+contract, a rejected trade, a 401, a 500, an unparseable body, a body without a
+boolean `build_profile_done`, or a browser without `fetch` all leave the page
+exactly as authored. It needs three page-level embeds installed after the guard;
+see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md).
 
 ## Signup redirect marker
 

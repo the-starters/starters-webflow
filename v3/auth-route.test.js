@@ -11,9 +11,52 @@ const routeGuardSource = fs.readFileSync(
 
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
-const GET_URL = XANO + '/api:KZf7nFnk/starters_onboarding/get_freelancers'
-const DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: true }] }
-const NOT_DONE_ENVELOPE = { freelancer: [{ id: 12, onboarding_done: false }] }
+const STATUS_URL =
+  XANO + '/api:KZf7nFnk/starters_onboarding/get_build_profile_status'
+// The endpoint the funnel check used to read. Still stubbed so "it is never
+// requested any more" is an assertion about behaviour rather than about a stub
+// that would have thrown anyway.
+const LEGACY_GET_URL =
+  XANO + '/api:KZf7nFnk/starters_onboarding/get_freelancers'
+
+// get_build_profile_status bodies. `build_profile_done` is true only when a
+// freelancers_v3 row exists AND its profile_type_30 is stamped, which is what
+// the Build-profile submit does.
+const ONBOARDED = {
+  has_record: true,
+  build_profile_done: true,
+  onboarding_done: true,
+  profile_type: 'Full',
+  platform_status: 'approved',
+}
+const NEEDS_ONBOARDING = {
+  has_record: true,
+  build_profile_done: true,
+  onboarding_done: false,
+  profile_type: 'Full',
+  platform_status: 'approved',
+}
+// The 282-of-955 case: the row was created when the member started Build profile
+// and never submitted it, so profile_type_30 is empty. Row-existence used to read
+// this as "past Build profile" and sent the member on to onboarding.
+const UNFINISHED_WITH_ROW = {
+  has_record: true,
+  build_profile_done: false,
+  onboarding_done: false,
+  profile_type: '',
+  platform_status: '',
+}
+const NO_RECORD = {
+  has_record: false,
+  build_profile_done: false,
+  onboarding_done: false,
+  profile_type: '',
+  platform_status: '',
+}
+// What the pre-migration code would have read for UNFINISHED_WITH_ROW.
+const LEGACY_ROW_EXISTS_ENVELOPE = {
+  freelancer: [{ id: 12, onboarding_done: false }],
+}
 
 function plan(planId) {
   return { active: true, planId }
@@ -79,6 +122,19 @@ function makeClock() {
 
 function jsonResponse(body, { ok = true, status = 200 } = {}) {
   return { ok, status, json: async () => body }
+}
+
+// A 200 whose body is not JSON. The router's `.json().catch(() => null)` turns
+// this into a null payload, which must read as inconclusive rather than as a
+// funnel state.
+function malformedJsonResponse() {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw new SyntaxError('Unexpected token < in JSON at position 0')
+    },
+  }
 }
 
 function loadRouter(options = {}) {
@@ -149,17 +205,25 @@ function loadRouter(options = {}) {
       )
     }
 
-    if (String(url) === GET_URL) {
+    if (String(url) === STATUS_URL) {
       if (xano.getNeverSettles) return new Promise(() => {})
       if (xano.getRejects) throw new Error('get network failure')
       if (xano.getStatus) {
         return jsonResponse(null, { ok: false, status: xano.getStatus })
       }
+      if (xano.getMalformedJson) return malformedJsonResponse()
       return jsonResponse(
-        Object.prototype.hasOwnProperty.call(xano, 'envelope')
-          ? xano.envelope
-          : DONE_ENVELOPE,
+        Object.prototype.hasOwnProperty.call(xano, 'statusBody')
+          ? xano.statusBody
+          : ONBOARDED,
       )
+    }
+
+    // Answerable on purpose (see LEGACY_GET_URL): the pre-migration router would
+    // get a usable row-exists envelope here, so a test that asserts the new
+    // destination really is asserting the new signal.
+    if (String(url) === LEGACY_GET_URL) {
+      return jsonResponse(LEGACY_ROW_EXISTS_ENVELOPE)
     }
 
     throw new Error('unexpected fetch: ' + url)
@@ -936,34 +1000,105 @@ test('/starter-onboarding is an allowed Talent next and stays Talent-only', () =
   )
 })
 
-test('the freelancer envelope maps to the three funnel states', () => {
+test('the status body maps to a funnel position', () => {
   const { api } = loadRouter()
 
-  assert.equal(api.onboardingStateFrom(DONE_ENVELOPE), 'done')
-  assert.equal(api.onboardingStateFrom(NOT_DONE_ENVELOPE), 'not-done')
-  assert.equal(api.onboardingStateFrom({ freelancer: [{}] }), 'not-done')
-  assert.equal(
-    api.onboardingStateFrom({ freelancer: [{ onboarding_done: 'true' }] }),
-    'not-done',
-  )
-  assert.equal(api.onboardingStateFrom({ freelancer: [] }), 'no-record')
-  assert.equal(api.onboardingStateFrom({}), 'no-record')
-  assert.equal(api.onboardingStateFrom(null), 'no-record')
+  assert.equal(api.funnelStateFrom(ONBOARDED), 'done')
+  assert.equal(api.funnelStateFrom(NEEDS_ONBOARDING), 'onboarding')
+  assert.equal(api.funnelStateFrom(UNFINISHED_WITH_ROW), 'build-profile')
+  assert.equal(api.funnelStateFrom(NO_RECORD), 'build-profile')
 })
 
-test('a Talent member with no freelancer row is sent to Build profile', async () => {
+test('only a literal false on build_profile_done means "still building"', () => {
+  const { api } = loadRouter()
+
+  // Here the distinction matters: 'build-profile' redirects, 'unknown' fails
+  // open to the standard destination. A body the router cannot read must never
+  // be turned into a redirect.
+  assert.equal(api.funnelStateFrom(null), 'unknown')
+  assert.equal(api.funnelStateFrom(undefined), 'unknown')
+  assert.equal(api.funnelStateFrom({}), 'unknown')
+  assert.equal(api.funnelStateFrom('nope'), 'unknown')
+  assert.equal(api.funnelStateFrom({ build_profile_done: 'false' }), 'unknown')
+  assert.equal(api.funnelStateFrom({ build_profile_done: 0 }), 'unknown')
+  assert.equal(api.funnelStateFrom({ build_profile_done: null }), 'unknown')
+  // The old envelope is not a status body.
+  assert.equal(api.funnelStateFrom(LEGACY_ROW_EXISTS_ENVELOPE), 'unknown')
+})
+
+test('only a literal true on onboarding_done counts as onboarded', () => {
+  const { api } = loadRouter()
+
+  for (const onboarding_done of ['true', 1, {}, null, undefined]) {
+    assert.equal(
+      api.funnelStateFrom({ build_profile_done: true, onboarding_done }),
+      'onboarding',
+      String(onboarding_done),
+    )
+  }
+})
+
+test('a Talent member with no record at all is sent to Build profile', async () => {
   const { location, fetchCalls } = loadRouter({
     pathname: '/auth-route',
     member: talentMember(),
-    xano: { envelope: {} },
+    xano: { statusBody: NO_RECORD },
   })
 
   await flush()
   assert.equal(location.replaced, '/build-profile/select-profile')
   assert.ok(urlsOf(fetchCalls)[0].startsWith(TRADE_URL + '?token='))
-  const reads = callsTo(fetchCalls, GET_URL)
+  const reads = callsTo(fetchCalls, STATUS_URL)
   assert.equal(reads.length, 1)
   assert.equal(reads[0].config.headers.Authorization, 'Bearer xano-token-abc')
+})
+
+/**
+ * The 282-member regression guard. Before 2026-08-04 the signal was "a
+ * freelancers_v3 row exists", so a member who started Build profile and never
+ * submitted it read as finished and was routed on to /starter-onboarding. 282 of
+ * 955 rows are in exactly that shape. They must be sent back to finish the step.
+ */
+test('a Talent member with a row but an unfinished build profile goes BACK to Build profile', async () => {
+  const { location, fetchCalls } = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { statusBody: UNFINISHED_WITH_ROW },
+  })
+
+  await flush()
+  assert.equal(
+    location.replaced,
+    '/build-profile/select-profile',
+    'has_record true must not count as "past Build profile"',
+  )
+  // Proof the decision came from the new signal: the old endpoint, which is
+  // answerable in this harness and would have said "row exists, go to
+  // onboarding", was never asked.
+  assert.equal(callsTo(fetchCalls, LEGACY_GET_URL).length, 0)
+  assert.equal(callsTo(fetchCalls, STATUS_URL).length, 1)
+})
+
+test('the funnel read goes to get_build_profile_status, never to get_freelancers', async () => {
+  const { fetchCalls } = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { statusBody: ONBOARDED },
+  })
+
+  await flush()
+  const urls = urlsOf(fetchCalls)
+  assert.equal(urls.length, 2, 'one token trade plus one status read')
+  assert.ok(urls[0].startsWith(TRADE_URL + '?token='), urls[0])
+  assert.equal(urls[1], STATUS_URL)
+  assert.ok(
+    !urls.some((url) => url.indexOf(LEGACY_GET_URL) === 0),
+    'get_freelancers must no longer be requested',
+  )
+  // No inputs: the endpoint derives the member from the bearer token.
+  const read = callsTo(fetchCalls, STATUS_URL)[0]
+  assert.equal(read.config.method, undefined)
+  assert.equal(read.config.body, undefined)
 })
 
 test('unfinished onboarding wins over a valid stored next and consumes it', async () => {
@@ -971,7 +1106,7 @@ test('unfinished onboarding wins over a valid stored next and consumes it', asyn
     pathname: '/auth-route',
     storedDestination: '/messages',
     member: talentMember(),
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
 
   await flush()
@@ -984,11 +1119,24 @@ test('unfinished onboarding wins over a query next too', async () => {
     pathname: '/auth-route',
     search: '?next=%2Fopportunities%2Fproduct-designer',
     member: talentMember(),
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
 
   await flush()
   assert.equal(location.replaced, '/starter-onboarding')
+})
+
+test('an unfinished build profile wins over a stored next and consumes it', async () => {
+  const { location, storage } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/messages',
+    member: talentMember(),
+    xano: { statusBody: UNFINISHED_WITH_ROW },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/build-profile/select-profile')
+  assert.equal(storage.has('thestarters:v3-auth-next'), false)
 })
 
 test('a finished Talent member keeps the requested next', async () => {
@@ -996,7 +1144,7 @@ test('a finished Talent member keeps the requested next', async () => {
     pathname: '/auth-route',
     storedDestination: '/messages',
     member: talentMember(),
-    xano: { envelope: DONE_ENVELOPE },
+    xano: { statusBody: ONBOARDED },
   })
 
   await flush()
@@ -1008,7 +1156,7 @@ test('a finished Talent member completes the /starter-onboarding round trip', as
     pathname: '/auth-route',
     search: '?next=%2Fstarter-onboarding',
     member: talentMember(),
-    xano: { envelope: DONE_ENVELOPE },
+    xano: { statusBody: ONBOARDED },
   })
 
   await flush()
@@ -1019,24 +1167,56 @@ test('a finished Talent member with no next lands on the Talent home', async () 
   const { location } = loadRouter({
     pathname: '/auth-route',
     member: talentMember(),
-    xano: { envelope: DONE_ENVELOPE },
+    xano: { statusBody: ONBOARDED },
   })
 
   await flush()
   assert.equal(location.replaced, '/starter-dashboard')
 })
 
-test('an HTTP error on the freelancer read fails open to the standard route', async () => {
-  const { location, fetchCalls } = loadRouter({
+test('a 401 or 500 on the status read fails open to the standard route', async () => {
+  // 401 is the endpoint's own answer to a missing or expired Xano token. It must
+  // never be read as a funnel position, and in particular must not send a
+  // finished member back into the funnel.
+  for (const getStatus of [401, 500]) {
+    const { location, fetchCalls } = loadRouter({
+      pathname: '/auth-route',
+      storedDestination: '/messages',
+      member: talentMember(),
+      xano: { getStatus },
+    })
+
+    await flush()
+    assert.equal(location.replaced, '/messages', String(getStatus))
+    assert.equal(callsTo(fetchCalls, STATUS_URL).length, 1, String(getStatus))
+  }
+})
+
+test('a 200 with an unparseable body fails open to the standard route', async () => {
+  const { location, logs } = loadRouter({
     pathname: '/auth-route',
     storedDestination: '/messages',
     member: talentMember(),
-    xano: { getStatus: 500 },
+    xano: { getMalformedJson: true },
   })
 
   await flush()
   assert.equal(location.replaced, '/messages')
-  assert.equal(callsTo(fetchCalls, GET_URL).length, 1)
+  assert.ok(logs.info.some((line) => line.includes('unknown')))
+})
+
+test('a status body missing build_profile_done fails open, never to Build profile', async () => {
+  for (const statusBody of [{}, { has_record: true }, 'nope', 42]) {
+    const { location } = loadRouter({
+      pathname: '/auth-route',
+      storedDestination: '/messages',
+      member: talentMember(),
+      xano: { statusBody },
+    })
+
+    await flush()
+    assert.equal(location.replaced, '/messages', JSON.stringify(statusBody))
+  }
 })
 
 test('a rejected read, a failed trade, and a tokenless trade all fail open', async () => {
@@ -1060,8 +1240,8 @@ test('a rejected read, a failed trade, and a tokenless trade all fail open', asy
   assert.equal(rejected.location.replaced, '/starter-dashboard')
   assert.equal(tradeFailed.location.replaced, '/starter-dashboard')
   assert.equal(tokenless.location.replaced, '/starter-dashboard')
-  assert.equal(callsTo(tradeFailed.fetchCalls, GET_URL).length, 0)
-  assert.equal(callsTo(tokenless.fetchCalls, GET_URL).length, 0)
+  assert.equal(callsTo(tradeFailed.fetchCalls, STATUS_URL).length, 0)
+  assert.equal(callsTo(tokenless.fetchCalls, STATUS_URL).length, 0)
 })
 
 test('a member with no Memberstack cookie never reaches Xano and routes normally', async () => {
@@ -1069,7 +1249,7 @@ test('a member with no Memberstack cookie never reaches Xano and routes normally
     pathname: '/auth-route',
     member: talentMember(),
     loggedOutCookie: true,
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
 
   await flush()
@@ -1100,7 +1280,7 @@ test('a slow but in-budget check still drives the funnel', async () => {
     pathname: '/auth-route',
     member: talentMember(),
     clock: true,
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
 
   await flush()
@@ -1118,7 +1298,7 @@ test('Brand logins never spend a Xano call on the Talent funnel', async () => {
       id: 'member-brand-paid',
       planConnections: [plan('pln_new-paid-plan-463h04ph')],
     },
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
   const freeBrand = loadRouter({
     pathname: '/auth-route',
@@ -1126,12 +1306,12 @@ test('Brand logins never spend a Xano call on the Talent funnel', async () => {
       id: 'member-brand-free',
       planConnections: [plan('pln_free-plan-f6kn0dxz')],
     },
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
   const unmapped = loadRouter({
     pathname: '/auth-route',
     member: { id: 'member-unknown', planConnections: [plan('pln_unknown')] },
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
 
   await flush()
@@ -1148,7 +1328,7 @@ test('funnel diagnostics are staging-only unless STARTERS_DEBUG is set', async (
     hostname: 'www.thestarters.com',
     pathname: '/auth-route',
     member: talentMember(),
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
   await flush()
   assert.equal(quiet.location.replaced, '/starter-onboarding')
@@ -1157,7 +1337,7 @@ test('funnel diagnostics are staging-only unless STARTERS_DEBUG is set', async (
   const loud = loadRouter({
     pathname: '/auth-route',
     member: talentMember(),
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
   await flush()
   assert.ok(loud.logs.info.some((line) => line.includes('/starter-onboarding')))
@@ -1167,7 +1347,7 @@ test('funnel diagnostics are staging-only unless STARTERS_DEBUG is set', async (
     pathname: '/auth-route',
     member: talentMember(),
     debug: true,
-    xano: { envelope: NOT_DONE_ENVELOPE },
+    xano: { statusBody: NEEDS_ONBOARDING },
   })
   await flush()
   assert.equal(debugged.location.replaced, '/starter-onboarding')

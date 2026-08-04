@@ -1,25 +1,39 @@
 /**
  * V3 login router.
  *
- * @release v1.59.81
+ * @release v1.59.82
  *
  * Install on the V3 login pages (/login and /starter-login) and /auth-route
  * only. Every V3 login form must redirect to /auth-route so shared Memberstack
  * plan redirects can remain unchanged for V2.
  *
- * Talent members additionally get an onboarding-funnel check here, because
+ * Talent members additionally get a funnel-position check here, because
  * /auth-route is the one page every Talent login passes through. The product
- * flow is Apply → Build profile (creates the Xano freelancers_v3 row before the
- * member ever logs in) → Login → Onboarding → Dashboard, so the router asks
- * Xano where in that flow the member actually is:
+ * flow is Apply → Build profile → Login → Onboarding → Dashboard, and one lean
+ * Xano endpoint answers where in that flow the member actually is:
  *
- *   - no freelancers_v3 row      → /build-profile/select-profile
- *   - row, onboarding not done   → /starter-onboarding (wins over any `next`)
- *   - row, onboarding done       → the normal `next`/role-home routing
+ *   GET api:KZf7nFnk/starters_onboarding/get_build_profile_status
+ *   → {has_record, build_profile_done, onboarding_done, profile_type,
+ *      platform_status}
+ *
+ * No inputs; the member is derived from the bearer token traded from the
+ * Memberstack JWT. The router reads two of those fields:
+ *
+ *   - build_profile_done false → /build-profile/select-profile
+ *   - done, not onboarded      → /starter-onboarding (wins over any `next`)
+ *   - done and onboarded       → the normal `next`/role-home routing
+ *
+ * `build_profile_done` is deliberately STRICTER than the "does a freelancers_v3
+ * row exist" test it replaced on 2026-08-04: it also requires the row's
+ * `profile_type_30` to be non-empty, which the Build-profile submit is what
+ * stamps. The row itself is created earlier, so row-existence said "finished"
+ * for anyone who merely started the form — 282 of 955 rows carry an empty
+ * `profile_type_30`, and every one of those members was being routed past a step
+ * they had not completed. They are now sent back to finish it.
  *
  * The check FAILS OPEN in every other case — logged out of Xano, token trade
- * rejected, HTTP error, malformed envelope, or the whole check exceeding its
- * 4s budget — and the member is routed exactly as before. This is funnel UX,
+ * rejected, HTTP error, malformed body, or the whole check exceeding its 4s
+ * budget — and the member is routed exactly as before. This is funnel UX,
  * never a security boundary: Memberstack gated content, v3/route-guard.js, and
  * Xano endpoint authorization remain the enforced layers. Brand roles and
  * unmapped members never trigger a Xano call at all.
@@ -64,16 +78,22 @@
   var XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
   var XANO_ONBOARDING_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
   var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
-  var GET_FREELANCERS_PATH = '/starters_onboarding/get_freelancers'
+  // The lean funnel-status read. No inputs: the member is derived from the
+  // bearer token, exactly like the get_freelancers read it replaced.
+  var BUILD_PROFILE_STATUS_PATH =
+    '/starters_onboarding/get_build_profile_status'
 
-  // One OVERALL deadline for the token trade plus the record read, not a
+  // One OVERALL deadline for the token trade plus the status read, not a
   // per-request timeout. /auth-route is a blank hop page, so the member is
   // staring at nothing while this runs; past the budget the funnel check is
   // abandoned and the standard destination wins.
   var ONBOARDING_CHECK_BUDGET_MS = 4000
 
-  var FUNNEL_NO_RECORD = 'no-record'
-  var FUNNEL_NOT_DONE = 'not-done'
+  // Funnel POSITION, not a record shape: where the member actually is in Apply →
+  // Build profile → Onboarding → Dashboard. Same four values as
+  // v3/build-profile-redirect.js.
+  var FUNNEL_BUILD_PROFILE = 'build-profile'
+  var FUNNEL_ONBOARDING = 'onboarding'
   var FUNNEL_DONE = 'done'
   var FUNNEL_UNKNOWN = 'unknown'
 
@@ -424,32 +444,43 @@
   }
 
   /**
-   * `{"freelancer": [ <one record> ]}`, and an empty envelope for a member who
-   * never completed Build profile. Only a literal `true` counts as done, so a
-   * missing field or an unexpected shape lands on "not done" — the state that
-   * sends the member into onboarding rather than past it.
+   * `{has_record, build_profile_done, onboarding_done, profile_type,
+   * platform_status}` → a funnel position. Strict in both directions, because
+   * here the three answers route three different ways and UNKNOWN is the only
+   * one that fails open:
+   *
+   *   - only a literal `false` on `build_profile_done` means "still building"
+   *     and earns the /build-profile/select-profile redirect. Anything else
+   *     non-`true` (missing, null, a string) is a body this router does not
+   *     understand, so it reads UNKNOWN and the standard destination wins.
+   *   - only a literal `true` on `onboarding_done` counts as onboarded, so a
+   *     missing or odd value biases toward sending the member into onboarding
+   *     rather than past it.
+   *
+   * `has_record` is deliberately unread. A row can exist for a member who never
+   * finished the form, and treating that as "done building" is exactly the bug
+   * this endpoint replaced.
    */
-  function onboardingStateFrom(payload) {
-    var records = payload && payload.freelancer
-    if (!Array.isArray(records) || records.length === 0) return FUNNEL_NO_RECORD
-    var record = records[0]
-    if (!record) return FUNNEL_NOT_DONE
-    return record.onboarding_done === true ? FUNNEL_DONE : FUNNEL_NOT_DONE
+  function funnelStateFrom(payload) {
+    if (!payload || typeof payload !== 'object') return FUNNEL_UNKNOWN
+    if (payload.build_profile_done === false) return FUNNEL_BUILD_PROFILE
+    if (payload.build_profile_done !== true) return FUNNEL_UNKNOWN
+    return payload.onboarding_done === true ? FUNNEL_DONE : FUNNEL_ONBOARDING
   }
 
-  async function readOnboardingState(memberstack, signal) {
+  async function readFunnelState(memberstack, signal) {
     var token = await tradeForXanoToken(memberstack, signal)
     var response = await window.fetch(
-      XANO_ONBOARDING_BASE + GET_FREELANCERS_PATH,
+      XANO_ONBOARDING_BASE + BUILD_PROFILE_STATUS_PATH,
       { headers: { Authorization: 'Bearer ' + token }, signal: signal },
     )
     if (!response.ok) {
-      throw new Error('get_freelancers responded ' + response.status)
+      throw new Error('get_build_profile_status responded ' + response.status)
     }
     var data = await response.json().catch(function () {
       return null
     })
-    return onboardingStateFrom(data)
+    return funnelStateFrom(data)
   }
 
   /**
@@ -464,7 +495,7 @@
 
     var budget = startCheckBudget()
     return Promise.race([
-      readOnboardingState(memberstack, budget.signal).catch(function (error) {
+      readFunnelState(memberstack, budget.signal).catch(function (error) {
         warn(
           'onboarding funnel check failed, using the standard destination: ' +
             describe(error),
@@ -515,14 +546,16 @@
     // contract) still falls through to the existing error handling below.
     if (memberRole(member) === 'talent') {
       var state = await onboardingFunnelState(memberstack)
-      if (state === FUNNEL_NO_RECORD) {
+      if (state === FUNNEL_BUILD_PROFILE) {
         note(
-          'no freelancer record; sending Talent to ' + BUILD_PROFILE_PATH + '.',
+          'build profile not finished; sending Talent to ' +
+            BUILD_PROFILE_PATH +
+            '.',
         )
         window.location.replace(BUILD_PROFILE_PATH)
         return
       }
-      if (state === FUNNEL_NOT_DONE) {
+      if (state === FUNNEL_ONBOARDING) {
         note(
           'onboarding not done; sending Talent to ' +
             ONBOARDING_PATH +
@@ -532,7 +565,7 @@
         window.location.replace(ONBOARDING_PATH)
         return
       }
-      note('onboarding state "' + state + '"; routing normally.')
+      note('funnel state "' + state + '"; routing normally.')
     }
 
     var destination = destinationFor(member, requested)
@@ -548,7 +581,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/auth-route.test.js drift guard asserts they match.
-    release: 'v1.59.81',
+    release: 'v1.59.82',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,
@@ -560,7 +593,7 @@
     // Onboarding funnel, for console diagnostics and tests.
     stagingHost: stagingHost,
     diagnosticsEnabled: diagnosticsEnabled,
-    onboardingStateFrom: onboardingStateFrom,
+    funnelStateFrom: funnelStateFrom,
     onboardingFunnelState: onboardingFunnelState,
     onboardingPath: ONBOARDING_PATH,
     buildProfilePath: BUILD_PROFILE_PATH,
