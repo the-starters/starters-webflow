@@ -83,19 +83,42 @@ remain required before publishing the frontend install.
 
 ## Configuration switches
 
-Account Security ownership remains off:
+This repository does not currently provide the durable backend adapter or a
+`window.StartersPasswordEmailIssuer` bootstrap. Do not publish the controller
+configuration until the backend owner supplies that adapter and its browser
+bootstrap is installed before `brand-account-controller.js`.
+
+Use Brand-scoped ownership when the controller is installed sitewide:
 
 ```html
 <script>
   window.StartersBrandAccountConfig = {
-    guardSecurityForm: false
+    guardSecurityForm: 'brand',
+    // Supplied by the prerequisite backend bootstrap.
+    passwordEmailIssuer: window.StartersPasswordEmailIssuer
   }
 </script>
 ```
 
-- `guardSecurityForm`: take capture-phase ownership of
-  `#wf-form-Account-Security`. Enable only when removing the competing
-  `data-ms-form="profile"` ownership from that form.
+- `guardSecurityForm: 'brand'`: resolve the current member through
+  `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
+  `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. Talent,
+  unmapped, conflicted, logged-out, or unreadable identity states retain the
+  existing Memberstack-native handler.
+- `passwordEmailIssuer`: the authenticated backend adapter that owns the
+  durable reset-email outbox. The controller calls it with `prepare` before an
+  email-auth mutation and `deliver` afterward. Both actions receive the same
+  deterministic key, stable Memberstack member ID, and normalized target email;
+  `prepare` also receives `required`. With `required: true`, it creates or
+  resumes a pending request. With `required: false`, it resumes an existing
+  pending request but otherwise returns `{status: 'sent'}` as a no-op, which is
+  how an unchanged Account Security email avoids a new message while a replay
+  after a completed auth mutation can still finish delivery. A completed
+  request also returns `{status: 'sent'}`. `deliver` atomically claims the
+  pending request, sends the Memberstack reset/set-password email once, records
+  completion, and returns `{status: 'sent'}` or `{status: 'already-sent'}`.
+  The adapter must return the existing state for duplicate calls and must not
+  expose a direct, non-idempotent Memberstack email call to the browser.
 
 The ordinary Account Profile form remains Memberstack-native. Endpoint #1513
 must mirror its `member.updated` payload into `brands_v3`.
@@ -105,12 +128,14 @@ must mirror its `member.updated` payload into `brands_v3`.
 - Invalid authored fields do not call Memberstack.
 - Duplicate submits while one save is running are ignored.
 - Custom-field and email assignments retry once only on timeout, 429, or 5xx.
-- Build Account requests a reset/set-password email for the final normalized
-  email after profile and auth updates and before completion is marked.
+- Build Account prepares a reset/set-password email request before profile and
+  auth updates, delivers it afterward, and marks completion last.
 - Account Security requests that email only when the login email changes.
-- The email request is never automatically retried because an ambiguous send
-  response could otherwise emit a duplicate email. A failure remains
-  recoverable and leaves Build Account incomplete.
+- No separate verification email is sent. Successful redemption of the one
+  reset/set-password link is the email-ownership proof.
+- Email issuance is resumed through the durable backend outbox. A replay uses
+  the same member-and-target key, so a completed request is not sent again and
+  an unfinished request can resume even after the login email already changed.
 - Successful password-token redemption is the ownership proof. The controller
   does not claim Memberstack `verified=true` without separately observed state.
 - `completed-brand-profile` is written last. Any earlier failure leaves the
@@ -131,8 +156,12 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
    and no partial Xano email drift.
 6. Change to the approved canary email; prove one reset/set-password message and
    matching Xano values.
-7. Replay duplicate and out-of-order webhook fixtures; prove no stale overwrite.
-8. Run the read-only reconciliation and require zero unexplained differences.
+7. Fail after email delivery but before Build Account completion, replay, and
+   prove the outbox returns `already-sent` with one inbox message.
+8. Fail delivery after the Account Security auth mutation, replay, and prove the
+   prepared outbox request resumes with one inbox message.
+9. Replay duplicate and out-of-order webhook fixtures; prove no stale overwrite.
+10. Run the read-only reconciliation and require zero unexplained differences.
 
 Production canaries require separate approval for the exact member, email,
 expected message, rollback, and any marketing projection.

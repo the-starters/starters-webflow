@@ -12,13 +12,16 @@
  * the completion marker last. Every operation is replay-safe; a failed retry
  * repeats assignments rather than creating another account or Brand row.
  *
- * Build Account requests a Memberstack reset/set-password email before
- * completion. Account Security requests one only after changing login email.
+ * Build Account prepares a durable Memberstack reset/set-password request
+ * before its member writes, delivers it after them, and marks completion last.
+ * Account Security creates a request only for a changed login email, while a
+ * replay can resume a request prepared before an earlier auth mutation.
  *
  * The Account Security interception is also OFF by default so it cannot race
- * Memberstack's currently published `data-ms-form="profile"` handler. Enable
- * only after its Designer wiring is intentionally handed to this controller:
- *   window.StartersBrandAccountConfig = { guardSecurityForm: true }
+ * Memberstack's currently published `data-ms-form="profile"` handler. The
+ * configured Brand-scoped mode resolves the current member through the
+ * canonical route-guard role contract and claims Brand forms only:
+ *   window.StartersBrandAccountConfig = { guardSecurityForm: 'brand' }
  */
 ;(function () {
   'use strict'
@@ -199,13 +202,45 @@
     return { changed: changed, email: email }
   }
 
-  async function sendResetPasswordEmail(client, email) {
-    if (typeof client.sendMemberResetPasswordEmail !== 'function') {
-      throw new Error('Password setup email is unavailable. Contact support.')
+  function passwordEmailKey(member, email) {
+    return 'brand-password-email:' + member.id + ':' + email
+  }
+
+  async function preparePasswordEmail(member, email, required) {
+    var issuer = config().passwordEmailIssuer
+    if (typeof issuer !== 'function') {
+      throw new Error('Password setup email service is unavailable. Contact support.')
     }
-    return withTimeout(function () {
-      return client.sendMemberResetPasswordEmail({ email: email })
+    var request = {
+      action: 'prepare',
+      key: passwordEmailKey(member, email),
+      memberId: member.id,
+      email: email,
+      required: !!required,
+    }
+    var result = await withTimeout(function () {
+      return issuer(request)
     })
+    if (!result || (result.status !== 'pending' && result.status !== 'sent')) {
+      throw new Error('Password setup email service returned an invalid response.')
+    }
+    return { request: request, pending: result.status === 'pending' }
+  }
+
+  async function deliverPasswordEmail(prepared) {
+    if (!prepared.pending) return
+    var issuer = config().passwordEmailIssuer
+    var result = await withTimeout(function () {
+      return issuer({
+        action: 'deliver',
+        key: prepared.request.key,
+        memberId: prepared.request.memberId,
+        email: prepared.request.email,
+      })
+    })
+    if (!result || (result.status !== 'sent' && result.status !== 'already-sent')) {
+      throw new Error('Password setup email service returned an invalid response.')
+    }
   }
 
   async function markBuildComplete(client) {
@@ -264,12 +299,13 @@
 
     var client = memberstack()
     var member = await currentMember(client)
+    var passwordEmail = await preparePasswordEmail(member, values.email, true)
 
     // Completion is deliberately last. If email or ordinary fields fail, the
     // member remains on onboarding and can replay the same idempotent values.
     await updateOrdinaryFields(client, values)
     await updateEmailIfChanged(client, member, values.email)
-    await sendResetPasswordEmail(client, values.email)
+    await deliverPasswordEmail(passwordEmail)
     await markBuildComplete(client)
 
     return { memberId: member.id }
@@ -280,8 +316,10 @@
     if (!EMAIL_PATTERN.test(email)) throw new Error('Enter a valid email address.')
     var client = memberstack()
     var member = await currentMember(client)
+    var changed = memberEmail(member) !== email
+    var passwordEmail = await preparePasswordEmail(member, email, changed)
     var result = await updateEmailIfChanged(client, member, email)
-    if (result.changed) await sendResetPasswordEmail(client, result.email)
+    await deliverPasswordEmail(passwordEmail)
     return result
   }
 
@@ -327,6 +365,72 @@
     return true
   }
 
+  function replayNativeSubmit(form, submitter) {
+    form.setAttribute('data-brand-account-native-replay', 'true')
+    try {
+      if (typeof form.requestSubmit === 'function') form.requestSubmit(submitter || undefined)
+      else if (typeof form.dispatchEvent === 'function') {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      }
+    } finally {
+      form.setAttribute('data-brand-account-native-replay', 'false')
+    }
+  }
+
+  function bindBrandSecurityForm(form) {
+    if (!form || form.getAttribute('data-brand-account-bound') === 'true') return false
+    form.setAttribute('data-brand-account-bound', 'true')
+    var busy = false
+    var ownsSubmission = false
+
+    form.addEventListener(
+      'submit',
+      function (event) {
+        if (form.getAttribute('data-brand-account-native-replay') === 'true') return
+        event.preventDefault()
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation()
+        }
+        if (busy) return
+        busy = true
+        ownsSubmission = false
+        var submitter = event.submitter
+
+        Promise.resolve()
+          .then(async function () {
+            var guard = window.StartersV3RouteGuard
+            if (!guard || typeof guard.memberRole !== 'function') return false
+            var member = await currentMember(memberstack())
+            var role = guard.memberRole(member)
+            if (role !== 'brand-free' && role !== 'brand-paid') return false
+            ownsSubmission = true
+            setBusy(form, true)
+            setMessage(form, 'idle', '')
+            await submitSecurity(form)
+            setMessage(form, 'success', '')
+            return true
+          })
+          .then(function (owned) {
+            if (!owned) replayNativeSubmit(form, submitter)
+          })
+          .catch(function (error) {
+            if (!ownsSubmission) {
+              replayNativeSubmit(form, submitter)
+              return
+            }
+            setMessage(form, 'error', friendlyError(error))
+            trackFailure(error, 'brand/account/email')
+          })
+          .finally(function () {
+            busy = false
+            setBusy(form, false)
+          })
+      },
+      true,
+    )
+    return true
+  }
+
   function init() {
     var location = window.location || {}
     if (!allowedHost(location.hostname || '')) return false
@@ -337,10 +441,11 @@
       bound = bindForm(buildForm, 'brand/account/build', submitBuild, true) || bound
     }
 
-    if (config().guardSecurityForm === true) {
-      var securityForm = document.querySelector(SECURITY_FORM_SELECTOR)
-      if (securityForm) {
-        bound = bindForm(securityForm, 'brand/account/email', submitSecurity, false) || bound
+    var securityMode = config().guardSecurityForm
+    if (securityMode === 'brand') {
+      var brandSecurityForm = document.querySelector(SECURITY_FORM_SELECTOR)
+      if (brandSecurityForm) {
+        bound = bindBrandSecurityForm(brandSecurityForm) || bound
       }
     }
 
