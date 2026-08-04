@@ -89,10 +89,11 @@
   var MEMBERSTACK_POLL_MS = 100
 
   var CONVERSATION_SOURCE = 'hire-page'
-  // Memberstack ids are `mem_` + an alphanumeric cuid. Anything else is an
-  // unbound Designer placeholder and must never reach TalkJS, which would
-  // happily create a real user record for it.
-  var MEMBER_ID_PATTERN = /^mem_[A-Za-z0-9]+$/
+  // Memberstack ids are `mem_` + an alphanumeric cuid, with an extra `sb_`
+  // segment for Test Mode (sandbox) members. Anything else is an unbound
+  // Designer placeholder and must never reach TalkJS, which would happily
+  // create a real user record for it.
+  var MEMBER_ID_PATTERN = /^mem_(?:sb_)?[A-Za-z0-9]+$/
   var MAX_NAME_LENGTH = 120
   // Hidden from the trigger. `brand-free` is additionally redirected on open.
   var HIDDEN_ROLES = ['brand-free', 'talent']

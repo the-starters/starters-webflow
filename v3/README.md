@@ -427,6 +427,11 @@ And an empty container inside that modal, which is where the chat renders:
 | `messages-profile-name` | Name | PlainText (optional) |
 | `messages-profile-photo` | Profile Photo Xano | PlainText (optional) |
 
+The identity guard accepts both live `mem_<cuid>` ids and Memberstack Test Mode
+`mem_sb_<cuid>` ids. It rejects empty suffixes, hyphens, and any other extra
+underscore so Designer placeholders or hand-edited deep links cannot create
+unintended TalkJS users.
+
 The three identity attributes must be *field bindings*, not literal values, or
 every profile ships the same starter's id. Bind `Profile Photo Xano` rather than
 `Profile Photo`: the latter is an Image field and is not reliably offered for

@@ -288,8 +288,18 @@ test('corrupt handoff JSON degrades to an id-only reference', async () => {
   assert.equal(calls.users[1], OTHER_ID)
 })
 
+test('a sandbox (Test Mode) ?with= id opens the conversation like a live id', async () => {
+  const SANDBOX_ID = 'mem_sb_cmqhuaxn80d270sseeo74fn7i'
+  const { calls } = loadMessages({ search: '?with=' + SANDBOX_ID })
+
+  await settle()
+
+  assert.equal(calls.conversations.length, 1)
+  assert.equal(calls.users[1], SANDBOX_ID)
+})
+
 test('a malformed ?with= value is ignored', async () => {
-  for (const value of ['not-a-member', 'mem_', '', 'mem_bad-id', '../../etc']) {
+  for (const value of ['not-a-member', 'mem_', 'mem_sb_', '', 'mem_bad-id', 'mem_sb_extra_underscore', '../../etc']) {
     const { calls } = loadMessages({ search: '?with=' + encodeURIComponent(value) })
 
     await settle()
