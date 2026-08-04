@@ -83,12 +83,18 @@ remain required before publishing the frontend install.
 
 ## Configuration switches
 
+This repository does not currently provide the durable backend adapter or a
+`window.StartersPasswordEmailIssuer` bootstrap. Do not publish the controller
+configuration until the backend owner supplies that adapter and its browser
+bootstrap is installed before `brand-account-controller.js`.
+
 Use Brand-scoped ownership when the controller is installed sitewide:
 
 ```html
 <script>
   window.StartersBrandAccountConfig = {
     guardSecurityForm: 'brand',
+    // Supplied by the prerequisite backend bootstrap.
     passwordEmailIssuer: window.StartersPasswordEmailIssuer
   }
 </script>

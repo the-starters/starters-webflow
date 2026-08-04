@@ -19,8 +19,8 @@
  *
  * The Account Security interception is also OFF by default so it cannot race
  * Memberstack's currently published `data-ms-form="profile"` handler. The
- * sitewide production mode resolves the current member through the canonical
- * route-guard role contract and claims Brand forms only:
+ * configured Brand-scoped mode resolves the current member through the
+ * canonical route-guard role contract and claims Brand forms only:
  *   window.StartersBrandAccountConfig = { guardSecurityForm: 'brand' }
  */
 ;(function () {
