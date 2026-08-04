@@ -172,22 +172,6 @@ function loadController(options = {}) {
     },
   }
 
-  const emailRequests = options.emailRequests || new Map()
-  const passwordEmailIssuer = options.passwordEmailIssuer || (async (request) => {
-    const status = emailRequests.get(request.key)
-    if (request.action === 'prepare') {
-      if (status === 'sent') return { status: 'sent' }
-      if (status === 'pending') return { status: 'pending' }
-      if (!request.required) return { status: 'sent' }
-      emailRequests.set(request.key, 'pending')
-      return { status: 'pending' }
-    }
-    if (status === 'sent') return { status: 'already-sent' }
-    await memberstack.sendMemberResetPasswordEmail({ email: request.email })
-    emailRequests.set(request.key, 'sent')
-    return { status: 'sent' }
-  })
-
   const location = {
     hostname: options.hostname || 'the-starters-3-0.webflow.io',
     pathname: options.pathname || '/complete-profile',
@@ -198,10 +182,7 @@ function loadController(options = {}) {
   const window = {
     location,
     $memberstackDom: memberstack,
-    StartersBrandAccountConfig: {
-      passwordEmailIssuer,
-      ...(options.config || {}),
-    },
+    StartersBrandAccountConfig: options.config || {},
     StartersV3RouteGuard: options.routeGuard,
     StartersTrack: {
       track(name, payload) {
@@ -269,8 +250,8 @@ test('Build Account writes ordinary fields, changed email, then completion in or
       'getCurrentMember',
       'updateMember',
       'updateMemberAuth',
-      'sendMemberResetPasswordEmail',
       'updateMember',
+      'sendMemberResetPasswordEmail',
     ],
   )
   assert.deepEqual(plain(environment.calls[1].payload), {
@@ -281,10 +262,10 @@ test('Build Account writes ordinary fields, changed email, then completion in or
     },
   })
   assert.deepEqual(plain(environment.calls[2].payload), { email: 'ada+new@example.com' })
-  assert.deepEqual(plain(environment.calls[3].payload), { email: 'ada+new@example.com' })
-  assert.deepEqual(plain(environment.calls[4].payload), {
+  assert.deepEqual(plain(environment.calls[3].payload), {
     customFields: { 'completed-brand-profile': 'true' },
   })
+  assert.deepEqual(plain(environment.calls[4].payload), { email: 'ada+new@example.com' })
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
   assert.equal(buildForm.getAttribute('aria-busy'), 'false')
   assert.equal(buildForm.submit.disabled, false)
@@ -299,9 +280,9 @@ test('Build Account sends a reset password email without an unchanged auth mutat
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'sendMemberResetPasswordEmail', 'updateMember'],
+    ['getCurrentMember', 'updateMember', 'updateMember', 'sendMemberResetPasswordEmail'],
   )
-  assert.deepEqual(plain(environment.calls[2].payload), { email: 'ada@example.com' })
+  assert.deepEqual(plain(environment.calls[3].payload), { email: 'ada@example.com' })
 })
 
 test('invalid input performs no Memberstack mutation and exposes the authored error state', async () => {
@@ -420,16 +401,16 @@ test('Build Account sends one reset password email after changing auth', async (
       'getCurrentMember',
       'updateMember',
       'updateMemberAuth',
-      'sendMemberResetPasswordEmail',
       'updateMember',
+      'sendMemberResetPasswordEmail',
     ],
   )
-  assert.deepEqual(plain(environment.calls[3].payload), {
+  assert.deepEqual(plain(environment.calls[4].payload), {
     email: 'verified-next@example.com',
   })
 })
 
-test('reset password email failure leaves Build Account incomplete', async () => {
+test('reset password email failure keeps durable completion and provides recovery copy', async () => {
   const buildForm = makeForm('build', { email: 'next@example.com' })
   const sendError = new Error('password email service unavailable')
   sendError.status = 503
@@ -446,23 +427,52 @@ test('reset password email failure leaves Build Account incomplete', async () =>
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    [
+      'getCurrentMember',
+      'updateMember',
+      'updateMemberAuth',
+      'updateMember',
+      'sendMemberResetPasswordEmail',
+    ],
   )
   assert.equal(
     environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
     1,
   )
   assert.equal(
-    environment.calls.some(
+    environment.calls.filter(
       (call) => call.method === 'updateMember' && call.payload.customFields['completed-brand-profile'],
-    ),
-    false,
+    ).length,
+    1,
   )
   assert.deepEqual(environment.redirects, [])
   assert.equal(buildForm.wrapper.fail.style.display, 'block')
-  assert.equal(buildForm.wrapper.failText.textContent, 'password email service unavailable')
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
+  )
   assert.equal(buildForm.getAttribute('aria-busy'), 'false')
   assert.equal(buildForm.submit.disabled, false)
+})
+
+test('non-Error password email rejection still produces stable recovery copy', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  const environment = loadController({
+    buildForm,
+    sendMemberResetPasswordEmail: async () => Promise.reject('response lost'),
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    buildForm.wrapper.failText.textContent,
+    'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
+  )
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    1,
+  )
 })
 
 test('Account Security interception remains off until explicitly configured', () => {
@@ -624,11 +634,9 @@ test('Brand-scoped Account Security rechecks role on every submit', async () => 
   assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
 })
 
-test('Build Account replay uses the durable email request after completion failure', async () => {
-  const emailRequests = new Map()
+test('Build Account sends no email until its completion write succeeds', async () => {
   let completionAttempts = 0
   const environment = loadController({
-    emailRequests,
     currentEmail: 'old@example.com',
     updateMember: async (payload) => {
       if (payload.customFields['completed-brand-profile']) {
@@ -652,26 +660,12 @@ test('Build Account replay uses the durable email request after completion failu
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
-test('Build Account replay does not duplicate an ambiguously acknowledged email', async () => {
-  const requests = new Map()
+test('Build Account does not retry an ambiguously acknowledged email on the same page', async () => {
   let messages = 0
-  let firstAcknowledgement = true
   const environment = loadController({
-    passwordEmailIssuer: async (request) => {
-      const status = requests.get(request.key)
-      if (request.action === 'prepare') {
-        if (status === 'sent') return { status: 'sent' }
-        requests.set(request.key, 'pending')
-        return { status: 'pending' }
-      }
-      if (status === 'sent') return { status: 'already-sent' }
+    sendMemberResetPasswordEmail: async () => {
       messages += 1
-      requests.set(request.key, 'sent')
-      if (firstAcknowledgement) {
-        firstAcknowledgement = false
-        throw new Error('response lost after delivery')
-      }
-      return { status: 'sent' }
+      throw new Error('response lost after delivery')
     },
   })
 
@@ -684,8 +678,7 @@ test('Build Account replay does not duplicate an ambiguously acknowledged email'
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
-test('Account Security resumes a prepared email after auth changed', async () => {
-  const requests = new Map()
+test('Account Security does not retry an ambiguous email send after auth changed', async () => {
   let deliveries = 0
   const securityForm = makeForm('security', { email: 'next@example.com' })
   const environment = loadController({
@@ -693,17 +686,9 @@ test('Account Security resumes a prepared email after auth changed', async () =>
     securityForm,
     config: { guardSecurityForm: 'brand' },
     routeGuard: { memberRole: () => 'brand-paid' },
-    passwordEmailIssuer: async (request) => {
-      const status = requests.get(request.key)
-      if (request.action === 'prepare') {
-        if (status === 'sent') return { status: 'sent' }
-        if (!status && request.required) requests.set(request.key, 'pending')
-        return { status: requests.has(request.key) ? 'pending' : 'sent' }
-      }
+    sendMemberResetPasswordEmail: async () => {
       deliveries += 1
-      if (deliveries === 1) throw new Error('delivery unavailable')
-      requests.set(request.key, 'sent')
-      return { status: 'sent' }
+      throw new Error('delivery unavailable')
     },
   })
 
@@ -712,7 +697,7 @@ test('Account Security resumes a prepared email after auth changed', async () =>
   securityForm.submitEvent()
   await settle()
 
-  assert.equal(deliveries, 2)
+  assert.equal(deliveries, 1)
   assert.equal(
     environment.calls.filter((call) => call.method === 'updateMemberAuth').length,
     1,

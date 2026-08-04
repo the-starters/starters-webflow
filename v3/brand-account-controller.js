@@ -12,10 +12,11 @@
  * the completion marker last. Every operation is replay-safe; a failed retry
  * repeats assignments rather than creating another account or Brand row.
  *
- * Build Account prepares a durable Memberstack reset/set-password request
- * before its member writes, delivers it after them, and marks completion last.
- * Account Security creates a request only for a changed login email, while a
- * replay can resume a request prepared before an earlier auth mutation.
+ * Build Account makes the completion marker its last durable member write,
+ * then attempts one Memberstack reset/set-password email. Account Security
+ * attempts that email only after a changed login email succeeds. Password
+ * email calls are never automatically retried; Memberstack's Forgot Password
+ * flow is the recovery path when delivery cannot be confirmed.
  *
  * The Account Security interception is also OFF by default so it cannot race
  * Memberstack's currently published `data-ms-form="profile"` handler. The
@@ -39,6 +40,7 @@
   var OP_TIMEOUT_MS = 15000
   var RETRY_DELAYS_MS = [0, 300]
   var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  var passwordEmailAttempts = new WeakMap()
 
   function config() {
     return window.StartersBrandAccountConfig || {}
@@ -202,44 +204,29 @@
     return { changed: changed, email: email }
   }
 
-  function passwordEmailKey(member, email) {
-    return 'brand-password-email:' + member.id + ':' + email
-  }
+  async function sendResetPasswordEmailOnce(form, client, email) {
+    var attemptedEmail = passwordEmailAttempts.get(form)
+    if (attemptedEmail === email) return { attempted: false }
+    passwordEmailAttempts.set(form, email)
 
-  async function preparePasswordEmail(member, email, required) {
-    var issuer = config().passwordEmailIssuer
-    if (typeof issuer !== 'function') {
-      throw new Error('Password setup email service is unavailable. Contact support.')
+    if (typeof client.sendMemberResetPasswordEmail !== 'function') {
+      var unavailable = new Error('Password setup email is unavailable.')
+      unavailable.passwordEmailAttempted = true
+      throw unavailable
     }
-    var request = {
-      action: 'prepare',
-      key: passwordEmailKey(member, email),
-      memberId: member.id,
-      email: email,
-      required: !!required,
-    }
-    var result = await withTimeout(function () {
-      return issuer(request)
-    })
-    if (!result || (result.status !== 'pending' && result.status !== 'sent')) {
-      throw new Error('Password setup email service returned an invalid response.')
-    }
-    return { request: request, pending: result.status === 'pending' }
-  }
 
-  async function deliverPasswordEmail(prepared) {
-    if (!prepared.pending) return
-    var issuer = config().passwordEmailIssuer
-    var result = await withTimeout(function () {
-      return issuer({
-        action: 'deliver',
-        key: prepared.request.key,
-        memberId: prepared.request.memberId,
-        email: prepared.request.email,
+    try {
+      await withTimeout(function () {
+        return client.sendMemberResetPasswordEmail({ email: email })
       })
-    })
-    if (!result || (result.status !== 'sent' && result.status !== 'already-sent')) {
-      throw new Error('Password setup email service returned an invalid response.')
+      return { attempted: true }
+    } catch (error) {
+      var failed = new Error(
+        error && error.message ? error.message : 'Password setup email could not be confirmed.',
+      )
+      failed.passwordEmailAttempted = true
+      failed.status = statusOf(error)
+      throw failed
     }
   }
 
@@ -285,6 +272,9 @@
   }
 
   function friendlyError(error) {
+    if (error && error.passwordEmailAttempted) {
+      return 'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.'
+    }
     var status = statusOf(error)
     if (status === 409 || status === 422) {
       return 'That email is already in use. Choose another email address.'
@@ -299,14 +289,14 @@
 
     var client = memberstack()
     var member = await currentMember(client)
-    var passwordEmail = await preparePasswordEmail(member, values.email, true)
 
-    // Completion is deliberately last. If email or ordinary fields fail, the
-    // member remains on onboarding and can replay the same idempotent values.
+    // Completion is the last durable member write. The password email follows
+    // it as a single, non-retried side effect, so a lost acknowledgement cannot
+    // cause an automatic replay to emit a duplicate message.
     await updateOrdinaryFields(client, values)
     await updateEmailIfChanged(client, member, values.email)
-    await deliverPasswordEmail(passwordEmail)
     await markBuildComplete(client)
+    await sendResetPasswordEmailOnce(form, client, values.email)
 
     return { memberId: member.id }
   }
@@ -316,10 +306,8 @@
     if (!EMAIL_PATTERN.test(email)) throw new Error('Enter a valid email address.')
     var client = memberstack()
     var member = await currentMember(client)
-    var changed = memberEmail(member) !== email
-    var passwordEmail = await preparePasswordEmail(member, email, changed)
     var result = await updateEmailIfChanged(client, member, email)
-    await deliverPasswordEmail(passwordEmail)
+    if (result.changed) await sendResetPasswordEmailOnce(form, client, result.email)
     return result
   }
 
