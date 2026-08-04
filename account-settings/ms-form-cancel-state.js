@@ -2,7 +2,7 @@
  * Cancel-flow success state — show one success message out of several, picked by
  * the reason button the member clicked.
  *
- * @release v1.59.88
+ * @release v1.59.90
  *
  * ONE job: remember the state KEY chosen inside a `[ms-form-cancel-state]` root and
  * show only the success item tagged with that key. Nothing is submitted, fetched,
@@ -471,7 +471,7 @@
   window.StartersMsFormCancelState = {
     // Keep in sync with the @release line in this file's header comment; the
     // ms-form-cancel-state.test.js drift guard asserts they match.
-    release: 'v1.59.88',
+    release: 'v1.59.90',
     stagingHost: stagingHost,
     diagnosticsEnabled: diagnosticsEnabled,
     get: getState,
