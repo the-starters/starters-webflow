@@ -105,6 +105,27 @@ test('sets a fresh stable-project idempotency key in capture phase', () => {
   assert.equal(key.getAttribute('value'), key.value)
 })
 
+test('binds the authored embed to the only rendered Xano project', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture })
+  const project = new Element({ 'data-wf-xano-id': '667' })
+  const form = new Element()
+  const component = new Element()
+  const projectInput = new Element()
+  const intro = new Element()
+  form.children['[wf-xano-field="project_id"]'] = projectInput
+  component.children['.review-v3_intro'] = intro
+  form.closest = (selector) => selector === '.review-v3_component' ? component : null
+  fixture.querySelector = (selector) => selector === 'form[data-review-form-v3]' ? form : null
+  fixture.querySelectorAll = (selector) => selector === '.project_item[data-wf-xano-id]' ? [project] : []
+
+  assert.equal(api.bindReviewFormToSingleProject(fixture), true)
+  assert.equal(projectInput.value, '667')
+  assert.equal(projectInput.getAttribute('value'), '667')
+  assert.equal(project.childNodes[0], component)
+  assert.match(intro.textContent, /appear on the Starter profile/)
+})
+
 test('paints approved aggregate and reveals the authored section', () => {
   const fixture = documentFixture()
   const { api } = load({ document: fixture })
