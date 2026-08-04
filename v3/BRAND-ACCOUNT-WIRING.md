@@ -27,7 +27,8 @@ The Build Account form remains native Webflow HTML:
 Do not add `data-ms-form="profile"` to this form while
 `brand-account-controller.js` owns submit. Two Memberstack submit owners would
 race. The hidden completion field remains authored for visibility and backward
-compatibility, but the controller writes its value explicitly and last.
+compatibility, but the controller writes its value explicitly as the final
+durable member write, before the non-retried password-email attempt.
 
 The upload link stays outside any Memberstack profile-form contract and is
 bound by `complete-profile-photo.js` to:

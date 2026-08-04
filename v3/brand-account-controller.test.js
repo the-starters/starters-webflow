@@ -75,6 +75,7 @@ function makeForm(kind = 'build', values = {}) {
   ])
   const listeners = new Map()
   let nativeSubmits = 0
+  let nativeSubmitReady = true
   const form = {
     wrapper,
     submit,
@@ -97,6 +98,7 @@ function makeForm(kind = 'build', values = {}) {
       listeners.set(type, { listener, capture })
     },
     requestSubmit() {
+      if (!nativeSubmitReady) return
       nativeSubmits += 1
       const record = listeners.get('submit')
       if (record) {
@@ -110,6 +112,12 @@ function makeForm(kind = 'build', values = {}) {
       return nativeSubmits
     },
     submitEvent() {
+      if (values.nativeSubmitNeedsMacrotask) {
+        nativeSubmitReady = false
+        setImmediate(() => {
+          nativeSubmitReady = true
+        })
+      }
       const record = listeners.get('submit')
       if (!record) throw new Error('submit listener not bound')
       const event = {
@@ -627,6 +635,22 @@ test('Brand-scoped Account Security rechecks role on every submit', async () => 
   })
 
   role = 'talent'
+  securityForm.submitEvent()
+  await settle()
+
+  assert.equal(securityForm.nativeSubmits, 1)
+  assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+})
+
+test('non-Brand native replay waits until the intercepted browser submit task clears', async () => {
+  const securityForm = makeForm('security', { nativeSubmitNeedsMacrotask: true })
+  const environment = loadController({
+    buildForm: null,
+    securityForm,
+    config: { guardSecurityForm: 'brand' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
   securityForm.submitEvent()
   await settle()
 

@@ -9,8 +9,9 @@
  * This controller keeps the Designer-authored form intact. It prevents the
  * native Webflow submission, validates the authored fields, updates ordinary
  * Memberstack fields first, updates login email only when it changed, and sets
- * the completion marker last. Every operation is replay-safe; a failed retry
- * repeats assignments rather than creating another account or Brand row.
+ * the completion marker as its last durable member write. Durable assignments
+ * are replay-safe; a failed retry repeats assignments rather than creating
+ * another account or Brand row. The password email is deliberately not retried.
  *
  * Build Account makes the completion marker its last durable member write,
  * then attempts one Memberstack reset/set-password email. Account Security
@@ -360,14 +361,16 @@
 
   function replayNativeSubmit(form, submitter) {
     form.setAttribute('data-brand-account-native-replay', 'true')
-    try {
-      if (typeof form.requestSubmit === 'function') form.requestSubmit(submitter || undefined)
-      else if (typeof form.dispatchEvent === 'function') {
-        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    window.setTimeout(function () {
+      try {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit(submitter || undefined)
+        else if (typeof form.dispatchEvent === 'function') {
+          form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+        }
+      } finally {
+        form.setAttribute('data-brand-account-native-replay', 'false')
       }
-    } finally {
-      form.setAttribute('data-brand-account-native-replay', 'false')
-    }
+    }, 0)
   }
 
   function bindBrandSecurityForm(form) {
