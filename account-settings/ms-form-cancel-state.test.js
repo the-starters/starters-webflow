@@ -4,16 +4,15 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-const source = fs.readFileSync(path.join(__dirname, 'msform-cancel-state.js'), 'utf8')
+const source = fs.readFileSync(path.join(__dirname, 'ms-form-cancel-state.js'), 'utf8')
 
 /* ------------------------------- mini DOM -------------------------------- *
- * The module walks ancestors (closest) to decide which root owns an element and
- * writes style.display / aria-hidden, so flat stubs cannot express what it does.
- * This is a small tree implementing exactly the surface it touches. Only the
- * selector shapes the module actually uses are supported — `[attr]`,
- * `[attr="value"]`, `.class`, and comma groups of those — and anything else
- * throws, so a future selector cannot silently match nothing and turn a real
- * regression into a passing test.
+ * The module walks ancestors (closest, parentElement) to decide which root owns an
+ * element and writes style.display / aria-hidden, so flat stubs cannot express what
+ * it does. This is a small tree implementing exactly the surface it touches. Only
+ * the selector shapes the module actually uses are supported — `[attr]`,
+ * `[attr="value"]`, `.class` — and anything else throws, so a future selector cannot
+ * silently match nothing and turn a real regression into a passing test.
  * ------------------------------------------------------------------------- */
 
 function matcher(selector) {
@@ -50,6 +49,7 @@ class El {
     this._attrs = new Map()
     this.children = []
     this.parentNode = null
+    this.parentElement = null
     this.style = {}
     this.classes = new Set()
     // What getComputedStyle reports when no inline display is set.
@@ -82,7 +82,6 @@ class El {
 
   append(child) {
     child.parentNode = this
-    // The disabled walk uses parentElement, as the real DOM does to skip text nodes.
     child.parentElement = this
     this.children.push(child)
     return child
@@ -123,21 +122,18 @@ const h = (tag, attrs, children) => new El(tag, attrs || {}, children || [])
 /* ------------------------------- fixtures -------------------------------- */
 
 const A = {
-  root: 'msform-cancel-state',
-  element: 'msform-cancel-state-element',
-  change: 'msform-cancel-state-change',
-  key: 'msform-cancel-state-key',
-  current: 'msform-cancel-state-current',
-  active: 'msform-cancel-state-active',
-  display: 'msform-cancel-state-display',
+  root: 'ms-form-cancel-state',
+  element: 'ms-form-cancel-state-element',
+  change: 'ms-form-cancel-state-change',
+  key: 'ms-form-cancel-state-key',
+  current: 'ms-form-cancel-state-current',
 }
 
 /**
- * Webflow's button component as the real page authors it: the attributes live on
- * the `.button_main-wrap` WRAPPER, and the click lands on the overlaid
- * `.clickable_btn` inside it (or on `.button_main-text`), never on the wrapper.
- * `type="button"` is what the flow's branch buttons use; the final Confirm is
- * `type="submit"`.
+ * Webflow's button component as the real page authors it: the attributes live on the
+ * `.button_main-wrap` WRAPPER, and the click lands on the overlaid `.clickable_btn`
+ * inside it (or on `.button_main-text`), never on the wrapper. `type="button"` is
+ * what the flow's branch buttons use; the final Confirm is `type="submit"`.
  */
 function componentButton(attrs, innerType) {
   const hit = h('button', { type: innerType || 'button', class: 'clickable_btn' })
@@ -160,26 +156,27 @@ function componentButton(attrs, innerType) {
 }
 
 /**
- * The cancel form as authored in Webflow: a `.w-form` Form Block carrying the
- * root, the `<form>` with the reason buttons, and Webflow's success div holding
- * the tagged wrapper + items.
+ * The cancel form as authored in Webflow: the `.w-form` Form Block carries the root,
+ * the `<form>` holds the reason buttons, and Webflow's success div — a SIBLING of the
+ * form, inside the block — holds the tagged wrapper and items.
  *
  * Returns `wraps` (the elements carrying the attributes) and `buttons` (the inner
- * elements a member actually clicks). They are the same element only for the
- * `plain: true` variant, which is a bare tagged `<a>`.
+ * elements a member actually clicks); they are the same element only for `plain`.
  *
- * @param {{prefix?: string, rootValue?: string, keys?: string[], buttons?: string[],
- *          rootOn?: 'block'|'form', wrapper?: boolean, plain?: boolean,
- *          displays?: Record<string,string>, innerType?: string}} [options]
+ * @param {{keys?: string[], buttons?: string[], rootOn?: 'block'|'form',
+ *          wrapper?: boolean, plain?: boolean, noElementAttr?: boolean,
+ *          displays?: Record<string,string>, innerType?: string,
+ *          rootValue?: string}} [options]
  */
 function cancelForm(options) {
   const o = options || {}
-  const p = o.prefix || ''
   const keys = o.keys || ['default', 'pause', 'needs']
   const buttonKeys = o.buttons || ['pause', 'needs']
 
   const built = buttonKeys.map((key) => {
-    const attrs = { [p + A.element]: 'button', [p + A.change]: key }
+    const attrs = {}
+    if (!o.noElementAttr) attrs[A.element] = 'button'
+    attrs[A.change] = key
     if (o.plain) {
       const el = h('a', attrs)
       return { wrap: el, hit: el, text: el }
@@ -189,28 +186,25 @@ function cancelForm(options) {
   const wraps = built.map((b) => b.wrap)
   const buttons = built.map((b) => b.hit)
   const labels = built.map((b) => b.text)
-  const items = keys.map((key) =>
-    h('div', { [p + A.element]: 'success-item', [p + A.key]: key })
-  )
+
+  const items = keys.map((key) => h('div', { [A.element]: 'success-item', [A.key]: key }))
   // Displays have to be in place BEFORE the module boots, exactly as page CSS is.
   if (o.displays) {
     items.forEach((item) => {
-      const key = item.getAttribute(p + A.key)
+      const key = item.getAttribute(A.key)
       if (o.displays[key]) item.computedDisplay = o.displays[key]
     })
   }
 
   const itemHost =
-    o.wrapper === false ? h('div', {}, items) : h('div', { [p + A.element]: 'success-wrapper' }, items)
+    o.wrapper === false ? h('div', {}, items) : h('div', { [A.element]: 'success-wrapper' }, items)
   const done = h('div', { class: 'w-form-done' }, [itemHost])
   const formEl = h('form', {}, wraps)
 
-  const rootAttrs = { [p + A.root]: o.rootValue === undefined ? '' : o.rootValue }
+  const rootAttrs = { [A.root]: o.rootValue === undefined ? '' : o.rootValue }
   let root
   let block
   if (o.rootOn === 'form') {
-    // Root on the <form>: Webflow puts the success div OUTSIDE the form, as a
-    // sibling inside the Form Block.
     Object.keys(rootAttrs).forEach((k) => formEl.setAttribute(k, rootAttrs[k]))
     root = formEl
     block = h('div', { class: 'w-form' }, [formEl, done])
@@ -222,25 +216,19 @@ function cancelForm(options) {
   return { root, block, formEl, done, wrapper: itemHost, items, buttons, wraps, labels }
 }
 
-/** Items keyed by their state key, for readable assertions. */
 function byKey(items) {
   const out = {}
   items.forEach((item) => {
-    out[item.getAttribute(A.key) || item.getAttribute('data-' + A.key)] = item
+    out[item.getAttribute(A.key)] = item
   })
   return out
 }
 
 const visible = (el) => el.style.display !== 'none'
-const shownKeys = (items) =>
-  items.filter(visible).map((i) => i.getAttribute(A.key) || i.getAttribute('data-' + A.key))
+const shownKeys = (items) => items.filter(visible).map((i) => i.getAttribute(A.key))
 
 /* -------------------------------- harness -------------------------------- */
 
-/**
- * Boot the module over a page. `body` is the document element; anything the test
- * appends afterwards is visible to refresh() and to delegated clicks.
- */
 function load(options) {
   const opts = options || {}
   const body = opts.body || h('body')
@@ -258,6 +246,7 @@ function load(options) {
     Object,
     Array,
     WeakMap,
+    WeakSet,
     RegExp,
   }
 
@@ -307,13 +296,12 @@ function load(options) {
 /** A booted page holding one cancel form. */
 function onePage(options) {
   const form = cancelForm(options)
-  const body = h('body', {}, [form.root.parentNode || form.root])
-  if (form.block !== form.root && !form.block.parentNode) body.append(form.block)
+  const body = h('body', {}, [form.block])
   const page = load({ ...options, body })
   return { ...page, ...form, keyed: byKey(form.items) }
 }
 
-/* --------------------------------- tests --------------------------------- */
+/* ------------------------------ core contract ----------------------------- */
 
 test('first paint shows only the default item', () => {
   const { items, keyed, root } = onePage()
@@ -334,11 +322,9 @@ test('clicking a state button shows only that key', () => {
 })
 
 test('the state key matches by value, not by DOM order', () => {
-  // `pause` is authored LAST here, so a positional implementation would show the
-  // wrong message.
   const { items, buttons, click } = onePage({ keys: ['default', 'needs', 'pause'] })
 
-  click(buttons[0]) // pause
+  click(buttons[0]) // pause, authored last
 
   assert.deepEqual(shownKeys(items), ['pause'])
 })
@@ -365,11 +351,42 @@ test('every item with the clicked key shows, not just the first', () => {
   assert.deepEqual(shownKeys(items), ['pause', 'pause'])
 })
 
+test('a forgotten success-wrapper does not break the switch', () => {
+  const { items, buttons, click } = onePage({ wrapper: false })
+
+  click(buttons[0]) // pause
+
+  assert.deepEqual(shownKeys(items), ['pause'])
+})
+
+test('a key with no item leaves the block empty and says so', () => {
+  // The contract is "only the div with that key shows", so a mistyped key is an
+  // authoring bug to surface — not something to paper over with another message.
+  const { items, root, buttons, click, warnings } = onePage({
+    keys: ['default', 'needs'],
+    hostname: 'the-starters-3-0.webflow.io',
+  })
+
+  click(buttons[0]) // pause — no matching item
+
+  assert.deepEqual(shownKeys(items), [])
+  assert.equal(root.getAttribute(A.current), 'pause', 'the chosen state is still reported')
+  assert.ok(warnings.some((w) => w.includes('no success-item has') && w.includes('pause')))
+})
+
+test('the root attribute value is a label, never a starting state', () => {
+  const { items, root } = onePage({ rootValue: 'pause' })
+
+  assert.deepEqual(shownKeys(items), ['default'])
+  assert.equal(root.getAttribute(A.current), 'default')
+})
+
+/* --------------------------- ownership isolation -------------------------- */
+
 test('two forms on one page keep separate state', () => {
   const a = cancelForm()
   const b = cancelForm()
-  const body = h('body', {}, [a.root, b.root])
-  const { click } = load({ body })
+  const { click } = load({ body: h('body', {}, [a.root, b.root]) })
 
   click(b.buttons[1]) // needs, in form B
 
@@ -391,118 +408,55 @@ test('a nested root is not repainted by the outer root', () => {
   assert.deepEqual(shownKeys(inner.items), ['default'], 'inner form must not move')
 })
 
-test('root tagged on the <form> still finds the sibling success div', () => {
-  const { items, buttons, click } = onePage({ rootOn: 'form' })
-
-  click(buttons[1]) // needs
-
-  assert.deepEqual(shownKeys(items), ['needs'])
-})
-
-test('a forgotten success-wrapper does not break the switch', () => {
-  const { items, buttons, click } = onePage({ wrapper: false })
-
-  click(buttons[0]) // pause
-
-  assert.deepEqual(shownKeys(items), ['pause'])
-})
-
-test('a key with no item falls back to default but still reports the state', () => {
-  const { items, root, buttons, click, warnings } = onePage({
-    keys: ['default', 'needs'],
-    hostname: 'the-starters-3-0.webflow.io',
-  })
-
-  click(buttons[0]) // pause — no matching item
-
-  assert.deepEqual(shownKeys(items), ['default'], 'the member never sees an empty success box')
-  assert.equal(root.getAttribute(A.current), 'pause', 'the chosen state is still reported')
-  assert.ok(
-    warnings.some((w) => w.includes('no success-item with') && w.includes('pause')),
-    'staging warns about the missing item'
-  )
-})
-
-test('a missing default item leaves the block empty and says so', () => {
-  const { items, warnings } = onePage({
-    keys: ['pause', 'needs'],
+test('ownership is strict: a root never adopts items it does not contain', () => {
+  // Root on the <form> puts Webflow's success div outside it. Widening the search to
+  // the enclosing .w-form would couple behavior to a styling class and could let a
+  // root adopt items owned by no root in an outer block. It warns instead.
+  const { items, buttons, click, warnings } = onePage({
+    rootOn: 'form',
     hostname: 'localhost',
   })
 
-  assert.deepEqual(shownKeys(items), [])
-  assert.ok(warnings.some((w) => w.includes('there is no "default" item')))
+  click(buttons[1])
+
+  assert.deepEqual(shownKeys(items), ['default', 'pause', 'needs'], 'nothing painted')
+  assert.ok(warnings.some((w) => w.includes('has no [ms-form-cancel-state-element="success-item"]')))
 })
 
-test('the data- spelling of every attribute works', () => {
-  const { items, buttons, root, click } = onePage({ prefix: 'data-' })
+/* ------------------------------ trigger contract -------------------------- */
 
-  assert.deepEqual(shownKeys(items), ['default'])
-
-  click(buttons[1]) // needs
-
-  assert.deepEqual(shownKeys(items), ['needs'])
-  assert.equal(root.getAttribute(A.current), 'needs', 'reflection is always un-prefixed')
-})
-
-test('the active flag lands on the component wrapper, and the previous one clears', () => {
-  const { buttons, wraps, click } = onePage()
-
-  click(buttons[0])
-  assert.equal(wraps[0].getAttribute(A.active), 'true')
-  assert.equal(wraps[1].getAttribute(A.active), null)
+test('a trigger missing the element attribute is inert and says so', () => {
+  const { items, buttons, click, warnings } = onePage({
+    noElementAttr: true,
+    hostname: 'the-starters-3-0.webflow.io',
+  })
 
   click(buttons[1])
-  assert.equal(wraps[0].getAttribute(A.active), null)
-  assert.equal(wraps[1].getAttribute(A.active), 'true')
+
+  assert.deepEqual(shownKeys(items), ['default'])
+  assert.ok(warnings.some((w) => w.includes('is missing ms-form-cancel-state-element="button"')))
 })
 
-test('the button theme is never touched — that belongs to the flow', () => {
-  const { buttons, wraps, click } = onePage()
+test('an element role used as a state key is inert, not a transition', () => {
+  // The mistake this attribute pair invites: -change="button". A role value must not
+  // become a state, and must not repaint anything.
+  const form = cancelForm({ buttons: ['button'] })
+  const { click, warnings } = load({
+    body: h('body', {}, [form.root]),
+    hostname: 'the-starters-3-0.webflow.io',
+  })
 
-  click(buttons[0])
+  click(form.buttons[0])
 
-  assert.equal(wraps[0].getAttribute('data-button-theme'), 'black')
+  assert.deepEqual(shownKeys(form.items), ['default'], 'the member sees no state change')
+  assert.equal(form.root.getAttribute(A.current), 'default')
+  assert.ok(warnings.some((w) => w.includes('is an ms-form-cancel-state-element role, not a state key')))
+  assert.ok(warnings.some((w) => w.includes('Ignoring this click')))
 })
 
-test('the click is never swallowed — these buttons also submit or navigate', () => {
-  const { buttons, click } = onePage()
-
-  const event = click(buttons[0])
-
-  assert.equal(event.defaultPrevented, false)
-  assert.equal(event.propagationStopped, false)
-})
-
-test('the listener is delegated once, in the capture phase', () => {
-  const { listeners } = onePage()
-
-  assert.equal(listeners.click.length, 1)
-  assert.equal(listeners.click[0].capture, true, 'capture survives a stopPropagation below')
-})
-
-test('loading the embed twice does not double-bind or double-boot', () => {
-  const page = onePage()
-
-  page.rerun()
-
-  assert.equal(page.listeners.click.length, 1)
-  page.click(page.buttons[1])
-  assert.deepEqual(shownKeys(page.items), ['needs'])
-})
-
-test('a click inside a text node child of the button still resolves', () => {
-  const { buttons, items, click } = onePage()
-  const label = h('span', {})
-  buttons[0].append(label)
-
-  click(label)
-
-  assert.deepEqual(shownKeys(items), ['pause'])
-})
-
-test('an empty change value is ignored instead of blanking the form', () => {
+test('an empty change value is inert', () => {
   const form = cancelForm()
-  const stray = h('a', { [A.change]: '   ' })
+  const stray = h('div', { [A.element]: 'button', [A.change]: '   ' })
   form.formEl.append(stray)
   const { click, warnings } = load({
     body: h('body', {}, [form.root]),
@@ -512,13 +466,12 @@ test('an empty change value is ignored instead of blanking the form', () => {
   click(stray)
 
   assert.deepEqual(shownKeys(form.items), ['default'])
-  assert.equal(form.root.getAttribute(A.current), 'default')
-  assert.ok(warnings.some((w) => w.includes('is empty on a clicked button')))
+  assert.ok(warnings.some((w) => w.includes('is empty on a clicked control')))
 })
 
 test('a button outside every root is ignored, not crashed on', () => {
   const form = cancelForm()
-  const orphan = h('a', { [A.change]: 'needs' })
+  const orphan = h('div', { [A.element]: 'button', [A.change]: 'needs' })
   const { click, warnings } = load({
     body: h('body', {}, [form.root, orphan]),
     hostname: 'the-starters-3-0.webflow.io',
@@ -526,139 +479,21 @@ test('a button outside every root is ignored, not crashed on', () => {
 
   assert.doesNotThrow(() => click(orphan))
   assert.deepEqual(shownKeys(form.items), ['default'])
-  assert.ok(warnings.some((w) => w.includes('is not inside a [msform-cancel-state] root')))
+  assert.ok(warnings.some((w) => w.includes('is not inside a [ms-form-cancel-state] root')))
 })
 
-test('a root with no items warns instead of throwing', () => {
-  const root = h('div', { [A.root]: '', class: 'w-form' }, [h('form', {})])
-  const { warnings } = load({ body: h('body', {}, [root]), hostname: 'localhost' })
+test('a repeated authoring mistake warns once, not once per click', () => {
+  const form = cancelForm({ buttons: ['button'] })
+  const { click, warnings } = load({ body: h('body', {}, [form.root]), hostname: 'localhost' })
 
-  assert.ok(warnings.some((w) => w.includes('has no [msform-cancel-state-element="success-item"]')))
+  click(form.buttons[0])
+  click(form.buttons[0])
+  click(form.buttons[0])
+
+  assert.equal(warnings.filter((w) => w.includes('not a state key')).length, 1)
 })
 
-test('items hidden in the Designer come back as block', () => {
-  const page = onePage({ displays: { default: 'none', pause: 'none', needs: 'none' } })
-
-  page.click(page.buttons[1]) // needs
-
-  assert.equal(page.keyed.needs.style.display, 'block')
-  assert.equal(page.keyed.default.style.display, 'none')
-})
-
-test('an authored display is preserved, and the display attribute overrides it', () => {
-  const page = onePage({ displays: { needs: 'flex', pause: 'none' } })
-  page.keyed.pause.setAttribute(A.display, 'grid')
-
-  page.click(page.buttons[1]) // needs
-  assert.equal(page.keyed.needs.style.display, 'flex')
-
-  page.click(page.buttons[0]) // pause
-  assert.equal(page.keyed.pause.style.display, 'grid')
-})
-
-test('the authored display survives being hidden first', () => {
-  // Reading the display only when an item is shown would read back the inline
-  // `none` this module wrote on the first paint, stranding the item forever.
-  // `needs` is hidden by the very first paint, before it is ever shown.
-  const page = onePage({ displays: { needs: 'flex' } })
-
-  page.click(page.buttons[0]) // pause
-  page.click(page.buttons[1]) // needs
-
-  assert.equal(page.keyed.needs.style.display, 'flex')
-})
-
-test('a root value naming an item starts on that state', () => {
-  const { items, root } = onePage({ rootValue: 'pause' })
-
-  assert.deepEqual(shownKeys(items), ['pause'])
-  assert.equal(root.getAttribute(A.current), 'pause')
-})
-
-test('a root value that is only a label still starts on default', () => {
-  const { items, root } = onePage({ rootValue: 'cancel-form' })
-
-  assert.deepEqual(shownKeys(items), ['default'])
-  assert.equal(root.getAttribute(A.current), 'default')
-})
-
-test('refresh() paints a root added after boot', () => {
-  const form = cancelForm()
-  const body = h('body')
-  const page = load({ body })
-
-  body.append(form.root)
-  page.api.refresh()
-
-  assert.deepEqual(shownKeys(form.items), ['default'])
-})
-
-test('a click paints a root that arrived after boot, with no refresh() call', () => {
-  const form = cancelForm()
-  const body = h('body')
-  const page = load({ body })
-
-  body.append(form.root)
-  page.click(form.buttons[1]) // needs
-
-  assert.deepEqual(shownKeys(form.items), ['needs'])
-})
-
-test('refresh() repaints the live state, picking up late items', () => {
-  const page = onePage()
-  page.click(page.buttons[0]) // pause
-
-  const late = h('div', { [A.element]: 'success-item', [A.key]: 'pause' })
-  page.wrapper.append(late)
-  page.api.refresh()
-
-  assert.equal(visible(late), true)
-  assert.deepEqual(shownKeys(page.items), ['pause'])
-})
-
-test('get() and set() drive a root programmatically', () => {
-  const page = onePage()
-
-  assert.equal(page.api.get(page.root), 'default')
-  page.api.set(page.root, 'needs')
-
-  assert.equal(page.api.get(page.root), 'needs')
-  assert.deepEqual(shownKeys(page.items), ['needs'])
-})
-
-test('boot waits for DOMContentLoaded while the document is still loading', () => {
-  const form = cancelForm()
-  const page = load({ body: h('body', {}, [form.root]), readyState: 'loading' })
-
-  assert.deepEqual(shownKeys(form.items), ['default', 'pause', 'needs'], 'nothing painted yet')
-
-  page.ready()
-
-  assert.deepEqual(shownKeys(form.items), ['default'])
-})
-
-test('production stays silent; staging and STARTERS_DEBUG talk', () => {
-  const prod = onePage({ keys: ['default'], hostname: 'www.thestarters.com' })
-  prod.click(prod.buttons[0]) // pause, which has no item
-  assert.deepEqual(prod.warnings, [])
-
-  const debug = onePage({ keys: ['default'], hostname: 'www.thestarters.com', debug: true })
-  debug.click(debug.buttons[0])
-  assert.ok(debug.warnings.length > 0)
-})
-
-test('staging host matching is anchored', () => {
-  const { api } = onePage()
-
-  assert.equal(api.stagingHost('the-starters-3-0.webflow.io'), true)
-  assert.equal(api.stagingHost('localhost'), true)
-  assert.equal(api.stagingHost('abc.trycloudflare.com'), true)
-  assert.equal(api.stagingHost('notwebflow.io'), false)
-  assert.equal(api.stagingHost('evil-trycloudflare.com'), false)
-  assert.equal(api.stagingHost('www.thestarters.com'), false)
-})
-
-/* --------------- Webflow button component + disabled gating --------------- */
+/* --------------------- Webflow button component + gating ------------------ */
 
 test('a click on the overlaid .clickable_btn resolves the wrapper key', () => {
   const { buttons, items, click } = onePage()
@@ -693,10 +528,33 @@ test('a bare tagged <a> still works', () => {
   assert.deepEqual(shownKeys(items), ['needs'])
 })
 
+test('the click is never swallowed — these buttons also submit or navigate', () => {
+  const { buttons, click } = onePage()
+
+  const event = click(buttons[0])
+
+  assert.equal(event.defaultPrevented, false)
+  assert.equal(event.propagationStopped, false)
+})
+
+test('the listener is delegated once, in the capture phase', () => {
+  const { listeners } = onePage()
+
+  assert.equal(listeners.click.length, 1)
+  assert.equal(listeners.click[0].capture, true, 'capture survives a stopPropagation below')
+})
+
+test('loading the embed twice does not double-bind or double-boot', () => {
+  const page = onePage()
+
+  page.rerun()
+
+  assert.equal(page.listeners.click.length, 1)
+  page.click(page.buttons[1])
+  assert.deepEqual(shownKeys(page.items), ['needs'])
+})
+
 test('a step-flow validation-gated button does not change state', () => {
-  // step-flow disables the wrapper by attribute, so the click still arrives here
-  // first (capture phase) — the success message must not move for a step the flow
-  // refuses to advance.
   const page = onePage()
   page.wraps[1].setAttribute('data-button-theme', 'disabled')
   page.wraps[1].setAttribute('data-form-flow-disabled', '')
@@ -756,8 +614,6 @@ test('a native disabled button is gated', () => {
 })
 
 test('a disabled state outside the root is not consulted', () => {
-  // The root sits inside a disabled panel wrapper; only markers between the
-  // trigger and the root may gate, or an unrelated ancestor could freeze the form.
   const form = cancelForm()
   const outer = h('div', { 'aria-disabled': 'true' }, [form.root])
   const { click } = load({ body: h('body', {}, [outer]) })
@@ -767,36 +623,31 @@ test('a disabled state outside the root is not consulted', () => {
   assert.deepEqual(shownKeys(form.items), ['needs'])
 })
 
-test('an element role used as a state key is named as a swap', () => {
-  // The mistake this attribute pair invites: msform-cancel-state-change="button".
-  const form = cancelForm({ buttons: ['button'] })
-  const { click, warnings } = load({
-    body: h('body', {}, [form.root]),
-    hostname: 'the-starters-3-0.webflow.io',
-  })
+test('the button theme is never touched — that belongs to the flow', () => {
+  const { buttons, wraps, click } = onePage()
 
-  click(form.buttons[0])
+  click(buttons[0])
 
-  assert.ok(
-    warnings.some((w) => w.includes('is an msform-cancel-state-element role, not a state key')),
-    'staging names the swap'
-  )
-  assert.deepEqual(shownKeys(form.items), ['default'], 'and it still shows default, not nothing')
+  assert.equal(wraps[0].getAttribute('data-button-theme'), 'black')
 })
 
-test('a repeated authoring mistake warns once, not once per click', () => {
-  const form = cancelForm({ buttons: ['button'] })
-  const { click, warnings } = load({
-    body: h('body', {}, [form.root]),
-    hostname: 'localhost',
-  })
+/* -------------------------------- visibility ------------------------------ */
 
-  click(form.buttons[0])
-  click(form.buttons[0])
-  click(form.buttons[0])
+test('items hidden in the Designer come back as block', () => {
+  const page = onePage({ displays: { default: 'none', pause: 'none', needs: 'none' } })
 
-  const swaps = warnings.filter((w) => w.includes('not a state key'))
-  assert.equal(swaps.length, 1)
+  page.click(page.buttons[1]) // needs
+
+  assert.equal(page.keyed.needs.style.display, 'block')
+  assert.equal(page.keyed.default.style.display, 'none')
+})
+
+test('an authored flex display is preserved', () => {
+  const page = onePage({ displays: { needs: 'flex' } })
+
+  page.click(page.buttons[1])
+
+  assert.equal(page.keyed.needs.style.display, 'flex')
 })
 
 test('display: contents survives a hide and show', () => {
@@ -810,10 +661,121 @@ test('display: contents survives a hide and show', () => {
   assert.equal(page.keyed.needs.style.display, 'contents')
 })
 
+test('the authored display survives being hidden first', () => {
+  // Reading the display only when an item is shown would read back the inline `none`
+  // this module wrote on the first paint, stranding the item forever.
+  const page = onePage({ displays: { needs: 'flex' } })
+
+  page.click(page.buttons[0]) // pause
+  page.click(page.buttons[1]) // needs
+
+  assert.equal(page.keyed.needs.style.display, 'flex')
+})
+
+/* ------------------------------- late DOM + API --------------------------- */
+
+test('refresh() paints a root added after boot', () => {
+  const form = cancelForm()
+  const body = h('body')
+  const page = load({ body })
+
+  body.append(form.root)
+  page.api.refresh()
+
+  assert.deepEqual(shownKeys(form.items), ['default'])
+})
+
+test('a click paints a root that arrived after boot, with no refresh() call', () => {
+  const form = cancelForm()
+  const body = h('body')
+  const page = load({ body })
+
+  body.append(form.root)
+  page.click(form.buttons[1])
+
+  assert.deepEqual(shownKeys(form.items), ['needs'])
+})
+
+test('refresh() repaints the live state, picking up late items', () => {
+  const page = onePage()
+  page.click(page.buttons[0]) // pause
+
+  const late = h('div', { [A.element]: 'success-item', [A.key]: 'pause' })
+  page.wrapper.append(late)
+  page.api.refresh()
+
+  assert.equal(visible(late), true)
+  assert.deepEqual(shownKeys(page.items), ['pause'])
+})
+
+test('get() and set() drive a root programmatically', () => {
+  const page = onePage()
+
+  assert.equal(page.api.get(page.root), 'default')
+  page.api.set(page.root, 'needs')
+
+  assert.equal(page.api.get(page.root), 'needs')
+  assert.deepEqual(shownKeys(page.items), ['needs'])
+})
+
+test('boot waits for DOMContentLoaded while the document is still loading', () => {
+  const form = cancelForm()
+  const page = load({ body: h('body', {}, [form.root]), readyState: 'loading' })
+
+  assert.deepEqual(shownKeys(form.items), ['default', 'pause', 'needs'], 'nothing painted yet')
+
+  page.ready()
+
+  assert.deepEqual(shownKeys(form.items), ['default'])
+})
+
+test('the public API is exactly the documented surface', () => {
+  const { api } = onePage()
+
+  assert.deepEqual(Object.keys(api).sort(), [
+    'diagnosticsEnabled',
+    'get',
+    'refresh',
+    'release',
+    'set',
+    'stagingHost',
+  ])
+})
+
+/* ------------------------------- diagnostics ------------------------------ */
+
+test('production stays silent; staging and STARTERS_DEBUG talk', () => {
+  const prod = onePage({ keys: ['default'], hostname: 'www.thestarters.com' })
+  prod.click(prod.buttons[0]) // pause, which has no item
+  assert.deepEqual(prod.warnings, [])
+
+  const debug = onePage({ keys: ['default'], hostname: 'www.thestarters.com', debug: true })
+  debug.click(debug.buttons[0])
+  assert.ok(debug.warnings.length > 0)
+})
+
+test('staging host matching is anchored', () => {
+  const { api } = onePage()
+
+  assert.equal(api.stagingHost('the-starters-3-0.webflow.io'), true)
+  assert.equal(api.stagingHost('localhost'), true)
+  assert.equal(api.stagingHost('abc.trycloudflare.com'), true)
+  assert.equal(api.stagingHost('notwebflow.io'), false)
+  assert.equal(api.stagingHost('evil-trycloudflare.com'), false)
+  assert.equal(api.stagingHost('www.thestarters.com'), false)
+})
+
 test('the release marker matches the header @release line', () => {
   const { api } = onePage()
   const header = /@release\s+(v\d+\.\d+\.\d+)/.exec(source)
 
   assert.ok(header, 'the file must carry an @release marker')
   assert.equal(api.release, header[1])
+})
+
+test('no bare msform- or data- prefixed attribute survives the rename', () => {
+  // The folder speaks one dialect: ms-form-*. A stray msform- or data-ms-form- would
+  // silently do nothing on a page authored to the documented contract.
+  assert.equal(/[^-]msform-/.test(source), false, 'stray msform- prefix')
+  assert.equal(/data-ms-form-/.test(source), false, 'stray data-ms-form- prefix')
 })
