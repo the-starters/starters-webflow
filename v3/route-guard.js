@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.82
+ * @release v1.59.86
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
  * /login and /auth-route, so a logged-in member can still reach another role's
@@ -53,6 +53,11 @@
   var SHARED_OPPORTUNITIES_ROLE_TIMEOUT_MS = 2000
   var SHARED_OPPORTUNITIES_ROLE_POLL_MS = 100
 
+  // Written by quiz-main.js on /quiz and consumed by quiz-results.js. Same key
+  // and same `ready` status quiz-main/quiz-redirect.js reads.
+  var PENDING_QUIZ_STORAGE_KEY = 'starterQuizPending'
+  var PENDING_QUIZ_READY_STATUS = 'ready'
+
   // Identical to v3/auth-route.js and opportunities-3.0.js (MS_PLAN_ROLES).
   var PLAN_ROLES = {
     'pln_free-plan-f6kn0dxz': 'brand-free',
@@ -82,6 +87,64 @@
   }
   function brandFreeHome(member) {
     return hasCompletedQuiz(member) ? '/quiz-results' : '/quiz'
+  }
+
+  /**
+   * A finished-but-not-yet-persisted quiz sitting in sessionStorage.
+   *
+   * The `starter-quiz` custom field cannot be the only gate on /quiz-results,
+   * because of the order the post-signup funnel runs in: quiz-main.js saves the
+   * answers to sessionStorage, Memberstack signs the visitor up and redirects
+   * them to /quiz-results, and it is quiz-results.js — running ON that page,
+   * AFTER it renders — that writes the field. A member who has just signed up
+   * therefore always reads as not-completed for a moment, and hasCompletedQuiz()
+   * alone would bounce them off the very page that was about to save their
+   * answers. The `ready` payload is the same signal quiz-results.js renders
+   * from, so it counts as "quiz done" for the enforcement branch below.
+   *
+   * Read-only on purpose, and never cleared: quiz-loader/quiz-loader.js derives
+   * its skip-on-refresh run id from this key's `updatedAt`, and quiz-results.js
+   * still needs the payload to render.
+   *
+   * Deliberately duplicated from quiz-main/quiz-redirect.js (v1.59.84) rather
+   * than shared — these are two independently loaded browser scripts with no
+   * module boundary between them, and cross-file duplication with matching
+   * comments is this repo's convention (see PLAN_ROLES and hasCompletedQuiz).
+   * Same tolerance as that copy: a `draft` payload, a payload with no `status`
+   * at all, malformed JSON, and blocked storage all read as NOT ready, because
+   * none of them proves the visitor finished the quiz. quiz-results.js is more
+   * tolerant of a status-less payload; this gate is not, so every failure mode
+   * falls back to today's behaviour.
+   *
+   * @returns {boolean}
+   */
+  function hasReadyPendingQuiz() {
+    var raw
+    try {
+      var storage = window.sessionStorage
+      if (!storage) return false
+      raw = storage.getItem(PENDING_QUIZ_STORAGE_KEY)
+    } catch (error) {
+      // Blocked storage (privacy modes) reads as "no pending quiz".
+      return false
+    }
+
+    if (!raw) return false
+
+    var payload
+    try {
+      payload = JSON.parse(raw)
+    } catch (error) {
+      // Malformed payload: ignored silently, same as no payload.
+      return false
+    }
+
+    if (!payload || typeof payload !== 'object') return false
+
+    return (
+      String(payload.status || '').trim().toLowerCase() ===
+      PENDING_QUIZ_READY_STATUS
+    )
   }
 
   // Page view-access, derived from v3/ACCESS-MATRIX.md. A role listed here may
@@ -194,6 +257,22 @@
    * before that their role home is /quiz and the results page has nothing to
    * show them. /all-starters deliberately does not use it — both Brand tiers
    * stay regardless of quiz state.
+   *
+   * "Done" is two signals, not one (regression fix 2026-08-04). The Memberstack
+   * `starter-quiz` field alone CANNOT be the gate here, because of the order the
+   * post-signup funnel runs in: quiz-main.js saves the answers to
+   * sessionStorage, Memberstack signs the visitor up and redirects them to
+   * /quiz-results, and the field is written by quiz-results.js on this page,
+   * AFTER it renders. Gating on the field alone therefore redirected every
+   * brand-new member off /quiz-results before the page could save it — an
+   * intermittent bounce-to-/quiz loop that only "worked" on the attempt where
+   * the Memberstack save happened to win the race (shipped v1.59.76, reproduced
+   * on staging 2026-08-04). So a ready `starterQuizPending` payload — the same
+   * signal quiz-results.js renders from, and the one it is about to persist —
+   * counts as done too, via hasReadyPendingQuiz(). Only the free-Brand
+   * enforcement branch consults it; the wrong-role bounces above it are
+   * unaffected, so a paid Brand or Talent member is still moved to their own
+   * home whatever is in sessionStorage.
    */
   var ROLE_BOUNCE_PAGES = {
     '/quiz-results': { roles: ['brand-free'], enforceBrandFreeQuizState: true },
@@ -424,6 +503,13 @@
     if (!role) return null // authenticated but no mapped active plan
     if (rule.roles.indexOf(role) === -1) return roleHome(member)
     if (rule.enforceBrandFreeQuizState && role === 'brand-free') {
+      // A ready pre-signup payload IS a completed quiz for this decision. It is
+      // what quiz-results.js renders from and is about to write to the
+      // `starter-quiz` field, so the field being empty right now proves only
+      // that this page has not run yet — see the ROLE_BOUNCE_PAGES docblock.
+      // Checked before brandFreeHome() so a just-signed-up member is never sent
+      // back to /quiz to redo a quiz they already finished.
+      if (hasReadyPendingQuiz()) return ''
       var home = brandFreeHome(member)
       // Quiz not done: home is /quiz, so this page is the wrong one even though
       // the role is allowed. Quiz done: home IS this page, so stay.
@@ -777,13 +863,14 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/route-guard.test.js drift guard asserts they match.
-    release: 'v1.59.82',
+    release: 'v1.59.86',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,
     memberRoleError: memberRoleError,
     roleHome: roleHome,
     hasCompletedQuiz: hasCompletedQuiz,
+    hasReadyPendingQuiz: hasReadyPendingQuiz,
     hasCancelledPaidBrandPlan: hasCancelledPaidBrandPlan,
     brandFreeHome: brandFreeHome,
     pageRolesFor: pageRolesFor,

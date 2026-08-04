@@ -15,6 +15,34 @@ const TEST_BRAND = { id: 'm-test-brand', planConnections: [plan('pln_dorxata-tes
 const BRAND_FREE = { id: 'm-brand-free', planConnections: [plan('pln_free-plan-f6kn0dxz')] }
 const UNMAPPED = { id: 'm-unknown', planConnections: [plan('pln_unknown')] }
 
+/**
+ * sessionStorage double that records every write, so the tests can prove the
+ * guard only ever READS `starterQuizPending`: quiz-loader/quiz-loader.js derives
+ * its skip-on-refresh run id from the same key's `updatedAt`, and
+ * quiz-results.js still needs the payload to render. Same shape as the double in
+ * quiz-main/quiz-redirect.test.js, which polices the sibling copy of the helper.
+ *
+ * @param {string | undefined} pending Raw stored value, if any.
+ * @param {boolean} [throws] Simulate blocked storage (privacy modes).
+ */
+function sessionStorageDouble(pending, throws) {
+  return {
+    removed: [],
+    written: [],
+    getItem(key) {
+      if (throws) throw new Error('storage blocked')
+      if (key !== 'starterQuizPending') return null
+      return pending === undefined ? null : pending
+    },
+    setItem(key, value) {
+      this.written.push([key, value])
+    },
+    removeItem(key) {
+      this.removed.push(key)
+    },
+  }
+}
+
 function loadGuard(options = {}) {
   const attributes = {}
   const events = []
@@ -27,6 +55,10 @@ function loadGuard(options = {}) {
       location.replaced = value
     },
   }
+  const sessionStorage = sessionStorageDouble(
+    options.pending,
+    options.storageThrows,
+  )
   const window = {
     CustomEvent: class CustomEvent {
       constructor(name, init) {
@@ -45,6 +77,10 @@ function loadGuard(options = {}) {
     clearInterval,
     clearTimeout,
   }
+  // `noStorage` leaves window.sessionStorage undefined, which is the shape an
+  // embedded/partitioned context can present. Every other call gets the double,
+  // so a test that passes no `pending` reads exactly as an empty store.
+  if (!options.noStorage) window.sessionStorage = sessionStorage
   if (Object.prototype.hasOwnProperty.call(options, 'delayedMember')) {
     window.setTimeout(() => {
       window.$memberstackDom = {
@@ -81,7 +117,14 @@ function loadGuard(options = {}) {
     window,
   })
 
-  return { api: window.StartersV3RouteGuard, attributes, events, location, window }
+  return {
+    api: window.StartersV3RouteGuard,
+    attributes,
+    events,
+    location,
+    window,
+    sessionStorage,
+  }
 }
 
 async function flush() {
@@ -1142,6 +1185,246 @@ test('a role-bounce page on an unapproved host is untouched', async () => {
   await flush()
   assert.equal(location.replaced, undefined)
   assert.deepEqual(attributes, {})
+})
+
+// --- Post-signup pending quiz on /quiz-results (regression 2026-08-04) --------
+//
+// The bug: a visitor completed the pre-signup quiz, signed up, landed on
+// /quiz-results and was immediately bounced to /quiz; retrying looped and only
+// stuck on roughly the third attempt. Cause: enforceBrandFreeQuizState gated on
+// the Memberstack `starter-quiz` field alone, and that field is written by
+// quiz-results.js AFTER it renders — so the guard moved the member off the very
+// page that was about to save it, and the intermittent success was the race
+// where Memberstack's save happened to land first. Shipped v1.59.76.
+
+const QUIZ_RESULTS_PATHS = ['/quiz-results', '/quiz-results/']
+const READY_PAYLOAD = JSON.stringify({
+  status: 'ready',
+  updatedAt: '2026-08-04T00:00:00.000Z',
+})
+const DRAFT_PAYLOAD = JSON.stringify({
+  status: 'draft',
+  updatedAt: '2026-08-04T00:00:00.000Z',
+})
+// The exact post-signup member: free plan live, `starter-quiz` never written.
+const FREE_JUST_SIGNED_UP = {
+  id: 'm-free-just-signed-up',
+  planConnections: [plan('pln_free-plan-f6kn0dxz')],
+}
+
+test('hasReadyPendingQuiz is exported and reads only an explicit ready status', () => {
+  assert.equal(loadGuard({ pending: READY_PAYLOAD }).api.hasReadyPendingQuiz(), true)
+  // Trimmed and case-insensitive, matching quiz-main/quiz-redirect.js.
+  assert.equal(
+    loadGuard({ pending: JSON.stringify({ status: '  Ready  ' }) }).api.hasReadyPendingQuiz(),
+    true,
+  )
+  for (const pending of [
+    DRAFT_PAYLOAD,
+    '{"updatedAt":"x"}', // no status at all
+    '{"status":""}',
+    'not json',
+    'null',
+    '',
+  ]) {
+    assert.equal(
+      loadGuard({ pending }).api.hasReadyPendingQuiz(),
+      false,
+      String(pending),
+    )
+  }
+  assert.equal(loadGuard().api.hasReadyPendingQuiz(), false)
+  assert.equal(loadGuard({ storageThrows: true }).api.hasReadyPendingQuiz(), false)
+  assert.equal(loadGuard({ noStorage: true }).api.hasReadyPendingQuiz(), false)
+})
+
+// THE regression guard. Fails against the pre-fix code, which returned '/quiz'.
+test('a just-signed-up free Brand with a ready payload stays on /quiz-results', () => {
+  const { api } = loadGuard({ pending: READY_PAYLOAD })
+  assert.equal(api.hasCompletedQuiz(FREE_JUST_SIGNED_UP), false)
+  for (const path of QUIZ_RESULTS_PATHS) {
+    assert.equal(api.roleBounceTargetFor(FREE_JUST_SIGNED_UP, path), '', path)
+    // A whitespace-only field is the same not-yet-written state.
+    assert.equal(
+      api.roleBounceTargetFor(
+        {
+          id: 'm-blank-field',
+          planConnections: [plan('pln_free-plan-f6kn0dxz')],
+          customFields: { 'starter-quiz': '   ' },
+        },
+        path,
+      ),
+      '',
+      path,
+    )
+  }
+})
+
+test('a just-signed-up free Brand is left on /quiz-results untouched at runtime', async () => {
+  for (const pathname of QUIZ_RESULTS_PATHS) {
+    const { location, attributes, events, sessionStorage } = loadGuard({
+      pathname,
+      member: FREE_JUST_SIGNED_UP,
+      pending: READY_PAYLOAD,
+    })
+    await flush()
+    assert.equal(location.replaced, undefined, pathname)
+    // Same silence contract as any other role-bounce stay: no attribute, no
+    // event, and the payload quiz-results.js still needs is left alone.
+    assert.deepEqual(attributes, {}, pathname)
+    assert.deepEqual(events, [], pathname)
+    assert.deepEqual(sessionStorage.written, [], pathname)
+    assert.deepEqual(sessionStorage.removed, [], pathname)
+  }
+})
+
+test('a draft payload is not a finished quiz — the member still goes to /quiz', async () => {
+  const { api } = loadGuard({ pending: DRAFT_PAYLOAD })
+  for (const path of QUIZ_RESULTS_PATHS) {
+    assert.equal(api.roleBounceTargetFor(FREE_JUST_SIGNED_UP, path), '/quiz', path)
+  }
+  // A payload with no `status` at all only proves somebody opened the quiz.
+  const statusless = loadGuard({ pending: '{"updatedAt":"x"}' })
+  assert.equal(
+    statusless.api.roleBounceTargetFor(FREE_JUST_SIGNED_UP, '/quiz-results'),
+    '/quiz',
+  )
+  const { location } = loadGuard({
+    pathname: '/quiz-results',
+    member: FREE_JUST_SIGNED_UP,
+    pending: DRAFT_PAYLOAD,
+  })
+  await flush()
+  assert.equal(location.replaced, '/quiz')
+})
+
+test('a malformed or unreadable payload falls back to todays /quiz bounce', async () => {
+  for (const options of [
+    { pending: 'not json' },
+    { pending: 'null' },
+    { pending: '' },
+    { storageThrows: true },
+    { noStorage: true },
+  ]) {
+    const { api } = loadGuard(options)
+    assert.equal(
+      api.roleBounceTargetFor(FREE_JUST_SIGNED_UP, '/quiz-results'),
+      '/quiz',
+      JSON.stringify(options),
+    )
+  }
+  // Blocked storage at runtime must not throw out of the bounce either.
+  const { location } = loadGuard({
+    pathname: '/quiz-results',
+    member: FREE_JUST_SIGNED_UP,
+    storageThrows: true,
+  })
+  await flush()
+  assert.equal(location.replaced, '/quiz')
+})
+
+test('the two quiz-done signals are independent — the field alone still keeps a member', () => {
+  // Field set, nothing in sessionStorage: the durable path, unchanged.
+  const { api } = loadGuard()
+  for (const path of QUIZ_RESULTS_PATHS) {
+    assert.equal(api.roleBounceTargetFor(FREE_DONE, path), '', path)
+  }
+  // Field empty AND no payload: a genuine never-took-the-quiz visitor is still
+  // bounced, which is the whole point of the rule.
+  for (const path of QUIZ_RESULTS_PATHS) {
+    assert.equal(api.roleBounceTargetFor(BRAND_FREE, path), '/quiz', path)
+    assert.equal(api.roleBounceTargetFor(FREE_JUST_SIGNED_UP, path), '/quiz', path)
+  }
+})
+
+test('the wrong-role bounces outrank a ready payload', () => {
+  const { api } = loadGuard({ pending: READY_PAYLOAD })
+  for (const path of QUIZ_RESULTS_PATHS) {
+    // The role check runs before the quiz-state branch, so sessionStorage
+    // cannot buy a paid Brand or a Talent member a seat on /quiz-results.
+    assert.equal(api.roleBounceTargetFor(BRAND_PAID, path), '/brand-dashboard', path)
+    assert.equal(api.roleBounceTargetFor(TEST_BRAND, path), '/brand-dashboard', path)
+    assert.equal(api.roleBounceTargetFor(TALENT, path), '/starter-dashboard', path)
+  }
+  // Unmapped and conflicted members are still the silent stay, not a redirect.
+  assert.equal(api.roleBounceTargetFor(UNMAPPED, '/quiz-results'), null)
+})
+
+test('the wrong-role bounces outrank a ready payload at runtime too', async () => {
+  for (const member of [BRAND_PAID, TALENT]) {
+    const { location } = loadGuard({
+      pathname: '/quiz-results',
+      member,
+      pending: READY_PAYLOAD,
+    })
+    await flush()
+    assert.equal(
+      location.replaced,
+      member === TALENT ? '/starter-dashboard' : '/brand-dashboard',
+      member.id,
+    )
+  }
+})
+
+test('the pending payload changes nothing outside the enforcement branch', () => {
+  const { api } = loadGuard({ pending: READY_PAYLOAD })
+  // /all-starters has enforceBrandFreeQuizState: false, so it never consults the
+  // payload — and it already kept a free Brand with an empty field either way.
+  for (const path of ['/all-starters', '/all-starters/']) {
+    assert.equal(api.roleBounceTargetFor(BRAND_FREE, path), '', path)
+    assert.equal(api.roleBounceTargetFor(FREE_JUST_SIGNED_UP, path), '', path)
+    assert.equal(api.roleBounceTargetFor(TALENT, path), '/starter-dashboard', path)
+  }
+  // The role home, the guarded-page redirects, and the homepage overrides all
+  // still read the durable field only: brandFreeHome is deliberately untouched.
+  assert.equal(api.brandFreeHome(FREE_JUST_SIGNED_UP), '/quiz')
+  assert.equal(api.roleHome(FREE_JUST_SIGNED_UP), '/quiz')
+  assert.equal(api.redirectTargetFor(FREE_JUST_SIGNED_UP, '/brand-dashboard'), '/quiz')
+  assert.equal(api.redirectTargetFor(FREE_JUST_SIGNED_UP, '/messages'), '/quiz')
+  // Homepage: the free-Brand stay rule already kept them, and the login pages
+  // still send them to /quiz.
+  assert.equal(api.bounceTargetFor(FREE_JUST_SIGNED_UP, null, '/'), '')
+  for (const pathname of ['/login', '/starter-login', '/sign-up']) {
+    assert.equal(api.bounceTargetFor(FREE_JUST_SIGNED_UP, null, pathname), '/quiz', pathname)
+  }
+})
+
+test('a logged-out visitor with a ready payload is still left completely alone', async () => {
+  for (const pathname of QUIZ_RESULTS_PATHS) {
+    const { location, attributes, events } = loadGuard({
+      pathname,
+      member: null,
+      pending: READY_PAYLOAD,
+    })
+    await flush()
+    assert.equal(location.replaced, undefined, pathname)
+    assert.deepEqual(attributes, {}, pathname)
+    assert.deepEqual(events, [], pathname)
+  }
+})
+
+test('the guard never writes or removes the pending payload', async () => {
+  // Swept across every path that could plausibly touch storage: the stay, both
+  // bounce directions, a member-bounce page, and a guarded page.
+  for (const pathname of [
+    '/quiz-results',
+    '/quiz-results/',
+    '/all-starters',
+    '/',
+    '/login',
+    '/brand-dashboard',
+    '/about',
+  ]) {
+    for (const member of [FREE_JUST_SIGNED_UP, FREE_DONE, BRAND_PAID, TALENT, UNMAPPED, null]) {
+      for (const pending of [READY_PAYLOAD, DRAFT_PAYLOAD, undefined]) {
+        const { sessionStorage } = loadGuard({ pathname, member, pending })
+        await flush()
+        const label = `${pathname} ${member ? member.id : 'logged-out'}`
+        assert.deepEqual(sessionStorage.written, [], label)
+        assert.deepEqual(sessionStorage.removed, [], label)
+      }
+    }
+  }
 })
 
 // --- Homepage-only bounce overrides (2026-08-03) -------------------------------

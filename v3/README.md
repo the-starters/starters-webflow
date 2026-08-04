@@ -247,8 +247,14 @@ forms) borrow the member-home bounce's silence and add the guarded pages' role
 test, so a logged-in member whose role does not belong there goes to their role
 home while every other visitor is untouched. Talent leaves both; a free Brand
 stays on both, though on `/quiz-results` only once the quiz is done, since before
-that its role home is `/quiz`. `/generate-invoice` (Talent) also joined the
-guarded route table.
+that its role home is `/quiz`. "Done" there means either the `starter-quiz`
+custom field or a `ready` `sessionStorage.starterQuizPending` payload — the
+second signal was added on 2026-08-04 to fix a regression, because the field is
+written by `quiz-results.js` *after* that page renders, so a member who had just
+signed up was bounced straight back to `/quiz` in a race the field alone could
+never win. The guard only reads that key, never clears it, and only an explicit
+`ready` counts, so a free Brand who genuinely never took the quiz still goes to
+`/quiz`. `/generate-invoice` (Talent) also joined the guarded route table.
 
 `/complete-profile` was in that table for part of 2026-08-03 and is not any more.
 Memberstack's `restrict-pages` gated group owns the page on its own, redirecting a

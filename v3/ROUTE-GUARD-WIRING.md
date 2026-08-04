@@ -1,9 +1,15 @@
 # V3 Route Guard Wiring
 
 Status: Installed sitewide on staging (2026-08-03). The staging site
-`the-starters-3-0.webflow.io` loads it from project Custom Code head at jsDelivr
-`@latest`, so a new git tag deploys it without an embed change. The production
-custom-domain publish is still deferred.
+`the-starters-3-0.webflow.io` loads it from project Custom Code head at jsDelivr.
+The production custom-domain publish is still deferred.
+
+> **Embed pin (checked 2026-08-04):** the staging head embed is pinned to a
+> specific tag (`@v1.59.84` at the time of writing), not `@latest`. A new git tag
+> therefore does **not** deploy a change on its own — the embed URL has to be
+> bumped to the new tag as well. Re-check the head code before assuming a tag
+> shipped; if the embed is ever moved back to `@latest`, tagging alone is enough
+> again.
 
 Tracking: Jira `INITIATIVE-132`. This router release remains independent from
 the `INITIATIVE-131` points reconciliation and dashboard tile rollout.
@@ -228,7 +234,7 @@ and only ever to their own role home.
 
 | Page | Roles that stay | Quiz-state rule |
 | --- | --- | --- |
-| `/quiz-results` and `/quiz-results/` | Brand free | Yes — see below |
+| `/quiz-results` and `/quiz-results/` | Brand free | Yes — see below, including the pending-payload exception |
 | `/all-starters` and `/all-starters/` | Brand paid, Brand free | No |
 
 | Visitor state on a role-bounce page | Action |
@@ -250,6 +256,53 @@ that page only once the quiz is done, because until then `brandFreeHome()` is
 Brand is sent to `/quiz` even though its role is on the allowlist.
 `/all-starters` deliberately has no such rule: both Brand tiers stay regardless
 of quiz state.
+
+### The pending-payload exception (regression fix 2026-08-04)
+
+"Done" is **two** signals for this rule, not one. The Memberstack `starter-quiz`
+field cannot be the only gate here, because of the order the post-signup funnel
+runs in:
+
+1. `quiz-main.js` writes the finished answers to
+   `sessionStorage.starterQuizPending` with `status: "ready"`.
+2. Memberstack signs the visitor up and redirects them to `/quiz-results`.
+3. `quiz-results.js` renders from that payload and **then** writes the
+   `starter-quiz` custom field.
+
+A member who has just signed up therefore always reads as not-completed for a
+moment. Gating on the field alone redirected them off the very page that was
+about to save it: a visitor completed the quiz, signed up, landed on
+`/quiz-results`, and was immediately bounced to `/quiz`; retrying looped and only
+stuck on roughly the third attempt, because the intermittent success was the race
+where the Memberstack save happened to land before the guard's redirect. That
+shipped in v1.59.76 and was reproduced on staging on 2026-08-04.
+
+So `enforceBrandFreeQuizState` also accepts a ready pending payload, via
+`hasReadyPendingQuiz()` — the same signal `quiz-results.js` renders from and is
+about to persist. Properties worth knowing:
+
+- **Read-only, always.** The guard never calls `setItem` or `removeItem` on
+  `sessionStorage`. `quiz-loader/quiz-loader.js` derives its skip-on-refresh run
+  id from this key's `updatedAt`, and `quiz-results.js` needs the payload to
+  render. `route-guard.test.js` asserts the no-write invariant across every page
+  and member combination.
+- **Only `ready` counts.** A `draft` payload, a payload with no `status` at all,
+  malformed JSON, and blocked or absent storage all read as NOT ready, so every
+  failure mode falls back to the pre-fix `/quiz` bounce. (`quiz-results.js` is
+  deliberately more tolerant of a status-less payload; this gate is not.)
+- **Scoped to this one branch.** It is consulted only inside
+  `rule.enforceBrandFreeQuizState && role === 'brand-free'`. The wrong-role
+  bounces run first, so a paid Brand or a Talent member on `/quiz-results` is
+  still sent to their own home whatever sits in `sessionStorage`.
+  `brandFreeHome()`, `roleHome()`, `redirectTargetFor()`, the member-home bounce,
+  and the homepage overrides all still read the durable field only.
+- **A genuine never-took-the-quiz free Brand is still bounced** to `/quiz`, which
+  is the original intent of the rule.
+- The helper is deliberately a second copy of the one in
+  `quiz-main/quiz-redirect.js` (added there in v1.59.84 for the mirror-image
+  problem on `/quiz`). Two independently loaded browser scripts have no module
+  boundary between them, so cross-file duplication is the convention here — the
+  same reason `PLAN_ROLES` and `hasCompletedQuiz` are duplicated.
 
 `/quiz-results` is itself the done free Brand's role home, and it is on its own
 allowlist, so that case resolves to "stay" rather than to a redirect at itself.
@@ -427,7 +480,7 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.82'
+window.StartersV3RouteGuard.release // -> 'v1.59.86'
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
 window.StartersCompleteProfileRedirect.release
@@ -450,6 +503,12 @@ CDN copy is still in play; purge it with `purge.jsdelivr.net`.
   decisions, `hasCancelledPaidBrandPlan` for the homepage cancelled-Brand
   decision, and `isRoleBouncePage`, `roleBounceRolesFor`, and
   `roleBounceTargetFor` for the role-bounce decision.
+- `hasReadyPendingQuiz()` takes no arguments and reports whether
+  `sessionStorage.starterQuizPending` currently holds a `ready` payload. It is the
+  fastest way to check the post-signup exception from the console on
+  `/quiz-results`: `hasCompletedQuiz(member) === false` together with
+  `hasReadyPendingQuiz() === true` is exactly the just-signed-up state that must
+  resolve to a stay, i.e. `roleBounceTargetFor(member, '/quiz-results') === ''`.
 - `bounceTargetFor` takes `(member, next, pathname)`. Pass `'/'` as the third
   argument to exercise the homepage overrides from the console; omit it and only
   the pre-override role-home path runs.
