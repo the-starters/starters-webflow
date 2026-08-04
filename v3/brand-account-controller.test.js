@@ -546,14 +546,40 @@ test('Brand-scoped Account Security binds Brand roles and sends only the reset p
   }
 })
 
-test('Brand-scoped Account Security leaves Talent and unmapped roles Memberstack-native', async () => {
-  for (const role of ['talent', null]) {
+test('Brand-scoped Account Security leaves Talent, unmapped, and conflicted roles Memberstack-native', async () => {
+  for (const role of ['talent', null, 'conflicting-plan-roles']) {
     const securityForm = makeForm('security')
     const environment = loadController({
       buildForm: null,
       securityForm,
       config: { guardSecurityForm: 'brand' },
       routeGuard: { memberRole: () => role },
+    })
+
+    const submission = securityForm.submitEvent()
+    await settle()
+
+    assert.equal(submission.event.prevented, true)
+    assert.equal(securityForm.nativeSubmits, 1)
+    assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  }
+})
+
+test('Brand-scoped Account Security leaves logged-out and unreadable roles Memberstack-native', async () => {
+  for (const state of ['logged-out', 'unreadable']) {
+    const securityForm = makeForm('security')
+    const environment = loadController({
+      buildForm: null,
+      securityForm,
+      config: { guardSecurityForm: 'brand' },
+      getCurrentMember:
+        state === 'logged-out' ? async () => ({ data: null }) : undefined,
+      routeGuard: {
+        memberRole() {
+          if (state === 'unreadable') throw new Error('role lookup failed')
+          throw new Error('role lookup must not run while logged out')
+        },
+      },
     })
 
     const submission = securityForm.submitEvent()

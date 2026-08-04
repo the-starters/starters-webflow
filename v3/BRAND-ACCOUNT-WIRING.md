@@ -102,9 +102,13 @@ Use Brand-scoped ownership when the controller is installed sitewide:
 - `passwordEmailIssuer`: the authenticated backend adapter that owns the
   durable reset-email outbox. The controller calls it with `prepare` before an
   email-auth mutation and `deliver` afterward. Both actions receive the same
-  deterministic key, stable Memberstack member ID, and normalized target email.
-  `prepare` returns `{status: 'pending'}` for a new or unfinished request and
-  `{status: 'sent'}` for a completed request. `deliver` atomically claims the
+  deterministic key, stable Memberstack member ID, and normalized target email;
+  `prepare` also receives `required`. With `required: true`, it creates or
+  resumes a pending request. With `required: false`, it resumes an existing
+  pending request but otherwise returns `{status: 'sent'}` as a no-op, which is
+  how an unchanged Account Security email avoids a new message while a replay
+  after a completed auth mutation can still finish delivery. A completed
+  request also returns `{status: 'sent'}`. `deliver` atomically claims the
   pending request, sends the Memberstack reset/set-password email once, records
   completion, and returns `{status: 'sent'}` or `{status: 'already-sent'}`.
   The adapter must return the existing state for duplicate calls and must not
@@ -118,8 +122,8 @@ must mirror its `member.updated` payload into `brands_v3`.
 - Invalid authored fields do not call Memberstack.
 - Duplicate submits while one save is running are ignored.
 - Custom-field and email assignments retry once only on timeout, 429, or 5xx.
-- Build Account requests a reset/set-password email for the final normalized
-  email after profile and auth updates and before completion is marked.
+- Build Account prepares a reset/set-password email request before profile and
+  auth updates, delivers it afterward, and marks completion last.
 - Account Security requests that email only when the login email changes.
 - No separate verification email is sent. Successful redemption of the one
   reset/set-password link is the email-ownership proof.

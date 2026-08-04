@@ -12,8 +12,10 @@
  * the completion marker last. Every operation is replay-safe; a failed retry
  * repeats assignments rather than creating another account or Brand row.
  *
- * Build Account requests a Memberstack reset/set-password email before
- * completion. Account Security requests one only after changing login email.
+ * Build Account prepares a durable Memberstack reset/set-password request
+ * before its member writes, delivers it after them, and marks completion last.
+ * Account Security creates a request only for a changed login email, while a
+ * replay can resume a request prepared before an earlier auth mutation.
  *
  * The Account Security interception is also OFF by default so it cannot race
  * Memberstack's currently published `data-ms-form="profile"` handler. The
