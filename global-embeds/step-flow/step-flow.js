@@ -27,6 +27,13 @@
  * Exposes `window.lumos.formFlow` for programmatic reset, navigation, and
  * returning to the hub (`reset-panel`) inside `[data-form-flow="main-container"]`.
  *
+ * Shared tail steps (multi-sub): put a `[data-form-flow-step]` outside every
+ * `[data-form-flow-subflow]` wrapper and point each branch's last button at it with
+ * `data-form-flow-target="<id>"`. All branches then funnel into one final step (review +
+ * submit) instead of duplicating it per branch. `back` restores the branch the user came
+ * from, because history stores the wrapper element, not just an id.
+ *
+ * @release v1.59.85
  */
 document.addEventListener("DOMContentLoaded", function () {
   /** @type {readonly string[]} Valid CSS `display` values for flow elements. */
@@ -875,6 +882,19 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 
     /**
+     * Finds a content step that lives at flow-root level — outside every subflow
+     * wrapper. In a multi-sub flow those are the shared tail steps: one final step
+     * (e.g. review + submit) that every branch funnels into, instead of duplicating
+     * that step inside all six branches.
+     *
+     * @param {string} stepId - `data-form-flow-element` value.
+     * @returns {HTMLElement | null}
+     */
+    const findRootLevelStep = (stepId) => {
+      return linearContentSteps.find((el) => el.getAttribute("data-form-flow-element") === stepId) || null
+    }
+
+    /**
      * Finds a subflow wrapper by `data-form-flow-element` id.
      * @param {string} subflowId - Subflow id (e.g. `"step-2a"`).
      * @returns {HTMLElement | null}
@@ -883,10 +903,13 @@ document.addEventListener("DOMContentLoaded", function () {
       return subflowWrappers.find((el) => el.getAttribute("data-form-flow-element") === subflowId) || null
     }
 
-    /** @returns {HTMLElement[]} Ordered content steps in the current navigation scope. */
+    /**
+     * @returns {HTMLElement[]} Ordered content steps in the current navigation scope.
+     * Inside a branch that's the branch's own steps; otherwise the root-level steps —
+     * for a multi-sub flow those are its shared tail steps (see `findRootLevelStep`).
+     */
     const getScopeContentSteps = () => {
       if (state.activeSubflowEl) return getContentStepsInScope(state.activeSubflowEl)
-      if (isMultiSub) return []
       return linearContentSteps
     }
 
@@ -993,26 +1016,36 @@ document.addEventListener("DOMContentLoaded", function () {
 
       if (entryIsWrapper) hideEl(entryWrapper)
 
-      if (subflowEl) {
+      // Leaving a branch for a shared tail step: the target isn't in the active
+      // subflow but does exist at flow-root level, so widen the scope to the root
+      // and drop the branch. Without this the lookup below misses and every content
+      // step stays hidden — a blank panel. A target that is inside the branch, or
+      // that exists nowhere, keeps the old behaviour (branch scope, then warn).
+      let scopeEl = subflowEl
+      if (scopeEl && !findContentStep(stepId, scopeEl) && findRootLevelStep(stepId)) {
+        scopeEl = null
+      }
+
+      if (scopeEl) {
         subflowWrappers.forEach((wrap) => {
-          if (wrap === subflowEl) showEl(wrap, "contents")
+          if (wrap === scopeEl) showEl(wrap, "contents")
           else hideEl(wrap)
         })
-        state.activeSubflowEl = subflowEl
-      } else if (!isMultiSub) {
+        state.activeSubflowEl = scopeEl
+      } else {
         hideAllSubflows()
         state.activeSubflowEl = null
         if (sharedFooter) showEl(sharedFooter)
       }
 
-      const contentStep = findContentStep(stepId, subflowEl)
+      const contentStep = findContentStep(stepId, scopeEl)
       if (!contentStep) {
         console.warn(`[data-form-flow="${flowId}"] Could not find content step:`, stepId)
         return
       }
 
       showEl(contentStep)
-      state.currentGroupEl = showButtonGroup(stepId, getButtonGroupScope(stepId, subflowEl))
+      state.currentGroupEl = showButtonGroup(stepId, getButtonGroupScope(stepId, scopeEl))
       state.currentStepId = stepId
       syncStepValidation()
       maybeScrollToTop(previousStepId)
