@@ -1,7 +1,7 @@
 /**
  * Quiz main page controller.
  *
- * @release v1.59.83
+ * @release v1.59.84
  *
  * Initial data sources:
  * - Webflow-rendered category checkboxes from [data-quiz-form="categories"].
