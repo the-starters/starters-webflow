@@ -76,7 +76,7 @@ used for staging verification.
 `quiz-main.js` owns the category/subcategory flow and supports both the custom
 step layout and the tab-driven layout. It:
 
-- restores this session's own answers first, from the
+- restores this session's own unmarked answers first, from the
   `sessionStorage.starterQuizPending` draft below, setting every checkbox to
   *exactly* what the draft holds (see the restore-order contract);
 - otherwise reads bucket IDs from `sessionStorage.quizSelectedCategories`,
@@ -103,8 +103,11 @@ step layout and the tab-driven layout. It:
 order is load-bearing:
 
 1. **The session draft wins.** If `starterQuizPending` holds any category or
-   subcategory, `restoreCategoriesFromDraft()` applies it as an exact match, so
-   an answer the user cleared stays cleared.
+   subcategory and is not marked as a Memberstack cache,
+   `restoreCategoriesFromDraft()` applies it as an exact match, so an answer the
+   user cleared stays cleared. A payload with a `memberstackSavedAt` marker is
+   ignored here because it may belong to a member who logged out in the same
+   tab; current-member answers come through the Memberstack JSON restore path.
 2. **The homepage seed is the fallback.** `quizSelectedCategories` applies only
    when there is no draft yet, i.e. a genuine first arrival. An empty draft
    payload counts as "no draft", which is what keeps homepage prefill working
@@ -164,7 +167,9 @@ writes. Since `sessionStorage` survives logout, `/quiz-results` deletes a marked
 payload as soon as Memberstack positively reports the visitor as logged out
 (never when Memberstack is merely unavailable), so a signed-out browser stops
 previewing the previous member's results; an unmarked pre-signup payload is left
-alone and still previews.
+alone and still previews. On `/quiz`, `quiz-main.js` likewise refuses to restore
+a marked payload as a visitor draft, leaving current-member answers to the
+Memberstack JSON restore path.
 
 Saved Memberstack answers are restored whenever a logged-in member with a
 non-empty `starterQuiz` object reaches `/quiz`; `?retake=true` controls only the

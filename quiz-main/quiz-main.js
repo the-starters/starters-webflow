@@ -8,9 +8,10 @@
  * - Webflow-rendered subcategory items from
  *   [data-quiz-form="subcategories"] [data-category].
  * - Webflow-rendered bucket mapping from [data-quiz-bucket].
- * - sessionStorage.starterQuizPending, this session's own answer draft. It is
- *   restored first and wins over the homepage seed below, so a reload or a
- *   browser Back/Forward keeps the answers the user actually has.
+ * - sessionStorage.starterQuizPending, when it holds this visitor's unmarked
+ *   answer draft. It is restored first and wins over the homepage seed below,
+ *   so a reload or browser Back/Forward keeps the answers the user actually
+ *   has. A member-cached payload is rejected at this boundary.
  * - sessionStorage.quizSelectedCategories saved by quiz-home.js. A one-time
  *   seed: it applies only when there is no draft yet, and is cleared on the
  *   first user edit so it can never outlive the answers it seeded.
@@ -632,10 +633,11 @@
      * Reads the answers this controller last saved for the current session.
      *
      * Source: sessionStorage.starterQuizPending, written by savePendingQuiz() on
-     * every answer change. Unlike the homepage bucket seed this is the user's own
-     * live selection, so it is the authority whenever it holds any answer. An
-     * empty payload counts as no draft, which keeps a first arrival on the
-     * homepage-seed path.
+     * every answer change. Unlike the homepage bucket seed, an unmarked payload
+     * is the visitor's own live selection, so it is the authority whenever it
+     * holds any answer. An empty payload counts as no draft, which keeps a first
+     * arrival on the homepage-seed path. A member-cached payload is rejected
+     * below because the shared key may outlive the member's logout.
      *
      * @returns {{categoryIds: string[], subcategoryIds: string[]} | null} Draft answers.
      */
@@ -777,6 +779,7 @@
 
         return false
     }
+
     /**
      * Reads currently selected category IDs from the quiz page checkboxes.
      *
