@@ -191,13 +191,13 @@ release.
 
 Pin a specific `@vX.Y.Z` instead only when this page must not move on its own, and
 accept the trade: every fix then needs a Webflow edit as well as a tag. This
-module ships as `@release v1.59.89` (see the header comment and the exported
+module ships as `@release v1.59.90` (see the header comment and the exported
 `release` property, which a test asserts match). **Do not paste a pinned URL
 naming a tag that does not exist yet** — pin after the tag is cut, and verify with:
 
 ```sh
 curl -fsS -o /dev/null -w '%{http_code}\n' \
-  "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.89/account-settings/plan-dates.js"
+  "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.59.90/account-settings/plan-dates.js"
 ```
 
 **This module does not pause anything.** It only reads and prints. Pausing a
