@@ -798,9 +798,8 @@
     }
     const ptId = checked('Project-Type')
     const project_type = PROJECT_TYPE[ptId] || ptId
-    // budget: one of three inputs is visible/required per project type
-    const budget =
-      val('One-Time-Budget') || val('Part-Time-Budget') || val('Full-Time-Budget')
+    const budgetFieldName = BUDGET_FIELD_BY_PROJECT_TYPE[project_type]
+    const budget = budgetFieldName ? val(budgetFieldName) : ''
     const role_names = selectedOpportunityCategories(scope)
     const payload = {
       title: val('Opportunity-title'),

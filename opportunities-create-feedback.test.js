@@ -361,6 +361,23 @@ test('create and edit forms require only the budget for the selected project typ
   }
 })
 
+test('create and edit submit only the selected project type budget', () => {
+  const { create, edit, window } = loadOpportunityForms()
+
+  for (const opportunity of [create, edit]) {
+    opportunity.oneTimeBudget.value = '1000'
+    opportunity.partTimeBudget.value = '2500'
+    opportunity.oneTime.checked = false
+    opportunity.partTime.checked = true
+    opportunity.partTime.dispatchEvent({ type: 'change' })
+
+    const payload = window.Opp30.readOpportunityForm(opportunity.form)
+
+    assert.equal(payload.project_type, 'Ongoing Part Time')
+    assert.equal(payload.budget, '2500')
+  }
+})
+
 test('create and edit titles keep the 15-word rule and add a 120-character backstop', () => {
   const { create, edit, window } = loadOpportunityForms()
 
