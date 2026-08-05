@@ -417,6 +417,64 @@
     var busy = false
     var ownsSubmission = false
 
+    // Native constraint validation prevents the form's submit event from
+    // firing when an unrelated required profile field is incomplete. Keep
+    // that validation for profile saves, but let a valid changed login email
+    // use the identity path independently. A later complete profile save sees
+    // an unchanged email and replays the authored form normally.
+    form.addEventListener(
+      'click',
+      function (event) {
+        var submit = form.querySelector('[type="submit"]')
+        if (!submit || event.target !== submit || busy) return
+        if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
+
+        var email = inputValue(form, STARTER_PROFILE_EMAIL_SELECTOR).toLowerCase()
+        if (!EMAIL_PATTERN.test(email)) return
+
+        event.preventDefault()
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation()
+        }
+        busy = true
+        ownsSubmission = false
+
+        Promise.resolve()
+          .then(async function () {
+            var guard = window.StartersV3RouteGuard
+            if (!guard || typeof guard.memberRole !== 'function') return false
+            var member = await currentMember(memberstack())
+            if (guard.memberRole(member) !== 'talent') return false
+            if (memberEmail(member) === email) return false
+
+            ownsSubmission = true
+            setBusy(form, true)
+            setMessage(form, 'idle', '')
+            await submitSecurity(form, member, STARTER_PROFILE_EMAIL_SELECTOR)
+            setMessage(form, 'success', '')
+            return true
+          })
+          .then(function (owned) {
+            if (!owned && typeof form.reportValidity === 'function') {
+              form.reportValidity()
+            }
+          })
+          .catch(function (error) {
+            if (!ownsSubmission) {
+              if (typeof form.reportValidity === 'function') form.reportValidity()
+              return
+            }
+            setMessage(form, 'error', friendlyError(error))
+            trackFailure(error, 'starter/account/email')
+          })
+          .finally(function () {
+            busy = false
+            setBusy(form, false)
+          })
+      },
+      true,
+    )
+
     form.addEventListener(
       'submit',
       function (event) {
