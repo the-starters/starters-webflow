@@ -771,6 +771,7 @@
       console.error('[dashboard-calls] failed closed: Memberstack unavailable')
       return
     }
+
     let sessionGeneration = 0
     const currentGeneration = function () {
       return sessionGeneration
