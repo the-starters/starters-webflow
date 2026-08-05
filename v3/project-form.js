@@ -202,20 +202,40 @@
 
   function state(form) {
     if (!stateByForm) {
-      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', dirty: false }
+      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', lockedFields: null }
       return form.__projectFormV3State
     }
     var current = stateByForm.get(form)
     if (!current) {
-      current = { active: null, key: '', dirty: false }
+      current = { active: null, key: '', lockedFields: null }
       stateByForm.set(form, current)
     }
     return current
   }
 
+  function setFormLocked(form, locked) {
+    var formState = state(form)
+    if (locked) {
+      if (formState.lockedFields) return
+      var fields = form.querySelectorAll('[' + FIELD_ATTR + ']')
+      formState.lockedFields = Array.prototype.map.call(fields, function (field) {
+        var wasDisabled = Boolean(field.disabled)
+        field.disabled = true
+        return { field: field, wasDisabled: wasDisabled }
+      })
+      return
+    }
+    if (!formState.lockedFields) return
+    formState.lockedFields.forEach(function (entry) {
+      entry.field.disabled = entry.wasDisabled
+    })
+    formState.lockedFields = null
+  }
+
   function setStatus(form, status, message) {
     form.setAttribute('data-project-form-status', status)
     form.setAttribute('aria-busy', status === 'submitting' ? 'true' : 'false')
+    setFormLocked(form, status === 'submitting')
     var error = form.querySelector('[data-project-form-state="error"]')
     if (error) {
       error.textContent = status === 'error' ? message : ''
@@ -286,7 +306,6 @@
     setField(form, 'application_id', '')
     setField(form, 'idempotency_key', '')
     formState.key = ''
-    formState.dirty = false
     var context = selectedContext(trigger, documentObject)
     if (!context.opportunityId || !context.applicationId) {
       setStatus(form, 'error', 'Select an eligible applicant before starting the project.')
@@ -362,14 +381,7 @@
         setStatus(form, 'error', safeError(requestError))
         return false
       })
-      .finally(function () {
-        formState.active = null
-        if (formState.dirty) {
-          formState.key = ''
-          formState.dirty = false
-          setField(form, 'idempotency_key', '')
-        }
-      })
+      .finally(function () { formState.active = null })
     return formState.active
   }
 
@@ -384,10 +396,7 @@
       var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
       if (!form || field.getAttribute(FIELD_ATTR) === 'idempotency_key') return
       var formState = state(form)
-      if (formState.active) {
-        formState.dirty = true
-        return
-      }
+      if (formState.active) return
       formState.key = ''
       setField(form, 'idempotency_key', '')
     })

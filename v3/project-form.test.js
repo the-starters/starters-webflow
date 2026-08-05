@@ -219,7 +219,7 @@ test('projects safe authorization errors without exposing raw server messages', 
   assert.doesNotMatch(form.error.textContent, /raw server detail/)
 })
 
-test('retains the retry key until an in-flight request settles', async () => {
+test('locks fields in flight and retains the retry key after a lost response', async () => {
   let rejectRequest
   const payloads = []
   const createProject = (payload) => {
@@ -233,13 +233,17 @@ test('retains the retry key until an in-flight request settles', async () => {
   const retryKey = keyField.value
   const title = form.querySelector('[data-project-field="title"]')
   title.form = form
+  assert.equal(title.disabled, true)
   document.listeners.input.handler({ target: title })
   assert.equal(keyField.value, retryKey)
   assert.equal(api.submit(form, window, document), pending)
   rejectRequest(Object.assign(new Error('lost response'), { status: 503 }))
   assert.equal(await pending, false)
-  assert.equal(keyField.value, '')
+  assert.equal(title.disabled, false)
+  assert.equal(keyField.value, retryKey)
   assert.equal(payloads[0].idempotency_key, retryKey)
+  document.listeners.input.handler({ target: title })
+  assert.equal(keyField.value, '')
 })
 
 test('installs the submit handler in capture phase ahead of native Webflow submission', () => {
