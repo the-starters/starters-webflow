@@ -627,6 +627,35 @@ test('Identity-scoped Account Security owns Talent email changes', async () => {
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
+test('Account Security preserves Brand telemetry and classifies Starter failures separately', async () => {
+  for (const scenario of [
+    { mode: 'brand', role: 'brand-paid', path: 'brand/account/email' },
+    { mode: 'identity', role: 'brand-free', path: 'brand/account/email' },
+    { mode: 'identity', role: 'talent', path: 'starter/account/email' },
+  ]) {
+    const failure = new Error('email update failed')
+    failure.status = 503
+    const securityForm = makeForm('security', { email: 'next@example.com' })
+    const environment = loadController({
+      buildForm: null,
+      securityForm,
+      currentEmail: 'old@example.com',
+      config: { guardSecurityForm: scenario.mode },
+      routeGuard: { memberRole: () => scenario.role },
+      updateMemberAuth: async () => {
+        throw failure
+      },
+    })
+
+    securityForm.submitEvent()
+    await settle()
+
+    assert.deepEqual(plain(environment.tracked), [
+      { name: 'bridge_error', payload: { path: scenario.path, status: 503 } },
+    ])
+  }
+})
+
 test('Identity-scoped Account Security still leaves unknown and conflicted roles Memberstack-native', async () => {
   for (const role of [null, 'conflicting-plan-roles']) {
     const securityForm = makeForm('security')

@@ -400,11 +400,16 @@
     return false
   }
 
+  function securityFailurePath(role) {
+    return role === 'talent' ? 'starter/account/email' : 'brand/account/email'
+  }
+
   function bindIdentitySecurityForm(form, mode) {
     if (!form || form.getAttribute('data-brand-account-bound') === 'true') return false
     form.setAttribute('data-brand-account-bound', 'true')
     var busy = false
     var ownsSubmission = false
+    var submissionRole = null
 
     form.addEventListener(
       'submit',
@@ -417,6 +422,7 @@
         if (busy) return
         busy = true
         ownsSubmission = false
+        submissionRole = null
         var submitter = event.submitter
 
         Promise.resolve()
@@ -426,6 +432,7 @@
             var member = await currentMember(memberstack())
             var role = guard.memberRole(member)
             if (!securityModeOwnsRole(mode, role)) return false
+            submissionRole = role
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
@@ -442,7 +449,7 @@
               return
             }
             setMessage(form, 'error', friendlyError(error))
-            trackFailure(error, 'identity/account/email')
+            trackFailure(error, securityFailurePath(submissionRole))
           })
           .finally(function () {
             busy = false
