@@ -96,11 +96,11 @@ function load(options = {}) {
   const window = {
     document,
     crypto: { randomUUID: () => 'uuid-123' },
-    Opp30: { API: { projectCreate: async (payload) => {
+    Opp30: { API: { projectCreate: options.createProject || (async (payload) => {
       calls.push(payload)
       if (options.reject) throw Object.assign(new Error('raw server detail'), { status: options.reject })
       return { project: { id: 669 }, replayed: false }
-    } } },
+    }) } },
     StartersTrack: { track(name, payload) { calls.push({ name, payload }) } },
     CustomEvent: class CustomEvent { constructor(name, init) { this.type = name; this.detail = init.detail } },
     WeakMap,
@@ -141,6 +141,17 @@ test('serializes only explicitly marked fields into the Xano contract', () => {
   assert.equal(Object.values(result.payload).includes('must-not-submit'), false)
 })
 
+test('serializes the checked engagement radio before deduplicating its field name', () => {
+  const form = projectForm()
+  form.children = form.children.filter((child) => child.getAttribute('data-project-field') !== 'engagement_type')
+  form.children.push(
+    field('engagement_type', 'Flat Fee', { type: 'radio', checked: false }),
+    field('engagement_type', 'Weekly Recurring', { type: 'radio', checked: true }),
+  )
+  const { api } = load({ form })
+  assert.equal(api.serialize(form).payload.engagement_type, 'weekly')
+})
+
 test('fails closed for hourly contracts because endpoint 1678 does not accept them', () => {
   const form = projectForm({ engagement_type: 'Ongoing Hourly', hourly_rate: '100' })
   const { api } = load({ form })
@@ -169,6 +180,19 @@ test('hydrates stable opportunity and application ids from an authored applicant
   assert.equal(form.getAttribute('data-project-form-status'), 'ready')
 })
 
+test('clears hydrated ids and retry state when a trigger has incomplete context', async () => {
+  const form = projectForm()
+  const { api, document, window } = load({ form, reject: 403 })
+  await api.submit(form, window, document)
+  document.documentElement = new Element()
+  const trigger = new Element({ 'data-project-form-open': '' })
+  assert.equal(api.bindTrigger(trigger, document), false)
+  assert.equal(form.querySelector('[data-project-field="opportunity_id"]').value, '')
+  assert.equal(form.querySelector('[data-project-field="application_id"]').value, '')
+  assert.equal(form.querySelector('[data-project-field="idempotency_key"]').value, '')
+  assert.equal(await api.submit(form, window, document), false)
+})
+
 test('submits once through Opp30 auth, keeps the retry key, and emits safe success state', async () => {
   const { api, calls, document, form, window } = load()
   form.wrapper = new Element()
@@ -193,6 +217,29 @@ test('projects safe authorization errors without exposing raw server messages', 
   assert.equal(form.getAttribute('data-project-form-status'), 'error')
   assert.match(form.error.textContent, /Brand account/)
   assert.doesNotMatch(form.error.textContent, /raw server detail/)
+})
+
+test('retains the retry key until an in-flight request settles', async () => {
+  let rejectRequest
+  const payloads = []
+  const createProject = (payload) => {
+    payloads.push(payload)
+    return new Promise((resolve, reject) => { rejectRequest = reject })
+  }
+  const { api, document, form, window } = load({ createProject })
+  const pending = api.submit(form, window, document)
+  await Promise.resolve()
+  const keyField = form.querySelector('[data-project-field="idempotency_key"]')
+  const retryKey = keyField.value
+  const title = form.querySelector('[data-project-field="title"]')
+  title.form = form
+  document.listeners.input.handler({ target: title })
+  assert.equal(keyField.value, retryKey)
+  assert.equal(api.submit(form, window, document), pending)
+  rejectRequest(Object.assign(new Error('lost response'), { status: 503 }))
+  assert.equal(await pending, false)
+  assert.equal(keyField.value, '')
+  assert.equal(payloads[0].idempotency_key, retryKey)
 })
 
 test('installs the submit handler in capture phase ahead of native Webflow submission', () => {

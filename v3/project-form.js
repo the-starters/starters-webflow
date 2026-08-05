@@ -149,6 +149,7 @@
       ? form.querySelectorAll('[' + FIELD_ATTR + ']')
       : []
     Array.prototype.forEach.call(fields, function (field) {
+      if (clean(field.type).toLowerCase() === 'radio' && !field.checked) return
       var name = clean(field.getAttribute && field.getAttribute(FIELD_ATTR))
       if (!name || Object.prototype.hasOwnProperty.call(payload, name)) return
       var value = fieldValue(field)
@@ -201,12 +202,12 @@
 
   function state(form) {
     if (!stateByForm) {
-      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '' }
+      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', dirty: false }
       return form.__projectFormV3State
     }
     var current = stateByForm.get(form)
     if (!current) {
-      current = { active: null, key: '' }
+      current = { active: null, key: '', dirty: false }
       stateByForm.set(form, current)
     }
     return current
@@ -272,6 +273,8 @@
   function bindTrigger(trigger, documentObject) {
     var form = formForTrigger(trigger, documentObject)
     if (!form) return false
+    var formState = state(form)
+    if (formState.active) return false
     form.style.display = ''
     var wrapper = form.closest && (form.closest('.w-form') || form.closest('[data-modal-target]'))
     var priorSuccess = wrapper && wrapper.querySelector('.generate-contract_success, [data-project-form-state="success"]')
@@ -279,6 +282,11 @@
       priorSuccess.hidden = true
       priorSuccess.style.display = 'none'
     }
+    setField(form, 'opportunity_id', '')
+    setField(form, 'application_id', '')
+    setField(form, 'idempotency_key', '')
+    formState.key = ''
+    formState.dirty = false
     var context = selectedContext(trigger, documentObject)
     if (!context.opportunityId || !context.applicationId) {
       setStatus(form, 'error', 'Select an eligible applicant before starting the project.')
@@ -286,8 +294,6 @@
     }
     setField(form, 'opportunity_id', context.opportunityId)
     setField(form, 'application_id', context.applicationId)
-    setField(form, 'idempotency_key', '')
-    state(form).key = ''
     setStatus(form, 'ready', '')
     return true
   }
@@ -356,7 +362,14 @@
         setStatus(form, 'error', safeError(requestError))
         return false
       })
-      .finally(function () { formState.active = null })
+      .finally(function () {
+        formState.active = null
+        if (formState.dirty) {
+          formState.key = ''
+          formState.dirty = false
+          setField(form, 'idempotency_key', '')
+        }
+      })
     return formState.active
   }
 
@@ -370,7 +383,12 @@
       var field = event.target
       var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
       if (!form || field.getAttribute(FIELD_ATTR) === 'idempotency_key') return
-      state(form).key = ''
+      var formState = state(form)
+      if (formState.active) {
+        formState.dirty = true
+        return
+      }
+      formState.key = ''
       setField(form, 'idempotency_key', '')
     })
     documentObject.addEventListener('submit', function (event) {
