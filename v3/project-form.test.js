@@ -23,10 +23,9 @@ class Element {
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return this.attrs[name] ?? null }
-  matches(selector) { return selector === 'form[data-project-form-v3="brand"]' && this.attrs['data-project-form-v3'] === 'brand' }
+  matches(selector) { return selector.includes('form[data-project-form-v3="brand"]') && this.attrs['data-project-form-v3'] === 'brand' }
   closest(selector) {
-    if (selector === 'form[data-project-form-v3="brand"]') return this.form || (this.matches(selector) ? this : null)
-    if (selector.includes('data-wf-xano-id')) return this.card || null
+    if (selector.includes('form[data-project-form-v3="brand"]')) return this.form || (this.matches(selector) ? this : null)
     if (selector === '[data-project-form-container]') return this.wrapper || null
     return null
   }
@@ -58,8 +57,7 @@ function projectForm(values = {}) {
   form.error = new Element()
   form.submitters = [new Element({ type: 'submit' })]
   form.children = Object.entries({
-    opportunity_id: '77',
-    application_id: '88',
+    starter_memberstack_id: 'mem_starter_123',
     idempotency_key: '',
     title: 'Launch project',
     service: 'Email Marketing',
@@ -71,6 +69,9 @@ function projectForm(values = {}) {
     monthly_rate: '',
     estimated_hours: '',
     maximum_total_hours: '',
+    hourly_billing_frequency: '',
+    maximum_hours_per_week: '',
+    maximum_hours_per_month: '',
     number_of_weeks: '8',
     number_of_months: '',
     start_date: '08/20/2026',
@@ -78,17 +79,18 @@ function projectForm(values = {}) {
     project_scope: 'Build and optimize the retention program.',
     ...values,
   }).map(([name, value]) => field(name, value))
+  form.contractChoice = new Element({ 'data-project-contract-choice': '', type: 'radio', value: 'Standard contract', checked: true })
   return form
 }
 
 function documentFixture(form) {
   const listeners = {}
   return {
-    documentElement: new Element({ 'data-opp30-opportunity-id': '77' }),
+    documentElement: new Element(),
     listeners,
     addEventListener(name, handler, capture) { listeners[name] = { handler, capture } },
     dispatchEvent(event) { this.event = event },
-    querySelector(selector) { return selector === 'form[data-project-form-v3="brand"]' ? form : null },
+    querySelector(selector) { return selector.includes('form[data-project-form-v3="brand"]') ? form : null },
   }
 }
 
@@ -99,7 +101,7 @@ function load(options = {}) {
   const window = {
     document,
     crypto: { randomUUID: () => 'uuid-123' },
-    Opp30: { API: { projectCreate: options.createProject || (async (payload) => {
+    Opp30: { API: { projectDirectCreate: options.createProject || (async (payload) => {
       calls.push(payload)
       if (options.reject) throw Object.assign(new Error('raw server detail'), { status: options.reject })
       return { project: { id: 669 }, replayed: false }
@@ -122,22 +124,19 @@ test('normalizes ids, money, dates, and supported engagement values', () => {
   assert.equal(api.numberValue('$1,250.50'), 1250.5)
   assert.equal(api.dateValue('8/20/2026'), '2026-08-20')
   assert.equal(api.dateValue('02/30/2026'), '')
-  const monthly = api.canonicalEngagement('Monthly Recurring')
-  assert.equal(monthly.value, 'monthly')
-  assert.equal(monthly.unsupported, false)
-  const hourly = api.canonicalEngagement('Hourly Rate')
-  assert.equal(hourly.value, '')
-  assert.equal(hourly.unsupported, true)
+  assert.equal(api.canonicalEngagement('Monthly Recurring'), 'monthly')
+  assert.equal(api.canonicalEngagement('Ongoing Hourly'), 'hourly')
+  assert.equal(api.canonicalContractType('My own contract'), 'own_contract')
+  assert.equal(api.canonicalHourlyFrequency('One Time'), 'one_time')
 })
 
 test('serializes only explicitly marked fields into the Xano contract', () => {
   const { api, form } = load()
   form.children.push(new Element({ value: 'must-not-submit' }))
   const result = api.serialize(form)
-  assert.equal(result.payload.opportunity_id, 77)
-  assert.equal(result.payload.application_id, 88)
+  assert.equal(result.payload.starter_memberstack_id, 'mem_starter_123')
   assert.equal(result.payload.engagement_type, 'weekly')
-  assert.equal(result.payload.pandadoc_template_key, 'weekly')
+  assert.equal(result.payload.contract_type, 'standard')
   assert.equal(result.payload.weekly_rate, 1250)
   assert.equal(result.payload.number_of_weeks, 8)
   assert.equal(result.payload.start_date, '2026-08-20')
@@ -155,43 +154,49 @@ test('serializes the checked engagement radio before deduplicating its field nam
   assert.equal(api.serialize(form).payload.engagement_type, 'weekly')
 })
 
-test('fails closed for hourly contracts because endpoint 1678 does not accept them', () => {
-  const form = projectForm({ engagement_type: 'Ongoing Hourly', hourly_rate: '100' })
+test('prefers the populated conditional fee-panel control over hidden blank siblings', () => {
+  const form = projectForm({ start_date: '' })
+  form.children.push(field('start_date', '08/20/2026'))
   const { api } = load({ form })
-  const serialized = api.serialize(form)
-  assert.match(api.validationError(serialized), /not supported/)
+  assert.equal(api.serialize(form).payload.start_date, '2026-08-20')
 })
 
-test('uses the server-side own-contract template when that authored radio is selected', () => {
+test('serializes the authored ongoing-hourly model for the direct-hire endpoint', () => {
+  const form = projectForm({ engagement_type: 'Ongoing Hourly', total_cost: '999', hourly_rate: '100', hourly_billing_frequency: 'Weekly', maximum_total_hours: '40', maximum_hours_per_week: '20', maximum_hours_per_month: '80' })
+  const { api } = load({ form })
+  const serialized = api.serialize(form)
+  assert.equal(serialized.payload.engagement_type, 'hourly')
+  assert.equal(serialized.payload.hourly_rate, 100)
+  assert.equal(serialized.payload.hourly_billing_frequency, 'weekly')
+  assert.equal(serialized.payload.maximum_hours_per_week, 20)
+  assert.equal(serialized.payload.total_cost, null)
+  assert.equal(serialized.payload.maximum_total_hours, null)
+  assert.equal(serialized.payload.maximum_hours_per_month, null)
+  assert.equal(api.validationError(serialized), '')
+})
+
+test('keeps pricing separate from the authored own-contract choice', () => {
   const form = projectForm({ engagement_type: 'Weekly Recurring' })
   form.contractChoice = new Element({ 'data-project-contract-choice': '', value: 'My own contract' })
   const { api } = load({ form })
   const serialized = api.serialize(form)
-  assert.equal(serialized.payload.engagement_type, 'own_contract')
-  assert.equal(serialized.payload.pandadoc_template_key, 'own_contract')
+  assert.equal(serialized.payload.engagement_type, 'weekly')
+  assert.equal(serialized.payload.contract_type, 'own_contract')
 })
 
-test('hydrates stable opportunity and application ids from an authored applicant trigger', () => {
-  const form = projectForm({ opportunity_id: '', application_id: '' })
+test('binds the existing Hire trigger when the selected Starter identity is present', () => {
+  const form = projectForm()
   const { api, document } = load({ form })
-  const card = new Element({ 'data-wf-xano-id': '88', 'data-project-opportunity-id': '77' })
-  const trigger = new Element({ 'data-project-form-open': '' })
-  trigger.card = card
+  const trigger = new Element({ 'data-modal-trigger': 'generate-contract' })
   assert.equal(api.bindTrigger(trigger, document), true)
-  assert.equal(form.querySelector('[data-project-field="opportunity_id"]').value, '77')
-  assert.equal(form.querySelector('[data-project-field="application_id"]').value, '88')
   assert.equal(form.getAttribute('data-project-form-status'), 'ready')
 })
 
-test('clears hydrated ids and retry state when a trigger has incomplete context', async () => {
-  const form = projectForm()
+test('fails closed when the Hire form has no selected Starter identity', async () => {
+  const form = projectForm({ starter_memberstack_id: '' })
   const { api, document, window } = load({ form, reject: 403 })
-  await api.submit(form, window, document)
-  document.documentElement = new Element()
-  const trigger = new Element({ 'data-project-form-open': '' })
+  const trigger = new Element({ 'data-modal-trigger': 'generate-contract' })
   assert.equal(api.bindTrigger(trigger, document), false)
-  assert.equal(form.querySelector('[data-project-field="opportunity_id"]').value, '')
-  assert.equal(form.querySelector('[data-project-field="application_id"]').value, '')
   assert.equal(form.querySelector('[data-project-field="idempotency_key"]').value, '')
   assert.equal(await api.submit(form, window, document), false)
 })
@@ -204,8 +209,8 @@ test('submits once through Opp30 auth, keeps the retry key, and emits safe succe
   const duplicate = api.submit(form, window, document)
   assert.equal(first, duplicate)
   assert.equal(await first, true)
-  assert.equal(calls.filter((call) => call && call.application_id === 88).length, 1)
-  assert.equal(calls[0].idempotency_key, 'project-ui:88:uuid-123')
+  assert.equal(calls.filter((call) => call && call.starter_memberstack_id === 'mem_starter_123').length, 1)
+  assert.equal(calls[0].idempotency_key, 'direct-hire-ui:uuid-123')
   assert.equal(form.getAttribute('data-project-form-status'), 'success')
   assert.equal(form.style.display, 'none')
   assert.equal(form.wrapper.success.style.display, 'block')
@@ -265,9 +270,9 @@ test('installs the submit handler in capture phase ahead of native Webflow submi
   assert.equal(typeof document.listeners.input.handler, 'function')
 })
 
-test('routes project creation through the existing authenticated Opp30 bridge', () => {
+test('routes direct-hire project creation through the authenticated Opp30 bridge', () => {
   assert.match(
     OPPORTUNITIES_SOURCE,
-    /projectCreate:\s*\(payload\)\s*=>\s*call\('projects\/create\/v3',\s*\{ body: payload \}\)/,
+    /projectDirectCreate:\s*\(payload\)\s*=>\s*call\('projects\/create-direct\/v3',\s*\{ body: payload \}\)/,
   )
 })

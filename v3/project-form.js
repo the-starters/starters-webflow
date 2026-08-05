@@ -2,18 +2,19 @@
  * V3 Brand project / contract form adapter.
  *
  * Webflow owns the native form and every field. This module only:
- *   - binds an authored Brand "Generate Contract" form to the selected
- *     opportunity/application stable IDs;
+ *   - binds the existing Brand /hire/<slug> "Contract Generation" form to
+ *     the selected Starter's stable Memberstack identity;
  *   - serializes an explicit data-project-field allowlist into the published
- *     Xano projects/create/v3 contract;
+ *     Xano projects/create-direct/v3 contract;
  *   - supplies a retry-stable idempotency key and submits through Opp30's
  *     authenticated Memberstack -> Xano bridge;
  *   - projects safe pending/success/error state into authored elements.
  *
  * Xano remains authoritative for identity, ownership, project creation,
  * PandaDoc, lifecycle state, and duplicate prevention. This script never
- * creates form HTML and intentionally does not wire the Starter-only
- * "Start a Project" component: endpoint #1678 is Brand-only.
+ * creates form HTML and intentionally ignores the separate "start-project"
+ * modal. Only the Brand Hire modal with data-modal-target="generate-contract"
+ * is in scope.
  */
 ;(function (global) {
   'use strict'
@@ -21,8 +22,8 @@
   if (!global || global.__startersV3ProjectFormBooted) return
   global.__startersV3ProjectFormBooted = true
 
-  var FORM_SELECTOR = 'form[data-project-form-v3="brand"]'
-  var OPEN_SELECTOR = '[data-project-form-open]'
+  var FORM_SELECTOR = 'dialog[data-modal-target="generate-contract"] form[data-project-form-v3="brand"]'
+  var OPEN_SELECTOR = '[data-modal-trigger="generate-contract"]'
   var FIELD_ATTR = 'data-project-field'
   var CONTRACT_CHOICE_SELECTOR = '[data-project-contract-choice]'
   var PAYLOAD_CONTROL_SELECTOR = '[' + FIELD_ATTR + '], ' + CONTRACT_CHOICE_SELECTOR
@@ -33,20 +34,14 @@
   var ENGAGEMENT_TYPES = {
     'flat fee': 'flat_fee',
     flat_fee: 'flat_fee',
+    'ongoing hourly': 'hourly',
+    'on going hourly': 'hourly',
+    'hourly rate': 'hourly',
+    hourly: 'hourly',
     'weekly recurring': 'weekly',
     weekly: 'weekly',
     'monthly recurring': 'monthly',
     monthly: 'monthly',
-    'my own contract': 'own_contract',
-    'your contract': 'own_contract',
-    own_contract: 'own_contract',
-  }
-
-  var UNSUPPORTED_ENGAGEMENTS = {
-    'hourly rate': true,
-    hourly: true,
-    'ongoing hourly': true,
-    'on going hourly': true,
   }
 
   var NUMERIC_FIELDS = {
@@ -57,13 +52,13 @@
     monthly_rate: true,
     estimated_hours: true,
     maximum_total_hours: true,
+    maximum_hours_per_week: true,
+    maximum_hours_per_month: true,
     number_of_weeks: true,
     number_of_months: true,
   }
 
   var INTEGER_FIELDS = {
-    opportunity_id: true,
-    application_id: true,
     number_of_weeks: true,
     number_of_months: true,
   }
@@ -115,8 +110,8 @@
     return String(Date.now()) + ':' + String(Math.random()).slice(2)
   }
 
-  function createIdempotencyKey(applicationId, cryptoObject) {
-    return 'project-ui:' + String(applicationId || 'unknown') + ':' + randomPart(cryptoObject)
+  function createIdempotencyKey(cryptoObject) {
+    return 'direct-hire-ui:' + randomPart(cryptoObject)
   }
 
   function formField(form, name) {
@@ -143,8 +138,20 @@
 
   function canonicalEngagement(value) {
     var normalized = clean(value).toLowerCase()
-    if (UNSUPPORTED_ENGAGEMENTS[normalized]) return { value: '', unsupported: true }
-    return { value: ENGAGEMENT_TYPES[normalized] || '', unsupported: false }
+    return ENGAGEMENT_TYPES[normalized] || ''
+  }
+
+  function canonicalContractType(value) {
+    var normalized = clean(value).toLowerCase()
+    if (normalized === 'my own contract' || normalized === 'your contract' || normalized === 'own_contract') return 'own_contract'
+    if (normalized === 'standard contract' || normalized === 'standard') return 'standard'
+    return ''
+  }
+
+  function canonicalHourlyFrequency(value) {
+    var normalized = clean(value).toLowerCase().replace(/[\s-]+/g, '_')
+    if (normalized === 'one_time' || normalized === 'weekly' || normalized === 'monthly') return normalized
+    return ''
   }
 
   function serialize(form) {
@@ -155,8 +162,12 @@
     Array.prototype.forEach.call(fields, function (field) {
       if (clean(field.type).toLowerCase() === 'radio' && !field.checked) return
       var name = clean(field.getAttribute && field.getAttribute(FIELD_ATTR))
-      if (!name || Object.prototype.hasOwnProperty.call(payload, name)) return
+      if (!name) return
       var value = fieldValue(field)
+      // The live form authors one rate/date control per conditional fee panel.
+      // Prefer the populated control rather than allowing a hidden blank panel
+      // to win by DOM order.
+      if (Object.prototype.hasOwnProperty.call(payload, name) && !value) return
       if (INTEGER_FIELDS[name]) {
         payload[name] = positiveId(value)
       } else if (NUMERIC_FIELDS[name]) {
@@ -166,36 +177,61 @@
           : numeric
       } else if (name === 'start_date' || name === 'estimated_end_date') {
         payload[name] = dateValue(value) || null
+      } else if (name === 'hourly_billing_frequency') {
+        payload[name] = canonicalHourlyFrequency(value) || null
       } else {
         payload[name] = value
       }
     })
 
-    var engagement = canonicalEngagement(payload.engagement_type)
+    payload.engagement_type = canonicalEngagement(payload.engagement_type)
     var contractChoice = form && form.querySelector
       ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked')
       : null
-    if (contractChoice && canonicalEngagement(fieldValue(contractChoice)).value === 'own_contract') {
-      engagement = { value: 'own_contract', unsupported: false }
+    payload.contract_type = canonicalContractType(fieldValue(contractChoice))
+
+    // Webflow keeps inactive conditional panels in the DOM. Clear their stale
+    // commercial values so only the selected pricing contract crosses the API.
+    if (payload.engagement_type !== 'flat_fee') payload.total_cost = null
+    if (payload.engagement_type !== 'hourly') {
+      payload.hourly_rate = null
+      payload.hourly_billing_frequency = null
+      payload.maximum_total_hours = null
+      payload.maximum_hours_per_week = null
+      payload.maximum_hours_per_month = null
+    } else if (payload.hourly_billing_frequency === 'one_time') {
+      payload.maximum_hours_per_week = null
+      payload.maximum_hours_per_month = null
+    } else if (payload.hourly_billing_frequency === 'weekly') {
+      payload.maximum_total_hours = null
+      payload.maximum_hours_per_month = null
+    } else if (payload.hourly_billing_frequency === 'monthly') {
+      payload.maximum_total_hours = null
+      payload.maximum_hours_per_week = null
     }
-    payload.engagement_type = engagement.value
-    // The worker's template selector intentionally matches the approved
-    // engagement enum. Derive it here so authored markup cannot pair a weekly
-    // price model with a flat-fee PandaDoc template.
-    payload.pandadoc_template_key = engagement.value
-    return { payload: payload, unsupportedEngagement: engagement.unsupported }
+    if (payload.engagement_type !== 'weekly') {
+      payload.weekly_rate = null
+      payload.number_of_weeks = null
+    }
+    if (payload.engagement_type !== 'monthly') {
+      payload.monthly_rate = null
+      payload.number_of_months = null
+    }
+    return { payload: payload }
   }
 
   function validationError(serialized) {
     var payload = serialized.payload
-    if (!payload.opportunity_id || !payload.application_id) return 'Select an eligible applicant before starting the project.'
-    if (serialized.unsupportedEngagement) return 'Hourly project contracts are not supported by the V3 project workflow yet.'
+    if (!clean(payload.starter_memberstack_id)) return 'The selected Starter could not be identified. Reload and try again.'
     if (!payload.engagement_type) return 'Choose a supported fee structure.'
+    if (!payload.contract_type) return 'Choose a contract type.'
     if (!clean(payload.title)) return 'Enter a project name.'
     if (!clean(payload.service)) return 'Choose a service.'
     if (!payload.start_date) return 'Enter a valid start date.'
     if (!clean(payload.project_scope)) return 'Add the project scope.'
     if (payload.engagement_type === 'flat_fee' && !(payload.total_cost > 0)) return 'Enter a total project cost.'
+    if (payload.engagement_type === 'hourly' && !(payload.hourly_rate > 0)) return 'Enter an hourly rate.'
+    if (payload.engagement_type === 'hourly' && !payload.hourly_billing_frequency) return 'Choose an hourly billing frequency.'
     if (payload.engagement_type === 'weekly' && !(payload.weekly_rate > 0)) return 'Enter a weekly rate.'
     if (payload.engagement_type === 'monthly' && !(payload.monthly_rate > 0)) return 'Enter a monthly rate.'
     if (payload.paid_upfront_pct != null && (payload.paid_upfront_pct < 0 || payload.paid_upfront_pct > 100)) {
@@ -257,40 +293,12 @@
     var status = error && Number(error.status)
     if (status === 401) return 'Your session expired. Sign in again and retry.'
     if (status === 403) return 'This project is not available for your Brand account.'
-    if (status === 409) return 'This application already has a project request.'
+    if (status === 409) return 'This project request was already accepted.'
     if (status === 400 || status === 422) return 'Review the project details and try again.'
     return 'The project could not be created. Please retry.'
   }
 
-  function selectedContext(trigger, documentObject) {
-    var card = trigger && trigger.closest
-      ? trigger.closest('[data-wf-xano-id], [data-app-id], [data-project-application-id]')
-      : null
-    var page = documentObject && documentObject.documentElement
-    var pageOpportunity = documentObject && documentObject.querySelector
-      ? documentObject.querySelector('[data-opp-page-id]')
-      : null
-    var applicationId = positiveId(
-      trigger && trigger.getAttribute('data-project-application-id') ||
-      card && (card.getAttribute('data-project-application-id') || card.getAttribute('data-wf-xano-id') || card.getAttribute('data-app-id')),
-    )
-    var opportunityId = positiveId(
-      trigger && trigger.getAttribute('data-project-opportunity-id') ||
-      card && card.getAttribute('data-project-opportunity-id') ||
-      pageOpportunity && pageOpportunity.getAttribute('data-opp-page-id') ||
-      page && (page.getAttribute('data-opp30-opportunity-id') || page.getAttribute('data-opp-id')),
-    )
-    return { opportunityId: opportunityId, applicationId: applicationId }
-  }
-
   function formForTrigger(trigger, documentObject) {
-    var target = clean(trigger && trigger.getAttribute('data-project-form-target'))
-    if (target && documentObject.querySelector) {
-      try {
-        var explicit = documentObject.querySelector(target)
-        if (explicit && explicit.matches && explicit.matches(FORM_SELECTOR)) return explicit
-      } catch (_) {}
-    }
     return documentObject.querySelector(FORM_SELECTOR)
   }
 
@@ -310,24 +318,19 @@
       priorSuccess.hidden = true
       priorSuccess.style.display = 'none'
     }
-    setField(form, 'opportunity_id', '')
-    setField(form, 'application_id', '')
     setField(form, 'idempotency_key', '')
     formState.key = ''
-    var context = selectedContext(trigger, documentObject)
-    if (!context.opportunityId || !context.applicationId) {
-      setStatus(form, 'error', 'Select an eligible applicant before starting the project.')
+    if (!fieldValue(formField(form, 'starter_memberstack_id'))) {
+      setStatus(form, 'error', 'The selected Starter could not be identified. Reload and try again.')
       return false
     }
-    setField(form, 'opportunity_id', context.opportunityId)
-    setField(form, 'application_id', context.applicationId)
     setStatus(form, 'ready', '')
     return true
   }
 
   function projectApi(globalObject) {
     var api = globalObject && globalObject.Opp30 && globalObject.Opp30.API
-    return api && typeof api.projectCreate === 'function' ? api.projectCreate : null
+    return api && typeof api.projectDirectCreate === 'function' ? api.projectDirectCreate : null
   }
 
   function showSuccess(form, result, documentObject) {
@@ -368,7 +371,7 @@
       setStatus(form, 'error', 'The project form is missing its idempotency field.')
       return Promise.resolve(false)
     }
-    if (!formState.key) formState.key = createIdempotencyKey(serialized.payload.application_id, globalObject.crypto)
+    if (!formState.key) formState.key = createIdempotencyKey(globalObject.crypto)
     serialized.payload.idempotency_key = formState.key
     setField(form, 'idempotency_key', formState.key)
 
@@ -422,10 +425,11 @@
     numberValue: numberValue,
     dateValue: dateValue,
     canonicalEngagement: canonicalEngagement,
+    canonicalContractType: canonicalContractType,
+    canonicalHourlyFrequency: canonicalHourlyFrequency,
     createIdempotencyKey: createIdempotencyKey,
     serialize: serialize,
     validationError: validationError,
-    selectedContext: selectedContext,
     bindTrigger: bindTrigger,
     submit: submit,
     install: install,
