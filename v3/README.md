@@ -1238,6 +1238,14 @@ On Brand only, the same resolved Memberstack snapshot paints the existing hero:
 every session refresh and on any failure, so another member's projection cannot
 survive an auth transition.
 
+The Brand dashboard's existing `form[data-ms-form="profile"]` remains a native
+Memberstack form and keeps sole ownership of its submit. The controller observes
+that submit without cancelling it, reads the intended `free-user`, `last-name`,
+and `company` values from the authored fields, and retries `getCurrentMember()`
+for a bounded period. It repaints the hero only after Memberstack readback
+matches all three submitted values. A failed, delayed beyond the retry window,
+or superseded save leaves the current hero unchanged.
+
 Runtime contract:
 
 - `data-dashboard-calls-v3` on the document root reports `loading`, `ready`, or

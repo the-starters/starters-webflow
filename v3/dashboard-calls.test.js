@@ -197,6 +197,167 @@ test('auth changes clear identity state and stale requests cannot render', async
   await until(() => root.attributes['data-dashboard-calls-v3'] === 'error')
 })
 
+test('native Brand profile saves repaint the hero only after canonical Memberstack readback', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const profileListeners = {}
+  const profileFields = {
+    'free-user': { value: 'Old First' },
+    'last-name': { value: 'Old Last' },
+    company: { value: 'Old Company' },
+  }
+  const profileForm = element({ 'data-ms-form': 'profile' })
+  profileForm.querySelector = (selector) => {
+    const match = selector.match(/^\[data-ms-member="(.+)"\]$/)
+    return match ? profileFields[match[1]] || null : null
+  }
+  profileForm.addEventListener = (name, listener) => {
+    profileListeners[name] = listener
+  }
+
+  const name = element()
+  const surname = element()
+  const company = element()
+  const list = element()
+  const template = element({ 'bookings-item-template': 'calls' })
+  const loader = element()
+  const empty = element()
+  const count = element()
+  const filters = element()
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': loader,
+      '[bookings-empty="calls"]': empty,
+      '[bookings-count]': count,
+      '.tabs-button_component.is-dashboard': filters,
+    })[selector] || null
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [template] : []
+  template.cloneNode = () => element()
+
+  let memberReads = 0
+  let authChange
+  let pendingMemberRead
+  const oldMember = {
+    id: 'brand-1',
+    customFields: {
+      'free-user': 'Old First',
+      'last-name': 'Old Last',
+      company: 'Old Company',
+    },
+  }
+  const newMember = {
+    id: 'brand-1',
+    customFields: {
+      'free-user': 'New First',
+      'last-name': 'New Last',
+      company: 'New Company',
+    },
+  }
+  let currentMember = oldMember
+  const memberstack = {
+    async getCurrentMember() {
+      memberReads += 1
+      if (pendingMemberRead) {
+        const read = pendingMemberRead
+        pendingMemberRead = null
+        return read.promise
+      }
+      return currentMember
+    },
+    onAuthChange(listener) {
+      authChange = listener
+    },
+  }
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    querySelector(selector) {
+      return selector === '.dash-hero_profile-stats > p' ? company : null
+    },
+    querySelectorAll(selector) {
+      if (selector === '[bookings-section]') return [section]
+      if (selector === '.dash-hero_profile-name span') return [name, surname]
+      if (selector === 'form[data-ms-form="profile"]') return [profileForm]
+      return []
+    },
+  }
+  const window = {
+    $memberstackDom: memberstack,
+    clearInterval,
+    document,
+    location: { pathname: '/brand-dashboard' },
+    setInterval,
+    setTimeout: (listener) => setImmediate(listener),
+    xanoAuthFetch: async () => ({ ok: true, json: async () => [] }),
+  }
+
+  vm.runInNewContext(source, {
+    console: { error() {} },
+    document,
+    Intl,
+    setInterval,
+    window,
+  })
+  await until(() => root.attributes['data-dashboard-calls-v3'] === 'ready')
+  assert.equal(name.textContent, 'Old First')
+  assert.equal(surname.textContent, 'Old Last')
+  assert.equal(company.textContent, 'Old Company')
+
+  profileFields['free-user'].value = ' New First '
+  profileFields['last-name'].value = ' New Last '
+  profileFields.company.value = ' New Company '
+  let prevented = false
+  profileListeners.submit({
+    preventDefault() {
+      prevented = true
+    },
+  })
+  await until(() => memberReads >= 3)
+  assert.equal(prevented, false)
+  assert.equal(name.textContent, 'Old First')
+
+  currentMember = newMember
+  await until(() => name.textContent === 'New First')
+  assert.equal(surname.textContent, 'New Last')
+  assert.equal(company.textContent, 'New Company')
+
+  profileFields['free-user'].value = 'Stale First'
+  profileFields['last-name'].value = 'Stale Last'
+  profileFields.company.value = 'Stale Company'
+  const staleRead = deferred()
+  pendingMemberRead = staleRead
+  profileListeners.submit({})
+  await until(() => pendingMemberRead === null)
+
+  currentMember = {
+    id: 'brand-2',
+    customFields: {
+      'free-user': 'Current First',
+      'last-name': 'Current Last',
+      company: 'Current Company',
+    },
+  }
+  authChange()
+  await until(() => name.textContent === 'Current First')
+
+  staleRead.resolve({
+    id: 'brand-1',
+    customFields: {
+      'free-user': 'Stale First',
+      'last-name': 'Stale Last',
+      company: 'Stale Company',
+    },
+  })
+  await new Promise(setImmediate)
+  assert.equal(name.textContent, 'Current First')
+  assert.equal(surname.textContent, 'Current Last')
+  assert.equal(company.textContent, 'Current Company')
+})
+
 test('fails closed when the authenticated participant identity is absent or mismatched', () => {
   const booking = {
     starter_data: { memberstack_id: 'starter-1' },
