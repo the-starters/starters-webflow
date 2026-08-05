@@ -3,7 +3,7 @@
  * that Webflow's own IntersectionObserver can never trigger, and never let a submit
  * leave without a fresh token.
  *
- * @release v1.59.106
+ * @release v1.59.107
  *
  * THE BUG. Webflow "bot protection" (Cloudflare Turnstile) is on site-wide, so the
  * published forms runtime does this to every `form[data-turnstile-sitekey]`:
@@ -52,25 +52,53 @@
  * (leaked fields, misplaced buttons), and it would be a styling fix for a
  * measurement bug.
  *
- * SCOPE IS DELIBERATELY NARROW — computed `display: contents` only. A form with a
- * real display (`flex`, `block`, …) is armed by Webflow itself as soon as it scrolls
- * or is revealed within 200px of the viewport, including forms in a closed modal, so
- * touching those would mean two widgets, two `cf-turnstile-response` inputs, and a
- * token race in one form. Before rendering, each form is re-checked: a form that
- * already contains a widget, or whose `.w-form` wrapper no longer carries
- * `w-form-loading`, is left alone. `[data-wf-no-turnstile]` is honoured the same way
- * Webflow honours it.
+ * OPT-IN ONLY. A form is a candidate solely because someone marked it
+ * `data-starters-turnstile-fix` in the Designer. There is no detection, no heuristic,
+ * and no "looks broken so let's help" — an unmarked form is invisible to this script
+ * even when it is a textbook case of the bug. That is the whole point: this thing
+ * reaches into another library's private state (`jQuery.data(form, '.w-form')`) and
+ * appends a node inside a form it does not own, and the blast radius of getting that
+ * wrong on an unrelated form is a broken submit on a page nobody was testing. An
+ * explicit marker makes every armed form a decision someone made on purpose, and it
+ * means dropping this script site-wide can never change the behaviour of a form that
+ * was working. The earlier revision armed every `display: contents` form it found;
+ * this replaces that with the marker.
+ *
+ * THE SAFETY RAILS STAY ON TOP OF THE MARKER — the marker says "you may", not "you
+ * must". A marked form is still skipped unless it also carries
+ * `data-turnstile-sitekey` and its computed display really is `contents`. That second
+ * check is the no-double-arm invariant: a form with a real display (`flex`, `block`, …)
+ * is armed by Webflow itself as soon as it scrolls or is revealed within 200px of the
+ * viewport, including inside a closed modal, so arming it too would put two widgets and
+ * two `cf-turnstile-response` inputs in one payload and race their tokens. A marked
+ * form with a real display is therefore skipped **and warned about on staging**,
+ * because the marker on it is a mistake worth seeing rather than something to obey.
+ * Before rendering, each form is re-checked once more: one that already contains a
+ * widget, or whose `.w-form` wrapper no longer carries `w-form-loading`, is left alone.
+ * `[data-wf-no-turnstile]` is honoured the same way Webflow honours it.
  *
  * Where it goes in Webflow: Page or Project Settings -> Custom Code -> Footer Code
- * (or Head with `defer`), one tag, on any page that has a `display: contents` form.
- * No dependencies of its own and safe to load twice; it needs Webflow's own jQuery
- * only to read `jQuery.data(form, '.w-form')`, which is where Webflow keeps the state
- * object its own closures read — there is no second copy of that state to write to.
+ * (or Head with `defer`), one tag. Safe to install site-wide — with no marked form on
+ * the page it does nothing at all. No dependencies of its own and safe to load twice;
+ * it needs Webflow's own jQuery only to read `jQuery.data(form, '.w-form')`, which is
+ * where Webflow keeps the state object its own closures read — there is no second copy
+ * of that state to write to.
  *
- * Attributes it writes (never authored by hand):
+ * ATTRIBUTE GRAMMAR
  *
- *   data-starters-turnstile-armed="true"   on a form this script has armed
- *   data-starters-turnstile-host           on the hidden div holding the widget
+ * Authored in the Designer, on the `<form>` element:
+ *
+ *   data-starters-turnstile-fix            arm this form (presence is the whole
+ *                                          contract — any value, including empty,
+ *                                          means the same thing; there is nothing to
+ *                                          spell wrong in a value)
+ *
+ * Written at runtime, never by hand:
+ *
+ *   data-starters-turnstile-armed="true"      on a form this script has armed
+ *   data-starters-turnstile-armed="skipped"   on a marked form it deliberately left
+ *                                             to Webflow
+ *   data-starters-turnstile-host              on the hidden div holding the widget
  *
  * Ordering note: the wait for `window.turnstile` is what makes the "did Webflow
  * already arm this?" re-check trustworthy. Webflow's forms module is what injects
@@ -89,9 +117,10 @@
   window.__startersTurnstileContentsFixBooted = true
 
   // Keep in sync with the @release line in this file's header comment.
-  var RELEASE = 'v1.59.106'
+  var RELEASE = 'v1.59.107'
   var LOG_PREFIX = '[starters turnstile-contents-fix]'
 
+  var OPT_IN_ATTR = 'data-starters-turnstile-fix'
   var SITEKEY_ATTR = 'data-turnstile-sitekey'
   var OPT_OUT_ATTR = 'data-wf-no-turnstile'
   var ARMED_ATTR = 'data-starters-turnstile-armed'
@@ -150,6 +179,22 @@
     if (!diagnosticsEnabled()) return
     if (detail === undefined) console.info(LOG_PREFIX + ' ' + message)
     else console.info(LOG_PREFIX + ' ' + message, detail)
+  }
+
+  var warnedForms = typeof WeakSet === 'function' ? new WeakSet() : null
+
+  /**
+   * One selection warning per form for the life of the page. `refresh()` re-scans, and
+   * an authoring mistake that survives a re-scan would otherwise repeat its warning on
+   * every call until the console is useless.
+   */
+  function warnOnce(form, message) {
+    if (!diagnosticsEnabled()) return
+    if (warnedForms) {
+      if (warnedForms.has(form)) return
+      warnedForms.add(form)
+    }
+    warn(formLabel(form) + ' ' + message)
   }
 
   function formLabel(form) {
@@ -212,16 +257,18 @@
     )
   }
 
-  function isContentsForm(form) {
+  function computedDisplay(form) {
     var view = form.ownerDocument && form.ownerDocument.defaultView
-    if (!view || typeof view.getComputedStyle !== 'function') return false
-    var display = ''
+    if (!view || typeof view.getComputedStyle !== 'function') return ''
     try {
-      display = view.getComputedStyle(form).display
+      return view.getComputedStyle(form).display || ''
     } catch (error) {
-      return false
+      return ''
     }
-    return display === 'contents'
+  }
+
+  function isContentsForm(form) {
+    return computedDisplay(form) === 'contents'
   }
 
   /**
@@ -239,12 +286,57 @@
 
   /* ------------------------------- selection ------------------------------- */
 
+  /**
+   * Selection is the marker and then the rails, in that order. Every rail failure on a
+   * MARKED form warns, because someone deliberately asked for arming and did not get
+   * it — silence there would leave an author staring at a disabled button with nothing
+   * to go on. An unmarked form is not mentioned at all: it is not this script's
+   * business, and a page full of ordinary forms must not produce a page full of noise.
+   */
   function candidates() {
-    var forms = Array.prototype.slice.call(document.querySelectorAll('form[' + SITEKEY_ATTR + ']'))
-    return forms.filter(function (form) {
+    var marked = Array.prototype.slice.call(document.querySelectorAll('form[' + OPT_IN_ATTR + ']'))
+    return marked.filter(function (form) {
       if (form.getAttribute(ARMED_ATTR) === 'true') return false
-      if (form.hasAttribute(OPT_OUT_ATTR)) return false
-      return isContentsForm(form)
+
+      if (form.hasAttribute(OPT_OUT_ATTR)) {
+        warnOnce(
+          form,
+          'is marked ' +
+            OPT_IN_ATTR +
+            ' but also carries ' +
+            OPT_OUT_ATTR +
+            ', which turns Webflow bot protection off for it; the two contradict each other, so nothing was armed'
+        )
+        return false
+      }
+
+      if (!(form.getAttribute(SITEKEY_ATTR) || '').trim()) {
+        warnOnce(
+          form,
+          'is marked ' +
+            OPT_IN_ATTR +
+            ' but has no ' +
+            SITEKEY_ATTR +
+            ' value, so Webflow bot protection is not on for this form and there is nothing to arm'
+        )
+        return false
+      }
+
+      // The no-double-arm invariant. A marked form with a real box is armed by Webflow
+      // itself, so the marker is the mistake here, not the display.
+      if (!isContentsForm(form)) {
+        warnOnce(
+          form,
+          'is marked ' +
+            OPT_IN_ATTR +
+            ' but its computed display is "' +
+            (computedDisplay(form) || 'unknown') +
+            '", not "contents" — Webflow arms a form with a real layout box itself once it comes near the viewport, so this one is left alone to avoid a second widget and a second cf-turnstile-response field in one payload. Remove the marker from it.'
+        )
+        return false
+      }
+
+      return true
     })
   }
 
@@ -675,12 +767,14 @@
   function boot() {
     var pending = candidates()
     if (!pending.length) {
-      info('no display:contents forms with ' + SITEKEY_ATTR + ' on this page')
+      // Covers both "nobody marked anything here" and "everything marked failed a
+      // rail"; the rail failures have already warned by name, so this stays an info.
+      info('no form on this page is marked ' + OPT_IN_ATTR + ' and eligible; standing down')
       return
     }
     info(
       pending.length +
-        ' display:contents form(s) to arm: ' +
+        ' marked display:contents form(s) to arm: ' +
         pending
           .map(function (form) {
             return formLabel(form)
