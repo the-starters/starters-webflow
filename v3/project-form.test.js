@@ -35,7 +35,7 @@ class Element {
     if (field) return this.children.find((child) => child.getAttribute('data-project-field') === field[1]) || null
     if (selector === '[data-project-form-state="error"]') return this.error || null
     if (selector === '[data-project-contract-choice]:checked') return this.contractChoice || null
-    if (selector.includes('generate-contract_success')) return this.success || null
+    if (selector === '[data-project-form-state="success"]') return this.success || null
     return null
   }
   querySelectorAll(selector) {

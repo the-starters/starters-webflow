@@ -26,6 +26,7 @@
   var FIELD_ATTR = 'data-project-field'
   var CONTRACT_CHOICE_SELECTOR = '[data-project-contract-choice]'
   var PAYLOAD_CONTROL_SELECTOR = '[' + FIELD_ATTR + '], ' + CONTRACT_CHOICE_SELECTOR
+  var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   var ENGAGEMENT_TYPES = {
@@ -299,7 +300,7 @@
     if (formState.active) return false
     form.style.display = ''
     var wrapper = form.closest && (form.closest('.w-form') || form.closest('[data-modal-target]'))
-    var priorSuccess = wrapper && wrapper.querySelector('.generate-contract_success, [data-project-form-state="success"]')
+    var priorSuccess = wrapper && wrapper.querySelector(SUCCESS_SELECTOR)
     if (priorSuccess) {
       priorSuccess.hidden = true
       priorSuccess.style.display = 'none'
@@ -327,7 +328,7 @@
   function showSuccess(form, result, documentObject) {
     setStatus(form, 'success', '')
     var wrapper = form.closest && (form.closest('.w-form') || form.closest('[data-modal-target]'))
-    var success = wrapper && wrapper.querySelector('.generate-contract_success, [data-project-form-state="success"]')
+    var success = wrapper && wrapper.querySelector(SUCCESS_SELECTOR)
     if (success) {
       success.hidden = false
       success.style.display = 'block'

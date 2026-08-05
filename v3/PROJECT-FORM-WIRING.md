@@ -72,8 +72,7 @@ If the form is not the first Brand project form on the page, add
 - The form receives `data-project-form-status="ready|submitting|success|error"`
   and `aria-busy`.
 - Native submit buttons and `[data-project-submit]` are disabled while pending.
-- The existing `.generate-contract_success` or
-  `[data-project-form-state="success"]` is revealed after Xano accepts the
+- The authored `[data-project-form-state="success"]` is revealed after Xano accepts the
   project while the native form is hidden. Reopening from another applicant
   restores the form and hides the prior success state.
 - Success dispatches `starters:project-created` with only `project_id` and
