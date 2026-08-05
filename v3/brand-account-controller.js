@@ -454,6 +454,9 @@
               replayNativeSubmit(form, submitter)
               return
             }
+            if (error && error.passwordEmailAttempted) {
+              replayNativeSubmit(form, submitter)
+            }
             setMessage(form, 'error', friendlyError(error))
             trackFailure(error, 'starter/account/email')
           })

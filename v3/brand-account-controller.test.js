@@ -660,6 +660,41 @@ test('visible Starter Edit Profile changes Memberstack email before replaying th
   assert.equal(starterProfileForm.nativeSubmits, 1)
 })
 
+test('visible Starter Edit Profile replays after reset password email failure', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-next@example.com',
+  })
+  const sendError = new Error('password email service unavailable')
+  sendError.status = 503
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    sendMemberResetPasswordEmail: async () => {
+      throw sendError
+    },
+  })
+
+  starterProfileForm.submitEvent()
+  await settle(12)
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.equal(starterProfileForm.nativeSubmits, 1)
+  assert.equal(
+    starterProfileForm.wrapper.failText.textContent,
+    'Your account changes were saved, but the password email could not be confirmed. Use Forgot Password to send a new link.',
+  )
+  assert.deepEqual(plain(environment.tracked), [
+    { name: 'bridge_error', payload: { path: 'starter/account/email', status: 503 } },
+  ])
+})
+
 test('visible Starter Edit Profile replays an unchanged email without an auth mutation', async () => {
   const starterProfileForm = makeForm('starter-profile', { email: 'talent@example.com' })
   const environment = loadController({
