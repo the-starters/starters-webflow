@@ -1,6 +1,8 @@
 /**
  * Starter Dashboard 3.0 — Messages tile.
  *
+ * @release v1.59.103
+ *
  * Binds the #messages tile on /starter-dashboard to the member's recent
  * TalkJS conversations. Two data sources, merged:
  *   - Xano `starter/messages/recent` (TalkJS REST proxy) → recent
@@ -121,7 +123,12 @@
     const customFields = member.customFields || {}
     const auth = member.auth || {}
     const email = auth.email || member.email || ''
-    const name = [customFields['first-name'], customFields['last-name']]
+    // 'free-user' is this site's legacy Memberstack key for the member's
+    // first name; there is no 'first-name' field in the app.
+    const name = [
+      customFields['free-user'] || customFields['first-name'],
+      customFields['last-name'],
+    ]
       .filter(Boolean)
       .join(' ')
       .trim()

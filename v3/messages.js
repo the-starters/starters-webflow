@@ -1,6 +1,8 @@
 /**
  * Messages 3.0 — TalkJS inbox bootstrap.
  *
+ * @release v1.59.103
+ *
  * Self-contained page controller for /messages. It waits for Memberstack,
  * redirects logged-out visitors through the V3 login router while preserving
  * the current path and query, loads TalkJS, syncs the current member's public
@@ -135,7 +137,12 @@
     const customFields = member.customFields || {}
     const auth = member.auth || {}
     const email = auth.email || member.email || ''
-    const name = [customFields['first-name'], customFields['last-name']]
+    // 'free-user' is this site's legacy Memberstack key for the member's
+    // first name; there is no 'first-name' field in the app.
+    const name = [
+      customFields['free-user'] || customFields['first-name'],
+      customFields['last-name'],
+    ]
       .filter(Boolean)
       .join(' ')
       .trim()

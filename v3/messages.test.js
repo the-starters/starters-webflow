@@ -13,7 +13,8 @@ function member(id = MY_ID) {
   return {
     id,
     auth: { email: 'brand@example.com' },
-    customFields: { 'first-name': 'Brand', 'last-name': 'Owner' },
+    // 'free-user' is this site's legacy Memberstack key for the first name.
+    customFields: { 'free-user': 'Brand', 'last-name': 'Owner' },
   }
 }
 
@@ -202,6 +203,34 @@ test('the current member syncs a changed login email to the same stable TalkJS u
     email: 'starter.canary@example.com',
   })
   assert.deepEqual(errors, [])
+})
+
+test('the legacy free-user field plus last-name become "First Last"', async () => {
+  const { calls } = loadMessages({ search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'Brand Owner')
+})
+
+test('a member carrying only a first-name key still gets a full name', async () => {
+  const legacyMember = member()
+  legacyMember.customFields = { 'first-name': 'Brand', 'last-name': 'Owner' }
+  const { calls } = loadMessages({ member: legacyMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'Brand Owner')
+})
+
+test('with no first- or last-name fields the name falls back to the email', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'brand@example.com')
 })
 
 test('?with= opens the one-on-one conversation and selects it', async () => {
