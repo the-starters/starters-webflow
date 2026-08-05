@@ -83,12 +83,11 @@
     var normalized = clean(value)
     if (!normalized) return ''
     var iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(normalized)
-    if (iso) return normalized
     var us = /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/.exec(normalized)
-    if (!us) return ''
-    var month = Number(us[1])
-    var day = Number(us[2])
-    var year = Number(us[3])
+    if (!iso && !us) return ''
+    var year = Number(iso ? iso[1] : us[3])
+    var month = Number(iso ? iso[2] : us[1])
+    var day = Number(iso ? iso[3] : us[2])
     var candidate = new Date(Date.UTC(year, month - 1, day))
     if (
       candidate.getUTCFullYear() !== year ||
@@ -96,6 +95,14 @@
       candidate.getUTCDate() !== day
     ) return ''
     return String(year).padStart(4, '0') + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0')
+  }
+
+  function payloadSignature(payload) {
+    var normalized = {}
+    Object.keys(payload || {}).sort().forEach(function (name) {
+      if (name !== 'idempotency_key') normalized[name] = payload[name]
+    })
+    return JSON.stringify(normalized)
   }
 
   function randomPart(cryptoObject) {
@@ -242,12 +249,12 @@
 
   function state(form) {
     if (!stateByForm) {
-      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', lockedFields: null }
+      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', keyPayload: '', lockedFields: null }
       return form.__projectFormV3State
     }
     var current = stateByForm.get(form)
     if (!current) {
-      current = { active: null, key: '', lockedFields: null }
+      current = { active: null, key: '', keyPayload: '', lockedFields: null }
       stateByForm.set(form, current)
     }
     return current
@@ -318,8 +325,11 @@
       priorSuccess.hidden = true
       priorSuccess.style.display = 'none'
     }
-    setField(form, 'idempotency_key', '')
-    formState.key = ''
+    if (formState.key && formState.keyPayload !== payloadSignature(serialize(form).payload)) {
+      formState.key = ''
+      formState.keyPayload = ''
+      setField(form, 'idempotency_key', '')
+    }
     if (!fieldValue(formField(form, 'starter_memberstack_id'))) {
       setStatus(form, 'error', 'The selected Starter could not be identified. Reload and try again.')
       return false
@@ -335,6 +345,10 @@
 
   function showSuccess(form, result, documentObject) {
     setStatus(form, 'success', '')
+    var formState = state(form)
+    formState.key = ''
+    formState.keyPayload = ''
+    setField(form, 'idempotency_key', '')
     var wrapper = formContainer(form)
     var success = wrapper && wrapper.querySelector(SUCCESS_SELECTOR)
     if (success) {
@@ -371,7 +385,12 @@
       setStatus(form, 'error', 'The project form is missing its idempotency field.')
       return Promise.resolve(false)
     }
-    if (!formState.key) formState.key = createIdempotencyKey(globalObject.crypto)
+    var signature = payloadSignature(serialized.payload)
+    if (formState.key && formState.keyPayload !== signature) formState.key = ''
+    if (!formState.key) {
+      formState.key = createIdempotencyKey(globalObject.crypto)
+      formState.keyPayload = signature
+    }
     serialized.payload.idempotency_key = formState.key
     setField(form, 'idempotency_key', formState.key)
 
@@ -409,6 +428,7 @@
       var formState = state(form)
       if (formState.active) return
       formState.key = ''
+      formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
     })
     documentObject.addEventListener('submit', function (event) {
