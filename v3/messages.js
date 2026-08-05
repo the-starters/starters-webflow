@@ -1,7 +1,7 @@
 /**
  * Messages 3.0 — TalkJS inbox bootstrap.
  *
- * @release v1.59.106
+ * @release v1.59.107
  *
  * Self-contained page controller for /messages. It waits for Memberstack,
  * redirects logged-out visitors through the V3 login router while preserving
@@ -133,23 +133,57 @@
     })
   }
 
+  // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
+  // source of the plan-to-role map; update it first and mirror changes here.
+  const PLAN_ROLES = {
+    'pln_free-plan-f6kn0dxz': 'brand-free',
+    'pln_new-paid-plan-463h04ph': 'brand-paid',
+    'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
+    'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
+  }
+
+  /**
+   * Display-name placeholder for a member without a first name. Mirrors
+   * v3/route-guard.js roleResolution: active plan connections collapse to
+   * brand vs talent, and a cross-family conflict fails closed to the
+   * generic default.
+   */
+  function namePlaceholder(member) {
+    const roles = (member.planConnections || [])
+      .filter(
+        (connection) =>
+          connection &&
+          (connection.active === true || connection.status === 'ACTIVE'),
+      )
+      .map((connection) => PLAN_ROLES[connection.planId])
+      .filter(Boolean)
+
+    const isBrand = roles.includes('brand-free') || roles.includes('brand-paid')
+    const isTalent = roles.includes('talent')
+    if (isBrand && isTalent) return 'The Starters member'
+    if (isBrand) return 'Brand Name'
+    if (isTalent) return 'Starter Name'
+    return 'The Starters member'
+  }
+
   function talkUserFields(member) {
     const customFields = member.customFields || {}
     const auth = member.auth || {}
     const email = auth.email || member.email || ''
     // 'free-user' is this site's legacy Memberstack key for the member's
-    // first name; there is no 'first-name' field in the app.
-    const name = [
-      customFields['free-user'] || customFields['first-name'],
-      customFields['last-name'],
-    ]
-      .filter(Boolean)
-      .join(' ')
+    // first name; there is no 'first-name' field in the app. The display
+    // name is the first name alone — no last name, and never the email.
+    const firstName = (
+      customFields['free-user'] ||
+      customFields['first-name'] ||
+      ''
+    )
+      .toString()
       .trim()
 
     const fields = {
       id: member.id,
-      name: name || email || 'The Starters member',
+      name: firstName || namePlaceholder(member),
     }
 
     if (email) fields.email = email

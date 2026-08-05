@@ -130,7 +130,7 @@ async function settle(turns = 25) {
   }
 }
 
-test('the legacy free-user field plus last-name become "First Last"', async () => {
+test('the display name is the first name alone, never the last name', async () => {
   const { calls, errors } = loadTile({
     member: {
       id: MY_ID,
@@ -144,13 +144,13 @@ test('the legacy free-user field plus last-name become "First Last"', async () =
 
   assert.deepEqual(plain(calls.users[0]), {
     id: MY_ID,
-    name: 'Kaeser Valencerina',
+    name: 'Kaeser',
     email: 'starter@example.com',
   })
   assert.deepEqual(errors, [])
 })
 
-test('a member carrying only a first-name key still gets a full name', async () => {
+test('a member carrying only a first-name key still gets that first name', async () => {
   const { calls } = loadTile({
     member: {
       id: MY_ID,
@@ -161,21 +161,44 @@ test('a member carrying only a first-name key still gets a full name', async () 
 
   await settle()
 
-  assert.equal(plain(calls.users[0]).name, 'Kaeser Valencerina')
+  assert.equal(plain(calls.users[0]).name, 'Kaeser')
 })
 
-test('with no first- or last-name fields the name falls back to the email', async () => {
+test('a nameless Talent member reads "Starter Name", never the email', async () => {
   const { calls } = loadTile({
     member: {
       id: MY_ID,
       auth: { email: 'starter@example.com' },
       customFields: {},
+      planConnections: [
+        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+      ],
     },
   })
 
   await settle()
 
-  assert.equal(plain(calls.users[0]).name, 'starter@example.com')
+  // The email stays synced as a field — it just never becomes the name.
+  assert.deepEqual(plain(calls.users[0]), {
+    id: MY_ID,
+    name: 'Starter Name',
+    email: 'starter@example.com',
+  })
+})
+
+test('a nameless member with no mapped active plan keeps the generic default', async () => {
+  const { calls } = loadTile({
+    member: {
+      id: MY_ID,
+      auth: { email: 'starter@example.com' },
+      customFields: {},
+      planConnections: [],
+    },
+  })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'The Starters member')
 })
 
 test('the release marker matches the header @release line', () => {

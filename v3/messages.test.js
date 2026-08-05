@@ -199,38 +199,113 @@ test('the current member syncs a changed login email to the same stable TalkJS u
 
   assert.deepEqual(plain(calls.users[0]), {
     id: MY_ID,
-    name: 'Brand Owner',
+    name: 'Brand',
     email: 'starter.canary@example.com',
   })
   assert.deepEqual(errors, [])
 })
 
-test('the legacy free-user field plus last-name become "First Last"', async () => {
+test('the display name is the first name alone, never the last name', async () => {
   const { calls } = loadMessages({ search: '' })
 
   await settle()
 
-  assert.equal(plain(calls.users[0]).name, 'Brand Owner')
+  assert.equal(plain(calls.users[0]).name, 'Brand')
 })
 
-test('a member carrying only a first-name key still gets a full name', async () => {
+test('a member carrying only a first-name key still gets that first name', async () => {
   const legacyMember = member()
   legacyMember.customFields = { 'first-name': 'Brand', 'last-name': 'Owner' }
   const { calls } = loadMessages({ member: legacyMember, search: '' })
 
   await settle()
 
-  assert.equal(plain(calls.users[0]).name, 'Brand Owner')
+  assert.equal(plain(calls.users[0]).name, 'Brand')
 })
 
-test('with no first- or last-name fields the name falls back to the email', async () => {
+test('a nameless member on the free Brand plan reads "Brand Name"', async () => {
   const namelessMember = member()
   namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_free-plan-f6kn0dxz', active: true },
+  ]
   const { calls } = loadMessages({ member: namelessMember, search: '' })
 
   await settle()
 
-  assert.equal(plain(calls.users[0]).name, 'brand@example.com')
+  assert.equal(plain(calls.users[0]).name, 'Brand Name')
+})
+
+test('a nameless member on the paid Brand plan reads "Brand Name"', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  // The status-string flavor of "active" that route-guard also accepts.
+  namelessMember.planConnections = [
+    { planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'Brand Name')
+})
+
+test('a nameless Talent member reads "Starter Name"', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'Starter Name')
+})
+
+test('a nameless member with no mapped active plan keeps the generic default', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_something-unmapped-000000', active: true },
+    { planId: 'pln_new-paid-plan-463h04ph', active: false, status: 'CANCELED' },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'The Starters member')
+})
+
+test('conflicting Brand and Talent plans fail closed to the generic default', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_new-paid-plan-463h04ph', active: true },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'The Starters member')
+})
+
+test('the email field stays synced even when the name is a placeholder', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]), {
+    id: MY_ID,
+    name: 'Starter Name',
+    email: 'brand@example.com',
+  })
 })
 
 test('?with= opens the one-on-one conversation and selects it', async () => {

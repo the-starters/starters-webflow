@@ -1,7 +1,7 @@
 /**
  * /hire/<slug> — "Message this starter" modal.
  *
- * @release v1.59.106
+ * @release v1.59.107
  *
  * Mounts a TalkJS chatbox with the profiled starter inside the page's existing
  * modal, so a brand can start or resume the conversation without leaving the
@@ -469,21 +469,58 @@
   }
 
   /** Mirrors v3/messages.js so the viewer syncs identically from either page. */
+  // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
+  // source of the plan-to-role map; update it first and mirror changes here.
+  var PLAN_ROLES = {
+    'pln_free-plan-f6kn0dxz': 'brand-free',
+    'pln_new-paid-plan-463h04ph': 'brand-paid',
+    'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
+    'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
+  }
+
+  /**
+   * Display-name placeholder for a member without a first name. Mirrors
+   * v3/route-guard.js roleResolution: active plan connections collapse to
+   * brand vs talent, and a cross-family conflict fails closed to the
+   * generic default.
+   */
+  function namePlaceholder(member) {
+    var roles = (member.planConnections || [])
+      .filter(function (connection) {
+        return (
+          connection &&
+          (connection.active === true || connection.status === 'ACTIVE')
+        )
+      })
+      .map(function (connection) {
+        return PLAN_ROLES[connection.planId]
+      })
+      .filter(Boolean)
+
+    var isBrand = roles.includes('brand-free') || roles.includes('brand-paid')
+    var isTalent = roles.includes('talent')
+    if (isBrand && isTalent) return 'The Starters member'
+    if (isBrand) return 'Brand Name'
+    if (isTalent) return 'Starter Name'
+    return 'The Starters member'
+  }
+
   function talkUserFields(member) {
     var customFields = member.customFields || {}
     var auth = member.auth || {}
     var email = auth.email || member.email || ''
     // 'free-user' is this site's legacy Memberstack key for the member's
-    // first name; there is no 'first-name' field in the app.
-    var name = [
-      customFields['free-user'] || customFields['first-name'],
-      customFields['last-name'],
-    ]
-      .filter(Boolean)
-      .join(' ')
+    // first name; there is no 'first-name' field in the app. The display
+    // name is the first name alone — no last name, and never the email.
+    var firstName = (
+      customFields['free-user'] ||
+      customFields['first-name'] ||
+      ''
+    )
+      .toString()
       .trim()
 
-    var fields = { id: member.id, name: name || email || 'The Starters member' }
+    var fields = { id: member.id, name: firstName || namePlaceholder(member) }
     if (email) fields.email = email
     if (member.profileImage) fields.photoUrl = member.profileImage
     return fields
@@ -804,7 +841,7 @@
   }
 
   window.StartersMessagesProfile = {
-    release: 'v1.59.106',
+    release: 'v1.59.107',
     apply: apply,
     decorate: decorate,
     identityFrom: identityFrom,
