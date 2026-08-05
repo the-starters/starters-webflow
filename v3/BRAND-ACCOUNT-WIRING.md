@@ -166,16 +166,18 @@ A successful Account Security save changes Memberstack first. The resulting
 1. Endpoint #1513 deduplicates and orders the event by its event watermark,
    resolves the member by immutable Memberstack member ID, and updates `user_v3`
    plus the matching role mirror without creating or switching a role row.
-2. TalkJS continues to use the same Memberstack member ID as its user ID. On the
-   member's next `/messages` or dashboard-messages session, the existing TalkJS
-   bootstrap supplies the new Memberstack email for that same TalkJS user; it
-   must not create an email-keyed TalkJS user.
-3. The Mailchimp projection updates the existing contact through its stored
-   stable Memberstack-ID mapping. An email change must not subscribe a second
-   contact, change consent, or trigger a campaign.
-4. Any Webflow member/profile projection resolves the existing item from its
-   stored Memberstack member ID and updates that item in place. It must not use
-   email matching or create a second CMS item.
+2. The identity-projection worker updates an existing TalkJS user at the stable
+   Memberstack user ID. It must not create an email-keyed TalkJS user; the normal
+   messaging bootstrap retains creation ownership.
+3. The outbox retains the stable Memberstack event context and the previous
+   normalized-email hash. The Mailchimp adapter PATCHes only the existing old-
+   email contact in the approved audience. It must not create or resubscribe a
+   contact, change consent, or trigger a campaign, and it stops on an old/new
+   contact collision.
+4. Webflow is the presentation layer for this field. The existing
+   `data-ms-member="email"` input must rehydrate from Memberstack with the new
+   address after reload; this workflow does not create a Webflow CMS email
+   writer or a second CMS item.
 
 Endpoint acceptance is all-or-observable: a failed downstream projection must
 be recorded for retry/reconciliation without rolling Memberstack back or
@@ -248,8 +250,9 @@ and execution owner. Do not create a new member as a substitute.
 
 1. Freeze a canary manifest containing the stable Memberstack member ID, current
    role, old and canary emails, the expected single `user_v3` and
-   `freelancers_v3` row IDs, TalkJS user ID, Mailchimp contact ID, Webflow item
-   ID, and the current event watermarks. Stop on any missing or mismatched ID.
+   `freelancers_v3` row IDs, TalkJS user ID, Mailchimp contact identity and
+   consent state when present, and the current event watermarks. Stop on any
+   missing or mismatched required identity.
 2. Read every system by those stable IDs and require the old email, one record
    per system, Talent role, and unchanged consent/status before the write.
 3. Confirm the published sitewide configuration reads
@@ -260,11 +263,14 @@ and execution owner. Do not create a new member as a substitute.
    Require the canary email, unchanged stable row IDs and role, and a common
    processed event watermark. Replay the captured webhook once and require a
    stale/replay skip with no duplicate rows.
-5. Open `/messages` as the canary member to exercise the existing TalkJS sync.
-   Require the same TalkJS user ID with the canary email and no email-keyed user.
-6. Run or observe the approved Mailchimp and Webflow projection workers. Require
-   the same contact and item IDs with the canary email, unchanged subscription
-   consent/status, no campaign send, and no duplicate contact or CMS item.
+5. Run the approved identity-projection worker and then open `/messages` as the
+   canary member. Require the same TalkJS user ID with the canary email and no
+   email-keyed user.
+6. Require the existing Mailchimp contact to carry the canary email with the
+   same provider contact identity and unchanged subscription consent/status,
+   with no campaign send or duplicate contact. Reload Account Security and
+   require the existing Webflow input to display the canary email from
+   Memberstack; no CMS email write is expected.
 7. Run read-only reconciliation from the Memberstack member ID and require zero
    unexplained differences across Memberstack, both Xano rows, TalkJS,
    Mailchimp, and Webflow before ending the canary.
