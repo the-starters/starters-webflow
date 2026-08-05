@@ -299,9 +299,10 @@ embeds installed after the guard; see
 
 `brand-account-controller.js` aligns the native Brand signup plan with
 Memberstack Test or Live Data and owns the native Build Account submission,
-while its Account Security interception remains configuration-gated for Brand
-and Talent members. The authoritative identity scope, stable-ID propagation,
-failure, release-gate, and reversible-canary contract is in
+while its login-email interception remains configuration-gated for Brand
+Account Security and the visible Talent form on `/starter-edit-profile`. The
+authoritative identity scope, stable-ID propagation, failure, release-gate, and
+reversible-canary contract is in
 [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md).
 
 ## Build-profile funnel redirect

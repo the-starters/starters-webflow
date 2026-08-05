@@ -22,10 +22,11 @@
  * email calls are never automatically retried; Memberstack's Forgot Password
  * flow is the recovery path when delivery cannot be confirmed.
  *
- * The Account Security interception is also OFF by default so it cannot race
- * Memberstack's currently published `data-ms-form="profile"` handler. The
- * configured identity-scoped mode resolves the current member through the
- * canonical route-guard role contract and claims both Brand and Talent forms:
+ * Login-email interception is also OFF by default so it cannot race the forms'
+ * existing submit owners. The configured identity-scoped mode resolves the
+ * current member through the canonical route-guard role contract, claims Brand
+ * and Talent Account Security, and guards the visible Talent edit-profile form
+ * before replaying its Designer-authored Xano submission:
  *   window.StartersBrandAccountConfig = { guardSecurityForm: 'identity' }
  * The legacy `brand` mode remains supported for a rollback-safe rollout.
  */
@@ -42,6 +43,8 @@
   ]
   var BUILD_FORM_SELECTOR = '#wf-form-Complete-Profile-Form'
   var SECURITY_FORM_SELECTOR = '#wf-form-Account-Security'
+  var STARTER_PROFILE_FORM_SELECTOR = '#wf-form-Build-Form-Full-Profile'
+  var STARTER_PROFILE_EMAIL_SELECTOR = 'input[type="email"]'
   var BRAND_SIGNUP_FORM_SELECTOR = '#wf-form-Brand-Signup'
   var LIVE_BRAND_PLAN_ID = 'pln_free-plan-f6kn0dxz'
   var TEST_BRAND_PLAN_ID = 'pln_dorxata-test-brand-plan-777r02pa'
@@ -327,8 +330,11 @@
     return { memberId: member.id }
   }
 
-  async function submitSecurity(form, memberSnapshot) {
-    var email = inputValue(form, '[data-ms-member="email"]').toLowerCase()
+  async function submitSecurity(form, memberSnapshot, emailSelector) {
+    var email = inputValue(
+      form,
+      emailSelector || '[data-ms-member="email"]',
+    ).toLowerCase()
     if (!EMAIL_PATTERN.test(email)) throw new Error('Enter a valid email address.')
     var client = memberstack()
     var member = memberSnapshot || (await currentMember(client))
@@ -403,6 +409,66 @@
 
   function securityFailurePath(role) {
     return role === 'talent' ? 'starter/account/email' : 'brand/account/email'
+  }
+
+  function bindStarterProfileEmail(form) {
+    if (!form || form.getAttribute('data-starter-identity-bound') === 'true') return false
+    form.setAttribute('data-starter-identity-bound', 'true')
+    var busy = false
+    var ownsSubmission = false
+
+    form.addEventListener(
+      'submit',
+      function (event) {
+        if (form.getAttribute('data-brand-account-native-replay') === 'true') return
+        event.preventDefault()
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation()
+        }
+        if (busy) return
+        busy = true
+        ownsSubmission = false
+        var submitter = event.submitter
+
+        Promise.resolve()
+          .then(async function () {
+            var guard = window.StartersV3RouteGuard
+            if (!guard || typeof guard.memberRole !== 'function') return false
+            var member = await currentMember(memberstack())
+            if (guard.memberRole(member) !== 'talent') return false
+
+            var email = inputValue(form, STARTER_PROFILE_EMAIL_SELECTOR).toLowerCase()
+            if (!EMAIL_PATTERN.test(email)) return false
+            if (memberEmail(member) === email) return false
+
+            ownsSubmission = true
+            setBusy(form, true)
+            setMessage(form, 'idle', '')
+            await submitSecurity(form, member, STARTER_PROFILE_EMAIL_SELECTOR)
+            return true
+          })
+          .then(function () {
+            replayNativeSubmit(form, submitter)
+          })
+          .catch(function (error) {
+            if (!ownsSubmission) {
+              replayNativeSubmit(form, submitter)
+              return
+            }
+            if (error && error.passwordEmailAttempted) {
+              replayNativeSubmit(form, submitter)
+            }
+            setMessage(form, 'error', friendlyError(error))
+            trackFailure(error, 'starter/account/email')
+          })
+          .finally(function () {
+            busy = false
+            setBusy(form, false)
+          })
+      },
+      true,
+    )
+    return true
   }
 
   function bindIdentitySecurityForm(form, mode) {
@@ -480,6 +546,13 @@
       var securityForm = document.querySelector(SECURITY_FORM_SELECTOR)
       if (securityForm) {
         bound = bindIdentitySecurityForm(securityForm, securityMode) || bound
+      }
+    }
+
+    if (securityMode === 'identity' && location.pathname === '/starter-edit-profile') {
+      var starterProfileForm = document.querySelector(STARTER_PROFILE_FORM_SELECTOR)
+      if (starterProfileForm) {
+        bound = bindStarterProfileEmail(starterProfileForm) || bound
       }
     }
 

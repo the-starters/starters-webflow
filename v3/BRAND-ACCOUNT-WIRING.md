@@ -72,6 +72,21 @@ data-complete-profile-image
 The photo binder adds `data-ms-member="profile-image"` to that authored image.
 It does not create an image element.
 
+The visible Talent edit-profile form also remains Designer-authored HTML and
+keeps its existing authenticated Xano submission owner:
+
+```html
+<form id="wf-form-Build-Form-Full-Profile">
+  <!-- Existing Designer-authored profile fields and controls -->
+  <input type="email">
+</form>
+```
+
+On `/starter-edit-profile`, the controller reads the form's first email input,
+updates a changed Talent login email in Memberstack, and then replays the same
+native submission. Do not add a second form, remove the existing Xano handler,
+or move the login-email input outside this form.
+
 ## Install order
 
 Install `brand-account-controller.js` sitewide, before Memberstack form
@@ -144,25 +159,35 @@ sitewide:
 
 - `guardSecurityForm: 'identity'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
-  `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`.
+  `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`. On
+  `/starter-edit-profile`, the same setting also guards the visible
+  `#wf-form-Build-Form-Full-Profile` for Talent: a changed email is written to
+  Memberstack first, then the existing Designer-authored profile submit is
+  replayed so its authenticated Xano save continues unchanged. An unchanged
+  email is replayed without an auth mutation or reset email.
 - `guardSecurityForm: 'brand'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
   `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. This is the
   rollback switch if Starter interception must be disabled without changing
   Brand behavior.
 - With either setting, unmapped, conflicted, logged-out, or unreadable identity
-  states retain the existing Memberstack-native handler. With `brand`, Talent
-  also retains that native handler.
+  states retain the form's existing native handler. Account Security therefore
+  stays Memberstack-native, while `/starter-edit-profile` replays its existing
+  authenticated Xano submission. With `brand`, Talent also retains that native
+  path without login-email interception.
 
-The ordinary Account Profile form remains Memberstack-native. Endpoint #1513
-must route each `member.updated` event by stable Memberstack member ID and mirror
-it into `user_v3` plus exactly one role row: `brands_v3` for Brand roles or
-`freelancers_v3` for Talent. Email is payload data, never a lookup or join key.
+The ordinary Account Profile form outside `/starter-edit-profile` remains
+Memberstack-native. Endpoint #1513 must route each `member.updated` event by
+stable Memberstack member ID and mirror it into `user_v3` plus exactly one role
+row: `brands_v3` for Brand roles or `freelancers_v3` for Talent. Email is
+payload data, never a lookup or join key.
 
 ## Stable-ID propagation contract
 
-A successful Account Security save changes Memberstack first. The resulting
-`member.updated` event is the only normal trigger for downstream propagation:
+A successful guarded login-email save changes Memberstack first. The resulting
+`member.updated` event is the only normal trigger for downstream propagation;
+the replayed Talent profile submission continues its existing Xano profile save
+but is not a second login-email writer:
 
 1. Endpoint #1513 deduplicates and orders the event by its event watermark,
    resolves the member by immutable Memberstack member ID, and updates `user_v3`
@@ -175,10 +200,11 @@ A successful Account Security save changes Memberstack first. The resulting
    email contact in the approved audience. It must not create or resubscribe a
    contact, change consent, or trigger a campaign, and it stops on an old/new
    contact collision.
-4. Webflow is the presentation layer for this field. The existing
-   `data-ms-member="email"` input must rehydrate from Memberstack with the new
-   address after reload; this workflow does not create a Webflow CMS email
-   writer or a second CMS item.
+4. Webflow is the presentation layer for this field. Account Security's
+   existing `data-ms-member="email"` input rehydrates from Memberstack, while
+   the existing Talent profile path rehydrates its authored email input after
+   Xano convergence. This workflow does not create a Webflow CMS email writer
+   or a second CMS item.
 
 Endpoint acceptance is all-or-observable: a failed downstream projection must
 be recorded for retry/reconciliation without rolling Memberstack back or
@@ -188,13 +214,13 @@ projection.
 
 ## Failure semantics
 
-- Invalid authored fields do not call Memberstack.
+- Invalid Build Account fields do not call Memberstack.
 - Duplicate submits while one save is running are ignored.
 - Custom-field and email assignments retry once only on timeout, 429, or 5xx.
 - Build Account writes ordinary fields, any changed login email, and the
   completion marker before attempting one reset/set-password email.
-- Account Security attempts that email only after a changed login email has
-  been saved successfully.
+- Account Security and the guarded Talent edit-profile form attempt that email
+  only after a changed login email has been saved successfully.
 - No separate verification email is sent. Successful redemption of the one
   reset/set-password link is the email-ownership proof.
 - Reset-email delivery is an external, non-idempotent browser side effect. The
@@ -205,7 +231,8 @@ projection.
   not claim mathematically exactly-once delivery.
 - If the reset-email result is failed or ambiguous, the durable account changes
   remain saved and the UI directs the member to the standard Forgot Password
-  flow for an explicit recovery attempt.
+  flow for an explicit recovery attempt. On `/starter-edit-profile`, the native
+  Xano profile submission is still replayed after that email-side-effect failure.
 - Successful password-token redemption is the ownership proof. The controller
   does not claim Memberstack `verified=true` without separately observed state.
 - `completed-brand-profile` is the final durable Build Account write. Any
@@ -257,9 +284,10 @@ and execution owner. Do not create a new member as a substitute.
 2. Read every system by those stable IDs and require the old email, one record
    per system, Talent role, and unchanged consent/status before the write.
 3. Confirm the published sitewide configuration reads
-   `guardSecurityForm: 'identity'`. Submit the existing native Account Security
-   form once with the canary email and require exactly one reset/set-password
-   message.
+   `guardSecurityForm: 'identity'`. As Talent, submit the visible native form on
+   `/starter-edit-profile` once with only the email changed and require exactly
+   one reset/set-password message. Brand may continue using the native Account
+   Security modal.
 4. Read Memberstack, `user_v3`, and `freelancers_v3` by Memberstack member ID.
    Require the canary email, unchanged stable row IDs and role, and a common
    processed event watermark. Replay the captured webhook once and require a
@@ -269,16 +297,16 @@ and execution owner. Do not create a new member as a substitute.
    email-keyed user.
 6. Require the existing Mailchimp contact to carry the canary email with the
    same provider contact identity and unchanged subscription consent/status,
-   with no campaign send or duplicate contact. Reload Account Security and
-   require the existing Webflow input to display the canary email from
-   Memberstack; no CMS email write is expected.
+   with no campaign send or duplicate contact. Reload `/starter-edit-profile`
+   and require the visible email input to display the canary email after
+   Memberstack and Xano converge; no CMS email write is expected.
 7. Run read-only reconciliation from the Memberstack member ID and require zero
    unexplained differences across Memberstack, both Xano rows, TalkJS,
    Mailchimp, and Webflow before ending the canary.
-8. Roll back through the same native Account Security form by submitting the old
-   email once. Repeat steps 4 through 7 in reverse, requiring the same stable
-   IDs, one rollback reset message, advanced watermarks, restored email, and no
-   duplicate or consent/status drift.
+8. Roll back through the same native `/starter-edit-profile` form by submitting
+   the old email once. Repeat steps 4 through 7 in reverse, requiring the same
+   stable IDs, one rollback reset message, advanced watermarks, restored email,
+   and no duplicate or consent/status drift.
 
 If interception itself must be rolled back, change only
 `guardSecurityForm: 'identity'` to `'brand'`, publish and read back the complete
