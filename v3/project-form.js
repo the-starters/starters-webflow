@@ -26,6 +26,7 @@
   var FIELD_ATTR = 'data-project-field'
   var CONTRACT_CHOICE_SELECTOR = '[data-project-contract-choice]'
   var PAYLOAD_CONTROL_SELECTOR = '[' + FIELD_ATTR + '], ' + CONTRACT_CHOICE_SELECTOR
+  var CONTAINER_SELECTOR = '[data-project-form-container]'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
@@ -293,13 +294,17 @@
     return documentObject.querySelector(FORM_SELECTOR)
   }
 
+  function formContainer(form) {
+    return form && form.closest ? form.closest(CONTAINER_SELECTOR) : null
+  }
+
   function bindTrigger(trigger, documentObject) {
     var form = formForTrigger(trigger, documentObject)
     if (!form) return false
     var formState = state(form)
     if (formState.active) return false
     form.style.display = ''
-    var wrapper = form.closest && (form.closest('.w-form') || form.closest('[data-modal-target]'))
+    var wrapper = formContainer(form)
     var priorSuccess = wrapper && wrapper.querySelector(SUCCESS_SELECTOR)
     if (priorSuccess) {
       priorSuccess.hidden = true
@@ -327,7 +332,7 @@
 
   function showSuccess(form, result, documentObject) {
     setStatus(form, 'success', '')
-    var wrapper = form.closest && (form.closest('.w-form') || form.closest('[data-modal-target]'))
+    var wrapper = formContainer(form)
     var success = wrapper && wrapper.querySelector(SUCCESS_SELECTOR)
     if (success) {
       success.hidden = false

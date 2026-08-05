@@ -13,6 +13,9 @@ authorization/product flow exists.
 Keep all form HTML in Designer. The controller does not create inputs, buttons,
 success UI, or error UI.
 
+Add `data-project-form-container` to the authored wrapper containing the form
+and its success state.
+
 Add `data-project-form-v3="brand"` to the native `<form>`. Add one authored
 control for every field below using `data-project-field="<name>"`:
 

@@ -27,7 +27,7 @@ class Element {
   closest(selector) {
     if (selector === 'form[data-project-form-v3="brand"]') return this.form || (this.matches(selector) ? this : null)
     if (selector.includes('data-wf-xano-id')) return this.card || null
-    if (selector === '.w-form' || selector === '[data-modal-target]') return this.wrapper || null
+    if (selector === '[data-project-form-container]') return this.wrapper || null
     return null
   }
   querySelector(selector) {
