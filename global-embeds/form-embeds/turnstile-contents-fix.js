@@ -3,7 +3,7 @@
  * that Webflow's own IntersectionObserver can never trigger, and never let a submit
  * leave without a fresh token.
  *
- * @release v1.59.105
+ * @release v1.59.106
  *
  * THE BUG. Webflow "bot protection" (Cloudflare Turnstile) is on site-wide, so the
  * published forms runtime does this to every `form[data-turnstile-sitekey]`:
@@ -89,7 +89,7 @@
   window.__startersTurnstileContentsFixBooted = true
 
   // Keep in sync with the @release line in this file's header comment.
-  var RELEASE = 'v1.59.105'
+  var RELEASE = 'v1.59.106'
   var LOG_PREFIX = '[starters turnstile-contents-fix]'
 
   var SITEKEY_ATTR = 'data-turnstile-sitekey'
