@@ -81,7 +81,8 @@ focusable"). Following the same pattern as
 from inactive controls and marks them with `data-project-required-hidden`,
 restoring the authored attribute as soon as the branch becomes visible. The sync
 runs when the modal is bound, on `change`, on click (before the browser
-validates the submit), and again inside `reportValidity()`. This keeps the
+validates the submit), and again in the adapter's own pre-submit validity check
+before it delegates to native `reportValidity()`. This keeps the
 authored own-contract confirmation required when visible without blocking the
 Standard contract branch, and works on a Webflow-default form as well as one
 marked `novalidate`.
