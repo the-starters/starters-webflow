@@ -4,8 +4,8 @@
  * Webflow owns the native form and every field. This module only:
  *   - binds the existing Brand /hire/<slug> "Contract Generation" form to
  *     the selected Starter's stable Memberstack identity;
- *   - serializes an explicit data-project-field allowlist into the published
- *     Xano projects/create-direct/v3 contract;
+ *   - serializes the existing named Webflow controls into the published Xano
+ *     projects/create-direct/v3 contract;
  *   - supplies a retry-stable idempotency key and submits through Opp30's
  *     authenticated Memberstack -> Xano bridge;
  *   - projects safe pending/success/error state into authored elements.
@@ -22,11 +22,19 @@
   if (!global || global.__startersV3ProjectFormBooted) return
   global.__startersV3ProjectFormBooted = true
 
-  var FORM_SELECTOR = 'dialog[data-modal-target="generate-contract"] form[data-project-form-v3="brand"]'
+  // Webflow applies Form Block custom attributes to the authored `.w-form`
+  // wrapper, not its generated native `<form>`. Resolve the form through that
+  // wrapper so the Designer remains the sole owner of the markup.
+  var FORM_SELECTOR = 'dialog[data-modal-target="generate-contract"] [data-project-form-v3="brand"] form'
   var OPEN_SELECTOR = '[data-modal-trigger="generate-contract"]'
   var FIELD_ATTR = 'data-project-field'
+  // `pushMemID` is an established CMS-bound control emitted by the target
+  // modal's existing Code Embed on published pages. It is not present as a
+  // selectable native Designer field, so scope the established ID to this
+  // modal rather than editing the separate start-project embed.
+  var SELECTED_STARTER_SELECTOR = 'dialog[data-modal-target="generate-contract"] #pushMemID'
   var CONTRACT_CHOICE_SELECTOR = '[data-project-contract-choice]'
-  var PAYLOAD_CONTROL_SELECTOR = '[' + FIELD_ATTR + '], ' + CONTRACT_CHOICE_SELECTOR
+  var PAYLOAD_CONTROL_SELECTOR = '[' + FIELD_ATTR + '], ' + CONTRACT_CHOICE_SELECTOR + ', [name], [type="submit"]'
   var CONTAINER_SELECTOR = '[data-project-form-container]'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
@@ -143,6 +151,55 @@
     return clean(field.value)
   }
 
+  function activeControl(field) {
+    if (!field || field.disabled || field.hidden) return false
+    var node = field
+    while (node && node !== field.form) {
+      if (node.hidden || clean(node.getAttribute && node.getAttribute('aria-hidden')).toLowerCase() === 'true') return false
+      var style = node.style || {}
+      if (style.display === 'none' || style.visibility === 'hidden') return false
+      node = node.parentElement
+    }
+    // Published Webflow conditional panels use display:none. offsetParent is
+    // the cheapest reliable runtime signal while remaining test-DOM friendly.
+    return field.offsetParent !== null || typeof field.offsetParent === 'undefined'
+  }
+
+  function namedControls(form, name) {
+    return form && form.querySelectorAll
+      ? form.querySelectorAll('[name="' + name + '"]')
+      : []
+  }
+
+  function namedField(form, names) {
+    var candidates = []
+    ;(Array.isArray(names) ? names : [names]).forEach(function (name) {
+      Array.prototype.push.apply(candidates, Array.prototype.slice.call(namedControls(form, name)))
+    })
+    if (!candidates.length) return null
+    return candidates.find(function (field) { return activeControl(field) && fieldValue(field) }) ||
+      candidates.find(activeControl) ||
+      candidates.find(function (field) { return fieldValue(field) }) ||
+      candidates[0]
+  }
+
+  function setPayloadValue(payload, name, field) {
+    if (!field || Object.prototype.hasOwnProperty.call(payload, name)) return
+    var value = fieldValue(field)
+    if (INTEGER_FIELDS[name]) {
+      payload[name] = positiveId(value)
+    } else if (NUMERIC_FIELDS[name]) {
+      var numeric = numberValue(value)
+      payload[name] = INTEGER_FIELDS[name] && numeric != null ? Math.trunc(numeric) : numeric
+    } else if (name === 'start_date' || name === 'estimated_end_date') {
+      payload[name] = dateValue(value) || null
+    } else if (name === 'hourly_billing_frequency') {
+      payload[name] = canonicalHourlyFrequency(value) || null
+    } else {
+      payload[name] = value
+    }
+  }
+
   function canonicalEngagement(value) {
     var normalized = clean(value).toLowerCase()
     return ENGAGEMENT_TYPES[normalized] || ''
@@ -161,7 +218,7 @@
     return ''
   }
 
-  function serialize(form) {
+  function serialize(form, documentObject) {
     var payload = {}
     var fields = form && form.querySelectorAll
       ? form.querySelectorAll('[' + FIELD_ATTR + ']')
@@ -191,15 +248,53 @@
       }
     })
 
+    // The authored form predates this adapter and already exposes stable native
+    // Webflow names. Prefer semantic data attributes when present, then fill
+    // the allowlisted payload from those native names. For repeated Amount,
+    // Frequency, and date controls, namedField chooses the visible conditional
+    // panel and never lets a hidden blank panel win.
+    setPayloadValue(payload, 'title', namedField(form, 'Project-Name'))
+    setPayloadValue(payload, 'service', namedField(form, 'Services'))
+    setPayloadValue(payload, 'engagement_type', namedField(form, 'Fee-Structure') || namedField(form, 'fee-structure'))
+    setPayloadValue(payload, 'start_date', namedField(form, 'startDateInput'))
+    setPayloadValue(payload, 'estimated_end_date', namedField(form, 'endDateInput'))
+    setPayloadValue(payload, 'project_scope', namedField(form, 'Project-Scope'))
+    setPayloadValue(payload, 'paid_upfront_pct', namedField(form, 'Percent-Paid-Upfront'))
+    setPayloadValue(payload, 'maximum_total_hours', namedField(form, 'Maximum-Hours-Billed'))
+    setPayloadValue(payload, 'maximum_hours_per_week', namedField(form, 'Maximum-Hours-Billed-per-Week'))
+    setPayloadValue(payload, 'maximum_hours_per_month', namedField(form, 'Maximum-Hours-Billed-per-Month'))
+    setPayloadValue(payload, 'number_of_weeks', namedField(form, 'Number-of-Weeks'))
+    setPayloadValue(payload, 'number_of_months', namedField(form, 'Number-of-Months'))
+
+    var authoredAmount = namedField(form, 'Amount')
+    var authoredFrequency = namedField(form, 'Frequency')
+    var authoredEngagement = canonicalEngagement(payload.engagement_type)
+    if (authoredEngagement === 'flat_fee') setPayloadValue(payload, 'total_cost', authoredAmount)
+    if (authoredEngagement === 'hourly') {
+      setPayloadValue(payload, 'hourly_rate', authoredAmount)
+      setPayloadValue(payload, 'hourly_billing_frequency', authoredFrequency)
+    }
+    if (authoredEngagement === 'weekly') setPayloadValue(payload, 'weekly_rate', authoredAmount)
+    if (authoredEngagement === 'monthly') setPayloadValue(payload, 'monthly_rate', authoredAmount)
+
+    // Reuse the target modal's existing CMS-bound Starter identity control
+    // instead of duplicating its CMS binding or generating a hidden field.
+    if (!clean(payload.starter_memberstack_id) && documentObject && documentObject.querySelector) {
+      payload.starter_memberstack_id = fieldValue(documentObject.querySelector(SELECTED_STARTER_SELECTOR))
+    }
+
     payload.engagement_type = canonicalEngagement(payload.engagement_type)
     var contractChoice = form && form.querySelector
-      ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked')
+      ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked') || form.querySelector('input[type="radio"]:checked')
       : null
     payload.contract_type = canonicalContractType(fieldValue(contractChoice))
 
     // Webflow keeps inactive conditional panels in the DOM. Clear their stale
     // commercial values so only the selected pricing contract crosses the API.
-    if (payload.engagement_type !== 'flat_fee') payload.total_cost = null
+    if (payload.engagement_type !== 'flat_fee') {
+      payload.total_cost = null
+      payload.paid_upfront_pct = null
+    }
     if (payload.engagement_type !== 'hourly') {
       payload.hourly_rate = null
       payload.hourly_billing_frequency = null
@@ -283,7 +378,9 @@
     form.setAttribute('data-project-form-status', status)
     form.setAttribute('aria-busy', status === 'submitting' ? 'true' : 'false')
     setFormLocked(form, status === 'submitting')
-    var error = form.querySelector('[data-project-form-state="error"]')
+    var wrapper = formContainer(form)
+    var error = form.querySelector('[data-project-form-state="error"]') ||
+      (wrapper && (wrapper.querySelector('[data-project-form-state="error"]') || wrapper.querySelector('.w-form-fail')))
     if (error) {
       error.textContent = status === 'error' ? message : ''
       error.hidden = status !== 'error'
@@ -325,12 +422,12 @@
       priorSuccess.hidden = true
       priorSuccess.style.display = 'none'
     }
-    if (formState.key && formState.keyPayload !== payloadSignature(serialize(form).payload)) {
+    if (formState.key && formState.keyPayload !== payloadSignature(serialize(form, documentObject).payload)) {
       formState.key = ''
       formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
     }
-    if (!fieldValue(formField(form, 'starter_memberstack_id'))) {
+    if (!fieldValue(documentObject.querySelector(SELECTED_STARTER_SELECTOR))) {
       setStatus(form, 'error', 'The selected Starter could not be identified. Reload and try again.')
       return false
     }
@@ -350,7 +447,7 @@
     formState.keyPayload = ''
     setField(form, 'idempotency_key', '')
     var wrapper = formContainer(form)
-    var success = wrapper && wrapper.querySelector(SUCCESS_SELECTOR)
+    var success = wrapper && (wrapper.querySelector(SUCCESS_SELECTOR) || wrapper.querySelector('.w-form-done'))
     if (success) {
       success.hidden = false
       success.style.display = 'block'
@@ -373,18 +470,13 @@
     if (formState.active) return formState.active
     if (typeof form.reportValidity === 'function' && !form.reportValidity()) return Promise.resolve(false)
 
-    var serialized = serialize(form)
+    var serialized = serialize(form, documentObject)
     var error = validationError(serialized)
     if (error) {
       setStatus(form, 'error', error)
       return Promise.resolve(false)
     }
 
-    var keyField = formField(form, 'idempotency_key')
-    if (!keyField) {
-      setStatus(form, 'error', 'The project form is missing its idempotency field.')
-      return Promise.resolve(false)
-    }
     var signature = payloadSignature(serialized.payload)
     if (formState.key && formState.keyPayload !== signature) formState.key = ''
     if (!formState.key) {

@@ -23,9 +23,9 @@ class Element {
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return this.attrs[name] ?? null }
-  matches(selector) { return selector.includes('form[data-project-form-v3="brand"]') && this.attrs['data-project-form-v3'] === 'brand' }
+  matches(selector) { return selector.includes('[data-project-form-v3="brand"] form') && this.attrs['data-project-form-v3'] === 'brand' }
   closest(selector) {
-    if (selector.includes('form[data-project-form-v3="brand"]')) return this.form || (this.matches(selector) ? this : null)
+    if (selector.includes('[data-project-form-v3="brand"] form')) return this.form || (this.matches(selector) ? this : null)
     if (selector === '[data-project-form-container]') return this.wrapper || null
     return null
   }
@@ -34,12 +34,15 @@ class Element {
     if (field) return this.children.find((child) => child.getAttribute('data-project-field') === field[1]) || null
     if (selector === '[data-project-form-state="error"]') return this.error || null
     if (selector === '[data-project-contract-choice]:checked') return this.contractChoice || null
+    if (selector === 'input[type="radio"]:checked') return this.contractChoice || null
     if (selector === '[data-project-form-state="success"]') return this.success || null
     return null
   }
   querySelectorAll(selector) {
     if (selector === '[data-project-field]') return this.children
-    if (selector === '[data-project-field], [data-project-contract-choice]') {
+    const named = /^\[name="([^"]+)"\]$/.exec(selector)
+    if (named) return this.children.filter((child) => child.getAttribute('name') === named[1])
+    if (selector.includes('[data-project-field]') && selector.includes('[data-project-contract-choice]')) {
       return this.children.concat(this.contractChoices || (this.contractChoice ? [this.contractChoice] : []))
     }
     if (selector.includes('[type="submit"]')) return this.submitters || []
@@ -50,6 +53,10 @@ class Element {
 
 function field(name, value, attrs = {}) {
   return new Element({ 'data-project-field': name, value, ...attrs })
+}
+
+function nativeField(name, value, attrs = {}) {
+  return new Element({ name, value, ...attrs })
 }
 
 function projectForm(values = {}) {
@@ -90,7 +97,10 @@ function documentFixture(form) {
     listeners,
     addEventListener(name, handler, capture) { listeners[name] = { handler, capture } },
     dispatchEvent(event) { this.event = event },
-    querySelector(selector) { return selector.includes('form[data-project-form-v3="brand"]') ? form : null },
+    querySelector(selector) {
+      if (selector === 'dialog[data-modal-target="generate-contract"] #pushMemID') return form.querySelector('[data-project-field="starter_memberstack_id"]')
+      return selector.includes('[data-project-form-v3="brand"] form') ? form : null
+    },
   }
 }
 
@@ -273,6 +283,47 @@ test('submits once through Opp30 auth, keeps the retry key, and emits safe succe
   assert.equal(document.event.type, 'starters:project-created')
   assert.equal(document.event.detail.project_id, 669)
   assert.equal(document.event.detail.replayed, false)
+})
+
+test('uses the authored external Starter identity and internal retry state without new inputs', async () => {
+  const form = projectForm()
+  form.children = form.children.filter((child) => !['starter_memberstack_id', 'idempotency_key'].includes(child.getAttribute('data-project-field')))
+  const selectedStarter = new Element({ value: 'mem_starter_external' })
+  const document = documentFixture(form)
+  const originalQuerySelector = document.querySelector
+  document.querySelector = (selector) => selector === 'dialog[data-modal-target="generate-contract"] #pushMemID'
+    ? selectedStarter
+    : originalQuerySelector(selector)
+  const { api, calls, window } = load({ form, document })
+  assert.equal(await api.submit(form, window, document), true)
+  assert.equal(calls[0].starter_memberstack_id, 'mem_starter_external')
+  assert.equal(calls[0].idempotency_key, 'direct-hire-ui:uuid-123')
+})
+
+test('serializes the existing named Webflow controls without per-field attributes', () => {
+  const form = projectForm()
+  form.children = [
+    nativeField('Project-Name', 'Native project'),
+    nativeField('Services', 'Paid Social'),
+    nativeField('fee-structure', 'Ongoing Hourly'),
+    nativeField('startDateInput', '08/25/2026'),
+    nativeField('endDateInput', '12/31/2026'),
+    nativeField('Amount', '$175'),
+    nativeField('Frequency', 'Weekly'),
+    nativeField('Maximum-Hours-Billed-per-Week', '20'),
+    nativeField('Project-Scope', 'Run the paid social program.'),
+  ]
+  form.contractChoice = new Element({ type: 'radio', value: 'Standard contract', checked: true })
+  const { api, document } = load({ form })
+  const payload = api.serialize(form, document).payload
+  assert.equal(payload.title, 'Native project')
+  assert.equal(payload.service, 'Paid Social')
+  assert.equal(payload.engagement_type, 'hourly')
+  assert.equal(payload.start_date, '2026-08-25')
+  assert.equal(payload.hourly_rate, 175)
+  assert.equal(payload.hourly_billing_frequency, 'weekly')
+  assert.equal(payload.maximum_hours_per_week, 20)
+  assert.equal(payload.contract_type, 'standard')
 })
 
 test('projects safe authorization errors without exposing raw server messages', async () => {
