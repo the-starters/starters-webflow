@@ -1,6 +1,8 @@
 /**
  * /hire/<slug> — "Message this starter" modal.
  *
+ * @release v1.59.106
+ *
  * Mounts a TalkJS chatbox with the profiled starter inside the page's existing
  * modal, so a brand can start or resume the conversation without leaving the
  * profile. The conversation is created on first open when it does not exist.
@@ -471,7 +473,12 @@
     var customFields = member.customFields || {}
     var auth = member.auth || {}
     var email = auth.email || member.email || ''
-    var name = [customFields['first-name'], customFields['last-name']]
+    // 'free-user' is this site's legacy Memberstack key for the member's
+    // first name; there is no 'first-name' field in the app.
+    var name = [
+      customFields['free-user'] || customFields['first-name'],
+      customFields['last-name'],
+    ]
       .filter(Boolean)
       .join(' ')
       .trim()
@@ -797,6 +804,7 @@
   }
 
   window.StartersMessagesProfile = {
+    release: 'v1.59.106',
     apply: apply,
     decorate: decorate,
     identityFrom: identityFrom,

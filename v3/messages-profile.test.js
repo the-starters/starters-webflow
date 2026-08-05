@@ -379,7 +379,8 @@ test('a modal that is not ours is ignored', async () => {
 test('a paid Brand gets the chatbox mounted into the container', async () => {
   const loaded = load({
     triggers: [starterTrigger()],
-    member: { id: VIEWER_ID, customFields: { 'first-name': 'Brand' } },
+    // 'free-user' is this site's legacy Memberstack key for the first name.
+    member: { id: VIEWER_ID, customFields: { 'free-user': 'Brand' } },
     role: 'brand-paid',
   })
   await settle()
@@ -398,6 +399,65 @@ test('a paid Brand gets the chatbox mounted into the container', async () => {
     custom: { source: 'hire-page', slug: 'kaeser-valencerina' },
   })
   assert.deepEqual(loaded.calls.selected, [conversation])
+})
+
+test('the viewer name maps the legacy free-user field plus last-name', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      customFields: { 'free-user': 'Brand', 'last-name': 'Owner' },
+    },
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(plain(loaded.calls.users[0]), {
+    id: VIEWER_ID,
+    name: 'Brand Owner',
+  })
+})
+
+test('a viewer carrying only a first-name key still gets a full name', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      customFields: { 'first-name': 'Brand', 'last-name': 'Owner' },
+    },
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(plain(loaded.calls.users[0]), {
+    id: VIEWER_ID,
+    name: 'Brand Owner',
+  })
+})
+
+test('with no first- or last-name fields the viewer name falls back to the email', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      auth: { email: 'viewer@example.com' },
+      customFields: {},
+    },
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(plain(loaded.calls.users[0]), {
+    id: VIEWER_ID,
+    name: 'viewer@example.com',
+    email: 'viewer@example.com',
+  })
 })
 
 test('the starter is synced with the CMS name and photo', async () => {
