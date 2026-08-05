@@ -33,7 +33,7 @@
  * submit) instead of duplicating it per branch. `back` restores the branch the user came
  * from, because history stores the wrapper element, not just an id.
  *
- * @release v1.59.100
+ * @release v1.59.101
  */
 document.addEventListener("DOMContentLoaded", function () {
   /** @type {readonly string[]} Valid CSS `display` values for flow elements. */
@@ -137,7 +137,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Keep in sync with the @release line in this file's header comment
   // (release marker convention: header + API property match the shipping tag).
-  formFlowSystem.release = "v1.59.100"
+  formFlowSystem.release = "v1.59.101"
 
   /**
    * Returns stored or computed `display` for an element, caching on first read.
