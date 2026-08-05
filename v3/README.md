@@ -295,15 +295,14 @@ embeds installed after the guard; see
 [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and
 [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
-## Brand signup, create, and edit sync
+## Brand account and Starter email sync
 
 `brand-account-controller.js` aligns the native Brand signup plan with
 Memberstack Test or Live Data and owns the native Build Account submission,
-while its Account Security interception remains configuration-gated.
-Memberstack owns member state and profile images; published endpoint #1513
-mirrors that state to Xano without a competing browser writer. The authoritative
-signup mapping, markup, ordering, retry, verification, release-gate, and canary
-contract is in [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md).
+while its Account Security interception remains configuration-gated for Brand
+and Talent members. The authoritative identity scope, stable-ID propagation,
+failure, release-gate, and reversible-canary contract is in
+[BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md).
 
 ## Build-profile funnel redirect
 

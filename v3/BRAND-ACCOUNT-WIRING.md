@@ -4,11 +4,12 @@
 
 - Memberstack owns member identity, login email, custom fields, plan state, and
   profile image.
-- Xano `brands_v3` is the canonical operational Brand profile.
+- Xano `brands_v3` and `freelancers_v3` are the canonical operational role
+  profiles for Brand and Talent members, respectively.
 - Memberstack member ID is the only normal sync key. Never match an update by
   mutable email or name.
 - Xano endpoint #1513 is the single normal Memberstack-to-Xano writer. Browser
-  code must not create a competing `brands_v3` writer.
+  code must not create a competing role-profile writer.
 
 ## Native markup contract
 
