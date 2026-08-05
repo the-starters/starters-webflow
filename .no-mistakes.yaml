@@ -1,6 +1,6 @@
-# Codex review is runnable again as of 2026-08-02. Keep the validation agent
-# aligned with the repository's Codex release workflow.
-agent: codex
+# codex is SIGKILLed at spawn on this machine as of 2026-08-05, so the pipeline
+# cannot run with it here. claude is the agent no-mistakes doctor reports runnable.
+agent: claude
 
 ignore_patterns:
   - "*.min.js"
