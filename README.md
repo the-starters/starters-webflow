@@ -236,6 +236,10 @@ controller is released.
 Create and update requests send the input's trimmed value as the existing Xano
 `est_hours` field, and edit prefill restores that value. One Time and Full Time
 requests send an empty `est_hours` value and do not require the field.
+The controller also synchronizes the three authored budget inputs
+(`One-Time-Budget`, `Part-Time-Budget`, and `Full-Time-Budget`) so only the
+budget for the selected Project Type is required. This prevents hidden budget
+inputs from disabling the form's Submit control.
 The edit modal refreshes its saved values after each form-flow reset so Webflow's
 authored default radio cannot replace the opportunity's current Project Type
 when the modal reopens. Project Type prefill also emits the native change event

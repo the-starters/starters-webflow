@@ -126,7 +126,9 @@ function opportunityForm(kind) {
     'wf-validate-maxwords': '15',
   })
   const category = new FakeControl({ name: 'Category-option' })
-  const budget = new FakeControl({ name: 'Part-Time-Budget' })
+  const oneTimeBudget = new FakeControl({ name: 'One-Time-Budget' })
+  const partTimeBudget = new FakeControl({ name: 'Part-Time-Budget' })
+  const fullTimeBudget = new FakeControl({ name: 'Full-Time-Budget' })
   const estimatedHoursGroup = { hidden: false }
   const estimatedHours = new FakeControl({ name: 'Estimated-Hours' })
   estimatedHours.closest = (selector) =>
@@ -174,12 +176,14 @@ function opportunityForm(kind) {
   const fields = new Map([
     ['Opportunity-title', title],
     ['Category-option', category],
-    ['Part-Time-Budget', budget],
+    ['One-Time-Budget', oneTimeBudget],
+    ['Part-Time-Budget', partTimeBudget],
+    ['Full-Time-Budget', fullTimeBudget],
     ['Estimated-Hours', estimatedHours],
   ])
   const partTimeGroup = {
     querySelector: (selector) =>
-      selector === '[name="Part-Time-Budget"]' ? budget : null,
+      selector === '[name="Part-Time-Budget"]' ? partTimeBudget : null,
   }
   const form = {
     attrs: new Map(),
@@ -226,10 +230,13 @@ function opportunityForm(kind) {
     category,
     estimatedHoursGroup,
     fields,
+    fullTimeBudget,
     form,
     fullTime,
     modal,
+    oneTimeBudget,
     oneTime,
+    partTimeBudget,
     partTime,
     tabItems,
   }
@@ -323,6 +330,52 @@ test('create and edit forms bind Webflow-authored estimated hours without genera
   assert.equal(create.estimatedHoursGroup.hidden, true)
   assert.equal(edit.estimatedHoursGroup.hidden, true)
   assert.deepEqual(refreshed, [create.form, edit.form])
+})
+
+test('create and edit forms require only the budget for the selected project type', () => {
+  const { create, edit } = loadOpportunityForms()
+
+  for (const opportunity of [create, edit]) {
+    assert.equal(opportunity.oneTimeBudget.required, true)
+    assert.equal(opportunity.oneTimeBudget.getAttribute('aria-required'), 'true')
+    assert.equal(opportunity.partTimeBudget.required, false)
+    assert.equal(opportunity.fullTimeBudget.required, false)
+
+    opportunity.oneTime.checked = false
+    opportunity.partTime.checked = true
+    opportunity.partTime.dispatchEvent({ type: 'change' })
+
+    assert.equal(opportunity.oneTimeBudget.required, false)
+    assert.equal(opportunity.partTimeBudget.required, true)
+    assert.equal(opportunity.partTimeBudget.getAttribute('aria-required'), 'true')
+    assert.equal(opportunity.fullTimeBudget.required, false)
+
+    opportunity.partTime.checked = false
+    opportunity.fullTime.checked = true
+    opportunity.fullTime.dispatchEvent({ type: 'change' })
+
+    assert.equal(opportunity.oneTimeBudget.required, false)
+    assert.equal(opportunity.partTimeBudget.required, false)
+    assert.equal(opportunity.fullTimeBudget.required, true)
+    assert.equal(opportunity.fullTimeBudget.getAttribute('aria-required'), 'true')
+  }
+})
+
+test('create and edit submit only the selected project type budget', () => {
+  const { create, edit, window } = loadOpportunityForms()
+
+  for (const opportunity of [create, edit]) {
+    opportunity.oneTimeBudget.value = '1000'
+    opportunity.partTimeBudget.value = '2500'
+    opportunity.oneTime.checked = false
+    opportunity.partTime.checked = true
+    opportunity.partTime.dispatchEvent({ type: 'change' })
+
+    const payload = window.Opp30.readOpportunityForm(opportunity.form)
+
+    assert.equal(payload.project_type, 'Ongoing Part Time')
+    assert.equal(payload.budget, '2500')
+  }
 })
 
 test('create and edit titles keep the 15-word rule and add a 120-character backstop', () => {

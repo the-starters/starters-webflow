@@ -389,6 +389,11 @@
   const CATEGORY_SET_EVENT = 'opp30:set-category-values'
   const MAX_CATEGORY_SELECTIONS = 3
   const EST_HOURS_FIELD_NAME = 'Estimated-Hours'
+  const BUDGET_FIELD_BY_PROJECT_TYPE = {
+    'One Time': 'One-Time-Budget',
+    'Ongoing Part Time': 'Part-Time-Budget',
+    'Full Time': 'Full-Time-Budget',
+  }
   const CATEGORY_REQUIRED_MESSAGE = 'Please select at least one category.'
   const EST_HOURS_REQUIRED_MESSAGE = 'Please enter the estimated hours per week.'
   const OPPORTUNITY_TITLE_MAX_CHARS = 120
@@ -630,25 +635,37 @@
 
   // Complete the published Create/Edit opportunity form contract. Categories
   // use a custom validity rule because the visible search query may be empty
-  // while selected tags are stored separately. Estimated hours is an existing
-  // Xano text field and is required only for Ongoing Part Time opportunities.
-  // Webflow owns the form markup, including Estimated-Hours. This controller
-  // only binds behavior to the authored control. wf-validate may already be
-  // bound when defer scripts run, so refresh it after applying its state.
+  // while selected tags are stored separately. Estimated hours is required only
+  // for Ongoing Part Time opportunities, and only the selected project type's
+  // budget is required. Webflow owns all form markup, including Estimated-Hours
+  // and the budget inputs; this controller only binds behavior to those authored
+  // controls. wf-validate may already be bound when defer scripts run, so refresh
+  // it after applying their state.
   function syncOpportunityEstimatedHours(form) {
-    const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
-    if (!estHoursInput) return
-    const estHoursGroup = estHoursInput.closest('[data-project-type="part-time"]')
     const projectType = $('[name="Project-Type"]:checked', form)
-    const required = Boolean(
-      projectType &&
-        (PROJECT_TYPE[projectType.id] || projectType.value) === 'Ongoing Part Time',
-    )
-    if (estHoursGroup) estHoursGroup.hidden = !required
-    estHoursInput.required = required
-    estHoursInput.setAttribute('aria-required', required ? 'true' : 'false')
-    if (!required) estHoursInput.setCustomValidity('')
-    estHoursInput.dispatchEvent(new Event('input', { bubbles: true }))
+    const projectTypeValue = projectType && (PROJECT_TYPE[projectType.id] || projectType.value)
+    const activeBudgetName = BUDGET_FIELD_BY_PROJECT_TYPE[projectTypeValue] || ''
+
+    Object.values(BUDGET_FIELD_BY_PROJECT_TYPE).forEach((name) => {
+      const input = $(`[name="${name}"]`, form)
+      if (!input) return
+      const required = name === activeBudgetName
+      input.required = required
+      input.setAttribute('aria-required', required ? 'true' : 'false')
+      if (!required) input.setCustomValidity('')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
+    if (estHoursInput) {
+      const estHoursGroup = estHoursInput.closest('[data-project-type="part-time"]')
+      const required = projectTypeValue === 'Ongoing Part Time'
+      if (estHoursGroup) estHoursGroup.hidden = !required
+      estHoursInput.required = required
+      estHoursInput.setAttribute('aria-required', required ? 'true' : 'false')
+      if (!required) estHoursInput.setCustomValidity('')
+      estHoursInput.dispatchEvent(new Event('input', { bubbles: true }))
+    }
   }
 
   function prepareOpportunityForms(root = document) {
@@ -690,12 +707,13 @@
       }
 
       const estHoursInput = $(`[name="${EST_HOURS_FIELD_NAME}"]`, form)
-      if (!estHoursInput || form.getAttribute('data-opp-est-hours-inited') === 'true') return
-      form.setAttribute('data-opp-est-hours-inited', 'true')
-      estHoursInput.setAttribute(
-        'wf-validate-message-required',
-        EST_HOURS_REQUIRED_MESSAGE,
-      )
+      if (form.getAttribute('data-opp-conditional-fields-inited') === 'true') return
+      form.setAttribute('data-opp-conditional-fields-inited', 'true')
+      if (estHoursInput)
+        estHoursInput.setAttribute(
+          'wf-validate-message-required',
+          EST_HOURS_REQUIRED_MESSAGE,
+        )
       $$('[name="Project-Type"]', form).forEach((radio) =>
         radio.addEventListener('change', () => syncOpportunityEstimatedHours(form)),
       )
@@ -781,9 +799,8 @@
     }
     const ptId = checked('Project-Type')
     const project_type = PROJECT_TYPE[ptId] || ptId
-    // budget: one of three inputs is visible/required per project type
-    const budget =
-      val('One-Time-Budget') || val('Part-Time-Budget') || val('Full-Time-Budget')
+    const budgetFieldName = BUDGET_FIELD_BY_PROJECT_TYPE[project_type]
+    const budget = budgetFieldName ? val(budgetFieldName) : ''
     const role_names = selectedOpportunityCategories(scope)
     const payload = {
       title: val('Opportunity-title'),
