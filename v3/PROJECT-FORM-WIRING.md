@@ -23,21 +23,21 @@ Live read-only audit on 2026-08-05:
   `data-modal-trigger="generate-contract"`;
 - the form has no `data-project-*` attributes yet.
 
-Add `data-project-form-container` to the existing `.w-form` wrapper that owns
-the target form and its sibling success/failure states. Add
-`data-project-form-v3="brand"` to the target native `<form>`.
+Add `data-project-form-container="true"` and
+`data-project-form-v3="brand"` to the existing `.w-form` Form Block wrapper
+that owns the target native form and its sibling success/failure states.
+Webflow applies Form Block custom attributes to this wrapper; the adapter
+resolves the generated native `<form>` beneath it.
 
-The selected Starter identity already exists in the form's `pushMemID` input.
-Add `data-project-field="starter_memberstack_id"` to that control. Add one new
-hidden input for `idempotency_key` and mark it
-`data-project-field="idempotency_key"`.
+The selected Starter identity already exists in the target modal's published,
+CMS-bound `pushMemID` control. That control is emitted by an existing Code
+Embed rather than exposed as a selectable native Designer field, so the
+adapter reads the established `#pushMemID` contract scoped to
+`data-modal-target="generate-contract"`. Do not edit or bind the separate
+`start-project` modal.
 
-Create one inline text element inside the form for safe validation/API errors
-and add `data-project-form-state="error"`. These are the only two new Designer
-elements required. All other work in this guide adds attributes to existing
-Designer elements.
-
-Add canonical field attributes to the existing controls:
+No new Designer elements or per-field attributes are required. The adapter
+uses an explicit allowlist of the form's existing native Webflow names:
 
 | Backend field | Existing Designer control | Notes |
 | --- | --- | --- |
@@ -59,23 +59,22 @@ Add canonical field attributes to the existing controls:
 | `estimated_end_date` | active fee panel end date | optional |
 | `project_scope` | `Project-Scope` | required |
 
-Apply the repeated date/rate attributes in their authored fee panels:
+Repeated date/rate controls remain in their authored fee panels:
 
 | Fee panel | Existing controls and attributes |
 | --- | --- |
-| Flat Fee | `startDateInput` -> `start_date`; `endDateInput` -> `estimated_end_date`; `Amount` -> `total_cost`; `Percent-Paid-Upfront` -> `paid_upfront_pct` |
-| Ongoing Hourly | `startDateInput` -> `start_date`; `endDateInput` -> `estimated_end_date`; `Amount` -> `hourly_rate`; `Frequency` -> `hourly_billing_frequency`; three maximum-hours controls -> their matching cap fields |
-| Monthly Recurring | `startDateInput` -> `start_date`; `endDateInput` -> `estimated_end_date`; `Amount` -> `monthly_rate`; `Number-of-Months` -> `number_of_months` |
-| Weekly Recurring | `startDateInput` -> `start_date`; `Amount` -> `weekly_rate`; `Number-of-Weeks` -> `number_of_weeks` |
+| Flat Fee | `startDateInput`, `endDateInput`, `Amount`, `Percent-Paid-Upfront` |
+| Ongoing Hourly | `startDateInput`, `endDateInput`, `Amount`, `Frequency`, and the three maximum-hours controls |
+| Monthly Recurring | `startDateInput`, `endDateInput`, `Amount`, `Number-of-Months` |
+| Weekly Recurring | `startDateInput`, `Amount`, `Number-of-Weeks` |
 
-The form has repeated rate/date controls across conditional fee panels. Give
-each applicable control the same semantic field attribute where needed, and
-keep inactive duplicates blank. The adapter uses the first populated value in
-DOM order and does not let a later blank control replace it.
+The adapter selects the visible authored conditional panel, with a nonblank
+fallback for test and preview DOMs. Hidden blank controls never replace the
+active value.
 
-Add `data-project-contract-choice` to the existing Standard Contract and My
-Own Contract radio inputs. One choice is required before submission. Contract
-type remains separate from pricing:
+The adapter reads the existing Standard Contract and My Own Contract radio
+inputs. One choice is required before submission. Contract type remains
+separate from pricing:
 
 - fee structure becomes `flat_fee`, `hourly`, `monthly`, or `weekly`;
 - contract choice becomes `standard` or `own_contract`;
@@ -88,11 +87,10 @@ authenticated Brand plus the selected Starter Memberstack identity.
 
 ## Authored states
 
-- Add `data-project-form-state="error"` to the new inline error text element
-  inside the form. It receives a safe message and `role="alert"`.
-- Add `data-project-form-state="success"` to the existing
-  `.generate-contract_success` sibling. Runtime behavior uses only the data
-  attribute.
+- The existing Webflow Error Message sibling receives a safe message and
+  `role="alert"`.
+- The existing `.generate-contract_success.w-form-done` sibling is reused for
+  success.
 - The form receives `data-project-form-status` and `aria-busy`.
 - Payload controls and submit buttons are locked while a request is pending.
 - Success dispatches `starters:project-created` with only `project_id` and
