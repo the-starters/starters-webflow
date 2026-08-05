@@ -36,6 +36,9 @@
   var CONTRACT_CHOICE_SELECTOR = '[data-project-contract-choice]'
   var PAYLOAD_CONTROL_SELECTOR = '[' + FIELD_ATTR + '], ' + CONTRACT_CHOICE_SELECTOR + ', [name], [type="submit"]'
   var CONTAINER_SELECTOR = '[data-project-form-container]'
+  // Marks a Designer-authored `required` this adapter removed while its
+  // conditional branch is hidden, so it can be put back unchanged.
+  var REQUIRED_STASH_ATTR = 'data-project-required-hidden'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
@@ -165,20 +168,36 @@
     return field.offsetParent !== null || typeof field.offsetParent === 'undefined'
   }
 
-  function reportActiveValidity(form) {
-    if (!form || typeof form.reportValidity !== 'function') return true
-    var inactiveRequired = []
-    var required = form.querySelectorAll ? form.querySelectorAll('[required]') : []
-    Array.prototype.forEach.call(required, function (field) {
-      if (field.disabled || activeControl(field)) return
-      inactiveRequired.push(field)
-      field.disabled = true
+  // Webflow keeps conditional branches in the native form when they are hidden,
+  // and the browser runs interactive validation as the *default action* of the
+  // submit click, before dispatching `submit`. A required control in an
+  // inactive branch therefore aborts submission before this adapter is ever
+  // called ("An invalid form control ... is not focusable"). Mirror the
+  // established form-input-filter pattern instead: drop `required` while a
+  // control is inactive and restore it the moment its branch becomes visible.
+  function syncActiveRequired(form) {
+    if (!form || !form.querySelectorAll) return
+    var candidates = form.querySelectorAll('[required], [' + REQUIRED_STASH_ATTR + ']')
+    Array.prototype.forEach.call(candidates, function (field) {
+      var stashed = field.getAttribute && field.getAttribute(REQUIRED_STASH_ATTR) !== null
+      if (activeControl(field)) {
+        if (!stashed) return
+        field.required = true
+        if (field.setAttribute) field.setAttribute('required', '')
+        if (field.removeAttribute) field.removeAttribute(REQUIRED_STASH_ATTR)
+        return
+      }
+      if (stashed) return
+      field.required = false
+      if (field.removeAttribute) field.removeAttribute('required')
+      if (field.setAttribute) field.setAttribute(REQUIRED_STASH_ATTR, 'true')
     })
-    try {
-      return form.reportValidity()
-    } finally {
-      inactiveRequired.forEach(function (field) { field.disabled = false })
-    }
+  }
+
+  function reportActiveValidity(form) {
+    syncActiveRequired(form)
+    if (!form || typeof form.reportValidity !== 'function') return true
+    return form.reportValidity()
   }
 
   function namedControls(form, name) {
@@ -444,6 +463,7 @@
       formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
     }
+    syncActiveRequired(form)
     if (!fieldValue(documentObject.querySelector(SELECTED_STARTER_SELECTOR))) {
       setStatus(form, 'error', 'The selected Starter could not be identified. Reload and try again.')
       return false
@@ -485,11 +505,9 @@
   function submit(form, globalObject, documentObject) {
     var formState = state(form)
     if (formState.active) return formState.active
-    // Webflow keeps conditional inputs in the native form even when their
-    // panels are display:none. Hidden required controls must not block a
-    // different authored branch (for example, the own-contract confirmation
-    // checkbox while Standard contract is selected). Keep active controls in
-    // native constraint validation and temporarily exclude only inactive ones.
+    // Hidden required controls must not block a different authored branch (for
+    // example, the own-contract confirmation checkbox while Standard contract
+    // is selected), while visible required controls still gate submission.
     if (!reportActiveValidity(form)) return Promise.resolve(false)
 
     var serialized = serialize(form, documentObject)
@@ -532,8 +550,24 @@
   function install(documentObject, globalObject) {
     if (!documentObject || !documentObject.addEventListener) return
     documentObject.addEventListener('click', function (event) {
-      var trigger = event.target && event.target.closest ? event.target.closest(OPEN_SELECTOR) : null
-      if (trigger) bindTrigger(trigger, documentObject)
+      var target = event.target
+      var trigger = target && target.closest ? target.closest(OPEN_SELECTOR) : null
+      if (trigger) {
+        bindTrigger(trigger, documentObject)
+        return
+      }
+      // Event dispatch completes before the click's default action, so this is
+      // the last point at which the authored required state can be corrected
+      // ahead of the browser's interactive validation.
+      var clickedForm = target && target.closest ? target.closest(FORM_SELECTOR) : null
+      if (clickedForm) syncActiveRequired(clickedForm)
+    })
+    documentObject.addEventListener('change', function (event) {
+      // Switching fee structure or contract type swaps which conditional panel
+      // is visible; keep required aligned for implicit (Enter key) submission.
+      var field = event.target
+      var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
+      if (form) syncActiveRequired(form)
     })
     documentObject.addEventListener('input', function (event) {
       var field = event.target
@@ -561,6 +595,7 @@
     canonicalEngagement: canonicalEngagement,
     canonicalContractType: canonicalContractType,
     canonicalHourlyFrequency: canonicalHourlyFrequency,
+    syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,
     createIdempotencyKey: createIdempotencyKey,
     serialize: serialize,
