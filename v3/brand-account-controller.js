@@ -23,9 +23,10 @@
  *
  * The Account Security interception is also OFF by default so it cannot race
  * Memberstack's currently published `data-ms-form="profile"` handler. The
- * configured Brand-scoped mode resolves the current member through the
- * canonical route-guard role contract and claims Brand forms only:
- *   window.StartersBrandAccountConfig = { guardSecurityForm: 'brand' }
+ * configured identity-scoped mode resolves the current member through the
+ * canonical route-guard role contract and claims both Brand and Talent forms:
+ *   window.StartersBrandAccountConfig = { guardSecurityForm: 'identity' }
+ * The legacy `brand` mode remains supported for a rollback-safe rollout.
  */
 ;(function () {
   'use strict'
@@ -391,7 +392,15 @@
     }, 0)
   }
 
-  function bindBrandSecurityForm(form) {
+  function securityModeOwnsRole(mode, role) {
+    if (mode === 'brand') return role === 'brand-free' || role === 'brand-paid'
+    if (mode === 'identity') {
+      return role === 'brand-free' || role === 'brand-paid' || role === 'talent'
+    }
+    return false
+  }
+
+  function bindIdentitySecurityForm(form, mode) {
     if (!form || form.getAttribute('data-brand-account-bound') === 'true') return false
     form.setAttribute('data-brand-account-bound', 'true')
     var busy = false
@@ -416,7 +425,7 @@
             if (!guard || typeof guard.memberRole !== 'function') return false
             var member = await currentMember(memberstack())
             var role = guard.memberRole(member)
-            if (role !== 'brand-free' && role !== 'brand-paid') return false
+            if (!securityModeOwnsRole(mode, role)) return false
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
@@ -433,7 +442,7 @@
               return
             }
             setMessage(form, 'error', friendlyError(error))
-            trackFailure(error, 'brand/account/email')
+            trackFailure(error, 'identity/account/email')
           })
           .finally(function () {
             busy = false
@@ -459,10 +468,10 @@
     }
 
     var securityMode = config().guardSecurityForm
-    if (securityMode === 'brand') {
-      var brandSecurityForm = document.querySelector(SECURITY_FORM_SELECTOR)
-      if (brandSecurityForm) {
-        bound = bindBrandSecurityForm(brandSecurityForm) || bound
+    if (securityMode === 'brand' || securityMode === 'identity') {
+      var securityForm = document.querySelector(SECURITY_FORM_SELECTOR)
+      if (securityForm) {
+        bound = bindIdentitySecurityForm(securityForm, securityMode) || bound
       }
     }
 

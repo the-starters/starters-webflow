@@ -601,6 +601,50 @@ test('Brand-scoped Account Security binds Brand roles and sends only the reset p
   }
 })
 
+test('Identity-scoped Account Security owns Talent email changes', async () => {
+  const securityForm = makeForm('security', { email: 'talent-next@example.com' })
+  const environment = loadController({
+    buildForm: null,
+    securityForm,
+    currentEmail: 'talent-old@example.com',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  const submission = securityForm.submitEvent()
+  await settle()
+
+  assert.equal(submission.event.prevented, true)
+  assert.equal(submission.event.stopped, true)
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.deepEqual(plain(environment.calls[2].payload), {
+    email: 'talent-next@example.com',
+  })
+  assert.equal(securityForm.nativeSubmits, 0)
+  assert.equal(securityForm.wrapper.done.style.display, 'block')
+})
+
+test('Identity-scoped Account Security still leaves unknown and conflicted roles Memberstack-native', async () => {
+  for (const role of [null, 'conflicting-plan-roles']) {
+    const securityForm = makeForm('security')
+    const environment = loadController({
+      buildForm: null,
+      securityForm,
+      config: { guardSecurityForm: 'identity' },
+      routeGuard: { memberRole: () => role },
+    })
+
+    securityForm.submitEvent()
+    await settle()
+
+    assert.equal(securityForm.nativeSubmits, 1)
+    assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  }
+})
+
 test('Brand-scoped Account Security leaves Talent, unmapped, and conflicted roles Memberstack-native', async () => {
   for (const role of ['talent', null, 'conflicting-plan-roles']) {
     const securityForm = makeForm('security')
