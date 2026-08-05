@@ -635,11 +635,12 @@
 
   // Complete the published Create/Edit opportunity form contract. Categories
   // use a custom validity rule because the visible search query may be empty
-  // while selected tags are stored separately. Estimated hours is an existing
-  // Xano text field and is required only for Ongoing Part Time opportunities.
-  // Webflow owns the form markup, including Estimated-Hours. This controller
-  // only binds behavior to the authored control. wf-validate may already be
-  // bound when defer scripts run, so refresh it after applying its state.
+  // while selected tags are stored separately. Estimated hours is required only
+  // for Ongoing Part Time opportunities, and only the selected project type's
+  // budget is required. Webflow owns all form markup, including Estimated-Hours
+  // and the budget inputs; this controller only binds behavior to those authored
+  // controls. wf-validate may already be bound when defer scripts run, so refresh
+  // it after applying their state.
   function syncOpportunityEstimatedHours(form) {
     const projectType = $('[name="Project-Type"]:checked', form)
     const projectTypeValue = projectType && (PROJECT_TYPE[projectType.id] || projectType.value)
