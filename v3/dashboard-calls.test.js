@@ -237,8 +237,9 @@ test('native Brand profile saves repaint the hero only after canonical Membersta
     selector === '[bookings-item-template]' ? [template] : []
   template.cloneNode = () => element()
 
-  let saved = false
   let memberReads = 0
+  let authChange
+  let pendingMemberRead
   const oldMember = {
     id: 'brand-1',
     customFields: {
@@ -255,12 +256,20 @@ test('native Brand profile saves repaint the hero only after canonical Membersta
       company: 'New Company',
     },
   }
+  let currentMember = oldMember
   const memberstack = {
     async getCurrentMember() {
       memberReads += 1
-      return saved ? newMember : oldMember
+      if (pendingMemberRead) {
+        const read = pendingMemberRead
+        pendingMemberRead = null
+        return read.promise
+      }
+      return currentMember
     },
-    onAuthChange() {},
+    onAuthChange(listener) {
+      authChange = listener
+    },
   }
   const root = element()
   const document = {
@@ -311,10 +320,42 @@ test('native Brand profile saves repaint the hero only after canonical Membersta
   assert.equal(prevented, false)
   assert.equal(name.textContent, 'Old First')
 
-  saved = true
+  currentMember = newMember
   await until(() => name.textContent === 'New First')
   assert.equal(surname.textContent, 'New Last')
   assert.equal(company.textContent, 'New Company')
+
+  profileFields['free-user'].value = 'Stale First'
+  profileFields['last-name'].value = 'Stale Last'
+  profileFields.company.value = 'Stale Company'
+  const staleRead = deferred()
+  pendingMemberRead = staleRead
+  profileListeners.submit({})
+  await until(() => pendingMemberRead === null)
+
+  currentMember = {
+    id: 'brand-2',
+    customFields: {
+      'free-user': 'Current First',
+      'last-name': 'Current Last',
+      company: 'Current Company',
+    },
+  }
+  authChange()
+  await until(() => name.textContent === 'Current First')
+
+  staleRead.resolve({
+    id: 'brand-1',
+    customFields: {
+      'free-user': 'Stale First',
+      'last-name': 'Stale Last',
+      company: 'Stale Company',
+    },
+  })
+  await new Promise(setImmediate)
+  assert.equal(name.textContent, 'Current First')
+  assert.equal(surname.textContent, 'Current Last')
+  assert.equal(company.textContent, 'Current Company')
 })
 
 test('fails closed when the authenticated participant identity is absent or mismatched', () => {

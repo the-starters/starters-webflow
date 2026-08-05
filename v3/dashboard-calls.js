@@ -638,7 +638,7 @@
     return false
   }
 
-  function wireBrandProfileRepaint(memberstack) {
+  function wireBrandProfileRepaint(memberstack, currentSessionGeneration) {
     if (roleForPath(global.location && global.location.pathname) !== 'brand') {
       return
     }
@@ -653,8 +653,12 @@
         }
         submissionGeneration += 1
         const generation = submissionGeneration
+        const sessionGeneration = currentSessionGeneration()
         repaintBrandHeroWhenSaved(memberstack, expected, function () {
-          return generation === submissionGeneration
+          return (
+            generation === submissionGeneration &&
+            sessionGeneration === currentSessionGeneration()
+          )
         })
       })
     })
@@ -767,12 +771,11 @@
       console.error('[dashboard-calls] failed closed: Memberstack unavailable')
       return
     }
-    wireBrandProfileRepaint(memberstack)
-
     let sessionGeneration = 0
     const currentGeneration = function () {
       return sessionGeneration
     }
+    wireBrandProfileRepaint(memberstack, currentGeneration)
     const restart = function () {
       sessionGeneration += 1
       resetIdentityState(refs, role)
