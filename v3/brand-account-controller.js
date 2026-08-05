@@ -430,9 +430,7 @@
           submit &&
           (event.target === submit ||
             (typeof submit.contains === 'function' && submit.contains(event.target)) ||
-            (event.target &&
-              typeof event.target.contains === 'function' &&
-              event.target.contains(submit)))
+            event.target === submit.parentElement)
         if (!clickedSubmit || busy) return
         if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 

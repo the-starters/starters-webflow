@@ -759,6 +759,7 @@ test('independent Starter email accepts the disabled authored submit wrapper cli
       return candidate === starterProfileForm.submit
     },
   }
+  starterProfileForm.submit.parentElement = disabledSubmitWrapper
   const environment = loadController({
     buildForm: null,
     starterProfileForm,
@@ -779,6 +780,35 @@ test('independent Starter email accepts the disabled authored submit wrapper cli
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
+})
+
+test('independent Starter email ignores ancestors outside the submit wrapper', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-next@example.com',
+    valid: false,
+  })
+  const formAncestor = {
+    contains(candidate) {
+      return candidate === starterProfileForm.submit
+    },
+  }
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  const click = starterProfileForm.clickSubmit(formAncestor)
+  await settle()
+
+  assert.equal(click.event.prevented, false)
+  assert.equal(click.event.stopped, false)
+  assert.deepEqual(environment.calls, [])
+  assert.equal(starterProfileForm.nativeSubmits, 0)
+  assert.equal(starterProfileForm.validityReports, 0)
 })
 
 test('independent Starter email change preserves its validated click-time snapshot', async () => {
