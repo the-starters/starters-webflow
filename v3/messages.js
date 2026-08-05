@@ -1,7 +1,7 @@
 /**
  * Messages 3.0 — TalkJS inbox bootstrap.
  *
- * @release v1.59.106
+ * @release v1.59.108
  *
  * Self-contained page controller for /messages. It waits for Memberstack,
  * redirects logged-out visitors through the V3 login router while preserving
@@ -133,23 +133,72 @@
     })
   }
 
+  // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
+  // source of the plan-to-role map; update it first and mirror changes here.
+  const PLAN_ROLES = {
+    'pln_free-plan-f6kn0dxz': 'brand-free',
+    'pln_new-paid-plan-463h04ph': 'brand-paid',
+    'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
+    'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
+  }
+
+  // Placeholder display names by plan family; members outside both families
+  // read the generic default.
+  const NAME_PLACEHOLDERS = { brand: 'Brand Name', talent: 'Starter Name' }
+
+  /**
+   * Resolve the member's plan family: 'brand', 'talent', or null when no
+   * mapped plan is active. Mirrors v3/route-guard.js roleResolution: active
+   * plan connections collapse to brand vs talent, and a cross-family
+   * conflict fails closed to null.
+   */
+  function roleFamily(member) {
+    const roles = (member.planConnections || [])
+      .filter(
+        (connection) =>
+          connection &&
+          (connection.active === true || connection.status === 'ACTIVE'),
+      )
+      .map((connection) => PLAN_ROLES[connection.planId])
+      .filter(Boolean)
+
+    const isBrand = roles.includes('brand-free') || roles.includes('brand-paid')
+    const isTalent = roles.includes('talent')
+    if (isBrand && isTalent) return null
+    if (isBrand) return 'brand'
+    if (isTalent) return 'talent'
+    return null
+  }
+
   function talkUserFields(member) {
     const customFields = member.customFields || {}
     const auth = member.auth || {}
     const email = auth.email || member.email || ''
     // 'free-user' is this site's legacy Memberstack key for the member's
-    // first name; there is no 'first-name' field in the app.
-    const name = [
-      customFields['free-user'] || customFields['first-name'],
-      customFields['last-name'],
-    ]
-      .filter(Boolean)
-      .join(' ')
+    // first name; there is no 'first-name' field in the app. The display
+    // name is the first name alone — no last name, and never the email.
+    const firstName = (
+      customFields['free-user'] ||
+      customFields['first-name'] ||
+      ''
+    )
+      .toString()
       .trim()
+
+    const company = (customFields['company'] || '').toString().trim()
+    // The plan family is resolved once and drives both placeholders.
+    const family = roleFamily(member)
 
     const fields = {
       id: member.id,
-      name: name || email || 'The Starters member',
+      name: firstName || NAME_PLACEHOLDERS[family] || 'The Starters member',
+      // User-level custom data for the TalkJS theme (company shown under the
+      // first name). TalkJS custom values must be strings, and the key is
+      // always present so a stale previously-synced company self-clears.
+      // Brands without a company read 'Company Name'; everyone else blank.
+      custom: {
+        company: company || (family === 'brand' ? 'Company Name' : ''),
+      },
     }
 
     if (email) fields.email = email

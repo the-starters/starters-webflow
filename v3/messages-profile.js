@@ -1,7 +1,7 @@
 /**
  * /hire/<slug> — "Message this starter" modal.
  *
- * @release v1.59.106
+ * @release v1.59.108
  *
  * Mounts a TalkJS chatbox with the profiled starter inside the page's existing
  * modal, so a brand can start or resume the conversation without leaving the
@@ -469,21 +469,76 @@
   }
 
   /** Mirrors v3/messages.js so the viewer syncs identically from either page. */
+  // Replicated from v3/route-guard.js PLAN_ROLES — that file is the canonical
+  // source of the plan-to-role map; update it first and mirror changes here.
+  var PLAN_ROLES = {
+    'pln_free-plan-f6kn0dxz': 'brand-free',
+    'pln_new-paid-plan-463h04ph': 'brand-paid',
+    'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
+    'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
+  }
+
+  // Placeholder display names by plan family; members outside both families
+  // read the generic default.
+  var NAME_PLACEHOLDERS = { brand: 'Brand Name', talent: 'Starter Name' }
+
+  /**
+   * Resolve the member's plan family: 'brand', 'talent', or null when no
+   * mapped plan is active. Mirrors v3/route-guard.js roleResolution: active
+   * plan connections collapse to brand vs talent, and a cross-family
+   * conflict fails closed to null.
+   */
+  function roleFamily(member) {
+    var roles = (member.planConnections || [])
+      .filter(function (connection) {
+        return (
+          connection &&
+          (connection.active === true || connection.status === 'ACTIVE')
+        )
+      })
+      .map(function (connection) {
+        return PLAN_ROLES[connection.planId]
+      })
+      .filter(Boolean)
+
+    var isBrand = roles.includes('brand-free') || roles.includes('brand-paid')
+    var isTalent = roles.includes('talent')
+    if (isBrand && isTalent) return null
+    if (isBrand) return 'brand'
+    if (isTalent) return 'talent'
+    return null
+  }
+
   function talkUserFields(member) {
     var customFields = member.customFields || {}
     var auth = member.auth || {}
     var email = auth.email || member.email || ''
     // 'free-user' is this site's legacy Memberstack key for the member's
-    // first name; there is no 'first-name' field in the app.
-    var name = [
-      customFields['free-user'] || customFields['first-name'],
-      customFields['last-name'],
-    ]
-      .filter(Boolean)
-      .join(' ')
+    // first name; there is no 'first-name' field in the app. The display
+    // name is the first name alone — no last name, and never the email.
+    var firstName = (
+      customFields['free-user'] ||
+      customFields['first-name'] ||
+      ''
+    )
+      .toString()
       .trim()
 
-    var fields = { id: member.id, name: name || email || 'The Starters member' }
+    var company = (customFields['company'] || '').toString().trim()
+    // The plan family is resolved once and drives both placeholders.
+    var family = roleFamily(member)
+
+    var fields = {
+      id: member.id,
+      name: firstName || NAME_PLACEHOLDERS[family] || 'The Starters member',
+      // User-level custom data for the TalkJS theme (company shown under the
+      // first name). TalkJS custom values must be strings, and the key is
+      // always present so a stale previously-synced company self-clears.
+      // Brands without a company read 'Company Name'; everyone else blank.
+      custom: {
+        company: company || (family === 'brand' ? 'Company Name' : ''),
+      },
+    }
     if (email) fields.email = email
     if (member.profileImage) fields.photoUrl = member.profileImage
     return fields
@@ -804,7 +859,7 @@
   }
 
   window.StartersMessagesProfile = {
-    release: 'v1.59.106',
+    release: 'v1.59.108',
     apply: apply,
     decorate: decorate,
     identityFrom: identityFrom,

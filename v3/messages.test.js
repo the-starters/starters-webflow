@@ -199,38 +199,186 @@ test('the current member syncs a changed login email to the same stable TalkJS u
 
   assert.deepEqual(plain(calls.users[0]), {
     id: MY_ID,
-    name: 'Brand Owner',
+    name: 'Brand',
     email: 'starter.canary@example.com',
+    custom: { company: '' },
   })
   assert.deepEqual(errors, [])
 })
 
-test('the legacy free-user field plus last-name become "First Last"', async () => {
+test('the display name is the first name alone, never the last name', async () => {
   const { calls } = loadMessages({ search: '' })
 
   await settle()
 
-  assert.equal(plain(calls.users[0]).name, 'Brand Owner')
+  assert.equal(plain(calls.users[0]).name, 'Brand')
 })
 
-test('a member carrying only a first-name key still gets a full name', async () => {
+test('a member carrying only a first-name key still gets that first name', async () => {
   const legacyMember = member()
   legacyMember.customFields = { 'first-name': 'Brand', 'last-name': 'Owner' }
   const { calls } = loadMessages({ member: legacyMember, search: '' })
 
   await settle()
 
-  assert.equal(plain(calls.users[0]).name, 'Brand Owner')
+  assert.equal(plain(calls.users[0]).name, 'Brand')
 })
 
-test('with no first- or last-name fields the name falls back to the email', async () => {
+test('a nameless member on the free Brand plan reads "Brand Name"', async () => {
   const namelessMember = member()
   namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_free-plan-f6kn0dxz', active: true },
+  ]
   const { calls } = loadMessages({ member: namelessMember, search: '' })
 
   await settle()
 
-  assert.equal(plain(calls.users[0]).name, 'brand@example.com')
+  assert.equal(plain(calls.users[0]).name, 'Brand Name')
+})
+
+test('a nameless member on the paid Brand plan reads "Brand Name"', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  // The status-string flavor of "active" that route-guard also accepts.
+  namelessMember.planConnections = [
+    { planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'Brand Name')
+})
+
+test('a nameless Talent member reads "Starter Name"', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'Starter Name')
+})
+
+test('a nameless member with no mapped active plan keeps the generic default', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_something-unmapped-000000', active: true },
+    { planId: 'pln_new-paid-plan-463h04ph', active: false, status: 'CANCELED' },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'The Starters member')
+})
+
+test('conflicting Brand and Talent plans fail closed to the generic default', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_new-paid-plan-463h04ph', active: true },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.equal(plain(calls.users[0]).name, 'The Starters member')
+})
+
+test('the email field stays synced even when the name is a placeholder', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]), {
+    id: MY_ID,
+    name: 'Starter Name',
+    email: 'brand@example.com',
+    custom: { company: '' },
+  })
+})
+
+test('a member with a company gets it synced trimmed into custom.company', async () => {
+  const companyMember = member()
+  companyMember.customFields = { 'free-user': 'Brand', company: '  Acme Co  ' }
+  const { calls } = loadMessages({ member: companyMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Acme Co' })
+})
+
+test('a member without a company or mapped plan syncs a blank custom.company', async () => {
+  const { calls } = loadMessages({ search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
+})
+
+test('a Brand without a company reads "Company Name"', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_new-paid-plan-463h04ph', active: true },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Company Name' })
+})
+
+test('a Brand with a company keeps the real company over the placeholder', async () => {
+  const companyMember = member()
+  companyMember.customFields = { 'free-user': 'Brand', company: '  Acme Co  ' }
+  companyMember.planConnections = [
+    { planId: 'pln_free-plan-f6kn0dxz', active: true },
+  ]
+  const { calls } = loadMessages({ member: companyMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Acme Co' })
+})
+
+test('a Talent member without a company keeps a blank company', async () => {
+  const talentMember = member()
+  talentMember.customFields = {}
+  talentMember.planConnections = [
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: talentMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
+})
+
+test('conflicting plan roles fail closed to a blank company', async () => {
+  const conflictedMember = member()
+  conflictedMember.customFields = {}
+  conflictedMember.planConnections = [
+    { planId: 'pln_new-paid-plan-463h04ph', active: true },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: conflictedMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
 })
 
 test('?with= opens the one-on-one conversation and selects it', async () => {
