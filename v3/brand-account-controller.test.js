@@ -737,6 +737,63 @@ test('visible Starter Edit Profile leaves non-Talent and off-route forms native'
   }
 })
 
+test('visible Starter Edit Profile leaves logged-out and unreadable roles native', async () => {
+  for (const state of ['logged-out', 'unreadable']) {
+    const starterProfileForm = makeForm('starter-profile', {
+      email: 'talent-next@example.com',
+    })
+    const environment = loadController({
+      buildForm: null,
+      starterProfileForm,
+      pathname: '/starter-edit-profile',
+      config: { guardSecurityForm: 'identity' },
+      getCurrentMember:
+        state === 'logged-out' ? async () => ({ data: null }) : undefined,
+      routeGuard: {
+        memberRole() {
+          if (state === 'unreadable') throw new Error('role lookup failed')
+          throw new Error('role lookup must not run while logged out')
+        },
+      },
+    })
+
+    starterProfileForm.submitEvent()
+    await settle()
+
+    assert.equal(starterProfileForm.nativeSubmits, 1)
+    assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  }
+})
+
+test('visible Starter Edit Profile sends at most one reset email for one real change', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-next@example.com',
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  starterProfileForm.submitEvent()
+  await settle()
+  starterProfileForm.submitEvent()
+  await settle()
+
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail').length,
+    1,
+  )
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'updateMemberAuth').length,
+    1,
+  )
+  assert.equal(starterProfileForm.nativeSubmits, 2)
+})
+
 test('Account Security preserves Brand telemetry and classifies Starter failures separately', async () => {
   for (const scenario of [
     { mode: 'brand', role: 'brand-paid', path: 'brand/account/email' },
