@@ -417,18 +417,22 @@
     var ownsSubmission = false
 
     // Native constraint validation prevents the form's submit event from
-    // firing when an unrelated required profile field is incomplete. Keep
-    // that validation for profile saves, but let a valid changed login email
-    // use the identity path independently. A later complete profile save sees
-    // an unchanged email and replays the authored form normally.
+    // firing when an unrelated required profile field is incomplete. The
+    // authored submit disables pointer events in that state, so its direct
+    // wrapper receives the click. Keep that validation for profile saves, but
+    // let a valid changed login email use the identity path independently. A
+    // later complete profile save sees an unchanged email and replays the
+    // authored form normally.
     form.addEventListener(
       'click',
       function (event) {
-        var submit = form.querySelector('[type="submit"]')
+        var submit =
+          form.querySelector('[data-edit-submit]') || form.querySelector('[type="submit"]')
         var clickedSubmit =
           submit &&
           (event.target === submit ||
-            (typeof submit.contains === 'function' && submit.contains(event.target)))
+            (typeof submit.contains === 'function' && submit.contains(event.target)) ||
+            event.target === submit.parentElement)
         if (!clickedSubmit || busy) return
         if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 
