@@ -22,10 +22,11 @@
  * email calls are never automatically retried; Memberstack's Forgot Password
  * flow is the recovery path when delivery cannot be confirmed.
  *
- * The Account Security interception is also OFF by default so it cannot race
- * Memberstack's currently published `data-ms-form="profile"` handler. The
- * configured identity-scoped mode resolves the current member through the
- * canonical route-guard role contract and claims both Brand and Talent forms:
+ * Login-email interception is also OFF by default so it cannot race the forms'
+ * existing submit owners. The configured identity-scoped mode resolves the
+ * current member through the canonical route-guard role contract, claims Brand
+ * and Talent Account Security, and guards the visible Talent edit-profile form
+ * before replaying its Designer-authored Xano submission:
  *   window.StartersBrandAccountConfig = { guardSecurityForm: 'identity' }
  * The legacy `brand` mode remains supported for a rollback-safe rollout.
  */
