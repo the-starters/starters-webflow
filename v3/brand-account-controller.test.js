@@ -747,6 +747,40 @@ test('independent Starter email accepts a click from nested submit content', asy
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
 })
 
+test('independent Starter email accepts the disabled authored submit wrapper click', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-next@example.com',
+    valid: false,
+  })
+  starterProfileForm.inputs.delete('[type="submit"]')
+  starterProfileForm.inputs.set('[data-edit-submit]', starterProfileForm.submit)
+  const disabledSubmitWrapper = {
+    contains(candidate) {
+      return candidate === starterProfileForm.submit
+    },
+  }
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  const click = starterProfileForm.clickSubmit(disabledSubmitWrapper)
+  await settle()
+
+  assert.equal(click.event.prevented, true)
+  assert.equal(click.event.stopped, true)
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.equal(starterProfileForm.nativeSubmits, 0)
+  assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
+})
+
 test('independent Starter email change preserves its validated click-time snapshot', async () => {
   const values = {
     email: 'validated@example.com',

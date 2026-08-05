@@ -424,11 +424,15 @@
     form.addEventListener(
       'click',
       function (event) {
-        var submit = form.querySelector('[type="submit"]')
+        var submit =
+          form.querySelector('[data-edit-submit]') || form.querySelector('[type="submit"]')
         var clickedSubmit =
           submit &&
           (event.target === submit ||
-            (typeof submit.contains === 'function' && submit.contains(event.target)))
+            (typeof submit.contains === 'function' && submit.contains(event.target)) ||
+            (event.target &&
+              typeof event.target.contains === 'function' &&
+              event.target.contains(submit)))
         if (!clickedSubmit || busy) return
         if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 
