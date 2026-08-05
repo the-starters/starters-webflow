@@ -324,6 +324,8 @@
       call('brand/applications/archive', { method: 'PATCH', body: { application_id } }),
     brandAppRestore: (application_id) =>
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
+    projectCreate: (payload) => call('projects/create/v3', { body: payload }),
+    projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
     // starter / talent
     starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
     starterOppList: (tab, page = 1, per_page = 20, options = {}) =>
