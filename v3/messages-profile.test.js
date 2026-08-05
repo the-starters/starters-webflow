@@ -457,11 +457,12 @@ test('a nameless Brand viewer reads "Brand Name", never the email', async () => 
   await settle()
 
   // The email stays synced as a field — it just never becomes the name.
+  // Brands without a company get the 'Company Name' placeholder.
   assert.deepEqual(plain(loaded.calls.users[0]), {
     id: VIEWER_ID,
     name: 'Brand Name',
     email: 'viewer@example.com',
-    custom: { company: '' },
+    custom: { company: 'Company Name' },
   })
 })
 
@@ -505,12 +506,48 @@ test('a viewer with a company gets it synced trimmed into custom.company', async
   assert.deepEqual(plain(loaded.calls.users[0]).custom, { company: 'Acme Co' })
 })
 
-test('a viewer without a company syncs an empty custom.company to self-clear', async () => {
+test('a viewer without a company or mapped plan syncs a blank custom.company', async () => {
   const loaded = load({
     triggers: [starterTrigger()],
     member: {
       id: VIEWER_ID,
       customFields: { 'free-user': 'Brand' },
+    },
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(plain(loaded.calls.users[0]).custom, { company: '' })
+})
+
+test('a Brand viewer keeps the real company over the placeholder', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      customFields: { 'free-user': 'Brand', company: '  Acme Co  ' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }],
+    },
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(plain(loaded.calls.users[0]).custom, { company: 'Acme Co' })
+})
+
+test('a Talent viewer without a company keeps a blank company', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      customFields: {},
+      planConnections: [
+        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+      ],
     },
     role: 'brand-paid',
   })

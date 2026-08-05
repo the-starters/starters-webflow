@@ -320,8 +320,61 @@ test('a member with a company gets it synced trimmed into custom.company', async
   assert.deepEqual(plain(calls.users[0]).custom, { company: 'Acme Co' })
 })
 
-test('a member without a company syncs an empty custom.company to self-clear', async () => {
+test('a member without a company or mapped plan syncs a blank custom.company', async () => {
   const { calls } = loadMessages({ search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
+})
+
+test('a Brand without a company reads "Company Name"', async () => {
+  const namelessMember = member()
+  namelessMember.customFields = {}
+  namelessMember.planConnections = [
+    { planId: 'pln_new-paid-plan-463h04ph', active: true },
+  ]
+  const { calls } = loadMessages({ member: namelessMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Company Name' })
+})
+
+test('a Brand with a company keeps the real company over the placeholder', async () => {
+  const companyMember = member()
+  companyMember.customFields = { 'free-user': 'Brand', company: '  Acme Co  ' }
+  companyMember.planConnections = [
+    { planId: 'pln_free-plan-f6kn0dxz', active: true },
+  ]
+  const { calls } = loadMessages({ member: companyMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Acme Co' })
+})
+
+test('a Talent member without a company keeps a blank company', async () => {
+  const talentMember = member()
+  talentMember.customFields = {}
+  talentMember.planConnections = [
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: talentMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
+})
+
+test('conflicting plan roles fail closed to a blank company', async () => {
+  const conflictedMember = member()
+  conflictedMember.customFields = {}
+  conflictedMember.planConnections = [
+    { planId: 'pln_new-paid-plan-463h04ph', active: true },
+    { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+  ]
+  const { calls } = loadMessages({ member: conflictedMember, search: '' })
 
   await settle()
 

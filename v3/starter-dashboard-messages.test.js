@@ -202,12 +202,60 @@ test('a member with a company gets it synced trimmed into custom.company', async
   assert.deepEqual(plain(calls.users[0]).custom, { company: 'Acme Co' })
 })
 
-test('a member without a company syncs an empty custom.company to self-clear', async () => {
+test('a member without a company or mapped plan syncs a blank custom.company', async () => {
   const { calls } = loadTile({
     member: {
       id: MY_ID,
       auth: { email: 'starter@example.com' },
       customFields: { 'free-user': 'Kaeser' },
+    },
+  })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
+})
+
+test('a Brand without a company reads "Company Name"', async () => {
+  const { calls } = loadTile({
+    member: {
+      id: MY_ID,
+      auth: { email: 'starter@example.com' },
+      customFields: {},
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', active: true }],
+    },
+  })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Company Name' })
+})
+
+test('a Brand with a company keeps the real company over the placeholder', async () => {
+  const { calls } = loadTile({
+    member: {
+      id: MY_ID,
+      auth: { email: 'starter@example.com' },
+      customFields: { 'free-user': 'Kaeser', company: '  Acme Co  ' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', active: true }],
+    },
+  })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Acme Co' })
+})
+
+test('conflicting plan roles fail closed to a blank company', async () => {
+  const { calls } = loadTile({
+    member: {
+      id: MY_ID,
+      auth: { email: 'starter@example.com' },
+      customFields: {},
+      planConnections: [
+        { planId: 'pln_new-paid-plan-463h04ph', active: true },
+        { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', active: true },
+      ],
     },
   })
 

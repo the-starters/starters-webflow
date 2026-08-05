@@ -478,13 +478,17 @@
     'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
   }
 
+  // Placeholder display names by plan family; members outside both families
+  // read the generic default.
+  var NAME_PLACEHOLDERS = { brand: 'Brand Name', talent: 'Starter Name' }
+
   /**
-   * Display-name placeholder for a member without a first name. Mirrors
-   * v3/route-guard.js roleResolution: active plan connections collapse to
-   * brand vs talent, and a cross-family conflict fails closed to the
-   * generic default.
+   * Resolve the member's plan family: 'brand', 'talent', or null when no
+   * mapped plan is active. Mirrors v3/route-guard.js roleResolution: active
+   * plan connections collapse to brand vs talent, and a cross-family
+   * conflict fails closed to null.
    */
-  function namePlaceholder(member) {
+  function roleFamily(member) {
     var roles = (member.planConnections || [])
       .filter(function (connection) {
         return (
@@ -499,10 +503,10 @@
 
     var isBrand = roles.includes('brand-free') || roles.includes('brand-paid')
     var isTalent = roles.includes('talent')
-    if (isBrand && isTalent) return 'The Starters member'
-    if (isBrand) return 'Brand Name'
-    if (isTalent) return 'Starter Name'
-    return 'The Starters member'
+    if (isBrand && isTalent) return null
+    if (isBrand) return 'brand'
+    if (isTalent) return 'talent'
+    return null
   }
 
   function talkUserFields(member) {
@@ -520,14 +524,19 @@
       .toString()
       .trim()
 
+    var company = (customFields['company'] || '').toString().trim()
+    // The plan family is resolved once and drives both placeholders.
+    var family = roleFamily(member)
+
     var fields = {
       id: member.id,
-      name: firstName || namePlaceholder(member),
+      name: firstName || NAME_PLACEHOLDERS[family] || 'The Starters member',
       // User-level custom data for the TalkJS theme (company shown under the
       // first name). TalkJS custom values must be strings, and the key is
       // always present so a stale previously-synced company self-clears.
+      // Brands without a company read 'Company Name'; everyone else blank.
       custom: {
-        company: (customFields['company'] || '').toString().trim(),
+        company: company || (family === 'brand' ? 'Company Name' : ''),
       },
     }
     if (email) fields.email = email
