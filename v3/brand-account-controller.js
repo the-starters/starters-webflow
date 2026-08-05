@@ -330,11 +330,8 @@
     return { memberId: member.id }
   }
 
-  async function submitSecurity(form, memberSnapshot, emailSelector) {
-    var email = inputValue(
-      form,
-      emailSelector || '[data-ms-member="email"]',
-    ).toLowerCase()
+  async function submitSecurity(form, memberSnapshot, emailSnapshot) {
+    var email = trim(emailSnapshot).toLowerCase()
     if (!EMAIL_PATTERN.test(email)) throw new Error('Enter a valid email address.')
     var client = memberstack()
     var member = memberSnapshot || (await currentMember(client))
@@ -459,7 +456,7 @@
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
-            await submitSecurity(form, member, STARTER_PROFILE_EMAIL_SELECTOR)
+            await submitSecurity(form, member, email)
             setMessage(form, 'success', '')
             return true
           })
@@ -496,6 +493,7 @@
         busy = true
         ownsSubmission = false
         var submitter = event.submitter
+        var email = inputValue(form, STARTER_PROFILE_EMAIL_SELECTOR).toLowerCase()
 
         Promise.resolve()
           .then(async function () {
@@ -504,14 +502,13 @@
             var member = await currentMember(memberstack())
             if (guard.memberRole(member) !== 'talent') return false
 
-            var email = inputValue(form, STARTER_PROFILE_EMAIL_SELECTOR).toLowerCase()
             if (!EMAIL_PATTERN.test(email)) return false
             if (memberEmail(member) === email) return false
 
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
-            await submitSecurity(form, member, STARTER_PROFILE_EMAIL_SELECTOR)
+            await submitSecurity(form, member, email)
             return true
           })
           .then(function () {
@@ -558,6 +555,7 @@
         ownsSubmission = false
         submissionRole = null
         var submitter = event.submitter
+        var email = inputValue(form, '[data-ms-member="email"]').toLowerCase()
 
         Promise.resolve()
           .then(async function () {
@@ -570,7 +568,7 @@
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
-            await submitSecurity(form, member)
+            await submitSecurity(form, member, email)
             setMessage(form, 'success', '')
             return true
           })

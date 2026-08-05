@@ -718,6 +718,50 @@ test('visible Starter Edit Profile changes email independently when unrelated re
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
 })
 
+test('independent Starter email change preserves its validated click-time snapshot', async () => {
+  const values = {
+    email: 'validated@example.com',
+    valid: false,
+  }
+  const starterProfileForm = makeForm('starter-profile', values)
+  let resolveMember
+  const memberRead = new Promise((resolve) => {
+    resolveMember = resolve
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    getCurrentMember: () => memberRead,
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  starterProfileForm.clickSubmit()
+  await flush()
+  starterProfileForm.inputs.get('input[type="email"]').value = 'blocked@example.com'
+  values.emailValid = false
+  resolveMember({
+    data: {
+      id: 'mem_sb_talent',
+      auth: { email: 'talent-old@example.com' },
+    },
+  })
+  await settle()
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.deepEqual(plain(environment.calls[1].payload), {
+    email: 'validated@example.com',
+  })
+  assert.deepEqual(plain(environment.calls[2].payload), {
+    email: 'validated@example.com',
+  })
+})
+
 test('valid Starter profile click stays native so the submit path can save all fields', async () => {
   const starterProfileForm = makeForm('starter-profile', {
     email: 'talent-next@example.com',
