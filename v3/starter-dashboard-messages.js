@@ -1,7 +1,7 @@
 /**
  * Starter Dashboard 3.0 — Messages tile.
  *
- * @release v1.59.107
+ * @release v1.59.108
  *
  * Binds the #messages tile on /starter-dashboard to the member's recent
  * TalkJS conversations. Two data sources, merged:
