@@ -66,7 +66,9 @@ function makeForm(kind = 'build', values = {}) {
   } else if (kind === 'security') {
     inputs.set('[data-ms-member="email"]', makeElement(values.email || 'ada@example.com'))
   } else {
-    inputs.set('input[type="email"]', makeElement(values.email || 'ada@example.com'))
+    const emailInput = makeElement(values.email || 'ada@example.com')
+    emailInput.checkValidity = () => values.emailValid !== false
+    inputs.set('input[type="email"]', emailInput)
   }
   inputs.set('[type="submit"]', submit)
   inputs.set('[data-opp-element="loading-button"]', loading)
@@ -755,6 +757,29 @@ test('invalid email stays native so browser validation remains authoritative', a
   await settle()
 
   assert.equal(click.event.prevented, false)
+  assert.deepEqual(environment.calls, [])
+})
+
+test('natively invalid Starter email stays native despite matching the basic pattern', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-next@example.com',
+    emailValid: false,
+    valid: false,
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  const click = starterProfileForm.clickSubmit()
+  await settle()
+
+  assert.equal(click.event.prevented, false)
+  assert.equal(click.event.stopped, false)
   assert.deepEqual(environment.calls, [])
 })
 

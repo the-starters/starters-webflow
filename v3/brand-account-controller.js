@@ -429,7 +429,16 @@
         if (!submit || event.target !== submit || busy) return
         if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 
-        var email = inputValue(form, STARTER_PROFILE_EMAIL_SELECTOR).toLowerCase()
+        var emailInput = form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
+        if (
+          !emailInput ||
+          typeof emailInput.checkValidity !== 'function' ||
+          !emailInput.checkValidity()
+        ) {
+          return
+        }
+
+        var email = trim(emailInput.value).toLowerCase()
         if (!EMAIL_PATTERN.test(email)) return
 
         event.preventDefault()
