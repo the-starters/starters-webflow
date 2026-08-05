@@ -24,6 +24,8 @@
   var FORM_SELECTOR = 'form[data-project-form-v3="brand"]'
   var OPEN_SELECTOR = '[data-project-form-open]'
   var FIELD_ATTR = 'data-project-field'
+  var CONTRACT_CHOICE_SELECTOR = '[data-project-contract-choice]'
+  var PAYLOAD_CONTROL_SELECTOR = '[' + FIELD_ATTR + '], ' + CONTRACT_CHOICE_SELECTOR
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   var ENGAGEMENT_TYPES = {
@@ -169,7 +171,7 @@
 
     var engagement = canonicalEngagement(payload.engagement_type)
     var contractChoice = form && form.querySelector
-      ? form.querySelector('[data-project-contract-choice]:checked')
+      ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked')
       : null
     if (contractChoice && canonicalEngagement(fieldValue(contractChoice)).value === 'own_contract') {
       engagement = { value: 'own_contract', unsupported: false }
@@ -217,7 +219,7 @@
     var formState = state(form)
     if (locked) {
       if (formState.lockedFields) return
-      var fields = form.querySelectorAll('[' + FIELD_ATTR + ']')
+      var fields = form.querySelectorAll(PAYLOAD_CONTROL_SELECTOR)
       formState.lockedFields = Array.prototype.map.call(fields, function (field) {
         var wasDisabled = Boolean(field.disabled)
         field.disabled = true

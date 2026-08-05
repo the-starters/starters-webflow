@@ -15,7 +15,7 @@ class Element {
     this.value = attrs.value || ''
     this.type = attrs.type || 'text'
     this.checked = attrs.checked !== false
-    this.disabled = false
+    this.disabled = attrs.disabled === true
     this.hidden = false
     this.textContent = ''
     this.style = { display: '' }
@@ -40,6 +40,9 @@ class Element {
   }
   querySelectorAll(selector) {
     if (selector === '[data-project-field]') return this.children
+    if (selector === '[data-project-field], [data-project-contract-choice]') {
+      return this.children.concat(this.contractChoices || (this.contractChoice ? [this.contractChoice] : []))
+    }
     if (selector.includes('[type="submit"]')) return this.submitters || []
     return []
   }
@@ -227,6 +230,11 @@ test('locks fields in flight and retains the retry key after a lost response', a
     return new Promise((resolve, reject) => { rejectRequest = reject })
   }
   const { api, document, form, window } = load({ createProject })
+  form.contractChoice = new Element({ 'data-project-contract-choice': '', type: 'radio', value: 'My own contract' })
+  const disabledChoice = new Element({ 'data-project-contract-choice': '', type: 'radio', value: 'Standard', disabled: true })
+  form.contractChoice.form = form
+  disabledChoice.form = form
+  form.contractChoices = [form.contractChoice, disabledChoice]
   const pending = api.submit(form, window, document)
   await Promise.resolve()
   const keyField = form.querySelector('[data-project-field="idempotency_key"]')
@@ -234,12 +242,16 @@ test('locks fields in flight and retains the retry key after a lost response', a
   const title = form.querySelector('[data-project-field="title"]')
   title.form = form
   assert.equal(title.disabled, true)
+  assert.equal(form.contractChoice.disabled, true)
+  assert.equal(disabledChoice.disabled, true)
   document.listeners.input.handler({ target: title })
   assert.equal(keyField.value, retryKey)
   assert.equal(api.submit(form, window, document), pending)
   rejectRequest(Object.assign(new Error('lost response'), { status: 503 }))
   assert.equal(await pending, false)
   assert.equal(title.disabled, false)
+  assert.equal(form.contractChoice.disabled, false)
+  assert.equal(disabledChoice.disabled, true)
   assert.equal(keyField.value, retryKey)
   assert.equal(payloads[0].idempotency_key, retryKey)
   document.listeners.input.handler({ target: title })
