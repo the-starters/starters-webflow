@@ -1,10 +1,11 @@
 /**
- * Brand signup plan, Build Account, and guarded email controller.
+ * Brand signup plan, Build Account, and guarded identity email controller.
  *
  * Authority contract:
  *   - Memberstack owns identity, login email, custom fields, and profile image.
  *   - Xano endpoint #1513 consumes Memberstack webhooks and mirrors successful
- *     state into `user_v3` and `brands_v3` by stable Memberstack member ID.
+ *     state into `user_v3` and the matching Brand or Talent role row by stable
+ *     Memberstack member ID.
  *
  * This controller keeps the Designer-authored forms intact. It aligns the
  * native signup plan with the hostname's Memberstack data mode. On Build

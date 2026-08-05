@@ -1,4 +1,4 @@
-# Brand Signup, Build, And Edit Wiring
+# Brand Account And Starter Email Wiring
 
 ## Authority
 
