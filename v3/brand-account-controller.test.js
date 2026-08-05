@@ -542,7 +542,7 @@ test('Brand Account Security owns the submit and skips an unchanged email', asyn
   assert.equal(submission.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember'],
+    ['getCurrentMember'],
   )
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
@@ -562,9 +562,9 @@ test('Brand Account Security changes email and sends reset password email once',
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
-  assert.deepEqual(plain(environment.calls[3].payload), { email: 'next@example.com' })
+  assert.deepEqual(plain(environment.calls[2].payload), { email: 'next@example.com' })
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
@@ -588,7 +588,6 @@ test('Brand-scoped Account Security binds Brand roles and sends only the reset p
     assert.deepEqual(
       environment.calls.map((call) => call.method),
       [
-        'getCurrentMember',
         'getCurrentMember',
         'updateMemberAuth',
         'sendMemberResetPasswordEmail',
@@ -618,9 +617,9 @@ test('Identity-scoped Account Security owns Talent email changes', async () => {
   assert.equal(submission.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
-  assert.deepEqual(plain(environment.calls[2].payload), {
+  assert.deepEqual(plain(environment.calls[1].payload), {
     email: 'talent-next@example.com',
   })
   assert.equal(securityForm.nativeSubmits, 0)
@@ -672,6 +671,41 @@ test('Identity-scoped Account Security still leaves unknown and conflicted roles
     assert.equal(securityForm.nativeSubmits, 1)
     assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
   }
+})
+
+test('Identity-scoped Account Security uses its authorized member snapshot for mutation', async () => {
+  const securityForm = makeForm('security', { email: 'next@example.com' })
+  let reads = 0
+  const authorizedMember = {
+    id: 'mem_sb_talent',
+    auth: { email: 'old@example.com' },
+    planConnections: ['talent'],
+  }
+  const environment = loadController({
+    buildForm: null,
+    securityForm,
+    config: { guardSecurityForm: 'identity' },
+    getCurrentMember: async () => {
+      reads += 1
+      if (reads === 1) return { data: authorizedMember }
+      return { data: { ...authorizedMember, planConnections: ['conflicting-plan-roles'] } }
+    },
+    routeGuard: {
+      memberRole(member) {
+        return member.planConnections[0]
+      },
+    },
+  })
+
+  securityForm.submitEvent()
+  await settle()
+
+  assert.equal(reads, 1)
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.equal(securityForm.nativeSubmits, 0)
 })
 
 test('Brand-scoped Account Security leaves Talent, unmapped, and conflicted roles Memberstack-native', async () => {

@@ -327,11 +327,11 @@
     return { memberId: member.id }
   }
 
-  async function submitSecurity(form) {
+  async function submitSecurity(form, memberSnapshot) {
     var email = inputValue(form, '[data-ms-member="email"]').toLowerCase()
     if (!EMAIL_PATTERN.test(email)) throw new Error('Enter a valid email address.')
     var client = memberstack()
-    var member = await currentMember(client)
+    var member = memberSnapshot || (await currentMember(client))
     var result = await updateEmailIfChanged(client, member, email)
     if (result.changed) await sendResetPasswordEmailOnce(form, client, result.email)
     return result
@@ -437,7 +437,7 @@
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
-            await submitSecurity(form)
+            await submitSecurity(form, member)
             setMessage(form, 'success', '')
             return true
           })
