@@ -25,8 +25,10 @@
  * Login-email interception is also OFF by default so it cannot race the forms'
  * existing submit owners. The configured identity-scoped mode resolves the
  * current member through the canonical route-guard role contract, claims Brand
- * and Talent Account Security, and guards the visible Talent edit-profile form
- * before replaying its Designer-authored Xano submission:
+ * and Talent Account Security, and guards the visible Talent edit-profile form.
+ * A valid changed login email can save independently when other required
+ * profile fields are incomplete; a valid full-profile submit changes the login
+ * email first and then replays its Designer-authored Xano submission:
  *   window.StartersBrandAccountConfig = { guardSecurityForm: 'identity' }
  * The legacy `brand` mode remains supported for a rollback-safe rollout.
  */

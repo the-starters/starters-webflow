@@ -82,10 +82,14 @@ keeps its existing authenticated Xano submission owner:
 </form>
 ```
 
-On `/starter-edit-profile`, the controller reads the form's first email input,
-updates a changed Talent login email in Memberstack, and then replays the same
-native submission. Do not add a second form, remove the existing Xano handler,
-or move the login-email input outside this form.
+On `/starter-edit-profile`, the controller reads the form's first email input.
+When the whole form is valid, it updates a changed Talent login email in
+Memberstack and then replays the same native submission. When unrelated required
+profile fields are incomplete, clicking submit still saves a natively valid,
+changed login email through Memberstack without submitting the incomplete
+profile to Xano. Invalid or unchanged email input remains under the browser's
+native full-profile validation. Do not add a second form, remove the existing
+Xano handler, or move the login-email input outside this form.
 
 ## Install order
 
@@ -161,10 +165,13 @@ sitewide:
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
   `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`. On
   `/starter-edit-profile`, the same setting also guards the visible
-  `#wf-form-Build-Form-Full-Profile` for Talent: a changed email is written to
-  Memberstack first, then the existing Designer-authored profile submit is
-  replayed so its authenticated Xano save continues unchanged. An unchanged
-  email is replayed without an auth mutation or reset email.
+  `#wf-form-Build-Form-Full-Profile` for Talent. A natively valid changed email
+  can be written to Memberstack even while unrelated required profile fields
+  are incomplete, without running the Xano profile save. On a valid full-profile
+  submit, the email is written first and the existing Designer-authored submit
+  is replayed so its authenticated Xano save continues unchanged. An unchanged
+  email preserves native full-profile validation without an auth mutation or
+  reset email.
 - `guardSecurityForm: 'brand'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
   `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. This is the
@@ -221,6 +228,10 @@ projection.
   completion marker before attempting one reset/set-password email.
 - Account Security and the guarded Talent edit-profile form attempt that email
   only after a changed login email has been saved successfully.
+- An independent Talent login-email save requires the authored email input to
+  pass native constraint validation and the normalized email to differ from the
+  current Memberstack login email. It does not bypass or submit unrelated
+  invalid profile fields.
 - No separate verification email is sent. Successful redemption of the one
   reset/set-password link is the email-ownership proof.
 - Reset-email delivery is an external, non-idempotent browser side effect. The
@@ -285,8 +296,10 @@ and execution owner. Do not create a new member as a substitute.
    per system, Talent role, and unchanged consent/status before the write.
 3. Confirm the published sitewide configuration reads
    `guardSecurityForm: 'identity'`. As Talent, submit the visible native form on
-   `/starter-edit-profile` once with only the email changed and require exactly
-   one reset/set-password message. Brand may continue using the native Account
+   `/starter-edit-profile` once with only the email changed while an unrelated
+   required profile field is incomplete. Require the Memberstack login email to
+   change, exactly one reset/set-password message, and no Xano full-profile
+   submission from that click. Brand may continue using the native Account
    Security modal.
 4. Read Memberstack, `user_v3`, and `freelancers_v3` by Memberstack member ID.
    Require the canary email, unchanged stable row IDs and role, and a common
