@@ -144,7 +144,12 @@ sitewide:
 
 - `guardSecurityForm: 'identity'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
-  `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`.
+  `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`. On
+  `/starter-edit-profile`, the same setting also guards the visible
+  `#wf-form-Build-Form-Full-Profile` for Talent: a changed email is written to
+  Memberstack first, then the existing Designer-authored profile submit is
+  replayed so its authenticated Xano save continues unchanged. An unchanged
+  email is replayed without an auth mutation or reset email.
 - `guardSecurityForm: 'brand'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
   `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. This is the
@@ -257,9 +262,10 @@ and execution owner. Do not create a new member as a substitute.
 2. Read every system by those stable IDs and require the old email, one record
    per system, Talent role, and unchanged consent/status before the write.
 3. Confirm the published sitewide configuration reads
-   `guardSecurityForm: 'identity'`. Submit the existing native Account Security
-   form once with the canary email and require exactly one reset/set-password
-   message.
+   `guardSecurityForm: 'identity'`. As Talent, submit the visible native form on
+   `/starter-edit-profile` once with only the email changed and require exactly
+   one reset/set-password message. Brand may continue using the native Account
+   Security modal.
 4. Read Memberstack, `user_v3`, and `freelancers_v3` by Memberstack member ID.
    Require the canary email, unchanged stable row IDs and role, and a common
    processed event watermark. Replay the captured webhook once and require a
@@ -275,8 +281,8 @@ and execution owner. Do not create a new member as a substitute.
 7. Run read-only reconciliation from the Memberstack member ID and require zero
    unexplained differences across Memberstack, both Xano rows, TalkJS,
    Mailchimp, and Webflow before ending the canary.
-8. Roll back through the same native Account Security form by submitting the old
-   email once. Repeat steps 4 through 7 in reverse, requiring the same stable
+8. Roll back through the same native `/starter-edit-profile` form by submitting
+   the old email once. Repeat steps 4 through 7 in reverse, requiring the same stable
    IDs, one rollback reset message, advanced watermarks, restored email, and no
    duplicate or consent/status drift.
 

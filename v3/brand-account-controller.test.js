@@ -63,8 +63,10 @@ function makeForm(kind = 'build', values = {}) {
     inputs.set('[name="Last-Name"]', makeElement(values.lastName || 'Lovelace'))
     inputs.set('[name="Email-Address"]', makeElement(values.email || 'ada@example.com'))
     inputs.set('[name="Company-Name"]', makeElement(values.company || 'Analytical Engines'))
-  } else {
+  } else if (kind === 'security') {
     inputs.set('[data-ms-member="email"]', makeElement(values.email || 'ada@example.com'))
+  } else {
+    inputs.set('input[type="email"]', makeElement(values.email || 'ada@example.com'))
   }
   inputs.set('[type="submit"]', submit)
   inputs.set('[data-opp-element="loading-button"]', loading)
@@ -140,6 +142,7 @@ function makeForm(kind = 'build', values = {}) {
 function loadController(options = {}) {
   const buildForm = options.buildForm === null ? null : options.buildForm || makeForm('build')
   const securityForm = options.securityForm || makeForm('security')
+  const starterProfileForm = options.starterProfileForm || null
   const signupForm = options.signupForm || null
   const calls = []
   const tracked = []
@@ -209,6 +212,7 @@ function loadController(options = {}) {
     querySelector(selector) {
       if (selector === '#wf-form-Complete-Profile-Form') return buildForm
       if (selector === '#wf-form-Account-Security') return securityForm
+      if (selector === '#wf-form-Build-Form-Full-Profile') return starterProfileForm
       if (selector === '#wf-form-Brand-Signup') return signupForm
       return null
     },
@@ -234,6 +238,7 @@ function loadController(options = {}) {
     memberstack,
     redirects,
     securityForm,
+    starterProfileForm,
     signupForm,
     tracked,
     window,
@@ -624,6 +629,77 @@ test('Identity-scoped Account Security owns Talent email changes', async () => {
   })
   assert.equal(securityForm.nativeSubmits, 0)
   assert.equal(securityForm.wrapper.done.style.display, 'block')
+})
+
+test('visible Starter Edit Profile changes Memberstack email before replaying the authored submit', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-next@example.com',
+    nativeSubmitNeedsMacrotask: true,
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  const submission = starterProfileForm.submitEvent()
+  await settle(12)
+
+  assert.equal(submission.event.prevented, true)
+  assert.equal(submission.event.stopped, true)
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.deepEqual(plain(environment.calls[1].payload), {
+    email: 'talent-next@example.com',
+  })
+  assert.equal(starterProfileForm.nativeSubmits, 1)
+})
+
+test('visible Starter Edit Profile replays an unchanged email without an auth mutation', async () => {
+  const starterProfileForm = makeForm('starter-profile', { email: 'talent@example.com' })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  starterProfileForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  assert.equal(starterProfileForm.nativeSubmits, 1)
+})
+
+test('visible Starter Edit Profile leaves non-Talent and off-route forms native', async () => {
+  for (const scenario of [
+    { pathname: '/starter-edit-profile', role: 'brand-paid', bound: true },
+    { pathname: '/starter-dashboard', role: 'talent', bound: false },
+  ]) {
+    const starterProfileForm = makeForm('starter-profile')
+    const environment = loadController({
+      buildForm: null,
+      starterProfileForm,
+      pathname: scenario.pathname,
+      config: { guardSecurityForm: 'identity' },
+      routeGuard: { memberRole: () => scenario.role },
+    })
+
+    assert.equal(starterProfileForm.listeners.has('submit'), scenario.bound)
+    if (scenario.bound) {
+      starterProfileForm.submitEvent()
+      await settle()
+      assert.equal(starterProfileForm.nativeSubmits, 1)
+      assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+    }
+  }
 })
 
 test('Account Security preserves Brand telemetry and classifies Starter failures separately', async () => {
