@@ -3,7 +3,7 @@
  * that Webflow's own IntersectionObserver can never trigger, and never let a submit
  * leave without a fresh token.
  *
- * @release v1.59.104
+ * @release v1.59.105
  *
  * THE BUG. Webflow "bot protection" (Cloudflare Turnstile) is on site-wide, so the
  * published forms runtime does this to every `form[data-turnstile-sitekey]`:
@@ -89,7 +89,7 @@
   window.__startersTurnstileContentsFixBooted = true
 
   // Keep in sync with the @release line in this file's header comment.
-  var RELEASE = 'v1.59.104'
+  var RELEASE = 'v1.59.105'
   var LOG_PREFIX = '[starters turnstile-contents-fix]'
 
   var SITEKEY_ATTR = 'data-turnstile-sitekey'
@@ -331,7 +331,11 @@
         else record.wrap.setAttribute('data-opp-loading', record.loading)
       }
       record.btn.classList.remove(LOADING_CLASS)
-      record.btn.disabled = false
+      // Restore the snapshot, never a blanket enable. These forms carry one submit
+      // button per branch tail, and the ones the member did not click are disabled on
+      // purpose by wf-validate and the flow logic. A hold ending — token arrived or
+      // timed out — must hand back exactly the state it borrowed.
+      record.btn.disabled = record.disabled
     })
     entry.waiting = null
     var doneWrapper = wrapperOf(entry.form)
@@ -542,9 +546,11 @@
         setWaiting(entry, true)
         info('holding a tokenless submit on ' + formLabel(entry.form) + '; waiting for a token')
 
-        var waited = 0
+        // Wall clock, not a tick count. A background or throttled tab clamps
+        // setInterval to roughly 1/s, which would silently stretch this 10s budget to
+        // 100s and leave a member staring at a spinner on a form they never left.
+        var startedAt = Date.now()
         var timer = window.setInterval(function () {
-          waited += TOKEN_POLL_MS
           if (tokenOf(entry)) {
             window.clearInterval(timer)
             entry.pendingHold = false
@@ -552,7 +558,7 @@
             resubmit(entry)
             return
           }
-          if (waited >= TOKEN_WAIT_MS) {
+          if (Date.now() - startedAt >= TOKEN_WAIT_MS) {
             window.clearInterval(timer)
             entry.pendingHold = false
             setWaiting(entry, false)
@@ -607,15 +613,15 @@
       done(true)
       return
     }
-    var waited = 0
+    // Wall clock for the same reason as the token wait above.
+    var startedAt = Date.now()
     var timer = window.setInterval(function () {
-      waited += TURNSTILE_POLL_MS
       if (turnstileReady()) {
         window.clearInterval(timer)
         done(true)
         return
       }
-      if (waited >= TURNSTILE_WAIT_MS) {
+      if (Date.now() - startedAt >= TURNSTILE_WAIT_MS) {
         window.clearInterval(timer)
         done(false)
       }
