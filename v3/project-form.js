@@ -145,14 +145,14 @@
   }
 
   function fieldValue(field) {
-    if (!field || field.disabled) return ''
+    if (!field) return ''
     var type = clean(field.type).toLowerCase()
     if ((type === 'checkbox' || type === 'radio') && !field.checked) return ''
     return clean(field.value)
   }
 
   function activeControl(field) {
-    if (!field || field.disabled || field.hidden) return false
+    if (!field || field.hidden) return false
     var node = field
     while (node && node !== field.form) {
       if (node.hidden || clean(node.getAttribute && node.getAttribute('aria-hidden')).toLowerCase() === 'true') return false
@@ -207,7 +207,7 @@
 
   function canonicalContractType(value) {
     var normalized = clean(value).toLowerCase()
-    if (normalized === 'my own contract' || normalized === 'your contract' || normalized === 'own_contract') return 'own_contract'
+    if (normalized === 'my own contract' || normalized === 'own contract' || normalized === 'your contract' || normalized === 'own_contract') return 'own_contract'
     if (normalized === 'standard contract' || normalized === 'standard') return 'standard'
     return ''
   }
@@ -384,6 +384,7 @@
     if (error) {
       error.textContent = status === 'error' ? message : ''
       error.hidden = status !== 'error'
+      error.style.display = status === 'error' ? 'block' : 'none'
       if (error.setAttribute) error.setAttribute('role', 'alert')
     }
     var submitters = form.querySelectorAll('[type="submit"], [data-project-submit]')
@@ -417,7 +418,7 @@
     if (formState.active) return false
     form.style.display = ''
     var wrapper = formContainer(form)
-    var priorSuccess = wrapper && wrapper.querySelector(SUCCESS_SELECTOR)
+    var priorSuccess = wrapper && (wrapper.querySelector(SUCCESS_SELECTOR) || wrapper.querySelector('.w-form-done'))
     if (priorSuccess) {
       priorSuccess.hidden = true
       priorSuccess.style.display = 'none'

@@ -36,6 +36,8 @@ class Element {
     if (selector === '[data-project-contract-choice]:checked') return this.contractChoice || null
     if (selector === 'input[type="radio"]:checked') return this.contractChoice || null
     if (selector === '[data-project-form-state="success"]') return this.success || null
+    if (selector === '.w-form-fail') return this.nativeError || null
+    if (selector === '.w-form-done') return this.nativeSuccess || null
     return null
   }
   querySelectorAll(selector) {
@@ -138,6 +140,7 @@ test('normalizes ids, money, dates, and supported engagement values', () => {
   assert.equal(api.canonicalEngagement('Monthly Recurring'), 'monthly')
   assert.equal(api.canonicalEngagement('Ongoing Hourly'), 'hourly')
   assert.equal(api.canonicalContractType('My own contract'), 'own_contract')
+  assert.equal(api.canonicalContractType('Own Contract'), 'own_contract')
   assert.equal(api.canonicalHourlyFrequency('One Time'), 'one_time')
 })
 
@@ -324,6 +327,48 @@ test('serializes the existing named Webflow controls without per-field attribute
   assert.equal(payload.hourly_billing_frequency, 'weekly')
   assert.equal(payload.maximum_hours_per_week, 20)
   assert.equal(payload.contract_type, 'standard')
+})
+
+test('serializes disabled authored controls from the confirmation step', () => {
+  const form = projectForm()
+  form.children = [
+    field('starter_memberstack_id', 'mem_starter_123', { disabled: true }),
+    nativeField('Project-Name', 'Confirmed project', { disabled: true }),
+    nativeField('Services', 'Paid Social', { disabled: true }),
+    nativeField('fee-structure', 'Weekly Recurring', { disabled: true }),
+    nativeField('startDateInput', '08/25/2026', { disabled: true }),
+    nativeField('Amount', '$1,250', { disabled: true }),
+    nativeField('Number-of-Weeks', '8', { disabled: true }),
+    nativeField('Project-Scope', 'Run the paid social program.', { disabled: true }),
+  ]
+  form.contractChoice = new Element({ type: 'radio', value: 'Own Contract', checked: true, disabled: true })
+  const { api, document } = load({ form })
+  const serialized = api.serialize(form, document)
+  assert.equal(api.validationError(serialized), '')
+  assert.equal(serialized.payload.title, 'Confirmed project')
+  assert.equal(serialized.payload.weekly_rate, 1250)
+  assert.equal(serialized.payload.contract_type, 'own_contract')
+})
+
+test('shows and resets native Webflow error and success states', async () => {
+  const form = projectForm({ title: '' })
+  form.error = null
+  form.wrapper = new Element()
+  form.wrapper.nativeError = new Element()
+  form.wrapper.nativeSuccess = new Element()
+  form.wrapper.nativeSuccess.hidden = false
+  form.wrapper.nativeSuccess.style.display = 'block'
+  const { api, document, window } = load({ form })
+  assert.equal(await api.submit(form, window, document), false)
+  assert.equal(form.wrapper.nativeError.hidden, false)
+  assert.equal(form.wrapper.nativeError.style.display, 'block')
+  form.querySelector('[data-project-field="title"]').value = 'Ready project'
+  const trigger = new Element({ 'data-modal-trigger': 'generate-contract' })
+  assert.equal(api.bindTrigger(trigger, document), true)
+  assert.equal(form.wrapper.nativeError.hidden, true)
+  assert.equal(form.wrapper.nativeError.style.display, 'none')
+  assert.equal(form.wrapper.nativeSuccess.hidden, true)
+  assert.equal(form.wrapper.nativeSuccess.style.display, 'none')
 })
 
 test('projects safe authorization errors without exposing raw server messages', async () => {
