@@ -425,7 +425,11 @@
       'click',
       function (event) {
         var submit = form.querySelector('[type="submit"]')
-        if (!submit || event.target !== submit || busy) return
+        var clickedSubmit =
+          submit &&
+          (event.target === submit ||
+            (typeof submit.contains === 'function' && submit.contains(event.target)))
+        if (!clickedSubmit || busy) return
         if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 
         var emailInput = form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
