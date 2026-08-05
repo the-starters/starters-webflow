@@ -1,7 +1,7 @@
 /**
  * /hire/<slug> — "Message this starter" modal.
  *
- * @release v1.59.103
+ * @release v1.59.106
  *
  * Mounts a TalkJS chatbox with the profiled starter inside the page's existing
  * modal, so a brand can start or resume the conversation without leaving the
@@ -804,7 +804,7 @@
   }
 
   window.StartersMessagesProfile = {
-    release: 'v1.59.103',
+    release: 'v1.59.106',
     apply: apply,
     decorate: decorate,
     identityFrom: identityFrom,

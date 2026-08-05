@@ -1,7 +1,7 @@
 /**
  * Messages 3.0 — TalkJS inbox bootstrap.
  *
- * @release v1.59.103
+ * @release v1.59.106
  *
  * Self-contained page controller for /messages. It waits for Memberstack,
  * redirects logged-out visitors through the V3 login router while preserving
