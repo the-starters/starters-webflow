@@ -1,14 +1,15 @@
-# Brand Signup, Build, And Edit Wiring
+# Brand Account And Starter Email Wiring
 
 ## Authority
 
 - Memberstack owns member identity, login email, custom fields, plan state, and
   profile image.
-- Xano `brands_v3` is the canonical operational Brand profile.
+- Xano `brands_v3` and `freelancers_v3` are the canonical operational role
+  profiles for Brand and Talent members, respectively.
 - Memberstack member ID is the only normal sync key. Never match an update by
   mutable email or name.
 - Xano endpoint #1513 is the single normal Memberstack-to-Xano writer. Browser
-  code must not create a competing `brands_v3` writer.
+  code must not create a competing role-profile writer.
 
 ## Native markup contract
 
@@ -77,8 +78,16 @@ Install `brand-account-controller.js` sitewide, before Memberstack form
 initialization, so it can align the native signup form with Test or Live Data:
 
 ```html
+<script>
+  window.StartersBrandAccountConfig = {
+    guardSecurityForm: 'identity'
+  }
+</script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-account-controller.js"></script>
 ```
+
+The `identity` setting is the production activation for Starter login-email
+changes. Keep the configuration block before the controller script.
 
 On `/complete-profile`, after the sitewide Memberstack and route-guard installs,
 keep the photo and redirect scripts after that sitewide controller:
@@ -122,24 +131,60 @@ does not depend on or claim a durable email outbox. Do not add an automatic retr
 around `sendMemberResetPasswordEmail`; a lost response is ambiguous and retrying
 could send a second message.
 
-Use Brand-scoped ownership when the controller is installed sitewide:
+Use identity-scoped ownership in production when the controller is installed
+sitewide:
 
 ```html
 <script>
   window.StartersBrandAccountConfig = {
-    guardSecurityForm: 'brand'
+    guardSecurityForm: 'identity'
   }
 </script>
 ```
 
+- `guardSecurityForm: 'identity'`: resolve the current member through
+  `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
+  `#wf-form-Account-Security` for `brand-free`, `brand-paid`, or `talent`.
 - `guardSecurityForm: 'brand'`: resolve the current member through
   `window.StartersV3RouteGuard.memberRole` and take capture-phase ownership of
-  `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. Talent,
-  unmapped, conflicted, logged-out, or unreadable identity states retain the
-  existing Memberstack-native handler.
+  `#wf-form-Account-Security` only for `brand-free` or `brand-paid`. This is the
+  rollback switch if Starter interception must be disabled without changing
+  Brand behavior.
+- With either setting, unmapped, conflicted, logged-out, or unreadable identity
+  states retain the existing Memberstack-native handler. With `brand`, Talent
+  also retains that native handler.
 
 The ordinary Account Profile form remains Memberstack-native. Endpoint #1513
-must mirror its `member.updated` payload into `brands_v3`.
+must route each `member.updated` event by stable Memberstack member ID and mirror
+it into `user_v3` plus exactly one role row: `brands_v3` for Brand roles or
+`freelancers_v3` for Talent. Email is payload data, never a lookup or join key.
+
+## Stable-ID propagation contract
+
+A successful Account Security save changes Memberstack first. The resulting
+`member.updated` event is the only normal trigger for downstream propagation:
+
+1. Endpoint #1513 deduplicates and orders the event by its event watermark,
+   resolves the member by immutable Memberstack member ID, and updates `user_v3`
+   plus the matching role mirror without creating or switching a role row.
+2. The identity-projection worker updates an existing TalkJS user at the stable
+   Memberstack user ID. It must not create an email-keyed TalkJS user; the normal
+   messaging bootstrap retains creation ownership.
+3. The outbox retains the stable Memberstack event context and the previous
+   normalized-email hash. The Mailchimp adapter PATCHes only the existing old-
+   email contact in the approved audience. It must not create or resubscribe a
+   contact, change consent, or trigger a campaign, and it stops on an old/new
+   contact collision.
+4. Webflow is the presentation layer for this field. The existing
+   `data-ms-member="email"` input must rehydrate from Memberstack with the new
+   address after reload; this workflow does not create a Webflow CMS email
+   writer or a second CMS item.
+
+Endpoint acceptance is all-or-observable: a failed downstream projection must
+be recorded for retry/reconciliation without rolling Memberstack back or
+silently reporting convergence. Readback and reconciliation always start from
+the Memberstack member ID and compare the expected email across every applicable
+projection.
 
 ## Failure semantics
 
@@ -169,7 +214,7 @@ must mirror its `member.updated` payload into `brands_v3`.
 - Error telemetry carries only operation path and HTTP status, never member ID,
   email, name, or company.
 
-## Canary matrix
+## Brand canary matrix
 
 Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 
@@ -198,5 +243,45 @@ Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 11. Replay duplicate and out-of-order webhook fixtures; prove no stale overwrite.
 12. Run the read-only reconciliation and require zero unexplained differences.
 
-Production canaries require separate approval for the exact member, email,
-expected message, rollback, and any marketing projection.
+## Reversible production Starter canary
+
+Run this only after separate approval of the exact existing Starter member ID,
+old email, canary email, expected reset message, downstream marketing behavior,
+and execution owner. Do not create a new member as a substitute.
+
+1. Freeze a canary manifest containing the stable Memberstack member ID, current
+   role, old and canary emails, the expected single `user_v3` and
+   `freelancers_v3` row IDs, TalkJS user ID, Mailchimp contact identity and
+   consent state when present, and the current event watermarks. Stop on any
+   missing or mismatched required identity.
+2. Read every system by those stable IDs and require the old email, one record
+   per system, Talent role, and unchanged consent/status before the write.
+3. Confirm the published sitewide configuration reads
+   `guardSecurityForm: 'identity'`. Submit the existing native Account Security
+   form once with the canary email and require exactly one reset/set-password
+   message.
+4. Read Memberstack, `user_v3`, and `freelancers_v3` by Memberstack member ID.
+   Require the canary email, unchanged stable row IDs and role, and a common
+   processed event watermark. Replay the captured webhook once and require a
+   stale/replay skip with no duplicate rows.
+5. Run the approved identity-projection worker and then open `/messages` as the
+   canary member. Require the same TalkJS user ID with the canary email and no
+   email-keyed user.
+6. Require the existing Mailchimp contact to carry the canary email with the
+   same provider contact identity and unchanged subscription consent/status,
+   with no campaign send or duplicate contact. Reload Account Security and
+   require the existing Webflow input to display the canary email from
+   Memberstack; no CMS email write is expected.
+7. Run read-only reconciliation from the Memberstack member ID and require zero
+   unexplained differences across Memberstack, both Xano rows, TalkJS,
+   Mailchimp, and Webflow before ending the canary.
+8. Roll back through the same native Account Security form by submitting the old
+   email once. Repeat steps 4 through 7 in reverse, requiring the same stable
+   IDs, one rollback reset message, advanced watermarks, restored email, and no
+   duplicate or consent/status drift.
+
+If interception itself must be rolled back, change only
+`guardSecurityForm: 'identity'` to `'brand'`, publish and read back the complete
+sitewide code block, then verify Talent falls through to the Memberstack-native
+handler while Brand behavior is unchanged. This switch does not undo a completed
+email mutation; use step 8 for data rollback.

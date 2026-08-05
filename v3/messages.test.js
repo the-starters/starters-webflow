@@ -189,6 +189,21 @@ test('a visit without ?with= mounts the inbox and touches no conversation', asyn
   assert.deepEqual(errors, [])
 })
 
+test('the current member syncs a changed login email to the same stable TalkJS user', async () => {
+  const updatedMember = member()
+  updatedMember.auth.email = 'starter.canary@example.com'
+  const { calls, errors } = loadMessages({ member: updatedMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]), {
+    id: MY_ID,
+    name: 'Brand Owner',
+    email: 'starter.canary@example.com',
+  })
+  assert.deepEqual(errors, [])
+})
+
 test('?with= opens the one-on-one conversation and selects it', async () => {
   const { calls } = loadMessages({
     search: '?with=' + OTHER_ID,
