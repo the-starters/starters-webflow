@@ -176,6 +176,60 @@ test('serializes the authored ongoing-hourly model for the direct-hire endpoint'
   assert.equal(api.validationError(serialized), '')
 })
 
+test('supports every authored pricing mode and keeps only its applicable commercial fields', async (t) => {
+  const cases = [
+    {
+      name: 'Flat Fee',
+      values: { engagement_type: 'Flat Fee', total_cost: '$5,000' },
+      expected: { engagement_type: 'flat_fee', total_cost: 5000 },
+      cleared: ['hourly_rate', 'weekly_rate', 'monthly_rate'],
+    },
+    {
+      name: 'Ongoing Hourly with one-time cap',
+      values: { engagement_type: 'Ongoing Hourly', hourly_rate: '150', hourly_billing_frequency: 'One Time', maximum_total_hours: '40' },
+      expected: { engagement_type: 'hourly', hourly_rate: 150, hourly_billing_frequency: 'one_time', maximum_total_hours: 40 },
+      cleared: ['maximum_hours_per_week', 'maximum_hours_per_month', 'total_cost'],
+    },
+    {
+      name: 'Ongoing Hourly with weekly cap',
+      values: { engagement_type: 'Ongoing Hourly', hourly_rate: '150', hourly_billing_frequency: 'Weekly', maximum_hours_per_week: '20' },
+      expected: { engagement_type: 'hourly', hourly_rate: 150, hourly_billing_frequency: 'weekly', maximum_hours_per_week: 20 },
+      cleared: ['maximum_total_hours', 'maximum_hours_per_month', 'total_cost'],
+    },
+    {
+      name: 'Ongoing Hourly with monthly cap',
+      values: { engagement_type: 'Ongoing Hourly', hourly_rate: '150', hourly_billing_frequency: 'Monthly', maximum_hours_per_month: '80' },
+      expected: { engagement_type: 'hourly', hourly_rate: 150, hourly_billing_frequency: 'monthly', maximum_hours_per_month: 80 },
+      cleared: ['maximum_total_hours', 'maximum_hours_per_week', 'total_cost'],
+    },
+    {
+      name: 'Weekly',
+      values: { engagement_type: 'Weekly Recurring', weekly_rate: '$1,250', number_of_weeks: '8' },
+      expected: { engagement_type: 'weekly', weekly_rate: 1250, number_of_weeks: 8 },
+      cleared: ['total_cost', 'hourly_rate', 'monthly_rate'],
+    },
+    {
+      name: 'Monthly',
+      values: { engagement_type: 'Monthly Recurring', monthly_rate: '$4,500', number_of_months: '6' },
+      expected: { engagement_type: 'monthly', monthly_rate: 4500, number_of_months: 6 },
+      cleared: ['total_cost', 'hourly_rate', 'weekly_rate'],
+    },
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, () => {
+      const form = projectForm(scenario.values)
+      const { api } = load({ form })
+      const serialized = api.serialize(form)
+      assert.equal(api.validationError(serialized), '')
+      for (const [name, value] of Object.entries(scenario.expected)) {
+        assert.equal(serialized.payload[name], value, name)
+      }
+      for (const name of scenario.cleared) assert.equal(serialized.payload[name], null, name)
+    })
+  }
+})
+
 test('keeps pricing separate from the authored own-contract choice', () => {
   const form = projectForm({ engagement_type: 'Weekly Recurring' })
   form.contractChoice = new Element({ 'data-project-contract-choice': '', value: 'My own contract' })
@@ -270,6 +324,23 @@ test('locks fields in flight and retains the retry key after a lost response', a
   keyField.value = retryKey
   document.listeners.input.handler({ target: title })
   assert.equal(keyField.value, '')
+})
+
+test('retries a lost response with the exact same idempotency key', async () => {
+  const payloads = []
+  let attempt = 0
+  const createProject = async (payload) => {
+    payloads.push(payload)
+    attempt += 1
+    if (attempt === 1) throw Object.assign(new Error('lost response'), { status: 503 })
+    return { project: { id: 669 }, replayed: true }
+  }
+  const { api, document, form, window } = load({ createProject })
+  assert.equal(await api.submit(form, window, document), false)
+  assert.equal(await api.submit(form, window, document), true)
+  assert.equal(payloads.length, 2)
+  assert.equal(payloads[0].idempotency_key, payloads[1].idempotency_key)
+  assert.equal(document.event.detail.replayed, true)
 })
 
 test('installs the submit handler in capture phase ahead of native Webflow submission', () => {

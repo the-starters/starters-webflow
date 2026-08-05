@@ -47,8 +47,9 @@ Add canonical field attributes to the existing controls:
 | `project_scope` | `Project-Scope` | required |
 
 The form has repeated rate/date controls across conditional fee panels. Give
-each applicable control the same semantic field attribute where needed. The
-adapter selects the populated active value and ignores blank hidden panels.
+each applicable control the same semantic field attribute where needed, and
+keep inactive duplicates blank. The adapter uses the first populated value in
+DOM order and does not let a later blank control replace it.
 
 Add `data-project-contract-choice` to the existing Standard Contract and My
 Own Contract radio inputs. One choice is required before submission. Contract
@@ -88,8 +89,9 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
 1. Verify exactly one target form exists inside `data-modal-target="generate-contract"`.
 2. Open it from every responsive Hire trigger and confirm the selected Starter
    identity is present before review.
-3. Exercise Flat Fee, Ongoing Hourly, Monthly, Weekly, Standard Contract, and
-   My Own Contract validation without issuing a request for invalid inputs.
+3. Exercise Flat Fee; Ongoing Hourly with One Time, Weekly, and Monthly caps;
+   Monthly; Weekly; Standard Contract; and My Own Contract validation without
+   issuing a request for invalid inputs.
 4. With an approved Test Data canary, verify exactly one authenticated
    `projects/create-direct/v3` request and no Airtable/Make/browser secret.
 5. Read Xano back and verify `creation_context=direct_hire`, null opportunity
