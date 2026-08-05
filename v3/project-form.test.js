@@ -23,6 +23,7 @@ class Element {
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return this.attrs[name] ?? null }
+  removeAttribute(name) { delete this.attrs[name] }
   matches(selector) { return selector.includes('[data-project-form-v3="brand"] form') && this.attrs['data-project-form-v3'] === 'brand' }
   closest(selector) {
     if (selector.includes('[data-project-form-v3="brand"] form')) return this.form || (this.matches(selector) ? this : null)
@@ -42,7 +43,9 @@ class Element {
   }
   querySelectorAll(selector) {
     if (selector === '[data-project-field]') return this.children
-    if (selector === '[required]') return this.children.filter((child) => child.getAttribute('required') !== null)
+    if (selector.startsWith('[required]')) {
+      return this.children.filter((child) => child.getAttribute('required') !== null || child.getAttribute('data-project-required-hidden') !== null)
+    }
     const named = /^\[name="([^"]+)"\]$/.exec(selector)
     if (named) return this.children.filter((child) => child.getAttribute('name') === named[1])
     if (selector.includes('[data-project-field]') && selector.includes('[data-project-contract-choice]')) {
@@ -253,33 +256,62 @@ test('keeps pricing separate from the authored own-contract choice', () => {
   assert.equal(serialized.payload.contract_type, 'own_contract')
 })
 
-test('temporarily excludes hidden required conditional controls from native validation', async () => {
+function requiredConfirmation(form, { visible }) {
+  const confirmation = nativeField('confirm-contract', '', { type: 'checkbox', checked: false, required: '' })
+  confirmation.form = form
+  confirmation.offsetParent = visible ? {} : null
+  form.children.push(confirmation)
+  return confirmation
+}
+
+test('drops required from hidden conditional controls so native validation cannot block submit', async () => {
   const form = projectForm()
-  const hiddenConfirmation = nativeField('confirm-contract', '', { type: 'checkbox', checked: false, required: '' })
-  hiddenConfirmation.form = form
-  hiddenConfirmation.offsetParent = null
-  form.children.push(hiddenConfirmation)
-  let hiddenWasDisabledDuringValidation = false
-  form.reportValidityImpl = () => {
-    hiddenWasDisabledDuringValidation = hiddenConfirmation.disabled
-    return hiddenConfirmation.disabled
-  }
+  const hiddenConfirmation = requiredConfirmation(form, { visible: false })
+  form.reportValidityImpl = () => hiddenConfirmation.getAttribute('required') === null
   const { api, calls, document, window } = load({ form })
   assert.equal(await api.submit(form, window, document), true)
-  assert.equal(hiddenWasDisabledDuringValidation, true)
+  assert.equal(hiddenConfirmation.getAttribute('required'), null)
+  assert.equal(hiddenConfirmation.required, false)
   assert.equal(hiddenConfirmation.disabled, false)
   assert.equal(calls.filter((call) => call && call.starter_memberstack_id).length, 1)
 })
 
+test('clears hidden required state on click, before the browser validates the submit', () => {
+  const form = projectForm()
+  const hiddenConfirmation = requiredConfirmation(form, { visible: false })
+  const visibleName = nativeField('Project-Name', 'Launch project', { required: '' })
+  visibleName.form = form
+  visibleName.offsetParent = {}
+  form.children.push(visibleName)
+  const { document } = load({ form })
+  const submitter = new Element({ type: 'submit' })
+  submitter.form = form
+  document.listeners.click.handler({ target: submitter })
+  assert.equal(hiddenConfirmation.getAttribute('required'), null)
+  assert.equal(hiddenConfirmation.getAttribute('data-project-required-hidden'), 'true')
+  assert.equal(visibleName.getAttribute('required'), '')
+})
+
+test('restores the authored required attribute when its branch becomes visible again', () => {
+  const form = projectForm()
+  const confirmation = requiredConfirmation(form, { visible: false })
+  const { api, document } = load({ form })
+  document.listeners.change.handler({ target: confirmation })
+  assert.equal(confirmation.getAttribute('required'), null)
+  confirmation.offsetParent = {}
+  api.syncActiveRequired(form)
+  assert.equal(confirmation.getAttribute('required'), '')
+  assert.equal(confirmation.required, true)
+  assert.equal(confirmation.getAttribute('data-project-required-hidden'), null)
+})
+
 test('keeps visible required controls in native validation', async () => {
   const form = projectForm()
-  const visibleConfirmation = nativeField('confirm-contract', '', { type: 'checkbox', checked: false, required: '' })
-  visibleConfirmation.form = form
-  visibleConfirmation.offsetParent = {}
-  form.children.push(visibleConfirmation)
-  form.reportValidityImpl = () => visibleConfirmation.disabled
+  const visibleConfirmation = requiredConfirmation(form, { visible: true })
+  form.reportValidityImpl = () => visibleConfirmation.getAttribute('required') === null
   const { api, calls, document, window } = load({ form })
   assert.equal(await api.submit(form, window, document), false)
+  assert.equal(visibleConfirmation.getAttribute('required'), '')
   assert.equal(visibleConfirmation.disabled, false)
   assert.equal(calls.length, 0)
 })
