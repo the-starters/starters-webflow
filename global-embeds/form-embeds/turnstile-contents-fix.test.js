@@ -45,8 +45,14 @@ function makeWorld({ hostname, forms = [], turnstile = null, debug = undefined, 
       querySelector: () => null,
       querySelectorAll: () => [],
     }),
+    // Deliberately strict: the module's selection selector is the whole opt-in
+    // contract, so an unexpected one must fail loudly rather than quietly match no
+    // forms and turn a targeting regression into a passing test.
     querySelectorAll(selector) {
-      return selector === 'form[data-turnstile-sitekey]' ? forms : []
+      if (selector === 'form[data-starters-turnstile-fix]') {
+        return forms.filter((form) => form.hasAttribute('data-starters-turnstile-fix'))
+      }
+      throw new Error('mini DOM: unexpected document selector ' + selector)
     },
   }
 
@@ -122,14 +128,21 @@ function submitButton({ name, disabled, loadingWrap = false }) {
   }
 }
 
-function contentsForm(id, buttons = []) {
+/**
+ * A form the module is allowed to arm: marked, sitekey-bearing, computed
+ * `display: contents`. Every test that expects a skip takes one of those three away.
+ */
+function contentsForm(id, buttons = [], { marked = true, display = 'contents', sitekey = '0xTESTKEY' } = {}) {
   const wrapper = { classList: { contains: () => true, add() {}, remove() {} }, children: [] }
+  const attrs = {}
+  if (marked) attrs['data-starters-turnstile-fix'] = ''
+  if (sitekey !== null) attrs['data-turnstile-sitekey'] = sitekey
   return {
     id,
     buttons,
     listeners: [],
     submitted: 0,
-    attrs: { 'data-turnstile-sitekey': '0xTESTKEY' },
+    attrs,
     getAttribute(name) {
       return name in this.attrs ? this.attrs[name] : null
     },
@@ -151,7 +164,7 @@ function contentsForm(id, buttons = []) {
     requestSubmit() {
       this.submitted += 1
     },
-    ownerDocument: { defaultView: { getComputedStyle: () => ({ display: 'contents' }) } },
+    ownerDocument: { defaultView: { getComputedStyle: () => ({ display }) } },
   }
 }
 
@@ -183,6 +196,16 @@ function armedWorld({ buttons, hostname = 'the-starters-3-0.webflow.io' }) {
     return event
   }
   return { ...world, form, state, fire }
+}
+
+/**
+ * The labels of the forms the module actually armed, copied into this realm. `status()`
+ * returns an array built inside the vm context, whose prototype is that context's
+ * Array — strict deepEqual compares prototypes and would reject it against a plain
+ * literal here even when the contents match.
+ */
+function armedForms(world) {
+  return Array.from(world.api.status(), (entry) => entry.form)
 }
 
 /* --------------------------------- tests ---------------------------------- */
@@ -253,32 +276,129 @@ test('production is completely silent — turnstile never loads', () => {
 test('staging reports both of those cases', () => {
   const quiet = makeWorld({ hostname: 'the-starters-3-0.webflow.io' })
   assert.equal(quiet.logs.info.length, 1)
-  assert.match(quiet.logs.info[0], /no display:contents forms/)
+  assert.match(quiet.logs.info[0], /no form on this page is marked data-starters-turnstile-fix/)
 
   const waiting = makeWorld({
     hostname: 'the-starters-3-0.webflow.io',
     forms: [contentsForm('wf-form-X')],
   })
-  assert.match(waiting.logs.info[0], /1 display:contents form\(s\) to arm: wf-form-X/)
+  assert.match(waiting.logs.info[0], /1 marked display:contents form\(s\) to arm: wf-form-X/)
   waiting.tick(250)
   assert.equal(waiting.logs.warn.length, 1)
   assert.match(waiting.logs.warn[0], /window\.turnstile never appeared/)
   assert.match(waiting.logs.warn[0], /exactly as Webflow left them/)
 })
 
-test('a form whose computed display is not contents is never a candidate', () => {
-  const form = contentsForm('wf-form-Flex')
-  form.ownerDocument.defaultView.getComputedStyle = () => ({ display: 'flex' })
-  const { logs } = makeWorld({ hostname: 'the-starters-3-0.webflow.io', forms: [form] })
-  assert.equal(logs.info.length, 1)
-  assert.match(logs.info[0], /no display:contents forms/)
+/* ------------------------- opt-in targeting contract ---------------------- */
+
+test('an UNMARKED display:contents turnstile form is never touched or mentioned', () => {
+  const unmarked = contentsForm('wf-form-Unmarked', [], { marked: false })
+  const world = makeWorld({
+    hostname: 'the-starters-3-0.webflow.io',
+    forms: [unmarked],
+    jquery: { data: () => ({ turnstileToken: null }) },
+    turnstile: { render: () => 'cf-chl-widget-test', reset() {} },
+  })
+
+  // Textbook case of the bug — and still none of this script's business.
+  assert.equal(unmarked.getAttribute('data-starters-turnstile-armed'), null)
+  assert.equal(unmarked.listeners.length, 0, 'no submit guard is installed')
+  assert.deepEqual(armedForms(world), [])
+  assert.deepEqual(world.logs.warn, [], 'an unmarked form must not generate noise either')
+  assert.match(world.logs.info[0], /no form on this page is marked/)
 })
 
-test('data-wf-no-turnstile is honoured the way Webflow honours it', () => {
+test('a MARKED form that is eligible is armed', () => {
+  const marked = contentsForm('wf-form-Marked')
+  const world = makeWorld({
+    hostname: 'the-starters-3-0.webflow.io',
+    forms: [marked],
+    jquery: { data: () => ({ turnstileToken: null }) },
+    turnstile: { render: () => 'cf-chl-widget-test', reset() {} },
+  })
+  assert.equal(marked.getAttribute('data-starters-turnstile-armed'), 'true')
+  assert.deepEqual(armedForms(world), ['wf-form-Marked'])
+  assert.equal(marked.listeners.filter((l) => l.type === 'submit').length, 1)
+  assert.deepEqual(world.logs.warn, [])
+})
+
+test('only the marked form is armed when a page holds both', () => {
+  const marked = contentsForm('wf-form-Marked')
+  const unmarked = contentsForm('wf-form-Unmarked', [], { marked: false })
+  const world = makeWorld({
+    hostname: 'the-starters-3-0.webflow.io',
+    forms: [unmarked, marked],
+    jquery: { data: () => ({ turnstileToken: null }) },
+    turnstile: { render: () => 'cf-chl-widget-test', reset() {} },
+  })
+  assert.deepEqual(armedForms(world), ['wf-form-Marked'])
+  assert.equal(unmarked.getAttribute('data-starters-turnstile-armed'), null)
+})
+
+test('a marked form with a real display box is skipped and warned about', () => {
+  const flex = contentsForm('wf-form-Flex', [], { display: 'flex' })
+  const world = makeWorld({
+    hostname: 'the-starters-3-0.webflow.io',
+    forms: [flex],
+    jquery: { data: () => ({ turnstileToken: null }) },
+    turnstile: { render: () => 'cf-chl-widget-test', reset() {} },
+  })
+  assert.deepEqual(armedForms(world), [], 'the no-double-arm invariant holds')
+  assert.equal(flex.getAttribute('data-starters-turnstile-armed'), null)
+  assert.equal(world.logs.warn.length, 1)
+  assert.match(world.logs.warn[0], /wf-form-Flex is marked data-starters-turnstile-fix/)
+  assert.match(world.logs.warn[0], /computed display is "flex", not "contents"/)
+  assert.match(world.logs.warn[0], /Remove the marker/)
+})
+
+test('that warning fires once per form however often the page re-scans', () => {
+  const flex = contentsForm('wf-form-Flex', [], { display: 'flex' })
+  const world = makeWorld({
+    hostname: 'the-starters-3-0.webflow.io',
+    forms: [flex],
+    jquery: { data: () => ({ turnstileToken: null }) },
+    turnstile: { render: () => 'cf-chl-widget-test', reset() {} },
+  })
+  world.api.refresh()
+  world.api.refresh()
+  assert.equal(world.logs.warn.length, 1)
+})
+
+test('a marked form with no sitekey is skipped and warned about', () => {
+  const noKey = contentsForm('wf-form-NoKey', [], { sitekey: null })
+  const world = makeWorld({
+    hostname: 'the-starters-3-0.webflow.io',
+    forms: [noKey],
+    jquery: { data: () => ({ turnstileToken: null }) },
+    turnstile: { render: () => 'cf-chl-widget-test', reset() {} },
+  })
+  assert.deepEqual(armedForms(world), [])
+  assert.match(world.logs.warn[0], /has no data-turnstile-sitekey value/)
+})
+
+test('data-wf-no-turnstile beats the marker, and says so', () => {
   const form = contentsForm('wf-form-OptedOut')
   form.attrs['data-wf-no-turnstile'] = ''
-  const { logs } = makeWorld({ hostname: 'the-starters-3-0.webflow.io', forms: [form] })
-  assert.match(logs.info[0], /no display:contents forms/)
+  const world = makeWorld({
+    hostname: 'the-starters-3-0.webflow.io',
+    forms: [form],
+    jquery: { data: () => ({ turnstileToken: null }) },
+    turnstile: { render: () => 'cf-chl-widget-test', reset() {} },
+  })
+  assert.deepEqual(armedForms(world), [])
+  assert.match(world.logs.warn[0], /also carries data-wf-no-turnstile/)
+  assert.match(world.logs.warn[0], /contradict/)
+})
+
+test('production stays silent about a mismarked form too', () => {
+  const flex = contentsForm('wf-form-Flex', [], { display: 'flex' })
+  const world = makeWorld({
+    hostname: 'thestarters.com',
+    forms: [flex],
+    jquery: { data: () => ({ turnstileToken: null }) },
+    turnstile: { render: () => 'cf-chl-widget-test', reset() {} },
+  })
+  assert.deepEqual(world.logs, { info: [], warn: [], error: [] })
 })
 
 test('a hold that ends with a token restores each button, it does not enable them all', () => {
