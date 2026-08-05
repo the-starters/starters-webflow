@@ -42,6 +42,7 @@ class Element {
   }
   querySelectorAll(selector) {
     if (selector === '[data-project-field]') return this.children
+    if (selector === '[required]') return this.children.filter((child) => child.getAttribute('required') !== null)
     const named = /^\[name="([^"]+)"\]$/.exec(selector)
     if (named) return this.children.filter((child) => child.getAttribute('name') === named[1])
     if (selector.includes('[data-project-field]') && selector.includes('[data-project-contract-choice]')) {
@@ -50,7 +51,7 @@ class Element {
     if (selector.includes('[type="submit"]')) return this.submitters || []
     return []
   }
-  reportValidity() { return this.valid !== false }
+  reportValidity() { return this.reportValidityImpl ? this.reportValidityImpl() : this.valid !== false }
 }
 
 function field(name, value, attrs = {}) {
@@ -250,6 +251,37 @@ test('keeps pricing separate from the authored own-contract choice', () => {
   const serialized = api.serialize(form)
   assert.equal(serialized.payload.engagement_type, 'weekly')
   assert.equal(serialized.payload.contract_type, 'own_contract')
+})
+
+test('temporarily excludes hidden required conditional controls from native validation', async () => {
+  const form = projectForm()
+  const hiddenConfirmation = nativeField('confirm-contract', '', { type: 'checkbox', checked: false, required: '' })
+  hiddenConfirmation.form = form
+  hiddenConfirmation.offsetParent = null
+  form.children.push(hiddenConfirmation)
+  let hiddenWasDisabledDuringValidation = false
+  form.reportValidityImpl = () => {
+    hiddenWasDisabledDuringValidation = hiddenConfirmation.disabled
+    return hiddenConfirmation.disabled
+  }
+  const { api, calls, document, window } = load({ form })
+  assert.equal(await api.submit(form, window, document), true)
+  assert.equal(hiddenWasDisabledDuringValidation, true)
+  assert.equal(hiddenConfirmation.disabled, false)
+  assert.equal(calls.filter((call) => call && call.starter_memberstack_id).length, 1)
+})
+
+test('keeps visible required controls in native validation', async () => {
+  const form = projectForm()
+  const visibleConfirmation = nativeField('confirm-contract', '', { type: 'checkbox', checked: false, required: '' })
+  visibleConfirmation.form = form
+  visibleConfirmation.offsetParent = {}
+  form.children.push(visibleConfirmation)
+  form.reportValidityImpl = () => visibleConfirmation.disabled
+  const { api, calls, document, window } = load({ form })
+  assert.equal(await api.submit(form, window, document), false)
+  assert.equal(visibleConfirmation.disabled, false)
+  assert.equal(calls.length, 0)
 })
 
 test('binds the existing Hire trigger when the selected Starter identity is present', () => {

@@ -165,6 +165,22 @@
     return field.offsetParent !== null || typeof field.offsetParent === 'undefined'
   }
 
+  function reportActiveValidity(form) {
+    if (!form || typeof form.reportValidity !== 'function') return true
+    var inactiveRequired = []
+    var required = form.querySelectorAll ? form.querySelectorAll('[required]') : []
+    Array.prototype.forEach.call(required, function (field) {
+      if (field.disabled || activeControl(field)) return
+      inactiveRequired.push(field)
+      field.disabled = true
+    })
+    try {
+      return form.reportValidity()
+    } finally {
+      inactiveRequired.forEach(function (field) { field.disabled = false })
+    }
+  }
+
   function namedControls(form, name) {
     return form && form.querySelectorAll
       ? form.querySelectorAll('[name="' + name + '"]')
@@ -469,7 +485,12 @@
   function submit(form, globalObject, documentObject) {
     var formState = state(form)
     if (formState.active) return formState.active
-    if (typeof form.reportValidity === 'function' && !form.reportValidity()) return Promise.resolve(false)
+    // Webflow keeps conditional inputs in the native form even when their
+    // panels are display:none. Hidden required controls must not block a
+    // different authored branch (for example, the own-contract confirmation
+    // checkbox while Standard contract is selected). Keep active controls in
+    // native constraint validation and temporarily exclude only inactive ones.
+    if (!reportActiveValidity(form)) return Promise.resolve(false)
 
     var serialized = serialize(form, documentObject)
     var error = validationError(serialized)
@@ -540,6 +561,7 @@
     canonicalEngagement: canonicalEngagement,
     canonicalContractType: canonicalContractType,
     canonicalHourlyFrequency: canonicalHourlyFrequency,
+    reportActiveValidity: reportActiveValidity,
     createIdempotencyKey: createIdempotencyKey,
     serialize: serialize,
     validationError: validationError,

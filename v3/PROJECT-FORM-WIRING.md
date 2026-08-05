@@ -72,6 +72,13 @@ The adapter selects the visible authored conditional panel, with a nonblank
 fallback for test and preview DOMs. Hidden blank controls never replace the
 active value.
 
+Webflow keeps conditional branches in the native form when they are hidden.
+Native constraint validation therefore runs only against required controls in
+the active branch: inactive `display:none` required controls are temporarily
+excluded during `reportValidity()` and immediately restored. This keeps the
+authored own-contract confirmation required when visible without blocking the
+Standard contract branch.
+
 The adapter reads the existing Standard Contract and My Own Contract radio
 inputs. One choice is required before submission. Contract type remains
 separate from pricing:
