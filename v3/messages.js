@@ -184,6 +184,12 @@
     const fields = {
       id: member.id,
       name: firstName || namePlaceholder(member),
+      // User-level custom data for the TalkJS theme (company shown under the
+      // first name). TalkJS custom values must be strings, and the key is
+      // always present so a stale previously-synced company self-clears.
+      custom: {
+        company: (customFields['company'] || '').toString().trim(),
+      },
     }
 
     if (email) fields.email = email

@@ -146,6 +146,7 @@ test('the display name is the first name alone, never the last name', async () =
     id: MY_ID,
     name: 'Kaeser',
     email: 'starter@example.com',
+    custom: { company: '' },
   })
   assert.deepEqual(errors, [])
 })
@@ -183,7 +184,36 @@ test('a nameless Talent member reads "Starter Name", never the email', async () 
     id: MY_ID,
     name: 'Starter Name',
     email: 'starter@example.com',
+    custom: { company: '' },
   })
+})
+
+test('a member with a company gets it synced trimmed into custom.company', async () => {
+  const { calls } = loadTile({
+    member: {
+      id: MY_ID,
+      auth: { email: 'starter@example.com' },
+      customFields: { 'free-user': 'Kaeser', company: '  Acme Co  ' },
+    },
+  })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Acme Co' })
+})
+
+test('a member without a company syncs an empty custom.company to self-clear', async () => {
+  const { calls } = loadTile({
+    member: {
+      id: MY_ID,
+      auth: { email: 'starter@example.com' },
+      customFields: { 'free-user': 'Kaeser' },
+    },
+  })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
 })
 
 test('a nameless member with no mapped active plan keeps the generic default', async () => {

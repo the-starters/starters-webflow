@@ -417,6 +417,7 @@ test('the viewer display name is the first name alone, never the last name', asy
   assert.deepEqual(plain(loaded.calls.users[0]), {
     id: VIEWER_ID,
     name: 'Brand',
+    custom: { company: '' },
   })
 })
 
@@ -436,6 +437,7 @@ test('a viewer carrying only a first-name key still gets that first name', async
   assert.deepEqual(plain(loaded.calls.users[0]), {
     id: VIEWER_ID,
     name: 'Brand',
+    custom: { company: '' },
   })
 })
 
@@ -459,6 +461,7 @@ test('a nameless Brand viewer reads "Brand Name", never the email', async () => 
     id: VIEWER_ID,
     name: 'Brand Name',
     email: 'viewer@example.com',
+    custom: { company: '' },
   })
 })
 
@@ -482,7 +485,40 @@ test('a nameless viewer with conflicting plan roles keeps the generic default', 
   assert.deepEqual(plain(loaded.calls.users[0]), {
     id: VIEWER_ID,
     name: 'The Starters member',
+    custom: { company: '' },
   })
+})
+
+test('a viewer with a company gets it synced trimmed into custom.company', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      customFields: { 'free-user': 'Brand', company: '  Acme Co  ' },
+    },
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(plain(loaded.calls.users[0]).custom, { company: 'Acme Co' })
+})
+
+test('a viewer without a company syncs an empty custom.company to self-clear', async () => {
+  const loaded = load({
+    triggers: [starterTrigger()],
+    member: {
+      id: VIEWER_ID,
+      customFields: { 'free-user': 'Brand' },
+    },
+    role: 'brand-paid',
+  })
+  await settle()
+  loaded.openModal()
+  await settle()
+
+  assert.deepEqual(plain(loaded.calls.users[0]).custom, { company: '' })
 })
 
 test('the starter is synced with the CMS name and photo', async () => {

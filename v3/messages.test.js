@@ -201,6 +201,7 @@ test('the current member syncs a changed login email to the same stable TalkJS u
     id: MY_ID,
     name: 'Brand',
     email: 'starter.canary@example.com',
+    custom: { company: '' },
   })
   assert.deepEqual(errors, [])
 })
@@ -305,7 +306,26 @@ test('the email field stays synced even when the name is a placeholder', async (
     id: MY_ID,
     name: 'Starter Name',
     email: 'brand@example.com',
+    custom: { company: '' },
   })
+})
+
+test('a member with a company gets it synced trimmed into custom.company', async () => {
+  const companyMember = member()
+  companyMember.customFields = { 'free-user': 'Brand', company: '  Acme Co  ' }
+  const { calls } = loadMessages({ member: companyMember, search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: 'Acme Co' })
+})
+
+test('a member without a company syncs an empty custom.company to self-clear', async () => {
+  const { calls } = loadMessages({ search: '' })
+
+  await settle()
+
+  assert.deepEqual(plain(calls.users[0]).custom, { company: '' })
 })
 
 test('?with= opens the one-on-one conversation and selects it', async () => {
