@@ -33,7 +33,7 @@
  * submit) instead of duplicating it per branch. `back` restores the branch the user came
  * from, because history stores the wrapper element, not just an id.
  *
- * @release v1.59.85
+ * @release v1.59.100
  */
 document.addEventListener("DOMContentLoaded", function () {
   /** @type {readonly string[]} Valid CSS `display` values for flow elements. */
@@ -134,6 +134,10 @@ document.addEventListener("DOMContentLoaded", function () {
       return container?._formFlowContainerApi?.showResetPanel?.() || false
     },
   })
+
+  // Keep in sync with the @release line in this file's header comment
+  // (release marker convention: header + API property match the shipping tag).
+  formFlowSystem.release = "v1.59.100"
 
   /**
    * Returns stored or computed `display` for an element, caching on first read.
@@ -1056,6 +1060,11 @@ document.addEventListener("DOMContentLoaded", function () {
      * @returns {string | null} Next step id in DOM order, or `null` at end.
      */
     const getNextStepId = (currentStepEl) => {
+      // Multi-sub root tails are alternative endpoints reached via explicit
+      // `data-form-flow-target`, never a sequence — with no active branch there
+      // is no "next", so every tail's submit button reads as terminal-submit
+      // (a second tail later in the DOM must not swallow the first one's submit).
+      if (isMultiSub && !state.activeSubflowEl) return null
       const steps = getScopeContentSteps()
       const index = steps.indexOf(currentStepEl)
       if (index === -1 || index >= steps.length - 1) return null

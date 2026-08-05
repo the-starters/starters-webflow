@@ -12,17 +12,21 @@ const { h, mount } = require('./step-flow-test-dom')
 const visible = (el) => el.style.display !== 'none'
 
 /**
- * The cancel-membership shape, trimmed to two branches: an entry gate, branch
- * `step-2a` (two steps), branch `step-2b` (one step), and a root-level `step-3`
- * both branches target. Step-1's Continue controls carry explicit targets so the
- * fixture never depends on radio state.
+ * The cancel-membership shape, trimmed to three branches: an entry gate, branch
+ * `step-2a` (two steps) and branch `step-2b` (one step) both targeting a
+ * root-level `step-3`, and branch `step-2c` (one step) targeting a SECOND
+ * root-level tail `step-3a` — the live page's two-tail topology, where each tail
+ * is an alternative endpoint and both submit buttons must be terminal. Step-1's
+ * Continue controls carry explicit targets so the fixture never depends on
+ * radio state.
  */
 function sharedTailFlow() {
   const toA = h('button', { 'data-form-flow-action': 'next', 'data-form-flow-target': 'step-2a' })
   const toB = h('button', { 'data-form-flow-action': 'next', 'data-form-flow-target': 'step-2b' })
+  const toC = h('button', { 'data-form-flow-action': 'next', 'data-form-flow-target': 'step-2c' })
   const entry = h('div', { 'data-form-flow-entry': '', 'data-form-flow-element': 'step-1' }, [
     h('div', { 'data-form-flow-element': 'radio-list' }),
-    h('div', { 'data-form-flow-button-group': 'step-1' }, [toA, toB]),
+    h('div', { 'data-form-flow-button-group': 'step-1' }, [toA, toB, toC]),
   ])
 
   const a1 = h('div', { 'data-form-flow-step': '', 'data-form-flow-element': 'step-2a-1' })
@@ -45,21 +49,34 @@ function sharedTailFlow() {
     h('div', { 'data-form-flow-button-group': 'step-2b-1' }, [b1Next]),
   ])
 
+  const c1 = h('div', { 'data-form-flow-step': '', 'data-form-flow-element': 'step-2c-1' })
+  const c1Next = h('button', { 'data-form-flow-action': 'next', 'data-form-flow-target': 'step-3a' })
+  const branchC = h('div', { 'data-form-flow-subflow': '', 'data-form-flow-element': 'step-2c' }, [
+    c1,
+    h('div', { 'data-form-flow-button-group': 'step-2c-1' }, [c1Next]),
+  ])
+
   const tail = h('div', { 'data-form-flow-step': '', 'data-form-flow-element': 'step-3' })
   const tailBack = h('button', { 'data-form-flow-action': 'back' })
   const tailSubmit = h('button', { type: 'submit' })
   const tailGroup = h('div', { 'data-form-flow-button-group': 'step-3' }, [tailBack, tailSubmit])
 
+  const tail2 = h('div', { 'data-form-flow-step': '', 'data-form-flow-element': 'step-3a' })
+  const tail2Back = h('button', { 'data-form-flow-action': 'back' })
+  const tail2Submit = h('button', { type: 'submit' })
+  const tail2Group = h('div', { 'data-form-flow-button-group': 'step-3a' }, [tail2Back, tail2Submit])
+
   const flow = h(
     'div',
     { 'data-form-flow': 'cancel-membership', 'data-form-flow-type': 'multi-sub' },
-    [entry, branchA, branchB, tail, tailGroup]
+    [entry, branchA, branchB, branchC, tail, tailGroup, tail2, tail2Group]
   )
 
   return {
-    flow, entry, branchA, branchB, tail, tailGroup,
-    a1, a2, b1,
-    toA, toB, a1Next, a1Back, a2Next, a2Back, b1Next, tailBack, tailSubmit,
+    flow, entry, branchA, branchB, branchC, tail, tailGroup, tail2, tail2Group,
+    a1, a2, b1, c1,
+    toA, toB, toC, a1Next, a1Back, a2Next, a2Back, b1Next, c1Next,
+    tailBack, tailSubmit, tail2Back, tail2Submit,
   }
 }
 
@@ -211,4 +228,90 @@ test('the tail submit button is terminal: the click falls through to Webflow', (
 
   assert.equal(event.defaultPrevented, false, 'native submit is not blocked')
   assert.equal(visible(f.tail), true, 'and the flow did not navigate away')
+})
+
+// ---------------------------------------------------------------------------
+// 5. Two root tails — each is an alternative endpoint, never a sequence, so a
+// second tail later in the DOM must not read as "next" from the first one.
+// ---------------------------------------------------------------------------
+
+test('with a second tail after it in the DOM, the first tail submit is still terminal', () => {
+  const { f, harness, click } = start()
+  click(f.toA)
+  click(f.a1Next)
+  click(f.a2Next)
+  const event = click(f.tailSubmit)
+
+  assert.equal(event.defaultPrevented, false, 'native submit is not blocked')
+  assert.equal(visible(f.tail), true, 'the flow did not navigate away from step-3')
+  assert.equal(visible(f.tail2), false, 'and step-3a was not treated as the next step')
+  assert.deepEqual(harness.warnings, [])
+})
+
+test('the second tail submit is terminal too', () => {
+  const { f, harness, click } = start()
+  click(f.toC)
+  click(f.c1Next)
+
+  assert.equal(visible(f.tail2), true, 'branch C funnels into step-3a')
+  assert.equal(visible(f.tail), false, 'step-3 stays hidden')
+
+  const event = click(f.tail2Submit)
+  assert.equal(event.defaultPrevented, false, 'native submit is not blocked')
+  assert.equal(visible(f.tail2), true, 'the flow did not navigate away from step-3a')
+  assert.deepEqual(harness.warnings, [])
+})
+
+test('with two tails present, plain next inside a branch still chains branch steps', () => {
+  const { f, click } = start()
+  click(f.toA)
+  const event = click(f.a1Next)
+
+  assert.equal(event.defaultPrevented, true, 'the flow handled the click')
+  assert.equal(visible(f.a2), true, 'advanced within the branch')
+  assert.equal(visible(f.tail), false)
+  assert.equal(visible(f.tail2), false)
+})
+
+// ---------------------------------------------------------------------------
+// 6. Linear flows are untouched — root-level steps chaining in DOM order is
+// their core mechanism, so the multi-sub tail gate must not apply to them.
+// ---------------------------------------------------------------------------
+
+/** A plain two-step linear flow whose Continue buttons are real submit buttons. */
+function linearFlow() {
+  const s1 = h('div', { 'data-form-flow-step': '', 'data-form-flow-element': 'step-1' })
+  const s2 = h('div', { 'data-form-flow-step': '', 'data-form-flow-element': 'step-2' })
+  const s1Submit = h('button', { type: 'submit' })
+  const s2Submit = h('button', { type: 'submit' })
+  const flow = h('div', { 'data-form-flow': 'linear-demo' }, [
+    s1,
+    s2,
+    h('div', { 'data-form-flow-button-group': 'step-1' }, [s1Submit]),
+    h('div', { 'data-form-flow-button-group': 'step-2' }, [s2Submit]),
+  ])
+  return { flow, s1, s2, s1Submit, s2Submit }
+}
+
+test('linear flow: root-level steps still chain with next', () => {
+  const f = linearFlow()
+  const harness = mount(h('body', {}, [f.flow]))
+
+  assert.equal(visible(f.s1), true)
+  const event = harness.fire(f.flow, 'click', f.s1Submit)
+
+  assert.equal(event.defaultPrevented, true, 'a mid-flow submit is intercepted')
+  assert.equal(visible(f.s2), true, 'and advances to the next root step')
+  assert.equal(visible(f.s1), false)
+  assert.deepEqual(harness.warnings, [])
+})
+
+test('linear flow: the last step submit stays terminal', () => {
+  const f = linearFlow()
+  const harness = mount(h('body', {}, [f.flow]))
+  harness.fire(f.flow, 'click', f.s1Submit)
+  const event = harness.fire(f.flow, 'click', f.s2Submit)
+
+  assert.equal(event.defaultPrevented, false, 'native submit falls through')
+  assert.equal(visible(f.s2), true)
 })
