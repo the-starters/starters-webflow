@@ -126,11 +126,11 @@ function makeForm(kind = 'build', values = {}) {
     get validityReports() {
       return validityReports
     },
-    clickSubmit() {
+    clickSubmit(target = submit) {
       const record = listeners.get('click')
       if (!record) throw new Error('click listener not bound')
       const event = {
-        target: submit,
+        target,
         prevented: false,
         stopped: false,
         preventDefault() {
@@ -715,6 +715,35 @@ test('visible Starter Edit Profile changes email independently when unrelated re
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.validityReports, 0)
+  assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
+})
+
+test('independent Starter email accepts a click from nested submit content', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'talent-next@example.com',
+    valid: false,
+  })
+  const nestedSubmitContent = {}
+  starterProfileForm.submit.contains = (candidate) => candidate === nestedSubmitContent
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent-old@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  const click = starterProfileForm.clickSubmit(nestedSubmitContent)
+  await settle()
+
+  assert.equal(click.event.prevented, true)
+  assert.equal(click.event.stopped, true)
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+  )
+  assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
 })
 
