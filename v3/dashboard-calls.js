@@ -14,6 +14,8 @@
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
   const BOOKINGS_PATH = '/booking_record/get/v3'
   const MEMBERSTACK_TIMEOUT_MS = 10000
+  const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
+  const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
   const PAGE_SIZE = 6
   const PROJECT_INSTANCE_KEYS = ['dash-projects', 'dash-brand-projects']
   const DASHBOARD_ROLES = {
@@ -128,6 +130,27 @@
   function text(root, selector, value) {
     const element = root && root.querySelector(selector)
     if (element) element.textContent = clean(value)
+  }
+
+  function profileValues(form) {
+    const value = function (field) {
+      const input = form && form.querySelector('[data-ms-member="' + field + '"]')
+      return clean(input && input.value)
+    }
+    return {
+      firstName: value('free-user'),
+      lastName: value('last-name'),
+      company: value('company'),
+    }
+  }
+
+  function memberMatchesProfile(member, values) {
+    const fields = (member && member.customFields) || {}
+    return (
+      clean(fields['free-user']) === values.firstName &&
+      clean(fields['last-name']) === values.lastName &&
+      clean(fields.company) === values.company
+    )
   }
 
   function formatDate(value, timezone) {
@@ -589,6 +612,54 @@
     if (company) company.textContent = ''
   }
 
+  function wait(ms) {
+    return new Promise(function (resolve) {
+      global.setTimeout(resolve, ms)
+    })
+  }
+
+  async function repaintBrandHeroWhenSaved(memberstack, values, isCurrent) {
+    for (const delayMs of PROFILE_REFRESH_DELAYS_MS) {
+      if (delayMs) await wait(delayMs)
+      if (!isCurrent()) return false
+      try {
+        const current = await memberstack.getCurrentMember()
+        const member = current && (current.data || current)
+        if (!isCurrent()) return false
+        if (memberMatchesProfile(member, values)) {
+          bindBrandHero(member)
+          return true
+        }
+      } catch (_error) {
+        // The native Memberstack form owns its success/error UI. A temporary
+        // readback failure leaves the current hero intact and retries quietly.
+      }
+    }
+    return false
+  }
+
+  function wireBrandProfileRepaint(memberstack) {
+    if (roleForPath(global.location && global.location.pathname) !== 'brand') {
+      return
+    }
+    document.querySelectorAll(PROFILE_FORM_SELECTOR).forEach(function (form) {
+      if (form.__startersBrandProfileRepaintBound) return
+      form.__startersBrandProfileRepaintBound = true
+      let submissionGeneration = 0
+      form.addEventListener('submit', function () {
+        const expected = profileValues(form)
+        if (!expected.firstName || !expected.lastName || !expected.company) {
+          return
+        }
+        submissionGeneration += 1
+        const generation = submissionGeneration
+        repaintBrandHeroWhenSaved(memberstack, expected, function () {
+          return generation === submissionGeneration
+        })
+      })
+    })
+  }
+
   async function fetchBookings(memberId) {
     if (typeof global.xanoAuthFetch !== 'function') {
       throw new Error('Scheduling authentication bridge unavailable')
@@ -696,6 +767,7 @@
       console.error('[dashboard-calls] failed closed: Memberstack unavailable')
       return
     }
+    wireBrandProfileRepaint(memberstack)
 
     let sessionGeneration = 0
     const currentGeneration = function () {
@@ -723,7 +795,9 @@
   const api = {
     bookingStatus,
     memberOwnsBooking,
+    memberMatchesProfile,
     normalizeBooking,
+    profileValues,
     findProjectLoadMore,
     projectFilterIsActive,
     projectFilterVisible,
