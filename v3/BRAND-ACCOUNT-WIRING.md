@@ -87,7 +87,11 @@ When the whole form is valid, it updates a changed Talent login email in
 Memberstack and then replays the same native submission. When unrelated required
 profile fields are incomplete, clicking submit still saves a natively valid,
 changed login email through Memberstack without submitting the incomplete
-profile to Xano. Invalid or unchanged email input remains under the browser's
+profile to Xano. Keep `data-edit-submit` on the Designer-authored submit control
+and keep that control directly inside its existing wrapper. The invalid-profile
+state disables pointer events on the control, so the controller recognizes the
+click that lands on that direct wrapper; it does not treat higher ancestors as
+submit targets. Invalid or unchanged email input remains under the browser's
 native full-profile validation. Do not add a second form, remove the existing
 Xano handler, or move the login-email input outside this form.
 
