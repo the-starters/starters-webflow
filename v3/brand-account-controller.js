@@ -25,8 +25,10 @@
  * Login-email interception is also OFF by default so it cannot race the forms'
  * existing submit owners. The configured identity-scoped mode resolves the
  * current member through the canonical route-guard role contract, claims Brand
- * and Talent Account Security, and guards the visible Talent edit-profile form
- * before replaying its Designer-authored Xano submission:
+ * and Talent Account Security, and guards the visible Talent edit-profile form.
+ * A valid changed login email can save independently when other required
+ * profile fields are incomplete; a valid full-profile submit changes the login
+ * email first and then replays its Designer-authored Xano submission:
  *   window.StartersBrandAccountConfig = { guardSecurityForm: 'identity' }
  * The legacy `brand` mode remains supported for a rollback-safe rollout.
  */
@@ -330,11 +332,8 @@
     return { memberId: member.id }
   }
 
-  async function submitSecurity(form, memberSnapshot, emailSelector) {
-    var email = inputValue(
-      form,
-      emailSelector || '[data-ms-member="email"]',
-    ).toLowerCase()
+  async function submitSecurity(form, memberSnapshot, emailSnapshot) {
+    var email = trim(emailSnapshot).toLowerCase()
     if (!EMAIL_PATTERN.test(email)) throw new Error('Enter a valid email address.')
     var client = memberstack()
     var member = memberSnapshot || (await currentMember(client))
@@ -417,6 +416,73 @@
     var busy = false
     var ownsSubmission = false
 
+    // Native constraint validation prevents the form's submit event from
+    // firing when an unrelated required profile field is incomplete. Keep
+    // that validation for profile saves, but let a valid changed login email
+    // use the identity path independently. A later complete profile save sees
+    // an unchanged email and replays the authored form normally.
+    form.addEventListener(
+      'click',
+      function (event) {
+        var submit = form.querySelector('[type="submit"]')
+        if (!submit || event.target !== submit || busy) return
+        if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
+
+        var emailInput = form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
+        if (
+          !emailInput ||
+          typeof emailInput.checkValidity !== 'function' ||
+          !emailInput.checkValidity()
+        ) {
+          return
+        }
+
+        var email = trim(emailInput.value).toLowerCase()
+        if (!EMAIL_PATTERN.test(email)) return
+
+        event.preventDefault()
+        if (typeof event.stopImmediatePropagation === 'function') {
+          event.stopImmediatePropagation()
+        }
+        busy = true
+        ownsSubmission = false
+
+        Promise.resolve()
+          .then(async function () {
+            var guard = window.StartersV3RouteGuard
+            if (!guard || typeof guard.memberRole !== 'function') return false
+            var member = await currentMember(memberstack())
+            if (guard.memberRole(member) !== 'talent') return false
+            if (memberEmail(member) === email) return false
+
+            ownsSubmission = true
+            setBusy(form, true)
+            setMessage(form, 'idle', '')
+            await submitSecurity(form, member, email)
+            setMessage(form, 'success', '')
+            return true
+          })
+          .then(function (owned) {
+            if (!owned && typeof form.reportValidity === 'function') {
+              form.reportValidity()
+            }
+          })
+          .catch(function (error) {
+            if (!ownsSubmission) {
+              if (typeof form.reportValidity === 'function') form.reportValidity()
+              return
+            }
+            setMessage(form, 'error', friendlyError(error))
+            trackFailure(error, 'starter/account/email')
+          })
+          .finally(function () {
+            busy = false
+            setBusy(form, false)
+          })
+      },
+      true,
+    )
+
     form.addEventListener(
       'submit',
       function (event) {
@@ -429,6 +495,7 @@
         busy = true
         ownsSubmission = false
         var submitter = event.submitter
+        var email = inputValue(form, STARTER_PROFILE_EMAIL_SELECTOR).toLowerCase()
 
         Promise.resolve()
           .then(async function () {
@@ -437,14 +504,13 @@
             var member = await currentMember(memberstack())
             if (guard.memberRole(member) !== 'talent') return false
 
-            var email = inputValue(form, STARTER_PROFILE_EMAIL_SELECTOR).toLowerCase()
             if (!EMAIL_PATTERN.test(email)) return false
             if (memberEmail(member) === email) return false
 
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
-            await submitSecurity(form, member, STARTER_PROFILE_EMAIL_SELECTOR)
+            await submitSecurity(form, member, email)
             return true
           })
           .then(function () {
@@ -491,6 +557,7 @@
         ownsSubmission = false
         submissionRole = null
         var submitter = event.submitter
+        var email = inputValue(form, '[data-ms-member="email"]').toLowerCase()
 
         Promise.resolve()
           .then(async function () {
@@ -503,7 +570,7 @@
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
-            await submitSecurity(form, member)
+            await submitSecurity(form, member, email)
             setMessage(form, 'success', '')
             return true
           })
