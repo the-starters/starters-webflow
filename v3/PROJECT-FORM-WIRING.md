@@ -88,8 +88,8 @@ authenticated Brand plus the selected Starter Memberstack identity.
 
 ## Authored states
 
-- Add `[data-project-form-state="error"]` inside the form if no suitable error
-  slot exists. It receives a safe message and `role="alert"`.
+- Add `data-project-form-state="error"` to the new inline error text element
+  inside the form. It receives a safe message and `role="alert"`.
 - Add `data-project-form-state="success"` to the existing
   `.generate-contract_success` sibling. Runtime behavior uses only the data
   attribute.
