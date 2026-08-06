@@ -547,24 +547,50 @@ either library.
 
 Webflow markup contract:
 
-- The page has separate `.section_all-starters-body` variants gated with
-  `data-ms-content="premium-brands"` and
-  `data-ms-content="!premium-brands"`. All favourite controls and view radios
-  belong inside the premium variant. The module only decorates that variant and
-  hard-hides `.expert-card_favorite-wrapper` in the non-premium variant.
-- Each premium Algolia card exposes `data-wf-algolia-hit-objectid` and contains
-  an `.expert-card_favorite-wrapper`; the module adds the canonical `wf-xano`
-  favourite attributes as cards render.
-- One Designer-owned radio group provides Show all and Favourites inputs. Mark
-  the inputs themselves or their Webflow radio-field wrappers with
-  `data-ts-favorites-view="all"` and
-  `data-ts-favorites-view="favorites"` respectively, and check Show all by
-  default. The module filters the existing Algolia grid by favourite
-  `objectID`; no second results grid is created. The grid's Designer-owned empty
-  state handles a member with no favourites.
+- Identify the favourites list section with a dedicated presence-only marker:
+  `data-starters-list` (no value required). Put it on the one
+  `.section_all-starters-body` (or equivalent wrapper) that owns the paid-Brand
+  Algolia browse and card template. The module keys boot, decoration, pre-warm,
+  and positioning CSS off `[data-starters-list]` only — **not** off any
+  Memberstack `data-ms-content` gate. Renaming the gate (e.g. from
+  `premium-brands` to `paid-plans`) must never switch favourites off again; the
+  gate on that section is presentation only.
+- Any other `.section_all-starters-body` without the marker gets
+  `.expert-card_favorite-wrapper` hard-hidden. Favourite wrappers outside those
+  list sections (e.g. membership-modal static Expert Cards) are left untouched.
+- Each marked-section Algolia card exposes `data-wf-algolia-hit-objectid` and
+  contains an `.expert-card_favorite-wrapper`; the module adds the canonical
+  `wf-xano` favourite attributes as cards render.
+- Optional (not required while `/favorites` owns “view my saved”): one
+  Designer-owned radio group for Show all / Favourites. Mark the inputs or
+  their Webflow radio-field wrappers with `data-ts-favorites-view="all"`
+  (checked by default) and `data-ts-favorites-view="favorites"`. Radios must
+  live **inside** the `[data-starters-list]` section. The module filters the
+  existing Algolia grid by favourite `objectID`; no second results grid. With no
+  radios present, hearts still work and the view-filter path never fires. The
+  grid's Designer-owned empty state handles a member with no favourites.
 - The page keeps its small inline `ms-loaded` reveal snippet. Page reveal is
   deliberately independent of this CDN asset so a CDN failure cannot leave
   the page hidden.
+
+Designer checklist (restore hearts after a gate rename):
+
+1. On `/all-starters`, select the list section that should own hearts.
+2. Add custom attribute **Name** `data-starters-list`, leave **Value** empty
+   (presence only).
+3. Publish the site.
+4. After this module is on jsDelivr `@latest` (or a pinned tag that includes the
+   marker change), hard-refresh as a paid Brand and confirm a heart click fills
+   and persists across reload.
+
+Optional future radios (same section, whenever you want the inline filter back):
+
+1. Add a radio group with two inputs.
+2. On “Show all” (or its radio-field wrapper): `data-ts-favorites-view="all"`,
+   checked by default.
+3. On “Favourites” (or its wrapper): `data-ts-favorites-view="favorites"`.
+4. Publish. No script change required if this module already ships the filter
+   binding.
 
 The module is production-enabled and has no hostname or reveal-class kill
 switch. It only injects favourite-control positioning/state styles and supplies

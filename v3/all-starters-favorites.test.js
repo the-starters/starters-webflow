@@ -8,7 +8,10 @@ const source = fs.readFileSync(require.resolve('./all-starters-favorites.js'), '
 // vm-realm objects have a foreign Object.prototype; normalize before deep-equal.
 const plain = (value) => JSON.parse(JSON.stringify(value))
 
-const PREMIUM_SECTION = '.section_all-starters-body[data-ms-content="premium-brands"]'
+// The favorites section is found by its dedicated marker attribute, never by a
+// Memberstack gate value (renaming the gate used to silently kill the module).
+const LIST_SECTION = '[data-starters-list]'
+const LEGACY_PREMIUM_SECTION = '.section_all-starters-body[data-ms-content="premium-brands"]'
 
 // Minimal element stub: enough surface for the decorate/filter paths.
 function fakeElement(overrides = {}) {
@@ -61,6 +64,7 @@ function fakeElement(overrides = {}) {
 function loadModule(options = {}) {
   const warnings = []
   const docListeners = {}
+  const queried = []
   let bootListener = null
   const head = fakeElement({ tagName: 'HEAD' })
   const documentStub = {
@@ -74,7 +78,9 @@ function loadModule(options = {}) {
       else docListeners[type] = listener
     },
     querySelector(selector) {
-      if (selector === PREMIUM_SECTION) return options.section || null
+      queried.push(selector)
+      const marker = options.sectionSelector || LIST_SECTION
+      if (selector === marker) return options.section || null
       return null
     },
     querySelectorAll() {
@@ -112,6 +118,7 @@ function loadModule(options = {}) {
     window: windowStub,
     document: documentStub,
     docListeners,
+    queried,
     warnings,
     boot: () => {
       documentStub.readyState = 'complete'
@@ -170,8 +177,37 @@ test('boot guard: module refuses to run twice', () => {
   assert.equal(mod.window.__startersV3AllStartersFavoritesBooted, true)
 })
 
-test('no premium section: config untouched, nothing built', async () => {
+test('no marked list section: config untouched, nothing built', async () => {
   const mod = loadModule({ section: null, memberReady: Promise.resolve(premiumMember()) })
+  mod.boot()
+  await Promise.resolve()
+  assert.equal(mod.window.WfXanoConfig, undefined)
+  assert.equal(mod.document.head.children.length, 0)
+})
+
+test('boot keys off the [data-starters-list] marker, not a Memberstack gate', async () => {
+  // Null member on purpose: the lookup+style injection happen before the plan
+  // check, and a premium member here would start a 10s wf-xano readiness poll.
+  const mod = loadModule({
+    section: fakeElement(),
+    memberReady: Promise.resolve(null),
+  })
+  mod.boot()
+  await Promise.resolve()
+  // Both the eval-time pre-warm and boot() look the section up by the marker.
+  assert.ok(mod.queried.length > 0)
+  mod.queried.forEach((selector) => assert.equal(selector, LIST_SECTION))
+  assert.equal(mod.document.head.children.length, 1)
+})
+
+test('a legacy premium-brands section without the marker is ignored', async () => {
+  // The section exists but only answers to the old gate selector: the module
+  // must no-op (this is exactly the paid-plans rename that killed it live).
+  const mod = loadModule({
+    section: fakeElement(),
+    sectionSelector: LEGACY_PREMIUM_SECTION,
+    memberReady: Promise.resolve(premiumMember()),
+  })
   mod.boot()
   await Promise.resolve()
   assert.equal(mod.window.WfXanoConfig, undefined)
@@ -200,7 +236,7 @@ test('favoritesSource defaults only when the site config lacks it', async () => 
   assert.equal(mod2.window.WfXanoConfig.favoritesSource, 'opp30:brand/favorites')
 })
 
-test('styles inject when the premium section exists (incl. non-premium hard hide)', async () => {
+test('styles inject when the marked section exists (incl. unmarked-variant hard hide)', async () => {
   const mod = loadModule({
     section: fakeElement(),
     memberReady: Promise.resolve(null),
@@ -209,8 +245,15 @@ test('styles inject when the premium section exists (incl. non-premium hard hide
   await Promise.resolve()
   assert.equal(mod.document.head.children.length, 1)
   const css = mod.document.head.children[0].textContent
-  assert.match(css, /data-ms-content="!premium-brands"\] \.expert-card_favorite-wrapper \{ display: none !important/)
-  assert.match(css, /data-ms-content="premium-brands"\] \.expert-card_wrapper > \.expert-card_favorite-wrapper \{ position: absolute/)
+  // Hard hide is scoped to unmarked .section_all-starters-body variants, so it
+  // survives gate renames AND leaves favorite wrappers elsewhere on the page
+  // (membership-modal static Expert Cards) alone.
+  assert.match(
+    css,
+    /\.section_all-starters-body:not\(\[data-starters-list\]\) \.expert-card_favorite-wrapper \{ display: none !important; \}/
+  )
+  assert.doesNotMatch(css, /data-ms-content/)
+  assert.match(css, /\[data-starters-list\] \.expert-card_wrapper > \.expert-card_favorite-wrapper \{ position: absolute/)
   // Global [hidden] override: Webflow's class display:flex beats the UA [hidden]
   // rule, so both our decorate-hidden state and wf-xano's auth-fail hide need
   // this to actually hide anything.
@@ -448,6 +491,15 @@ test('favorite events for other item types are ignored', async () => {
   mod.docListeners['wf-xano:favorite']({ detail: { item_type: 'opportunity', item_id: '9', favorited: false } })
   await new Promise((resolve) => setImmediate(resolve))
   assert.equal(wfAlgolia.filters.length, before)
+})
+
+test('executable code never references a Memberstack gate attribute', () => {
+  // Header prose keeps a historical note about the old premium-brands gate; the
+  // code itself must be free of gate coupling (that coupling is what broke).
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  assert.doesNotMatch(code, /data-ms-content/)
+  assert.doesNotMatch(code, /premium-brands/)
+  assert.match(code, /\[data-starters-list\]/)
 })
 
 test('module never creates UI or injects library scripts', () => {

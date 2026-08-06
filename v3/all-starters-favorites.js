@@ -3,18 +3,19 @@
  *
  * Page glue for the wf-xano favorites module (wf-xano v0.18+ ships the
  * toggle/hydration engine; endpoints live in Xano api:opp30 brand/favorites/*).
- * The /all-starters page has TWO `.section_all-starters-body` variants gated by
- * Memberstack: `data-ms-content="premium-brands"` (favorites live here) and
- * `data-ms-content="!premium-brands"` (must never show favorites UI). This
+ * The /all-starters page ships one or more `.section_all-starters-body`
+ * variants; the favorites one is the one carrying the `data-starters-list`
+ * marker attribute (the Memberstack gate on it is presentation only). This
  * module:
  *
  *   - decorates the favorite wrapper in every Algolia expert card inside the
- *     PREMIUM section with the canonical wf-xano favorite attributes (and
+ *     MARKED section with the canonical wf-xano favorite attributes (and
  *     injects a ♡ visual when a Designer template variant ships the wrapper
  *     empty); each control is decorated HIDDEN and is revealed by wf-xano's
  *     own paint (setFavoriteControl un-hides it) once favorites hydrate, so a
  *     slow or auth-failed ids fetch no longer flashes then hides the bookmark.
- *     Also hard-hides favorite wrappers in the non-premium section,
+ *     Also hard-hides favorite wrappers in any unmarked
+ *     `.section_all-starters-body` variant,
  *   - binds the Designer-built "Show all / Favourites" radio filter (marked
  *     with data-ts-favorites-view="all|favorites") and applies it to the
  *     existing wf-algolia grid as an objectID filter — the same proven pattern
@@ -35,15 +36,24 @@
  *   - own the page reveal (the page's inline `ms-loaded` snippet does that,
  *     independent of this CDN file, so a CDN outage can never blank the page),
  *   - gate by hostname (entitlement = the brand-paid plan check here, the
- *     Memberstack premium-brands gated-content wrapper as presentation, and
+ *     Memberstack gated-content wrapper on the section as presentation, and
  *     the Xano plan #4/#5 precondition server-side).
  *
- * Designer contract (all inside the data-ms-content="premium-brands" section):
+ * Designer contract — the favorites section is identified by the
+ * `data-starters-list` marker attribute (presence only, no value), NOT by its
+ * Memberstack gate. Decision 2026-08-06: this module used to key off
+ * data-ms-content="premium-brands", and renaming that gate to "paid-plans" in
+ * the Designer silently killed the whole module. The gate value on the marked
+ * section is presentation only and may change freely. Everything below lives
+ * INSIDE the marked section:
  *   - radio inputs (one group) carrying data-ts-favorites-view="all" (checked
  *     by default) and data-ts-favorites-view="favorites" — the attribute may
  *     sit on the input itself or on its Webflow radio-field wrapper,
  *   - expert-card favorite wrapper (.expert-card_favorite-wrapper) in the card
  *     template, ideally with its bookmark SVG (♡ is injected when absent).
+ * Any other `.section_all-starters-body` variant (unmarked) gets its favorite
+ * wrappers hard-hidden; favorite wrappers outside that section entirely (e.g.
+ * the membership modal's static Expert Card lists) are left untouched.
  *
  * Install: /all-starters Page Settings -> Custom Code -> Footer, one deferred
  * jsDelivr @latest tag. History: extracted 2026-07-24 from the page's inline
@@ -63,8 +73,9 @@
     'pln_new-paid-plan-463h04ph': true,
     'pln_dorxata-test-brand-plan-777r02pa': true,
   }
-  var PREMIUM_SECTION = '.section_all-starters-body[data-ms-content="premium-brands"]'
-  var NON_PREMIUM_SECTION = '.section_all-starters-body[data-ms-content="!premium-brands"]'
+  // Dedicated marker attribute, deliberately NOT a Memberstack gate value:
+  // renaming the gate must never be able to switch this module off again.
+  var LIST_SECTION = '[data-starters-list]'
   var VIEW_ATTR = 'data-ts-favorites-view'
   var FAVORITE_TYPE = 'starter'
   var DEFAULT_FAVORITES_SOURCE = 'opp30:brand/favorites'
@@ -75,9 +86,12 @@
   var CSS = [
     '/* Favorite control sits on the card photo corner (some Designer template',
     '   variants ship the wrapper as an empty full-width div). */',
-    PREMIUM_SECTION + ' .expert-card_wrapper > .expert-card_favorite-wrapper { position: absolute; top: .75rem; right: .75rem; z-index: 2; width: auto; height: auto; }',
-    '/* Favorites are premium-only: never show the control in the non-premium variant. */',
-    NON_PREMIUM_SECTION + ' .expert-card_favorite-wrapper { display: none !important; }',
+    LIST_SECTION + ' .expert-card_wrapper > .expert-card_favorite-wrapper { position: absolute; top: .75rem; right: .75rem; z-index: 2; width: auto; height: auto; }',
+    '/* Never show the control in an unmarked list variant. Scoped to the list',
+    '   section so favorite wrappers elsewhere on the page (membership-modal',
+    '   static Expert Cards) stay untouched, and gate-attribute renames cannot',
+    '   break it. */',
+    '.section_all-starters-body:not([data-starters-list]) .expert-card_favorite-wrapper { display: none !important; }',
     '/* Webflow class CSS sets display:flex on these, which beats the UA [hidden]',
     '   rule — without this, neither our decorate-hidden state nor wf-xano',
     '   auth-fail hide actually hides anything. Global on purpose (repairs the',
@@ -140,7 +154,7 @@
     if (scope.matches && scope.matches('.expert-card_favorite-wrapper')) wrappers.push(scope)
     wrappers = wrappers.concat(Array.prototype.slice.call(scope.querySelectorAll('.expert-card_favorite-wrapper')))
     wrappers.forEach(function (wrapper) {
-      if (!wrapper.closest(PREMIUM_SECTION + ' [data-wf-algolia-hit-objectid]')) return
+      if (!wrapper.closest(LIST_SECTION + ' [data-wf-algolia-hit-objectid]')) return
       var control = wrapper.querySelector('button.expert_favorite-button') || wrapper
       if (control.getAttribute('wf-xano-element') === 'favorite') return
       // Show-when-ready, not hide-when-failed: start the control hidden so
@@ -259,7 +273,7 @@
   var memberPromise = memberReady()
 
   function boot() {
-    var section = document.querySelector(PREMIUM_SECTION)
+    var section = document.querySelector(LIST_SECTION)
     if (!section) return
     ensureFavoritesSource()
     injectStyles()
@@ -290,7 +304,7 @@
   // wf-xano's _favoriteLoads[type], so boot()'s later favorites.init reuses it —
   // no duplicate fetch. Guarded end-to-end so it can never break the page.
   try {
-    if (document.querySelector(PREMIUM_SECTION)) {
+    if (document.querySelector(LIST_SECTION)) {
       ensureFavoritesSource()
       memberPromise.then(function (member) {
         if (!isPremiumBrand(member)) return
