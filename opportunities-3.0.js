@@ -907,7 +907,7 @@
   // closed title twins to a modal-local confirm/success contract, then paint
   // that state explicitly on open and after the close mutation succeeds.
   function prepareCloseOpportunityModalTitles(modal) {
-    if (!modal) return null
+    if (!modal) return
     $$('.modal_nav [data-opp-status]', modal).forEach((el) => {
       const statuses = (el.getAttribute('data-opp-status') || '').split(/\s+/)
       const titleState = statuses.includes('closed')
@@ -919,12 +919,11 @@
       el.setAttribute('data-close-opp-title', titleState)
       el.removeAttribute('data-opp-status')
     })
-    return modal
   }
 
   function paintCloseOpportunityModalTitle(modal, state) {
-    modal = prepareCloseOpportunityModalTitles(modal)
     if (!modal) return
+    prepareCloseOpportunityModalTitles(modal)
     $$('[data-close-opp-title]', modal).forEach((el) => {
       el.style.display = el.getAttribute('data-close-opp-title') === state ? '' : 'none'
     })
@@ -3191,7 +3190,8 @@
           approvedCloseFlowAdvances.delete(flowConfirm)
           return
         }
-        if (!e.target.closest('[data-modal-target="close-opportunity"]') || !activeOpp) return
+        const closeModal = e.target.closest('[data-modal-target="close-opportunity"]')
+        if (!closeModal || !activeOpp) return
 
         e.preventDefault()
         e.stopPropagation()
@@ -3201,10 +3201,7 @@
           flowConfirm
         guard(btn, () => API.brandOppClose(activeOpp), (closedOpportunity) => {
           paintOpportunityMutationResult(closedOpportunity, 'Closed')
-          paintCloseOpportunityModalTitle(
-            e.target.closest('[data-modal-target="close-opportunity"]'),
-            'success',
-          )
+          paintCloseOpportunityModalTitle(closeModal, 'success')
           setOpportunityActionPending(btn, false)
           approvedCloseFlowAdvances.add(flowConfirm)
           try {
