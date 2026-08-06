@@ -593,22 +593,38 @@
     })
   }
 
+  function heroElement(name) {
+    return document.querySelector('[hero-element="' + name + '"]')
+  }
+
   function bindBrandHero(member) {
     if (roleForPath(global.location && global.location.pathname) !== 'brand') return
     const fields = member.customFields || {}
-    const names = document.querySelectorAll('.dash-hero_profile-name span')
-    if (names[0]) names[0].textContent = clean(fields['free-user']) || 'Brand'
-    if (names[1]) names[1].textContent = clean(fields['last-name'])
-    const company = document.querySelector('.dash-hero_profile-stats > p')
+    const firstName = heroElement('brand-first-name')
+    if (firstName) firstName.textContent = clean(fields['free-user']) || 'Brand'
+    const lastName = heroElement('brand-last-name')
+    if (lastName) lastName.textContent = clean(fields['last-name'])
+    const company = heroElement('brand-company')
     if (company) company.textContent = clean(fields.company)
+    // Memberstack's native data-ms-member="profile-image" owns the empty state
+    // (it leaves the Designer placeholder when the member has no photo). We only
+    // write a real photo URL, and strip srcset so the Webflow responsive set
+    // cannot outrank the src we set.
+    const image = heroElement('brand-image')
+    const photo = clean(member.profileImage)
+    if (image && photo) {
+      image.removeAttribute('srcset')
+      image.setAttribute('src', photo)
+    }
   }
 
   function clearBrandHero(role) {
     if (role !== 'brand') return
-    document.querySelectorAll('.dash-hero_profile-name span').forEach(function (name) {
-      name.textContent = ''
-    })
-    const company = document.querySelector('.dash-hero_profile-stats > p')
+    const firstName = heroElement('brand-first-name')
+    if (firstName) firstName.textContent = ''
+    const lastName = heroElement('brand-last-name')
+    if (lastName) lastName.textContent = ''
+    const company = heroElement('brand-company')
     if (company) company.textContent = ''
   }
 

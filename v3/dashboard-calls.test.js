@@ -101,6 +101,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   const name = element()
   const surname = element()
   const company = element()
+  const image = element({ 'hero-element': 'brand-image', srcset: 'placeholder.jpg 1x' })
   const list = element()
   const template = element({ 'bookings-item-template': 'calls' })
   const loader = element()
@@ -125,11 +126,17 @@ test('auth changes clear identity state and stale requests cannot render', async
     documentElement: root,
     readyState: 'complete',
     querySelector(selector) {
-      return selector === '.dash-hero_profile-stats > p' ? company : null
+      return (
+        {
+          '[hero-element="brand-first-name"]': name,
+          '[hero-element="brand-last-name"]': surname,
+          '[hero-element="brand-company"]': company,
+          '[hero-element="brand-image"]': image,
+        }[selector] || null
+      )
     },
     querySelectorAll(selector) {
       if (selector === '[bookings-section]') return [section]
-      if (selector === '.dash-hero_profile-name span') return [name, surname]
       return []
     },
   }
@@ -175,6 +182,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   currentMember = {
     id: 'member-b',
     customFields: { 'free-user': 'Member B', company: 'Company B' },
+    profileImage: 'https://cdn.example/member-b.jpg',
   }
   authChange()
   assert.equal(name.textContent, '')
@@ -183,6 +191,8 @@ test('auth changes clear identity state and stale requests cannot render', async
   assert.deepEqual(requests, ['member-a', 'member-b'])
   assert.equal(name.textContent, 'Member B')
   assert.equal(company.textContent, 'Company B')
+  assert.equal(image.attributes.src, 'https://cdn.example/member-b.jpg')
+  assert.equal(image.attributes.srcset, undefined)
   assert.equal(filters.hidden, false)
 
   firstResponse.resolve({ ok: true, json: async () => [] })
@@ -276,11 +286,17 @@ test('native Brand profile saves repaint the hero only after canonical Membersta
     documentElement: root,
     readyState: 'complete',
     querySelector(selector) {
-      return selector === '.dash-hero_profile-stats > p' ? company : null
+      return (
+        {
+          '[hero-element="brand-first-name"]': name,
+          '[hero-element="brand-last-name"]': surname,
+          '[hero-element="brand-company"]': company,
+          '[hero-element="brand-image"]': null,
+        }[selector] || null
+      )
     },
     querySelectorAll(selector) {
       if (selector === '[bookings-section]') return [section]
-      if (selector === '.dash-hero_profile-name span') return [name, surname]
       if (selector === 'form[data-ms-form="profile"]') return [profileForm]
       return []
     },
