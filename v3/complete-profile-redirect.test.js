@@ -20,6 +20,20 @@ const QUIZ_RESULTS = '/quiz-results'
 const DONE_FIELD = 'completed-brand-profile'
 const QUIZ_FIELD = 'starter-quiz'
 
+// The Xano surface the paid-Brand branch reads since 2026-08-06, and the
+// same-tab marker that lets it skip the read entirely.
+const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
+const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
+const BRAND_STATUS_URL =
+  XANO + '/api:KZf7nFnk/starters_onboarding/get_brand_profile_status'
+const MARKER_KEY = 'thestarters:v3-brand-profile-completed'
+
+// get_brand_profile_status bodies. Brands that predate the funnel are
+// grandfathered done, so only a new signup reads not-done.
+const BRAND_DONE = { has_record: true, brand_profile_done: true }
+const BRAND_NOT_DONE = { has_record: true, brand_profile_done: false }
+const BRAND_NO_RECORD = { has_record: false, brand_profile_done: false }
+
 function plan(planId) {
   return { active: true, planId }
 }
@@ -48,8 +62,10 @@ const CONFLICTED = {
   ],
 }
 
-// The one role this module acts on, in both the not-done and done states. The
-// customFields shape is Memberstack's own.
+// The one role this module acts on. `doneValue` writes the legacy
+// `completed-brand-profile` member field, which this module no longer reads — it
+// is kept so the tests can prove a stray value on the member object cannot
+// influence any branch.
 function brandPaid(doneValue) {
   const member = {
     id: 'm-brand-paid',
@@ -118,6 +134,22 @@ function makeClock() {
   }
 }
 
+function jsonResponse(body, { ok = true, status = 200 } = {}) {
+  return { ok, status, json: async () => body }
+}
+
+// A 200 whose body is not JSON. The module's `.json().catch(() => null)` turns
+// this into a null payload, which must read as inconclusive rather than as done.
+function malformedJsonResponse() {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw new SyntaxError('Unexpected token < in JSON at position 0')
+    },
+  }
+}
+
 function loadModule(options = {}) {
   const clock = makeClock()
   const hostname = options.hostname || 'the-starters-3-0.webflow.io'
@@ -140,17 +172,76 @@ function loadModule(options = {}) {
   // A recording tripwire rather than an absent global. An undefined `fetch`
   // proves only that the harness never defined one; a fetch that records its
   // arguments and then throws proves the module actually abstained, and fails
-  // loudly and traceably the day someone adds a request to this "no network"
-  // module.
+  // loudly and traceably the day someone adds a request to a branch that is
+  // still meant to be free (free Brand, Talent, and the marker fast path).
+  //
+  // The paid-Brand branch DOES read Xano since 2026-08-06, so a test that wants
+  // that branch to reach an answer passes `xano: {...}` and gets a recording stub
+  // that answers the two known URLs and tripwires everything else.
   const fetches = []
   function tripwireFetch(url, init) {
-    fetches.push({ url, init })
+    fetches.push({ url: String(url), init })
     throw new Error(
       'complete-profile-redirect must make no network request (fetch ' +
         url +
         ')',
     )
   }
+
+  const xano = options.xano || {}
+  async function xanoFetch(url, init) {
+    fetches.push({ url: String(url), init })
+
+    if (String(url).indexOf(TRADE_URL) === 0) {
+      if (xano.tradeRejects) throw new Error('trade network failure')
+      if (xano.tradeStatus) {
+        return jsonResponse(null, { ok: false, status: xano.tradeStatus })
+      }
+      return jsonResponse(
+        Object.prototype.hasOwnProperty.call(xano, 'tradeBody')
+          ? xano.tradeBody
+          : 'xano-token-abc',
+      )
+    }
+
+    if (String(url) === BRAND_STATUS_URL) {
+      if (xano.neverSettles) return new Promise(() => {})
+      if (xano.rejects) throw new Error('status network failure')
+      if (xano.status) {
+        return jsonResponse(null, { ok: false, status: xano.status })
+      }
+      if (xano.malformedJson) return malformedJsonResponse()
+      return jsonResponse(
+        Object.prototype.hasOwnProperty.call(xano, 'statusBody')
+          ? xano.statusBody
+          : BRAND_DONE,
+      )
+    }
+
+    return tripwireFetch(url, init)
+  }
+  const activeFetch = options.xano ? xanoFetch : tripwireFetch
+
+  // The marker store. `storageFailure: 'get'` reproduces Safari private mode,
+  // where reading is what throws; `'missing'` removes the property entirely.
+  const storage = new Map()
+  if (options.marker !== undefined) storage.set(MARKER_KEY, options.marker)
+  const sessionStorage = {
+    getItem(key) {
+      if (options.storageFailure === 'get') {
+        throw new DOMException('', 'SecurityError')
+      }
+      return storage.has(key) ? storage.get(key) : null
+    },
+    setItem(key, value) {
+      storage.set(key, String(value))
+    },
+    removeItem(key) {
+      storage.delete(key)
+    },
+  }
+
+  const aborted = []
 
   const window = {
     CustomEvent: class CustomEvent {
@@ -163,7 +254,17 @@ function loadModule(options = {}) {
     URLSearchParams,
     dispatchEvent() {},
     location,
-    fetch: tripwireFetch,
+    fetch: activeFetch,
+    sessionStorage: options.storageFailure === 'missing' ? undefined : sessionStorage,
+    AbortController: class {
+      constructor() {
+        this.signal = { aborted: false }
+      }
+      abort() {
+        this.signal.aborted = true
+        aborted.push(this)
+      }
+    },
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
     setInterval: clock.setInterval,
@@ -181,6 +282,10 @@ function loadModule(options = {}) {
         if (options.memberLookupMalformed) return null
         return { data: member }
       },
+      getMemberCookie: async () => {
+        if (options.cookieRejects) throw new Error('memberstack failure')
+        return options.loggedOutCookie ? null : 'ms-jwt'
+      },
     }
   }
 
@@ -192,7 +297,7 @@ function loadModule(options = {}) {
     window.$memberstackDom = memberstackFor(
       Object.prototype.hasOwnProperty.call(options, 'member')
         ? options.member
-        : brandPaid('yes'),
+        : brandPaid(),
     )
   }
 
@@ -270,6 +375,7 @@ function loadModule(options = {}) {
 
   return {
     api: window.StartersCompleteProfileRedirect,
+    aborted,
     clock,
     fetches,
     guard: window.StartersV3RouteGuard,
@@ -277,9 +383,13 @@ function loadModule(options = {}) {
     location,
     logs,
     lookups,
+    storage,
     window,
   }
 }
+
+const urlsOf = (calls) => calls.map((call) => call.url)
+const callsTo = (calls, url) => calls.filter((call) => call.url === url)
 
 /**
  * The destination the real route-guard contract names for a member, read from one
@@ -365,38 +475,97 @@ test('host gate covers production, staging, local, and dev tunnels but not looka
   }
 })
 
-test('the completion field is read with the same semantics as the quiz marker', () => {
+test('the completion marker is read with the same semantics as the quiz marker', () => {
   const { api, guard } = loadModule({ pathname: '/other' })
-  assert.equal(api.doneField, DONE_FIELD)
+  assert.equal(api.markerKey, MARKER_KEY)
 
-  // Done: any trimmed non-empty string, and any non-string truthy value.
-  for (const value of ['yes', 'true', 'completed', ' x ', true, 1, {}]) {
-    assert.equal(
-      api.hasCompletedBrandProfile(brandPaid(value)),
-      true,
-      JSON.stringify(value),
-    )
+  // Set: any trimmed non-empty string.
+  for (const marker of ['1', 'true', 'completed', ' x ']) {
+    const probe = loadModule({ pathname: '/other', marker })
+    assert.equal(probe.api.completionMarkerSet(), true, JSON.stringify(marker))
   }
-  // Not done: empty, whitespace-only, and every falsy value.
-  for (const value of ['', '   ', '\n\t ', false, 0, null, undefined]) {
-    assert.equal(
-      api.hasCompletedBrandProfile(brandPaid(value)),
-      false,
-      JSON.stringify(value),
-    )
+  // Not set: absent, empty, whitespace-only.
+  for (const marker of [undefined, '', '   ', '\n\t ']) {
+    const probe = loadModule({ pathname: '/other', marker })
+    assert.equal(probe.api.completionMarkerSet(), false, JSON.stringify(marker))
   }
-  // Absent field, absent customFields, and no member at all.
-  assert.equal(api.hasCompletedBrandProfile(brandPaid()), false)
-  assert.equal(api.hasCompletedBrandProfile({ id: 'm' }), false)
-  assert.equal(api.hasCompletedBrandProfile(null), false)
+  // Storage that throws on read, and storage that is not there at all.
+  assert.equal(
+    loadModule({ pathname: '/other', storageFailure: 'get', marker: '1' }).api.completionMarkerSet(),
+    false,
+  )
+  assert.equal(
+    loadModule({ pathname: '/other', storageFailure: 'missing' }).api.completionMarkerSet(),
+    false,
+  )
 
-  // The predicate is a deliberate copy of the guard's `starter-quiz` rule; if
-  // that contract ever changes shape, this pins the copy to the original.
+  // The predicate is the same rule as the guard's `starter-quiz` read; if that
+  // contract ever changes shape, this pins the copy to the original.
   const quizShaped = { customFields: { 'starter-quiz': '   ' } }
   assert.equal(guard.hasCompletedQuiz(quizShaped), false)
   assert.equal(
     guard.hasCompletedQuiz({ customFields: { 'starter-quiz': 'x' } }),
     true,
+  )
+  assert.equal(api.markerKey, MARKER_KEY)
+})
+
+test('the marker key is exactly the one the account controller writes', () => {
+  const controllerSource = fs.readFileSync(
+    require.resolve('./brand-account-controller.js'),
+    'utf8',
+  )
+  const { api } = loadModule({ pathname: '/other' })
+
+  assert.equal(api.markerKey, MARKER_KEY)
+  // Writer and reader are separate self-contained files by design, so the shared
+  // key is pinned here rather than trusted.
+  assert.ok(
+    controllerSource.includes("'" + MARKER_KEY + "'"),
+    'brand-account-controller.js must write the key this module reads',
+  )
+})
+
+test('the status body maps to one of three answers, and only one navigates', () => {
+  const { api } = loadModule({ pathname: '/other' })
+
+  assert.equal(api.brandProfileStateFrom(BRAND_DONE), 'done')
+  assert.equal(api.brandProfileStateFrom(BRAND_NOT_DONE), 'not-done')
+  // No brands_v3 row yet: the webhook has not mirrored this member, so the form
+  // is still the right place for them.
+  assert.equal(api.brandProfileStateFrom(BRAND_NO_RECORD), 'unknown')
+
+  // Nothing else may read as done, because done is the only answer that takes a
+  // member off a page they may still need.
+  for (const payload of [
+    null,
+    undefined,
+    {},
+    'nope',
+    42,
+    { brand_profile_done: true },
+    { has_record: 'true', brand_profile_done: true },
+    { has_record: true, brand_profile_done: 'true' },
+    { has_record: true, brand_profile_done: 1 },
+    { has_record: true },
+  ]) {
+    assert.notEqual(
+      api.brandProfileStateFrom(payload),
+      'done',
+      JSON.stringify(payload),
+    )
+  }
+})
+
+test('the legacy member field is no longer part of the decision', () => {
+  // The switch to Xano (2026-08-06) is the whole point of the same-signal rule,
+  // so the old field must be gone from the surface as well as from the branch.
+  const { api } = loadModule({ pathname: '/other' })
+  assert.equal(api.hasCompletedBrandProfile, undefined)
+  assert.equal(api.doneField, undefined)
+  assert.ok(
+    !source.includes("customFields[DONE_FIELD]"),
+    'the member-object completion read must be gone',
   )
 })
 
@@ -416,34 +585,182 @@ test('the route guard deliberately does not claim this page', () => {
 
 // --- Runtime behaviour --------------------------------------------------------
 
-test('a paid Brand with the completion field set goes to the brand dashboard', async () => {
-  const { location } = loadModule({ member: brandPaid('yes') })
+test('a paid Brand with the completion marker goes to the brand dashboard, free', async () => {
+  const { location, fetches, logs } = loadModule({
+    marker: '1',
+    member: brandPaid(),
+    // Deliberately the staying body: if the marker were ignored, this run would
+    // stay on the form instead of forwarding.
+    xano: { statusBody: BRAND_NOT_DONE },
+  })
   await flush()
   await flush()
   assert.equal(location.replaced, DASHBOARD)
+  assert.deepEqual(fetches, [], 'the marker path must cost no network call')
+  assert.ok(logs.info.some((line) => line.includes('marker is set')))
+})
+
+test('a paid Brand whose Xano status is done goes to the brand dashboard', async () => {
+  const { location, fetches } = loadModule({
+    member: brandPaid(),
+    xano: { statusBody: BRAND_DONE },
+  })
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(location.replaced, DASHBOARD)
+
+  // The read shape: one token trade, then one no-input bearer GET.
+  const urls = urlsOf(fetches)
+  assert.equal(urls.length, 2)
+  assert.ok(urls[0].startsWith(TRADE_URL + '?token='), urls[0])
+  assert.equal(urls[1], BRAND_STATUS_URL)
+  const read = callsTo(fetches, BRAND_STATUS_URL)[0]
+  assert.equal(read.init.headers.Authorization, 'Bearer xano-token-abc')
+  assert.equal(read.init.method, undefined)
+  assert.equal(read.init.body, undefined)
 })
 
 test('runs on both slash forms of the page', async () => {
   for (const pathname of ['/complete-profile', '/complete-profile/']) {
-    const { location } = loadModule({ pathname, member: brandPaid('yes') })
+    const { location } = loadModule({ pathname, marker: '1', member: brandPaid() })
     await flush()
     await flush()
     assert.equal(location.replaced, DASHBOARD, pathname)
   }
 })
 
-test('a paid Brand whose field is empty, whitespace, or absent stays', async () => {
-  for (const member of [
-    brandPaid(''),
-    brandPaid('   '),
-    brandPaid(),
-    { id: 'm-brand-paid', planConnections: [plan('pln_new-paid-plan-463h04ph')] },
+test('a paid Brand whose Xano status is not done stays on the form', async () => {
+  const { location, fetches, logs } = loadModule({
+    member: brandPaid(),
+    xano: { statusBody: BRAND_NOT_DONE },
+  })
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.equal(callsTo(fetches, BRAND_STATUS_URL).length, 1)
+  assert.ok(logs.info.some((line) => line.includes('not-done')))
+})
+
+test('a stale member field cannot move a paid Brand in either direction', async () => {
+  // The same-signal rule from the other side: the module reads Xano, so a
+  // `completed-brand-profile` value the webhook has not mirrored yet must not
+  // forward the member, and its absence must not hold back a member Xano calls
+  // done.
+  const staleDone = loadModule({
+    member: brandPaid('true'),
+    xano: { statusBody: BRAND_NOT_DONE },
+  })
+  const staleMissing = loadModule({
+    member: brandPaid(''),
+    xano: { statusBody: BRAND_DONE },
+  })
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(staleDone.location.replaced, undefined)
+  assert.equal(staleMissing.location.replaced, DASHBOARD)
+})
+
+test('a paid Brand with no brands_v3 record yet stays on the form', async () => {
+  const { location } = loadModule({
+    member: brandPaid('yes'),
+    xano: { statusBody: BRAND_NO_RECORD },
+  })
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(location.replaced, undefined)
+})
+
+test('every paid-Brand read failure leaves the page exactly as authored', async () => {
+  // Fail-open on this page means STAYING, because staying is the authored state.
+  for (const xano of [
+    { status: 401 },
+    { status: 500 },
+    { rejects: true },
+    { malformedJson: true },
+    { statusBody: {} },
+    { statusBody: 'nope' },
+    { statusBody: null },
+    { tradeStatus: 401 },
+    { tradeRejects: true },
+    { tradeBody: { nothing: true } },
   ]) {
-    const { location } = loadModule({ member })
+    const { location } = loadModule({ member: brandPaid(), xano })
     await flush()
     await flush()
-    assert.equal(location.replaced, undefined, JSON.stringify(member))
+    await flush()
+    assert.equal(location.replaced, undefined, JSON.stringify(xano))
   }
+
+  // No Memberstack cookie: the trade is never even attempted.
+  const loggedOutOfXano = loadModule({
+    member: brandPaid(),
+    loggedOutCookie: true,
+    xano: { statusBody: BRAND_DONE },
+  })
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(loggedOutOfXano.location.replaced, undefined)
+  assert.deepEqual(loggedOutOfXano.fetches, [])
+
+  // A cookie lookup that throws, and a marker read that throws: both are still
+  // just "stay", and the second one costs one read rather than a wrong answer.
+  const cookieThrows = loadModule({
+    member: brandPaid(),
+    cookieRejects: true,
+    xano: { statusBody: BRAND_DONE },
+  })
+  const markerThrows = loadModule({
+    member: brandPaid(),
+    storageFailure: 'get',
+    marker: '1',
+    xano: { statusBody: BRAND_NOT_DONE },
+  })
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(cookieThrows.location.replaced, undefined)
+  assert.equal(markerThrows.location.replaced, undefined)
+  assert.equal(callsTo(markerThrows.fetches, BRAND_STATUS_URL).length, 1)
+})
+
+test('a hung paid-Brand read is abandoned at the 4s budget and the page stays', async () => {
+  const { location, clock, aborted, logs, api } = loadModule({
+    member: brandPaid(),
+    xano: { neverSettles: true },
+  })
+
+  await flush()
+  await flush()
+  assert.equal(location.replaced, undefined, 'nothing has navigated yet')
+
+  await clock.advance(api.statusBudgetMs)
+  await flush()
+  assert.equal(location.replaced, undefined)
+  assert.equal(aborted.length, 1, 'the in-flight request is aborted')
+  assert.ok(logs.warn.some((line) => line.includes('budget')))
+  // And the budget timer is the only one that existed, so nothing is left behind.
+  assert.equal(clock.pending(), 0)
+})
+
+test('a slow but in-budget paid-Brand read still forwards a finished member', async () => {
+  const { location, clock } = loadModule({
+    member: brandPaid(),
+    xano: { statusBody: BRAND_DONE },
+  })
+
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(location.replaced, DASHBOARD)
+  // The budget timer is cleared once the answer lands, so nothing fires later.
+  await clock.advance(10000)
+  assert.equal(location.replaced, DASHBOARD)
+  assert.equal(clock.pending(), 0)
 })
 
 test('does not run on an unapproved hostname', async () => {
@@ -513,17 +830,17 @@ test('the free-Brand and Talent destinations are the guard contract, not a copy'
   }
 })
 
-test('the paid-Brand completion field is ignored for the other two roles', async () => {
-  // A stray `completed-brand-profile` value on a Talent or free-Brand member is
-  // meaningless — it is a paid-Brand form marker — and must not divert them to
-  // the Brand dashboard.
+test('the paid-Brand completion signals are ignored for the other two roles', async () => {
+  // A stray `completed-brand-profile` value or a stray completion marker is
+  // meaningless on a Talent or free-Brand member — both are paid-Brand signals —
+  // and must not divert them to the Brand dashboard.
   for (const member of [TALENT, BRAND_FREE, BRAND_FREE_DONE]) {
     const withField = Object.assign({}, member, {
       customFields: Object.assign({}, member.customFields, {
         [DONE_FIELD]: 'yes',
       }),
     })
-    const { location } = loadModule({ member: withField })
+    const { location } = loadModule({ marker: '1', member: withField })
     await flush()
     await flush()
     // Still the contract's answer for the member, and specifically not the paid
@@ -548,13 +865,10 @@ test('an unmapped and a cross-role conflicted member are left untouched', async 
   }
 })
 
-test('every role decision still costs exactly one member lookup and no network call', async () => {
-  for (const member of [
-    TALENT,
-    BRAND_FREE,
-    BRAND_FREE_DONE,
-    brandPaid('yes'),
-  ]) {
+test('the wrong-role decisions still cost one member lookup and no network call', async () => {
+  // The guard contract answers for these two roles, so nothing about the Xano
+  // switch is allowed to make them spend a round trip.
+  for (const member of [TALENT, BRAND_FREE, BRAND_FREE_DONE]) {
     const { fetches, lookups } = loadModule({ member })
     await flush()
     await flush()
@@ -563,6 +877,21 @@ test('every role decision still costs exactly one member lookup and no network c
     // empty list is the module abstaining, not the global being absent.
     assert.deepEqual(fetches, [], member.id)
   }
+
+  // A marked paid Brand is free too; only an unmarked one pays, and then for
+  // exactly two requests.
+  const marked = loadModule({ marker: '1', member: brandPaid() })
+  await flush()
+  await flush()
+  assert.equal(marked.lookups.length, 1)
+  assert.deepEqual(marked.fetches, [])
+
+  const unmarked = loadModule({ member: brandPaid(), xano: { statusBody: BRAND_DONE } })
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(unmarked.lookups.length, 1)
+  assert.equal(unmarked.fetches.length, 2)
 })
 
 test('a logged-out visitor is left alone; Memberstack gating owns that case', async () => {
@@ -653,7 +982,8 @@ test('a contract that names a role but no home for it leaves the page alone', as
 
 test('waits for a late Memberstack before deciding', async () => {
   const { location, clock } = loadModule({
-    delayedMember: brandPaid('yes'),
+    marker: '1',
+    delayedMember: brandPaid(),
     memberstackDelayMs: 300,
   })
   await flush()
@@ -691,9 +1021,10 @@ test('a malformed member response leaves the page alone', async () => {
   assert.equal(location.replaced, undefined)
 })
 
-test('the decision costs exactly one member lookup and no network call', async () => {
+test('the marked decision costs exactly one member lookup and no network call', async () => {
   const { fetches, location, lookups, window } = loadModule({
-    member: brandPaid('yes'),
+    marker: '1',
+    member: brandPaid(),
   })
   await flush()
   await flush()
@@ -721,13 +1052,34 @@ test('the fetch tripwire really does catch a request', () => {
 test('the decision half can be called by hand without navigating', async () => {
   const { api, location } = loadModule({
     pathname: '/other',
-    member: brandPaid('yes'),
+    marker: '1',
+    member: brandPaid(),
   })
   assert.equal(await api.completeProfileDestination(), DASHBOARD)
   assert.equal(location.replaced, undefined)
 
-  const notDone = loadModule({ pathname: '/other', member: brandPaid('  ') })
+  // Both Xano answers are reachable by hand too, and neither navigates.
+  const done = loadModule({
+    pathname: '/other',
+    member: brandPaid(),
+    xano: { statusBody: BRAND_DONE },
+  })
+  assert.equal(await done.api.completeProfileDestination(), DASHBOARD)
+  assert.equal(done.location.replaced, undefined)
+
+  const notDone = loadModule({
+    pathname: '/other',
+    member: brandPaid(),
+    xano: { statusBody: BRAND_NOT_DONE },
+  })
   assert.equal(await notDone.api.completeProfileDestination(), null)
+  // And the status read itself is callable in isolation on staging.
+  const probe = loadModule({
+    pathname: '/other',
+    member: brandPaid(),
+    xano: { statusBody: BRAND_NOT_DONE },
+  })
+  assert.equal(await probe.api.brandProfileState(probe.window.$memberstackDom), 'not-done')
 
   // The role branches are callable the same way, and still do not navigate. The
   // expected answer is the contract's, including the null for a member it cannot
@@ -761,10 +1113,17 @@ test('the exported role helpers answer without navigating', async () => {
 })
 
 test('no timer outlives the decision', async () => {
-  const { clock } = loadModule({ member: brandPaid('yes') })
+  const marked = loadModule({ marker: '1', member: brandPaid() })
   await flush()
   await flush()
-  assert.equal(clock.pending(), 0)
+  assert.equal(marked.clock.pending(), 0)
+
+  // Including the status budget on the branch that actually starts one.
+  const read = loadModule({ member: brandPaid(), xano: { statusBody: BRAND_DONE } })
+  await flush()
+  await flush()
+  await flush()
+  assert.equal(read.clock.pending(), 0)
 })
 
 // --- Diagnostics --------------------------------------------------------------
@@ -788,12 +1147,7 @@ test('diagnostics are staging-only unless STARTERS_DEBUG opts in', () => {
 })
 
 test('production logs nothing while still redirecting correctly', async () => {
-  for (const member of [
-    brandPaid('yes'),
-    TALENT,
-    BRAND_FREE,
-    BRAND_FREE_DONE,
-  ]) {
+  for (const member of [TALENT, BRAND_FREE, BRAND_FREE_DONE]) {
     const { location, logs } = loadModule({
       hostname: 'www.thestarters.com',
       member,
@@ -805,6 +1159,26 @@ test('production logs nothing while still redirecting correctly', async () => {
     assert.deepEqual(logs.warn, [], member.id)
     assert.deepEqual(logs.error, [], member.id)
   }
+
+  // The paid Brand, on both of its done paths.
+  for (const options of [
+    { marker: '1' },
+    { xano: { statusBody: BRAND_DONE } },
+  ]) {
+    const { location, logs } = loadModule(
+      Object.assign(
+        { hostname: 'www.thestarters.com', member: brandPaid() },
+        options,
+      ),
+    )
+    await flush()
+    await flush()
+    await flush()
+    assert.equal(location.replaced, DASHBOARD, JSON.stringify(options))
+    assert.deepEqual(logs.info, [], JSON.stringify(options))
+    assert.deepEqual(logs.warn, [], JSON.stringify(options))
+    assert.deepEqual(logs.error, [], JSON.stringify(options))
+  }
 })
 
 test('production stays silent on the fail-open paths too', async () => {
@@ -815,6 +1189,10 @@ test('production stays silent on the fail-open paths too', async () => {
     { member: UNMAPPED },
     { member: CONFLICTED },
     { member: null },
+    // The paid-Brand read failures are fail-open paths of their own now.
+    { member: brandPaid(), xano: { status: 500 } },
+    { member: brandPaid(), xano: { statusBody: BRAND_NOT_DONE } },
+    { member: brandPaid(), storageFailure: 'missing', xano: { rejects: true } },
   ]) {
     const { logs } = loadModule(
       Object.assign({ hostname: 'www.thestarters.com' }, options),

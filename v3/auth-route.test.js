@@ -13,6 +13,10 @@ const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
 const STATUS_URL =
   XANO + '/api:KZf7nFnk/starters_onboarding/get_build_profile_status'
+// The paid-Brand mirror of the funnel read (2026-08-06).
+const BRAND_STATUS_URL =
+  XANO + '/api:KZf7nFnk/starters_onboarding/get_brand_profile_status'
+const BRAND_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
 // The endpoint the funnel check used to read. Still stubbed so "it is never
 // requested any more" is an assertion about behaviour rather than about a stub
 // that would have thrown anyway.
@@ -57,6 +61,13 @@ const NO_RECORD = {
 const LEGACY_ROW_EXISTS_ENVELOPE = {
   freelancer: [{ id: 12, onboarding_done: false }],
 }
+
+// get_brand_profile_status bodies. Existing brands are grandfathered
+// `brand_profile_done: true`; a new signup reads false until they submit the
+// /complete-profile form and the Memberstack webhook stamps brands_v3.
+const BRAND_DONE = { has_record: true, brand_profile_done: true }
+const BRAND_NOT_DONE = { has_record: true, brand_profile_done: false }
+const BRAND_NO_RECORD = { has_record: false, brand_profile_done: false }
 
 function plan(planId) {
   return { active: true, planId }
@@ -156,6 +167,10 @@ function loadRouter(options = {}) {
   if (options.storedDestination) {
     storage.set('thestarters:v3-auth-next', options.storedDestination)
   }
+  // The same-tab completion marker v3/brand-account-controller.js writes.
+  if (options.brandMarker !== undefined) {
+    storage.set(BRAND_MARKER_KEY, options.brandMarker)
+  }
   const location = {
     hostname: options.hostname || 'the-starters-3-0.webflow.io',
     origin: `https://${options.hostname || 'the-starters-3-0.webflow.io'}`,
@@ -216,6 +231,20 @@ function loadRouter(options = {}) {
         Object.prototype.hasOwnProperty.call(xano, 'statusBody')
           ? xano.statusBody
           : ONBOARDED,
+      )
+    }
+
+    if (String(url) === BRAND_STATUS_URL) {
+      if (xano.brandNeverSettles) return new Promise(() => {})
+      if (xano.brandRejects) throw new Error('brand get network failure')
+      if (xano.brandStatus) {
+        return jsonResponse(null, { ok: false, status: xano.brandStatus })
+      }
+      if (xano.brandMalformedJson) return malformedJsonResponse()
+      return jsonResponse(
+        Object.prototype.hasOwnProperty.call(xano, 'brandStatusBody')
+          ? xano.brandStatusBody
+          : BRAND_DONE,
       )
     }
 
@@ -1292,13 +1321,17 @@ test('a slow but in-budget check still drives the funnel', async () => {
 })
 
 test('Brand logins never spend a Xano call on the Talent funnel', async () => {
+  // A paid Brand does now spend a Xano call (see the Brand-funnel section
+  // below), but never the Talent one: it must read get_brand_profile_status and
+  // leave get_build_profile_status alone, so a Brand can never be diverted to a
+  // Talent funnel step.
   const paidBrand = loadRouter({
     pathname: '/auth-route',
     member: {
       id: 'member-brand-paid',
       planConnections: [plan('pln_new-paid-plan-463h04ph')],
     },
-    xano: { statusBody: NEEDS_ONBOARDING },
+    xano: { statusBody: NEEDS_ONBOARDING, brandStatusBody: BRAND_DONE },
   })
   const freeBrand = loadRouter({
     pathname: '/auth-route',
@@ -1316,7 +1349,8 @@ test('Brand logins never spend a Xano call on the Talent funnel', async () => {
 
   await flush()
   assert.equal(paidBrand.location.replaced, '/brand-dashboard')
-  assert.equal(paidBrand.fetchCalls.length, 0)
+  assert.equal(callsTo(paidBrand.fetchCalls, STATUS_URL).length, 0)
+  assert.equal(callsTo(paidBrand.fetchCalls, BRAND_STATUS_URL).length, 1)
   assert.equal(freeBrand.location.replaced, '/quiz')
   assert.equal(freeBrand.fetchCalls.length, 0)
   assert.equal(unmapped.location.replaced, undefined)
@@ -1391,6 +1425,373 @@ test('auth route fails safely when the shared role contract is missing', async (
     attributes['data-auth-route-error'],
     'role-contract-unavailable',
   )
+})
+
+// --- Brand profile funnel -----------------------------------------------------
+
+const paidBrandMember = () => ({
+  id: 'member-brand-paid',
+  planConnections: [plan('pln_new-paid-plan-463h04ph')],
+})
+
+test('the brand status body maps to a funnel position', () => {
+  const { api } = loadRouter()
+
+  assert.equal(api.brandProfileStateFrom(BRAND_NOT_DONE), 'complete-profile')
+  assert.equal(api.brandProfileStateFrom(BRAND_DONE), 'done')
+  // No brands_v3 row means there is nothing to complete, so this is inconclusive
+  // rather than "not done" — the member routes normally.
+  assert.equal(api.brandProfileStateFrom(BRAND_NO_RECORD), 'unknown')
+})
+
+test('only has_record true with a literal false brand_profile_done diverts a Brand', () => {
+  const { api } = loadRouter()
+
+  // Every one of these must read as "route normally", because only the exact
+  // shape above is an answer this router understands.
+  for (const payload of [
+    null,
+    undefined,
+    {},
+    'nope',
+    42,
+    { brand_profile_done: false },
+    { has_record: 'true', brand_profile_done: false },
+    { has_record: true, brand_profile_done: 'false' },
+    { has_record: true, brand_profile_done: 0 },
+    { has_record: true, brand_profile_done: null },
+    { has_record: true },
+    // The Talent body is not a Brand body.
+    UNFINISHED_WITH_ROW,
+  ]) {
+    assert.notEqual(
+      api.brandProfileStateFrom(payload),
+      'complete-profile',
+      JSON.stringify(payload),
+    )
+  }
+})
+
+test('a paid Brand with an unfinished profile is sent to /complete-profile', async () => {
+  const { location, fetchCalls } = loadRouter({
+    pathname: '/auth-route',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/complete-profile')
+  const urls = urlsOf(fetchCalls)
+  assert.equal(urls.length, 2, 'one token trade plus one status read')
+  assert.ok(urls[0].startsWith(TRADE_URL + '?token='), urls[0])
+  assert.equal(urls[1], BRAND_STATUS_URL)
+  const read = callsTo(fetchCalls, BRAND_STATUS_URL)[0]
+  assert.equal(read.config.headers.Authorization, 'Bearer xano-token-abc')
+  // No inputs: the endpoint derives the member from the bearer token.
+  assert.equal(read.config.method, undefined)
+  assert.equal(read.config.body, undefined)
+})
+
+test('an unfinished brand profile wins over a stored next and consumes it', async () => {
+  const { location, storage } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/favorites',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/complete-profile')
+  assert.equal(storage.has('thestarters:v3-auth-next'), false)
+})
+
+test('an unfinished brand profile wins over a query next too', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    search: '?next=%2Fopportunities-brands-view',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/complete-profile')
+})
+
+test('a finished paid Brand keeps the requested next and its role home', async () => {
+  const withNext = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/favorites',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_DONE },
+  })
+  const withoutNext = loadRouter({
+    pathname: '/auth-route',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_DONE },
+  })
+
+  await flush()
+  assert.equal(withNext.location.replaced, '/favorites')
+  assert.equal(withoutNext.location.replaced, '/brand-dashboard')
+})
+
+test('a paid Brand with no brands_v3 record routes normally', async () => {
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/favorites',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_NO_RECORD },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/favorites')
+})
+
+test('the completion marker short-circuits the brand check with no network', async () => {
+  // The webhook-latency bridge: a member who just submitted the form is done,
+  // whatever Xano currently says — and the endpoint is not even asked.
+  const { location, fetchCalls, logs } = loadRouter({
+    pathname: '/auth-route',
+    brandMarker: '1',
+    member: paidBrandMember(),
+    // Deliberately the diverting body: if the marker were ignored, this run
+    // would end on /complete-profile instead of the dashboard.
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/brand-dashboard')
+  assert.deepEqual(fetchCalls, [])
+  assert.ok(logs.info.some((line) => line.includes('marker is set')))
+})
+
+test('the marker is read with the same semantics as its other two readers', async () => {
+  // Set: any trimmed non-empty string. Not set: absent, empty, whitespace-only.
+  for (const brandMarker of ['1', 'true', ' x ']) {
+    const { location, fetchCalls } = loadRouter({
+      pathname: '/auth-route',
+      brandMarker,
+      member: paidBrandMember(),
+      xano: { brandStatusBody: BRAND_NOT_DONE },
+    })
+    await flush()
+    assert.equal(location.replaced, '/brand-dashboard', JSON.stringify(brandMarker))
+    assert.deepEqual(fetchCalls, [], JSON.stringify(brandMarker))
+  }
+
+  for (const brandMarker of ['', '   ', '\n\t ']) {
+    const { location, fetchCalls } = loadRouter({
+      pathname: '/auth-route',
+      brandMarker,
+      member: paidBrandMember(),
+      xano: { brandStatusBody: BRAND_NOT_DONE },
+    })
+    await flush()
+    assert.equal(location.replaced, '/complete-profile', JSON.stringify(brandMarker))
+    assert.equal(callsTo(fetchCalls, BRAND_STATUS_URL).length, 1)
+  }
+})
+
+test('the marker key is exactly the one the account controller writes', () => {
+  const controllerSource = fs.readFileSync(
+    require.resolve('./brand-account-controller.js'),
+    'utf8',
+  )
+  const { api } = loadRouter()
+
+  assert.equal(api.brandProfileMarkerKey, BRAND_MARKER_KEY)
+  // The writer and the reader are separate self-contained files by design, so
+  // the shared key is pinned here rather than trusted.
+  assert.ok(
+    controllerSource.includes("'" + BRAND_MARKER_KEY + "'"),
+    'brand-account-controller.js must write the key this router reads',
+  )
+})
+
+test('a marker read that throws costs a Xano read, not a wrong destination', async () => {
+  // Safari private mode. Reading the marker fails, so the router asks Xano
+  // instead of assuming either answer.
+  const { location, fetchCalls } = loadRouter({
+    pathname: '/auth-route',
+    storageFailure: 'get',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/complete-profile')
+  assert.equal(callsTo(fetchCalls, BRAND_STATUS_URL).length, 1)
+})
+
+test('every brand-check failure fails open to the standard route', async () => {
+  const cases = [
+    { brandStatus: 401 },
+    { brandStatus: 500 },
+    { brandRejects: true },
+    { brandMalformedJson: true },
+    { brandStatusBody: {} },
+    { brandStatusBody: 'nope' },
+    { tradeStatus: 401 },
+    { tradeBody: { nothing: true } },
+  ]
+  for (const xano of cases) {
+    const { location } = loadRouter({
+      pathname: '/auth-route',
+      storedDestination: '/favorites',
+      member: paidBrandMember(),
+      xano,
+    })
+    await flush()
+    assert.equal(location.replaced, '/favorites', JSON.stringify(xano))
+  }
+
+  // No Memberstack cookie: the trade is never even attempted.
+  const loggedOutOfXano = loadRouter({
+    pathname: '/auth-route',
+    member: paidBrandMember(),
+    loggedOutCookie: true,
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+  await flush()
+  assert.equal(loggedOutOfXano.location.replaced, '/brand-dashboard')
+  assert.deepEqual(loggedOutOfXano.fetchCalls, [])
+
+  // No fetch at all in the window: the check is skipped, not thrown.
+  const noFetch = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/favorites',
+    member: paidBrandMember(),
+  })
+  await flush()
+  assert.equal(noFetch.location.replaced, '/favorites')
+})
+
+test('a hung brand check is abandoned at the 4s budget and fails open', async () => {
+  const { location, clock, aborted, logs } = loadRouter({
+    pathname: '/auth-route',
+    storedDestination: '/favorites',
+    member: paidBrandMember(),
+    clock: true,
+    xano: { brandNeverSettles: true },
+  })
+
+  await flush()
+  assert.equal(location.replaced, undefined, 'still waiting inside the budget')
+
+  await clock.advance(4000)
+  assert.equal(location.replaced, '/favorites')
+  assert.equal(aborted.length, 1, 'the in-flight request is aborted')
+  assert.ok(logs.warn.some((line) => line.includes('brand profile check')))
+  assert.ok(logs.warn.some((line) => line.includes('budget')))
+})
+
+test('a slow but in-budget brand check still drives the funnel', async () => {
+  const { location, clock } = loadRouter({
+    pathname: '/auth-route',
+    member: paidBrandMember(),
+    clock: true,
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/complete-profile')
+  // The budget timer is cleared once the answer lands, so nothing fires later.
+  await clock.advance(10000)
+  assert.equal(location.replaced, '/complete-profile')
+  assert.equal(clock.pending(), 0)
+})
+
+test('the brand check is paid-Brand only; nobody else touches that endpoint', async () => {
+  const talent = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { statusBody: ONBOARDED, brandStatusBody: BRAND_NOT_DONE },
+  })
+  const freeBrand = loadRouter({
+    pathname: '/auth-route',
+    member: {
+      id: 'member-brand-free',
+      planConnections: [plan('pln_free-plan-f6kn0dxz')],
+    },
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+  const unmapped = loadRouter({
+    pathname: '/auth-route',
+    member: { id: 'member-unknown', planConnections: [plan('pln_unknown')] },
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+
+  await flush()
+  // Talent is untouched: its own funnel decided, and the Brand endpoint was
+  // never asked even though it would have said "not done".
+  assert.equal(talent.location.replaced, '/starter-dashboard')
+  assert.equal(callsTo(talent.fetchCalls, BRAND_STATUS_URL).length, 0)
+  assert.equal(callsTo(talent.fetchCalls, STATUS_URL).length, 1)
+  // brand-free has no /complete-profile form to finish, so it stays a
+  // zero-network login.
+  assert.equal(freeBrand.location.replaced, '/quiz')
+  assert.deepEqual(freeBrand.fetchCalls, [])
+  assert.equal(unmapped.location.replaced, undefined)
+  assert.deepEqual(unmapped.fetchCalls, [])
+})
+
+test('a Talent funnel redirect never spends the brand call either', async () => {
+  // The two branches are mutually exclusive by role, so an unfinished Talent
+  // member returns before the Brand branch can be reached.
+  const { location, fetchCalls } = loadRouter({
+    pathname: '/auth-route',
+    member: talentMember(),
+    xano: { statusBody: NEEDS_ONBOARDING, brandStatusBody: BRAND_NOT_DONE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/starter-onboarding')
+  assert.equal(callsTo(fetchCalls, BRAND_STATUS_URL).length, 0)
+})
+
+test('a finished Brand asking for /complete-profile still lands on its role home', async () => {
+  // /complete-profile is not an allowed `next` for any role (asserted above), so
+  // the only way to reach it from here is the funnel branch.
+  const { location } = loadRouter({
+    pathname: '/auth-route',
+    search: '?next=%2Fcomplete-profile',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_DONE },
+  })
+
+  await flush()
+  assert.equal(location.replaced, '/brand-dashboard')
+})
+
+test('brand funnel diagnostics are staging-only unless STARTERS_DEBUG is set', async () => {
+  const quiet = loadRouter({
+    hostname: 'www.thestarters.com',
+    pathname: '/auth-route',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+  await flush()
+  assert.equal(quiet.location.replaced, '/complete-profile')
+  assert.equal(quiet.logs.info.length + quiet.logs.warn.length, 0)
+
+  const loud = loadRouter({
+    pathname: '/auth-route',
+    member: paidBrandMember(),
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+  await flush()
+  assert.ok(loud.logs.info.some((line) => line.includes('/complete-profile')))
+
+  const debugged = loadRouter({
+    hostname: 'www.thestarters.com',
+    pathname: '/auth-route',
+    member: paidBrandMember(),
+    debug: true,
+    xano: { brandStatusBody: BRAND_NOT_DONE },
+  })
+  await flush()
+  assert.equal(debugged.location.replaced, '/complete-profile')
+  assert.ok(debugged.logs.info.length > 0)
 })
 
 // --- Release marker -----------------------------------------------------------

@@ -67,8 +67,9 @@ The product flow is Apply, then Build profile, then Login, then Onboarding, then
 Dashboard. `/auth-route` is the one page every Talent login passes through, so the
 router asks Xano where in that flow the member actually is and routes accordingly.
 
-The check runs for the Talent role only. Brand paid, Brand free, unmapped, and
-conflicted members never trigger a Xano request.
+The Talent check runs for the Talent role only. Brand free, unmapped, and
+conflicted members never trigger a Xano request. **Paid Brands** take the separate
+Brand profile funnel below (added 2026-08-06) — they are no longer zero-network.
 
 ### The funnel-status endpoint
 
@@ -145,6 +146,32 @@ without a boolean `build_profile_done`, or a browser without `fetch`.
 This is funnel UX, not a security boundary. `/starter-onboarding` itself remains
 guarded by `v3/route-guard.js`, and `v3/onboarding-done-redirect.js` still
 bounces a finished member off that page.
+
+## Brand profile funnel (paid Brand only, 2026-08-06)
+
+Paid Brands get the same "where is this member" question at login, from the mirror
+endpoint:
+
+```
+GET api:KZf7nFnk/starters_onboarding/get_brand_profile_status
+→ {"has_record": bool, "brand_profile_done": bool}
+```
+
+Same no-input bearer shape, same single 4s budget, same fail-open rule.
+
+| Brand profile status | Destination |
+| --- | --- |
+| `sessionStorage` marker `thestarters:v3-brand-profile-completed` set | Normal routing (no Xano call) |
+| `has_record` true AND `brand_profile_done` false | `/complete-profile`, wins over any stored or query `next` |
+| anything else (done, no record, error, timeout, malformed) | Normal routing |
+
+Scope is `brand-paid` only. `brand-free` has no `/complete-profile` form.
+Existing brands are grandfathered `brand_profile_done: true` in `brands_v3`, so
+in practice only new signups are diverted. The marker is written by
+`v3/brand-account-controller.js` after a successful submit and read here (and by
+both redirect halves) so the Memberstack → Xano webhook catch-up window cannot
+bounce a fresh completer. `/complete-profile` is deliberately **not** an allowed
+`next` — the router constructs that destination, never accepts it from the client.
 
 An optional `?next=` destination survives login only when it is same-origin and
 allowlisted for the authenticated role. This prevents an open redirect and prevents
