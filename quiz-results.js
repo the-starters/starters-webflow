@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.80
+ * @release v1.59.111
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -2593,6 +2593,42 @@
     }
 
     /**
+     * Extracts the company names from an Algolia `work-history` attribute.
+     *
+     * The field holds an array of `{company, title, logo, domain}` objects. Only
+     * the company names are read here, and they stay in the index's array order
+     * so recommendation cards list companies the same way /all-starters does
+     * (`work-history.0.company`, `.1.company`, `.2.company`). Repeat stints at
+     * one company collapse to a single entry, matched case-insensitively, with
+     * the first spelling kept. Entries whose `company` is missing or is not a
+     * string are dropped rather than coerced, because normalize() only accepts
+     * strings.
+     *
+     * @param {unknown} value Attribute value from Algolia.
+     * @returns {string[]} Company names in index order, deduplicated.
+     */
+    function getWorkHistoryCompanies(value) {
+        if (!Array.isArray(value)) return []
+
+        const seenCompanies = new Set()
+
+        return value.reduce((companies, entry) => {
+            if (typeof entry?.company !== 'string') return companies
+
+            const company = normalize(entry.company)
+            if (!company) return companies
+
+            const companyKey = company.toLowerCase()
+            if (seenCompanies.has(companyKey)) return companies
+
+            seenCompanies.add(companyKey)
+            companies.push(company)
+
+            return companies
+        }, [])
+    }
+
+    /**
      * Reads a possibly nested field from an Algolia hit using a dot path.
      *
      * @param {object} hit Algolia hit.
@@ -3139,6 +3175,7 @@
                         'average-project-size',
                         'roles-concatenate',
                         'previous-company',
+                        'work-history',
                         'bio',
                         'tagline',
                         'free-consulting-calls-t-f',
@@ -3309,6 +3346,9 @@
                 projectRate: getFirstHitFieldValue(hit, projectRateFieldNames),
                 subcategories: getSubcategoryLabels(hit),
                 previousCompany: normalize(hit['previous-company']),
+                workHistoryCompanies: getWorkHistoryCompanies(
+                    hit['work-history'],
+                ),
                 bio: stripHtml(hit.bio),
                 freeConsultingCalls: hit['free-consulting-calls-t-f'] === true,
                 paidConsultingCalls: hit['paid-consulting-calls-t-f'] === true,
@@ -3852,7 +3892,11 @@
             case 'project-rate':
                 return freelancer.projectRate
             case 'previous-company':
-                return freelancer.previousCompany
+                // Prefer every company in work-history; records without it fall
+                // back to the single previous-company string.
+                return freelancer.workHistoryCompanies?.length
+                    ? freelancer.workHistoryCompanies
+                    : freelancer.previousCompany
             case 'bio':
                 return freelancer.bio
             case 'availability':
