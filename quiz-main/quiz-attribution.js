@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.117
+ * @release v1.59.118
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code), not only on the
  * quiz funnel: a paid click can land on any page, and the cookies written here
@@ -66,7 +66,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.117'
+    var RELEASE = 'v1.59.118'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72

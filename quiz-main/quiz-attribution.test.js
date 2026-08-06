@@ -8,7 +8,7 @@ const source = fs.readFileSync(require.resolve('./quiz-attribution.js'), 'utf8')
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.117'
+const RELEASE = 'v1.59.118'
 
 // Cookie name to Memberstack custom-field ID. Verified to exist in the
 // Memberstack app config, so these are the literals both this file and
