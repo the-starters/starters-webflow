@@ -165,6 +165,13 @@ function loadModule(options = {}) {
     : backButtonMarkup(options)
   const roots = markup.wrapper ? [markup.wrapper] : []
 
+  // Elements that match the module's selectors but live OUTSIDE the wrapper.
+  // This is the production shape, not a hypothetical: `clickable_btn` is the
+  // project's generic button class, and the Complete-profile form's own Submit
+  // control carries it.
+  if (options.strayButton && markup.button) roots.push(markup.button)
+  if (options.strayLabel && markup.label) roots.push(markup.label)
+
   const window = {
     location,
     URL,
@@ -343,6 +350,48 @@ test('every funnel and guarded page hides the button, both slash forms', () => {
   }
 })
 
+test('every page brand-profile-redirect.js guards is on this hide list', () => {
+  // The one piece of shotgun surgery this module cannot avoid: the hide list
+  // duplicates the guard's page list, and the two must move together. A page
+  // added to GUARDED_PATHS without a matching entry here silently reopens the
+  // bounce loop on exactly that page — the member goes "back" to it, and the
+  // guard sends them straight to this form again.
+  //
+  // Read out of the sibling's source rather than restated, so this fails the day
+  // the guard grows a page instead of the day someone notices in production.
+  const guardSource = fs.readFileSync(
+    require.resolve('./brand-profile-redirect.js'),
+    'utf8',
+  )
+  const block = guardSource.match(/var GUARDED_PATHS = \[([\s\S]*?)\n {2}\]/)
+  assert.ok(block, 'no GUARDED_PATHS array found in brand-profile-redirect.js')
+
+  const guarded = Array.from(block[1].matchAll(/'([^']+)'/g), (match) => match[1])
+  assert.ok(guarded.length >= 12, 'expected the full guarded-page list, got ' + guarded.length)
+
+  const api = helpers()
+  for (const path of guarded) {
+    const normalized = api.normalizePath(path)
+    assert.ok(
+      api.hiddenPaths.indexOf(normalized) !== -1,
+      'brand-profile-redirect.js guards ' +
+        path +
+        ' but this module would offer it as a "go back" destination',
+    )
+    // And through the real predicate, in both slash forms.
+    assert.equal(api.shouldHide(SITE + normalized), true, normalized)
+    assert.equal(api.shouldHide(SITE + normalized + '/'), true, normalized + '/')
+  }
+
+  // The guard matches the opportunity detail slug with its own regex rather than
+  // through GUARDED_PATHS, so it is asserted separately.
+  assert.ok(
+    /\^\\\/opportunities\\\/\[\^\/\]\+/.test(guardSource),
+    'brand-profile-redirect.js no longer guards /opportunities/<slug> by regex',
+  )
+  assert.equal(api.shouldHide(SITE + '/opportunities/product-designer'), true)
+})
+
 test('an opportunity detail page hides the button; a nested page under it does not', () => {
   const api = helpers()
   assert.equal(api.shouldHide(SITE + '/opportunities/product-designer'), true)
@@ -494,6 +543,44 @@ test('both hidden shapes are revealed, and a missing button still works', () => 
   assert.equal(noButton.api.state.applied, true)
   noButton.wrapper.fire()
   assert.deepEqual(noButton.assigns, [SITE + '/learn'])
+})
+
+test('a stray .clickable_btn outside the wrapper is never bound', () => {
+  // The live page's authored wrapper contains NO <button> at all, while the
+  // form's own Submit control is a `button.clickable_btn`. A document-wide
+  // fallback would therefore bind "go back" to Submit, and pressing Submit would
+  // navigate to the referrer instead of submitting the profile form.
+  const loaded = loadModule({
+    referrer: SITE + '/why-us',
+    buttonMissing: true,
+    strayButton: true,
+  })
+
+  assert.equal(loaded.api.state.applied, true, 'the button still works')
+  assert.deepEqual(
+    loaded.button.listeners,
+    [],
+    'the stray button must never receive a listener',
+  )
+
+  // Firing the stray control navigates nowhere; only the wrapper does.
+  loaded.button.fire()
+  assert.deepEqual(loaded.assigns, [])
+  loaded.wrapper.fire()
+  assert.deepEqual(loaded.assigns, [SITE + '/why-us'])
+})
+
+test('a stray label outside the wrapper is neither used nor rewritten', () => {
+  // Same rule, the other selector: the wrapper is the only scope.
+  const loaded = loadModule({
+    referrer: SITE + '/why-us',
+    labelMissing: true,
+    strayLabel: true,
+  })
+  assert.equal(loaded.api.state.applied, false)
+  assert.equal(loaded.api.state.reason, 'no-label')
+  assert.equal(loaded.label.textContent, AUTHORED_LABEL, 'left untouched')
+  assert.equal(loaded.wrapper.classes.has(HIDDEN_CLASS), true)
 })
 
 test('an unmapped referrer still gets a working button, labelled "Go back"', () => {

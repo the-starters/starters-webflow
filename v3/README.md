@@ -295,6 +295,56 @@ embeds installed after the guard; see
 [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and
 [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
+## Complete-profile back button
+
+`complete-profile-back.js` turns the authored, hidden "Go back to [Name]" button on
+`/complete-profile` into a working escape hatch. It exists because
+`brand-profile-redirect.js` delivers an unfinished Brand to the form with
+`location.replace()`, which destroys the history entry the browser's own back
+button would have used, so the page needs a destination it captured rather than one
+it inherits. The module never redirects anybody, reads no member, holds no role
+contract, and makes no network request.
+
+The destination is `document.referrer`, read on init and mirrored into
+`sessionStorage` under `thestarters:v3-complete-profile-back` — its own key, never
+the `thestarters:v3-brand-profile-completed` marker the three sibling modules share
+on the same page. A referrer whose origin passes the module's own host allowlist is
+stored, overwriting any prior value, and used; an off-site one is neither stored nor
+used, and deliberately does not fall back. An empty referrer — a reload, a direct
+hit, a stripped policy — falls back to the stored value, re-validated against the
+same allowlist so a hand-edited entry cannot become a navigation target. That
+fallback is the whole reason the key exists: a refresh of the form is exactly when
+the member most wants out, and exactly when the referrer is gone.
+
+The button stays hidden for the funnel and login pages (`/auth-route`, `/login`,
+`/sign-up`, `/starter-login`), for `/complete-profile` itself, and for **every page
+`brand-profile-redirect.js` guards** — going "back" to one of those just bounces an
+unfinished Brand to this form a second later. The two path lists are therefore
+duplicated, and a test reads `GUARDED_PATHS` out of the sibling's source and asserts
+this module covers all of it, so a page added to the guard cannot silently reopen
+the loop. The label comes from a curated map (Home, Learn, Sessions, Article,
+Playbook, Webinar, Events, Case Studies, Why Us, Functions, Industries, and the
+Starter's first name for `/hire/<slug>`); anything unmapped gets a bare `Go back`
+rather than a title-cased guess at a slug.
+
+Both the label element and the inner `button.clickable_btn` are looked up **strictly
+inside the wrapper**, with no document-wide fallback. That is load-bearing rather
+than tidy: `clickable_btn` is the project's generic button class and the form's own
+Submit control carries it, while the authored wrapper holds no `<button>` at all, so
+a fallback would bind "go back" to Submit. The click is bound on the wrapper too,
+behind a one-shot latch, so a missing inner button degrades instead of dying and a
+bubbling press is still one navigation. A missing wrapper, a missing label, storage
+that throws, or a DOM that refuses to be queried all leave the page exactly as
+authored — the button is already hidden, so the failure mode is the status quo.
+Needs the two Designer attributes plus one page-level embed; see
+[COMPLETE-PROFILE-BACK-WIRING.md](COMPLETE-PROFILE-BACK-WIRING.md).
+
+Run its focused test with:
+
+```sh
+node --test v3/complete-profile-back.test.js
+```
+
 ## Brand account and Starter email sync
 
 `brand-account-controller.js` aligns the native Brand signup plan with

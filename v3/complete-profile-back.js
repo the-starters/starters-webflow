@@ -25,13 +25,19 @@
  *   [data-complete-profile-back-label]  the text element. Its FULL text is
  *                                       replaced, so it holds "Go back to Home",
  *                                       not just "Home".
- *   button.clickable_btn                the real control inside the wrapper. The
- *                                       click is bound on BOTH it and the
- *                                       wrapper, because the wrapper is what the
- *                                       member's pointer usually lands on, and a
- *                                       one-shot latch keeps the bubbling pair
- *                                       from navigating twice. `type="button"`,
- *                                       so there is no submit to preventDefault.
+ *   button.clickable_btn                the real control, looked up STRICTLY
+ *                                       inside the wrapper — the class is the
+ *                                       project's generic button class, so a
+ *                                       document-wide search would find the
+ *                                       form's own Submit button, and the
+ *                                       wrapper as authored today holds no
+ *                                       <button> at all. The click is bound on
+ *                                       BOTH it and the wrapper, because the
+ *                                       wrapper is what the member's pointer
+ *                                       usually lands on, and a one-shot latch
+ *                                       keeps the bubbling pair from navigating
+ *                                       twice. `type="button"`, so there is no
+ *                                       submit to preventDefault.
  *
  * If any hook is missing the page is left exactly as authored — hidden button,
  * no error, one staging warning. That is the whole failure mode: this is a
@@ -111,10 +117,11 @@
   // entry to behave identically if Webflow ever serves the page un-normalized.
   var COMPLETE_PROFILE_PATHS = ['/complete-profile', '/complete-profile/']
 
-  // Same production allowlist as v3/brand-profile-redirect.js, plus the
-  // local/dev-tunnel hosts ./dev-tunnel.sh serves from — without those the
-  // module would be dead on staging exactly when it needs QA. The same gate is
-  // reused to decide whether a referrer is one of ours.
+  // The PRODUCTION allowlist only, identical to v3/brand-profile-redirect.js.
+  // Staging, localhost and the ./dev-tunnel.sh hosts are not listed here — they
+  // come in through stagingHost() inside allowedHost(), which is the gate every
+  // caller actually uses, both for "may this module run?" and for "is this
+  // referrer one of ours?".
   var APPROVED_HOSTS = [
     'the-starters-3-0.webflow.io',
     'thestarters.com',
@@ -443,13 +450,22 @@
     }
   }
 
-  function findWithin(element, selector) {
+  /**
+   * STRICTLY inside the wrapper, with no document-wide fallback — and that is the
+   * whole point of the function, not an implementation detail.
+   *
+   * `button.clickable_btn` is the project's generic button class, so the form's
+   * own Submit control matches it too. The wrapper as authored today contains NO
+   * <button> element at all, so a fallback to `document.querySelector()` would
+   * hand the click binding to the first `.clickable_btn` on the page — the Submit
+   * button — and pressing Submit would navigate to the referrer instead of
+   * submitting the form. A missing inner button is already covered: the wrapper
+   * itself is bound, and a missing label already keeps the button hidden.
+   */
+  function findInWrapper(wrapper, selector) {
     try {
-      if (element && typeof element.querySelector === 'function') {
-        var found = element.querySelector(selector)
-        if (found) return found
-      }
-      return document.querySelector(selector)
+      if (!wrapper || typeof wrapper.querySelector !== 'function') return null
+      return wrapper.querySelector(selector) || null
     } catch (error) {
       return null
     }
@@ -556,7 +572,7 @@
       return stayHidden('excluded-referrer')
     }
 
-    var labelElement = findWithin(wrapper, LABEL_SELECTOR)
+    var labelElement = findInWrapper(wrapper, LABEL_SELECTOR)
     if (!labelElement) {
       // Revealing now would ship the authored placeholder — a literal "[Name]" —
       // to a real member, which is worse than the hidden button they have today.
@@ -585,7 +601,7 @@
     }
 
     listen(wrapper, go)
-    listen(findWithin(wrapper, BUTTON_SELECTOR), go)
+    listen(findInWrapper(wrapper, BUTTON_SELECTOR), go)
 
     state.applied = true
     state.reason = 'applied'
