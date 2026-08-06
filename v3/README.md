@@ -1232,11 +1232,16 @@ initial, replacement-error, missing-instance, and auth-transition states fail
 closed. Call controls reveal the next six matching canonical rows under the
 active client-side filter and hide when that filtered list is exhausted.
 
-On Brand only, the same resolved Memberstack snapshot paints the existing hero:
-`free-user` and `last-name` populate `.dash-hero_profile-name span`, and
-`company` populates `.dash-hero_profile-stats > p`. Those values clear before
-every session refresh and on any failure, so another member's projection cannot
-survive an auth transition.
+On Brand only, the same resolved Memberstack snapshot paints the existing hero
+through the Designer custom-attribute contract, never through styling classes:
+`free-user` populates `hero-element="brand-first-name"`, `last-name` populates
+`hero-element="brand-last-name"`, and `company` populates
+`hero-element="brand-company"`. Those values clear before every session refresh
+and on any failure, so another member's projection cannot survive an auth
+transition. The avatar carries `hero-element="brand-image"` for contract
+completeness, but the controller never writes it: its `src` stays owned by
+Memberstack's native `data-ms-member="profile-image"` binding, which handles
+both the empty-photo placeholder and a populated member photo.
 
 The Brand dashboard's existing `form[data-ms-form="profile"]` remains a native
 Memberstack form and keeps sole ownership of its submit. The controller observes
