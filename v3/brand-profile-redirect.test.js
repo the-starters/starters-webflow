@@ -279,15 +279,42 @@ const callsTo = (calls, url) => calls.filter((call) => call.url === url)
 
 // --- Pure helpers -------------------------------------------------------------
 
-test('only the two /brand-dashboard path forms are in scope', () => {
+test('the paid-Brand lock pages are in scope, including slash twins and opp detail', () => {
   const { api } = loadModule({ pathname: '/other' })
-  assert.equal(api.isBrandDashboardPath('/brand-dashboard'), true)
-  assert.equal(api.isBrandDashboardPath('/brand-dashboard/'), true)
-  assert.equal(api.isBrandDashboardPath('/brand-dashboard/settings'), false)
-  assert.equal(api.isBrandDashboardPath('/brand-dashboard-old'), false)
-  assert.equal(api.isBrandDashboardPath('/complete-profile'), false)
-  assert.equal(api.isBrandDashboardPath('/starter-dashboard'), false)
-  assert.equal(api.isBrandDashboardPath('/'), false)
+  const inScope = [
+    '/brand-dashboard',
+    '/brand-dashboard/',
+    '/opportunities',
+    '/opportunities/',
+    '/opportunities/product-designer',
+    '/opportunities/product-designer/',
+    '/all-starters',
+    '/all-starters/',
+    '/messages',
+    '/messages/',
+    '/starter-dashboard',
+    '/starter-dashboard/',
+    '/dashboard',
+    '/dashboard/',
+  ]
+  for (const path of inScope) {
+    assert.equal(api.isGuardedPath(path), true, path)
+    assert.equal(api.isBrandDashboardPath(path), true, 'alias ' + path)
+  }
+  const outOfScope = [
+    '/brand-dashboard/settings',
+    '/brand-dashboard-old',
+    '/complete-profile',
+    '/opportunities/product-designer/apply',
+    '/opportunities-brands-view',
+    '/opportunities---create',
+    '/favorites',
+    '/quiz',
+    '/',
+  ]
+  for (const path of outOfScope) {
+    assert.equal(api.isGuardedPath(path), false, path)
+  }
 })
 
 test('host gate covers production, staging, local, and dev tunnels but not lookalikes', () => {
@@ -692,12 +719,35 @@ test('redirectIfIncomplete() called by hand leaves the spinner alone', async () 
 // --- Scope gates --------------------------------------------------------------
 
 test('does nothing on another page of the site', async () => {
-  for (const pathname of ['/complete-profile', '/starter-dashboard', '/brand-dashboard/settings', '/']) {
+  for (const pathname of [
+    '/complete-profile',
+    '/brand-dashboard/settings',
+    '/opportunities/x/apply',
+    '/favorites',
+    '/',
+  ]) {
     const { location, fetchCalls, storage } = loadModule({ pathname })
     await flush()
     assert.equal(location.replaced, undefined, pathname)
     assert.equal(fetchCalls.length, 0, pathname)
     assert.deepEqual(storage.touches, [], pathname)
+  }
+})
+
+test('each expanded lock page redirects an unfinished Brand', async () => {
+  for (const pathname of [
+    '/opportunities',
+    '/opportunities/',
+    '/opportunities/acme-role',
+    '/all-starters',
+    '/messages',
+    '/starter-dashboard',
+    '/dashboard',
+  ]) {
+    const { location, fetchCalls } = loadModule({ pathname })
+    await flush()
+    assert.equal(location.replaced, COMPLETE_PROFILE, pathname)
+    assert.ok(callsTo(fetchCalls, STATUS_URL).length >= 1, pathname)
   }
 })
 
@@ -715,9 +765,11 @@ test('runs on a cloudflared dev tunnel so the staging loop can QA it', async () 
 })
 
 test('the trailing-slash path form is in scope at runtime too', async () => {
-  const { location } = loadModule({ pathname: '/brand-dashboard/' })
-  await flush()
-  assert.equal(location.replaced, COMPLETE_PROFILE)
+  for (const pathname of ['/brand-dashboard/', '/all-starters/', '/messages/', '/dashboard/']) {
+    const { location } = loadModule({ pathname })
+    await flush()
+    assert.equal(location.replaced, COMPLETE_PROFILE, pathname)
+  }
 })
 
 test('a second load of the same tag is a no-op (boot guard)', async () => {
@@ -744,7 +796,9 @@ test('the exposed console surface is the read half only', () => {
     'completeProfilePath',
     'completionMarkerSet',
     'diagnosticsEnabled',
+    'guardedPaths',
     'isBrandDashboardPath',
+    'isGuardedPath',
     'loaderSelector',
     'markerKey',
     'needsBrandProfile',
@@ -756,13 +810,29 @@ test('the exposed console surface is the read half only', () => {
   assert.equal(api.loaderSelector, LOADER_SELECTOR)
   assert.equal(api.markerKey, MARKER_KEY)
   // Array.from because the module's copy is built inside the vm realm.
-  assert.deepEqual(Array.from(api.brandDashboardPaths), ['/brand-dashboard', '/brand-dashboard/'])
+  assert.deepEqual(Array.from(api.guardedPaths), [
+    '/brand-dashboard',
+    '/brand-dashboard/',
+    '/opportunities',
+    '/opportunities/',
+    '/all-starters',
+    '/all-starters/',
+    '/messages',
+    '/messages/',
+    '/starter-dashboard',
+    '/starter-dashboard/',
+    '/dashboard',
+    '/dashboard/',
+  ])
+  assert.deepEqual(Array.from(api.brandDashboardPaths), Array.from(api.guardedPaths))
 })
 
 test('the exposed paths array cannot be mutated from the console', () => {
   const { api } = loadModule({ pathname: '/other' })
-  api.brandDashboardPaths.push('/anything')
-  assert.equal(api.isBrandDashboardPath('/anything'), false)
+  api.guardedPaths.push('/anything')
+  api.brandDashboardPaths.push('/anything-else')
+  assert.equal(api.isGuardedPath('/anything'), false)
+  assert.equal(api.isGuardedPath('/anything-else'), false)
 })
 
 // The release-marker convention: the header line and the exported property must

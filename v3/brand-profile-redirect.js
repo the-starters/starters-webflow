@@ -1,13 +1,21 @@
 /**
- * /brand-dashboard — the inbound half of the Brand profile-completion loop.
+ * Brand platform pages — the inbound half of the Brand profile-completion loop.
  *
- * @release vX.Y.Z
+ * @release v1.59.116
  *
  * ONE job: a signed-in paid Brand whose Xano brand record exists but is not yet
  * marked complete is sent to /complete-profile with `location.replace()`, so a
- * Brand who abandoned the form halfway — or who never opened it, and reached the
- * dashboard from a bookmark, the back button, or a stale link — is put back in
- * front of the form instead of landing on a dashboard that has nothing to show.
+ * Brand who abandoned the form halfway — or who never opened it, and reached a
+ * locked page from a bookmark, the back button, nav, or a stale link — is put
+ * back in front of the form instead of using the platform unfinished.
+ *
+ * IN-SCOPE PAGES (exact path + trailing-slash twin, plus /opportunities/<slug>):
+ *   /brand-dashboard, /opportunities, /all-starters, /messages,
+ *   /starter-dashboard, /dashboard
+ * Install one deferred tag on each of those pages (or sitewide — out-of-scope
+ * paths exit immediately). Paid-Brand only in effect: Talent / free-Brand get
+ * has_record false from the endpoint and stay; the route guard still owns role
+ * routing and runs first.
  *
  * PAIRED WITH v3/complete-profile-redirect.js, which owns the OUTBOUND half:
  * that module sits on /complete-profile and bounces a Brand who is already
@@ -87,11 +95,11 @@
  * memoized for the page, and dropped on failure so a retry re-trades rather than
  * reusing a token that just failed.
  *
- * Install: ONE deferred page-level tag on /brand-dashboard and nowhere else,
- * placed AFTER v3/route-guard.js so role routing has already run. Diagnostics are
- * staging-only (`*.webflow.io`, localhost, 127.0.0.1, `*.trycloudflare.com`, or
- * `window.STARTERS_DEBUG === true`); production is silent. Page wiring and the
- * staging QA order: see v3/BRAND-PROFILE-REDIRECT-WIRING.md.
+ * Install: one deferred page-level tag on each in-scope page (or sitewide — the
+ * path gate exits immediately elsewhere), AFTER v3/route-guard.js so role
+ * routing has already run. Diagnostics are staging-only (`*.webflow.io`,
+ * localhost, 127.0.0.1, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`);
+ * production is silent. Page wiring and QA: see v3/BRAND-PROFILE-REDIRECT-WIRING.md.
  */
 ;(function () {
   'use strict'
@@ -104,11 +112,23 @@
   var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   var BRAND_STATUS_PATH = '/starters_onboarding/get_brand_profile_status'
 
-  // Both slash forms, for the same reason v3/complete-profile-redirect.js lists
-  // both forms of its own page: no prefix rule catches the trailing-slash twin,
-  // so each URL form needs its own entry to behave identically if Webflow ever
-  // serves the page un-normalized.
-  var BRAND_DASHBOARD_PATHS = ['/brand-dashboard', '/brand-dashboard/']
+  // Exact paths only (both slash forms). No prefix rule catches a trailing-slash
+  // twin, so each form needs its own entry. /opportunities/<slug> is matched
+  // separately below — nested paths like …/apply are not in scope.
+  var GUARDED_PATHS = [
+    '/brand-dashboard',
+    '/brand-dashboard/',
+    '/opportunities',
+    '/opportunities/',
+    '/all-starters',
+    '/all-starters/',
+    '/messages',
+    '/messages/',
+    '/starter-dashboard',
+    '/starter-dashboard/',
+    '/dashboard',
+    '/dashboard/',
+  ]
   var COMPLETE_PROFILE_PATH = '/complete-profile'
 
   // Same production allowlist as v3/route-guard.js, plus the local/dev-tunnel
@@ -152,8 +172,16 @@
     return APPROVED_HOSTS.indexOf(hostname) !== -1 || stagingHost(hostname)
   }
 
+  function isGuardedPath(pathname) {
+    var path = pathname || ''
+    if (GUARDED_PATHS.indexOf(path) !== -1) return true
+    // Single-segment opportunity detail only (same shape as route-guard).
+    return /^\/opportunities\/[^/]+\/?$/.test(path)
+  }
+
+  // Back-compat alias for console checks written against the dashboard-only name.
   function isBrandDashboardPath(pathname) {
-    return BRAND_DASHBOARD_PATHS.indexOf(pathname) !== -1
+    return isGuardedPath(pathname)
   }
 
   // STARTERS_DEBUG belongs here and not in stagingHost(): it may turn logging on
@@ -442,7 +470,7 @@
     // Before anything else, and before any network: a member who just submitted
     // is done, whatever Xano currently says.
     if (completionMarkerSet()) {
-      note('completion marker is set; the webhook is still catching up — rendering the dashboard.')
+      note('completion marker is set; the webhook is still catching up — staying put.')
       return false
     }
 
@@ -451,7 +479,7 @@
       incomplete = await fetchNeedsBrandProfile()
     } catch (error) {
       if (error && error.code === 'logged-out') {
-        note('no member session; leaving the dashboard alone.')
+        note('no member session; leaving the page alone.')
       } else {
         warn('could not read brand profile status, staying put: ' + describe(error))
       }
@@ -459,7 +487,7 @@
     }
 
     if (!incomplete) {
-      note('brand profile does not need completing; rendering the dashboard.')
+      note('brand profile does not need completing; staying put.')
       return false
     }
 
@@ -477,8 +505,8 @@
     redirectIfIncomplete().then(
       function (redirecting) {
         // Left up on purpose when a redirect is in flight: the page is being
-        // replaced, and uncovering it first would flash the dashboard the member
-        // is on their way out of.
+        // replaced, and uncovering it first would flash content the member is
+        // on their way out of.
         if (redirecting) return
         hideLoader()
       },
@@ -492,22 +520,24 @@
   window.StartersBrandProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/brand-profile-redirect.test.js drift guard asserts they match.
-    release: 'vX.Y.Z',
+    release: 'v1.59.116',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
+    isGuardedPath: isGuardedPath,
     isBrandDashboardPath: isBrandDashboardPath,
     diagnosticsEnabled: diagnosticsEnabled,
     completionMarkerSet: completionMarkerSet,
     needsBrandProfile: needsBrandProfile,
     redirectIfIncomplete: redirectIfIncomplete,
-    brandDashboardPaths: BRAND_DASHBOARD_PATHS.slice(),
+    guardedPaths: GUARDED_PATHS.slice(),
+    brandDashboardPaths: GUARDED_PATHS.slice(),
     completeProfilePath: COMPLETE_PROFILE_PATH,
     markerKey: MARKER_KEY,
     loaderSelector: LOADER_SELECTOR,
   }
 
   if (!allowedHost(window.location.hostname)) return
-  if (!isBrandDashboardPath(window.location.pathname)) return
+  if (!isGuardedPath(window.location.pathname)) return
 
   // With `defer` the document is already parsed; the readyState branch only
   // matters if the tag is ever moved into the head without it.
