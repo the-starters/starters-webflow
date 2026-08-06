@@ -191,8 +191,8 @@ test('auth changes clear identity state and stale requests cannot render', async
   assert.deepEqual(requests, ['member-a', 'member-b'])
   assert.equal(name.textContent, 'Member B')
   assert.equal(company.textContent, 'Company B')
-  assert.equal(image.attributes.src, 'https://cdn.example/member-b.jpg')
-  assert.equal(image.attributes.srcset, undefined)
+  assert.equal(image.attributes.src, undefined)
+  assert.equal(image.attributes.srcset, 'placeholder.jpg 1x')
   assert.equal(filters.hidden, false)
 
   firstResponse.resolve({ ok: true, json: async () => [] })
