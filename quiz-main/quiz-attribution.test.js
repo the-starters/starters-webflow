@@ -10,6 +10,7 @@ const header = source.slice(0, source.indexOf('*/') + 2)
 
 const RELEASE = 'v1.59.119'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
+const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
 
 // Cookie name to Memberstack custom-field ID. Verified to exist in the
@@ -39,27 +40,29 @@ const FALLBACK_EVENT_ID =
 const plain = (value) => JSON.parse(JSON.stringify(value))
 
 /**
- * Lifts one top-level object or array literal out of the script and evaluates it,
- * so a contract can be pinned against the real constant instead of a copy of it.
- * Balances brackets rather than regex-matching a closing line, which keeps it
- * indifferent to how the literal is formatted.
+ * Lifts one top-level object or array literal out of a source string and
+ * evaluates it, so a contract can be pinned against the real constant instead of
+ * a copy of it. Balances brackets rather than regex-matching a closing line,
+ * which keeps it indifferent to how the literal is formatted.
  *
+ * @param {string} src File contents to search.
  * @param {string} name Declared constant name.
+ * @param {string} keyword Declaration keyword (`var` or `const`).
  */
-function extractLiteral(name) {
-    const marker = `var ${name} = `
-    const start = source.indexOf(marker)
-    assert.notEqual(start, -1, `no ${name} declaration in quiz-attribution.js`)
+function extractLiteralFrom(src, name, keyword = 'var') {
+    const marker = `${keyword} ${name} = `
+    const start = src.indexOf(marker)
+    assert.notEqual(start, -1, `no ${name} declaration`)
 
     const from = start + marker.length
-    const open = source[from]
+    const open = src[from]
     const close = open === '{' ? '}' : ']'
     let depth = 0
     let index = from
 
-    for (; index < source.length; index += 1) {
-        if (source[index] === open) depth += 1
-        else if (source[index] === close) {
+    for (; index < src.length; index += 1) {
+        if (src[index] === open) depth += 1
+        else if (src[index] === close) {
             depth -= 1
             if (depth === 0) {
                 index += 1
@@ -68,7 +71,14 @@ function extractLiteral(name) {
         }
     }
 
-    return plain(vm.runInNewContext(`(${source.slice(from, index)})`))
+    return plain(vm.runInNewContext(`(${src.slice(from, index)})`))
+}
+
+/**
+ * @param {string} name Declared constant name in quiz-attribution.js.
+ */
+function extractLiteral(name) {
+    return extractLiteralFrom(source, name, 'var')
 }
 
 /**
@@ -126,12 +136,19 @@ function boot(options = {}) {
               getCurrentMember: async () => {
                   if (options.memberThrows) throw new Error('no session')
                   memberReads.push(true)
+                  // First read only: the signup watch's starting-state probe.
+                  // Lets a test prove an unreadable start is not treated as
+                  // "arrived logged out".
+                  if (options.firstMemberThrows && memberReads.length === 1) {
+                      throw new Error('no session')
+                  }
                   // The registration watch reads first, the pending-save retry
                   // second. Holding only the second read lets a test interleave a
                   // signup transition with a still-pending retry.
                   if (options.holdSecondMemberRead && memberReads.length === 2) {
                       return new Promise((resolve) => {
-                          releaseMember = () => resolve({ data: options.heldMember || null })
+                          releaseMember = () =>
+                              resolve({ data: options.heldMember || null })
                       })
                   }
                   return { data: options.member || null }
@@ -198,12 +215,23 @@ function boot(options = {}) {
         writesFor: (name) =>
             document.writes.filter((write) => write.startsWith(`${name}=`)),
         pendingSave: () => session.get(PENDING_SAVE_FLAG),
+        pendingFields: () => {
+            const raw = session.get(PENDING_FIELDS_KEY)
+            return raw === undefined ? undefined : JSON.parse(raw)
+        },
         releaseMember: () => releaseMember(),
         savedFields: () => plain(updateCalls.map((call) => call.customFields)),
     }
 }
 
 const loggedInMember = { id: 'mem_123', email: 'brand@example.com' }
+
+const clickCookies = {
+    utm_source: 'facebook',
+    utm_campaign: 'summer',
+    fbclid: 'IwAR123',
+    event_id: 'evt_fixed',
+}
 
 /* --------------------------------- capture -------------------------------- */
 
@@ -356,11 +384,37 @@ test('the map in the script is exactly the eight verified pairs', () => {
     assert.deepEqual(extractLiteral('FIELD_IDS'), FIELD_IDS)
 })
 
-test('SIGNUP_PATHS covers exactly /quiz and /sign-up', () => {
-    assert.deepEqual(extractLiteral('SIGNUP_PATHS'), ['/quiz', '/sign-up'])
-    // Only the direct signup writes fields from this script; /quiz has
-    // quiz-results.js for that.
-    assert.deepEqual(extractLiteral('DIRECT_SAVE_PATHS'), ['/sign-up'])
+test('COOKIE_NAMES is derived from FIELD_IDS so the two cannot drift', () => {
+    assert.match(
+        source,
+        /var COOKIE_NAMES = Object\.keys\(FIELD_IDS\)/,
+        'COOKIE_NAMES must be derived from FIELD_IDS',
+    )
+    assert.deepEqual(Object.keys(boot().api.getParams()), COOKIE_NAMES)
+    // URL_PARAMS must stay a subset of the field map: a URL-only cookie with no
+    // field ID would write a literal "undefined" key to Memberstack.
+    const urlParams = extractLiteral('URL_PARAMS')
+    for (const name of urlParams) {
+        assert.equal(FIELD_IDS[name] !== undefined, true, name)
+    }
+})
+
+test('the FIELD_IDS map stays in step with quiz-results.js', () => {
+    const resultsSource = fs.readFileSync(
+        path.join(__dirname, '..', 'quiz-results.js'),
+        'utf8',
+    )
+    assert.deepEqual(
+        extractLiteralFrom(resultsSource, 'attributionCookieFieldIds', 'const'),
+        FIELD_IDS,
+    )
+})
+
+test('SIGNUP_PATH_POLICY covers /quiz and /sign-up with directSave only on /sign-up', () => {
+    assert.deepEqual(extractLiteral('SIGNUP_PATH_POLICY'), {
+        '/quiz': { directSave: false },
+        '/sign-up': { directSave: true },
+    })
 })
 
 test('the header and README document all eight verified field IDs', () => {
@@ -471,6 +525,46 @@ test('an already logged-in visitor is not a registration', async () => {
     assert.deepEqual(harness.fbqCalls, [])
 })
 
+test('an unreadable starting state does not treat a logged-in replay as signup', async () => {
+    // Failed getCurrentMember must not arm as "arrived logged out", or the next
+    // auth replay for an already-signed-in visitor would fire the pixel and
+    // start a spurious /sign-up field save.
+    const harness = boot({
+        cookies: clickCookies,
+        firstMemberThrows: true,
+        member: loggedInMember,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('an unreadable start still arms after a definitive logged-out reading', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        firstMemberThrows: true,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](null)
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fbqCalls.length, 1)
+    assert.equal(harness.updateCalls.length, 1)
+    assert.equal(harness.pendingSave(), undefined)
+})
+
 test('does not watch auth outside the signup pages', async () => {
     for (const pathname of [
         '/',
@@ -536,13 +630,6 @@ test('an absent Memberstack never throws', async () => {
 
 /* --------------------------- field persistence ---------------------------- */
 
-const clickCookies = {
-    utm_source: 'facebook',
-    utm_campaign: 'summer',
-    fbclid: 'IwAR123',
-    event_id: 'evt_fixed',
-}
-
 test('the /sign-up transition marks the save before starting it', async () => {
     const harness = boot({
         cookies: clickCookies,
@@ -557,6 +644,12 @@ test('the /sign-up transition marks the save before starting it', async () => {
     // time the handler returns, because the form's redirect="/brand-dashboard"
     // can navigate away before the request lands.
     assert.equal(harness.pendingSave(), 'true')
+    assert.deepEqual(harness.pendingFields(), {
+        'utm-source': 'facebook',
+        'utm-campaign': 'summer',
+        fbclid: 'IwAR123',
+        'event-id': 'evt_fixed',
+    })
 
     await harness.settle()
     await harness.settle()
@@ -576,7 +669,91 @@ test('the /sign-up transition marks the save before starting it', async () => {
         'utm-campaign',
         'utm-source',
     ])
-    // Confirmed write, so the marker is gone and no page retries it.
+    // Confirmed write, so the marker and snapshot are gone and no page retries.
+    assert.equal(harness.pendingSave(), undefined)
+    assert.equal(harness.pendingFields(), undefined)
+})
+
+test('whitespace-only cookies are omitted from the Memberstack write', async () => {
+    const harness = boot({
+        cookies: {
+            utm_source: '   ',
+            utm_campaign: 'summer',
+            event_id: 'evt_fixed',
+        },
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-campaign': 'summer',
+            'event-id': 'evt_fixed',
+        },
+    ])
+})
+
+test('retry uses the signup-time field snapshot, not fresh cookies', async () => {
+    // A fresh ad click landed between /sign-up and /brand-dashboard. The write
+    // must still use the values the signup captured.
+    const harness = boot({
+        cookies: {
+            utm_source: 'google',
+            utm_campaign: 'winter',
+            event_id: 'evt_new',
+        },
+        member: loggedInMember,
+        pathname: '/brand-dashboard',
+        session: {
+            [PENDING_SAVE_FLAG]: 'true',
+            [PENDING_FIELDS_KEY]: JSON.stringify({
+                'utm-source': 'facebook',
+                'utm-campaign': 'summer',
+                fbclid: 'IwAR123',
+                'event-id': 'evt_fixed',
+            }),
+        },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-source': 'facebook',
+            'utm-campaign': 'summer',
+            fbclid: 'IwAR123',
+            'event-id': 'evt_fixed',
+        },
+    ])
+    assert.equal(harness.pendingSave(), undefined)
+    assert.equal(harness.pendingFields(), undefined)
+})
+
+test('a marker without a snapshot still falls back to live cookies', async () => {
+    // Pre-snapshot sessions (or blocked storage on the signup page) leave only
+    // the marker. Live cookies remain the best available values.
+    const harness = boot({
+        cookies: clickCookies,
+        member: loggedInMember,
+        pathname: '/brand-dashboard',
+        session: { [PENDING_SAVE_FLAG]: 'true' },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-source': 'facebook',
+            'utm-campaign': 'summer',
+            fbclid: 'IwAR123',
+            'event-id': 'evt_fixed',
+        },
+    ])
     assert.equal(harness.pendingSave(), undefined)
 })
 

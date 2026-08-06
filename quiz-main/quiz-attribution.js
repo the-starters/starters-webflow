@@ -41,14 +41,16 @@
  *
  * The same map is duplicated in `quiz-results.js`, which owns the write for the
  * quiz funnel. Keep the two in step: a field ID that exists in only one of them
- * is a value Memberstack silently drops on one of the two signup routes.
+ * is a value Memberstack silently drops on one of the two signup routes. The
+ * quiz-attribution.test.js drift guard asserts both maps still match.
  *
  * Signup pages. Two pages can turn a visitor into a member: `/quiz` (the funnel
  * signup, followed by `/quiz-results`) and `/sign-up` (the direct signup,
  * followed by `/brand-dashboard`). Both carry exactly one Memberstack signup
  * form and no login form, so on either page a logged-out to logged-in transition
  * can only be that form succeeding. Logins live on `/login` and
- * `/starter-login`, which is why they are not in the list.
+ * `/starter-login`, which is why they are not in the list. Policy for each path
+ * lives in one `SIGNUP_PATH_POLICY` map (`directSave` true only for `/sign-up`).
  *
  * CompleteRegistration. The Meta Pixel base snippet lives in Webflow site-head
  * custom code (pixel 775648331097942); this file never installs it and only
@@ -57,7 +59,9 @@
  * arrived logged out and fires `CompleteRegistration` on the transition. The
  * event carries the `event_id` cookie as its `eventID` so a server-side copy of
  * the same registration deduplicates against it. It fires for every signup,
- * including one with no ad parameters at all.
+ * including one with no ad parameters at all. An unreadable starting member
+ * state is not treated as logged out: the first definitive auth event only arms
+ * the watch, it does not fire.
  *
  * A `sessionStorage` flag makes the fire once-per-session, which is what covers
  * the refresh double-fire: Memberstack replays the authenticated state on the
@@ -69,13 +73,15 @@
  * direct `/sign-up` route has no such follow-up page, so this script writes the
  * fields itself, and it has to survive the form's own
  * `redirect="/brand-dashboard"` cutting the request off mid-flight. The order is
- * therefore: set `startersAttributionPendingSave` first, then call
- * `updateMember`, then clear the marker only once the write is confirmed. Every
- * page load checks that marker and re-attempts the write, so a save killed by
- * the redirect completes on `/brand-dashboard` instead of being lost. A marker
- * found while Memberstack reports the visitor logged out is stale and gets
- * cleared without a write, unless this page's own signup is what raised it while
- * that member read was still in flight.
+ * therefore: snapshot the non-empty field values into
+ * `startersAttributionPendingFields`, set `startersAttributionPendingSave`, then
+ * call `updateMember`, then clear both only once the write is confirmed. Every
+ * page load checks that marker and re-attempts the write from the snapshot (not
+ * from live cookies), so a save killed by the redirect completes on
+ * `/brand-dashboard` with the values the signup captured. A marker found while
+ * Memberstack reports the visitor logged out is stale and gets cleared without a
+ * write, unless a stale marker was already present at load and this page's own
+ * signup re-raised it while that retry's member read was still in flight.
  *
  * Debug: `window.StartersAttribution.getParams()` returns the current cookie
  * values. Diagnostics are staging-only (`*.webflow.io`, localhost, 127.0.0.1,
@@ -113,13 +119,11 @@
     var EVENT_ID_COOKIE = 'event_id'
     var EVENT_ID_PREFIX = 'evt_'
 
-    // Every cookie this script owns, in contract order.
-    var COOKIE_NAMES = URL_PARAMS.concat(['fbc', 'fbp', EVENT_ID_COOKIE])
-
     // Cookie name to Memberstack custom-field ID: underscores swapped for
     // hyphens. Duplicated in quiz-results.js on purpose (the house pattern for
     // two scripts that write the same fields); the IDs are verified against the
     // live Memberstack app config, so a rename here silently drops the value.
+    // COOKIE_NAMES is derived from this map so the two can never drift.
     var FIELD_IDS = {
         utm_source: 'utm-source',
         utm_campaign: 'utm-campaign',
@@ -131,19 +135,23 @@
         event_id: 'event-id',
     }
 
-    // Pages that can turn a visitor into a member. Each has exactly one
-    // Memberstack signup form and no login form, so the logged-out to logged-in
-    // transition is unambiguous there. Logins (/login, /starter-login) are
-    // deliberately absent.
-    var SIGNUP_PATHS = ['/quiz', '/sign-up']
+    // Every cookie this script owns, in FIELD_IDS contract order.
+    var COOKIE_NAMES = Object.keys(FIELD_IDS)
 
-    // Signup pages with no follow-up page to write the attribution fields for
-    // them. /quiz is excluded because quiz-results.js owns that write.
-    var DIRECT_SAVE_PATHS = ['/sign-up']
+    // One path -> policy map for pages that can turn a visitor into a member.
+    // Each has exactly one Memberstack signup form and no login form, so the
+    // logged-out to logged-in transition is unambiguous there. Logins (/login,
+    // /starter-login) are deliberately absent. `directSave` is true only when
+    // this script (not quiz-results.js) must write the attribution fields.
+    var SIGNUP_PATH_POLICY = {
+        '/quiz': { directSave: false },
+        '/sign-up': { directSave: true },
+    }
 
     var COMPLETE_REGISTRATION_EVENT = 'CompleteRegistration'
     var FIRED_FLAG = 'startersCompleteRegistrationFired'
     var PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
+    var PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 
     var MEMBERSTACK_POLL_MS = 100
     var MEMBERSTACK_MAX_WAIT_MS = 10000
@@ -378,18 +386,10 @@
 
     /**
      * @param {string} pathname
-     * @returns {boolean}
+     * @returns {{ directSave: boolean } | null}
      */
-    var isSignupPath = function (pathname) {
-        return SIGNUP_PATHS.indexOf(normalizePath(pathname)) !== -1
-    }
-
-    /**
-     * @param {string} pathname
-     * @returns {boolean}
-     */
-    var isDirectSavePath = function (pathname) {
-        return DIRECT_SAVE_PATHS.indexOf(normalizePath(pathname)) !== -1
+    var signupPolicyFor = function (pathname) {
+        return SIGNUP_PATH_POLICY[normalizePath(pathname)] || null
     }
 
     /**
@@ -434,6 +434,62 @@
         } catch (error) {
             /* a flag that cannot be cleared only costs a retry */
         }
+    }
+
+    /**
+     * @returns {object | null} Signup-time custom-field snapshot, or null.
+     */
+    var readPendingFields = function () {
+        try {
+            var storage = window.sessionStorage
+            if (!storage) return null
+            var raw = storage.getItem(PENDING_FIELDS_KEY)
+            if (!raw) return null
+            var parsed = JSON.parse(raw)
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return null
+            }
+            return parsed
+        } catch (error) {
+            return null
+        }
+    }
+
+    /**
+     * @param {object} fields Custom-field ID to value.
+     * @returns {void}
+     */
+    var writePendingFields = function (fields) {
+        try {
+            var storage = window.sessionStorage
+            if (!storage) return
+            storage.setItem(PENDING_FIELDS_KEY, JSON.stringify(fields || {}))
+        } catch (error) {
+            /* blocked storage just means the retry falls back to live cookies */
+        }
+    }
+
+    /**
+     * @returns {void}
+     */
+    var clearPendingFields = function () {
+        try {
+            var storage = window.sessionStorage
+            if (!storage) return
+            storage.removeItem(PENDING_FIELDS_KEY)
+        } catch (error) {
+            /* a snapshot that cannot be cleared only costs a stale retry */
+        }
+    }
+
+    /**
+     * Clears both the pending-save marker and its field snapshot.
+     *
+     * @returns {void}
+     */
+    var clearPendingSave = function () {
+        clearFlag(PENDING_SAVE_FLAG)
+        clearPendingFields()
     }
 
     /* -------------------------- CompleteRegistration ------------------------- */
@@ -516,79 +572,100 @@
     /**
      * Collects the captured cookies as Memberstack custom fields.
      *
-     * Absent and empty cookies are omitted, exactly like `quiz-results.js`: a
-     * later untagged visit must never blank a value an earlier tagged visit
-     * captured.
+     * Absent and empty (including whitespace-only) cookies are omitted, exactly
+     * like `quiz-results.js`: a later untagged visit must never blank a value an
+     * earlier tagged visit captured.
      *
      * @returns {object} Non-empty values keyed by custom-field ID.
      */
-    var attributionCustomFields = function () {
+    var attributionCustomFieldsFromCookies = function () {
         var customFields = {}
         COOKIE_NAMES.forEach(function (name) {
-            var value = readCookie(name)
+            var raw = readCookie(name)
+            if (raw == null) return
+            var value = String(raw).trim()
             if (!value) return
-            customFields[FIELD_IDS[name]] = value
+            var fieldId = FIELD_IDS[name]
+            if (!fieldId) return
+            customFields[fieldId] = value
         })
         return customFields
     }
 
     /**
-     * Writes the attribution fields onto the current member.
+     * Writes attribution fields onto the current member.
      *
      * @param {object} memberstack Memberstack DOM instance.
-     * @returns {Promise<boolean>} Whether the write is confirmed done.
+     * @param {object} [customFields] Snapshot to write; live cookies when omitted.
+     * @returns {Promise<boolean>} True when settled (write confirmed, or nothing
+     *     owed because every cookie was absent/empty). False when Memberstack
+     *     cannot accept the write yet.
      */
-    var saveAttribution = async function (memberstack) {
+    var saveAttribution = async function (memberstack, customFields) {
         if (!memberstack || typeof memberstack.updateMember !== 'function') {
             warn('Memberstack updateMember unavailable, attribution not saved')
             return false
         }
 
-        var customFields = attributionCustomFields()
-        // Nothing to write is not a failure: with cookies blocked there is no
-        // attribution to persist, and retrying forever would be pointless.
-        if (!Object.keys(customFields).length) return true
+        var fields =
+            customFields && typeof customFields === 'object'
+                ? customFields
+                : attributionCustomFieldsFromCookies()
+        // Nothing to write is settled, not a failure: with cookies blocked there
+        // is no attribution to persist, and retrying forever would be pointless.
+        if (!Object.keys(fields).length) return true
 
-        var result = await memberstack.updateMember({ customFields: customFields })
         // Memberstack rejects on failure, so a resolved call is the confirmation.
-        // The error-shaped payload check is belt and braces.
-        if (result && result.error) throw new Error(String(result.error))
+        await memberstack.updateMember({ customFields: fields })
         return true
     }
 
     /**
      * Saves the attribution fields, leaving the marker set on any failure.
      *
+     * Prefers the signup-time snapshot so a fresh ad click between `/sign-up`
+     * and `/brand-dashboard` cannot overwrite the values the signup owed. Falls
+     * back to live cookies when an older marker has no snapshot (pre-snapshot
+     * sessions, or blocked storage on the signup page).
+     *
      * @param {object} memberstack Memberstack DOM instance.
      * @returns {Promise<void>}
      */
     var savePendingAttribution = async function (memberstack) {
         try {
-            var saved = await saveAttribution(memberstack)
-            if (saved) clearFlag(PENDING_SAVE_FLAG)
+            var snapshot = readPendingFields()
+            var saved = await saveAttribution(
+                memberstack,
+                snapshot || undefined,
+            )
+            if (saved) clearPendingSave()
         } catch (error) {
             // The marker stays set on purpose: the next page load retries it.
             warn('attribution save failed, will retry on the next page load')
         }
     }
 
-    // Set when the signup on THIS page created the marker, so the stale-marker
-    // cleanup below can tell "left over from a dead session" apart from "owed by a
-    // save that started seconds ago on this very page".
+    // True only while THIS page's signup handler owns an in-flight direct save.
+    // Used solely for the narrow race where a stale marker was already present
+    // at load, the retry's member read is still pending, and the signup then
+    // re-raises the marker: clearing on a logged-out answer would discard the
+    // save the next page owes. Not a general "any marker from this page" latch.
     var savePendingFromThisPage = false
 
     /**
-     * Marks the save as owed and starts it.
+     * Snapshots the fields, marks the save as owed, and starts it.
      *
-     * The marker is written first and synchronously, because the /sign-up form
-     * carries redirect="/brand-dashboard" and that navigation can cut the
-     * updateMember request off before it lands.
+     * The marker and snapshot are written first and synchronously, because the
+     * /sign-up form carries redirect="/brand-dashboard" and that navigation can
+     * cut the updateMember request off before it lands.
      *
      * @param {object} memberstack Memberstack DOM instance.
      * @returns {void}
      */
     var persistAfterDirectSignup = function (memberstack) {
         savePendingFromThisPage = true
+        var fields = attributionCustomFieldsFromCookies()
+        writePendingFields(fields)
         setFlag(PENDING_SAVE_FLAG)
         savePendingAttribution(memberstack)
     }
@@ -625,11 +702,13 @@
             // there is no member to write to, and the signup it belonged to is
             // gone. Clearing it stops an unfulfillable retry on every page.
             //
-            // Unless this page's own signup raised it while the member read was
-            // still in flight: that marker belongs to a save that has only just
-            // started, and clearing it would throw away the attribution the
-            // /brand-dashboard load is supposed to finish writing.
-            if (!savePendingFromThisPage) clearFlag(PENDING_SAVE_FLAG)
+            // Exception: a stale marker was already present at load, this page's
+            // signup re-raised it while the retry's member read was still in
+            // flight, and that read then comes back logged out. That marker
+            // belongs to a save that has only just started; clearing it would
+            // throw away the attribution the /brand-dashboard load is supposed
+            // to finish writing.
+            if (!savePendingFromThisPage) clearPendingSave()
             return
         }
 
@@ -643,8 +722,8 @@
      */
     var wireCompleteRegistration = async function () {
         var pathname = (window.location && window.location.pathname) || ''
-        if (!isSignupPath(pathname)) return
-        var directSave = isDirectSavePath(pathname)
+        var policy = signupPolicyFor(pathname)
+        if (!policy) return
 
         var memberstack = await waitForMemberstack()
         if (!memberstack) {
@@ -652,15 +731,18 @@
             return
         }
 
-        // The starting state has to be read before subscribing, because
-        // onAuthChange replays the current member on some loads and a visitor who
-        // was already logged in when the page opened did not just register.
-        var loggedOut = true
+        // Tri-state on purpose. true = arrived logged out (arm for transition).
+        // false = arrived logged in (ignore auth replays). null = unreadable:
+        // never treat as logged out, or a failed getCurrentMember for an already
+        // signed-in visitor would fire CompleteRegistration and start a spurious
+        // direct save on the next auth replay.
+        var seenLoggedOut = null
         try {
             var current = await memberstack.getCurrentMember()
-            loggedOut = !isLoggedInMember(getMemberData(current))
+            seenLoggedOut = !isLoggedInMember(getMemberData(current))
         } catch (error) {
-            loggedOut = true
+            warn('member state unreadable at signup watch start')
+            seenLoggedOut = null
         }
 
         if (typeof memberstack.onAuthChange !== 'function') return
@@ -668,13 +750,18 @@
         memberstack.onAuthChange(function (payload) {
             try {
                 var loggedIn = isLoggedInMember(getMemberData(payload))
-                if (loggedIn && loggedOut) {
+                if (loggedIn && seenLoggedOut === true) {
                     fireCompleteRegistration()
                     // /quiz is excluded: quiz-results.js writes these fields as
                     // part of its own single quiz save.
-                    if (directSave) persistAfterDirectSignup(memberstack)
+                    if (policy.directSave) {
+                        persistAfterDirectSignup(memberstack)
+                    }
                 }
-                loggedOut = !loggedIn
+                // First definitive reading after an unreadable start only arms
+                // the watch: a logged-in replay is "already in", a logged-out
+                // reading waits for a later transition.
+                seenLoggedOut = loggedIn ? false : true
             } catch (error) {
                 /* attribution must never break the signup */
             }

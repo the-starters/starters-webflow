@@ -292,7 +292,8 @@ by `/quiz-results`, so `quiz-results.js` writes the fields there as part of its
 single quiz save. A direct `/sign-up` signup has no follow-up page, so
 `quiz-attribution.js` writes them itself. The map therefore exists in both files.
 Keep the two copies in step: a field ID present in only one of them is a value
-Memberstack silently drops on one of the two routes.
+Memberstack silently drops on one of the two routes. The
+`quiz-attribution.test.js` drift guard asserts both maps still match.
 
 ### Signup pages
 
@@ -317,6 +318,12 @@ every signup, including one with no ad parameters at all. If `fbq` is not a
 function at that moment the event is skipped and nothing is marked as fired, so a
 pixel that loads later in the session can still report the next transition.
 
+An unreadable starting member state is not treated as logged out. The first
+definitive auth event after that only arms the watch: a logged-in replay is
+ignored (the visitor was already signed in), and a logged-out reading waits for a
+later transition. Treating a failed `getCurrentMember` as logged out would fire
+the pixel and start a spurious field save on the next auth replay.
+
 A `sessionStorage.startersCompleteRegistrationFired` flag limits the event to one
 fire per browser session, and both signup pages share that one flag. This is what
 covers a refresh: Memberstack replays the authenticated state on the next load,
@@ -328,21 +335,29 @@ The `/sign-up` form carries `redirect="/brand-dashboard"`, so the browser can
 navigate away while the `updateMember` request is still in flight. The save is
 therefore written to survive being cut off:
 
-1. On the transition, `sessionStorage.startersAttributionPendingSave` is set
-   first, synchronously.
-2. Then `updateMember` is called with the non-empty attribution cookies mapped to
-   their field IDs. Absent and empty cookies are omitted, so a later untagged
-   visit never blanks a value an earlier tagged visit captured.
-3. The marker is cleared only once the write is confirmed.
+1. On the transition, the non-empty attribution cookies are snapshotted into
+   `sessionStorage.startersAttributionPendingFields` (field ID keys), and
+   `sessionStorage.startersAttributionPendingSave` is set, both synchronously.
+   Absent and empty cookies — including whitespace-only values — are omitted, so
+   a later untagged visit never blanks a value an earlier tagged visit captured.
+2. Then `updateMember` is called with that snapshot.
+3. The marker and snapshot are cleared only once the write is confirmed.
 
 Every page load checks that marker, and a page that finds it waits for
-Memberstack, confirms a logged-in member, and re-attempts the write. That is what
-completes on `/brand-dashboard` a save the redirect killed on `/sign-up`. A marker
-found while Memberstack reports the visitor logged out cannot ever be filled, so
-it is cleared without a write. Two states are excluded from that cleanup: an
-unreadable member state is not the same thing as a logged-out one, and a marker
-this page's own signup raised while the member read was still in flight belongs to
-a save that has only just started. Both leave the marker alone for the next load.
+Memberstack, confirms a logged-in member, and re-attempts the write from the
+snapshot (not from live cookies). That is what completes on `/brand-dashboard` a
+save the redirect killed on `/sign-up`, without letting a fresh ad click between
+those two pages overwrite the values the signup captured. A marker left over from
+before snapshots existed (or when storage was blocked on the signup page) falls
+back to live cookies.
+
+A marker found while Memberstack reports the visitor logged out cannot ever be
+filled, so it is cleared without a write. Two states are excluded from that
+cleanup: an unreadable member state is not the same thing as a logged-out one,
+and the narrow race where a stale marker was already present at load, this page's
+own signup re-raised it while that retry's member read was still in flight, and
+the read then comes back logged out. Both leave the marker alone for the next
+load.
 
 A failed or unavailable write leaves the marker set, warns on staging, and never
 throws into the page. With cookies blocked there is nothing to persist, so the
