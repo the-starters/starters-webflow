@@ -228,6 +228,83 @@ class. Category IDs in the forms, bucket mappings, and subcategory parent
 attributes must match after trimming. Saved subcategory IDs match the checkbox
 `id`, then its `value`, then its visible label.
 
+## Ad attribution
+
+`quiz-attribution.js` captures paid-click attribution and reports the signup back
+to Meta. Load it site-wide with `defer`, on every page rather than only on the
+quiz funnel, because an ad click can land anywhere on the site and the visitor
+may sign up several pages later:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-attribution.js"></script>
+```
+
+The Meta Pixel base snippet is installed separately in the Webflow site-head
+custom code, with pixel ID `775648331097942`. This script never installs the
+pixel. It calls `fbq` only when the pixel has already defined it, so a missing or
+blocked pixel leaves the page working and simply sends no event.
+
+### Cookie contract
+
+Every value is stored in a first-party cookie of the same name, with a 72 hour
+TTL on `path=/`:
+
+| Cookie | Source |
+| --- | --- |
+| `utm_source` | `?utm_source` |
+| `utm_campaign` | `?utm_campaign` |
+| `utm_adset` | `?utm_adset` |
+| `utm_content` | `?utm_content` |
+| `fbclid` | `?fbclid` |
+| `fbc` | Meta's own `_fbc` cookie, copied when ours is unset |
+| `fbp` | Meta's own `_fbp` cookie, copied when ours is unset |
+| `event_id` | `evt_<uuid>`, generated once and then reused |
+
+A parameter only overwrites its cookie when the URL actually carries a non-empty
+value. The freshest click therefore wins, and browsing the rest of the site never
+clears an earlier click. The `_fbc` and `_fbp` copy is re-checked on every page
+load, since the pixel writes those cookies itself and can finish loading after
+this script runs. The event id is reused for the life of the cookie so the
+browser event and any server-side copy of the same registration share one id.
+
+### Memberstack field IDs
+
+`quiz-results.js` writes the captured values onto the member. The field ID is the
+cookie name with underscores replaced by hyphens:
+
+`utm_source` -> `utm-source`
+`utm_campaign` -> `utm-campaign`
+`utm_adset` -> `utm-adset`
+`utm_content` -> `utm-content`
+`fbclid` -> `fbclid`
+`fbc` -> `fbc`
+`fbp` -> `fbp`
+`event_id` -> `event-id`
+
+These eight field IDs are verified to exist in the Memberstack app config. Do not
+rename them without changing the app config first, because Memberstack silently
+drops a write to a field it does not know.
+
+### CompleteRegistration
+
+On `/quiz` only, the script reads whether the visitor arrived logged out and then
+listens for the Memberstack auth change. A logged-out to logged-in transition on
+that page can only be the signup form succeeding, since logins happen on `/login`
+and `/starter-login`. The event fires as
+`fbq('track', 'CompleteRegistration', {}, { eventID: <event_id> })` and fires for
+every signup, including one with no ad parameters at all.
+
+A `sessionStorage.startersCompleteRegistrationFired` flag limits the event to one
+fire per browser session. That is what covers a refresh: Memberstack replays the
+authenticated state on the next load, and without the flag the replay would look
+like a second registration.
+
+`window.StartersAttribution.getParams()` returns the current cookie values for
+debugging, and `window.StartersAttribution.release` reports the shipped version.
+Console warnings are staging-only (`*.webflow.io`, localhost, `127.0.0.1`,
+`*.trycloudflare.com`) or with `window.STARTERS_DEBUG === true`, so production
+stays silent.
+
 ## Diagnostics
 
 Append `?starterQuizDebug=1` (also `true` or `yes`) to enable namespaced console

@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.112
+ * @release v1.59.117
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -5552,11 +5552,82 @@
         return starterQuiz
     }
 
+    // Attribution cookie name -> Memberstack custom field ID. The sitewide
+    // attribution script writes these first-party cookies with a 72h TTL; the
+    // field IDs are verified against the live Memberstack app config, and the
+    // mapping is simply underscores swapped for hyphens (event_id -> event-id).
+    const attributionCookieFieldIds = {
+        utm_source: 'utm-source',
+        utm_campaign: 'utm-campaign',
+        utm_adset: 'utm-adset',
+        utm_content: 'utm-content',
+        fbclid: 'fbclid',
+        fbc: 'fbc',
+        fbp: 'fbp',
+        event_id: 'event-id',
+    }
+
+    /**
+     * Reads one first-party cookie value by name.
+     *
+     * @param {string} name Cookie name to read.
+     * @returns {string} Decoded cookie value, or an empty string when absent.
+     */
+    function getCookieValue(name) {
+        const cookies = String(document.cookie || '').split(';')
+
+        for (const cookie of cookies) {
+            const separatorIndex = cookie.indexOf('=')
+
+            if (separatorIndex === -1) continue
+            if (cookie.slice(0, separatorIndex).trim() !== name) continue
+
+            const rawValue = cookie.slice(separatorIndex + 1).trim()
+
+            try {
+                return decodeURIComponent(rawValue)
+            } catch (error) {
+                // A half-written or malformed cookie should still contribute
+                // its raw value rather than throw away the whole save.
+                return rawValue
+            }
+        }
+
+        return ''
+    }
+
+    /**
+     * Collects the attribution cookies as Memberstack custom fields.
+     *
+     * The quiz save is the first authenticated moment these values can be
+     * attached to a member. Absent and empty cookies are omitted so a later
+     * untagged visit never blanks a value an earlier tagged visit captured.
+     *
+     * @returns {object} Non-empty attribution values keyed by custom field ID.
+     */
+    function getAttributionCustomFields() {
+        const customFields = {}
+
+        for (const cookieName of Object.keys(attributionCookieFieldIds)) {
+            const value = normalize(getCookieValue(cookieName))
+
+            if (!value) continue
+
+            customFields[attributionCookieFieldIds[cookieName]] = value
+        }
+
+        return customFields
+    }
+
     /**
      * Saves a short starter quiz summary to one Memberstack custom field.
      *
      * Create a Memberstack custom field named Starter Quiz with field ID
      * starter-quiz. This field is intentionally not the full JSON payload.
+     *
+     * Attribution cookies ride along in the same updateMember call so the quiz
+     * save stays a single write. Gathering them can never fail the save: any
+     * error degrades to writing starter-quiz alone.
      *
      * @param {object} memberstack Memberstack DOM instance.
      * @param {object} starterQuiz Compact starter quiz payload.
@@ -5569,9 +5640,20 @@
         }
 
         const customFieldValue = getStarterQuizCustomFieldSummary(starterQuiz)
+        let attributionCustomFields = {}
+
+        try {
+            attributionCustomFields = getAttributionCustomFields()
+        } catch (error) {
+            logQuizFlow('attribution cookies unreadable; saved starter-quiz only', {
+                error,
+            })
+            attributionCustomFields = {}
+        }
 
         await memberstack.updateMember({
             customFields: {
+                ...attributionCustomFields,
                 'starter-quiz': customFieldValue,
             },
         })
@@ -5580,6 +5662,7 @@
             customFields: {
                 'starter-quiz': customFieldValue,
             },
+            attributionFieldIds: Object.keys(attributionCustomFields),
         })
     }
 
