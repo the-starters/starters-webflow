@@ -7,12 +7,29 @@ header's `@release` line and the exported `release` property both carry the
 QA; without it the module simply fails open on every load, which is invisible
 rather than broken.
 
-`v3/brand-profile-redirect.js` is a **page-scoped** module for
-`/brand-dashboard`. It does one thing: it sends a signed-in paid Brand who has
-not finished their profile to `/complete-profile`. It is the **inbound half** of a
+`v3/brand-profile-redirect.js` is a **page-scoped** module for the paid-Brand
+lock pages below. It does one thing: it sends a signed-in paid Brand who has not
+finished their profile to `/complete-profile`. It is the **inbound half** of a
 pair — it reads status, decides, and redirects, and it never writes anything to
 Xano or to Memberstack. The only markup it touches is the spinner it raises while
 deciding.
+
+**In-scope paths** (exact + trailing-slash twin; `/opportunities/<slug>` too):
+
+| Path | Why |
+| --- | --- |
+| `/brand-dashboard` | Brand home |
+| `/opportunities` (+ single-segment detail) | Shared feed Brands use |
+| `/all-starters` | Browse |
+| `/messages` | Shared inbox |
+| `/starter-dashboard` | Future-proof (guard normally bounces Brands off first) |
+| `/dashboard` | Future-proof thin router |
+
+Out of scope on purpose for now: `/opportunities-brands-view`,
+`/opportunities---create`, `/favorites`, `/complete-profile` (outbound half owns
+it). Install one deferred tag per page (or sitewide — the path gate no-ops
+elsewhere). Paid-Brand only in effect: Talent / free-Brand get `has_record: false`
+and stay.
 
 Its counterpart is
 [complete-profile-redirect.js](COMPLETE-PROFILE-REDIRECT-WIRING.md), the
@@ -174,14 +191,22 @@ wait together.
 
 ## Webflow install
 
-One deferred tag, in **Page Settings → Custom Code → Before `</body>`** on
-`/brand-dashboard` only. Do not install it sitewide.
+One deferred tag per in-scope page, in **Page Settings → Custom Code → Before
+`</body>`** (or one sitewide embed — out-of-scope paths exit immediately):
+
+- `/brand-dashboard`
+- `/opportunities` (covers the feed; detail slugs match in JS)
+- `/all-starters`
+- `/messages`
+- `/starter-dashboard` (optional today; guard usually bounces Brands first)
+- `/dashboard` (optional today; thin router)
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/brand-profile-redirect.js" defer></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@main/v3/brand-profile-redirect.js" defer></script>
 ```
 
-Pin `@vX.Y.Z` instead of `@latest` for production stability once the tag exists.
+Pin `@v1.59.116` (or newer) instead of `@main` / `@latest` once the release tag
+exists. Until then `@latest` 404s this file (tag still on `v1.59.115`).
 
 **It must load after `v3/route-guard.js`**, which is sitewide and already earlier
 in the document, so role routing has run before this module starts a network call.
@@ -189,10 +214,9 @@ It does not read the guard's globals, so this is an ordering courtesy rather tha
 hard dependency — but a wrong-role member should be gone before a pointless Xano
 read goes out on their behalf.
 
-**Its counterpart lives on the other page**, not this one:
-`v3/complete-profile-redirect.js` stays embedded on `/complete-profile`. Do not
-add either file to the other's page — each is scoped to its own path and would
-exit immediately anyway, but two redirect modules on one page is how loops get
+**Its counterpart lives on `/complete-profile`**, not these pages:
+`v3/complete-profile-redirect.js` stays embedded there only. Do not add either
+file to the other's page — two redirect modules on one page is how loops get
 built.
 
 ### Designer prerequisites
