@@ -31,12 +31,40 @@
  * `profile_type_30`, and every one of those members was being routed past a step
  * they had not completed. They are now sent back to finish it.
  *
+ * PAID BRANDS NOW COST A XANO CALL TOO (deliberate change, 2026-08-06). Until
+ * this release the sentence here read "Brand roles and unmapped members never
+ * trigger a Xano call at all", and for Brands that is no longer true. The Brand
+ * profile-completion funnel needs the same "where is this member" answer at
+ * /auth-route that Talent already gets, from the mirror endpoint:
+ *
+ *   GET api:KZf7nFnk/starters_onboarding/get_brand_profile_status
+ *   → {has_record, brand_profile_done}
+ *
+ * Same no-input, bearer-token shape, same single 4s budget, same fail-open rule:
+ *
+ *   - has_record true AND brand_profile_done false → /complete-profile, and it
+ *     WINS over any stored or query `next`, exactly as the Talent onboarding
+ *     branch does
+ *   - anything else, including has_record false     → the normal `next`/role-home
+ *     routing
+ *
+ * Scope is `brand-paid` and nothing else. `brand-free` has no /complete-profile
+ * form to finish and unmapped members have no funnel, so both remain zero-network
+ * logins — the extra round trip is spent only on the one role whose answer can
+ * change the destination. Existing brands are grandfathered `brand_profile_done:
+ * true` in brands_v3, so in practice only new signups are ever diverted. A member
+ * who just submitted the form is answered from the sessionStorage marker
+ * `thestarters:v3-brand-profile-completed` (written by
+ * v3/brand-account-controller.js) with no network call at all, which is what stops
+ * the Memberstack → Xano webhook's catch-up window from bouncing a fresh completer
+ * back onto the form.
+ *
  * The check FAILS OPEN in every other case — logged out of Xano, token trade
  * rejected, HTTP error, malformed body, or the whole check exceeding its 4s
  * budget — and the member is routed exactly as before. This is funnel UX,
  * never a security boundary: Memberstack gated content, v3/route-guard.js, and
- * Xano endpoint authorization remain the enforced layers. Brand roles and
- * unmapped members never trigger a Xano call at all.
+ * Xano endpoint authorization remain the enforced layers. Unmapped members never
+ * trigger a Xano call at all.
  */
 ;(function () {
   'use strict'
@@ -67,7 +95,17 @@
   var DASHBOARD_PATH = '/dashboard'
   var ONBOARDING_PATH = '/starter-onboarding'
   var BUILD_PROFILE_PATH = '/build-profile/select-profile'
+  // The paid-Brand equivalent of ONBOARDING_PATH: the one page a Brand who has
+  // not finished their profile belongs on. Deliberately absent from
+  // ROLE_DESTINATIONS below — it is a destination this router CONSTRUCTS, never
+  // one it accepts from a `next`.
+  var COMPLETE_PROFILE_PATH = '/complete-profile'
   var NEXT_STORAGE_KEY = 'thestarters:v3-auth-next'
+  // Written by v3/brand-account-controller.js the moment a profile submit's
+  // durable member write resolves, and read here as "done" so the Memberstack →
+  // Xano webhook's catch-up window cannot bounce a fresh completer back onto the
+  // form. Never written or cleared by this file.
+  var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var MEMBERSTACK_TIMEOUT_MS = 10000
   var LOG_PREFIX = '[v3-auth-route]'
 
@@ -82,6 +120,10 @@
   // bearer token, exactly like the get_freelancers read it replaced.
   var BUILD_PROFILE_STATUS_PATH =
     '/starters_onboarding/get_build_profile_status'
+  // The Brand mirror of it, same no-input bearer-token shape:
+  // {has_record, brand_profile_done}.
+  var BRAND_PROFILE_STATUS_PATH =
+    '/starters_onboarding/get_brand_profile_status'
 
   // One OVERALL deadline for the token trade plus the status read, not a
   // per-request timeout. /auth-route is a blank hop page, so the member is
@@ -96,6 +138,11 @@
   var FUNNEL_ONBOARDING = 'onboarding'
   var FUNNEL_DONE = 'done'
   var FUNNEL_UNKNOWN = 'unknown'
+
+  // The paid-Brand funnel has exactly one step, so it needs one position of its
+  // own; DONE and UNKNOWN are the shared vocabulary above, and both route
+  // normally here.
+  var FUNNEL_COMPLETE_PROFILE = 'complete-profile'
 
   /* ------------------------------ diagnostics ------------------------------ */
   // Funnel routing is invisible to the member (one blank page replacing itself
@@ -375,9 +422,10 @@
    * The single 4s budget for the whole check. One AbortController is shared by
    * both requests so an expiry releases the sockets too, and `expiry` resolves
    * (never rejects) with FUNNEL_UNKNOWN so the caller's race reads like any
-   * other inconclusive answer.
+   * other inconclusive answer. `label` only names the check in the staging
+   * warning — the Talent and Brand checks share the budget, not a request.
    */
-  function startCheckBudget() {
+  function startCheckBudget(label) {
     var controller =
       typeof window.AbortController === 'function'
         ? new window.AbortController()
@@ -393,7 +441,8 @@
           } catch (error) {}
         }
         warn(
-          'onboarding check exceeded its ' +
+          label +
+            ' exceeded its ' +
             ONBOARDING_CHECK_BUDGET_MS +
             'ms budget; using the standard destination.',
         )
@@ -493,11 +542,102 @@
       return Promise.resolve(FUNNEL_UNKNOWN)
     }
 
-    var budget = startCheckBudget()
+    var budget = startCheckBudget('onboarding check')
     return Promise.race([
       readFunnelState(memberstack, budget.signal).catch(function (error) {
         warn(
           'onboarding funnel check failed, using the standard destination: ' +
+            describe(error),
+        )
+        return FUNNEL_UNKNOWN
+      }),
+      budget.expiry,
+    ]).then(function (state) {
+      budget.cancel()
+      return state
+    })
+  }
+
+  /* -------------------------- brand profile funnel -------------------------- */
+
+  /**
+   * The same-tab completion marker written by v3/brand-account-controller.js.
+   * Reading the property can itself throw (Safari private mode), so the whole
+   * access is wrapped and a failure reads as "no marker" — that costs one
+   * fail-open Xano read rather than a wrong destination.
+   *
+   * Semantics match the other two readers of this key
+   * (v3/complete-profile-redirect.js, v3/brand-profile-redirect.js): a string
+   * counts once trimmed non-empty, and a non-string truthy value counts as set.
+   */
+  function brandProfileMarked() {
+    var value
+    try {
+      var storage = window.sessionStorage
+      if (!storage || typeof storage.getItem !== 'function') return false
+      value = storage.getItem(BRAND_PROFILE_MARKER_KEY)
+    } catch (error) {
+      return false
+    }
+    if (typeof value === 'string') return value.trim() !== ''
+    return !!value
+  }
+
+  /**
+   * `{has_record, brand_profile_done}` → a Brand funnel position. Exactly ONE
+   * shape diverts the member: a literal `true` on has_record alongside a literal
+   * `false` on brand_profile_done. Everything else routes normally, which is why
+   * the two non-diverting answers are told apart only for the staging log:
+   *
+   *   - has_record false → the member has no brands_v3 row to complete, so there
+   *     is nothing to send them to. UNKNOWN, not DONE.
+   *   - brand_profile_done true → genuinely finished, or grandfathered.
+   *   - anything else (missing, null, the string "false", a 0) → a body this
+   *     router does not understand, so it must not become a redirect.
+   */
+  function brandProfileStateFrom(payload) {
+    if (!payload || typeof payload !== 'object') return FUNNEL_UNKNOWN
+    if (payload.has_record !== true) return FUNNEL_UNKNOWN
+    if (payload.brand_profile_done === false) return FUNNEL_COMPLETE_PROFILE
+    if (payload.brand_profile_done === true) return FUNNEL_DONE
+    return FUNNEL_UNKNOWN
+  }
+
+  async function readBrandProfileState(memberstack, signal) {
+    var token = await tradeForXanoToken(memberstack, signal)
+    var response = await window.fetch(
+      XANO_ONBOARDING_BASE + BRAND_PROFILE_STATUS_PATH,
+      { headers: { Authorization: 'Bearer ' + token }, signal: signal },
+    )
+    if (!response.ok) {
+      throw new Error('get_brand_profile_status responded ' + response.status)
+    }
+    var data = await response.json().catch(function () {
+      return null
+    })
+    return brandProfileStateFrom(data)
+  }
+
+  /**
+   * Always resolves, never rejects — same contract as onboardingFunnelState().
+   * The marker short-circuit comes first and costs no network at all.
+   */
+  function brandProfileState(memberstack) {
+    if (brandProfileMarked()) {
+      note('brand profile completion marker is set; skipping the Xano read.')
+      return Promise.resolve(FUNNEL_DONE)
+    }
+
+    if (typeof window.fetch !== 'function') {
+      warn('fetch is unavailable; skipping the brand profile check.')
+      return Promise.resolve(FUNNEL_UNKNOWN)
+    }
+
+    var budget = startCheckBudget('brand profile check')
+    return Promise.race([
+      readBrandProfileState(memberstack, budget.signal).catch(function (error) {
+        warn(
+          'brand profile check failed, using the standard destination: ' +
             describe(error),
         )
         return FUNNEL_UNKNOWN
@@ -541,10 +681,14 @@
     // wins, the stored destination has had its one chance at this login.
     var requested = consumeRequestedDestination()
 
-    // Talent only. A Brand or unmapped member must not cost a Xano round trip,
-    // and memberRole() returning null (unmapped, conflicted, or a missing role
-    // contract) still falls through to the existing error handling below.
-    if (memberRole(member) === 'talent') {
+    // Resolved once and reused by both funnel checks. null (unmapped,
+    // conflicted, or a missing role contract) matches neither branch and falls
+    // through to the existing error handling below, still without a Xano call.
+    var role = memberRole(member)
+
+    // Talent only. A Brand member takes the paid-Brand branch below instead, and
+    // neither branch can run for the other's role.
+    if (role === 'talent') {
       var state = await onboardingFunnelState(memberstack)
       if (state === FUNNEL_BUILD_PROFILE) {
         note(
@@ -566,6 +710,26 @@
         return
       }
       note('funnel state "' + state + '"; routing normally.')
+    }
+
+    // Paid Brands only (2026-08-06). brand-free has no /complete-profile form to
+    // finish, so it keeps its zero-network login; see the header.
+    if (role === 'brand-paid') {
+      var brandState = await brandProfileState(memberstack)
+      if (brandState === FUNNEL_COMPLETE_PROFILE) {
+        // Wins over `next`, for the same reason the Talent onboarding branch
+        // does: the member cannot use what they asked for until the profile
+        // exists, and `requested` has already been consumed above.
+        note(
+          'brand profile not finished; sending paid Brand to ' +
+            COMPLETE_PROFILE_PATH +
+            (requested ? ' instead of ' + requested : '') +
+            '.',
+        )
+        window.location.replace(COMPLETE_PROFILE_PATH)
+        return
+      }
+      note('brand profile state "' + brandState + '"; routing normally.')
     }
 
     var destination = destinationFor(member, requested)
@@ -598,6 +762,12 @@
     onboardingPath: ONBOARDING_PATH,
     buildProfilePath: BUILD_PROFILE_PATH,
     checkBudgetMs: ONBOARDING_CHECK_BUDGET_MS,
+    // Brand profile funnel, same purpose.
+    brandProfileMarked: brandProfileMarked,
+    brandProfileStateFrom: brandProfileStateFrom,
+    brandProfileState: brandProfileState,
+    completeProfilePath: COMPLETE_PROFILE_PATH,
+    brandProfileMarkerKey: BRAND_PROFILE_MARKER_KEY,
     isLoginPath: isLoginPath,
     loginPaths: LOGIN_PATHS.slice(),
   }

@@ -7,19 +7,49 @@
  * actually belong, without a hop through /login. The page is a paid-Brand form,
  * so only a paid Brand who has not finished it has any reason to be here:
  *
- *   - paid Brand, `completed-brand-profile` empty/whitespace/absent → STAY. This
- *     is exactly who the page is for.
- *   - paid Brand, field carries any real value                     → /brand-dashboard
- *   - free Brand                                                   → its guard home
+ *   - paid Brand, completion marker in sessionStorage → /brand-dashboard, no network
+ *   - paid Brand, Xano says brand_profile_done true   → /brand-dashboard
+ *   - paid Brand, Xano says has_record true and
+ *     brand_profile_done false                        → STAY. This is exactly who
+ *     the page is for.
+ *   - paid Brand, any inconclusive Xano answer        → STAY
+ *   - free Brand                                      → its guard home
  *     (the quiz funnel: /quiz-results once `starter-quiz` is set, else /quiz)
- *   - Talent                                                       → /starter-dashboard
+ *   - Talent                                          → /starter-dashboard
  *
- * Completion is a durable signal on the member object — the Memberstack custom
- * field `completed-brand-profile`, written last by brand-account-controller.js.
- * The hidden `data-ms-member` input remains the native field contract. The role
- * and the other two destinations come from the guard contract already in memory,
- * so the whole decision still costs ZERO network requests beyond the one
- * getCurrentMember() call.
+ * COMPLETION IS READ FROM XANO, NOT FROM THE MEMBER OBJECT (change of source,
+ * 2026-08-06). Until this release the paid-Brand branch read the Memberstack
+ * custom field `completed-brand-profile` off the member object route-guard.js had
+ * already resolved, which cost nothing but broke the SAME-SIGNAL RULE: the
+ * inbound check (v3/brand-profile-redirect.js on /brand-dashboard) reads Xano, so
+ * two halves of one loop answering from two sources means a fresh completer
+ * ping-pongs — the field lands in Memberstack immediately, the webhook mirror
+ * into `brands_v3.brand_profile_done` lands seconds later, and in between this
+ * page forwarded the member to the dashboard while the dashboard bounced them
+ * straight back. Both halves now read:
+ *
+ *   GET api:KZf7nFnk/starters_onboarding/get_brand_profile_status
+ *   → {has_record, brand_profile_done}
+ *
+ * authorized by the proven trade-token flow (the Memberstack JWT from
+ * `getMemberCookie()` traded at api:g1vmSLWh/auth/trade-token/v3). No inputs: the
+ * member is derived from the bearer token. The plumbing is duplicated from the
+ * sibling v3 modules rather than shared, on purpose — each browser-facing script
+ * is dropped into a Webflow page on its own and must stand alone.
+ *
+ * THE MARKER COMES FIRST, AND COSTS NOTHING. v3/brand-account-controller.js
+ * stamps `thestarters:v3-brand-profile-completed` into sessionStorage the moment
+ * its durable completion write resolves, and a non-empty value here is read as
+ * DONE with no network call at all — that is what closes the webhook's catch-up
+ * window from this side. It is deliberately sessionStorage and deliberately never
+ * cleared here: it dies with the tab, by which time Xano answers for itself.
+ * Every access is wrapped, because Safari private mode throws on the property
+ * itself, and a storage failure only costs one fail-open read.
+ *
+ * The role and the other two destinations still come from the guard contract
+ * already in memory, so the free-Brand and Talent branches remain ZERO network
+ * beyond the one getCurrentMember() call. Only the paid-Brand branch spends a
+ * round trip, and only when the marker is absent.
  *
  * WHY THE ROLE BRANCHES EXIST (decision 2026-08-03 evening). Until this release a
  * free Brand or a Talent member who reached /complete-profile was left on a form
@@ -49,21 +79,24 @@
  * contract reads as unavailable and this module stays put, so install it AFTER
  * route-guard.js.
  *
- * INERT UNTIL THE FIELD IS WRITTEN (paid Brand only). `completed-brand-profile`
- * exists on the member object but nothing wrote to it before 2026-08-03, so every
- * paid Brand reads as not-done until they submit the form once with the account
- * controller installed. That is the safe direction: the page keeps working
- * exactly as authored for the role it is for, and the completion redirect
- * switches itself on member by member as the field starts landing. The
- * free-Brand and Talent branches depend on no new field and are live immediately.
+ * WHO ACTUALLY GETS FORWARDED (paid Brand only). Every brand that existed before
+ * the funnel shipped is grandfathered `brand_profile_done: true` in `brands_v3`,
+ * so in practice this branch forwards essentially everybody except a new signup
+ * who has not submitted the form yet — which is the intent: the page is for them,
+ * and nobody else should be looking at it.
  *
- * FAIL-OPEN ON EVERY UNCERTAIN ANSWER. Logged out, Memberstack missing or slow,
- * no role contract, an unmapped or cross-role conflicted plan set, a role whose
- * home the guard cannot name, a member lookup that throws, an unreadable member
- * object: every one of those leaves the page exactly as authored. Only a
- * positive, unambiguous role answer ever redirects. This is funnel UX and never a
- * security boundary — Memberstack gated content and Xano endpoint authorization
- * remain the enforced layers.
+ * FAIL-OPEN HERE MEANS STAYING, because staying is the authored state. Logged
+ * out, Memberstack missing or slow, no role contract, an unmapped or cross-role
+ * conflicted plan set, a role whose home the guard cannot name, a member lookup
+ * that throws, an unreadable member object, a rejected token trade, an HTTP
+ * error, a malformed body, a hung request, storage that throws: every one of
+ * those leaves the page exactly as authored. Only a positive, unambiguous answer
+ * ever redirects. The bias is the whole risk posture — a finished Brand who is
+ * shown the form once more can navigate away, while a Brand forwarded to a
+ * dashboard because a transient blip read as "done" has skipped the one step the
+ * product needed from them. This is funnel UX and never a security boundary —
+ * Memberstack gated content and Xano endpoint authorization remain the enforced
+ * layers.
  *
  * Install: one deferred page-level tag on /complete-profile, after the sitewide
  * route guard. Diagnostics are staging-only (`*.webflow.io`, localhost,
@@ -83,10 +116,29 @@
   var COMPLETE_PROFILE_PATHS = ['/complete-profile', '/complete-profile/']
   var DASHBOARD_PATH = '/brand-dashboard'
 
-  // The Memberstack custom field the form's hidden `data-ms-member` input writes
-  // on submit. Read from the member object route-guard.js already resolves — no
-  // extra call, and no Xano surface involved.
-  var DONE_FIELD = 'completed-brand-profile'
+  // Same Xano surface the sibling v3 modules use (see v3/auth-route.js,
+  // v3/brand-profile-redirect.js). Duplicated rather than shared on purpose:
+  // each browser-facing script is dropped into a Webflow page on its own.
+  var XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
+  var XANO_ONBOARDING_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
+  var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
+  // No inputs; the member is derived from the bearer token.
+  // → {has_record, brand_profile_done}
+  var BRAND_STATUS_PATH = '/starters_onboarding/get_brand_profile_status'
+
+  // Written by v3/brand-account-controller.js the moment its durable completion
+  // write resolves. Read here as DONE, never written or cleared by this file.
+  var MARKER_KEY = 'thestarters:v3-brand-profile-completed'
+
+  // One OVERALL deadline for the token trade plus the status read, not a
+  // per-request timeout — the same budget v3/auth-route.js gives its funnel
+  // checks. Past it the check is abandoned and the member stays on the form.
+  var STATUS_BUDGET_MS = 4000
+
+  // What the status read can conclude. DONE is the only answer that navigates.
+  var BRAND_DONE = 'done'
+  var BRAND_NOT_DONE = 'not-done'
+  var BRAND_UNKNOWN = 'unknown'
 
   // Same production allowlist as v3/route-guard.js, plus the local/dev-tunnel
   // hosts ./dev-tunnel.sh serves from — without those the module would be dead
@@ -204,21 +256,166 @@
   /* -------------------------------- completion ------------------------------- */
 
   /**
-   * Deliberately the same semantics as route-guard.js's hasCompletedQuiz for the
-   * `starter-quiz` field: a string counts only once trimmed non-empty, and a
-   * non-string truthy value counts as set. Memberstack has been seen to hand back
-   * a boolean for checkbox-backed fields, and a form that wrote *something*
-   * should not be re-run because the something was not a string.
+   * The same-tab completion marker, checked before any network. Reading the
+   * property can itself throw (Safari private mode), so the whole access is
+   * wrapped and a failure reads as "no marker" — that costs one fail-open Xano
+   * read, never a wrong destination.
    *
-   * The bias is toward STAYING: an absent field, an empty string, and a
-   * whitespace-only value all read as not done, which leaves the page as
-   * authored. Re-showing a completed form is a harmless annoyance; redirecting a
-   * member away from a form they still have to fill in is not.
+   * Semantics match the other two readers of this key (v3/auth-route.js,
+   * v3/brand-profile-redirect.js), and are the same rule route-guard.js uses for
+   * `starter-quiz`: a string counts only once trimmed non-empty, and a non-string
+   * truthy value counts as set.
    */
-  function hasCompletedBrandProfile(member) {
-    var fields = (member && member.customFields) || {}
-    var value = fields[DONE_FIELD]
-    return typeof value === 'string' ? value.trim() !== '' : !!value
+  function completionMarkerSet() {
+    var value
+    try {
+      var storage = window.sessionStorage
+      if (!storage || typeof storage.getItem !== 'function') return false
+      value = storage.getItem(MARKER_KEY)
+    } catch (error) {
+      note('sessionStorage is unavailable, so the marker cannot be read.')
+      return false
+    }
+    if (typeof value === 'string') return value.trim() !== ''
+    return !!value
+  }
+
+  /**
+   * The single 4s budget for the whole check. One AbortController is shared by
+   * both requests so an expiry releases the sockets too, and `expiry` resolves
+   * (never rejects) with BRAND_UNKNOWN so the caller's race reads like any other
+   * inconclusive answer — which on this page means "stay".
+   */
+  function startStatusBudget() {
+    var controller =
+      typeof window.AbortController === 'function'
+        ? new window.AbortController()
+        : null
+    var timer = null
+
+    var expiry = new Promise(function (resolve) {
+      timer = window.setTimeout(function () {
+        timer = null
+        if (controller) {
+          try {
+            controller.abort()
+          } catch (error) {}
+        }
+        warn(
+          'brand profile check exceeded its ' +
+            STATUS_BUDGET_MS +
+            'ms budget; leaving the page alone.',
+        )
+        resolve(BRAND_UNKNOWN)
+      }, STATUS_BUDGET_MS)
+    })
+
+    return {
+      expiry: expiry,
+      signal: controller ? controller.signal : undefined,
+      cancel: function () {
+        if (timer === null) return
+        window.clearTimeout(timer)
+        timer = null
+      },
+    }
+  }
+
+  /**
+   * Tolerant on purpose: the trade endpoint has been seen to answer a raw string,
+   * `{authToken}`, and `{token}`, and all three are valid.
+   */
+  async function tradeForXanoToken(memberstack, signal) {
+    if (typeof memberstack.getMemberCookie !== 'function') {
+      throw new Error('Memberstack cannot supply a member cookie')
+    }
+
+    var memberstackToken = await memberstack.getMemberCookie()
+    if (!memberstackToken) throw new Error('No Memberstack session cookie')
+
+    var response = await window.fetch(
+      XANO_AUTH_BASE +
+        TRADE_TOKEN_PATH +
+        '?token=' +
+        encodeURIComponent(memberstackToken),
+      { signal: signal },
+    )
+    var data = await response.json().catch(function () {
+      return null
+    })
+    if (!response.ok) {
+      throw new Error('Xano token trade failed with ' + response.status)
+    }
+    var token =
+      typeof data === 'string' ? data : data && (data.authToken || data.token)
+    if (!token) throw new Error('Xano token trade returned no token')
+    return token
+  }
+
+  /**
+   * `{has_record, brand_profile_done}` → one of three answers. Strict in the DONE
+   * direction, because DONE is the only one that takes the member off a page they
+   * may still need:
+   *
+   *   - has_record true + a literal `true`  → DONE, the only navigating answer.
+   *   - has_record true + a literal `false` → NOT DONE, the page as authored.
+   *   - has_record false                    → UNKNOWN. No brands_v3 row means the
+   *     webhook has not mirrored this member yet; the form is still the right
+   *     place for them.
+   *   - anything else (missing, null, "true", 1) → UNKNOWN.
+   */
+  function brandProfileStateFrom(payload) {
+    if (!payload || typeof payload !== 'object') return BRAND_UNKNOWN
+    if (payload.has_record !== true) return BRAND_UNKNOWN
+    if (payload.brand_profile_done === true) return BRAND_DONE
+    if (payload.brand_profile_done === false) return BRAND_NOT_DONE
+    return BRAND_UNKNOWN
+  }
+
+  async function readBrandProfileState(memberstack, signal) {
+    var token = await tradeForXanoToken(memberstack, signal)
+    var response = await window.fetch(XANO_ONBOARDING_BASE + BRAND_STATUS_PATH, {
+      headers: { Authorization: 'Bearer ' + token },
+      signal: signal,
+    })
+    if (!response.ok) {
+      throw new Error('get_brand_profile_status responded ' + response.status)
+    }
+    var data = await response.json().catch(function () {
+      return null
+    })
+    return brandProfileStateFrom(data)
+  }
+
+  /**
+   * Always resolves, never rejects: every failure is BRAND_UNKNOWN, which the
+   * caller treats as "leave the page exactly as authored".
+   */
+  function brandProfileState(memberstack) {
+    if (completionMarkerSet()) {
+      note('completion marker is set; skipping the Xano read.')
+      return Promise.resolve(BRAND_DONE)
+    }
+
+    if (typeof window.fetch !== 'function') {
+      warn('fetch is unavailable; leaving the page alone.')
+      return Promise.resolve(BRAND_UNKNOWN)
+    }
+
+    var budget = startStatusBudget()
+    return Promise.race([
+      readBrandProfileState(memberstack, budget.signal).catch(function (error) {
+        warn(
+          'brand profile status read failed, leaving the page alone: ' +
+            describe(error),
+        )
+        return BRAND_UNKNOWN
+      }),
+      budget.expiry,
+    ]).then(function (state) {
+      budget.cancel()
+      return state
+    })
   }
 
   /* -------------------------------- decision -------------------------------- */
@@ -288,25 +485,27 @@
     }
 
     // The one role the page was authored for, and the only role whose answer can
-    // be "stay".
+    // be "stay" — and the only one that costs a network call.
     if (role === 'brand-paid') {
-      if (!hasCompletedBrandProfile(member)) {
-        note(
-          '"' +
-            DONE_FIELD +
-            '" is not set; this page is exactly where the member belongs.',
-        )
-        return null
+      var state = await brandProfileState(memberstack)
+      if (state === BRAND_DONE) {
+        note('brand profile is complete; sending to ' + DASHBOARD_PATH + '.')
+        return DASHBOARD_PATH
       }
-      note('"' + DONE_FIELD + '" is set; sending to ' + DASHBOARD_PATH + '.')
-      return DASHBOARD_PATH
+      note(
+        'brand profile state "' +
+          state +
+          '"; this page is exactly where the member belongs.',
+      )
+      return null
     }
 
     // Talent and free Brand: this form is not theirs and never will be, so send
     // them to the home the guard would have sent them to after a /login hop —
     // /starter-dashboard for Talent, the quiz funnel for a free Brand — and skip
-    // the hop. `completed-brand-profile` is not consulted for either role; it is a
-    // paid-Brand form marker and a stray value on the wrong role means nothing.
+    // the hop. Neither the completion marker nor the Xano read is consulted for
+    // either role: both are paid-Brand signals, a stray marker on the wrong role
+    // means nothing, and this endpoint has no record for them anyway.
     var home = roleHome(member)
     if (!home) {
       warn(
@@ -344,7 +543,11 @@
     stagingHost: stagingHost,
     isCompleteProfilePath: isCompleteProfilePath,
     diagnosticsEnabled: diagnosticsEnabled,
-    hasCompletedBrandProfile: hasCompletedBrandProfile,
+    // The completion signal, in both halves: the free marker check and the Xano
+    // body reader, so a staging session can ask each of them in isolation.
+    completionMarkerSet: completionMarkerSet,
+    brandProfileStateFrom: brandProfileStateFrom,
+    brandProfileState: brandProfileState,
     // The two contract borrows, exported so a staging session can ask "what role
     // does the guard think I am, and where does it think I live?" without
     // reproducing the decision by hand.
@@ -356,7 +559,8 @@
     redirectPastCompleteProfile: redirectPastCompleteProfile,
     completeProfilePaths: COMPLETE_PROFILE_PATHS.slice(),
     dashboardPath: DASHBOARD_PATH,
-    doneField: DONE_FIELD,
+    markerKey: MARKER_KEY,
+    statusBudgetMs: STATUS_BUDGET_MS,
   }
 
   if (!allowedHost(window.location.hostname)) return

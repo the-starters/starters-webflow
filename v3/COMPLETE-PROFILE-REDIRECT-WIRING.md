@@ -1,7 +1,8 @@
 # V3 Complete-Profile Redirect Wiring
 
-Status: Implemented locally 2026-08-03, not yet installed. Needs one page-level
-Webflow embed; it does not arrive with a jsDelivr tag on its own.
+Status: Code complete 2026-08-06 (Xano same-signal rewrite). Needs one page-level
+Webflow embed; it does not arrive with a jsDelivr tag on its own. Pair with
+[brand-profile-redirect.js](BRAND-PROFILE-REDIRECT-WIRING.md) on `/brand-dashboard`.
 
 `v3/complete-profile-redirect.js` puts every **mapped** member who lands on
 `/complete-profile` where they actually belong. The page is a paid-Brand form, so
@@ -9,10 +10,13 @@ the only visitor with a reason to be there is a paid Brand who has not finished 
 yet. Everyone else mapped goes straight to their own home, with **no hop through
 `/login`**.
 
-Every input is already on the member object Memberstack hands back — the custom
-field `completed-brand-profile` for completion, the plan connections for the role —
-so unlike its `/build-profile/*` sibling this module makes **no network request at
-all** beyond the one `getCurrentMember()` call.
+**Completion is read from Xano** (changed 2026-08-06), not from the Memberstack
+field `completed-brand-profile`. Both halves of the Brand profile loop — this file
+and [brand-profile-redirect.js](BRAND-PROFILE-REDIRECT-WIRING.md) — must answer from
+the **same** signal or a fresh completer ping-pongs until the webhook lands. The
+controller still writes the Memberstack field (it feeds endpoint #1513) but nothing
+routes on it. Role destinations still come from the guard contract in memory, so
+free-Brand and Talent branches remain zero network beyond `getCurrentMember()`.
 
 ## What it does
 
@@ -20,13 +24,25 @@ On `/complete-profile` and `/complete-profile/` only, on the approved hosts only
 
 | Member | Action |
 | --- | --- |
-| Paid Brand, `completed-brand-profile` any trimmed non-empty string or any non-string truthy value | Replace with `/brand-dashboard` |
-| Paid Brand, empty string, whitespace-only, `false`, `0`, `null`, field absent, or `customFields` absent | **Stay** — this page is exactly where the member belongs |
+| Paid Brand, `thestarters:v3-brand-profile-completed` marker set | Replace with `/brand-dashboard` (no Xano call) |
+| Paid Brand, Xano `brand_profile_done: true` | Replace with `/brand-dashboard` |
+| Paid Brand, Xano `has_record: true` and `brand_profile_done: false` | **Stay** — this page is exactly where the member belongs |
+| Paid Brand, any inconclusive Xano answer (no record, error, timeout, malformed) | **Stay** |
 | Free Brand, `starter-quiz` not set | Replace with `/quiz` |
 | Free Brand, `starter-quiz` set | Replace with `/quiz-results` |
 | Talent | Replace with `/starter-dashboard` |
 | Unmapped plan set, or a cross-role conflicted one (Talent + Brand) | Stay, untouched |
 | Logged out, Memberstack missing or slow, no role contract, a role the guard cannot name a home for, lookup throws, malformed member | Stay, untouched |
+
+Paid-Brand Xano surface (same as the inbound half and auth-route):
+
+```
+GET api:KZf7nFnk/starters_onboarding/get_brand_profile_status
+→ {"has_record": bool, "brand_profile_done": bool}
+```
+
+Bearer via trade-token. Marker key written by
+[brand-account-controller.js](BRAND-ACCOUNT-WIRING.md) right after durable submit.
 
 The free-Brand and Talent rows are new as of the **2026-08-03 evening decision**
 and replace the earlier paid-Brand-only design, in which those two roles were left

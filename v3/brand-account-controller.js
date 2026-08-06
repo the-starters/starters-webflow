@@ -22,6 +22,14 @@
  * email calls are never automatically retried; Memberstack's Forgot Password
  * flow is the recovery path when delivery cannot be confirmed.
  *
+ * COMPLETION CONTRACT, SECOND HALF (2026-08-06). The durable answer is the
+ * member field plus its Xano mirror, but the Memberstack webhook needs a moment
+ * to land — so the instant the completion write resolves, this controller also
+ * stamps the sessionStorage marker `thestarters:v3-brand-profile-completed`,
+ * which v3/complete-profile-redirect.js and v3/auth-route.js read as "done"
+ * without asking Xano. Best-effort and never blocking: a storage failure only
+ * costs the member one fail-open Xano read.
+ *
  * Login-email interception is also OFF by default so it cannot race the forms'
  * existing submit owners. The configured identity-scoped mode resolves the
  * current member through the canonical route-guard role contract, claims Brand
@@ -53,6 +61,12 @@
   var OP_TIMEOUT_MS = 15000
   var RETRY_DELAYS_MS = [0, 300]
   var EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  // Read by v3/complete-profile-redirect.js (outbound), v3/auth-route.js (login
+  // hop), and v3/brand-profile-redirect.js (inbound) as "this member is done,
+  // do not ask Xano". Written here and cleared by nobody: it dies with the tab,
+  // by which time the Memberstack webhook has stamped brands_v3 for real.
+  var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
+  var BRAND_PROFILE_MARKER_VALUE = '1'
   var passwordEmailAttempts = new WeakMap()
 
   function config() {
@@ -269,6 +283,25 @@
     })
   }
 
+  /**
+   * The same-tab half of the completion contract, written only after the durable
+   * member write has resolved. Every access is wrapped — Safari private mode
+   * throws on the property itself — because a marker this controller failed to
+   * write costs the member one fail-open Xano read, while an exception here would
+   * cost them the rest of the submit: the password email and the redirect.
+   */
+  function markBrandProfileCompletedLocally() {
+    try {
+      window.sessionStorage.setItem(
+        BRAND_PROFILE_MARKER_KEY,
+        BRAND_PROFILE_MARKER_VALUE,
+      )
+      return true
+    } catch (error) {
+      return false
+    }
+  }
+
   function formWrapper(form) {
     return form && typeof form.closest === 'function' ? form.closest('.w-form') : null
   }
@@ -327,6 +360,11 @@
     await updateOrdinaryFields(client, values)
     await updateEmailIfChanged(client, member, values.email)
     await markBuildComplete(client)
+    // Only reached once completion is durable, and deliberately before the
+    // non-retried password email: the marker is what stops the routers from
+    // bouncing this member back onto the form during the webhook's catch-up
+    // window, so nothing that can fail afterwards is allowed to precede it.
+    markBrandProfileCompletedLocally()
     await sendResetPasswordEmailOnce(form, client, values.email)
 
     return { memberId: member.id }
@@ -641,6 +679,10 @@
     signupPlanForHost: signupPlanForHost,
     validate: validate,
     retryable: retryable,
+    // The shared completion-marker contract, exported so the reading modules'
+    // key can be pinned against the writer's rather than against a literal.
+    brandProfileMarkerKey: BRAND_PROFILE_MARKER_KEY,
+    brandProfileMarkerValue: BRAND_PROFILE_MARKER_VALUE,
   }
 
   if (document.readyState === 'loading') {

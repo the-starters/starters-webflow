@@ -221,8 +221,33 @@ function loadController(options = {}) {
       redirects.push(value)
     },
   }
+  // The same-tab completion marker the routers read. A recording store rather
+  // than a real one, so a test can assert both the key/value written and the
+  // Safari-private-mode case where the setter itself throws.
+  const storage = new Map()
+  const storageWrites = []
+  const sessionStorage = {
+    getItem(key) {
+      return storage.has(key) ? storage.get(key) : null
+    },
+    setItem(key, value) {
+      storageWrites.push({ key, value })
+      if (options.sessionStorageThrows) {
+        throw new DOMException('', 'SecurityError')
+      }
+      storage.set(key, String(value))
+    },
+    removeItem(key) {
+      storage.delete(key)
+    },
+  }
+
   const window = {
     location,
+    // Omitted entirely for the harsher storage case: reading the property is
+    // itself what throws in Safari private mode, so the controller's try/catch
+    // has to cover the lookup and not just the write.
+    sessionStorage: options.sessionStorageMissing ? undefined : sessionStorage,
     $memberstackDom: memberstack,
     StartersBrandAccountConfig: options.config || {},
     StartersV3RouteGuard: options.routeGuard,
@@ -270,10 +295,14 @@ function loadController(options = {}) {
     securityForm,
     starterProfileForm,
     signupForm,
+    storage,
+    storageWrites,
     tracked,
     window,
   }
 }
+
+const MARKER_KEY = 'thestarters:v3-brand-profile-completed'
 
 test('Brand signup uses the Test Brand plan on the Webflow staging hostname', () => {
   const signupForm = makeElement()
@@ -349,6 +378,88 @@ test('Build Account writes ordinary fields, changed email, then completion in or
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
   assert.equal(buildForm.getAttribute('aria-busy'), 'false')
   assert.equal(buildForm.submit.disabled, false)
+})
+
+// --- Completion marker (same-tab half of the completion contract) -------------
+
+test('a successful completion write stamps the sessionStorage marker', async () => {
+  const environment = loadController({ currentEmail: 'old@example.com' })
+
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.equal(environment.storage.get(MARKER_KEY), '1')
+  // Exactly one write, with the key the reading modules look for.
+  assert.deepEqual(environment.storageWrites, [{ key: MARKER_KEY, value: '1' }])
+  // The exported contract, so a reader pinning this key is pinning the writer's.
+  assert.equal(environment.api.brandProfileMarkerKey, MARKER_KEY)
+  assert.equal(environment.api.brandProfileMarkerValue, '1')
+  // Written after completion is durable and before the non-retried email, so a
+  // member whose password email fails still counts as done in this tab.
+  const methods = environment.calls.map((call) => call.method)
+  assert.equal(methods[methods.length - 1], 'sendMemberResetPasswordEmail')
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('a marker write that throws does not disturb the rest of the submit', async () => {
+  // Safari private mode, in both of its shapes: a setter that throws, and a
+  // sessionStorage property that cannot even be read.
+  for (const options of [
+    { sessionStorageThrows: true },
+    { sessionStorageMissing: true },
+  ]) {
+    const environment = loadController(
+      Object.assign({ currentEmail: 'old@example.com' }, options),
+    )
+
+    environment.buildForm.submitEvent()
+    await settle()
+
+    assert.deepEqual(
+      environment.calls.map((call) => call.method),
+      [
+        'getCurrentMember',
+        'updateMember',
+        'updateMemberAuth',
+        'updateMember',
+        'sendMemberResetPasswordEmail',
+      ],
+      JSON.stringify(options),
+    )
+    assert.deepEqual(environment.redirects, ['/brand-dashboard'], JSON.stringify(options))
+    // Success state, not the authored failure state: the marker is a courtesy.
+    assert.equal(environment.buildForm.wrapper.done.style.display, 'block')
+    assert.equal(environment.buildForm.wrapper.fail.style.display, 'none')
+    assert.equal(environment.storage.has(MARKER_KEY), false, JSON.stringify(options))
+  }
+})
+
+test('a rejected completion write leaves the marker unset', async () => {
+  // The marker must never claim more than the durable write achieved, or the
+  // routers would wave a member past a form Xano still has as unfinished.
+  const environment = loadController({
+    currentEmail: 'old@example.com',
+    updateMember: async (payload) => {
+      if (payload.customFields['completed-brand-profile']) {
+        throw new Error('completion failed')
+      }
+      return { ok: true }
+    },
+  })
+
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(environment.storageWrites, [])
+  assert.equal(environment.storage.has(MARKER_KEY), false)
+  // And the submit failed loudly rather than quietly succeeding.
+  assert.equal(environment.buildForm.wrapper.fail.style.display, 'block')
+  assert.deepEqual(environment.redirects, [])
+  assert.equal(
+    environment.calls.filter((call) => call.method === 'sendMemberResetPasswordEmail')
+      .length,
+    0,
+  )
 })
 
 test('Build Account sends a reset password email without an unchanged auth mutation', async () => {
