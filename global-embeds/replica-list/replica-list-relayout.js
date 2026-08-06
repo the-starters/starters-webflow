@@ -53,7 +53,7 @@
  * `?replica-list-debug`) and silent in production. Every path is wrapped: this
  * embed must never throw on a page it does not understand.
  *
- * @release vX.Y.Z (set at tag time)
+ * @release v1.59.113
  *
  * Webflow embed (jsDelivr):
  *   https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/global-embeds/replica-list/replica-list-relayout.js
