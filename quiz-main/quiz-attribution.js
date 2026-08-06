@@ -174,7 +174,7 @@
     /**
      * @param {string} name
      * @param {string} value
-     * @returns {boolean} Whether the write was attempted without throwing.
+     * @returns {void}
      */
     var writeCookie = function (name, value) {
         try {
@@ -190,9 +190,8 @@
                 '; path=' +
                 COOKIE_PATH +
                 '; SameSite=Lax'
-            return true
         } catch (error) {
-            return false
+            /* blocked cookies just mean nothing was stored */
         }
     }
 
@@ -281,7 +280,10 @@
     /**
      * Reuses the stored event id, or generates and stores one.
      *
-     * @returns {string | null} The id, or null when cookies are unavailable.
+     * A blocked cookie write still returns the generated id, so the page-lifetime
+     * value stays usable even when it could not be persisted.
+     *
+     * @returns {string} The event id.
      */
     var ensureEventId = function () {
         var existing = readCookie(EVENT_ID_COOKIE)
@@ -357,11 +359,11 @@
     /**
      * Sends CompleteRegistration to Meta, once per browser session.
      *
-     * @returns {boolean} Whether the event was handed to `fbq`.
+     * @returns {void}
      */
     var fireCompleteRegistration = function () {
         try {
-            if (hasFired()) return false
+            if (hasFired()) return
 
             if (typeof window.fbq !== 'function') {
                 warn(
@@ -369,7 +371,7 @@
                         COMPLETE_REGISTRATION_EVENT +
                         '. Install the pixel base snippet in site-head custom code.',
                 )
-                return false
+                return
             }
 
             var eventId = ensureEventId()
@@ -378,10 +380,8 @@
 
             window.fbq('track', COMPLETE_REGISTRATION_EVENT, {}, options)
             markFired()
-            return true
         } catch (error) {
             warn('failed to fire ' + COMPLETE_REGISTRATION_EVENT)
-            return false
         }
     }
 
