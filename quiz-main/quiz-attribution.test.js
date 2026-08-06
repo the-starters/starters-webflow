@@ -8,7 +8,10 @@ const source = fs.readFileSync(require.resolve('./quiz-attribution.js'), 'utf8')
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.118'
+const RELEASE = 'v1.59.119'
+const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
+const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
+const FIRED_FLAG = 'startersCompleteRegistrationFired'
 
 // Cookie name to Memberstack custom-field ID. Verified to exist in the
 // Memberstack app config, so these are the literals both this file and
@@ -37,14 +40,57 @@ const FALLBACK_EVENT_ID =
 const plain = (value) => JSON.parse(JSON.stringify(value))
 
 /**
+ * Lifts one top-level object or array literal out of a source string and
+ * evaluates it, so a contract can be pinned against the real constant instead of
+ * a copy of it. Balances brackets rather than regex-matching a closing line,
+ * which keeps it indifferent to how the literal is formatted.
+ *
+ * @param {string} src File contents to search.
+ * @param {string} name Declared constant name.
+ * @param {string} keyword Declaration keyword (`var` or `const`).
+ */
+function extractLiteralFrom(src, name, keyword = 'var') {
+    const marker = `${keyword} ${name} = `
+    const start = src.indexOf(marker)
+    assert.notEqual(start, -1, `no ${name} declaration`)
+
+    const from = start + marker.length
+    const open = src[from]
+    const close = open === '{' ? '}' : ']'
+    let depth = 0
+    let index = from
+
+    for (; index < src.length; index += 1) {
+        if (src[index] === open) depth += 1
+        else if (src[index] === close) {
+            depth -= 1
+            if (depth === 0) {
+                index += 1
+                break
+            }
+        }
+    }
+
+    return plain(vm.runInNewContext(`(${src.slice(from, index)})`))
+}
+
+/**
+ * @param {string} name Declared constant name in quiz-attribution.js.
+ */
+function extractLiteral(name) {
+    return extractLiteralFrom(source, name, 'var')
+}
+
+/**
  * `document` double whose `cookie` accessor behaves like the browser's: reading
  * returns the whole jar, assigning merges one cookie in. Every assignment is
  * recorded so a test can prove a cookie was NOT rewritten, which is the whole
  * point of "absence never clears".
  *
  * @param {object} [initial] Pre-existing cookies, name to raw value.
+ * @param {boolean} [readOnly] Swallow writes, like a browser with cookies off.
  */
-function documentDouble(initial) {
+function documentDouble(initial, readOnly) {
     const jar = new Map(Object.entries(initial || {}))
     const writes = []
 
@@ -63,6 +109,7 @@ function documentDouble(initial) {
         },
         set cookie(value) {
             writes.push(value)
+            if (readOnly) return
             const pair = String(value).split(';')[0]
             const separator = pair.indexOf('=')
             jar.set(pair.slice(0, separator).trim(), pair.slice(separator + 1))
@@ -74,20 +121,49 @@ function documentDouble(initial) {
  * Runs the script against a fake browser and returns everything it touched.
  */
 function boot(options = {}) {
-    const document = documentDouble(options.cookies)
+    const document = documentDouble(options.cookies, options.readOnlyCookies)
     const session = new Map(Object.entries(options.session || {}))
     const fbqCalls = []
     const warnings = []
     const authHandlers = []
+    const updateCalls = []
+    const memberReads = []
+    let releaseMember = () => {}
 
     const memberstack = options.noMemberstack
         ? undefined
         : {
-              getCurrentMember: async () => ({ data: options.member || null }),
+              getCurrentMember: async () => {
+                  if (options.memberThrows) throw new Error('no session')
+                  memberReads.push(true)
+                  // First read only: the signup watch's starting-state probe.
+                  // Lets a test prove an unreadable start is not treated as
+                  // "arrived logged out".
+                  if (options.firstMemberThrows && memberReads.length === 1) {
+                      throw new Error('no session')
+                  }
+                  // The registration watch reads first, the pending-save retry
+                  // second. Holding only the second read lets a test interleave a
+                  // signup transition with a still-pending retry.
+                  if (options.holdSecondMemberRead && memberReads.length === 2) {
+                      return new Promise((resolve) => {
+                          releaseMember = () =>
+                              resolve({ data: options.heldMember || null })
+                      })
+                  }
+                  return { data: options.member || null }
+              },
               onAuthChange(handler) {
                   authHandlers.push(handler)
               },
           }
+    if (memberstack && !options.noUpdateMember) {
+        memberstack.updateMember = async (payload) => {
+            updateCalls.push(payload)
+            if (options.updateFails) throw new Error('Memberstack said no')
+            return { data: { id: 'mem_123' } }
+        }
+    }
 
     const window = {
         $memberstackDom: memberstack,
@@ -99,6 +175,7 @@ function boot(options = {}) {
         sessionStorage: {
             getItem: (key) => (session.has(key) ? session.get(key) : null),
             setItem: (key, value) => session.set(key, String(value)),
+            removeItem: (key) => session.delete(key),
         },
         crypto: options.noRandomUuid
             ? {}
@@ -129,6 +206,7 @@ function boot(options = {}) {
         document,
         fbqCalls,
         session,
+        updateCalls,
         warnings,
         window,
         api: window.StartersAttribution,
@@ -136,10 +214,24 @@ function boot(options = {}) {
         settle: () => new Promise((resolve) => setImmediate(resolve)),
         writesFor: (name) =>
             document.writes.filter((write) => write.startsWith(`${name}=`)),
+        pendingSave: () => session.get(PENDING_SAVE_FLAG),
+        pendingFields: () => {
+            const raw = session.get(PENDING_FIELDS_KEY)
+            return raw === undefined ? undefined : JSON.parse(raw)
+        },
+        releaseMember: () => releaseMember(),
+        savedFields: () => plain(updateCalls.map((call) => call.customFields)),
     }
 }
 
 const loggedInMember = { id: 'mem_123', email: 'brand@example.com' }
+
+const clickCookies = {
+    utm_source: 'facebook',
+    utm_campaign: 'summer',
+    fbclid: 'IwAR123',
+    event_id: 'evt_fixed',
+}
 
 /* --------------------------------- capture -------------------------------- */
 
@@ -286,6 +378,45 @@ test('the field mapping is underscore to hyphen for all eight cookies', () => {
     assert.equal(FIELD_IDS.event_id, 'event-id')
 })
 
+test('the map in the script is exactly the eight verified pairs', () => {
+    // The map stopped being documentation when /sign-up started writing the
+    // fields from here, so it is now pinned as code.
+    assert.deepEqual(extractLiteral('FIELD_IDS'), FIELD_IDS)
+})
+
+test('COOKIE_NAMES is derived from FIELD_IDS so the two cannot drift', () => {
+    assert.match(
+        source,
+        /var COOKIE_NAMES = Object\.keys\(FIELD_IDS\)/,
+        'COOKIE_NAMES must be derived from FIELD_IDS',
+    )
+    assert.deepEqual(Object.keys(boot().api.getParams()), COOKIE_NAMES)
+    // URL_PARAMS must stay a subset of the field map: a URL-only cookie with no
+    // field ID would write a literal "undefined" key to Memberstack.
+    const urlParams = extractLiteral('URL_PARAMS')
+    for (const name of urlParams) {
+        assert.equal(FIELD_IDS[name] !== undefined, true, name)
+    }
+})
+
+test('the FIELD_IDS map stays in step with quiz-results.js', () => {
+    const resultsSource = fs.readFileSync(
+        path.join(__dirname, '..', 'quiz-results.js'),
+        'utf8',
+    )
+    assert.deepEqual(
+        extractLiteralFrom(resultsSource, 'attributionCookieFieldIds', 'const'),
+        FIELD_IDS,
+    )
+})
+
+test('SIGNUP_PATH_POLICY covers /quiz and /sign-up with directSave only on /sign-up', () => {
+    assert.deepEqual(extractLiteral('SIGNUP_PATH_POLICY'), {
+        '/quiz': { directSave: false },
+        '/sign-up': { directSave: true },
+    })
+})
+
 test('the header and README document all eight verified field IDs', () => {
     for (const [cookie, field] of Object.entries(FIELD_IDS)) {
         const row = new RegExp('`' + cookie + '` -> `' + field + '`')
@@ -310,10 +441,39 @@ test('fires CompleteRegistration on the /quiz signup transition', async () => {
     assert.deepEqual(plain(harness.fbqCalls), [
         ['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }],
     ])
-    assert.equal(
-        harness.session.get('startersCompleteRegistrationFired'),
-        'true',
-    )
+    assert.equal(harness.session.get(FIRED_FLAG), 'true')
+})
+
+test('fires CompleteRegistration on the /sign-up signup transition', async () => {
+    const harness = boot({
+        cookies: { event_id: 'evt_fixed' },
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    assert.equal(harness.authHandlers.length, 1)
+    harness.authHandlers[0](loggedInMember)
+
+    assert.deepEqual(plain(harness.fbqCalls), [
+        ['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }],
+    ])
+    assert.equal(harness.session.get(FIRED_FLAG), 'true')
+})
+
+test('arms on both signup paths whatever the case or trailing slash', async () => {
+    for (const pathname of [
+        '/quiz',
+        '/quiz/',
+        '/Quiz',
+        '/sign-up',
+        '/sign-up/',
+        '/Sign-Up',
+    ]) {
+        const harness = boot({ member: null, pathname })
+        await harness.settle()
+        assert.equal(harness.authHandlers.length, 1, pathname)
+    }
 })
 
 test('fires even when no ad parameter was ever captured', async () => {
@@ -328,15 +488,20 @@ test('fires even when no ad parameter was ever captured', async () => {
 })
 
 test('a session flag from an earlier load blocks a second fire', async () => {
-    const harness = boot({
-        member: null,
-        session: { startersCompleteRegistrationFired: 'true' },
-    })
-    await harness.settle()
+    // One flag for both signup pages, so a session that already registered on
+    // one of them cannot register again on the other.
+    for (const pathname of ['/quiz', '/sign-up']) {
+        const harness = boot({
+            member: null,
+            pathname,
+            session: { [FIRED_FLAG]: 'true' },
+        })
+        await harness.settle()
 
-    harness.authHandlers[0](loggedInMember)
+        harness.authHandlers[0](loggedInMember)
 
-    assert.deepEqual(harness.fbqCalls, [])
+        assert.deepEqual(harness.fbqCalls, [], pathname)
+    }
 })
 
 test('two transitions in one session fire once', async () => {
@@ -360,17 +525,62 @@ test('an already logged-in visitor is not a registration', async () => {
     assert.deepEqual(harness.fbqCalls, [])
 })
 
-test('does not watch auth outside /quiz', async () => {
-    for (const pathname of ['/', '/quiz-results', '/login', '/quiz-something']) {
+test('an unreadable starting state does not treat a logged-in replay as signup', async () => {
+    // Failed getCurrentMember must not arm as "arrived logged out", or the next
+    // auth replay for an already-signed-in visitor would fire the pixel and
+    // start a spurious /sign-up field save.
+    const harness = boot({
+        cookies: clickCookies,
+        firstMemberThrows: true,
+        member: loggedInMember,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('an unreadable start still arms after a definitive logged-out reading', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        firstMemberThrows: true,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](null)
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fbqCalls.length, 1)
+    assert.equal(harness.updateCalls.length, 1)
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('does not watch auth outside the signup pages', async () => {
+    for (const pathname of [
+        '/',
+        '/quiz-results',
+        '/login',
+        '/starter-login',
+        '/brand-dashboard',
+        '/quiz-something',
+        '/sign-up-now',
+    ]) {
         const harness = boot({ member: null, pathname })
         await harness.settle()
         assert.deepEqual(harness.authHandlers, [], pathname)
         assert.deepEqual(harness.fbqCalls, [], pathname)
+        assert.deepEqual(harness.updateCalls, [], pathname)
     }
-    // A trailing slash is still the quiz page.
-    const trailing = boot({ member: null, pathname: '/quiz/' })
-    await trailing.settle()
-    assert.equal(trailing.authHandlers.length, 1)
 })
 
 test('a missing fbq does not throw and warns only on staging', async () => {
@@ -416,6 +626,312 @@ test('an absent Memberstack never throws', async () => {
     // Capture still happened; only the registration watch is unavailable.
     assert.equal(harness.api.getParams().event_id.startsWith('evt_'), true)
     assert.deepEqual(harness.fbqCalls, [])
+})
+
+/* --------------------------- field persistence ---------------------------- */
+
+test('the /sign-up transition marks the save before starting it', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+
+    // Checked before settling on purpose: the marker has to be in storage by the
+    // time the handler returns, because the form's redirect="/brand-dashboard"
+    // can navigate away before the request lands.
+    assert.equal(harness.pendingSave(), 'true')
+    assert.deepEqual(harness.pendingFields(), {
+        'utm-source': 'facebook',
+        'utm-campaign': 'summer',
+        fbclid: 'IwAR123',
+        'event-id': 'evt_fixed',
+    })
+
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-source': 'facebook',
+            'utm-campaign': 'summer',
+            fbclid: 'IwAR123',
+            'event-id': 'evt_fixed',
+        },
+    ])
+    // Absent cookies are omitted rather than written blank.
+    assert.deepEqual(Object.keys(harness.savedFields()[0]).sort(), [
+        'event-id',
+        'fbclid',
+        'utm-campaign',
+        'utm-source',
+    ])
+    // Confirmed write, so the marker and snapshot are gone and no page retries.
+    assert.equal(harness.pendingSave(), undefined)
+    assert.equal(harness.pendingFields(), undefined)
+})
+
+test('whitespace-only cookies are omitted from the Memberstack write', async () => {
+    const harness = boot({
+        cookies: {
+            utm_source: '   ',
+            utm_campaign: 'summer',
+            event_id: 'evt_fixed',
+        },
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-campaign': 'summer',
+            'event-id': 'evt_fixed',
+        },
+    ])
+})
+
+test('retry uses the signup-time field snapshot, not fresh cookies', async () => {
+    // A fresh ad click landed between /sign-up and /brand-dashboard. The write
+    // must still use the values the signup captured.
+    const harness = boot({
+        cookies: {
+            utm_source: 'google',
+            utm_campaign: 'winter',
+            event_id: 'evt_new',
+        },
+        member: loggedInMember,
+        pathname: '/brand-dashboard',
+        session: {
+            [PENDING_SAVE_FLAG]: 'true',
+            [PENDING_FIELDS_KEY]: JSON.stringify({
+                'utm-source': 'facebook',
+                'utm-campaign': 'summer',
+                fbclid: 'IwAR123',
+                'event-id': 'evt_fixed',
+            }),
+        },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-source': 'facebook',
+            'utm-campaign': 'summer',
+            fbclid: 'IwAR123',
+            'event-id': 'evt_fixed',
+        },
+    ])
+    assert.equal(harness.pendingSave(), undefined)
+    assert.equal(harness.pendingFields(), undefined)
+})
+
+test('a marker without a snapshot still falls back to live cookies', async () => {
+    // Pre-snapshot sessions (or blocked storage on the signup page) leave only
+    // the marker. Live cookies remain the best available values.
+    const harness = boot({
+        cookies: clickCookies,
+        member: loggedInMember,
+        pathname: '/brand-dashboard',
+        session: { [PENDING_SAVE_FLAG]: 'true' },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-source': 'facebook',
+            'utm-campaign': 'summer',
+            fbclid: 'IwAR123',
+            'event-id': 'evt_fixed',
+        },
+    ])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('the /quiz transition never writes the fields itself', async () => {
+    const harness = boot({ cookies: clickCookies, member: null })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    // quiz-results.js owns that write, as part of its single quiz save.
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+    // The Meta event still fires on the quiz path.
+    assert.equal(harness.fbqCalls.length, 1)
+})
+
+test('a marker left by an earlier page is completed on the next load', async () => {
+    // What the redirect to /brand-dashboard leaves behind: marker set, member now
+    // logged in, no transition on this page at all.
+    const harness = boot({
+        cookies: clickCookies,
+        member: loggedInMember,
+        pathname: '/brand-dashboard',
+        session: { [PENDING_SAVE_FLAG]: 'true' },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-source': 'facebook',
+            'utm-campaign': 'summer',
+            fbclid: 'IwAR123',
+            'event-id': 'evt_fixed',
+        },
+    ])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('no marker means no retry write', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: loggedInMember,
+        pathname: '/brand-dashboard',
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.updateCalls, [])
+})
+
+test('a marker with a logged-out visitor is cleared without a write', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/brand-dashboard',
+        session: { [PENDING_SAVE_FLAG]: 'true' },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('an unreadable member state defers instead of clearing the marker', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        memberThrows: true,
+        pathname: '/brand-dashboard',
+        session: { [PENDING_SAVE_FLAG]: 'true' },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.updateCalls, [])
+    // Not proof of a logged-out visitor, so the next load tries again.
+    assert.equal(harness.pendingSave(), 'true')
+})
+
+test('a failed write leaves the marker for the next load', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        updateFails: true,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.updateCalls.length, 1)
+    assert.equal(harness.pendingSave(), 'true')
+    assert.ok(
+        harness.warnings.some((message) => /attribution save failed/.test(message)),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+})
+
+test('a Memberstack without updateMember leaves the marker set', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        noUpdateMember: true,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.pendingSave(), 'true')
+    assert.ok(
+        harness.warnings.some((message) => /updateMember unavailable/.test(message)),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+})
+
+test('nothing to save clears the marker without a write', async () => {
+    // Cookies blocked entirely: there is no attribution to persist, so retrying
+    // on every page load forever would be pointless.
+    const harness = boot({
+        member: null,
+        pathname: '/sign-up',
+        readOnlyCookies: true,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('this page\'s own signup marker survives a slow member read', async () => {
+    // The narrow interleaving: a stale marker was already in storage, the retry's
+    // member read is still pending when the signup lands, and that read then comes
+    // back logged out. Clearing there would discard the save the next page owes.
+    const harness = boot({
+        cookies: clickCookies,
+        holdSecondMemberRead: true,
+        member: null,
+        pathname: '/sign-up',
+        session: { [PENDING_SAVE_FLAG]: 'true' },
+        updateFails: true,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    harness.releaseMember()
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.pendingSave(), 'true')
+})
+
+test('the save never throws into the page', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        updateFails: true,
+    })
+    await harness.settle()
+
+    assert.doesNotThrow(() => harness.authHandlers[0](loggedInMember))
+    await harness.settle()
+    await harness.settle()
 })
 
 /* ----------------------------- file contract ------------------------------ */
