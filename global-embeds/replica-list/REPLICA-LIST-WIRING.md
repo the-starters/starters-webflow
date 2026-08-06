@@ -149,6 +149,16 @@ the cards are expert cards.
 
 ## Traps
 
+**Requires wf-algolia >= v1.0.9 on pages that also have an interactive browse
+list.** Before v1.0.9 the engine resolved browse render targets document-wide,
+so a static list earlier in the DOM than the interactive wrapper (the membership
+modals on /all-starters) silently swallowed every browse render: the browse list
+stayed empty while its pagination still updated, and the static list's own
+render then wiped the leaked hits — the theft was invisible at both ends. Fixed
+in wf-algolia PR #6, tag v1.0.9, live on `@latest` since 2026-08-06. If this
+symptom ever reappears, check for a stale browser-cached engine bundle first
+(jsDelivr `@latest` caches in browsers for up to ~7 days — hard refresh).
+
 **Never put `[data-loader]` inside the wrapper.** The global
 `expert-card-browse-loader.js` binds to the first browse block that has both a
 `[data-loader]` and a results list, and then drives a masking session off the
