@@ -901,6 +901,34 @@
     if (statusGuard) statusGuard.remove()
   }
 
+  // The shared Close modal on the brand list is not scoped to one opportunity
+  // until a card is clicked, so its nav titles cannot use the document-level
+  // data-opp-status painter. Upgrade the existing Designer-authored active/
+  // closed title twins to a modal-local confirm/success contract, then paint
+  // that state explicitly on open and after the close mutation succeeds.
+  function prepareCloseOpportunityModalTitles(modal) {
+    if (!modal) return
+    $$('.modal_nav [data-opp-status]', modal).forEach((el) => {
+      const statuses = (el.getAttribute('data-opp-status') || '').split(/\s+/)
+      const titleState = statuses.includes('closed')
+        ? 'success'
+        : statuses.includes('active')
+          ? 'confirm'
+          : ''
+      if (!titleState) return
+      el.setAttribute('data-close-opp-title', titleState)
+      el.removeAttribute('data-opp-status')
+    })
+  }
+
+  function paintCloseOpportunityModalTitle(modal, state) {
+    if (!modal) return
+    prepareCloseOpportunityModalTitles(modal)
+    $$('[data-close-opp-title]', modal).forEach((el) => {
+      el.style.display = el.getAttribute('data-close-opp-title') === state ? '' : 'none'
+    })
+  }
+
   // Opportunity lifecycle controls use valued Webflow-safe attributes:
   //   data-opp-element="loading-button|loading-spinner"
   //   data-opp-element="loading-label|loading-hide" (optional CSS hide targets)
@@ -2737,6 +2765,8 @@
     // reopen after a same-page withdraw never strands the success title.
     if (modal && modal.matches && modal.matches('[data-modal-target="cancel-application"]'))
       paintState(modal, 'applied')
+    if (modal && modal.matches && modal.matches('[data-modal-target="close-opportunity"]'))
+      paintCloseOpportunityModalTitle(modal, 'confirm')
     // Apply/edit-application AND edit-opportunity modals: rewind the success
     // screen (w-form-done) back to the form step, mirroring the form-flow reset
     // above, so a reopened modal never strands the brand on "pending for review".
@@ -3160,7 +3190,8 @@
           approvedCloseFlowAdvances.delete(flowConfirm)
           return
         }
-        if (!e.target.closest('[data-modal-target="close-opportunity"]') || !activeOpp) return
+        const closeModal = e.target.closest('[data-modal-target="close-opportunity"]')
+        if (!closeModal || !activeOpp) return
 
         e.preventDefault()
         e.stopPropagation()
@@ -3170,6 +3201,7 @@
           flowConfirm
         guard(btn, () => API.brandOppClose(activeOpp), (closedOpportunity) => {
           paintOpportunityMutationResult(closedOpportunity, 'Closed')
+          paintCloseOpportunityModalTitle(closeModal, 'success')
           setOpportunityActionPending(btn, false)
           approvedCloseFlowAdvances.add(flowConfirm)
           try {
@@ -3422,6 +3454,7 @@
     syncMergedNavbarRole,
     activateDeferredFeed,
     paintOpportunityDetail,
+    paintCloseOpportunityModalTitle,
     paintOpportunityReviewSuccess,
     opportunityPath,
     pageOppId,

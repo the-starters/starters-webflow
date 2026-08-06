@@ -576,6 +576,21 @@ when necessary, clones the spinner authored inside the page-level
 `data-modal-trigger="close-opportunity"` control. The form-flow advances only after
 the Close request succeeds; an error leaves the confirmation step open and usable.
 
+The Close modal's shared nav header may remain outside the form-flow steps. Author
+its confirmation title with `data-opp-status="active"` and its success title with
+`data-opp-status="closed"` inside the modal's `.modal_nav` bar; at runtime the
+script upgrades those legacy status twins to a modal-local
+`data-close-opp-title="confirm|success"` contract. Opening the modal always
+restores the confirmation title, and only a successful Close mutation reveals the
+success title. This avoids treating the shared brand-list modal as if it had one
+document-level opportunity status.
+
+Run the focused Close-modal title regressions with:
+
+```sh
+node --test opportunities-close-modal-title.test.js
+```
+
 The Withdraw Application modal remains identified by
 `data-modal-target="cancel-application"`. Its shared nav header sits outside the
 form-flow steps, so author the confirmation title with
