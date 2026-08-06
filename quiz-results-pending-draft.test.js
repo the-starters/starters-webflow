@@ -822,7 +822,28 @@ test('the pre-signup writer never stamps the member-cache marker', () => {
         'utf8',
     )
 
-    assert.doesNotMatch(quizMainSource, /memberstackSavedAt/)
+    // Scoped to savePendingQuiz() rather than the whole file since v1.59.88.
+    // quiz-main.js now *reads* this marker in getDraftQuizSelection(), to refuse a
+    // member cache as a pre-signup draft — that read serves this very invariant
+    // rather than breaking it. What must never happen is quiz-main *writing* the
+    // field, which is what would make the funnel look like a member cache.
+    const writerStart = quizMainSource.indexOf('function savePendingQuiz(status =')
+    const writerEnd = quizMainSource.indexOf(
+        'function clearSubcategoriesForUnselectedCategories(',
+        writerStart,
+    )
+
+    assert.notEqual(writerStart, -1, 'savePendingQuiz() not found in quiz-main.js')
+    assert.notEqual(writerEnd, -1, 'end of savePendingQuiz() not found')
+
+    const savePendingQuizSource = quizMainSource.slice(writerStart, writerEnd)
+
+    assert.doesNotMatch(savePendingQuizSource, /memberstackSavedAt/)
+
+    // Stronger than the old whole-file ban in the direction that matters: no
+    // assignment or object-literal write of the field anywhere in the controller,
+    // while a plain property read stays allowed.
+    assert.doesNotMatch(quizMainSource, /memberstackSavedAt\s*[:=][^=]/)
 })
 
 test('the boot flow clears the stale cache before it reads the key', () => {
