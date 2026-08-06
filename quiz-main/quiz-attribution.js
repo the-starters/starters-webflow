@@ -1,13 +1,13 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.118
+ * @release v1.59.119
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code), not only on the
  * quiz funnel: a paid click can land on any page, and the cookies written here
- * are what `/quiz-results` later saves onto the brand-new Memberstack member.
- * Every page load re-runs the capture, so a visitor who arrives on the blog and
- * signs up three pages later still carries their click through.
+ * are what a later signup saves onto the brand-new Memberstack member. Every
+ * page load re-runs the capture, so a visitor who arrives on the blog and signs
+ * up three pages later still carries their click through.
  *
  * Cookie contract. All first-party, written with a 72 hour TTL on `path=/`, and
  * named exactly like the value they carry:
@@ -27,8 +27,8 @@
  * because the pixel writes those cookies itself and can load after this script.
  *
  * Memberstack custom-field mapping, cookie name to field ID: underscores become
- * hyphens. `quiz-results.js` owns the write; these 8 field IDs are verified to
- * exist in the Memberstack app config, so do not rename them here.
+ * hyphens. These 8 field IDs are verified to exist in the Memberstack app
+ * config, so do not rename them here.
  *
  *   `utm_source` -> `utm-source`
  *   `utm_campaign` -> `utm-campaign`
@@ -39,13 +39,22 @@
  *   `fbp` -> `fbp`
  *   `event_id` -> `event-id`
  *
+ * The same map is duplicated in `quiz-results.js`, which owns the write for the
+ * quiz funnel. Keep the two in step: a field ID that exists in only one of them
+ * is a value Memberstack silently drops on one of the two signup routes.
+ *
+ * Signup pages. Two pages can turn a visitor into a member: `/quiz` (the funnel
+ * signup, followed by `/quiz-results`) and `/sign-up` (the direct signup,
+ * followed by `/brand-dashboard`). Both carry exactly one Memberstack signup
+ * form and no login form, so on either page a logged-out to logged-in transition
+ * can only be that form succeeding. Logins live on `/login` and
+ * `/starter-login`, which is why they are not in the list.
+ *
  * CompleteRegistration. The Meta Pixel base snippet lives in Webflow site-head
  * custom code (pixel 775648331097942); this file never installs it and only
  * calls `fbq` when it is already a function, so an uninstalled or blocked pixel
- * is a silent no-op. On `/quiz` only, the script records whether the visitor
- * arrived logged out and fires `CompleteRegistration` when Memberstack reports
- * the logged-out to logged-in transition, which on that page can only be the
- * signup form succeeding (logins happen on `/login` and `/starter-login`). The
+ * is a silent no-op. On a signup page the script records whether the visitor
+ * arrived logged out and fires `CompleteRegistration` on the transition. The
  * event carries the `event_id` cookie as its `eventID` so a server-side copy of
  * the same registration deduplicates against it. It fires for every signup,
  * including one with no ad parameters at all.
@@ -53,6 +62,20 @@
  * A `sessionStorage` flag makes the fire once-per-session, which is what covers
  * the refresh double-fire: Memberstack replays the authenticated state on the
  * next load, and without the flag that would look like a second registration.
+ * The flag is shared by both signup pages, so one session yields one event.
+ *
+ * Field persistence. `/quiz` needs nothing here: `quiz-results.js` runs right
+ * after it and writes the attribution fields alongside the quiz summary. The
+ * direct `/sign-up` route has no such follow-up page, so this script writes the
+ * fields itself, and it has to survive the form's own
+ * `redirect="/brand-dashboard"` cutting the request off mid-flight. The order is
+ * therefore: set `startersAttributionPendingSave` first, then call
+ * `updateMember`, then clear the marker only once the write is confirmed. Every
+ * page load checks that marker and re-attempts the write, so a save killed by
+ * the redirect completes on `/brand-dashboard` instead of being lost. A marker
+ * found while Memberstack reports the visitor logged out is stale and gets
+ * cleared without a write, unless this page's own signup is what raised it while
+ * that member read was still in flight.
  *
  * Debug: `window.StartersAttribution.getParams()` returns the current cookie
  * values. Diagnostics are staging-only (`*.webflow.io`, localhost, 127.0.0.1,
@@ -66,7 +89,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.118'
+    var RELEASE = 'v1.59.119'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -93,9 +116,34 @@
     // Every cookie this script owns, in contract order.
     var COOKIE_NAMES = URL_PARAMS.concat(['fbc', 'fbp', EVENT_ID_COOKIE])
 
-    var QUIZ_PATH = '/quiz'
+    // Cookie name to Memberstack custom-field ID: underscores swapped for
+    // hyphens. Duplicated in quiz-results.js on purpose (the house pattern for
+    // two scripts that write the same fields); the IDs are verified against the
+    // live Memberstack app config, so a rename here silently drops the value.
+    var FIELD_IDS = {
+        utm_source: 'utm-source',
+        utm_campaign: 'utm-campaign',
+        utm_adset: 'utm-adset',
+        utm_content: 'utm-content',
+        fbclid: 'fbclid',
+        fbc: 'fbc',
+        fbp: 'fbp',
+        event_id: 'event-id',
+    }
+
+    // Pages that can turn a visitor into a member. Each has exactly one
+    // Memberstack signup form and no login form, so the logged-out to logged-in
+    // transition is unambiguous there. Logins (/login, /starter-login) are
+    // deliberately absent.
+    var SIGNUP_PATHS = ['/quiz', '/sign-up']
+
+    // Signup pages with no follow-up page to write the attribution fields for
+    // them. /quiz is excluded because quiz-results.js owns that write.
+    var DIRECT_SAVE_PATHS = ['/sign-up']
+
     var COMPLETE_REGISTRATION_EVENT = 'CompleteRegistration'
     var FIRED_FLAG = 'startersCompleteRegistrationFired'
+    var PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 
     var MEMBERSTACK_POLL_MS = 100
     var MEMBERSTACK_MAX_WAIT_MS = 10000
@@ -314,47 +362,81 @@
         ensureEventId()
     }
 
-    /* -------------------------- CompleteRegistration ------------------------- */
+    /* ------------------------------ page + flags ----------------------------- */
+
+    /**
+     * @param {string} pathname
+     * @returns {string} Lowercased path with any single trailing slash removed.
+     */
+    var normalizePath = function (pathname) {
+        var path = String(pathname || '').toLowerCase()
+        if (path.length > 1 && path.charAt(path.length - 1) === '/') {
+            path = path.slice(0, -1)
+        }
+        return path
+    }
 
     /**
      * @param {string} pathname
      * @returns {boolean}
      */
-    var isQuizPath = function (pathname) {
-        var path = String(pathname || '').toLowerCase()
-        if (path.length > 1 && path.charAt(path.length - 1) === '/') {
-            path = path.slice(0, -1)
-        }
-        return path === QUIZ_PATH
+    var isSignupPath = function (pathname) {
+        return SIGNUP_PATHS.indexOf(normalizePath(pathname)) !== -1
     }
 
     /**
+     * @param {string} pathname
      * @returns {boolean}
      */
-    var hasFired = function () {
+    var isDirectSavePath = function (pathname) {
+        return DIRECT_SAVE_PATHS.indexOf(normalizePath(pathname)) !== -1
+    }
+
+    /**
+     * @param {string} key
+     * @returns {boolean}
+     */
+    var flagIsSet = function (key) {
         try {
             var storage = window.sessionStorage
             if (!storage) return false
-            return storage.getItem(FIRED_FLAG) === 'true'
+            return storage.getItem(key) === 'true'
         } catch (error) {
-            // Blocked storage reads as "not fired": missing a dedup is better
-            // than dropping the conversion entirely.
+            // Blocked storage reads as unset: missing a dedup is better than
+            // dropping the conversion entirely.
             return false
         }
     }
 
     /**
+     * @param {string} key
      * @returns {void}
      */
-    var markFired = function () {
+    var setFlag = function (key) {
         try {
             var storage = window.sessionStorage
             if (!storage) return
-            storage.setItem(FIRED_FLAG, 'true')
+            storage.setItem(key, 'true')
         } catch (error) {
             /* blocked storage just means no dedup */
         }
     }
+
+    /**
+     * @param {string} key
+     * @returns {void}
+     */
+    var clearFlag = function (key) {
+        try {
+            var storage = window.sessionStorage
+            if (!storage) return
+            storage.removeItem(key)
+        } catch (error) {
+            /* a flag that cannot be cleared only costs a retry */
+        }
+    }
+
+    /* -------------------------- CompleteRegistration ------------------------- */
 
     /**
      * Sends CompleteRegistration to Meta, once per browser session.
@@ -363,7 +445,7 @@
      */
     var fireCompleteRegistration = function () {
         try {
-            if (hasFired()) return
+            if (flagIsSet(FIRED_FLAG)) return
 
             if (typeof window.fbq !== 'function') {
                 warn(
@@ -379,7 +461,7 @@
             if (eventId) options.eventID = eventId
 
             window.fbq('track', COMPLETE_REGISTRATION_EVENT, {}, options)
-            markFired()
+            setFlag(FIRED_FLAG)
         } catch (error) {
             warn('failed to fire ' + COMPLETE_REGISTRATION_EVENT)
         }
@@ -429,13 +511,140 @@
         })
     }
 
+    /* ---------------------------- field persistence -------------------------- */
+
     /**
-     * Watches the /quiz signup for its logged-out to logged-in transition.
+     * Collects the captured cookies as Memberstack custom fields.
+     *
+     * Absent and empty cookies are omitted, exactly like `quiz-results.js`: a
+     * later untagged visit must never blank a value an earlier tagged visit
+     * captured.
+     *
+     * @returns {object} Non-empty values keyed by custom-field ID.
+     */
+    var attributionCustomFields = function () {
+        var customFields = {}
+        COOKIE_NAMES.forEach(function (name) {
+            var value = readCookie(name)
+            if (!value) return
+            customFields[FIELD_IDS[name]] = value
+        })
+        return customFields
+    }
+
+    /**
+     * Writes the attribution fields onto the current member.
+     *
+     * @param {object} memberstack Memberstack DOM instance.
+     * @returns {Promise<boolean>} Whether the write is confirmed done.
+     */
+    var saveAttribution = async function (memberstack) {
+        if (!memberstack || typeof memberstack.updateMember !== 'function') {
+            warn('Memberstack updateMember unavailable, attribution not saved')
+            return false
+        }
+
+        var customFields = attributionCustomFields()
+        // Nothing to write is not a failure: with cookies blocked there is no
+        // attribution to persist, and retrying forever would be pointless.
+        if (!Object.keys(customFields).length) return true
+
+        var result = await memberstack.updateMember({ customFields: customFields })
+        // Memberstack rejects on failure, so a resolved call is the confirmation.
+        // The error-shaped payload check is belt and braces.
+        if (result && result.error) throw new Error(String(result.error))
+        return true
+    }
+
+    /**
+     * Saves the attribution fields, leaving the marker set on any failure.
+     *
+     * @param {object} memberstack Memberstack DOM instance.
+     * @returns {Promise<void>}
+     */
+    var savePendingAttribution = async function (memberstack) {
+        try {
+            var saved = await saveAttribution(memberstack)
+            if (saved) clearFlag(PENDING_SAVE_FLAG)
+        } catch (error) {
+            // The marker stays set on purpose: the next page load retries it.
+            warn('attribution save failed, will retry on the next page load')
+        }
+    }
+
+    // Set when the signup on THIS page created the marker, so the stale-marker
+    // cleanup below can tell "left over from a dead session" apart from "owed by a
+    // save that started seconds ago on this very page".
+    var savePendingFromThisPage = false
+
+    /**
+     * Marks the save as owed and starts it.
+     *
+     * The marker is written first and synchronously, because the /sign-up form
+     * carries redirect="/brand-dashboard" and that navigation can cut the
+     * updateMember request off before it lands.
+     *
+     * @param {object} memberstack Memberstack DOM instance.
+     * @returns {void}
+     */
+    var persistAfterDirectSignup = function (memberstack) {
+        savePendingFromThisPage = true
+        setFlag(PENDING_SAVE_FLAG)
+        savePendingAttribution(memberstack)
+    }
+
+    /**
+     * Completes a save that an earlier page could not finish.
+     *
+     * Runs on every page load, which is what makes the /sign-up write survive its
+     * own redirect: the attempt cut off there is retried on /brand-dashboard.
+     *
+     * @returns {Promise<void>}
+     */
+    var retryPendingSave = async function () {
+        if (!flagIsSet(PENDING_SAVE_FLAG)) return
+
+        var memberstack = await waitForMemberstack()
+        if (!memberstack) {
+            warn('Memberstack never loaded, pending attribution save deferred')
+            return
+        }
+
+        var member = null
+        try {
+            member = getMemberData(await memberstack.getCurrentMember())
+        } catch (error) {
+            // Unreadable state is not proof of a logged-out visitor, so the
+            // marker survives for the next load.
+            warn('member state unreadable, pending attribution save deferred')
+            return
+        }
+
+        if (!isLoggedInMember(member)) {
+            // A marker left behind by a logged-out visitor can never be filled:
+            // there is no member to write to, and the signup it belonged to is
+            // gone. Clearing it stops an unfulfillable retry on every page.
+            //
+            // Unless this page's own signup raised it while the member read was
+            // still in flight: that marker belongs to a save that has only just
+            // started, and clearing it would throw away the attribution the
+            // /brand-dashboard load is supposed to finish writing.
+            if (!savePendingFromThisPage) clearFlag(PENDING_SAVE_FLAG)
+            return
+        }
+
+        await savePendingAttribution(memberstack)
+    }
+
+    /**
+     * Watches a signup page for its logged-out to logged-in transition.
      *
      * @returns {Promise<void>}
      */
     var wireCompleteRegistration = async function () {
-        if (!isQuizPath(window.location && window.location.pathname)) return
+        var pathname = (window.location && window.location.pathname) || ''
+        if (!isSignupPath(pathname)) return
+        var directSave = isDirectSavePath(pathname)
 
         var memberstack = await waitForMemberstack()
         if (!memberstack) {
@@ -459,7 +668,12 @@
         memberstack.onAuthChange(function (payload) {
             try {
                 var loggedIn = isLoggedInMember(getMemberData(payload))
-                if (loggedIn && loggedOut) fireCompleteRegistration()
+                if (loggedIn && loggedOut) {
+                    fireCompleteRegistration()
+                    // /quiz is excluded: quiz-results.js writes these fields as
+                    // part of its own single quiz save.
+                    if (directSave) persistAfterDirectSignup(memberstack)
+                }
                 loggedOut = !loggedIn
             } catch (error) {
                 /* attribution must never break the signup */
@@ -468,6 +682,27 @@
     }
 
     /* ---------------------------------- boot -------------------------------- */
+
+    /**
+     * Starts an async step so neither its throw nor its rejection reaches the
+     * page.
+     *
+     * @param {function(): Promise<void>} step
+     * @param {string} message Staging-only warning for a failed step.
+     * @returns {void}
+     */
+    var runSafely = function (step, message) {
+        try {
+            var pending = step()
+            if (pending && typeof pending.catch === 'function') {
+                pending.catch(function () {
+                    warn(message)
+                })
+            }
+        } catch (error) {
+            warn(message)
+        }
+    }
 
     /**
      * @returns {void}
@@ -479,16 +714,10 @@
             warn('capture failed')
         }
 
-        try {
-            var pending = wireCompleteRegistration()
-            if (pending && typeof pending.catch === 'function') {
-                pending.catch(function () {
-                    warn('CompleteRegistration wiring failed')
-                })
-            }
-        } catch (error) {
-            warn('CompleteRegistration wiring failed')
-        }
+        runSafely(wireCompleteRegistration, 'CompleteRegistration wiring failed')
+        // Sitewide, not just on the signup pages: this is the step that finishes a
+        // /sign-up save the redirect to /brand-dashboard cut short.
+        runSafely(retryPendingSave, 'pending attribution save failed')
     }
 
     window.StartersAttribution = {
