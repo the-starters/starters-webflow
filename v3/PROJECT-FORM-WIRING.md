@@ -138,11 +138,10 @@ separate from pricing:
   UUID or sends Brand/Starter authority fields.
 
 The Fee Structure select values and the conditional-panel attributes must use
-the same canonical values. `global-embeds/form-embeds/form-input-filter` compares
-them exactly:
-
-This is a values-only cutover. The visible option labels stay exactly as they
-read today — only the option values and the matching panel attributes change:
+the same canonical values, because `global-embeds/form-embeds/form-input-filter`
+compares them exactly. This is a values-only cutover: the visible option labels
+stay exactly as they read today, and only the option values and the matching
+panel attributes change.
 
 | Fee Structure option label | Option value | Fee panel attribute | Legacy value this replaces |
 | --- | --- | --- | --- |
@@ -157,8 +156,9 @@ release to precede the Designer attribute cutover without hiding every fee
 panel. New markup must use only the canonical values. CMS `data-sp-fill-value`
 presets for the `fee_structure` and `invoice_frequency` categories are matched
 literally first and then by canonical value, so a card written in either
-grammar fills the select whichever grammar the option carries; leaving the
-labels unchanged keeps the visible-text match working as a third path.
+grammar fills the authored control — select or radio group — whichever grammar
+its own options carry; on a select, leaving the labels unchanged keeps the
+visible-text match working as a third path.
 
 Because `form-input-filter` matches every `[data-input-filter-item]` descendant
 of its list and the canonical values are generic, the Fee Structure filter group
@@ -237,10 +237,12 @@ fallback each time) and selects that exact option, so duplicate option values
 stay distinguishable; a radio preset widens to the whole same-named group and
 clicks it, so Webflow's conditional panels react; a checkbox honors an explicit
 `true`/`false` or its own value and leaves the authored state alone for anything
-else; any other control has its value set. A disabled control is never touched,
-and every write reaches the rest of the page the way a Brand's would: radios and
-checkboxes through a real `click()`, everything else through a dispatched
-`input`/`change` pair.
+else; any other control has its value set. The two cutover categories above add
+one more pass for selects and radios: a preset that matches nothing literally is
+retried by canonical value, so either grammar resolves. A disabled control is
+never touched, and every write reaches the rest of the page the way a Brand's
+would: radios and checkboxes through a real `click()`, everything else through a
+dispatched `input`/`change` pair.
 
 **Current-date initialization.** Blank `[data-set-current-date]` controls in the
 form receive today's date, formatted by jQuery UI's datepicker when it is loaded
@@ -282,7 +284,9 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    Monthly caps; fixed and ongoing Monthly; fixed and ongoing Weekly; Standard
    Contract; and My Own Contract validation without issuing a request for
    invalid inputs. Confirm Monthly shows no end-date field and serializes only
-   `number_of_months` as its duration source.
+   `number_of_months` as its duration source. Run that pass once against the
+   legacy panel attributes and again after the Designer cutover to the canonical
+   values in the table above; both must behave identically.
 4. Confirm Standard Contract requires an invoice frequency and serializes it
    independently of the hourly billing frequency, that My Own Contract hides
    the select and omits `invoice_frequency` from the payload, and that
