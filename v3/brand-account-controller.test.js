@@ -376,8 +376,63 @@ test('Build Account writes ordinary fields, changed email, then completion in or
   })
   assert.deepEqual(plain(environment.calls[4].payload), { email: 'ada+new@example.com' })
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
-  assert.equal(buildForm.getAttribute('aria-busy'), 'false')
-  assert.equal(buildForm.submit.disabled, false)
+  // A redirect was initiated, so the form stays busy until the page unloads.
+  // See the `redirecting` flag in bindForm() for why.
+  assert.equal(buildForm.getAttribute('aria-busy'), 'true')
+  assert.equal(buildForm.submit.disabled, true)
+})
+
+// --- The redirect busy latch --------------------------------------------------
+//
+// Rationale lives at the `redirecting` flag in bindForm(). These three tests pin
+// its boundary: latched on the path that called assign, released on the two that
+// leave the member here. v3/complete-profile-loader.js watches this attribute.
+
+test('a successful submit that initiated a redirect stays busy until the page unloads', async () => {
+  const environment = loadController({ currentEmail: 'old@example.com' })
+
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+  assert.equal(environment.buildForm.getAttribute('aria-busy'), 'true')
+  assert.equal(environment.buildForm.submit.disabled, true)
+  // The button's own spinner keeps spinning through the navigation too.
+  assert.equal(
+    environment.buildForm.loading.getAttribute('data-opp-loading'),
+    'true',
+  )
+})
+
+test('a successful submit with no redirect URL still releases the form', async () => {
+  // Same success path, but nothing to navigate to — the latch must not fire, or
+  // a member on a form with no redirect attribute would be locked out of it.
+  const environment = loadController({ currentEmail: 'old@example.com' })
+  environment.buildForm.setAttribute('redirect', '')
+  environment.buildForm.setAttribute('data-redirect', '')
+
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(environment.redirects, [])
+  assert.equal(environment.buildForm.getAttribute('aria-busy'), 'false')
+  assert.equal(environment.buildForm.submit.disabled, false)
+})
+
+test('a failed submit releases the form, because the member is staying on it', async () => {
+  const environment = loadController({
+    currentEmail: 'old@example.com',
+    updateMember: async () => {
+      throw new Error('completion failed')
+    },
+  })
+
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(environment.redirects, [])
+  assert.equal(environment.buildForm.getAttribute('aria-busy'), 'false')
+  assert.equal(environment.buildForm.submit.disabled, false)
 })
 
 // --- Completion marker (same-tab half of the completion contract) -------------

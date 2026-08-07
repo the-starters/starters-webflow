@@ -397,6 +397,15 @@
         setBusy(form, true)
         setMessage(form, 'idle', '')
 
+        // Latched only on the success path that actually initiated a redirect.
+        // `location.assign()` merely QUEUES the navigation, so the promise chain
+        // settles while the browser is still fetching the destination; clearing
+        // busy there would hand the member back a live-looking form (and stop the
+        // button spinner) for the whole of that window. Staying busy until the
+        // page unloads is the honest state, and it is what lets the page's
+        // submit loader stay up through the redirect.
+        var redirecting = false
+
         Promise.resolve()
           .then(function () {
             return submitter(form)
@@ -405,7 +414,12 @@
             setMessage(form, 'success', '')
             if (redirectOnSuccess) {
               var redirect = form.getAttribute('redirect') || form.getAttribute('data-redirect')
-              if (redirect) window.location.assign(redirect)
+              if (redirect) {
+                window.location.assign(redirect)
+                // Set AFTER the call: a throwing assign() falls through to
+                // .catch() and must still release the form.
+                redirecting = true
+              }
             }
           })
           .catch(function (error) {
@@ -413,6 +427,7 @@
             trackFailure(error, operation)
           })
           .finally(function () {
+            if (redirecting) return
             busy = false
             setBusy(form, false)
           })
