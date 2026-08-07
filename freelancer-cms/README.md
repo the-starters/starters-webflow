@@ -17,3 +17,11 @@ folder exists as the versioned backup of that code.
 
 If this folder and Webflow ever disagree, treat **this folder** as correct and
 re-sync Webflow from it.
+
+## Exception: the `/hire/<slug>` contract form
+
+`prefill-ms-name.js`, `pre-fill-attr-val.js`, and `datepicker-current.js` are no
+longer the owners of those behaviors on the Brand Contract Generation form —
+`v3/project-form.js` is. Keep these files for the other CMS pages that still load
+them, but do not paste them onto `/hire/<slug>`; see
+[`../v3/PROJECT-FORM-WIRING.md`](../v3/PROJECT-FORM-WIRING.md).
