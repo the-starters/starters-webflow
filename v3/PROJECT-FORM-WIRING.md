@@ -167,10 +167,16 @@ The active Hourly panel's Hours Cap Period select is a separate contract. Keep
 the native Webflow field name `Frequency` until the adapter is migrated to a
 semantic field attribute; the user-facing label is deliberately different from
 that legacy name. `project-form.js` reveals exactly one maximum-hours control
-for the selected option. Remove `data-input-filter="wrapper"`,
-`data-input-filter="select"`, `data-input-filter="list"`, and every nested
-`data-input-filter-item` from this Hours Cap Period group; those attributes must
-not own the same controls as the adapter.
+for the selected option: the other two are hidden, disabled, and marked
+`data-project-hours-cap-hidden` through the same conservative control, label,
+and exclusive-wrapper walk as the Monthly end date above. Their values are never
+cleared, so switching cap periods and back restores what the Brand typed, and an
+authored `required` is stashed as `data-project-required-hidden` and restored
+when that cadence becomes the selected one again. Remove
+`data-input-filter="wrapper"`, `data-input-filter="select"`,
+`data-input-filter="list"`, and every nested `data-input-filter-item` from this
+Hours Cap Period group; those attributes must not own the same controls as the
+adapter.
 
 | Hours Cap Period option | Option value | Maximum-hours control it reveals | Visible maximum-hours label |
 | --- | --- | --- | --- |
@@ -304,7 +310,9 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
 3. Exercise Flat Fee; fixed and ongoing Hourly with the Entire project, Per
    week, and Per month hours caps; fixed and ongoing Monthly; fixed and ongoing
    Weekly; Standard Contract; and My Own Contract validation without issuing a
-   request for invalid inputs. Confirm Monthly shows no end-date field and
+   request for invalid inputs. Confirm each Hours Cap Period option leaves
+   exactly one maximum-hours field visible and keeps the hours already typed
+   into the other two. Confirm Monthly shows no end-date field and
    serializes only `number_of_months` as its duration source. Run that pass once
    against the legacy panel attributes and again after the Designer cutover to
    the canonical values in the Fee Structure table above; both must behave
