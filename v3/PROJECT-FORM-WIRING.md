@@ -56,10 +56,10 @@ left blank, the adapter fails closed instead of submitting.
 | `total_cost` | Flat Fee `Amount` | required for Flat Fee |
 | `paid_upfront_pct` | `Percent-Paid-Upfront` | optional, 0-100 |
 | `hourly_rate` | Ongoing Hourly `Amount` | required for Ongoing Hourly |
-| `hourly_billing_frequency` | Hourly `Frequency` | One Time, Weekly, or Monthly; required for Hourly |
-| `maximum_total_hours` | `Maximum-Hours-Billed` | required positive cap for One Time hourly |
-| `maximum_hours_per_week` | `Maximum-Hours-Billed-per-Week` | required positive cap for Weekly hourly |
-| `maximum_hours_per_month` | `Maximum-Hours-Billed-per-Month` | required positive cap for Monthly hourly |
+| `hourly_billing_frequency` | Hourly `Frequency` | the Hours Cap Period select; option values `one_time`, `weekly`, `monthly` (see the Hours Cap Period table below for the visible labels); required for Hourly |
+| `maximum_total_hours` | `Maximum-Hours-Billed` | required positive cap for the `one_time` hours cap period |
+| `maximum_hours_per_week` | `Maximum-Hours-Billed-per-Week` | required positive cap for the `weekly` hours cap period |
+| `maximum_hours_per_month` | `Maximum-Hours-Billed-per-Month` | required positive cap for the `monthly` hours cap period |
 | `monthly_rate` | Monthly Recurring `Amount` | required for Monthly Recurring |
 | `number_of_months` | `Number-of-Months` | fixed Monthly duration the server derives the end date from; omitted for ongoing Monthly |
 | `weekly_rate` | Weekly Recurring `Amount` | required for Weekly Recurring |
@@ -67,7 +67,7 @@ left blank, the adapter fails closed instead of submitting.
 | `start_date` | active fee panel start date | required |
 | `estimated_end_date` | Flat Fee or Ongoing Hourly end date | required for Standard Flat Fee; optional for fixed/ongoing Hourly; never submitted for Monthly/Weekly; when present it must be after `start_date` |
 | `project_scope` | `Project-Scope` | required |
-| `invoice_frequency` | `Invoice-Frequency` | Weekly, Bi-Weekly, Monthly, or Upon completion of the project; its own select, independent of Hourly `Frequency`; required for Standard Contract and omitted for My Own Contract |
+| `invoice_frequency` | `Invoice-Frequency` | Weekly, Bi-Weekly, Monthly, or Upon completion of the project; its own select, independent of the Hourly `Frequency` (Hours Cap Period) select; required for Standard Contract and omitted for My Own Contract |
 
 Repeated date/rate controls remain in their authored fee panels:
 
@@ -156,13 +156,18 @@ panel attributes change.
 The active Hourly panel uses this separate contract. Keep the native Webflow
 field name `Frequency` until the adapter is migrated to a semantic field
 attribute; the user-facing label is deliberately different from that legacy
-name.
+name. Each option reveals exactly one maximum-hours control through a plain
+Designer condition on that select — never through a nested `data-input-filter`
+list, which would shadow the fee panels as described below.
 
-| Hours Cap Period option | Option value | Maximum-hours panel attribute | Visible maximum-hours label |
+| Hours Cap Period option | Option value | Maximum-hours control it reveals | Visible maximum-hours label |
 | --- | --- | --- | --- |
-| Entire project | `one_time` | `data-input-filter-item="one_time"` | Maximum permitted hours for the entire project |
-| Per week | `weekly` | `data-input-filter-item="weekly"` | Maximum permitted hours per week |
-| Per month | `monthly` | `data-input-filter-item="monthly"` | Maximum permitted hours per month |
+| Entire project | `one_time` | `Maximum-Hours-Billed` | Maximum permitted hours for the entire project |
+| Per week | `weekly` | `Maximum-Hours-Billed-per-Week` | Maximum permitted hours per week |
+| Per month | `monthly` | `Maximum-Hours-Billed-per-Month` | Maximum permitted hours per month |
+
+The adapter also accepts the visible labels as option values, so relabeling the
+select in the Designer stays safe if an option loses its explicit value.
 
 The independent Invoice Frequency select must not carry
 `data-input-filter="select"`; otherwise its `weekly` and `monthly` values can
@@ -180,8 +185,9 @@ visible-text match working as a third path.
 
 Because `form-input-filter` matches every `[data-input-filter-item]` descendant
 of its list and the canonical values are generic, the Fee Structure filter group
-must not contain a nested one. The hourly `Frequency` select — whose own values
-are `one_time`, `weekly`, and `monthly` — gates the three maximum-hours controls
+must not contain a nested one. The hourly `Frequency` (Hours Cap Period) select
+— whose own values are `one_time`, `weekly`, and `monthly` — gates the three
+maximum-hours controls
 through plain Designer conditions, not a second `data-input-filter` list inside
 the hourly panel; a nested `[data-input-filter-item="weekly"]` there would
 shadow the Weekly fee panel. Invoice Frequency is likewise not a second

@@ -192,6 +192,9 @@ test('normalizes ids, money, dates, and supported engagement values', () => {
   assert.equal(api.canonicalContractType('My own contract'), 'own_contract')
   assert.equal(api.canonicalContractType('Own Contract'), 'own_contract')
   assert.equal(api.canonicalHourlyFrequency('One Time'), 'one_time')
+  assert.equal(api.canonicalHourlyFrequency('Entire project'), 'one_time')
+  assert.equal(api.canonicalHourlyFrequency('Per week'), 'weekly')
+  assert.equal(api.canonicalHourlyFrequency('Per month'), 'monthly')
   assert.equal(api.canonicalInvoiceFrequency('Bi-Weekly'), 'bi_weekly')
   assert.equal(api.canonicalInvoiceFrequency('Upon completion of the project'), 'upon_completion')
 })
@@ -823,9 +826,9 @@ test('fixed hourly accepts an end date without requiring the ongoing checkbox', 
 
 test('hourly requires the cadence-specific positive cap', () => {
   const scenarios = [
-    { frequency: 'One Time', error: /maximum total hours/ },
-    { frequency: 'Weekly', error: /maximum hours per week/ },
-    { frequency: 'Monthly', error: /maximum hours per month/ },
+    { frequency: 'One Time', error: /maximum permitted hours for the entire project/ },
+    { frequency: 'Weekly', error: /maximum permitted hours per week/ },
+    { frequency: 'Monthly', error: /maximum permitted hours per month/ },
   ]
   for (const scenario of scenarios) {
     const form = projectForm({
