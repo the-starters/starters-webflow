@@ -63,9 +63,9 @@ node --test v3/password-recovery.test.js
 
 `auth-route.js` owns post-login and post-signup routing for V3 without changing
 the shared Memberstack plan redirects used by V2. Install it only on the V3
-`/login` and `/auth-route` pages, after the sitewide `route-guard.js` that owns
-the shared stable plan-role contract. It runs on the V3 Webflow staging hostname
-and both custom domains; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
+`/login`, `/starter-login`, and `/auth-route` pages, after the sitewide
+`route-guard.js` that owns the shared stable plan-role contract. It runs on the
+V3 Webflow staging hostname and both custom domains; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
 installation, error contract, and release gate. The versioned
 [V3 Member Access Matrix](ACCESS-MATRIX.md) maps stable plan IDs to roles and
 documents route access plus the separate Webflow, content, and Xano enforcement
