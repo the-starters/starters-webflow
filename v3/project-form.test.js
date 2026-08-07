@@ -94,6 +94,7 @@ function projectForm(values = {}) {
     estimated_hours: '',
     maximum_total_hours: '',
     hourly_billing_frequency: '',
+    invoice_frequency: 'weekly',
     maximum_hours_per_week: '',
     maximum_hours_per_month: '',
     number_of_weeks: '8',
@@ -157,6 +158,8 @@ test('normalizes ids, money, dates, and supported engagement values', () => {
   assert.equal(api.canonicalContractType('My own contract'), 'own_contract')
   assert.equal(api.canonicalContractType('Own Contract'), 'own_contract')
   assert.equal(api.canonicalHourlyFrequency('One Time'), 'one_time')
+  assert.equal(api.canonicalInvoiceFrequency('Bi-Weekly'), 'bi_weekly')
+  assert.equal(api.canonicalInvoiceFrequency('Upon completion of the project'), 'upon_completion')
 })
 
 test('serializes only explicitly marked fields into the Xano contract', () => {
@@ -202,6 +205,26 @@ test('serializes the authored ongoing-hourly model for the direct-hire endpoint'
   assert.equal(serialized.payload.maximum_total_hours, null)
   assert.equal(serialized.payload.maximum_hours_per_month, null)
   assert.equal(api.validationError(serialized), '')
+})
+
+test('serializes a native Webflow invoice-frequency select independently from fee cadence', () => {
+  const form = projectForm({ engagement_type: 'Ongoing Hourly', hourly_rate: '100', hourly_billing_frequency: 'Weekly', maximum_hours_per_week: '20' })
+  form.children = form.children.filter((child) => child.getAttribute('data-project-field') !== 'invoice_frequency')
+  form.children.push(nativeField('invoice-frequency', 'Bi-Weekly'))
+  const { api } = load({ form })
+  const serialized = api.serialize(form)
+  assert.equal(serialized.payload.engagement_type, 'hourly')
+  assert.equal(serialized.payload.hourly_billing_frequency, 'weekly')
+  assert.equal(serialized.payload.invoice_frequency, 'bi_weekly')
+})
+
+test('fails closed if the standard-contract Designer field is missing', () => {
+  const form = projectForm()
+  form.children = form.children.filter((child) => child.getAttribute('data-project-field') !== 'invoice_frequency')
+  const { api } = load({ form })
+  const serialized = api.serialize(form)
+  assert.equal(Object.prototype.hasOwnProperty.call(serialized.payload, 'invoice_frequency'), false)
+  assert.equal(api.validationError(serialized), 'Choose an invoice frequency.')
 })
 
 test('supports every authored pricing mode and keeps only its applicable commercial fields', async (t) => {
@@ -624,6 +647,48 @@ test('keeps pricing separate from the authored own-contract choice', () => {
   const serialized = api.serialize(form)
   assert.equal(serialized.payload.engagement_type, 'weekly')
   assert.equal(serialized.payload.contract_type, 'own_contract')
+  assert.equal(serialized.payload.invoice_frequency, null)
+})
+
+test('shows and requires invoice frequency for the generated standard contract', () => {
+  const form = projectForm({ invoice_frequency: 'bi_weekly' })
+  const invoice = form.querySelector('[data-project-field="invoice_frequency"]')
+  const { api } = load({ form })
+  api.syncInvoiceFrequencyField(form)
+  assert.equal(invoice.hidden, false)
+  assert.equal(invoice.disabled, false)
+  assert.equal(invoice.required, true)
+  assert.equal(invoice.getAttribute('required'), '')
+  assert.equal(api.serialize(form).payload.invoice_frequency, 'bi_weekly')
+})
+
+test('hides and disables invoice frequency for an own contract, then restores it', () => {
+  const form = projectForm({ invoice_frequency: 'bi_weekly' })
+  const invoice = form.querySelector('[data-project-field="invoice_frequency"]')
+  form.contractChoice = new Element({ 'data-project-contract-choice': '', type: 'radio', value: 'Own Contract', checked: true })
+  const { api } = load({ form })
+
+  api.syncInvoiceFrequencyField(form)
+  assert.equal(invoice.hidden, true)
+  assert.equal(invoice.disabled, true)
+  assert.equal(invoice.required, false)
+  assert.equal(invoice.getAttribute('data-project-invoice-frequency-hidden'), 'true')
+  assert.equal(api.serialize(form).payload.invoice_frequency, null)
+
+  form.contractChoice.value = 'Standard contract'
+  api.syncInvoiceFrequencyField(form)
+  assert.equal(invoice.hidden, false)
+  assert.equal(invoice.disabled, false)
+  assert.equal(invoice.required, true)
+  assert.equal(invoice.getAttribute('data-project-invoice-frequency-hidden'), null)
+  assert.equal(api.serialize(form).payload.invoice_frequency, 'bi_weekly')
+})
+
+test('fails closed when a standard contract has no invoice frequency', () => {
+  const form = projectForm({ invoice_frequency: '' })
+  const { api } = load({ form })
+  const serialized = api.serialize(form)
+  assert.equal(api.validationError(serialized), 'Choose an invoice frequency.')
 })
 
 function requiredConfirmation(form, { visible }) {

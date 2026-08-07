@@ -43,6 +43,8 @@
   var MONTHLY_END_DATE_SELECTOR = '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]'
   var HOURLY_END_DATE_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]'
   var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
+  var INVOICE_FREQUENCY_NAMES = ['invoice-frequency', 'Invoice-Frequency', 'invoice_frequency', 'Invoice Frequency']
+  var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   var ENGAGEMENT_TYPES = {
@@ -331,6 +333,64 @@
     if (node.setAttribute) node.setAttribute('aria-hidden', 'true')
   }
 
+  function showElement(node) {
+    if (!node) return
+    node.hidden = false
+    if (node.style) node.style.display = ''
+    if (node.removeAttribute) node.removeAttribute('aria-hidden')
+  }
+
+  function contractChoice(form) {
+    return form && form.querySelector
+      ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked') || form.querySelector('input[type="radio"]:checked')
+      : null
+  }
+
+  function readContractType(form) {
+    return canonicalContractType(fieldValue(contractChoice(form)))
+  }
+
+  function invoiceFrequencyControl(form) {
+    return attributedField(form, 'invoice_frequency') || namedField(form, INVOICE_FREQUENCY_NAMES)
+  }
+
+  function syncInvoiceFrequencyField(form) {
+    var field = invoiceFrequencyControl(form)
+    if (!field) return
+    var type = readContractType(form)
+    var group = inputGroup(field, form)
+    var labels = labelsFor(form, field)
+    var hidden = type === 'own_contract'
+
+    if (hidden) {
+      field.disabled = true
+      field.required = false
+      if (field.setAttribute) {
+        field.setAttribute('disabled', '')
+        field.setAttribute(INVOICE_FREQUENCY_HIDDEN_ATTR, 'true')
+        field.removeAttribute('required')
+        field.removeAttribute(REQUIRED_STASH_ATTR)
+      }
+      hideElement(field)
+      labels.forEach(hideElement)
+      hideElement(group)
+      return
+    }
+
+    field.disabled = false
+    field.required = type === 'standard'
+    if (field.removeAttribute) {
+      field.removeAttribute('disabled')
+      field.removeAttribute(INVOICE_FREQUENCY_HIDDEN_ATTR)
+      field.removeAttribute(REQUIRED_STASH_ATTR)
+      if (!field.required) field.removeAttribute('required')
+    }
+    if (field.required && field.setAttribute) field.setAttribute('required', '')
+    showElement(group)
+    labels.forEach(showElement)
+    showElement(field)
+  }
+
   function syncMonthlyDurationField(form) {
     if (!form || !form.querySelectorAll) return
     var controls = form.querySelectorAll(MONTHLY_END_DATE_SELECTOR)
@@ -381,6 +441,7 @@
   function syncDurationFields(form) {
     syncMonthlyDurationField(form)
     syncHourlyDurationChoice(form)
+    syncInvoiceFrequencyField(form)
   }
 
   function setPayloadValue(payload, name, field) {
@@ -395,6 +456,8 @@
       payload[name] = dateValue(value) || null
     } else if (name === 'hourly_billing_frequency') {
       payload[name] = canonicalHourlyFrequency(value) || null
+    } else if (name === 'invoice_frequency') {
+      payload[name] = canonicalInvoiceFrequency(value) || null
     } else {
       payload[name] = value
     }
@@ -415,6 +478,15 @@
   function canonicalHourlyFrequency(value) {
     var normalized = clean(value).toLowerCase().replace(/[\s-]+/g, '_')
     if (normalized === 'one_time' || normalized === 'weekly' || normalized === 'monthly') return normalized
+    return ''
+  }
+
+  function canonicalInvoiceFrequency(value) {
+    var normalized = clean(value).toLowerCase().replace(/[\s-]+/g, '_')
+    if (normalized === 'weekly' || normalized === 'weekly_basis') return 'weekly'
+    if (normalized === 'bi_weekly' || normalized === 'biweekly' || normalized === 'bi_weekly_basis') return 'bi_weekly'
+    if (normalized === 'monthly' || normalized === 'monthly_basis') return 'monthly'
+    if (normalized === 'upon_completion' || normalized === 'upon_completion_of_the_project') return 'upon_completion'
     return ''
   }
 
@@ -443,6 +515,8 @@
         payload[name] = dateValue(value) || null
       } else if (name === 'hourly_billing_frequency') {
         payload[name] = canonicalHourlyFrequency(value) || null
+      } else if (name === 'invoice_frequency') {
+        payload[name] = canonicalInvoiceFrequency(value) || null
       } else {
         payload[name] = value
       }
@@ -457,6 +531,10 @@
     setPayloadValue(payload, 'service', namedField(form, 'Services'))
     setPayloadValue(payload, 'engagement_type', engagementControl(form))
     setPayloadValue(payload, 'project_scope', namedField(form, 'Project-Scope'))
+    if (!canonicalInvoiceFrequency(payload.invoice_frequency)) {
+      delete payload.invoice_frequency
+      setPayloadValue(payload, 'invoice_frequency', namedField(form, INVOICE_FREQUENCY_NAMES))
+    }
 
     var authoredEngagement = readEngagement(form)
     var authoredPanel = engagementPanel(form, authoredEngagement)
@@ -486,10 +564,8 @@
     }
 
     payload.engagement_type = canonicalEngagement(payload.engagement_type)
-    var contractChoice = form && form.querySelector
-      ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked') || form.querySelector('input[type="radio"]:checked')
-      : null
-    payload.contract_type = canonicalContractType(fieldValue(contractChoice))
+    payload.contract_type = readContractType(form)
+    if (payload.contract_type === 'own_contract') payload.invoice_frequency = null
 
     // Webflow keeps inactive conditional panels in the DOM. Clear their stale
     // commercial values so only the selected pricing contract crosses the API.
@@ -535,6 +611,7 @@
     if (!clean(payload.starter_memberstack_id)) return 'The selected Starter could not be identified. Reload and try again.'
     if (!payload.engagement_type) return 'Choose a supported fee structure.'
     if (!payload.contract_type) return 'Choose a contract type.'
+    if (payload.contract_type === 'standard' && !payload.invoice_frequency) return 'Choose an invoice frequency.'
     if (!clean(payload.title)) return 'Enter a project name.'
     if (!clean(payload.service)) return 'Choose a service.'
     if (!payload.start_date) return 'Enter a valid start date.'
@@ -785,6 +862,8 @@
     canonicalEngagement: canonicalEngagement,
     canonicalContractType: canonicalContractType,
     canonicalHourlyFrequency: canonicalHourlyFrequency,
+    canonicalInvoiceFrequency: canonicalInvoiceFrequency,
+    syncInvoiceFrequencyField: syncInvoiceFrequencyField,
     syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,
