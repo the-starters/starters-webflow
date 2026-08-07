@@ -175,6 +175,270 @@ const freeBrandMember = {
   planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
 }
 
+test('invoiceCreate sends the V3 invoice payload through the authenticated Xano bridge', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/create/v3')) {
+        return response({
+          invoice_id: 901,
+          stripe_ref: 'plink_test',
+          payment_link: 'https://buy.stripe.com/test',
+          status: 'unpaid',
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember },
+  )
+
+  const result = await bridge.API.invoiceCreate({
+    project_id: 675,
+    amount: 25.5,
+    description: 'August test invoice',
+    idempotency_key: 'invoice-v3-675-test',
+  })
+
+  assert.equal(result.invoice_id, 901)
+  assert.match(requests[1].url, /\/invoices\/create\/v3$/)
+  assert.equal(requests[1].init.method, 'POST')
+  assert.deepEqual(JSON.parse(requests[1].init.body), {
+    project_id: 675,
+    amount: 25.5,
+    description: 'August test invoice',
+    idempotency_key: 'invoice-v3-675-test',
+  })
+})
+
+test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
+  const bridge = await loadBridge(async () => response({}))
+
+  assert.equal(
+    bridge.window.Opp30.invoiceErrorMessage({
+      data: { message: 'Connect a Stripe account before generating invoices' },
+    }),
+    'Connect your Stripe account from the dashboard before generating invoices.',
+  )
+  assert.equal(bridge.window.Opp30.formatInvoiceAmount(25.5), '$25.50')
+})
+
+// A project card as either list library renders it: the row id as an attribute,
+// the display fields behind wf-algolia-text / wf-xano-bind / data-opp-bind.
+function invoiceCard(fields, id = '675') {
+  return {
+    getAttribute: (name) => (name === 'data-wf-xano-id' ? id : null),
+    querySelector: (selector) => {
+      const match = /^\[(?:wf-algolia-text|wf-xano-bind|data-opp-bind)="([\w-]+)"\]$/.exec(selector)
+      const field = match && match[1]
+      return field && fields[field] != null ? { textContent: fields[field] } : null
+    },
+  }
+}
+
+test('the invoiced amount is rounded to cents and never below the promised $0.01', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { normalizeInvoiceAmount } = bridge.window.Opp30
+
+  // What gets posted is exactly what the success screen shows.
+  assert.equal(normalizeInvoiceAmount('25.555'), 25.56)
+  assert.equal(bridge.window.Opp30.formatInvoiceAmount(normalizeInvoiceAmount('25.555')), '$25.56')
+  assert.equal(normalizeInvoiceAmount('0.01'), 0.01)
+  assert.equal(normalizeInvoiceAmount('0.004'), null)
+  assert.equal(normalizeInvoiceAmount('0'), null)
+  assert.equal(normalizeInvoiceAmount('-5'), null)
+  assert.equal(normalizeInvoiceAmount(''), null)
+  assert.equal(normalizeInvoiceAmount('abc'), null)
+  assert.equal(normalizeInvoiceAmount('1000000'), 1000000)
+  assert.equal(normalizeInvoiceAmount('1000000.01'), null)
+})
+
+test('invoiceProjectContext prefers a bound brand field over the pipe-split heading', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { invoiceProjectContext } = bridge.window.Opp30
+
+  const bound = invoiceProjectContext(
+    invoiceCard({ heading_display: 'Growth | Ops | Acme Co', company: 'Acme Co', title: 'Growth' }),
+  )
+  assert.equal(bound.projectId, 675)
+  assert.equal(bound.title, 'Growth')
+  assert.equal(bound.brand, 'Acme Co')
+
+  const heading = invoiceProjectContext(invoiceCard({ heading_display: 'Growth | Ops | Acme Co' }))
+  assert.equal(heading.brand, 'Acme Co')
+
+  // The authored V3 project card binds the brand as wf-xano-bind="company_name"
+  // and its heading as "#<id> | <brand>", so the bound field must win over the
+  // heading split rather than the other way round.
+  const authored = invoiceProjectContext(
+    invoiceCard({
+      heading_display: '#1123 | Stale Heading',
+      company_name: 'Northwind Coffee',
+      title: 'Growth Marketing Lead',
+    }),
+  )
+  assert.equal(authored.brand, 'Northwind Coffee')
+  assert.equal(authored.title, 'Growth Marketing Lead')
+
+  assert.equal(invoiceProjectContext(invoiceCard({}, '0')), null)
+  assert.equal(invoiceProjectContext(invoiceCard({}, '-4')), null)
+  assert.equal(invoiceProjectContext(null), null)
+})
+
+// The Generate Invoice modal's success screen as the authored Webflow component
+// renders it: brand/project/amount binds (there is no status hook), and a
+// "View in Stripe" design-system button whose visible element is the
+// .button_main-wrap div wrapping an invisible a.clickable_link overlay that
+// carries the "#invoice-payment-link" placeholder href.
+function invoiceModalFixture() {
+  const wrap = { style: {} }
+  // Attribute-backed like the real anchor: rewriting .href rewrites the
+  // attribute, so an [href="#invoice-payment-link"] selector stops matching.
+  const linkAttributes = new Map([['href', '#invoice-payment-link']])
+  const link = {
+    style: {},
+    closest: (selector) => (selector === '.button_main-wrap' ? wrap : null),
+    getAttribute: (name) => (linkAttributes.has(name) ? linkAttributes.get(name) : null),
+    hasAttribute: (name) => linkAttributes.has(name),
+    setAttribute: (name, value) => linkAttributes.set(name, String(value)),
+  }
+  Object.defineProperty(link, 'href', {
+    enumerable: true,
+    get: () => linkAttributes.get('href'),
+    set: (value) => linkAttributes.set('href', String(value)),
+  })
+  const binds = {
+    brand: { textContent: '' },
+    project: { textContent: '' },
+    amount: { textContent: '$1,000.00' },
+  }
+  const form = { dataset: {}, style: {}, reset() {} }
+  const done = { style: {} }
+  const modal = {
+    querySelector: (selector) => {
+      if (selector === 'form') return form
+      if (selector === '.w-form-done') return done
+      if (selector === '[data-wf-invoice="payment-link"]') {
+        return link.getAttribute('data-wf-invoice') === 'payment-link' ? link : null
+      }
+      if (selector === 'a[href="#invoice-payment-link"]') {
+        return link.getAttribute('href') === '#invoice-payment-link' ? link : null
+      }
+      return null
+    },
+    querySelectorAll: (selector) => {
+      const match = /^\[data-wf-invoice-bind="([\w-]+)"\]$/.exec(selector)
+      const field = match && match[1]
+      return field && binds[field] ? [binds[field]] : []
+    },
+  }
+  return { binds, done, form, link, modal, wrap }
+}
+
+test('the success screen shows and hides the Stripe button, not just its overlay anchor', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { paintInvoiceSuccess } = bridge.window.Opp30
+  const context = { brand: 'Northwind Coffee', title: 'Growth Marketing Lead' }
+
+  const paid = invoiceModalFixture()
+  paintInvoiceSuccess(
+    paid.modal,
+    { status: 'unpaid', payment_link: 'https://buy.stripe.com/test_link' },
+    context,
+    2500.5,
+  )
+  assert.equal(paid.form.style.display, 'none')
+  assert.equal(paid.done.style.display, 'block')
+  assert.equal(paid.binds.brand.textContent, 'Northwind Coffee')
+  assert.equal(paid.binds.project.textContent, 'Growth Marketing Lead')
+  assert.equal(paid.binds.amount.textContent, '$2,500.50')
+  assert.equal(paid.link.href, 'https://buy.stripe.com/test_link')
+  assert.equal(paid.link.target, '_blank')
+  assert.equal(paid.link.rel, 'noopener noreferrer')
+  assert.equal(paid.wrap.style.display, '')
+
+  // Without a payment_link the styled button itself has to go: hiding only the
+  // overlay anchor would leave a visible, dead "View in Stripe" button.
+  const unpayable = invoiceModalFixture()
+  paintInvoiceSuccess(unpayable.modal, { status: 'unpaid' }, context, 10)
+  assert.equal(unpayable.wrap.style.display, 'none')
+  assert.equal(unpayable.link.href, '#invoice-payment-link')
+})
+
+// A member can bill several projects without reloading, and the first success
+// rewrites the anchor's placeholder href — so the pay CTA has to stay findable
+// afterwards, or invoice #2 sends them to invoice #1's Stripe link.
+test('a second invoice in the same session repaints the Stripe button, never a stale link', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { paintInvoiceSuccess, prepareInvoiceModal } = bridge.window.Opp30
+  const first = { brand: 'Northwind Coffee', title: 'Growth Marketing Lead' }
+  const second = { brand: 'Halcyon Labs', title: 'Lifecycle Email Revamp' }
+  const fixture = invoiceModalFixture()
+
+  prepareInvoiceModal(fixture.modal, first)
+  paintInvoiceSuccess(
+    fixture.modal,
+    { status: 'unpaid', payment_link: 'https://buy.stripe.com/project-675' },
+    first,
+    250,
+  )
+  assert.equal(fixture.link.href, 'https://buy.stripe.com/project-675')
+
+  prepareInvoiceModal(fixture.modal, second)
+  assert.equal(fixture.wrap.style.display, '')
+  paintInvoiceSuccess(
+    fixture.modal,
+    { status: 'unpaid', payment_link: 'https://buy.stripe.com/project-702' },
+    second,
+    480,
+  )
+  assert.equal(fixture.binds.brand.textContent, 'Halcyon Labs')
+  assert.equal(fixture.link.href, 'https://buy.stripe.com/project-702')
+  assert.equal(fixture.wrap.style.display, '')
+
+  // An invoice that comes back without a payment_link must hide the button
+  // rather than leave the previous invoice's live link behind it.
+  prepareInvoiceModal(fixture.modal, second)
+  assert.equal(fixture.link.href, '#invoice-payment-link')
+  paintInvoiceSuccess(fixture.modal, { status: 'unpaid' }, second, 90)
+  assert.equal(fixture.wrap.style.display, 'none')
+  assert.equal(fixture.link.href, '#invoice-payment-link')
+})
+
+test('openInvoiceModal opens through modal.js and only falls back to showModal', async () => {
+  let live = false
+  let showModalCalls = 0
+  const opens = []
+  const modal = {
+    open: false,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    setAttribute() {},
+    showModal() {
+      showModalCalls += 1
+    },
+  }
+  const bridge = await loadBridge(async () => response({}), {
+    querySelector: (selector) =>
+      live && selector === '[data-modal-target="generate-invoice"]' ? modal : null,
+  })
+  live = true
+  const card = invoiceCard({ title: 'Growth', company: 'Acme Co' })
+
+  bridge.window.lumos = {
+    modal: { list: { 'generate-invoice': { open: () => opens.push('modal.js'), el: modal } } },
+  }
+  assert.equal(bridge.window.Opp30.openInvoiceModal(card), true)
+  assert.deepEqual(opens, ['modal.js'])
+  assert.equal(showModalCalls, 0)
+
+  bridge.window.lumos = undefined
+  assert.equal(bridge.window.Opp30.openInvoiceModal(card), true)
+  assert.equal(showModalCalls, 1)
+})
+
 test('redirectForeignBrandToFeed redirects only on ownership-denied statuses', async () => {
   const denied404 = await loadBridge(async () => response({}))
   assert.equal(denied404.window.Opp30.redirectForeignBrandToFeed({ status: 404 }), true)

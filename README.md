@@ -52,7 +52,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, sends authenticated members whose completion marker has outlived missing or malformed answer JSON to `/quiz?retake=true&quizDataMissing=1`, keeps diagnostics opt-in through `starterQuizDebug`, uses the `Freelancers3.0-dev` Algolia index for freelancer recommendations by default, and rides the ad-attribution cookies written by `quiz-main/quiz-attribution.js` into the same `updateMember` call as `starter-quiz` (verified Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone)
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, and redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`
+- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`, and drives the Starter dashboard's native Generate Invoice modal against the authenticated Xano `invoices/create/v3` endpoint
 - `v3/auth-route.js` — V3-only login/signup router consuming the sitewide route guard's stable role contract, with role-scoped `next` destinations; canonical `next=/dashboard` resolves directly to the role home. Talent logins fork on funnel position via Xano `starters_onboarding/get_build_profile_status`: `build_profile_done` false → `/build-profile/select-profile`, true with `onboarding_done` not literally `true` → `/starter-onboarding` (wins over any stored `next`), both true → normal routing. **Paid Brands (2026-08-06)** take a parallel check on `starters_onboarding/get_brand_profile_status`: `has_record` true + `brand_profile_done` false → `/complete-profile` (wins over `next`); marker `thestarters:v3-brand-profile-completed` short-circuits as done with no network. `brand-free` and unmapped stay zero-network. Every inconclusive answer fails open (4s budget). Installs on `/login`, `/starter-login`, and `/auth-route`; never on `/sign-up`. Wiring: [`v3/AUTH-ROUTE-WIRING.md`](v3/AUTH-ROUTE-WIRING.md)
 
 - `v3/talent-application.js` — `/freelancer-application/step-1` intake controller; suppresses the native Webflow/Zapier submission, posts `form[application-form]` to Xano, and continues successful applicants to step 2
@@ -621,6 +621,72 @@ Brand-side application archiving is private bookkeeping and does not add an
 `archived` talent UI state. An archived application still paints as `applied` or
 `edited`, so Withdraw and Edit Application remain available; if its opportunity is
 closed, `closed` takes precedence and hides those actions as usual.
+
+## Opportunities 3.0 Invoice Generation
+
+`opportunities-3.0.js` drives the Webflow-authored Generate Invoice modal used by
+the Starter dashboard project list. The delegation is armed once per page and
+stays inert wherever that modal and its project cards are not authored. It binds
+only existing elements and generates no markup, and it does not touch the V2
+Airtable/Make invoice chain; the browser holds no Airtable or Make credentials.
+
+Author the invoice control on each project card as
+`data-project-action="invoice"` (a plain `a[href="#generate-invoice"]` is also
+accepted), inside the card element that already carries the wf-xano row id
+`data-wf-xano-id`. That id is the `project_id` the invoice bills, so a control
+outside a card cannot start the flow: the click is left to `modal.js`'s own
+trigger delegation and the mismatch is logged. The dialog itself stays the
+native `dialog[data-modal-target="generate-invoice"]` component, opened through
+`window.lumos.modal`'s registry so its paused GSAP entrance timeline, scroll
+lock, and focus restore all still run; direct `showModal()` remains only as a
+fallback for pages without `modal.js`.
+
+The modal keeps its authored Webflow form. `Amount` and `Description` are
+resolved by id or input name. The amount is rounded to cents and must land
+between $0.01 and $1,000,000, otherwise the inline message `Enter an amount
+between $0.01 and $1,000,000.` is shown and nothing is sent. A submit from a
+modal that was opened without a project card fails closed with `Open Generate
+Invoice from the project you want to bill, so we know which project to
+invoice.`.
+
+A valid submit posts `project_id`, `amount`, `description`, and
+`idempotency_key` to Xano `POST invoices/create/v3` through the same
+authenticated Memberstack-to-Xano bridge as the rest of the file. The
+idempotency key (`invoice-v3-<project_id>-<uuid>`) is stored on the form, so a
+retry after a failure reuses it and is cleared once an invoice is created. The
+submit control is disabled while the request is in flight. After a success the
+wf-xano project list is refreshed best-effort; a failed refresh never reports a
+created invoice as failed.
+
+Keep these markup contracts in the modal:
+
+- `[data-wf-invoice-bind="brand|project|amount|status"]` receive the billed
+  brand, project title, formatted amount, and returned status (`unpaid` when the
+  response omits one). Brand and project come from the card's usual field binds
+  (`wf-xano-bind`, `wf-algolia-text`, or `data-opp-bind`): `title`, plus the
+  first present of `brand`, `company`, and `company_name`, with the last segment
+  of a pipe-separated `heading_display` heading as the only fallback.
+- The pay CTA is the anchor whose authored placeholder href is
+  `#invoice-payment-link`; the script stamps it with
+  `data-wf-invoice="payment-link"` on first use and rewrites the href to the
+  Stripe payment link, opened in a new tab. Its `.button_main-wrap` wrapper is
+  hidden when the response carries no link, and reopening the modal restores the
+  placeholder href, so a stale Stripe link is never left behind the button for a
+  later invoice.
+- Errors need `[data-wf-invoice="error"]` (the Webflow `.w-form-fail` block is
+  accepted) and optionally `[data-wf-invoice="error-message"]` inside it. With
+  neither present the failure is only a console warning, invisible to the member.
+
+A Xano refusal for a Talent member with no connected Stripe account is
+translated into the actionable message `Connect your Stripe account from the
+dashboard before generating invoices.`; the connect flow itself is owned by the
+[`v3/README.md` Stripe Connect section](v3/README.md#starter-dashboard-stripe-connect).
+
+Run the focused invoice regressions with:
+
+```sh
+node --test opportunities-3.0-auth.test.js
+```
 
 ## utils/wf-validate.js
 
