@@ -93,10 +93,10 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/scheduling-availability-writer.js` — writer counterpart to the
   availability initializer: the versioned port of the legacy V2 availability
   writer flow (form submit, manager selection, Nylas scheduler configuration
-  create/update, timezone set, calendar OAuth grant redirect) for the staging
-  booking page and the exact production `/starter-dashboard` path only. Every
-  write goes through `window.xanoAuthFetch` with the `member_id` taken from the
-  live Memberstack session; see the
+  create/update, timezone set, calendar OAuth grant redirect) on the Webflow
+  staging hostname and only the exact `/starter-dashboard` path on both
+  production hosts. Every write goes through `window.xanoAuthFetch` with the
+  `member_id` taken from the live Memberstack session; see the
   [`v3/README.md` booking-stage availability writer section](v3/README.md#booking-stage-availability-writer)
   for the authoritative host, path, and safety boundary
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
