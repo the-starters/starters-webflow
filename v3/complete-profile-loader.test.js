@@ -446,6 +446,32 @@ test('an idle form that was never busy is left completely alone', () => {
   assert.equal(loaded.dimForm.style.opacity, '')
 })
 
+// --- The success path (the controller's redirect busy latch) -------------------
+
+test('a successful submit keeps the loader up for the whole redirect window', async () => {
+  // The real success shape as of the redirect latch in
+  // v3/brand-account-controller.js: aria-busy goes true and is NEVER cleared,
+  // because location.assign() only queues the navigation and the controller
+  // deliberately stays busy until the page unloads.
+  const loaded = loadModule()
+  setBusy(loaded, 'true')
+
+  // Well past the minimum display, and the loader is still masking the form.
+  await loaded.clock.advance(AUTHORED_MIN_MS * 3)
+  assert.equal(loaded.loader.style.display, 'flex')
+  assert.equal(loaded.api.state.showing, true)
+  assertDimmed(loaded.dimForm, 'form')
+  assert.equal(loaded.form.getAttribute(BUSY), 'true')
+
+  // And if that navigation stalls, the fail-open cap is still the backstop —
+  // the member gets the page back rather than a permanent overlay.
+  await loaded.clock.advance(MAX_MS)
+  assert.equal(loaded.loader.style.display, 'none')
+  assert.equal(loaded.api.state.reason, 'cap')
+  assert.equal(loaded.dimForm.style.opacity, '')
+  assert.equal(loaded.dimForm.style.pointerEvents, '')
+})
+
 // --- Fail-open ----------------------------------------------------------------
 
 test('the loader hides itself 5s after a show even while the form is still busy', async () => {
@@ -602,11 +628,16 @@ test('the header @release marker matches the exported release property', () => {
 
 test('the file is raw CDN-safe JavaScript behind an init guard', () => {
   assert.equal(/<\/?script/i.test(source), false, 'no <script> wrapper tags')
-  assert.match(source, /window\.__completeProfileLoaderInit/)
+  // The `__starters<Name>Booted` prefix the rest of v3 uses. This file loads
+  // site-wide, so a generic global would be the one most likely to collide.
+  assert.match(source, /window\.__startersCompleteProfileLoaderBooted/)
   // Nothing executes before the guard: the first statement inside the IIFE is
   // the guard itself.
   const body = source.slice(source.indexOf('(function () {'))
-  assert.match(body, /^\(function \(\) \{\s*'use strict'\s*if \(window\.__completeProfileLoaderInit\) return/)
+  assert.match(
+    body,
+    /^\(function \(\) \{\s*'use strict'\s*if \(window\.__startersCompleteProfileLoaderBooted\) return/,
+  )
 })
 
 test('the attribute names carry their leading d — no "ata-" paste typo', () => {

@@ -18,14 +18,30 @@
  * the submit is in flight.
  *
  * WHERE THE SIGNAL COMES FROM. `aria-busy` on the form, which the controller
- * already maintains: its `setBusy(form, busy)` writes `aria-busy="true"` when a
- * submit starts and `aria-busy="false"` when it ends. On the SUCCESS path the
- * page redirects instead, so "false" is in practice the error path — which is
- * the path where a member is still on the page and needs the form back. This
- * module is a pure observer of that attribute. It deliberately does not bind
- * `submit`, and deliberately does not touch the submit button: double-submit is
- * already guarded by the controller, and two owners of one button is how a form
- * ends up permanently disabled.
+ * already maintains: `setBusy(form, busy)` in `v3/brand-account-controller.js`
+ * writes `aria-busy="true"` when a submit starts and `aria-busy="false"` when it
+ * ends.
+ *
+ * THE CONTROLLER GUARANTEE THIS MODULE DEPENDS ON. On a successful submit that
+ * initiates a redirect, the controller now deliberately does NOT clear busy: the
+ * form stays `aria-busy="true"` until the page unloads. That behaviour was added
+ * alongside this module and is load-bearing for it. `location.assign()` only
+ * QUEUES a navigation, so the controller's promise chain settles while the
+ * browser is still fetching the destination — and the old code cleared busy
+ * right there, which would drop this loader and hand the member back a
+ * live-looking form for exactly the window the loader exists to mask. So
+ * `aria-busy="false"` is now, in practice, the ERROR path: the path where the
+ * member is staying on the page and needs the form back.
+ *
+ * If anyone ever reverts that latch, this module does not break — it just stops
+ * covering the redirect, which is the most valuable second it covers. There is a
+ * controller test pinning it (`a successful submit that initiated a redirect
+ * stays busy until the page unloads`).
+ *
+ * This module is a pure observer of that attribute. It deliberately does not
+ * bind `submit`, and deliberately does not touch the submit button:
+ * double-submit is already guarded by the controller, and two owners of one
+ * button is how a form ends up permanently disabled.
  *
  * THE DESIGNER CONTRACT (one required hook, two optional):
  *
@@ -64,6 +80,14 @@
  * situation is the controller's business; leaving the member able to see and
  * scroll the page is this module's.
  *
+ * Note the interaction with the redirect latch above: on a successful submit
+ * `aria-busy` is never cleared, so the cap is the NORMAL end of a successful
+ * session whenever the redirect takes longer than 5s. That is the intended
+ * trade: a member on a slow connection briefly sees the form again before the
+ * new page paints, which is strictly better than a member on a stalled
+ * navigation staring at a spinner with no way out. `state.capHits` above zero is
+ * therefore not automatically a bug — see the wiring doc.
+ *
  * COALESCING. Rapid busy/idle toggles resolve to one visible session: a fresh
  * `aria-busy="true"` while the loader is already up cancels any pending hide and
  * restarts BOTH the minimum-display window and the 5s cap, so a stray timer from
@@ -82,8 +106,8 @@
 ;(function () {
   'use strict'
 
-  if (window.__completeProfileLoaderInit) return
-  window.__completeProfileLoaderInit = true
+  if (window.__startersCompleteProfileLoaderBooted) return
+  window.__startersCompleteProfileLoaderBooted = true
 
   var LOADER_SELECTOR = '[data-complete-profile-loader]'
   var FORM_SELECTOR = '#wf-form-Complete-Profile-Form'
@@ -482,9 +506,7 @@
 
   try {
     if (typeof window.MutationObserver === 'function') {
-      var observer = new window.MutationObserver(function () {
-        sync()
-      })
+      var observer = new window.MutationObserver(sync)
       observer.observe(form, {
         attributes: true,
         attributeFilter: [BUSY_ATTRIBUTE],
