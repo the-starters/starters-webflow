@@ -45,6 +45,14 @@
   var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
   var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
+  var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname], ' + FORM_SELECTOR + ' [name="Hiring-Manager-Name"]'
+  var SMART_FILL_TRIGGER_SELECTOR = '[data-sp-fill="button"]'
+  var SMART_FILL_INPUT_SELECTOR = '[data-sp-fill="input"]'
+  var CURRENT_DATE_SELECTOR = '[data-set-current-date]'
+  var CURRENT_DATE_INIT_ATTR = 'data-set-current-date-inited'
+  var DEFAULT_DATE_FORMAT = 'mm/dd/yy'
+  var MEMBERSTACK_POLL_MS = 100
+  var MEMBERSTACK_MAX_TRIES = 50
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   var ENGAGEMENT_TYPES = {
@@ -164,6 +172,181 @@
     var type = clean(field.type).toLowerCase()
     if ((type === 'checkbox' || type === 'radio') && !field.checked) return ''
     return clean(field.value)
+  }
+
+  function dispatchInputChange(field) {
+    if (!field || !field.dispatchEvent || typeof global.Event !== 'function') return
+    field.dispatchEvent(new global.Event('input', { bubbles: true }))
+    field.dispatchEvent(new global.Event('change', { bubbles: true }))
+  }
+
+  function pickMemberField(fields, names) {
+    var source = fields || {}
+    for (var i = 0; i < names.length; i += 1) {
+      var value = clean(source[names[i]])
+      if (value) return value
+    }
+    return ''
+  }
+
+  function fillMemberName(documentObject, globalObject, tries) {
+    if (!documentObject || !documentObject.querySelectorAll) return Promise.resolve(false)
+    var targets = documentObject.querySelectorAll(MEMBER_NAME_SELECTOR)
+    if (!targets || !targets.length) return Promise.resolve(false)
+    var memberstack = globalObject && globalObject.$memberstackDom
+    if (!memberstack || typeof memberstack.getCurrentMember !== 'function') {
+      if ((tries || 0) >= MEMBERSTACK_MAX_TRIES || !globalObject || typeof globalObject.setTimeout !== 'function') {
+        return Promise.resolve(false)
+      }
+      return new Promise(function (resolve) {
+        globalObject.setTimeout(function () {
+          resolve(fillMemberName(documentObject, globalObject, (tries || 0) + 1))
+        }, MEMBERSTACK_POLL_MS)
+      })
+    }
+    return Promise.resolve(memberstack.getCurrentMember()).then(function (member) {
+      var fields = member && member.data && member.data.customFields
+      var fullName = [
+        pickMemberField(fields, ['free-user', 'first-name', 'First Name', 'firstName', 'first_name', 'firstname']),
+        pickMemberField(fields, ['last-name', 'Last Name', 'lastName', 'last_name', 'lastname']),
+      ].filter(Boolean).join(' ')
+      if (!fullName) return false
+      Array.prototype.forEach.call(targets, function (target) {
+        if (clean(target.value)) return
+        target.value = fullName
+        dispatchInputChange(target)
+      })
+      return true
+    }).catch(function () { return false })
+  }
+
+  function collectSmartFillPairs(trigger) {
+    if (!trigger || !trigger.querySelectorAll) return []
+    var sources = Array.prototype.slice.call(trigger.querySelectorAll('[data-sp-fill-category]'))
+    if (trigger.getAttribute && trigger.getAttribute('data-sp-fill-category') !== null) sources.unshift(trigger)
+    return sources.reduce(function (pairs, source) {
+      var category = clean(source.getAttribute && source.getAttribute('data-sp-fill-category'))
+      if (!category || !source.getAttribute || source.getAttribute('data-sp-fill-value') === null) return pairs
+      pairs.push({ category: category, value: source.getAttribute('data-sp-fill-value') })
+      return pairs
+    }, [])
+  }
+
+  function smartFillTarget(documentObject, category) {
+    if (!documentObject || !documentObject.querySelectorAll) return null
+    var normalized = normalizedName(category)
+    var form = documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
+    if (form) {
+      if (normalized === 'fee_structure') return engagementControl(form)
+      if (normalized === 'invoice_frequency') return invoiceFrequencyControl(form)
+    }
+    var candidates = documentObject.querySelectorAll(FORM_SELECTOR + ' ' + SMART_FILL_INPUT_SELECTOR)
+    var exact = Array.prototype.find.call(candidates, function (field) {
+      return clean(field.getAttribute && field.getAttribute('data-sp-fill-category')) === category
+    })
+    if (exact) return exact
+    return Array.prototype.find.call(candidates, function (field) {
+      return normalizedName(field.getAttribute && field.getAttribute('data-sp-fill-category')) === normalized
+    }) || null
+  }
+
+  function smartFillFields(target) {
+    if (!target) return []
+    var tag = clean(target.tagName).toUpperCase()
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return [target]
+    return target.querySelectorAll ? Array.prototype.slice.call(target.querySelectorAll('input, select, textarea')) : []
+  }
+
+  function applySmartFill(documentObject, category, value) {
+    var fields = smartFillFields(smartFillTarget(documentObject, category))
+    if (!fields.length) return false
+    var first = fields[0]
+    var tag = clean(first.tagName).toUpperCase()
+    var wanted = value == null ? '' : String(value)
+    var lower = wanted.toLowerCase()
+    if (tag === 'SELECT') {
+      var options = Array.prototype.slice.call(first.options || [])
+      var option = options.find(function (item) { return item.value === wanted }) ||
+        options.find(function (item) { return clean(item.value).toLowerCase() === lower }) ||
+        options.find(function (item) { return clean(item.textContent) === wanted }) ||
+        options.find(function (item) { return clean(item.textContent).toLowerCase() === lower })
+      if (!option || first.disabled) return false
+      option.selected = true
+      first.value = option.value
+      dispatchInputChange(first)
+      return true
+    }
+    var type = clean(first.type).toLowerCase()
+    if (type === 'radio') {
+      var radio = fields.find(function (item) { return clean(item.value).toLowerCase() === lower })
+      if (!radio || radio.disabled) return false
+      if (!radio.checked && typeof radio.click === 'function') radio.click()
+      return true
+    }
+    if (type === 'checkbox') {
+      var desired = lower === 'true' || (clean(first.value) && clean(first.value).toLowerCase() === lower)
+      if ((lower !== 'true' && lower !== 'false' && !desired) || first.disabled) return false
+      if (first.checked !== desired && typeof first.click === 'function') first.click()
+      return true
+    }
+    if (first.disabled) return false
+    first.value = wanted
+    dispatchInputChange(first)
+    return true
+  }
+
+  function handleSmartFill(event, documentObject) {
+    var trigger = event && event.target && event.target.closest
+      ? event.target.closest(SMART_FILL_TRIGGER_SELECTOR)
+      : null
+    if (!trigger) return false
+    collectSmartFillPairs(trigger).forEach(function (pair) {
+      applySmartFill(documentObject, pair.category, pair.value)
+    })
+    return true
+  }
+
+  function formatCurrentDate(format, date, globalObject) {
+    var jquery = globalObject && globalObject.jQuery
+    if (jquery && jquery.datepicker) return jquery.datepicker.formatDate(format, date)
+    var day = String(date.getDate()).padStart(2, '0')
+    var month = String(date.getMonth() + 1).padStart(2, '0')
+    return String(format || DEFAULT_DATE_FORMAT)
+      .replace(/yy/g, String(date.getFullYear()))
+      .replace(/mm/g, month)
+      .replace(/dd/g, day)
+  }
+
+  function fillCurrentDates(scope, globalObject) {
+    var root = scope && scope.querySelectorAll ? scope : null
+    if (!root) return 0
+    var targets = Array.prototype.slice.call(root.querySelectorAll(CURRENT_DATE_SELECTOR))
+    if (root.matches && root.matches(CURRENT_DATE_SELECTOR)) targets.unshift(root)
+    var filled = 0
+    targets.forEach(function (field) {
+      if (field.getAttribute && field.getAttribute(CURRENT_DATE_INIT_ATTR) === 'true') return
+      var format = clean(field.getAttribute && (field.getAttribute('data-set-current-date') || field.getAttribute('data-input-datepicker-format'))) || DEFAULT_DATE_FORMAT
+      var today = new globalObject.Date()
+      var value = formatCurrentDate(format, today, globalObject)
+      var tag = clean(field.tagName).toUpperCase()
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        if (clean(field.value)) {
+          if (field.setAttribute) field.setAttribute(CURRENT_DATE_INIT_ATTR, 'true')
+          return
+        }
+        field.value = value
+        var jquery = globalObject && globalObject.jQuery
+        if (jquery && jquery.fn && jquery.fn.datepicker && jquery(field).data('datepicker')) {
+          jquery(field).datepicker('setDate', today)
+        }
+        dispatchInputChange(field)
+      } else {
+        field.textContent = value
+      }
+      if (field.setAttribute) field.setAttribute(CURRENT_DATE_INIT_ATTR, 'true')
+      filled += 1
+    })
+    return filled
   }
 
   function activeControl(field) {
@@ -716,6 +899,8 @@
     }
     syncDurationFields(form)
     syncActiveRequired(form)
+    fillCurrentDates(form, global)
+    fillMemberName(documentObject, global, 0)
     if (!fieldValue(documentObject.querySelector(SELECTED_STARTER_SELECTOR))) {
       setStatus(form, 'error', 'The selected Starter could not be identified. Reload and try again.')
       return false
@@ -802,6 +987,7 @@
   function install(documentObject, globalObject) {
     if (!documentObject || !documentObject.addEventListener) return
     documentObject.addEventListener('click', function (event) {
+      handleSmartFill(event, documentObject)
       var target = event.target
       var trigger = target && target.closest ? target.closest(OPEN_SELECTOR) : null
       if (trigger) {
@@ -848,7 +1034,11 @@
     }, true)
 
     var initialForm = documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
-    if (initialForm) syncDurationFields(initialForm)
+    if (initialForm) {
+      syncDurationFields(initialForm)
+      fillCurrentDates(initialForm, globalObject)
+      fillMemberName(documentObject, globalObject, 0)
+    }
   }
 
   var api = {
@@ -859,6 +1049,13 @@
     canonicalContractType: canonicalContractType,
     canonicalHourlyFrequency: canonicalHourlyFrequency,
     canonicalInvoiceFrequency: canonicalInvoiceFrequency,
+    fillMemberName: fillMemberName,
+    collectSmartFillPairs: collectSmartFillPairs,
+    smartFillTarget: smartFillTarget,
+    applySmartFill: applySmartFill,
+    handleSmartFill: handleSmartFill,
+    formatCurrentDate: formatCurrentDate,
+    fillCurrentDates: fillCurrentDates,
     syncInvoiceFrequencyField: syncInvoiceFrequencyField,
     syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,
