@@ -394,9 +394,12 @@
     document.querySelector('input[wf-algolia-element="search-input"]')
   );
 
-  /* Tab switches: re-sync the active line AFTER the tab solution flips the
-     active class. No new query. Bound to EVERY button-list on the page (a page
-     can carry more than one instance of the tab component), not to document. */
+  /* Click-driven tab switches: re-sync the active line AFTER the tab solution
+     flips the active class. No new query. Bound to EVERY button-list on the
+     page (a page can carry more than one instance of the tab component), not
+     to document. This covers clicks only; a tab activated by keyboard, by
+     autoplay, or by a deep link re-syncs on the next painted response instead
+     of immediately. */
   var buttonLists = document.querySelectorAll(
     '[data-tab-component="button-list"]'
   );
