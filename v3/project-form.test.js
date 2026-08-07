@@ -436,6 +436,36 @@ test('hides the exclusive wrapper with its own caption but never a foreign capti
   assert.equal(foreignLabel.hidden, false)
 })
 
+test('never touches the hourly caption when both panels share the Designer end-date id', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { id: 'endDateInput' })
+  const hourlyEndDate = nativeField('endDateInput', '10/15/2026', { id: 'endDateInput' })
+  const monthlyLabel = labelElement('endDateInput')
+  const hourlyLabel = labelElement('endDateInput')
+  const monthlyPanel = new Element({ 'data-input-filter-item': 'Monthly Recurring' })
+  const hourlyPanel = new Element({ 'data-input-filter-item': 'Ongoing Hourly' })
+  monthlyPanel.controls = [monthlyEndDate]
+  monthlyPanel.labels = [monthlyLabel]
+  hourlyPanel.controls = [hourlyEndDate]
+  hourlyPanel.labels = [hourlyLabel]
+  monthlyEndDate.parentElement = monthlyPanel
+  monthlyEndDate.form = form
+  form.feePanels = { 'Monthly Recurring': monthlyPanel, 'Ongoing Hourly': hourlyPanel }
+  form.labels = [monthlyLabel, hourlyLabel]
+  form.monthlyEndDates = [monthlyEndDate]
+  form.hourlyEndDates = [hourlyEndDate]
+
+  load({ form })
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(monthlyLabel.hidden, true)
+  assert.equal(monthlyPanel.hidden, false)
+  assert.equal(hourlyLabel.hidden, false)
+  assert.equal(hourlyLabel.style.display, '')
+  assert.equal(hourlyEndDate.hidden, false)
+  assert.equal(hourlyEndDate.disabled, false)
+  assert.equal(hourlyEndDate.value, '10/15/2026')
+})
+
 test('never hides the conditional fee panel itself', () => {
   const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
   const panel = new Element({ 'data-input-filter-item': 'Monthly Recurring' })

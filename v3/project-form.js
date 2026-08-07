@@ -281,11 +281,13 @@
   }
 
   // The authored `<label for="...">` bound to this exact control. Matching on
-  // the id rather than a selector keeps any Designer id safe to look up.
-  function labelsFor(form, field) {
+  // the id rather than a selector keeps any Designer id safe to look up. The
+  // Designer defaults a field id to its name, and the fee panels repeat those
+  // names, so `root` must be the owning panel and never the whole form.
+  function labelsFor(root, field) {
     var id = controlId(field)
-    if (!id || !form || !form.querySelectorAll) return []
-    return Array.prototype.filter.call(form.querySelectorAll('label'), function (label) {
+    if (!id || !root || !root.querySelectorAll) return []
+    return Array.prototype.filter.call(root.querySelectorAll('label'), function (label) {
       return clean(label.getAttribute && label.getAttribute('for')) === id
     })
   }
@@ -332,6 +334,8 @@
   function syncMonthlyDurationField(form) {
     if (!form || !form.querySelectorAll) return
     var controls = form.querySelectorAll(MONTHLY_END_DATE_SELECTOR)
+    if (!controls || !controls.length) return
+    var panel = engagementPanel(form, 'monthly') || form
     Array.prototype.forEach.call(controls, function (field) {
       field.value = ''
       field.disabled = true
@@ -342,7 +346,7 @@
         field.removeAttribute('required')
       }
       hideElement(field)
-      labelsFor(form, field).forEach(hideElement)
+      labelsFor(panel, field).forEach(hideElement)
       hideElement(inputGroup(field, form))
     })
   }

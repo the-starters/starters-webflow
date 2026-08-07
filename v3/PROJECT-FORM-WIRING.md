@@ -82,7 +82,11 @@ The Monthly end-date control is always hidden on the control itself, so the
 hide never depends on a particular Designer wrapper class. The adapter also
 hides the authored `<label for="...">` bound to that exact control id, so a
 shared date row or a date-picker companion input never leaves an orphaned
-"End date" caption behind. It then hides the nearest wrapping element,
+"End date" caption behind. That caption lookup is scoped to the Monthly
+Recurring panel, because the Designer defaults a field id to its name and the
+panels repeat `endDateInput`: an unscoped search would strip the Ongoing Hourly
+caption from a live, still-required control. It then hides the nearest wrapping
+element,
 preferring `app-form_input_group` so a single-control group travels with the
 input. That walk stops at the first ancestor holding another control or another
 control's label, and never touches the `data-input-filter-item` panel, which
