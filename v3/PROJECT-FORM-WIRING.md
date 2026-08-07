@@ -41,7 +41,13 @@ explicit allowlist of the form's native Webflow names. Webflow derives a native
 control name from its Designer label, so the allowlist is matched case- and
 separator-insensitively:
 `Invoice Frequency`, `Invoice-frequency`, and `invoice_frequency` all resolve to
-the same allowlisted control.
+the same allowlisted control. A `data-project-field` attribute naming the
+backend field in the table below still wins over the native name wherever one is
+authored, and the invoice-frequency and Hours Cap Period visibility syncs
+resolve their controls in that same order, so adding those attributes in the
+Designer is safe at any time and cannot make visibility and serialization
+disagree. The Monthly and Hourly end-date syncs are the exception: they resolve
+`endDateInput` and `no-end-date` by native name inside their fee panel only.
 
 The one control the Standard Contract branch depends on is a native Invoice
 Frequency select offering Weekly, Bi-Weekly, Monthly, and Upon completion of the
@@ -163,20 +169,24 @@ grammar fills the authored control — select or radio group — whichever gramm
 its own options carry; on a select, leaving the labels unchanged keeps the
 visible-text match working as a third path.
 
-The active Hourly panel's Hours Cap Period select is a separate contract. Keep
-the native Webflow field name `Frequency` until the adapter is migrated to a
-semantic field attribute; the user-facing label is deliberately different from
-that legacy name. `project-form.js` reveals exactly one maximum-hours control
-for the selected option: the other two are hidden, disabled, and marked
+The active Hourly panel's Hours Cap Period select is a separate contract. It is
+authored today under the native Webflow field name `Frequency`, and its
+user-facing label is deliberately different from that legacy name. It and the
+three maximum-hours controls follow the attribute-then-native-name precedence
+above, under the backend field names `hourly_billing_frequency`,
+`maximum_total_hours`, `maximum_hours_per_week`, and `maximum_hours_per_month`.
+`project-form.js` reveals exactly one maximum-hours control for the
+selected option: the other two are hidden, disabled, and marked
 `data-project-hours-cap-hidden` through the same conservative control, label,
 and exclusive-wrapper walk as the Monthly end date above. Their values are never
-cleared, so switching cap periods and back restores what the Brand typed, and an
-authored `required` is stashed as `data-project-required-hidden` and restored
-when that cadence becomes the selected one again. Remove
-`data-input-filter="wrapper"`, `data-input-filter="select"`,
-`data-input-filter="list"`, and every nested `data-input-filter-item` from this
-Hours Cap Period group; those attributes must not own the same controls as the
-adapter.
+cleared, so switching cap periods and back restores what the Brand typed; the
+serializer nulls the two caps the selected period does not use, so a preserved
+value can never cross the API. An authored `required` is stashed as
+`data-project-required-hidden` and restored when that cadence becomes the
+selected one again. Remove `data-input-filter="wrapper"`,
+`data-input-filter="select"`, `data-input-filter="list"`, and every nested
+`data-input-filter-item` from this Hours Cap Period group; those attributes must
+not own the same controls as the adapter.
 
 | Hours Cap Period option | Option value | Maximum-hours control it reveals | Visible maximum-hours label |
 | --- | --- | --- | --- |
