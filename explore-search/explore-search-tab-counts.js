@@ -61,16 +61,25 @@
     return;
   }
 
+  /* Every map below is keyed by strings we do not control — the raw query text
+     the user types — so all of them are created with Object.create(null). A
+     bare {} inherits Object.prototype, and a query of "constructor" or
+     "__proto__" would then find an inherited member on lookup (truthy, so the
+     wrong branch runs, while Object.keys sees nothing) and the
+     `store[q] || (store[q] = {})` idiom would write hit counts onto
+     Object.prototype itself. Null-prototype maps have no inherited keys, so a
+     miss is always undefined. */
+
   /* Latest total nbHits per index name, e.g. { "Freelancers3.0-dev": 122 }.
      This is the CURRENTLY PAINTED set — replaced wholesale when we repaint from
      memory so a stale index count from another query can never linger. */
-  var latestCounts = {};
+  var latestCounts = Object.create(null);
 
   /* Per-query memory: trimmed query string -> { indexName: nbHits }. Fed by
      every intercepted batch (including ones the guard declines to paint) so a
      repeat query served from the algoliasearch client's in-memory cache — with
      no network round-trip, so no interceptor fire — can still be repainted. */
-  var countsByQuery = {};
+  var countsByQuery = Object.create(null);
 
   /* Paint every [data-tab-count-for] span from latestCounts. Iterating the
      spans (not latestCounts keys) means an index absent from latestCounts is
@@ -120,7 +129,7 @@
   }
 
   function resetCounts() {
-    latestCounts = {};
+    latestCounts = Object.create(null);
     var spans = document.querySelectorAll("[data-tab-count-for]");
     Array.prototype.forEach.call(spans, function zeroCountSpan(el) {
       el.textContent = "0";
@@ -182,7 +191,7 @@
 
       /* Group this batch's counts by the request's trimmed query, then by
          index name (one multi-query batch can carry more than one query). */
-      var batchByQuery = {};
+      var batchByQuery = Object.create(null);
       req.requests.forEach(function collectBatchCount(r, i) {
         var result = res.results[i];
         if (!r || !r.indexName || !result || typeof result.nbHits !== "number") {
@@ -190,7 +199,8 @@
         }
         if (!hasClickAnalytics(r)) return; // not a search we count — skip
         var q = typeof r.query === "string" ? r.query.trim() : "";
-        var byIndex = batchByQuery[q] || (batchByQuery[q] = {});
+        var byIndex =
+          batchByQuery[q] || (batchByQuery[q] = Object.create(null));
         /* Last-wins per (query, index) within the batch: summing would
            double-count unrelated same-index queries sharing a batch, and a
            tab represents ONE section's count. */
@@ -201,7 +211,8 @@
          index so counts from separate batches for the same query accumulate). */
       Object.keys(batchByQuery).forEach(function recordQueryCounts(q) {
         var byIndex = batchByQuery[q];
-        var store = countsByQuery[q] || (countsByQuery[q] = {});
+        var store =
+          countsByQuery[q] || (countsByQuery[q] = Object.create(null));
         Object.keys(byIndex).forEach(function recordIndexCount(indexName) {
           store[indexName] = byIndex[indexName];
         });
@@ -213,6 +224,11 @@
       var input = document.querySelector(
         'input[wf-algolia-element="search-input"]'
       );
+      /* Heal the input binding off this lookup — no extra DOM query. Any node
+         swap is followed by the user querying in the NEW input, which fires a
+         request and lands here, so the binding is repaired in time for that
+         input's next cache-served repeat query. */
+      if (input !== boundSearchInput) bindSearchInput(input);
       var painted = false;
       if (!input) {
         Object.keys(batchByQuery).forEach(function paintQueryCounts(q) {
@@ -333,26 +349,46 @@
      Bound to the search input itself (not document): no input event from any
      other field on the page ever enters this handler. No input authored means
      repaint-from-memory simply never arms, matching the bail-out spirit. */
-  var searchInput = document.querySelector(
-    'input[wf-algolia-element="search-input"]'
-  );
-  if (searchInput) {
-    searchInput.addEventListener("input", function onSearchInput() {
-      var value = (searchInput.value || "").trim();
-      var remembered = countsByQuery[value];
-      if (remembered) {
-        var copy = {};
-        Object.keys(remembered).forEach(function copyRememberedCount(indexName) {
-          copy[indexName] = remembered[indexName];
-        });
-        latestCounts = copy; // replace, don't merge — no stale counts linger
-        renderTabCounts();
-        syncActiveCount();
-      } else if (value === "") {
-        resetCounts();
-      }
-    });
+  function onSearchInput() {
+    var input = boundSearchInput;
+    if (!input) return;
+    var value = (input.value || "").trim();
+    var remembered = countsByQuery[value];
+    if (remembered) {
+      var copy = Object.create(null);
+      Object.keys(remembered).forEach(function copyRememberedCount(indexName) {
+        copy[indexName] = remembered[indexName];
+      });
+      latestCounts = copy; // replace, don't merge — no stale counts linger
+      renderTabCounts();
+      syncActiveCount();
+    } else if (value === "") {
+      resetCounts();
+    }
   }
+
+  /* A one-shot binding would freeze onto whichever node existed at init, and
+     the search input can be REPLACED wholesale at runtime (Memberstack gating
+     and re-renders swap nodes rather than mutate them), leaving the handler
+     attached to a detached node. Move the listener to the current node instead
+     of falling back to a document listener, which would cost debugger-quiet
+     scoping. bindSearchInput is idempotent: same node in, nothing happens. */
+  var boundSearchInput = null;
+
+  function bindSearchInput(inputEl) {
+    if (boundSearchInput === inputEl) return;
+    if (boundSearchInput) {
+      boundSearchInput.removeEventListener("input", onSearchInput);
+    }
+    boundSearchInput = inputEl || null;
+    if (boundSearchInput) {
+      boundSearchInput.addEventListener("input", onSearchInput);
+    }
+  }
+
+  bindSearchInput(
+    document.querySelector('input[wf-algolia-element="search-input"]')
+  );
 
   /* Tab switches: re-sync the active line AFTER the tab solution flips the
      active class. No new query. Bound to EVERY button-list on the page (a page
