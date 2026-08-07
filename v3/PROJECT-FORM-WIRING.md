@@ -137,6 +137,25 @@ separate from pricing:
 - Xano derives the PandaDoc template key. The browser never chooses a template
   UUID or sends Brand/Starter authority fields.
 
+The Fee Structure select values and the conditional-panel attributes must use
+the same canonical values. `global-embeds/form-embeds/form-input-filter` compares
+them exactly:
+
+| Fee Structure option | Option value | Fee panel attribute |
+| --- | --- | --- |
+| Flat Fee | `flat_fee` | `data-input-filter-item="flat_fee"` |
+| Hourly | `hourly` | `data-input-filter-item="hourly"` |
+| Weekly Recurring | `weekly` | `data-input-filter-item="weekly"` |
+| Monthly Recurring | `monthly` | `data-input-filter-item="monthly"` |
+
+The adapter accepts those canonical panel values first and retains the legacy
+display labels as a transition reader. This permits the CDN release to precede
+the Designer attribute cutover without hiding every fee panel. New markup must
+use only the canonical values. Invoice Frequency is not a second
+`data-input-filter` controller: it is one independent select named
+`invoice-frequency`, and this adapter owns its Standard/My Own Contract
+visibility.
+
 Invoice frequency belongs to the contract rather than the pricing model, so the
 adapter syncs it from the contract choice alongside the duration sync at each of
 the points above. Standard Contract shows, enables, and requires the select. My

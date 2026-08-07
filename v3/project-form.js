@@ -43,9 +43,12 @@
   // conditional branch is hidden, so it can be put back unchanged.
   var REQUIRED_STASH_ATTR = 'data-project-required-hidden'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
-  var MONTHLY_END_DATE_SELECTOR = '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]'
-  var HOURLY_END_DATE_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]'
-  var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
+  // The V3 Designer contract uses canonical filter-item values. Keep the
+  // legacy display labels as a transition reader so the CDN script can ship
+  // before the separately governed Webflow attribute cutover.
+  var MONTHLY_END_DATE_SELECTOR = '[data-input-filter-item="monthly"] [name="endDateInput"], [data-input-filter-item="Monthly Recurring"] [name="endDateInput"]'
+  var HOURLY_END_DATE_SELECTOR = '[data-input-filter-item="hourly"] [name="endDateInput"], [data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]'
+  var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="hourly"] [name="no-end-date"], [data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
   var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
   var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname]'
@@ -72,11 +75,11 @@
     monthly: 'monthly',
   }
 
-  var ENGAGEMENT_PANEL_LABELS = {
-    flat_fee: 'Flat Fee',
-    hourly: 'Ongoing Hourly',
-    weekly: 'Weekly Recurring',
-    monthly: 'Monthly Recurring',
+  var ENGAGEMENT_PANEL_VALUES = {
+    flat_fee: ['flat_fee', 'Flat Fee'],
+    hourly: ['hourly', 'Ongoing Hourly'],
+    weekly: ['weekly', 'Weekly Recurring'],
+    monthly: ['monthly', 'Monthly Recurring'],
   }
 
   var NUMERIC_FIELDS = {
@@ -502,10 +505,13 @@
   }
 
   function engagementPanel(form, engagement) {
-    var label = ENGAGEMENT_PANEL_LABELS[engagement]
-    return label && form && form.querySelector
-      ? form.querySelector('[data-input-filter-item="' + label + '"]')
-      : null
+    var values = ENGAGEMENT_PANEL_VALUES[engagement] || []
+    if (!form || !form.querySelector) return null
+    for (var i = 0; i < values.length; i += 1) {
+      var panel = form.querySelector('[data-input-filter-item="' + values[i] + '"]')
+      if (panel) return panel
+    }
+    return null
   }
 
   function panelField(form, panel, names) {

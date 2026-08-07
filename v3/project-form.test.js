@@ -66,9 +66,9 @@ class Element {
     if (selector === 'input, select, textarea') return this.controls || []
     if (selector === 'label') return this.labels || []
     if (selector === '[data-project-field]') return this.children
-    if (selector === '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]') return this.monthlyEndDates || []
-    if (selector === '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]') return this.hourlyEndDates || []
-    if (selector === '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]') return this.hourlyOngoingChoices || []
+    if (selector.includes('[data-input-filter-item="monthly"]') && selector.includes('[name="endDateInput"]')) return this.monthlyEndDates || []
+    if (selector.includes('[data-input-filter-item="hourly"]') && selector.includes('[name="endDateInput"]')) return this.hourlyEndDates || []
+    if (selector.includes('[data-input-filter-item="hourly"]') && selector.includes('[name="no-end-date"]')) return this.hourlyOngoingChoices || []
     if (selector.startsWith('[required]')) {
       return this.children.filter((child) => child.getAttribute('required') !== null || child.getAttribute('data-project-required-hidden') !== null)
     }
@@ -1091,6 +1091,39 @@ test('serializes the existing named Webflow controls without per-field attribute
   assert.equal(payload.hourly_billing_frequency, 'weekly')
   assert.equal(payload.maximum_hours_per_week, 20)
   assert.equal(payload.contract_type, 'standard')
+})
+
+test('resolves canonical fee-panel attributes before legacy transition labels', () => {
+  const form = projectForm({
+    engagement_type: 'monthly',
+    monthly_rate: '',
+    number_of_months: '',
+  })
+  const canonicalPanel = new Element({ 'data-input-filter-item': 'monthly' })
+  canonicalPanel.children = [
+    nativeField('Amount', '$2,400'),
+    nativeField('Number-of-Months', '6'),
+  ]
+  form.children = form.children.filter((child) => !['monthly_rate', 'number_of_months'].includes(child.getAttribute('data-project-field')))
+  form.feePanels = { monthly: canonicalPanel }
+
+  const { api } = load({ form })
+  const payload = api.serialize(form).payload
+  assert.equal(payload.engagement_type, 'monthly')
+  assert.equal(payload.monthly_rate, 2400)
+  assert.equal(payload.number_of_months, 6)
+})
+
+test('syncs canonical hourly filter-item duration controls', () => {
+  const form = projectForm({ engagement_type: 'hourly' })
+  const endDate = nativeField('endDateInput', '10/15/2026')
+  const ongoing = nativeField('no-end-date', 'true', { type: 'checkbox', checked: true })
+  form.hourlyEndDates = [endDate]
+  form.hourlyOngoingChoices = [ongoing]
+
+  load({ form })
+  assert.equal(endDate.value, '')
+  assert.equal(endDate.disabled, true)
 })
 
 test('serializes disabled authored controls from the confirmation step', () => {
