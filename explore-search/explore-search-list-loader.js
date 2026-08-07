@@ -1,6 +1,6 @@
 /* explore-search-list-loader.js — masks layout jank while result lists change.
  *
- * @release v1.59.120
+ * @release v1.59.124
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. Standalone:
  * no imports, no shared globals with the sibling explore-search-*.js embeds

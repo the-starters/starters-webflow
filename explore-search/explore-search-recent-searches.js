@@ -2,7 +2,7 @@
  * chips, persisted in localStorage and rendered through a designer-owned
  * template.
  *
- * @release v1.59.120
+ * @release v1.59.124
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. Standalone:
  * no imports, no shared globals with the sibling explore-search-*.js embeds —

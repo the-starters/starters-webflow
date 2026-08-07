@@ -1,6 +1,6 @@
 /* explore-search-tab-counts.js — live per-index hit counts for the tab bar.
  *
- * @release v1.59.120
+ * @release v1.59.124
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer so the network
  * interception below is installed BEFORE the wf-algolia engine initializes
