@@ -85,15 +85,29 @@
     });
   }
 
-  /* Write the ACTIVE tab's count into every [data-active-tab-count]. */
+  /* Write the ACTIVE tab's count into every [data-active-tab-count].
+     Only button-lists that CONTAIN a [data-tab-count-for] span are search
+     tabs: a page can carry other tab components (e.g. the contract-generation
+     wizard) whose active button has no count span, and a single document-order
+     querySelector resolves to whichever of them comes first — painting 0
+     forever. Iterate every button-list, skip the count-free ones, and let the
+     first count-bearing match win. */
   function syncActiveCount() {
     try {
-      var activeButton = document.querySelector(
-        '[data-tab-component="button-list"] .is-active, ' +
-          '[data-tab-component="button-list"] [data-tab-active="true"]'
+      var lists = document.querySelectorAll(
+        '[data-tab-component="button-list"]'
       );
-      var countSpan =
-        activeButton && activeButton.querySelector("[data-tab-count-for]");
+      var countSpan = null;
+      Array.prototype.forEach.call(lists, function findActiveCountSpan(list) {
+        if (countSpan) return; // first count-bearing match wins
+        if (!list.querySelector("[data-tab-count-for]")) return;
+        var activeButton = list.querySelector(
+          '.is-active, [data-tab-active="true"]'
+        );
+        countSpan =
+          (activeButton && activeButton.querySelector("[data-tab-count-for]")) ||
+          null;
+      });
       var indexName = countSpan && countSpan.getAttribute("data-tab-count-for");
       var count = (indexName && latestCounts[indexName]) || 0;
       var targets = document.querySelectorAll("[data-active-tab-count]");
