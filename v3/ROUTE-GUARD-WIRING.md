@@ -109,7 +109,10 @@ guarded routes and opportunity detail pages do not use this hydration delay.
 same reason as `/favorites/`, and appears in `auth-route.js` `ROLE_DESTINATIONS`
 too. The guard/router parity test in `v3/auth-route.test.js` enforces that pair —
 a new `PAGE_ROLES` row without the matching router entry fails the suite rather
-than silently dropping a `next`.
+than silently dropping a `next`. The standalone page is still live and stays
+guarded: the Generate Invoice modal that `opportunities-3.0.js` drives on
+`/starter-dashboard` (see the root [`README.md`](../README.md#opportunities-30-invoice-generation))
+is a second entry point to invoicing, not a replacement for this route.
 
 `/complete-profile` briefly lived in this table on 2026-08-03 and was removed the
 same day. Memberstack is now its sole gate: the `restrict-pages` gated content
