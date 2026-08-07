@@ -1,5 +1,7 @@
 /* explore-search-tab-counts.js — live per-index hit counts for the tab bar.
  *
+ * @release v1.59.120
+ *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer so the network
  * interception below is installed BEFORE the wf-algolia engine initializes
  * (the engine boots on DOMContentLoaded via the Webflow ready-queue; deferred
@@ -47,7 +49,7 @@
  * Webflow embed (jsDelivr):
  *   https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/explore-search/explore-search-tab-counts.js
  */
-(function () {
+(function exploreSearchTabCounts() {
   if (window.__exploreSearchTabCountsInit) return;
   window.__exploreSearchTabCountsInit = true;
 
@@ -76,7 +78,7 @@
      latestCounts wholesale on repaint-from-memory. */
   function renderTabCounts() {
     var spans = document.querySelectorAll("[data-tab-count-for]");
-    Array.prototype.forEach.call(spans, function (el) {
+    Array.prototype.forEach.call(spans, function paintCountSpan(el) {
       var indexName = el.getAttribute("data-tab-count-for");
       var count = latestCounts[indexName];
       el.textContent = String(typeof count === "number" ? count : 0);
@@ -95,7 +97,7 @@
       var indexName = countSpan && countSpan.getAttribute("data-tab-count-for");
       var count = (indexName && latestCounts[indexName]) || 0;
       var targets = document.querySelectorAll("[data-active-tab-count]");
-      Array.prototype.forEach.call(targets, function (el) {
+      Array.prototype.forEach.call(targets, function paintActiveCount(el) {
         el.textContent = String(count);
       });
     } catch (e) {
@@ -106,7 +108,7 @@
   function resetCounts() {
     latestCounts = {};
     var spans = document.querySelectorAll("[data-tab-count-for]");
-    Array.prototype.forEach.call(spans, function (el) {
+    Array.prototype.forEach.call(spans, function zeroCountSpan(el) {
       el.textContent = "0";
     });
     syncActiveCount(); // active line back to "0"
@@ -118,17 +120,30 @@
      the engine's facet-stat auxiliary queries don't — their nbHits must not
      pollute the tab counts. Defensive: params may be a string or an object. */
   function hasClickAnalytics(r) {
-    try {
-      if (!r) return false;
-      if (r.clickAnalytics === true) return true;
-      var params = r.params;
-      if (typeof params === "string") {
-        return params.indexOf("clickAnalytics=true") !== -1;
-      }
-      return !!params && params.clickAnalytics === true;
-    } catch (e) {
-      return false;
+    if (!r || typeof r !== "object") return false;
+    if (r.clickAnalytics === true) return true;
+    var params = r.params;
+    if (typeof params === "string") {
+      return params.indexOf("clickAnalytics=true") !== -1;
     }
+    return (
+      !!params && typeof params === "object" && params.clickAnalytics === true
+    );
+  }
+
+  /* Cheap no-throw sniff so JSON.parse only ever sees something that can
+     parse: the first non-whitespace char must open an object/array and the
+     last must close the matching one, so a truncated or non-JSON body returns
+     early instead of throwing. Not a validator — the try/catch nets below stay
+     as the never-break-the-page guarantee. */
+  function looksLikeJson(value) {
+    if (typeof value !== "string") return false;
+    var trimmed = value.trim();
+    var first = trimmed.charAt(0);
+    var last = trimmed.charAt(trimmed.length - 1);
+    if (first === "{") return last === "}";
+    if (first === "[") return last === "]";
+    return false;
   }
 
   /* Pair request requests[] with response results[] positionally (skipping
@@ -138,6 +153,12 @@
      non-JSON. */
   function handleAlgoliaResponse(requestBody, responseText) {
     try {
+      /* No-throw pre-checks: strings are parsed only when they sniff as JSON,
+         anything already parsed passes straight through as before. */
+      if (typeof requestBody === "string" && !looksLikeJson(requestBody)) return;
+      if (typeof responseText === "string" && !looksLikeJson(responseText)) {
+        return;
+      }
       var req =
         typeof requestBody === "string" ? JSON.parse(requestBody) : requestBody;
       var res =
@@ -148,7 +169,7 @@
       /* Group this batch's counts by the request's trimmed query, then by
          index name (one multi-query batch can carry more than one query). */
       var batchByQuery = {};
-      req.requests.forEach(function (r, i) {
+      req.requests.forEach(function collectBatchCount(r, i) {
         var result = res.results[i];
         if (!r || !r.indexName || !result || typeof result.nbHits !== "number") {
           return;
@@ -164,10 +185,10 @@
 
       /* Record every query's counts in the per-query memory store (merge per
          index so counts from separate batches for the same query accumulate). */
-      Object.keys(batchByQuery).forEach(function (q) {
+      Object.keys(batchByQuery).forEach(function recordQueryCounts(q) {
         var byIndex = batchByQuery[q];
         var store = countsByQuery[q] || (countsByQuery[q] = {});
-        Object.keys(byIndex).forEach(function (indexName) {
+        Object.keys(byIndex).forEach(function recordIndexCount(indexName) {
           store[indexName] = byIndex[indexName];
         });
       });
@@ -180,9 +201,9 @@
       );
       var painted = false;
       if (!input) {
-        Object.keys(batchByQuery).forEach(function (q) {
+        Object.keys(batchByQuery).forEach(function paintQueryCounts(q) {
           var byIndex = batchByQuery[q];
-          Object.keys(byIndex).forEach(function (indexName) {
+          Object.keys(byIndex).forEach(function paintIndexCount(indexName) {
             latestCounts[indexName] = byIndex[indexName];
           });
           painted = true;
@@ -191,7 +212,7 @@
         var current = (input.value || "").trim();
         var match = batchByQuery[current];
         if (match) {
-          Object.keys(match).forEach(function (indexName) {
+          Object.keys(match).forEach(function paintMatchedIndexCount(indexName) {
             latestCounts[indexName] = match[indexName];
           });
           painted = true;
@@ -218,7 +239,7 @@
   /* Patch fetch — observe only; the original request/response are untouched. */
   if (typeof window.fetch === "function") {
     var originalFetch = window.fetch;
-    window.fetch = function (input, init) {
+    window.fetch = function exploreTabCountsFetch(input, init) {
       var promise = originalFetch.apply(this, arguments);
       try {
         var url =
@@ -230,20 +251,20 @@
         if (isAlgoliaQueriesUrl(url)) {
           var body = init && init.body;
           promise
-            .then(function (response) {
+            .then(function exploreTabCountsFetchResolved(response) {
               try {
                 response
                   .clone()
                   .text()
-                  .then(function (text) {
+                  .then(function exploreTabCountsFetchText(text) {
                     handleAlgoliaResponse(body, text);
                   })
-                  .catch(function () {});
+                  .catch(function exploreTabCountsFetchTextFailed() {});
               } catch (e) {
                 /* ignore */
               }
             })
-            .catch(function () {});
+            .catch(function exploreTabCountsFetchFailed() {});
         }
       } catch (e) {
         /* ignore — never break the underlying request */
@@ -256,7 +277,10 @@
   if (window.XMLHttpRequest) {
     var originalOpen = XMLHttpRequest.prototype.open;
     var originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function (method, url) {
+    XMLHttpRequest.prototype.open = function exploreTabCountsXhrOpen(
+      method,
+      url
+    ) {
       try {
         this.__exploreTabCountsUrl = url;
       } catch (e) {
@@ -264,11 +288,11 @@
       }
       return originalOpen.apply(this, arguments);
     };
-    XMLHttpRequest.prototype.send = function (body) {
+    XMLHttpRequest.prototype.send = function exploreTabCountsXhrSend(body) {
       try {
         if (isAlgoliaQueriesUrl(this.__exploreTabCountsUrl)) {
           var xhr = this;
-          xhr.addEventListener("load", function () {
+          xhr.addEventListener("load", function exploreTabCountsXhrLoad() {
             try {
               handleAlgoliaResponse(body, xhr.responseText);
             } catch (e) {
@@ -291,33 +315,41 @@
        - empty + no memory-> resetCounts() (keeps pages without the
          default-results embed sane).
        - non-empty + no memory -> do nothing; the engine's in-flight network
-         request will paint via the guarded interceptor. */
-  document.addEventListener("input", function (event) {
-    var input = document.querySelector(
-      'input[wf-algolia-element="search-input"]'
-    );
-    if (!input || event.target !== input) return;
-    var value = (input.value || "").trim();
-    var remembered = countsByQuery[value];
-    if (remembered) {
-      var copy = {};
-      Object.keys(remembered).forEach(function (indexName) {
-        copy[indexName] = remembered[indexName];
-      });
-      latestCounts = copy; // replace, don't merge — no stale counts linger
-      renderTabCounts();
-      syncActiveCount();
-    } else if (value === "") {
-      resetCounts();
-    }
-  });
+         request will paint via the guarded interceptor.
+     Bound to the search input itself (not document): no input event from any
+     other field on the page ever enters this handler. No input authored means
+     repaint-from-memory simply never arms, matching the bail-out spirit. */
+  var searchInput = document.querySelector(
+    'input[wf-algolia-element="search-input"]'
+  );
+  if (searchInput) {
+    searchInput.addEventListener("input", function onSearchInput() {
+      var value = (searchInput.value || "").trim();
+      var remembered = countsByQuery[value];
+      if (remembered) {
+        var copy = {};
+        Object.keys(remembered).forEach(function copyRememberedCount(indexName) {
+          copy[indexName] = remembered[indexName];
+        });
+        latestCounts = copy; // replace, don't merge — no stale counts linger
+        renderTabCounts();
+        syncActiveCount();
+      } else if (value === "") {
+        resetCounts();
+      }
+    });
+  }
 
   /* Tab switches: re-sync the active line AFTER the tab solution flips the
-     active class. No new query. */
-  document.addEventListener("click", function (event) {
-    if (event.target.closest('[data-tab-component="button-list"]')) {
+     active class. No new query. Bound to EVERY button-list on the page (a page
+     can carry more than one instance of the tab component), not to document. */
+  var buttonLists = document.querySelectorAll(
+    '[data-tab-component="button-list"]'
+  );
+  Array.prototype.forEach.call(buttonLists, function armButtonList(el) {
+    el.addEventListener("click", function onTabButtonListClick() {
       setTimeout(syncActiveCount, 0);
-    }
+    });
   });
 
   /* Initial sync (deferred script: DOM is parsed; the tab solution may not

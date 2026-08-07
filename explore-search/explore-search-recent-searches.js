@@ -2,6 +2,8 @@
  * chips, persisted in localStorage and rendered through a designer-owned
  * template.
  *
+ * @release v1.59.120
+ *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. Standalone:
  * no imports, no shared globals with the sibling explore-search-*.js embeds —
  * chip clicks reach this recorder ONLY via the "explore-search:commit"
@@ -123,10 +125,22 @@
 
   /* ---------- Storage (guarded for private mode) ---------- */
 
+  /* Cheap no-throw sniff so JSON.parse only ever sees something that can
+     parse: a stored value must open with "[" and close with "]" (the shape we
+     write). A corrupt or truncated entry reads as no recents instead of
+     throwing. The try/catch below stays as the private-mode/storage net. */
+  function looksLikeJsonArray(value) {
+    if (typeof value !== "string") return false;
+    var trimmed = value.trim();
+    return (
+      trimmed.charAt(0) === "[" && trimmed.charAt(trimmed.length - 1) === "]"
+    );
+  }
+
   function readRecent() {
     try {
       var raw = window.localStorage.getItem(RECENT_KEY);
-      var stored = raw ? JSON.parse(raw) : [];
+      var stored = looksLikeJsonArray(raw) ? JSON.parse(raw) : [];
       return Array.isArray(stored)
         ? stored.filter(function (q) {
             return typeof q === "string";
