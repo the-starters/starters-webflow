@@ -1405,9 +1405,21 @@
   // Invoice control as type="button" even when its Button Type prop is enabled.
   // Keep the fallback scoped to the native Generate Invoice form and its
   // attribute-driven primary action; native submit controls continue to work.
+  // `data-button-style` is a theming attribute, not a behaviour hook, so it only
+  // resolves the submitter while it is unambiguous — one primary-styled control
+  // in that form and no native submit. Authoring [data-wf-invoice="submit"] on
+  // the CTA wrapper always wins and never depends on the theme.
   const INVOICE_FORM_SELECTOR = '#wf-form-Generate-Invoice'
+  const INVOICE_SUBMIT_HOOK_SELECTOR = '[data-wf-invoice="submit"]'
+  const INVOICE_SUBMIT_STYLE_SELECTOR = INVOICE_FORM_SELECTOR + ' [data-button-style="primary"]'
   const INVOICE_SUBMIT_ACTION_SELECTOR =
-    '[data-wf-invoice="submit"], ' + INVOICE_FORM_SELECTOR + ' [data-button-style="primary"]'
+    INVOICE_SUBMIT_HOOK_SELECTOR + ', ' + INVOICE_SUBMIT_STYLE_SELECTOR
+  // A design-system button is disabled by attribute on its .button_main-wrap
+  // wrapper, never by the native property (form-validation.js setButtonEnabled,
+  // step-flow.js, tabs.js), so a gated control still receives the click.
+  const INVOICE_DISABLED_SELECTOR =
+    '[data-validate-disabled], [data-button-theme="disabled"], [aria-disabled="true"]'
+  const INVOICE_DISABLED_THEME = 'disabled'
   // Same card contract as every other delegated handler in this file: the
   // wf-xano-rendered project card is whatever ancestor carries the row id.
   const INVOICE_CARD_SELECTOR = '[data-wf-xano-id]'
@@ -1620,6 +1632,71 @@
     return message || 'Invoice generation failed. Please try again.'
   }
 
+  /**
+   * Single resolution for the control that submits the invoice form, so the
+   * click fallback and the in-flight disable can never drift onto different
+   * elements. @returns {Element|null}
+   */
+  function invoiceSubmitControl(form) {
+    if (!form || typeof form.querySelector !== 'function') return null
+    const hook = $(INVOICE_SUBMIT_HOOK_SELECTOR, form)
+    if (hook) return hook
+    const native = $('[type="submit"]', form)
+    if (native) return native
+    if (typeof form.querySelectorAll !== 'function') return null
+    const styled = $$(INVOICE_SUBMIT_STYLE_SELECTOR, form)
+    if (styled.length === 1) return styled[0]
+    if (styled.length > 1) {
+      console.warn(
+        '[opp30:invoice] the Generate Invoice form has several primary-styled buttons and no submit control, so the click fallback stood down; author data-wf-invoice="submit" on the Send Invoice wrapper',
+        styled.length,
+      )
+    }
+    return null
+  }
+
+  // The hook and the theming attribute can sit on different elements of the same
+  // design-system button (wrapper, overlaid .clickable_btn, label), so the click
+  // counts as the resolved submitter whenever the two are in the same subtree.
+  function invoiceSubmitOwns(control, action) {
+    if (!control || !action) return false
+    if (control === action) return true
+    if (control.contains && control.contains(action)) return true
+    return !!(action.contains && action.contains(control))
+  }
+
+  function invoiceControlDisabled(control) {
+    return !!(control && control.closest && control.closest(INVOICE_DISABLED_SELECTOR))
+  }
+
+  // Mirror form-validation.js's setButtonEnabled: the theme markers go on the
+  // wrapper the click is resolved from, the native property on the actionable
+  // element inside it. A native submit control is its own actionable element.
+  function setInvoiceSubmitDisabled(control, disabled) {
+    if (!control || typeof control.setAttribute !== 'function') return
+    const actionable =
+      (control.querySelector &&
+        control.querySelector('button, a.clickable_link, .clickable_btn')) ||
+      control
+    if (disabled) {
+      const theme = control.getAttribute && control.getAttribute('data-button-theme')
+      if (theme && theme !== INVOICE_DISABLED_THEME) {
+        if (control.dataset) control.dataset.invoiceOriginalTheme = theme
+        control.setAttribute('data-button-theme', INVOICE_DISABLED_THEME)
+      }
+      control.setAttribute('aria-disabled', 'true')
+      if ('disabled' in actionable) actionable.disabled = true
+      return
+    }
+    const original = control.dataset && control.dataset.invoiceOriginalTheme
+    if (original) {
+      control.setAttribute('data-button-theme', original)
+      delete control.dataset.invoiceOriginalTheme
+    }
+    if (control.removeAttribute) control.removeAttribute('aria-disabled')
+    if ('disabled' in actionable) actionable.disabled = false
+  }
+
   function requestInvoiceSubmit(target) {
     const action =
       target && target.closest ? target.closest(INVOICE_SUBMIT_ACTION_SELECTOR) : null
@@ -1627,6 +1704,14 @@
     const form = action.closest && action.closest('form')
     const modal = form && form.closest && form.closest(INVOICE_MODAL_SELECTOR)
     if (!form || !modal) return false
+    const control = invoiceSubmitControl(form)
+    // A native submitter needs no fallback: the browser's own click handling
+    // stays in charge and this listener must not swallow it.
+    if (control && control.matches && control.matches('[type="submit"]')) return false
+    if (!invoiceSubmitOwns(control, action)) return false
+    // A visually disabled control never acts: this listener sees the click
+    // before the wrapper's own capture gate, so it has to stand down itself.
+    if (invoiceControlDisabled(action) || invoiceControlDisabled(control)) return false
     if (typeof form.requestSubmit === 'function') form.requestSubmit()
     else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     return true
@@ -1693,8 +1778,8 @@
 
         clearInvoiceError(modal)
         invoiceSubmitting = true
-        const submit = $('[type="submit"]', form)
-        if (submit) submit.disabled = true
+        const submit = invoiceSubmitControl(form)
+        setInvoiceSubmitDisabled(submit, true)
         try {
           const result = await API.invoiceCreate({
             project_id: context.projectId,
@@ -1720,7 +1805,7 @@
           invoiceError(modal, invoiceErrorMessage(err))
         } finally {
           invoiceSubmitting = false
-          if (submit) submit.disabled = false
+          setInvoiceSubmitDisabled(submit, false)
         }
       },
       true,
@@ -3797,6 +3882,8 @@
     prepareInvoiceModal,
     paintInvoiceSuccess,
     requestInvoiceSubmit,
+    invoiceSubmitControl,
+    setInvoiceSubmitDisabled,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,

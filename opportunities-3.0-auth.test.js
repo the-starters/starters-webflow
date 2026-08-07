@@ -228,40 +228,277 @@ test('invoice helpers turn the Stripe prerequisite into an actionable dashboard 
   assert.equal(bridge.window.Opp30.formatInvoiceAmount(25.5), '$25.50')
 })
 
+// A minimal element graph with attribute-accurate matches()/closest()/query*,
+// so the invoice submit guards are exercised against real selector semantics
+// instead of a substring match that would still pass if the selector were
+// broadened or its form/modal scoping dropped.
+function el(tag, attrs = {}, children = []) {
+  const attributes = new Map(Object.entries(attrs))
+  const node = { tag, attributes, children, parent: null, dataset: {}, style: {} }
+  if (tag === 'button' || tag === 'input') node.disabled = false
+  children.forEach((child) => {
+    child.parent = node
+  })
+  node.getAttribute = (name) => (attributes.has(name) ? attributes.get(name) : null)
+  node.setAttribute = (name, value) => attributes.set(name, String(value))
+  node.removeAttribute = (name) => attributes.delete(name)
+  node.hasAttribute = (name) => attributes.has(name)
+  node.matches = (selector) => selectorMatches(node, selector)
+  node.closest = (selector) => {
+    for (let current = node; current; current = current.parent) {
+      if (selectorMatches(current, selector)) return current
+    }
+    return null
+  }
+  node.contains = (other) => other === node || descendants(node).includes(other)
+  node.querySelectorAll = (selector) =>
+    descendants(node).filter((descendant) => selectorMatches(descendant, selector))
+  node.querySelector = (selector) => node.querySelectorAll(selector)[0] || null
+  return node
+}
+
+function descendants(node) {
+  return node.children.flatMap((child) => [child, ...descendants(child)])
+}
+
+// The grammar the invoice selectors actually use: comma-separated lists of
+// descendant-combined simple selectors built from a tag, #id, .class and
+// [attr] / [attr="value"] terms.
+function simpleMatches(node, simple) {
+  const terms = simple.match(/^[a-z]+|#[\w-]+|\.[\w-]+|\[[^\]]+\]/gi) || []
+  return terms.every((term) => {
+    if (term.startsWith('#')) return node.getAttribute('id') === term.slice(1)
+    if (term.startsWith('.')) {
+      return (node.getAttribute('class') || '').split(/\s+/).includes(term.slice(1))
+    }
+    if (term.startsWith('[')) {
+      const parsed = /^\[([\w-]+)(?:="([^"]*)")?\]$/.exec(term)
+      if (!parsed) throw new Error(`unsupported attribute selector: ${term}`)
+      if (!node.hasAttribute(parsed[1])) return false
+      return parsed[2] === undefined || node.getAttribute(parsed[1]) === parsed[2]
+    }
+    return node.tag === term
+  })
+}
+
+function selectorMatches(node, selector) {
+  return String(selector)
+    .split(',')
+    .some((part) => {
+      const simples = part.trim().split(/\s+/)
+      let current = node
+      if (!simpleMatches(current, simples.pop())) return false
+      while (simples.length) {
+        const simple = simples.pop()
+        let ancestor = current.parent
+        while (ancestor && !simpleMatches(ancestor, simple)) ancestor = ancestor.parent
+        if (!ancestor) return false
+        current = ancestor
+      }
+      return true
+    })
+}
+
+// The Generate Invoice modal as the shared Webflow button component renders it:
+// the visible Send Invoice control is a .button_main-wrap wrapper carrying the
+// theme attributes, and the element inside it is type="button", so no native
+// submitter exists in the form.
+function invoiceSubmitDom({
+  disabled = false,
+  hook = false,
+  hookOnCta = false,
+  inModal = true,
+  isForm = true,
+  nativeSubmit = false,
+  secondPrimary = false,
+} = {}) {
+  const ctaAttrs = { type: 'button', class: 'clickable_btn' }
+  if (hookOnCta) ctaAttrs['data-wf-invoice'] = 'submit'
+  const cta = el('button', ctaAttrs)
+  const ctaText = el('div', { class: 'button_main-text' })
+  const wrapAttrs = {
+    class: 'button_main-wrap',
+    'data-button-style': 'primary',
+    'data-button-theme': 'black',
+  }
+  if (hook) wrapAttrs['data-wf-invoice'] = 'submit'
+  if (disabled) {
+    wrapAttrs['data-button-theme'] = 'disabled'
+    wrapAttrs['aria-disabled'] = 'true'
+  }
+  const wrap = el('div', wrapAttrs, [cta, ctaText])
+  const amount = el('input', { id: 'Amount', name: 'Amount' })
+  amount.value = '250'
+  const description = el('input', { id: 'Description', name: 'Description' })
+  description.value = 'August retainer'
+  const fields = [amount, description, wrap]
+  if (nativeSubmit) fields.push(el('input', { type: 'submit', class: 'w-button' }))
+  if (secondPrimary) {
+    fields.push(
+      el('div', { class: 'button_main-wrap', 'data-button-style': 'primary' }, [
+        el('button', { type: 'button' }),
+      ]),
+    )
+  }
+  const form = el(isForm ? 'form' : 'div', { id: 'wf-form-Generate-Invoice' }, fields)
+  let submits = 0
+  form.requestSubmit = () => {
+    submits += 1
+  }
+  form.reset = () => {}
+  const fail = el('div', { class: 'w-form-fail' })
+  const done = el('div', { class: 'w-form-done' }, [
+    el('div', { class: 'button_main-wrap', 'data-button-style': 'primary' }, [
+      el('a', { class: 'clickable_link', href: '#invoice-payment-link' }),
+    ]),
+  ])
+  const modal = el(
+    'dialog',
+    inModal ? { 'data-modal-target': 'generate-invoice' } : {},
+    [form, fail, done],
+  )
+  return { amount, cta, ctaText, description, form, modal, wrap, submitCount: () => submits }
+}
+
+function clickEvent(target) {
+  const counts = { prevented: 0, stopped: 0 }
+  return {
+    counts,
+    event: {
+      target,
+      preventDefault: () => {
+        counts.prevented += 1
+      },
+      stopPropagation: () => {
+        counts.stopped += 1
+      },
+    },
+  }
+}
+
 test('the authored type=button invoice CTA requests the native form submit', async () => {
   const bridge = await loadBridge(async () => response({}))
-  let submits = 0
-  let prevented = 0
-  let stopped = 0
-  const modal = {}
-  const form = {
-    closest: (selector) =>
-      selector === '[data-modal-target="generate-invoice"]' ? modal : null,
-    requestSubmit: () => {
-      submits += 1
-    },
-  }
-  const action = { closest: (selector) => (selector === 'form' ? form : null) }
-  const target = {
-    closest: (selector) =>
-      selector.includes('#wf-form-Generate-Invoice [data-button-style="primary"]')
-        ? action
-        : null,
-  }
+  const dom = invoiceSubmitDom()
 
-  bridge.dispatchDocument('click', {
-    target,
-    preventDefault: () => {
-      prevented += 1
+  // The click lands on the overlaid button inside the wrapper, never on the
+  // wrapper the selector resolves.
+  const { counts, event } = clickEvent(dom.cta)
+  bridge.dispatchDocument('click', event)
+
+  assert.equal(dom.submitCount(), 1)
+  assert.equal(counts.prevented, 1)
+  assert.equal(counts.stopped, 1)
+
+  // The explicit behaviour hook works without any theming attribute.
+  const hooked = invoiceSubmitDom({ hook: true })
+  bridge.dispatchDocument('click', clickEvent(hooked.cta).event)
+  assert.equal(hooked.submitCount(), 1)
+
+  // The hook and the theming attribute may land on different elements of the
+  // same button, and the click can land on the label rather than the control.
+  const split = invoiceSubmitDom({ hookOnCta: true })
+  bridge.dispatchDocument('click', clickEvent(split.ctaText).event)
+  assert.equal(split.submitCount(), 1)
+})
+
+test('the invoice submit fallback stands down outside its form, modal and disabled state', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { requestInvoiceSubmit } = bridge.window.Opp30
+
+  // No form ancestor: the id is authored on a plain container.
+  const notAForm = invoiceSubmitDom({ isForm: false })
+  assert.equal(requestInvoiceSubmit(notAForm.cta), false)
+  assert.equal(notAForm.submitCount(), 0)
+
+  // A form that is not inside the Generate Invoice dialog.
+  const outsideModal = invoiceSubmitDom({ inModal: false })
+  assert.equal(requestInvoiceSubmit(outsideModal.cta), false)
+  assert.equal(outsideModal.submitCount(), 0)
+
+  // A primary-styled button in some other form is never an invoice submitter.
+  const foreign = invoiceSubmitDom()
+  foreign.form.setAttribute('id', 'wf-form-Something-Else')
+  assert.equal(requestInvoiceSubmit(foreign.cta), false)
+  assert.equal(foreign.submitCount(), 0)
+
+  // data-button-style is theming, not behaviour: with a second primary-styled
+  // control in the same form the inference is ambiguous and fails closed rather
+  // than turning a Cancel-shaped button into an invoice submit.
+  const ambiguous = invoiceSubmitDom({ secondPrimary: true })
+  assert.equal(requestInvoiceSubmit(ambiguous.cta), false)
+  assert.equal(ambiguous.submitCount(), 0)
+  // Authoring the hook resolves the ambiguity.
+  const ambiguousHooked = invoiceSubmitDom({ hook: true, secondPrimary: true })
+  assert.equal(requestInvoiceSubmit(ambiguousHooked.cta), true)
+  assert.equal(ambiguousHooked.submitCount(), 1)
+
+  // A real submit control needs no fallback; the native click is left alone.
+  const native = invoiceSubmitDom({ nativeSubmit: true })
+  assert.equal(requestInvoiceSubmit(native.cta), false)
+  assert.equal(native.submitCount(), 0)
+
+  // A visually disabled wrapper never acts, even though this listener runs
+  // before the wrapper's own capture gate.
+  const gated = invoiceSubmitDom({ disabled: true })
+  assert.equal(requestInvoiceSubmit(gated.cta), false)
+  assert.equal(gated.submitCount(), 0)
+
+  assert.equal(requestInvoiceSubmit(null), false)
+  assert.equal(requestInvoiceSubmit({}), false)
+})
+
+test('the Send Invoice control is disabled by attribute while the invoice is in flight', async () => {
+  const dom = invoiceSubmitDom()
+  const pending = deferred()
+  const requests = []
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/create/v3')) return pending.promise
+      throw new Error(`Unexpected request: ${url}`)
     },
-    stopPropagation: () => {
-      stopped += 1
+    {
+      member: talentMember,
+      querySelector: (selector) =>
+        selector === '[data-modal-target="generate-invoice"]' ? dom.modal : null,
     },
+  )
+
+  bridge.window.Opp30.prepareInvoiceModal(dom.modal, {
+    card: invoiceCard({ title: 'Growth', company: 'Acme Co' }),
+    projectId: 675,
+    title: 'Growth',
+    brand: 'Acme Co',
   })
 
-  assert.equal(submits, 1)
-  assert.equal(prevented, 1)
-  assert.equal(stopped, 1)
+  const { counts, event } = clickEvent(dom.cta)
+  bridge.dispatchDocument('click', event)
+  assert.equal(dom.submitCount(), 1)
+  assert.equal(counts.prevented, 1)
+
+  bridge.dispatchDocument('submit', {
+    target: dom.form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  await waitForRequestCount(requests, 2)
+
+  // The design-system control is disabled by attribute on its wrapper, so a
+  // second click is refused instead of silently doing nothing.
+  assert.equal(dom.wrap.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(dom.wrap.getAttribute('aria-disabled'), 'true')
+  assert.equal(dom.cta.disabled, true)
+  assert.equal(bridge.window.Opp30.requestInvoiceSubmit(dom.cta), false)
+  assert.equal(dom.submitCount(), 1)
+
+  pending.resolve(response({ invoice_id: 901, status: 'unpaid' }))
+  for (let attempt = 0; attempt < 20; attempt += 1) await new Promise(setImmediate)
+
+  assert.equal(dom.wrap.getAttribute('data-button-theme'), 'black')
+  assert.equal(dom.wrap.getAttribute('aria-disabled'), null)
+  assert.equal(dom.cta.disabled, false)
 })
 
 // A project card as either list library renders it: the row id as an attribute,
