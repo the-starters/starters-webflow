@@ -1,6 +1,6 @@
 /* explore-search-default-results.js — DEFAULT result lists for the empty query.
  *
- * @release v1.59.126
+ * @release v1.59.127
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. Standalone:
  * no imports, no shared globals with the sibling explore-search-*.js embeds.
