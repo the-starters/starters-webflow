@@ -1397,24 +1397,45 @@
   }
 
   /* ======================= INVOICES ============================ */
-  const INVOICE_MODAL_SELECTOR = '[data-modal-target="generate-invoice"]'
+  const INVOICE_MODAL_ID = 'generate-invoice'
+  const INVOICE_MODAL_SELECTOR = '[data-modal-target="' + INVOICE_MODAL_ID + '"]'
   const INVOICE_ACTION_SELECTOR =
-    '[data-project-action="invoice"], a[href="#generate-invoice"]'
+    '[data-project-action="invoice"], a[href="#' + INVOICE_MODAL_ID + '"]'
+  // Same card contract as every other delegated handler in this file: the
+  // wf-xano-rendered project card is whatever ancestor carries the row id.
+  const INVOICE_CARD_SELECTOR = '[data-wf-xano-id]'
+  const INVOICE_MIN_AMOUNT = 0.01
+  const INVOICE_MAX_AMOUNT = 1000000
+  const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
+  const INVOICE_NO_PROJECT_MESSAGE =
+    'Open Generate Invoice from the project you want to bill, so we know which project to invoice.'
   let activeInvoiceProject = null
   let invoiceSubmitting = false
 
   function invoiceProjectContext(card) {
     if (!card) return null
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
-    if (!projectId) return null
+    if (!(projectId > 0)) return null
+    // Prefer a bound brand/company field; the "Title | Brand" heading split is
+    // only a fallback, and a title containing a pipe makes the last segment the
+    // closest guess at the brand.
     const heading = cardFieldText(card, 'heading_display')
-    const brand = heading.includes('|') ? heading.split('|').slice(1).join('|').trim() : heading
+    const headingBrand = heading.includes('|') ? heading.split('|').pop().trim() : heading
     return {
       card,
       projectId,
       title: cardFieldText(card, 'title'),
-      brand,
+      brand: cardFieldText(card, 'brand') || cardFieldText(card, 'company') || headingBrand,
     }
+  }
+
+  /** Round to cents, then accept only a billable amount. @returns {number|null} */
+  function normalizeInvoiceAmount(value) {
+    const raw = Number(value)
+    if (!Number.isFinite(raw)) return null
+    const amount = Math.round(raw * 100) / 100
+    if (amount < INVOICE_MIN_AMOUNT || amount > INVOICE_MAX_AMOUNT) return null
+    return amount
   }
 
   function invoiceBind(modal, field, value) {
@@ -1424,16 +1445,37 @@
     })
   }
 
+  // Single resolution for the authored error hook, so show and clear can never
+  // drift onto different elements.
+  function invoiceFailEl(modal) {
+    if (!modal) return null
+    return $('[data-wf-invoice="error"]', modal) || $('.w-form-fail', modal)
+  }
+
+  function invoicePaymentLinkEl(modal) {
+    if (!modal) return null
+    return (
+      $('[data-wf-invoice="payment-link"]', modal) || $('a[href="#invoice-payment-link"]', modal)
+    )
+  }
+
   function invoiceError(modal, message) {
-    const fail = $('[data-wf-invoice="error"]', modal) || $('.w-form-fail', modal)
-    if (!fail) return
-    const text = $('[data-wf-invoice="error-message"]', fail) || fail
-    text.textContent = message || 'Something went wrong. Please try again.'
+    const text = message || 'Something went wrong. Please try again.'
+    const fail = invoiceFailEl(modal)
+    if (!fail) {
+      console.warn(
+        '[opp30:invoice] the Generate Invoice modal has no [data-wf-invoice="error"] or .w-form-fail element, so this stayed invisible to the member:',
+        text,
+      )
+      return
+    }
+    const target = $('[data-wf-invoice="error-message"]', fail) || fail
+    target.textContent = text
     fail.style.display = 'block'
   }
 
   function clearInvoiceError(modal) {
-    const fail = $('[data-wf-invoice="error"]', modal) || $('.w-form-fail', modal)
+    const fail = invoiceFailEl(modal)
     if (fail) fail.style.display = ''
   }
 
@@ -1447,10 +1489,9 @@
     return form.dataset.invoiceIdempotencyKey
   }
 
-  function openInvoiceModal(card) {
-    const modal = $(INVOICE_MODAL_SELECTOR)
-    const context = invoiceProjectContext(card)
-    if (!modal || !context) return false
+  // Reset the authored screens and remember which project this invoice bills,
+  // without opening anything — the caller decides when the dialog appears.
+  function prepareInvoiceModal(modal, context) {
     activeInvoiceProject = context
     invoiceBind(modal, 'brand', context.brand)
     invoiceBind(modal, 'project', context.title)
@@ -1462,11 +1503,44 @@
       delete form.dataset.invoiceIdempotencyKey
     }
     if (done) done.style.display = ''
+    const link = invoicePaymentLinkEl(modal)
+    if (link) link.style.display = ''
     clearInvoiceError(modal)
-    if (typeof modal.showModal === 'function' && !modal.open) modal.showModal()
+  }
+
+  /**
+   * Open through modal.js's registry, not showModal(): modal.js owns the paused
+   * gsap entrance timeline (whose from/fromTo tweens have already rendered the
+   * .modal_content at opacity 0), the lenis/body scroll lock, and the
+   * last-focused element it restores on close. Calling showModal() ourselves
+   * would show an invisible dialog over a still-scrollable page. The direct
+   * path stays only as a fallback for pages without modal.js.
+   * @returns {boolean} whether the dialog is open
+   */
+  function showInvoiceModal(modal) {
+    if (modal.open) return true
+    const list = window.lumos && window.lumos.modal ? window.lumos.modal.list : null
+    const entry = list ? list[INVOICE_MODAL_ID] : null
+    if (entry && typeof entry.open === 'function') {
+      try {
+        entry.open()
+        return true
+      } catch (err) {
+        console.warn('[opp30:invoice] modal.js refused to open the Generate Invoice modal', err)
+      }
+    }
+    if (typeof modal.showModal === 'function') modal.showModal()
     else modal.setAttribute('open', '')
     window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal } }))
     return true
+  }
+
+  function openInvoiceModal(card) {
+    const modal = $(INVOICE_MODAL_SELECTOR)
+    const context = invoiceProjectContext(card)
+    if (!modal || !context) return false
+    prepareInvoiceModal(modal, context)
+    return showInvoiceModal(modal)
   }
 
   function formatInvoiceAmount(value) {
@@ -1481,15 +1555,21 @@
     invoiceBind(modal, 'brand', context.brand)
     invoiceBind(modal, 'project', context.title)
     invoiceBind(modal, 'amount', formatInvoiceAmount(amount))
-    invoiceBind(modal, 'status', result.status || 'unpaid')
-    const link =
-      $('[data-wf-invoice="payment-link"]', modal) ||
-      $('a[href="#invoice-payment-link"]', modal)
-    if (link && result.payment_link) {
-      link.href = result.payment_link
-      link.target = '_blank'
-      link.rel = 'noopener noreferrer'
+    invoiceBind(modal, 'status', (result && result.status) || 'unpaid')
+    const link = invoicePaymentLinkEl(modal)
+    if (!link) return
+    const paymentLink = result && result.payment_link
+    if (!paymentLink) {
+      // The authored anchor still points at its "#invoice-payment-link"
+      // placeholder, so showing it would be a dead pay button.
+      link.style.display = 'none'
+      console.warn('[opp30:invoice] invoice created without a payment_link; pay CTA hidden', result)
+      return
     }
+    link.href = paymentLink
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    link.style.display = ''
   }
 
   function invoiceErrorMessage(err) {
@@ -1507,13 +1587,24 @@
     document.addEventListener(
       'click',
       (event) => {
-        const action = event.target.closest && event.target.closest(INVOICE_ACTION_SELECTOR)
+        const target = event.target
+        const action = target && target.closest ? target.closest(INVOICE_ACTION_SELECTOR) : null
         if (!action) return
-        const card = action.closest('[data-project-element="item"][data-wf-xano-id]')
-        if (!card) return
+        // Only swallow the click once we know this workflow can handle it —
+        // otherwise modal.js's own trigger delegation must stay reachable.
+        const modal = $(INVOICE_MODAL_SELECTOR)
+        const context = invoiceProjectContext(action.closest(INVOICE_CARD_SELECTOR))
+        if (!modal || !context) {
+          console.error('[opp30:invoice] cannot prepare the Generate Invoice modal', {
+            modal: !!modal,
+            project: context ? context.projectId : null,
+          })
+          return
+        }
         event.preventDefault()
         event.stopPropagation()
-        openInvoiceModal(card)
+        prepareInvoiceModal(modal, context)
+        showInvoiceModal(modal)
       },
       true,
     )
@@ -1526,13 +1617,20 @@
         if (!modal) return
         event.preventDefault()
         event.stopPropagation()
-        if (invoiceSubmitting || !activeInvoiceProject) return
+        if (invoiceSubmitting) return
+        // modal.js's own trigger delegation can open this dialog without any
+        // card, so there is no project to bill until prepareInvoiceModal ran.
+        const context = activeInvoiceProject
+        if (!context) {
+          invoiceError(modal, INVOICE_NO_PROJECT_MESSAGE)
+          return
+        }
 
         const amountInput = $('#Amount', form) || $('[name="Amount"]', form)
         const descriptionInput = $('#Description', form) || $('[name="Description"]', form)
-        const amount = Number(amountInput && amountInput.value)
-        if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
-          invoiceError(modal, 'Enter an amount between $0.01 and $1,000,000.')
+        const amount = normalizeInvoiceAmount(amountInput && amountInput.value)
+        if (amount === null) {
+          invoiceError(modal, INVOICE_AMOUNT_MESSAGE)
           return
         }
 
@@ -1542,17 +1640,23 @@
         if (submit) submit.disabled = true
         try {
           const result = await API.invoiceCreate({
-            project_id: activeInvoiceProject.projectId,
+            project_id: context.projectId,
             amount,
             description: descriptionInput ? descriptionInput.value.trim() : '',
-            idempotency_key: invoiceIdempotencyKey(form, activeInvoiceProject.projectId),
+            idempotency_key: invoiceIdempotencyKey(form, context.projectId),
           })
-          paintInvoiceSuccess(modal, result, activeInvoiceProject, amount)
+          paintInvoiceSuccess(modal, result, context, amount)
           delete form.dataset.invoiceIdempotencyKey
-          if (window.WfXano && typeof window.WfXano.refresh === 'function') {
-            window.WfXano.refresh(
-              activeInvoiceProject.card.closest('[wf-xano-source]') || undefined,
-            )
+          // A stale project must never be billed by a later submit from a modal
+          // that was reopened without a card.
+          activeInvoiceProject = null
+          // Feed refresh is cosmetic; never report a created invoice as failed.
+          try {
+            if (window.WfXano && typeof window.WfXano.refresh === 'function') {
+              window.WfXano.refresh(context.card.closest('[wf-xano-source]') || undefined)
+            }
+          } catch (refreshError) {
+            /* non-fatal: the next page load repaints the card */
           }
         } catch (err) {
           console.error('[opp30:invoice]', err)
@@ -3631,6 +3735,7 @@
     invoiceProjectContext,
     invoiceErrorMessage,
     formatInvoiceAmount,
+    normalizeInvoiceAmount,
     openInvoiceModal,
     opportunityPath,
     pageOppId,

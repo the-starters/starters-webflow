@@ -225,6 +225,87 @@ test('invoice helpers turn the Stripe prerequisite into an actionable dashboard 
   assert.equal(bridge.window.Opp30.formatInvoiceAmount(25.5), '$25.50')
 })
 
+// A project card as either list library renders it: the row id as an attribute,
+// the display fields behind wf-algolia-text / wf-xano-bind / data-opp-bind.
+function invoiceCard(fields, id = '675') {
+  return {
+    getAttribute: (name) => (name === 'data-wf-xano-id' ? id : null),
+    querySelector: (selector) => {
+      const match = /^\[(?:wf-algolia-text|wf-xano-bind|data-opp-bind)="([\w-]+)"\]$/.exec(selector)
+      const field = match && match[1]
+      return field && fields[field] != null ? { textContent: fields[field] } : null
+    },
+  }
+}
+
+test('the invoiced amount is rounded to cents and never below the promised $0.01', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { normalizeInvoiceAmount } = bridge.window.Opp30
+
+  // What gets posted is exactly what the success screen shows.
+  assert.equal(normalizeInvoiceAmount('25.555'), 25.56)
+  assert.equal(bridge.window.Opp30.formatInvoiceAmount(normalizeInvoiceAmount('25.555')), '$25.56')
+  assert.equal(normalizeInvoiceAmount('0.01'), 0.01)
+  assert.equal(normalizeInvoiceAmount('0.004'), null)
+  assert.equal(normalizeInvoiceAmount('0'), null)
+  assert.equal(normalizeInvoiceAmount('-5'), null)
+  assert.equal(normalizeInvoiceAmount(''), null)
+  assert.equal(normalizeInvoiceAmount('abc'), null)
+  assert.equal(normalizeInvoiceAmount('1000000'), 1000000)
+  assert.equal(normalizeInvoiceAmount('1000000.01'), null)
+})
+
+test('invoiceProjectContext prefers a bound brand field over the pipe-split heading', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { invoiceProjectContext } = bridge.window.Opp30
+
+  const bound = invoiceProjectContext(
+    invoiceCard({ heading_display: 'Growth | Ops | Acme Co', company: 'Acme Co', title: 'Growth' }),
+  )
+  assert.equal(bound.projectId, 675)
+  assert.equal(bound.title, 'Growth')
+  assert.equal(bound.brand, 'Acme Co')
+
+  const heading = invoiceProjectContext(invoiceCard({ heading_display: 'Growth | Ops | Acme Co' }))
+  assert.equal(heading.brand, 'Acme Co')
+
+  assert.equal(invoiceProjectContext(invoiceCard({}, '0')), null)
+  assert.equal(invoiceProjectContext(invoiceCard({}, '-4')), null)
+  assert.equal(invoiceProjectContext(null), null)
+})
+
+test('openInvoiceModal opens through modal.js and only falls back to showModal', async () => {
+  let live = false
+  let showModalCalls = 0
+  const opens = []
+  const modal = {
+    open: false,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    setAttribute() {},
+    showModal() {
+      showModalCalls += 1
+    },
+  }
+  const bridge = await loadBridge(async () => response({}), {
+    querySelector: (selector) =>
+      live && selector === '[data-modal-target="generate-invoice"]' ? modal : null,
+  })
+  live = true
+  const card = invoiceCard({ title: 'Growth', company: 'Acme Co' })
+
+  bridge.window.lumos = {
+    modal: { list: { 'generate-invoice': { open: () => opens.push('modal.js'), el: modal } } },
+  }
+  assert.equal(bridge.window.Opp30.openInvoiceModal(card), true)
+  assert.deepEqual(opens, ['modal.js'])
+  assert.equal(showModalCalls, 0)
+
+  bridge.window.lumos = undefined
+  assert.equal(bridge.window.Opp30.openInvoiceModal(card), true)
+  assert.equal(showModalCalls, 1)
+})
+
 test('redirectForeignBrandToFeed redirects only on ownership-denied statuses', async () => {
   const denied404 = await loadBridge(async () => response({}))
   assert.equal(denied404.window.Opp30.redirectForeignBrandToFeed({ status: 404 }), true)
