@@ -79,11 +79,15 @@ server-derived from their count, matching V2. The adapter therefore hard-clears
 contradict the count.
 
 The Monthly end-date control is always hidden on the control itself, so the
-hide never depends on a particular Designer wrapper class. The adapter then
-also hides the nearest wrapping element, preferring `app-form_input_group` so
-the authored label travels with the input. It stops at the first ancestor that
-wraps another control and never touches the `data-input-filter-item` panel,
-which form-input-filter owns, so no sibling field can be hidden by accident.
+hide never depends on a particular Designer wrapper class. The adapter also
+hides the authored `<label for="...">` bound to that exact control id, so a
+shared date row or a date-picker companion input never leaves an orphaned
+"End date" caption behind. It then hides the nearest wrapping element,
+preferring `app-form_input_group` so a single-control group travels with the
+input. That walk stops at the first ancestor holding another control or another
+control's label, and never touches the `data-input-filter-item` panel, which
+form-input-filter owns. No sibling input, select, textarea, label, or shared
+wrapper is ever hidden.
 
 The authored Hourly panel supports either a fixed end date or the explicit
 "No end date" checkbox. The adapter makes those alternatives mutually valid:

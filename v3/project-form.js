@@ -274,12 +274,34 @@
     return namedField(panel || form, names)
   }
 
-  // True when `node` wraps no interactive control other than `field`, so hiding
-  // it cannot take a sibling Designer field down with it.
+  function controlId(field) {
+    if (!field) return ''
+    var attributeId = field.getAttribute ? field.getAttribute('id') : null
+    return clean(attributeId == null ? field.id : attributeId)
+  }
+
+  // The authored `<label for="...">` bound to this exact control. Matching on
+  // the id rather than a selector keeps any Designer id safe to look up.
+  function labelsFor(form, field) {
+    var id = controlId(field)
+    if (!id || !form || !form.querySelectorAll) return []
+    return Array.prototype.filter.call(form.querySelectorAll('label'), function (label) {
+      return clean(label.getAttribute && label.getAttribute('for')) === id
+    })
+  }
+
+  // True when `node` wraps no interactive control other than `field`, and no
+  // label belonging to another control, so hiding it cannot take a sibling
+  // Designer field or its caption down with it.
   function wrapsOnly(node, field) {
     if (!node || !node.querySelectorAll) return false
     var controls = node.querySelectorAll('input, select, textarea')
-    return !Array.prototype.some.call(controls, function (control) { return control !== field })
+    if (Array.prototype.some.call(controls, function (control) { return control !== field })) return false
+    var id = controlId(field)
+    return !Array.prototype.some.call(node.querySelectorAll('label'), function (label) {
+      var target = clean(label.getAttribute && label.getAttribute('for'))
+      return target !== '' && target !== id
+    })
   }
 
   // Prefer the authored `app-form_input_group` wrapper, but never depend on it:
@@ -320,6 +342,7 @@
         field.removeAttribute('required')
       }
       hideElement(field)
+      labelsFor(form, field).forEach(hideElement)
       hideElement(inputGroup(field, form))
     })
   }

@@ -45,6 +45,7 @@ class Element {
   }
   querySelectorAll(selector) {
     if (selector === 'input, select, textarea') return this.controls || []
+    if (selector === 'label') return this.labels || []
     if (selector === '[data-project-field]') return this.children
     if (selector === '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]') return this.monthlyEndDates || []
     if (selector === '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]') return this.hourlyEndDates || []
@@ -69,6 +70,10 @@ function field(name, value, attrs = {}) {
 
 function nativeField(name, value, attrs = {}) {
   return new Element({ name, value, ...attrs })
+}
+
+function labelElement(forId) {
+  return new Element({ for: forId })
 }
 
 function projectForm(values = {}) {
@@ -350,6 +355,85 @@ test('hides an unclassed exclusive wrapper but never one holding a sibling contr
   assert.equal(row.style.display, '')
   assert.equal(sharedEndDate.hidden, true)
   assert.equal(startDate.hidden, false)
+})
+
+test('hides the end date caption with the control when they share a date row', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { id: 'Monthly-End-Date' })
+  const startDate = nativeField('startDateInput', '08/20/2026', { id: 'Monthly-Start-Date' })
+  const endLabel = labelElement('Monthly-End-Date')
+  const startLabel = labelElement('Monthly-Start-Date')
+  const row = new Element({ class: 'app-form_input_group' })
+  row.controls = [startDate, monthlyEndDate]
+  row.labels = [startLabel, endLabel]
+  row.parentElement = form
+  monthlyEndDate.parentElement = row
+  monthlyEndDate.form = form
+  form.labels = [startLabel, endLabel]
+  form.monthlyEndDates = [monthlyEndDate]
+
+  load({ form })
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(endLabel.hidden, true)
+  assert.equal(endLabel.style.display, 'none')
+  assert.equal(row.hidden, false)
+  assert.equal(startDate.hidden, false)
+  assert.equal(startLabel.hidden, false)
+})
+
+test('hides only the end date and its caption beside a date-picker companion input', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { id: 'Monthly-End-Date' })
+  const companion = nativeField('endDateInput-alt', 'March 1, 2027')
+  const endLabel = labelElement('Monthly-End-Date')
+  const group = new Element({ class: 'app-form_input_group' })
+  group.controls = [monthlyEndDate, companion]
+  group.labels = [endLabel]
+  group.parentElement = form
+  monthlyEndDate.parentElement = group
+  monthlyEndDate.form = form
+  form.labels = [endLabel]
+  form.monthlyEndDates = [monthlyEndDate]
+
+  load({ form })
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(endLabel.hidden, true)
+  assert.equal(group.hidden, false)
+  assert.equal(group.style.display, '')
+  assert.equal(companion.hidden, false)
+})
+
+test('hides the exclusive wrapper with its own caption but never a foreign caption', () => {
+  const owned = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const ownedEndDate = nativeField('endDateInput', '03/01/2027', { id: 'Monthly-End-Date' })
+  const ownLabel = labelElement('Monthly-End-Date')
+  const ownGroup = new Element({ class: 'app-form_input_group' })
+  ownGroup.controls = [ownedEndDate]
+  ownGroup.labels = [ownLabel]
+  ownGroup.parentElement = owned
+  ownedEndDate.parentElement = ownGroup
+  ownedEndDate.form = owned
+  owned.labels = [ownLabel]
+  owned.monthlyEndDates = [ownedEndDate]
+  load({ form: owned })
+  assert.equal(ownGroup.hidden, true)
+  assert.equal(ownLabel.hidden, true)
+
+  const foreign = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const foreignEndDate = nativeField('endDateInput', '03/01/2027', { id: 'Monthly-End-Date' })
+  const foreignLabel = labelElement('Monthly-Number-of-Months')
+  const sharedGroup = new Element({ class: 'app-form_input_group' })
+  sharedGroup.controls = [foreignEndDate]
+  sharedGroup.labels = [foreignLabel]
+  sharedGroup.parentElement = foreign
+  foreignEndDate.parentElement = sharedGroup
+  foreignEndDate.form = foreign
+  foreign.labels = [foreignLabel]
+  foreign.monthlyEndDates = [foreignEndDate]
+  load({ form: foreign })
+  assert.equal(foreignEndDate.hidden, true)
+  assert.equal(sharedGroup.hidden, false)
+  assert.equal(foreignLabel.hidden, false)
 })
 
 test('never hides the conditional fee panel itself', () => {
