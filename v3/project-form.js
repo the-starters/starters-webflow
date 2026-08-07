@@ -43,12 +43,6 @@
   // conditional branch is hidden, so it can be put back unchanged.
   var REQUIRED_STASH_ATTR = 'data-project-required-hidden'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
-  // The V3 Designer contract uses canonical filter-item values. Keep the
-  // legacy display labels as a transition reader so the CDN script can ship
-  // before the separately governed Webflow attribute cutover.
-  var MONTHLY_END_DATE_SELECTOR = '[data-input-filter-item="monthly"] [name="endDateInput"], [data-input-filter-item="Monthly Recurring"] [name="endDateInput"]'
-  var HOURLY_END_DATE_SELECTOR = '[data-input-filter-item="hourly"] [name="endDateInput"], [data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]'
-  var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="hourly"] [name="no-end-date"], [data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
   var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
   var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname]'
@@ -75,11 +69,32 @@
     monthly: 'monthly',
   }
 
+  // The V3 Designer contract uses canonical filter-item values. Keep the
+  // legacy display labels as a transition reader so the CDN script can ship
+  // before the separately governed Webflow attribute cutover. Canonical value
+  // first: every panel lookup in this module resolves in this order.
   var ENGAGEMENT_PANEL_VALUES = {
     flat_fee: ['flat_fee', 'Flat Fee'],
     hourly: ['hourly', 'Ongoing Hourly'],
     weekly: ['weekly', 'Weekly Recurring'],
     monthly: ['monthly', 'Monthly Recurring'],
+  }
+
+  // One table drives both readers, so retiring the transition labels after the
+  // Designer cutover is a single edit that cannot leave the two disagreeing.
+  function panelSelectors(engagement, control) {
+    return (ENGAGEMENT_PANEL_VALUES[engagement] || []).map(function (value) {
+      return '[data-input-filter-item="' + value + '"] ' + control
+    })
+  }
+
+  var MONTHLY_END_DATE_SELECTORS = panelSelectors('monthly', '[name="endDateInput"]')
+  var HOURLY_END_DATE_SELECTORS = panelSelectors('hourly', '[name="endDateInput"]')
+  var HOURLY_ONGOING_SELECTORS = panelSelectors('hourly', '[name="no-end-date"]')
+
+  var SMART_FILL_CANONICALIZERS = {
+    fee_structure: canonicalEngagement,
+    invoice_frequency: canonicalInvoiceFrequency,
   }
 
   var NUMERIC_FIELDS = {
@@ -301,12 +316,21 @@
     var tag = clean(first.tagName).toUpperCase()
     var wanted = value == null ? '' : String(value)
     var lower = wanted.toLowerCase()
+    // Fee-structure and invoice-frequency presets and their authored options
+    // are cut over on separate schedules, so match the preset the same way the
+    // serializer reads the control: literally first, then by canonical value.
+    var canonical = SMART_FILL_CANONICALIZERS[normalizedName(category)] || null
+    var wantedCanonical = canonical ? canonical(wanted) : ''
     if (tag === 'SELECT') {
       var options = Array.prototype.slice.call(first.options || [])
       var option = options.find(function (item) { return item.value === wanted }) ||
         options.find(function (item) { return clean(item.value).toLowerCase() === lower }) ||
         options.find(function (item) { return clean(item.textContent) === wanted }) ||
         options.find(function (item) { return clean(item.textContent).toLowerCase() === lower })
+      if (!option && wantedCanonical) {
+        option = options.find(function (item) { return canonical(item.value) === wantedCanonical }) ||
+          options.find(function (item) { return canonical(item.textContent) === wantedCanonical })
+      }
       if (!option || first.disabled) return false
       // Select the matched option directly, so a select carrying duplicate
       // option values keeps the option the preset actually resolved.
@@ -319,6 +343,9 @@
       var group = fields.length > 1 ? fields : radioGroup(documentObject, first)
       var radio = group.find(function (item) { return clean(item.value) === wanted }) ||
         group.find(function (item) { return clean(item.value).toLowerCase() === lower })
+      if (!radio && wantedCanonical) {
+        radio = group.find(function (item) { return canonical(item.value) === wantedCanonical })
+      }
       if (!radio || radio.disabled) return false
       if (!radio.checked && typeof radio.click === 'function') radio.click()
       return true
@@ -470,10 +497,24 @@
       candidates[0]
   }
 
-  function firstControl(form, selector) {
+  // A comma-joined selector list resolves in document order, which would let a
+  // legacy panel outrank the canonical one. Try each selector in turn instead,
+  // so this matches how engagementPanel() picks the same panel.
+  function firstControl(form, selectors) {
     if (!form || !form.querySelectorAll) return null
-    var controls = form.querySelectorAll(selector)
-    return controls && controls.length ? controls[0] : null
+    for (var i = 0; i < selectors.length; i += 1) {
+      var controls = form.querySelectorAll(selectors[i])
+      if (controls && controls.length) return controls[0]
+    }
+    return null
+  }
+
+  function allControls(form, selectors) {
+    if (!form || !form.querySelectorAll) return []
+    return selectors.reduce(function (found, selector) {
+      Array.prototype.push.apply(found, Array.prototype.slice.call(form.querySelectorAll(selector) || []))
+      return found
+    }, [])
   }
 
   // Mirrors how serialize() resolves a `[data-project-field]` value: skip
@@ -634,11 +675,12 @@
   }
 
   function syncMonthlyDurationField(form) {
-    if (!form || !form.querySelectorAll) return
-    var controls = form.querySelectorAll(MONTHLY_END_DATE_SELECTOR)
-    if (!controls || !controls.length) return
+    // Monthly never submits an end date, so clear the control in every monthly
+    // panel a mid-cutover page carries rather than only the resolved one.
+    var controls = allControls(form, MONTHLY_END_DATE_SELECTORS)
+    if (!controls.length) return
     var panel = engagementPanel(form, 'monthly') || form
-    Array.prototype.forEach.call(controls, function (field) {
+    controls.forEach(function (field) {
       field.value = ''
       field.disabled = true
       field.required = false
@@ -655,8 +697,8 @@
 
   function syncHourlyDurationChoice(form) {
     if (readEngagement(form) !== 'hourly') return
-    var endDate = firstControl(form, HOURLY_END_DATE_SELECTOR)
-    var ongoing = firstControl(form, HOURLY_ONGOING_SELECTOR)
+    var endDate = firstControl(form, HOURLY_END_DATE_SELECTORS)
+    var ongoing = firstControl(form, HOURLY_ONGOING_SELECTORS)
     if (!endDate || !ongoing) return
 
     if (ongoing.checked) {

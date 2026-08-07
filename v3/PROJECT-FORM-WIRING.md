@@ -52,7 +52,7 @@ left blank, the adapter fails closed instead of submitting.
 | --- | --- | --- |
 | `title` | `Project-Name` | required |
 | `service` | `Services` | required |
-| `engagement_type` | `fee-structure` | Flat Fee, Ongoing Hourly, Monthly Recurring, Weekly Recurring |
+| `engagement_type` | `fee-structure` | Flat Fee, Ongoing Hourly, Monthly Recurring, Weekly Recurring; canonical option values `flat_fee`, `hourly`, `monthly`, `weekly` (see the cutover table below) |
 | `total_cost` | Flat Fee `Amount` | required for Flat Fee |
 | `paid_upfront_pct` | `Percent-Paid-Upfront` | optional, 0-100 |
 | `hourly_rate` | Ongoing Hourly `Amount` | required for Ongoing Hourly |
@@ -71,12 +71,12 @@ left blank, the adapter fails closed instead of submitting.
 
 Repeated date/rate controls remain in their authored fee panels:
 
-| Fee panel | Existing controls and attributes |
-| --- | --- |
-| Flat Fee | `startDateInput`, `endDateInput`, `Amount`, `Percent-Paid-Upfront` |
-| Ongoing Hourly | `startDateInput`, `endDateInput`, `Amount`, `Frequency`, and the three maximum-hours controls |
-| Monthly Recurring | `startDateInput`, `Amount`, `Number-of-Months`; the legacy `endDateInput` is hidden, disabled, and cleared by the adapter |
-| Weekly Recurring | `startDateInput`, `Amount`, `Number-of-Weeks` |
+| Fee panel | `data-input-filter-item` | Existing controls and attributes |
+| --- | --- | --- |
+| Flat Fee | `flat_fee` | `startDateInput`, `endDateInput`, `Amount`, `Percent-Paid-Upfront` |
+| Ongoing Hourly | `hourly` | `startDateInput`, `endDateInput`, `Amount`, `Frequency`, and the three maximum-hours controls |
+| Monthly Recurring | `monthly` | `startDateInput`, `Amount`, `Number-of-Months`; the legacy `endDateInput` is hidden, disabled, and cleared by the adapter |
+| Weekly Recurring | `weekly` | `startDateInput`, `Amount`, `Number-of-Weeks` |
 
 The adapter selects the visible authored conditional panel, with a nonblank
 fallback for test and preview DOMs. Hidden blank controls never replace the
@@ -141,17 +141,32 @@ The Fee Structure select values and the conditional-panel attributes must use
 the same canonical values. `global-embeds/form-embeds/form-input-filter` compares
 them exactly:
 
-| Fee Structure option | Option value | Fee panel attribute |
-| --- | --- | --- |
-| Flat Fee | `flat_fee` | `data-input-filter-item="flat_fee"` |
-| Hourly | `hourly` | `data-input-filter-item="hourly"` |
-| Weekly Recurring | `weekly` | `data-input-filter-item="weekly"` |
-| Monthly Recurring | `monthly` | `data-input-filter-item="monthly"` |
+This is a values-only cutover. The visible option labels stay exactly as they
+read today — only the option values and the matching panel attributes change:
+
+| Fee Structure option label | Option value | Fee panel attribute | Legacy value this replaces |
+| --- | --- | --- | --- |
+| Flat Fee | `flat_fee` | `data-input-filter-item="flat_fee"` | `Flat Fee` |
+| Ongoing Hourly | `hourly` | `data-input-filter-item="hourly"` | `Ongoing Hourly` |
+| Weekly Recurring | `weekly` | `data-input-filter-item="weekly"` | `Weekly Recurring` |
+| Monthly Recurring | `monthly` | `data-input-filter-item="monthly"` | `Monthly Recurring` |
 
 The adapter accepts those canonical panel values first and retains the legacy
-display labels as a transition reader. This permits the CDN release to precede
-the Designer attribute cutover without hiding every fee panel. New markup must
-use only the canonical values. Invoice Frequency is not a second
+values in the rightmost column as a transition reader. This permits the CDN
+release to precede the Designer attribute cutover without hiding every fee
+panel. New markup must use only the canonical values. CMS `data-sp-fill-value`
+presets for the `fee_structure` and `invoice_frequency` categories are matched
+literally first and then by canonical value, so a card written in either
+grammar fills the select whichever grammar the option carries; leaving the
+labels unchanged keeps the visible-text match working as a third path.
+
+Because `form-input-filter` matches every `[data-input-filter-item]` descendant
+of its list and the canonical values are generic, the Fee Structure filter group
+must not contain a nested one. The hourly `Frequency` select — whose own values
+are `one_time`, `weekly`, and `monthly` — gates the three maximum-hours controls
+through plain Designer conditions, not a second `data-input-filter` list inside
+the hourly panel; a nested `[data-input-filter-item="weekly"]` there would
+shadow the Weekly fee panel. Invoice Frequency is likewise not a second
 `data-input-filter` controller: it is one independent select named
 `invoice-frequency`, and this adapter owns its Standard/My Own Contract
 visibility.

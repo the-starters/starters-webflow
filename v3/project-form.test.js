@@ -66,9 +66,19 @@ class Element {
     if (selector === 'input, select, textarea') return this.controls || []
     if (selector === 'label') return this.labels || []
     if (selector === '[data-project-field]') return this.children
-    if (selector.includes('[data-input-filter-item="monthly"]') && selector.includes('[name="endDateInput"]')) return this.monthlyEndDates || []
-    if (selector.includes('[data-input-filter-item="hourly"]') && selector.includes('[name="endDateInput"]')) return this.hourlyEndDates || []
-    if (selector.includes('[data-input-filter-item="hourly"]') && selector.includes('[name="no-end-date"]')) return this.hourlyOngoingChoices || []
+    // Keyed on the exact filter-item value so the canonical and legacy panel
+    // grammars stay distinguishable. `panelControls` is authoritative when a
+    // test supplies it; otherwise the shorthand buckets answer for the
+    // canonical grammar only.
+    const panelControl = /^\[data-input-filter-item="([^"]+)"\] \[name="([^"]+)"\]$/.exec(selector)
+    if (panelControl) {
+      const [, item, name] = panelControl
+      if (this.panelControls) return (this.panelControls[item] || {})[name] || []
+      if (item === 'monthly' && name === 'endDateInput') return this.monthlyEndDates || []
+      if (item === 'hourly' && name === 'endDateInput') return this.hourlyEndDates || []
+      if (item === 'hourly' && name === 'no-end-date') return this.hourlyOngoingChoices || []
+      return []
+    }
     if (selector.startsWith('[required]')) {
       return this.children.filter((child) => child.getAttribute('required') !== null || child.getAttribute('data-project-required-hidden') !== null)
     }
@@ -1124,6 +1134,136 @@ test('syncs canonical hourly filter-item duration controls', () => {
   load({ form })
   assert.equal(endDate.value, '')
   assert.equal(endDate.disabled, true)
+})
+
+test('still syncs hourly duration controls behind the legacy transition label', () => {
+  const form = projectForm({ engagement_type: 'hourly' })
+  const endDate = nativeField('endDateInput', '10/15/2026')
+  const ongoing = nativeField('no-end-date', 'true', { type: 'checkbox', checked: true })
+  form.panelControls = {
+    'Ongoing Hourly': { endDateInput: [endDate], 'no-end-date': [ongoing] },
+  }
+
+  load({ form })
+  assert.equal(endDate.value, '')
+  assert.equal(endDate.disabled, true)
+})
+
+test('still clears the monthly end date behind the legacy transition label', () => {
+  const form = projectForm({ engagement_type: 'monthly', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027')
+  monthlyEndDate.form = form
+  form.panelControls = { 'Monthly Recurring': { endDateInput: [monthlyEndDate] } }
+
+  load({ form })
+  assert.equal(monthlyEndDate.value, '')
+  assert.equal(monthlyEndDate.disabled, true)
+  assert.equal(monthlyEndDate.hidden, true)
+})
+
+test('hourly duration controls prefer the canonical panel over a legacy one', () => {
+  const form = projectForm({ engagement_type: 'hourly' })
+  const canonicalEndDate = nativeField('endDateInput', '10/15/2026')
+  const canonicalOngoing = nativeField('no-end-date', 'true', { type: 'checkbox', checked: true })
+  const legacyEndDate = nativeField('endDateInput', '11/20/2026')
+  const legacyOngoing = nativeField('no-end-date', 'true', { type: 'checkbox', checked: true })
+  // Mid-cutover markup carrying both grammars. The serializer reads the
+  // canonical panel, so the duration sync must clear that same control.
+  form.panelControls = {
+    hourly: { endDateInput: [canonicalEndDate], 'no-end-date': [canonicalOngoing] },
+    'Ongoing Hourly': { endDateInput: [legacyEndDate], 'no-end-date': [legacyOngoing] },
+  }
+
+  load({ form })
+  assert.equal(canonicalEndDate.value, '')
+  assert.equal(canonicalEndDate.disabled, true)
+  assert.equal(legacyEndDate.value, '11/20/2026')
+  assert.equal(legacyEndDate.disabled, false)
+})
+
+test('smart-fill matches a fee-structure preset across the value grammars', () => {
+  const legacyOption = () => nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [
+      { value: '', textContent: 'Select one...' },
+      { value: 'Flat Fee', textContent: 'Flat Fee' },
+      { value: 'Ongoing Hourly', textContent: 'Ongoing Hourly' },
+    ],
+  })
+  const canonicalOption = () => nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [
+      { value: '', textContent: 'Select one...' },
+      { value: 'flat_fee', textContent: 'Flat Fee' },
+      { value: 'hourly', textContent: 'Ongoing Hourly' },
+    ],
+  })
+  const scenarios = [
+    { select: legacyOption(), preset: 'flat_fee', expected: 'Flat Fee' },
+    { select: legacyOption(), preset: 'hourly', expected: 'Ongoing Hourly' },
+    { select: canonicalOption(), preset: 'Ongoing Hourly', expected: 'hourly' },
+    { select: canonicalOption(), preset: 'Flat Fee', expected: 'flat_fee' },
+  ]
+  for (const scenario of scenarios) {
+    const form = projectForm()
+    form.children.push(scenario.select)
+    const document = documentFixture(form)
+    const { api } = load({ form, document })
+
+    assert.equal(api.applySmartFill(document, 'fee_structure', scenario.preset), true)
+    assert.equal(scenario.select.value, scenario.expected)
+  }
+})
+
+test('smart-fill matches a canonical invoice-frequency preset against legacy option text', () => {
+  const form = projectForm()
+  form.children = form.children.filter((child) => child.getAttribute('data-project-field') !== 'invoice_frequency')
+  const invoice = nativeField('invoice-frequency', '', {
+    tagName: 'SELECT',
+    options: [
+      { value: '', textContent: 'Select one...' },
+      { value: 'Bi-Weekly', textContent: 'Bi-Weekly' },
+      { value: 'Upon completion of the project', textContent: 'Upon completion of the project' },
+    ],
+  })
+  form.children.push(invoice)
+  const document = documentFixture(form)
+  const { api } = load({ form, document })
+
+  assert.equal(api.applySmartFill(document, 'invoice_frequency', 'upon_completion'), true)
+  assert.equal(invoice.value, 'Upon completion of the project')
+})
+
+test('smart-fill canonicalizes a fee-structure preset for a radio group', () => {
+  const form = projectForm()
+  const flat = nativeField('Fee-Structure', 'Flat Fee', { type: 'radio', checked: false })
+  const hourly = nativeField('Fee-Structure', 'Ongoing Hourly', { type: 'radio', checked: true })
+  form.children.push(flat, hourly)
+  const document = documentFixture(form)
+  const { api } = load({ form, document })
+
+  assert.equal(api.applySmartFill(document, 'fee_structure', 'flat_fee'), true)
+  assert.equal(flat.checked, true)
+})
+
+test('smart-fill leaves an unrelated category ungrammatical', () => {
+  const form = projectForm()
+  const service = nativeField('Services', '', {
+    tagName: 'SELECT',
+    options: [
+      { value: '', textContent: 'Select one...' },
+      { value: 'Email Marketing', textContent: 'Email Marketing' },
+    ],
+    'data-sp-fill': 'input',
+    'data-sp-fill-category': 'service',
+  })
+  form.children.push(service)
+  const document = documentFixture(form)
+  document.querySelectorAll = (selector) => selector.includes('[data-sp-fill="input"]') ? [service] : []
+  const { api } = load({ form, document })
+
+  assert.equal(api.applySmartFill(document, 'service', 'email_marketing'), false)
+  assert.equal(service.value, '')
 })
 
 test('serializes disabled authored controls from the confirmation step', () => {
