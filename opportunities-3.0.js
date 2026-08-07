@@ -1404,6 +1404,7 @@
   // Same card contract as every other delegated handler in this file: the
   // wf-xano-rendered project card is whatever ancestor carries the row id.
   const INVOICE_CARD_SELECTOR = '[data-wf-xano-id]'
+  const INVOICE_PAYMENT_LINK_PLACEHOLDER = '#invoice-payment-link'
   const INVOICE_MIN_AMOUNT = 0.01
   const INVOICE_MAX_AMOUNT = 1000000
   const INVOICE_AMOUNT_MESSAGE = 'Enter an amount between $0.01 and $1,000,000.'
@@ -1457,11 +1458,21 @@
     return $('[data-wf-invoice="error"]', modal) || $('.w-form-fail', modal)
   }
 
+  // The authored component has no data hook on its pay CTA, so the only way in
+  // is the "#invoice-payment-link" placeholder href — which paintInvoiceSuccess
+  // then overwrites with the live Stripe URL. Stamp our own hook on the first
+  // resolve so every later invoice in the same page session still finds the same
+  // anchor instead of silently painting nothing and leaving the previous
+  // invoice's link behind the button.
   function invoicePaymentLinkEl(modal) {
     if (!modal) return null
-    return (
-      $('[data-wf-invoice="payment-link"]', modal) || $('a[href="#invoice-payment-link"]', modal)
-    )
+    const link =
+      $('[data-wf-invoice="payment-link"]', modal) ||
+      $('a[href="' + INVOICE_PAYMENT_LINK_PLACEHOLDER + '"]', modal)
+    if (link && link.getAttribute('data-wf-invoice') !== 'payment-link') {
+      link.setAttribute('data-wf-invoice', 'payment-link')
+    }
+    return link
   }
 
   // The authored "View in Stripe" control is a design-system button: the visible
@@ -1519,7 +1530,12 @@
       delete form.dataset.invoiceIdempotencyKey
     }
     if (done) done.style.display = ''
-    const linkWrap = invoicePaymentLinkWrap(invoicePaymentLinkEl(modal))
+    // Put the previous invoice's live Stripe URL back to the placeholder, so a
+    // half-painted success screen can never expose a pay button for an invoice
+    // the member is no longer looking at.
+    const link = invoicePaymentLinkEl(modal)
+    if (link) link.href = INVOICE_PAYMENT_LINK_PLACEHOLDER
+    const linkWrap = invoicePaymentLinkWrap(link)
     if (linkWrap) linkWrap.style.display = ''
     clearInvoiceError(modal)
   }
@@ -3754,6 +3770,7 @@
     formatInvoiceAmount,
     normalizeInvoiceAmount,
     openInvoiceModal,
+    prepareInvoiceModal,
     paintInvoiceSuccess,
     opportunityPath,
     pageOppId,

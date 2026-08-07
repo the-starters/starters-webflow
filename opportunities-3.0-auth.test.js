@@ -294,23 +294,38 @@ test('invoiceProjectContext prefers a bound brand field over the pipe-split head
 // carries the "#invoice-payment-link" placeholder href.
 function invoiceModalFixture() {
   const wrap = { style: {} }
+  // Attribute-backed like the real anchor: rewriting .href rewrites the
+  // attribute, so an [href="#invoice-payment-link"] selector stops matching.
+  const linkAttributes = new Map([['href', '#invoice-payment-link']])
   const link = {
-    href: '#invoice-payment-link',
     style: {},
     closest: (selector) => (selector === '.button_main-wrap' ? wrap : null),
+    getAttribute: (name) => (linkAttributes.has(name) ? linkAttributes.get(name) : null),
+    hasAttribute: (name) => linkAttributes.has(name),
+    setAttribute: (name, value) => linkAttributes.set(name, String(value)),
   }
+  Object.defineProperty(link, 'href', {
+    enumerable: true,
+    get: () => linkAttributes.get('href'),
+    set: (value) => linkAttributes.set('href', String(value)),
+  })
   const binds = {
     brand: { textContent: '' },
     project: { textContent: '' },
     amount: { textContent: '$1,000.00' },
   }
-  const form = { style: {} }
+  const form = { dataset: {}, style: {}, reset() {} }
   const done = { style: {} }
   const modal = {
     querySelector: (selector) => {
       if (selector === 'form') return form
       if (selector === '.w-form-done') return done
-      if (selector === 'a[href="#invoice-payment-link"]') return link
+      if (selector === '[data-wf-invoice="payment-link"]') {
+        return link.getAttribute('data-wf-invoice') === 'payment-link' ? link : null
+      }
+      if (selector === 'a[href="#invoice-payment-link"]') {
+        return link.getAttribute('href') === '#invoice-payment-link' ? link : null
+      }
       return null
     },
     querySelectorAll: (selector) => {
@@ -350,6 +365,46 @@ test('the success screen shows and hides the Stripe button, not just its overlay
   paintInvoiceSuccess(unpayable.modal, { status: 'unpaid' }, context, 10)
   assert.equal(unpayable.wrap.style.display, 'none')
   assert.equal(unpayable.link.href, '#invoice-payment-link')
+})
+
+// A member can bill several projects without reloading, and the first success
+// rewrites the anchor's placeholder href — so the pay CTA has to stay findable
+// afterwards, or invoice #2 sends them to invoice #1's Stripe link.
+test('a second invoice in the same session repaints the Stripe button, never a stale link', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { paintInvoiceSuccess, prepareInvoiceModal } = bridge.window.Opp30
+  const first = { brand: 'Northwind Coffee', title: 'Growth Marketing Lead' }
+  const second = { brand: 'Halcyon Labs', title: 'Lifecycle Email Revamp' }
+  const fixture = invoiceModalFixture()
+
+  prepareInvoiceModal(fixture.modal, first)
+  paintInvoiceSuccess(
+    fixture.modal,
+    { status: 'unpaid', payment_link: 'https://buy.stripe.com/project-675' },
+    first,
+    250,
+  )
+  assert.equal(fixture.link.href, 'https://buy.stripe.com/project-675')
+
+  prepareInvoiceModal(fixture.modal, second)
+  assert.equal(fixture.wrap.style.display, '')
+  paintInvoiceSuccess(
+    fixture.modal,
+    { status: 'unpaid', payment_link: 'https://buy.stripe.com/project-702' },
+    second,
+    480,
+  )
+  assert.equal(fixture.binds.brand.textContent, 'Halcyon Labs')
+  assert.equal(fixture.link.href, 'https://buy.stripe.com/project-702')
+  assert.equal(fixture.wrap.style.display, '')
+
+  // An invoice that comes back without a payment_link must hide the button
+  // rather than leave the previous invoice's live link behind it.
+  prepareInvoiceModal(fixture.modal, second)
+  assert.equal(fixture.link.href, '#invoice-payment-link')
+  paintInvoiceSuccess(fixture.modal, { status: 'unpaid' }, second, 90)
+  assert.equal(fixture.wrap.style.display, 'none')
+  assert.equal(fixture.link.href, '#invoice-payment-link')
 })
 
 test('openInvoiceModal opens through modal.js and only falls back to showModal', async () => {
