@@ -52,7 +52,7 @@ left blank, the adapter fails closed instead of submitting.
 | --- | --- | --- |
 | `title` | `Project-Name` | required |
 | `service` | `Services` | required |
-| `engagement_type` | `fee-structure` | Flat Fee, Ongoing Hourly, Monthly Recurring, Weekly Recurring |
+| `engagement_type` | `fee-structure` | Flat Fee, Ongoing Hourly, Monthly Recurring, Weekly Recurring; canonical option values `flat_fee`, `hourly`, `monthly`, `weekly` (see the cutover table below) |
 | `total_cost` | Flat Fee `Amount` | required for Flat Fee |
 | `paid_upfront_pct` | `Percent-Paid-Upfront` | optional, 0-100 |
 | `hourly_rate` | Ongoing Hourly `Amount` | required for Ongoing Hourly |
@@ -71,12 +71,12 @@ left blank, the adapter fails closed instead of submitting.
 
 Repeated date/rate controls remain in their authored fee panels:
 
-| Fee panel | Existing controls and attributes |
-| --- | --- |
-| Flat Fee | `startDateInput`, `endDateInput`, `Amount`, `Percent-Paid-Upfront` |
-| Ongoing Hourly | `startDateInput`, `endDateInput`, `Amount`, `Frequency`, and the three maximum-hours controls |
-| Monthly Recurring | `startDateInput`, `Amount`, `Number-of-Months`; the legacy `endDateInput` is hidden, disabled, and cleared by the adapter |
-| Weekly Recurring | `startDateInput`, `Amount`, `Number-of-Weeks` |
+| Fee panel | `data-input-filter-item` | Existing controls and attributes |
+| --- | --- | --- |
+| Flat Fee | `flat_fee` | `startDateInput`, `endDateInput`, `Amount`, `Percent-Paid-Upfront` |
+| Ongoing Hourly | `hourly` | `startDateInput`, `endDateInput`, `Amount`, `Frequency`, and the three maximum-hours controls |
+| Monthly Recurring | `monthly` | `startDateInput`, `Amount`, `Number-of-Months`; the legacy `endDateInput` is hidden, disabled, and cleared by the adapter |
+| Weekly Recurring | `weekly` | `startDateInput`, `Amount`, `Number-of-Weeks` |
 
 The adapter selects the visible authored conditional panel, with a nonblank
 fallback for test and preview DOMs. Hidden blank controls never replace the
@@ -136,6 +136,40 @@ separate from pricing:
   hourly billing frequency;
 - Xano derives the PandaDoc template key. The browser never chooses a template
   UUID or sends Brand/Starter authority fields.
+
+The Fee Structure select values and the conditional-panel attributes must use
+the same canonical values, because `global-embeds/form-embeds/form-input-filter`
+compares them exactly. This is a values-only cutover: the visible option labels
+stay exactly as they read today, and only the option values and the matching
+panel attributes change.
+
+| Fee Structure option label | Option value | Fee panel attribute | Legacy value this replaces |
+| --- | --- | --- | --- |
+| Flat Fee | `flat_fee` | `data-input-filter-item="flat_fee"` | `Flat Fee` |
+| Ongoing Hourly | `hourly` | `data-input-filter-item="hourly"` | `Ongoing Hourly` |
+| Weekly Recurring | `weekly` | `data-input-filter-item="weekly"` | `Weekly Recurring` |
+| Monthly Recurring | `monthly` | `data-input-filter-item="monthly"` | `Monthly Recurring` |
+
+The adapter accepts those canonical panel values first and retains the legacy
+values in the rightmost column as a transition reader. This permits the CDN
+release to precede the Designer attribute cutover without hiding every fee
+panel. New markup must use only the canonical values. CMS `data-sp-fill-value`
+presets for the `fee_structure` and `invoice_frequency` categories are matched
+literally first and then by canonical value, so a card written in either
+grammar fills the authored control — select or radio group — whichever grammar
+its own options carry; on a select, leaving the labels unchanged keeps the
+visible-text match working as a third path.
+
+Because `form-input-filter` matches every `[data-input-filter-item]` descendant
+of its list and the canonical values are generic, the Fee Structure filter group
+must not contain a nested one. The hourly `Frequency` select — whose own values
+are `one_time`, `weekly`, and `monthly` — gates the three maximum-hours controls
+through plain Designer conditions, not a second `data-input-filter` list inside
+the hourly panel; a nested `[data-input-filter-item="weekly"]` there would
+shadow the Weekly fee panel. Invoice Frequency is likewise not a second
+`data-input-filter` controller: it is one independent select named
+`invoice-frequency`, and this adapter owns its Standard/My Own Contract
+visibility.
 
 Invoice frequency belongs to the contract rather than the pricing model, so the
 adapter syncs it from the contract choice alongside the duration sync at each of
@@ -203,10 +237,12 @@ fallback each time) and selects that exact option, so duplicate option values
 stay distinguishable; a radio preset widens to the whole same-named group and
 clicks it, so Webflow's conditional panels react; a checkbox honors an explicit
 `true`/`false` or its own value and leaves the authored state alone for anything
-else; any other control has its value set. A disabled control is never touched,
-and every write reaches the rest of the page the way a Brand's would: radios and
-checkboxes through a real `click()`, everything else through a dispatched
-`input`/`change` pair.
+else; any other control has its value set. The two cutover categories above add
+one more pass for selects and radios: a preset that matches nothing literally is
+retried by canonical value, so either grammar resolves. A disabled control is
+never touched, and every write reaches the rest of the page the way a Brand's
+would: radios and checkboxes through a real `click()`, everything else through a
+dispatched `input`/`change` pair.
 
 **Current-date initialization.** Blank `[data-set-current-date]` controls in the
 form receive today's date, formatted by jQuery UI's datepicker when it is loaded
@@ -248,7 +284,9 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    Monthly caps; fixed and ongoing Monthly; fixed and ongoing Weekly; Standard
    Contract; and My Own Contract validation without issuing a request for
    invalid inputs. Confirm Monthly shows no end-date field and serializes only
-   `number_of_months` as its duration source.
+   `number_of_months` as its duration source. Run that pass once against the
+   legacy panel attributes and again after the Designer cutover to the canonical
+   values in the table above; both must behave identically.
 4. Confirm Standard Contract requires an invoice frequency and serializes it
    independently of the hourly billing frequency, that My Own Contract hides
    the select and omits `invoice_frequency` from the payload, and that
