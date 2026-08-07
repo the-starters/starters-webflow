@@ -326,6 +326,7 @@
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     projectCreate: (payload) => call('projects/create/v3', { body: payload }),
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
+    invoiceCreate: (payload) => call('invoices/create/v3', { body: payload }),
     // starter / talent
     starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
     starterOppList: (tab, page = 1, per_page = 20, options = {}) =>
@@ -1393,6 +1394,176 @@
     $$(`[data-opp-bind="${field}"]`, card).forEach((el) => {
       el.textContent = value == null ? '' : value
     })
+  }
+
+  /* ======================= INVOICES ============================ */
+  const INVOICE_MODAL_SELECTOR = '[data-modal-target="generate-invoice"]'
+  const INVOICE_ACTION_SELECTOR =
+    '[data-project-action="invoice"], a[href="#generate-invoice"]'
+  let activeInvoiceProject = null
+  let invoiceSubmitting = false
+
+  function invoiceProjectContext(card) {
+    if (!card) return null
+    const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
+    if (!projectId) return null
+    const heading = cardFieldText(card, 'heading_display')
+    const brand = heading.includes('|') ? heading.split('|').slice(1).join('|').trim() : heading
+    return {
+      card,
+      projectId,
+      title: cardFieldText(card, 'title'),
+      brand,
+    }
+  }
+
+  function invoiceBind(modal, field, value) {
+    if (!modal) return
+    $$('[data-wf-invoice-bind="' + field + '"]', modal).forEach((el) => {
+      el.textContent = value == null ? '' : String(value)
+    })
+  }
+
+  function invoiceError(modal, message) {
+    const fail = $('[data-wf-invoice="error"]', modal) || $('.w-form-fail', modal)
+    if (!fail) return
+    const text = $('[data-wf-invoice="error-message"]', fail) || fail
+    text.textContent = message || 'Something went wrong. Please try again.'
+    fail.style.display = 'block'
+  }
+
+  function clearInvoiceError(modal) {
+    const fail = $('[data-wf-invoice="error"]', modal) || $('.w-form-fail', modal)
+    if (fail) fail.style.display = ''
+  }
+
+  function invoiceIdempotencyKey(form, projectId) {
+    if (form.dataset.invoiceIdempotencyKey) return form.dataset.invoiceIdempotencyKey
+    const uuid =
+      window.crypto && typeof window.crypto.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
+    form.dataset.invoiceIdempotencyKey = 'invoice-v3-' + projectId + '-' + uuid
+    return form.dataset.invoiceIdempotencyKey
+  }
+
+  function openInvoiceModal(card) {
+    const modal = $(INVOICE_MODAL_SELECTOR)
+    const context = invoiceProjectContext(card)
+    if (!modal || !context) return false
+    activeInvoiceProject = context
+    invoiceBind(modal, 'brand', context.brand)
+    invoiceBind(modal, 'project', context.title)
+    const form = $('form', modal)
+    const done = $('.w-form-done', modal)
+    if (form) {
+      form.reset()
+      form.style.display = ''
+      delete form.dataset.invoiceIdempotencyKey
+    }
+    if (done) done.style.display = ''
+    clearInvoiceError(modal)
+    if (typeof modal.showModal === 'function' && !modal.open) modal.showModal()
+    else modal.setAttribute('open', '')
+    window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal } }))
+    return true
+  }
+
+  function formatInvoiceAmount(value) {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
+  }
+
+  function paintInvoiceSuccess(modal, result, context, amount) {
+    const form = $('form', modal)
+    const done = $('.w-form-done', modal)
+    if (form) form.style.display = 'none'
+    if (done) done.style.display = 'block'
+    invoiceBind(modal, 'brand', context.brand)
+    invoiceBind(modal, 'project', context.title)
+    invoiceBind(modal, 'amount', formatInvoiceAmount(amount))
+    invoiceBind(modal, 'status', result.status || 'unpaid')
+    const link =
+      $('[data-wf-invoice="payment-link"]', modal) ||
+      $('a[href="#invoice-payment-link"]', modal)
+    if (link && result.payment_link) {
+      link.href = result.payment_link
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
+    }
+  }
+
+  function invoiceErrorMessage(err) {
+    const message = (err && err.data && err.data.message) || (err && err.message) || ''
+    if (/connect a stripe account/i.test(message)) {
+      return 'Connect your Stripe account from the dashboard before generating invoices.'
+    }
+    return message || 'Invoice generation failed. Please try again.'
+  }
+
+  function wireInvoiceWorkflow() {
+    if (window.__opp30InvoicesWired) return
+    window.__opp30InvoicesWired = true
+
+    document.addEventListener(
+      'click',
+      (event) => {
+        const action = event.target.closest && event.target.closest(INVOICE_ACTION_SELECTOR)
+        if (!action) return
+        const card = action.closest('[data-project-element="item"][data-wf-xano-id]')
+        if (!card) return
+        event.preventDefault()
+        event.stopPropagation()
+        openInvoiceModal(card)
+      },
+      true,
+    )
+
+    document.addEventListener(
+      'submit',
+      async (event) => {
+        const form = event.target
+        const modal = form && form.closest && form.closest(INVOICE_MODAL_SELECTOR)
+        if (!modal) return
+        event.preventDefault()
+        event.stopPropagation()
+        if (invoiceSubmitting || !activeInvoiceProject) return
+
+        const amountInput = $('#Amount', form) || $('[name="Amount"]', form)
+        const descriptionInput = $('#Description', form) || $('[name="Description"]', form)
+        const amount = Number(amountInput && amountInput.value)
+        if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) {
+          invoiceError(modal, 'Enter an amount between $0.01 and $1,000,000.')
+          return
+        }
+
+        clearInvoiceError(modal)
+        invoiceSubmitting = true
+        const submit = $('[type="submit"]', form)
+        if (submit) submit.disabled = true
+        try {
+          const result = await API.invoiceCreate({
+            project_id: activeInvoiceProject.projectId,
+            amount,
+            description: descriptionInput ? descriptionInput.value.trim() : '',
+            idempotency_key: invoiceIdempotencyKey(form, activeInvoiceProject.projectId),
+          })
+          paintInvoiceSuccess(modal, result, activeInvoiceProject, amount)
+          delete form.dataset.invoiceIdempotencyKey
+          if (window.WfXano && typeof window.WfXano.refresh === 'function') {
+            window.WfXano.refresh(
+              activeInvoiceProject.card.closest('[wf-xano-source]') || undefined,
+            )
+          }
+        } catch (err) {
+          console.error('[opp30:invoice]', err)
+          invoiceError(modal, invoiceErrorMessage(err))
+        } finally {
+          invoiceSubmitting = false
+          if (submit) submit.disabled = false
+        }
+      },
+      true,
+    )
   }
 
   // Paint the existing Webflow-authored opportunity review screen. Some
@@ -3390,6 +3561,7 @@
     prepareOpportunityStatusControls()
     prepareOpportunityLoadingControls()
     wireModals()
+    wireInvoiceWorkflow()
     const p = location.pathname
     if (p.includes('starter-dashboard')) initStarterDashboardOpportunityMatch()
     else if (p.includes('opportunities-details---brand-view')) initBrandDetail()
@@ -3456,6 +3628,10 @@
     paintOpportunityDetail,
     paintCloseOpportunityModalTitle,
     paintOpportunityReviewSuccess,
+    invoiceProjectContext,
+    invoiceErrorMessage,
+    formatInvoiceAmount,
+    openInvoiceModal,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,

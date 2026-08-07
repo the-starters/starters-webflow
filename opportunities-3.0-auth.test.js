@@ -175,6 +175,56 @@ const freeBrandMember = {
   planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
 }
 
+test('invoiceCreate sends the V3 invoice payload through the authenticated Xano bridge', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/create/v3')) {
+        return response({
+          invoice_id: 901,
+          stripe_ref: 'plink_test',
+          payment_link: 'https://buy.stripe.com/test',
+          status: 'unpaid',
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember },
+  )
+
+  const result = await bridge.API.invoiceCreate({
+    project_id: 675,
+    amount: 25.5,
+    description: 'August test invoice',
+    idempotency_key: 'invoice-v3-675-test',
+  })
+
+  assert.equal(result.invoice_id, 901)
+  assert.match(requests[1].url, /\/invoices\/create\/v3$/)
+  assert.equal(requests[1].init.method, 'POST')
+  assert.deepEqual(JSON.parse(requests[1].init.body), {
+    project_id: 675,
+    amount: 25.5,
+    description: 'August test invoice',
+    idempotency_key: 'invoice-v3-675-test',
+  })
+})
+
+test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
+  const bridge = await loadBridge(async () => response({}))
+
+  assert.equal(
+    bridge.window.Opp30.invoiceErrorMessage({
+      data: { message: 'Connect a Stripe account before generating invoices' },
+    }),
+    'Connect your Stripe account from the dashboard before generating invoices.',
+  )
+  assert.equal(bridge.window.Opp30.formatInvoiceAmount(25.5), '$25.50')
+})
+
 test('redirectForeignBrandToFeed redirects only on ownership-denied statuses', async () => {
   const denied404 = await loadBridge(async () => response({}))
   assert.equal(denied404.window.Opp30.redirectForeignBrandToFeed({ status: 404 }), true)
