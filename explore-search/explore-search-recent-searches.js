@@ -125,22 +125,28 @@
 
   /* ---------- Storage (guarded for private mode) ---------- */
 
-  /* Cheap no-throw sniff so JSON.parse only ever sees something that can
-     parse: a stored value must open with "[" and close with "]" (the shape we
-     write). A corrupt or truncated entry reads as no recents instead of
-     throwing. The try/catch below stays as the private-mode/storage net. */
-  function looksLikeJsonArray(value) {
-    if (typeof value !== "string") return false;
+  /* Parse a payload without exception-driven control flow. Non-strings pass
+     through untouched (an already-parsed body stays what it is); strings are
+     sniffed for a matching delimiter pair first, so JSON.parse only ever sees
+     something that can parse and a truncated or corrupt entry becomes null
+     instead of a throw. Not a validator — the caller's try/catch stays as the
+     never-break-the-page net.
+     Intentionally DUPLICATED in explore-search-tab-counts.js so each embed
+     stays standalone (no shared globals between files). Keep the two copies in
+     sync. */
+  function parseJsonOrNull(value) {
+    if (typeof value !== "string") return value;
     var trimmed = value.trim();
-    return (
-      trimmed.charAt(0) === "[" && trimmed.charAt(trimmed.length - 1) === "]"
-    );
+    var first = trimmed.charAt(0);
+    var closer = first === "{" ? "}" : first === "[" ? "]" : "";
+    if (!closer || trimmed.charAt(trimmed.length - 1) !== closer) return null;
+    return JSON.parse(trimmed);
   }
 
   function readRecent() {
     try {
       var raw = window.localStorage.getItem(RECENT_KEY);
-      var stored = looksLikeJsonArray(raw) ? JSON.parse(raw) : [];
+      var stored = parseJsonOrNull(raw);
       return Array.isArray(stored)
         ? stored.filter(function isStringEntry(q) {
             return typeof q === "string";

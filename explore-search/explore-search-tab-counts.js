@@ -99,24 +99,24 @@
      tabs: a page can carry other tab components (e.g. the contract-generation
      wizard) whose active button has no count span, and a single document-order
      querySelector resolves to whichever of them comes first — painting 0
-     forever. Iterate every button-list, skip the count-free ones, and let the
-     first count-bearing match win. */
+     forever. Walk the button-lists, skip the count-free ones, and stop at the
+     FIRST count-bearing list: that list owns the answer whether or not its
+     active button carries a span (no span means 0, as before). */
   function syncActiveCount() {
     try {
       var lists = document.querySelectorAll(
         '[data-tab-component="button-list"]'
       );
       var countSpan = null;
-      Array.prototype.forEach.call(lists, function findActiveCountSpan(list) {
-        if (countSpan) return; // first count-bearing match wins
-        if (!list.querySelector("[data-tab-count-for]")) return;
-        var activeButton = list.querySelector(
+      for (var i = 0; i < lists.length; i++) {
+        if (!lists[i].querySelector("[data-tab-count-for]")) continue;
+        var activeButton = lists[i].querySelector(
           '.is-active, [data-tab-active="true"]'
         );
         countSpan =
-          (activeButton && activeButton.querySelector("[data-tab-count-for]")) ||
-          null;
-      });
+          activeButton && activeButton.querySelector("[data-tab-count-for]");
+        break;
+      }
       var indexName = countSpan && countSpan.getAttribute("data-tab-count-for");
       var count = (indexName && latestCounts[indexName]) || 0;
       var targets = document.querySelectorAll("[data-active-tab-count]");
@@ -128,12 +128,12 @@
     }
   }
 
+  /* Clearing the counts is just painting an empty map: renderTabCounts already
+     falls back to 0 for every index it cannot find, so the painting lives in
+     one place. */
   function resetCounts() {
     latestCounts = Object.create(null);
-    var spans = document.querySelectorAll("[data-tab-count-for]");
-    Array.prototype.forEach.call(spans, function zeroCountSpan(el) {
-      el.textContent = "0";
-    });
+    renderTabCounts();
     syncActiveCount(); // active line back to "0"
   }
 
@@ -163,19 +163,22 @@
     }
   }
 
-  /* Cheap no-throw sniff so JSON.parse only ever sees something that can
-     parse: the first non-whitespace char must open an object/array and the
-     last must close the matching one, so a truncated or non-JSON body returns
-     early instead of throwing. Not a validator — the try/catch nets below stay
-     as the never-break-the-page guarantee. */
-  function looksLikeJson(value) {
-    if (typeof value !== "string") return false;
+  /* Parse a payload without exception-driven control flow. Non-strings pass
+     through untouched (an already-parsed body stays what it is); strings are
+     sniffed for a matching delimiter pair first, so JSON.parse only ever sees
+     something that can parse and a truncated or non-JSON body becomes null
+     instead of a throw. Not a validator — the caller's try/catch stays as the
+     never-break-the-page net.
+     Intentionally DUPLICATED in explore-search-recent-searches.js so each
+     embed stays standalone (no shared globals between files). Keep the two
+     copies in sync. */
+  function parseJsonOrNull(value) {
+    if (typeof value !== "string") return value;
     var trimmed = value.trim();
     var first = trimmed.charAt(0);
-    var last = trimmed.charAt(trimmed.length - 1);
-    if (first === "{") return last === "}";
-    if (first === "[") return last === "]";
-    return false;
+    var closer = first === "{" ? "}" : first === "[" ? "]" : "";
+    if (!closer || trimmed.charAt(trimmed.length - 1) !== closer) return null;
+    return JSON.parse(trimmed);
   }
 
   /* Pair request requests[] with response results[] positionally (skipping
@@ -185,16 +188,8 @@
      non-JSON. */
   function handleAlgoliaResponse(requestBody, responseText) {
     try {
-      /* No-throw pre-checks: strings are parsed only when they sniff as JSON,
-         anything already parsed passes straight through as before. */
-      if (typeof requestBody === "string" && !looksLikeJson(requestBody)) return;
-      if (typeof responseText === "string" && !looksLikeJson(responseText)) {
-        return;
-      }
-      var req =
-        typeof requestBody === "string" ? JSON.parse(requestBody) : requestBody;
-      var res =
-        typeof responseText === "string" ? JSON.parse(responseText) : responseText;
+      var req = parseJsonOrNull(requestBody);
+      var res = parseJsonOrNull(responseText);
       if (!req || !Array.isArray(req.requests)) return;
       if (!res || !Array.isArray(res.results)) return;
 
