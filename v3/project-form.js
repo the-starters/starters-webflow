@@ -45,7 +45,8 @@
   var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
   var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
-  var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname], ' + FORM_SELECTOR + ' [name="Hiring-Manager-Name"]'
+  var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname]'
+  var MEMBER_NAME_FIELD = 'Hiring-Manager-Name'
   var SMART_FILL_TRIGGER_SELECTOR = '[data-sp-fill="button"]'
   var SMART_FILL_INPUT_SELECTOR = '[data-sp-fill="input"]'
   var CURRENT_DATE_SELECTOR = '[data-set-current-date]'
@@ -189,10 +190,24 @@
     return ''
   }
 
+  // The legacy attribute hook plus the Designer-named control, resolved the way
+  // every other named control in this module is: case- and separator-insensitively.
+  // Only blank targets are returned, so an already-filled form never pays for
+  // another Memberstack read or restarts the poll chain.
+  function memberNameTargets(documentObject) {
+    var tagged = documentObject.querySelectorAll(MEMBER_NAME_SELECTOR)
+    var targets = tagged ? Array.prototype.slice.call(tagged) : []
+    var form = documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
+    namedControls(form, MEMBER_NAME_FIELD).forEach(function (field) {
+      if (targets.indexOf(field) === -1) targets.push(field)
+    })
+    return targets.filter(function (target) { return !clean(target.value) })
+  }
+
   function fillMemberName(documentObject, globalObject, tries) {
     if (!documentObject || !documentObject.querySelectorAll) return Promise.resolve(false)
-    var targets = documentObject.querySelectorAll(MEMBER_NAME_SELECTOR)
-    if (!targets || !targets.length) return Promise.resolve(false)
+    var targets = memberNameTargets(documentObject)
+    if (!targets.length) return Promise.resolve(false)
     var memberstack = globalObject && globalObject.$memberstackDom
     if (!memberstack || typeof memberstack.getCurrentMember !== 'function') {
       if ((tries || 0) >= MEMBERSTACK_MAX_TRIES || !globalObject || typeof globalObject.setTimeout !== 'function') {
@@ -237,8 +252,12 @@
     var normalized = normalizedName(category)
     var form = documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
     if (form) {
-      if (normalized === 'fee_structure') return engagementControl(form)
-      if (normalized === 'invoice_frequency') return invoiceFrequencyControl(form)
+      // Prefer the authored control the serializer reads, but never let an
+      // unresolvable one swallow a correctly tagged field.
+      var native = normalized === 'fee_structure' ? engagementControl(form)
+        : normalized === 'invoice_frequency' ? invoiceFrequencyControl(form)
+        : null
+      if (native) return native
     }
     var candidates = documentObject.querySelectorAll(FORM_SELECTOR + ' ' + SMART_FILL_INPUT_SELECTOR)
     var exact = Array.prototype.find.call(candidates, function (field) {
@@ -257,6 +276,18 @@
     return target.querySelectorAll ? Array.prototype.slice.call(target.querySelectorAll('input, select, textarea')) : []
   }
 
+  // A Webflow radio group answers one preset with several controls sharing a
+  // name, and every single-element resolution above returns whichever one is
+  // currently checked. Widen to the whole group before matching, or a preset
+  // for any other option can never find its radio.
+  function radioGroup(documentObject, field) {
+    var form = documentObject && documentObject.querySelector
+      ? documentObject.querySelector(FORM_SELECTOR)
+      : null
+    var group = namedControls(form, field.getAttribute && field.getAttribute('name'))
+    return group.length ? group : [field]
+  }
+
   function applySmartFill(documentObject, category, value) {
     var fields = smartFillFields(smartFillTarget(documentObject, category))
     if (!fields.length) return false
@@ -271,21 +302,30 @@
         options.find(function (item) { return clean(item.textContent) === wanted }) ||
         options.find(function (item) { return clean(item.textContent).toLowerCase() === lower })
       if (!option || first.disabled) return false
+      // Select the matched option directly, so a select carrying duplicate
+      // option values keeps the option the preset actually resolved.
       option.selected = true
-      first.value = option.value
       dispatchInputChange(first)
       return true
     }
     var type = clean(first.type).toLowerCase()
     if (type === 'radio') {
-      var radio = fields.find(function (item) { return clean(item.value).toLowerCase() === lower })
+      var group = fields.length > 1 ? fields : radioGroup(documentObject, first)
+      var radio = group.find(function (item) { return clean(item.value) === wanted }) ||
+        group.find(function (item) { return clean(item.value).toLowerCase() === lower })
       if (!radio || radio.disabled) return false
       if (!radio.checked && typeof radio.click === 'function') radio.click()
       return true
     }
     if (type === 'checkbox') {
-      var desired = lower === 'true' || (clean(first.value) && clean(first.value).toLowerCase() === lower)
-      if ((lower !== 'true' && lower !== 'false' && !desired) || first.disabled) return false
+      // An explicit true/false always wins over the checkbox's own value, and
+      // an unrecognized preset leaves the authored state alone.
+      var own = clean(first.value).toLowerCase()
+      var desired = lower === 'true' ? true
+        : lower === 'false' ? false
+        : own && own === lower ? true
+        : null
+      if (desired === null || first.disabled) return false
       if (first.checked !== desired && typeof first.click === 'function') first.click()
       return true
     }
