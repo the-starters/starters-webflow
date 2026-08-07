@@ -1788,10 +1788,12 @@ Wiring is wf-xano-style and multi-instance: each
 count), and `view-all`, with card fields `name` (alias `title`),
 `name_initials`, `preview`, `time`, and an optional `avatar` container inside
 the template. `data-messages-format="uppercase|lowercase"` transforms a bound
-element's text, and an optional `data-messages-limit="<n>"` on the wrapper caps
-rendered cards (default 8). All instances share one TalkJS session and one Xano
-fetch; the original class-based selectors (legacy wrapper `#messages`) remain
-as fallbacks.
+element's text, an optional `data-messages-limit="<n>"` on the wrapper caps
+rendered cards (default 8), and `data-messages-class-unread` — on the wrapper
+or on the template card — renames the class toggled on an unread card
+(default `is-new`). All instances share one TalkJS session and one Xano fetch; the
+original class-based selectors (legacy wrapper `#messages`) remain as
+fallbacks.
 
 Run its focused test with:
 
