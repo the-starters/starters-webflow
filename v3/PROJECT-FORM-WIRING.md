@@ -56,10 +56,10 @@ left blank, the adapter fails closed instead of submitting.
 | `total_cost` | Flat Fee `Amount` | required for Flat Fee |
 | `paid_upfront_pct` | `Percent-Paid-Upfront` | optional, 0-100 |
 | `hourly_rate` | Ongoing Hourly `Amount` | required for Ongoing Hourly |
-| `hourly_billing_frequency` | Hourly `Frequency` | One Time, Weekly, or Monthly; required for Hourly |
-| `maximum_total_hours` | `Maximum-Hours-Billed` | required positive cap for One Time hourly |
-| `maximum_hours_per_week` | `Maximum-Hours-Billed-per-Week` | required positive cap for Weekly hourly |
-| `maximum_hours_per_month` | `Maximum-Hours-Billed-per-Month` | required positive cap for Monthly hourly |
+| `hourly_billing_frequency` | Hourly `Frequency` | the Hours Cap Period select; option values `one_time`, `weekly`, `monthly` (see the Hours Cap Period table below for the visible labels); required for Hourly |
+| `maximum_total_hours` | `Maximum-Hours-Billed` | required positive cap for the `one_time` hours cap period |
+| `maximum_hours_per_week` | `Maximum-Hours-Billed-per-Week` | required positive cap for the `weekly` hours cap period |
+| `maximum_hours_per_month` | `Maximum-Hours-Billed-per-Month` | required positive cap for the `monthly` hours cap period |
 | `monthly_rate` | Monthly Recurring `Amount` | required for Monthly Recurring |
 | `number_of_months` | `Number-of-Months` | fixed Monthly duration the server derives the end date from; omitted for ongoing Monthly |
 | `weekly_rate` | Weekly Recurring `Amount` | required for Weekly Recurring |
@@ -67,7 +67,7 @@ left blank, the adapter fails closed instead of submitting.
 | `start_date` | active fee panel start date | required |
 | `estimated_end_date` | Flat Fee or Ongoing Hourly end date | required for Standard Flat Fee; optional for fixed/ongoing Hourly; never submitted for Monthly/Weekly; when present it must be after `start_date` |
 | `project_scope` | `Project-Scope` | required |
-| `invoice_frequency` | `Invoice-Frequency` | Weekly, Bi-Weekly, Monthly, or Upon completion of the project; its own select, independent of Hourly `Frequency`; required for Standard Contract and omitted for My Own Contract |
+| `invoice_frequency` | `Invoice-Frequency` | Weekly, Bi-Weekly, Monthly, or Upon completion of the project; its own select, independent of the Hourly `Frequency` (Hours Cap Period) select; required for Standard Contract and omitted for My Own Contract |
 
 Repeated date/rate controls remain in their authored fee panels:
 
@@ -133,7 +133,10 @@ separate from pricing:
 - contract choice becomes `standard` or `own_contract`;
 - invoice frequency becomes `weekly`, `bi_weekly`, `monthly`, or
   `upon_completion`, serialized from its own select and never derived from the
-  hourly billing frequency;
+  hourly Hours Cap Period;
+- Hours Cap Period becomes `one_time`, `weekly`, or `monthly` and is serialized
+  to the compatibility key `hourly_billing_frequency`; it controls which
+  maximum-permitted-hours field applies and does not control invoicing;
 - Xano derives the PandaDoc template key. The browser never chooses a template
   UUID or sends Brand/Starter authority fields.
 
@@ -160,13 +163,27 @@ grammar fills the authored control — select or radio group — whichever gramm
 its own options carry; on a select, leaving the labels unchanged keeps the
 visible-text match working as a third path.
 
+The active Hourly panel's Hours Cap Period select is a separate contract. Keep
+the native Webflow field name `Frequency` until the adapter is migrated to a
+semantic field attribute; the user-facing label is deliberately different from
+that legacy name. Each option reveals exactly one maximum-hours control through
+a plain Designer condition on that select — never through a nested
+`data-input-filter` list, for the reason below.
+
+| Hours Cap Period option | Option value | Maximum-hours control it reveals | Visible maximum-hours label |
+| --- | --- | --- | --- |
+| Entire project | `one_time` | `Maximum-Hours-Billed` | Maximum permitted hours for the entire project |
+| Per week | `weekly` | `Maximum-Hours-Billed-per-Week` | Maximum permitted hours per week |
+| Per month | `monthly` | `Maximum-Hours-Billed-per-Month` | Maximum permitted hours per month |
+
+The adapter also accepts those visible labels as option values, so relabeling
+the select in the Designer stays safe if an option loses its explicit value.
+
 Because `form-input-filter` matches every `[data-input-filter-item]` descendant
 of its list and the canonical values are generic, the Fee Structure filter group
-must not contain a nested one. The hourly `Frequency` select — whose own values
-are `one_time`, `weekly`, and `monthly` — gates the three maximum-hours controls
-through plain Designer conditions, not a second `data-input-filter` list inside
-the hourly panel; a nested `[data-input-filter-item="weekly"]` there would
-shadow the Weekly fee panel. Invoice Frequency is likewise not a second
+must not contain a nested one. The Hours Cap Period select shares those generic
+values, so a nested `[data-input-filter-item="weekly"]` inside the hourly panel
+would shadow the Weekly fee panel. Invoice Frequency is likewise not a second
 `data-input-filter` controller: it is one independent select named
 `invoice-frequency`, and this adapter owns its Standard/My Own Contract
 visibility.
@@ -280,15 +297,16 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    prefilled, that a CMS preset card fills only its own fields, and that the
    authored current-date control defaults to today and keeps a Brand's edit when
    the modal is reopened.
-3. Exercise Flat Fee; fixed and ongoing Hourly with One Time, Weekly, and
-   Monthly caps; fixed and ongoing Monthly; fixed and ongoing Weekly; Standard
-   Contract; and My Own Contract validation without issuing a request for
-   invalid inputs. Confirm Monthly shows no end-date field and serializes only
-   `number_of_months` as its duration source. Run that pass once against the
-   legacy panel attributes and again after the Designer cutover to the canonical
-   values in the table above; both must behave identically.
+3. Exercise Flat Fee; fixed and ongoing Hourly with the Entire project, Per
+   week, and Per month hours caps; fixed and ongoing Monthly; fixed and ongoing
+   Weekly; Standard Contract; and My Own Contract validation without issuing a
+   request for invalid inputs. Confirm Monthly shows no end-date field and
+   serializes only `number_of_months` as its duration source. Run that pass once
+   against the legacy panel attributes and again after the Designer cutover to
+   the canonical values in the Fee Structure table above; both must behave
+   identically.
 4. Confirm Standard Contract requires an invoice frequency and serializes it
-   independently of the hourly billing frequency, that My Own Contract hides
+   independently of the hourly Hours Cap Period, that My Own Contract hides
    the select and omits `invoice_frequency` from the payload, and that
    switching back to Standard Contract restores the previous selection.
 5. With the approved production canary and PandaDoc create worker #33 held

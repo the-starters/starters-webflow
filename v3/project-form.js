@@ -759,7 +759,9 @@
 
   function canonicalHourlyFrequency(value) {
     var normalized = clean(value).toLowerCase().replace(/[\s-]+/g, '_')
-    if (normalized === 'one_time' || normalized === 'weekly' || normalized === 'monthly') return normalized
+    if (normalized === 'one_time' || normalized === 'entire_project' || normalized === 'for_the_entire_project') return 'one_time'
+    if (normalized === 'weekly' || normalized === 'per_week') return 'weekly'
+    if (normalized === 'monthly' || normalized === 'per_month') return 'monthly'
     return ''
   }
 
@@ -888,10 +890,10 @@
     if (!clean(payload.project_scope)) return 'Add the project scope.'
     if (payload.engagement_type === 'flat_fee' && !(payload.total_cost > 0)) return 'Enter a total project cost.'
     if (payload.engagement_type === 'hourly' && !(payload.hourly_rate > 0)) return 'Enter an hourly rate.'
-    if (payload.engagement_type === 'hourly' && !payload.hourly_billing_frequency) return 'Choose an hourly billing frequency.'
-    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'one_time' && !(payload.maximum_total_hours > 0)) return 'Enter the maximum total hours.'
-    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'weekly' && !(payload.maximum_hours_per_week > 0)) return 'Enter the maximum hours per week.'
-    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'monthly' && !(payload.maximum_hours_per_month > 0)) return 'Enter the maximum hours per month.'
+    if (payload.engagement_type === 'hourly' && !payload.hourly_billing_frequency) return 'Choose an hours cap period.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'one_time' && !(payload.maximum_total_hours > 0)) return 'Enter the maximum permitted hours for the entire project.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'weekly' && !(payload.maximum_hours_per_week > 0)) return 'Enter the maximum permitted hours per week.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'monthly' && !(payload.maximum_hours_per_month > 0)) return 'Enter the maximum permitted hours per month.'
     if (payload.contract_type === 'standard' && payload.engagement_type === 'flat_fee' && !payload.estimated_end_date) return 'Enter an estimated end date.'
     if (payload.estimated_end_date && payload.estimated_end_date <= payload.start_date) return 'The estimated end date must be after the start date.'
     if (payload.engagement_type === 'weekly' && !(payload.weekly_rate > 0)) return 'Enter a weekly rate.'
