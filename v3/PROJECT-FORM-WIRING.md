@@ -52,11 +52,11 @@ uses an explicit allowlist of the form's existing native Webflow names:
 | `maximum_hours_per_week` | `Maximum-Hours-Billed-per-Week` | required positive cap for Weekly hourly |
 | `maximum_hours_per_month` | `Maximum-Hours-Billed-per-Month` | required positive cap for Monthly hourly |
 | `monthly_rate` | Monthly Recurring `Amount` | required for Monthly Recurring |
-| `number_of_months` | `Number-of-Months` | optional for ongoing Monthly |
+| `number_of_months` | `Number-of-Months` | fixed Monthly duration the server derives the end date from; omitted for ongoing Monthly |
 | `weekly_rate` | Weekly Recurring `Amount` | required for Weekly Recurring |
-| `number_of_weeks` | `Number-of-Weeks` | optional for ongoing Weekly |
+| `number_of_weeks` | `Number-of-Weeks` | fixed Weekly duration the server derives the end date from; omitted for ongoing Weekly |
 | `start_date` | active fee panel start date | required |
-| `estimated_end_date` | Flat Fee or Ongoing Hourly end date | required for Standard Flat Fee; optional for fixed/ongoing Hourly; never submitted for Monthly/Weekly |
+| `estimated_end_date` | Flat Fee or Ongoing Hourly end date | required for Standard Flat Fee; optional for fixed/ongoing Hourly; never submitted for Monthly/Weekly; when present it must be after `start_date` |
 | `project_scope` | `Project-Scope` | required |
 
 Repeated date/rate controls remain in their authored fee panels:
@@ -86,12 +86,11 @@ shared date row or a date-picker companion input never leaves an orphaned
 Recurring panel, because the Designer defaults a field id to its name and the
 panels repeat `endDateInput`: an unscoped search would strip the Ongoing Hourly
 caption from a live, still-required control. It then hides the nearest wrapping
-element,
-preferring `app-form_input_group` so a single-control group travels with the
-input. That walk stops at the first ancestor holding another control or another
-control's label, and never touches the `data-input-filter-item` panel, which
-form-input-filter owns. No sibling input, select, textarea, label, or shared
-wrapper is ever hidden.
+element, preferring `app-form_input_group` so a single-control group travels
+with the input. That walk stops at the first ancestor holding another control
+or another control's label, and never touches the `data-input-filter-item`
+panel, which form-input-filter owns. No sibling input, select, textarea,
+label, or shared wrapper is ever hidden.
 
 The authored Hourly panel supports either a fixed end date or the explicit
 "No end date" checkbox. The adapter makes those alternatives mutually valid:
@@ -107,12 +106,14 @@ focusable"). Following the same pattern as
 `global-embeds/form-embeds/form-input-filter`, the adapter removes `required`
 from inactive controls and marks them with `data-project-required-hidden`,
 restoring the authored attribute as soon as the branch becomes visible. The sync
-runs when the modal is bound, on `change`, on click (before the browser
-validates the submit), and again in the adapter's own pre-submit validity check
-before it delegates to native `reportValidity()`. This keeps the
-authored own-contract confirmation required when visible without blocking the
-Standard contract branch, and works on a Webflow-default form as well as one
-marked `novalidate`.
+runs on `input`, on `change`, on click (before the browser validates the
+submit), and again in the adapter's own pre-submit validity check before it
+delegates to native `reportValidity()`. The duration sync described above runs
+alongside it at each of those points, plus once when the adapter installs, so
+the Monthly end date is already hidden and cleared before the first
+interaction. This keeps the authored own-contract confirmation required when
+visible without blocking the Standard contract branch, and works on a
+Webflow-default form as well as one marked `novalidate`.
 
 The adapter reads the existing Standard Contract and My Own Contract radio
 inputs. One choice is required before submission. Contract type remains
