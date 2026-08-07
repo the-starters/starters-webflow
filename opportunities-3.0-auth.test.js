@@ -147,6 +147,9 @@ async function loadBridge(
         .filter((observer) => observer.connected)
         .forEach((observer) => observer.callback(mutations))
     },
+    dispatchDocument(type, event) {
+      for (const listener of documentListeners.get(type) || []) listener(event)
+    },
   }
 }
 
@@ -223,6 +226,42 @@ test('invoice helpers turn the Stripe prerequisite into an actionable dashboard 
     'Connect your Stripe account from the dashboard before generating invoices.',
   )
   assert.equal(bridge.window.Opp30.formatInvoiceAmount(25.5), '$25.50')
+})
+
+test('the authored type=button invoice CTA requests the native form submit', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  let submits = 0
+  let prevented = 0
+  let stopped = 0
+  const modal = {}
+  const form = {
+    closest: (selector) =>
+      selector === '[data-modal-target="generate-invoice"]' ? modal : null,
+    requestSubmit: () => {
+      submits += 1
+    },
+  }
+  const action = { closest: (selector) => (selector === 'form' ? form : null) }
+  const target = {
+    closest: (selector) =>
+      selector.includes('#wf-form-Generate-Invoice [data-button-style="primary"]')
+        ? action
+        : null,
+  }
+
+  bridge.dispatchDocument('click', {
+    target,
+    preventDefault: () => {
+      prevented += 1
+    },
+    stopPropagation: () => {
+      stopped += 1
+    },
+  })
+
+  assert.equal(submits, 1)
+  assert.equal(prevented, 1)
+  assert.equal(stopped, 1)
 })
 
 // A project card as either list library renders it: the row id as an attribute,

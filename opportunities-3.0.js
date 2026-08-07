@@ -1401,6 +1401,13 @@
   const INVOICE_MODAL_SELECTOR = '[data-modal-target="' + INVOICE_MODAL_ID + '"]'
   const INVOICE_ACTION_SELECTOR =
     '[data-project-action="invoice"], a[href="#' + INVOICE_MODAL_ID + '"]'
+  // The shared Webflow button component currently renders the authored Send
+  // Invoice control as type="button" even when its Button Type prop is enabled.
+  // Keep the fallback scoped to the native Generate Invoice form and its
+  // attribute-driven primary action; native submit controls continue to work.
+  const INVOICE_FORM_SELECTOR = '#wf-form-Generate-Invoice'
+  const INVOICE_SUBMIT_ACTION_SELECTOR =
+    '[data-wf-invoice="submit"], ' + INVOICE_FORM_SELECTOR + ' [data-button-style="primary"]'
   // Same card contract as every other delegated handler in this file: the
   // wf-xano-rendered project card is whatever ancestor carries the row id.
   const INVOICE_CARD_SELECTOR = '[data-wf-xano-id]'
@@ -1613,6 +1620,18 @@
     return message || 'Invoice generation failed. Please try again.'
   }
 
+  function requestInvoiceSubmit(target) {
+    const action =
+      target && target.closest ? target.closest(INVOICE_SUBMIT_ACTION_SELECTOR) : null
+    if (!action) return false
+    const form = action.closest && action.closest('form')
+    const modal = form && form.closest && form.closest(INVOICE_MODAL_SELECTOR)
+    if (!form || !modal) return false
+    if (typeof form.requestSubmit === 'function') form.requestSubmit()
+    else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    return true
+  }
+
   function wireInvoiceWorkflow() {
     if (window.__opp30InvoicesWired) return
     window.__opp30InvoicesWired = true
@@ -1621,6 +1640,11 @@
       'click',
       (event) => {
         const target = event.target
+        if (requestInvoiceSubmit(target)) {
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
         const action = target && target.closest ? target.closest(INVOICE_ACTION_SELECTOR) : null
         if (!action) return
         // Only swallow the click once we know this workflow can handle it —
@@ -3772,6 +3796,7 @@
     openInvoiceModal,
     prepareInvoiceModal,
     paintInvoiceSuccess,
+    requestInvoiceSubmit,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,
