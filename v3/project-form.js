@@ -43,6 +43,8 @@
   var MONTHLY_END_DATE_SELECTOR = '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]'
   var HOURLY_END_DATE_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]'
   var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
+  var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
+  var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   var ENGAGEMENT_TYPES = {
@@ -211,10 +213,20 @@
     return form.reportValidity()
   }
 
+  // Webflow derives a native control name from its Designer label, keeping the
+  // author's capitalization and turning spaces into hyphens. Match on a
+  // separator- and case-insensitive form so a label typed "Invoice frequency"
+  // still resolves to the same allowlisted control as "Invoice-Frequency".
+  function normalizedName(value) {
+    return clean(value).toLowerCase().replace(/[\s_-]+/g, '_')
+  }
+
   function namedControls(form, name) {
-    return form && form.querySelectorAll
-      ? form.querySelectorAll('[name="' + name + '"]')
-      : []
+    var wanted = normalizedName(name)
+    if (!wanted || !form || !form.querySelectorAll) return []
+    return Array.prototype.filter.call(form.querySelectorAll('[name]'), function (field) {
+      return normalizedName(field.getAttribute ? field.getAttribute('name') : field.name) === wanted
+    })
   }
 
   function namedField(form, names) {
@@ -251,7 +263,7 @@
   }
 
   function engagementControl(form) {
-    return namedField(form, 'Fee-Structure') || namedField(form, 'fee-structure')
+    return namedField(form, 'Fee-Structure')
   }
 
   // Single source of truth for "which fee panel is selected". The duration sync
@@ -331,6 +343,64 @@
     if (node.setAttribute) node.setAttribute('aria-hidden', 'true')
   }
 
+  function showElement(node) {
+    if (!node) return
+    node.hidden = false
+    if (node.style) node.style.display = ''
+    if (node.removeAttribute) node.removeAttribute('aria-hidden')
+  }
+
+  function contractChoice(form) {
+    return form && form.querySelector
+      ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked') || form.querySelector('input[type="radio"]:checked')
+      : null
+  }
+
+  function readContractType(form) {
+    return canonicalContractType(fieldValue(contractChoice(form)))
+  }
+
+  function invoiceFrequencyControl(form) {
+    return attributedField(form, 'invoice_frequency') || namedField(form, INVOICE_FREQUENCY_NAME)
+  }
+
+  function syncInvoiceFrequencyField(form) {
+    var field = invoiceFrequencyControl(form)
+    if (!field) return
+    var type = readContractType(form)
+    var group = inputGroup(field, form)
+    var labels = labelsFor(form, field)
+    var hidden = type === 'own_contract'
+
+    if (hidden) {
+      field.disabled = true
+      field.required = false
+      if (field.setAttribute) {
+        field.setAttribute('disabled', '')
+        field.setAttribute(INVOICE_FREQUENCY_HIDDEN_ATTR, 'true')
+        field.removeAttribute('required')
+        field.removeAttribute(REQUIRED_STASH_ATTR)
+      }
+      hideElement(field)
+      labels.forEach(hideElement)
+      hideElement(group)
+      return
+    }
+
+    field.disabled = false
+    field.required = type === 'standard'
+    if (field.removeAttribute) {
+      field.removeAttribute('disabled')
+      field.removeAttribute(INVOICE_FREQUENCY_HIDDEN_ATTR)
+      field.removeAttribute(REQUIRED_STASH_ATTR)
+      if (!field.required) field.removeAttribute('required')
+    }
+    if (field.required && field.setAttribute) field.setAttribute('required', '')
+    showElement(group)
+    labels.forEach(showElement)
+    showElement(field)
+  }
+
   function syncMonthlyDurationField(form) {
     if (!form || !form.querySelectorAll) return
     var controls = form.querySelectorAll(MONTHLY_END_DATE_SELECTOR)
@@ -381,23 +451,24 @@
   function syncDurationFields(form) {
     syncMonthlyDurationField(form)
     syncHourlyDurationChoice(form)
+    syncInvoiceFrequencyField(form)
+  }
+
+  // The only place a payload field is normalized. Both entry points - the
+  // `data-project-field` sweep and the native-name allowlist - go through it so
+  // a field can never normalize differently depending on how it was resolved.
+  function normalizePayloadValue(name, value) {
+    if (INTEGER_FIELDS[name]) return positiveId(value)
+    if (NUMERIC_FIELDS[name]) return numberValue(value)
+    if (name === 'start_date' || name === 'estimated_end_date') return dateValue(value) || null
+    if (name === 'hourly_billing_frequency') return canonicalHourlyFrequency(value) || null
+    if (name === 'invoice_frequency') return canonicalInvoiceFrequency(value) || null
+    return value
   }
 
   function setPayloadValue(payload, name, field) {
     if (!field || Object.prototype.hasOwnProperty.call(payload, name)) return
-    var value = fieldValue(field)
-    if (INTEGER_FIELDS[name]) {
-      payload[name] = positiveId(value)
-    } else if (NUMERIC_FIELDS[name]) {
-      var numeric = numberValue(value)
-      payload[name] = INTEGER_FIELDS[name] && numeric != null ? Math.trunc(numeric) : numeric
-    } else if (name === 'start_date' || name === 'estimated_end_date') {
-      payload[name] = dateValue(value) || null
-    } else if (name === 'hourly_billing_frequency') {
-      payload[name] = canonicalHourlyFrequency(value) || null
-    } else {
-      payload[name] = value
-    }
+    payload[name] = normalizePayloadValue(name, fieldValue(field))
   }
 
   function canonicalEngagement(value) {
@@ -418,6 +489,15 @@
     return ''
   }
 
+  function canonicalInvoiceFrequency(value) {
+    var normalized = clean(value).toLowerCase().replace(/[\s-]+/g, '_')
+    if (normalized === 'weekly' || normalized === 'weekly_basis') return 'weekly'
+    if (normalized === 'bi_weekly' || normalized === 'biweekly' || normalized === 'bi_weekly_basis') return 'bi_weekly'
+    if (normalized === 'monthly' || normalized === 'monthly_basis') return 'monthly'
+    if (normalized === 'upon_completion' || normalized === 'upon_completion_of_the_project') return 'upon_completion'
+    return ''
+  }
+
   function serialize(form, documentObject) {
     var payload = {}
     var fields = form && form.querySelectorAll
@@ -432,20 +512,7 @@
       // Prefer the populated control rather than allowing a hidden blank panel
       // to win by DOM order.
       if (Object.prototype.hasOwnProperty.call(payload, name) && !value) return
-      if (INTEGER_FIELDS[name]) {
-        payload[name] = positiveId(value)
-      } else if (NUMERIC_FIELDS[name]) {
-        var numeric = numberValue(value)
-        payload[name] = name === 'number_of_weeks' || name === 'number_of_months'
-          ? (numeric == null ? null : Math.trunc(numeric))
-          : numeric
-      } else if (name === 'start_date' || name === 'estimated_end_date') {
-        payload[name] = dateValue(value) || null
-      } else if (name === 'hourly_billing_frequency') {
-        payload[name] = canonicalHourlyFrequency(value) || null
-      } else {
-        payload[name] = value
-      }
+      payload[name] = normalizePayloadValue(name, value)
     })
 
     // The authored form predates this adapter and already exposes stable native
@@ -457,6 +524,10 @@
     setPayloadValue(payload, 'service', namedField(form, 'Services'))
     setPayloadValue(payload, 'engagement_type', engagementControl(form))
     setPayloadValue(payload, 'project_scope', namedField(form, 'Project-Scope'))
+    if (!canonicalInvoiceFrequency(payload.invoice_frequency)) {
+      delete payload.invoice_frequency
+      setPayloadValue(payload, 'invoice_frequency', namedField(form, INVOICE_FREQUENCY_NAME))
+    }
 
     var authoredEngagement = readEngagement(form)
     var authoredPanel = engagementPanel(form, authoredEngagement)
@@ -486,10 +557,11 @@
     }
 
     payload.engagement_type = canonicalEngagement(payload.engagement_type)
-    var contractChoice = form && form.querySelector
-      ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked') || form.querySelector('input[type="radio"]:checked')
-      : null
-    payload.contract_type = canonicalContractType(fieldValue(contractChoice))
+    payload.contract_type = readContractType(form)
+    // Own Contract has no generated invoice schedule. Leave the key out rather
+    // than sending an empty one, so the only shape Xano ever sees for an absent
+    // invoice frequency is the absent key.
+    if (payload.contract_type === 'own_contract') delete payload.invoice_frequency
 
     // Webflow keeps inactive conditional panels in the DOM. Clear their stale
     // commercial values so only the selected pricing contract crosses the API.
@@ -535,6 +607,7 @@
     if (!clean(payload.starter_memberstack_id)) return 'The selected Starter could not be identified. Reload and try again.'
     if (!payload.engagement_type) return 'Choose a supported fee structure.'
     if (!payload.contract_type) return 'Choose a contract type.'
+    if (payload.contract_type === 'standard' && !payload.invoice_frequency) return 'Choose an invoice frequency.'
     if (!clean(payload.title)) return 'Enter a project name.'
     if (!clean(payload.service)) return 'Choose a service.'
     if (!payload.start_date) return 'Enter a valid start date.'
@@ -785,6 +858,8 @@
     canonicalEngagement: canonicalEngagement,
     canonicalContractType: canonicalContractType,
     canonicalHourlyFrequency: canonicalHourlyFrequency,
+    canonicalInvoiceFrequency: canonicalInvoiceFrequency,
+    syncInvoiceFrequencyField: syncInvoiceFrequencyField,
     syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,
