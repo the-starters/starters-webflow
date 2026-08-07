@@ -279,6 +279,15 @@
         this.addEventListener("loadend", function exploreListLoaderXhrLoadEnd() {
           endRequest();
         });
+        try {
+          return originalSend.apply(this, arguments);
+        } catch (e) {
+          /* A synchronous throw fires no loadend, so the session would never
+             settle and the list would stay hidden for the page's lifetime.
+             Mirrors the fetch wrapper's synchronous-throw path. */
+          endRequest();
+          throw e;
+        }
       }
       return originalSend.apply(this, arguments);
     };

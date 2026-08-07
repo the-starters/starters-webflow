@@ -141,17 +141,26 @@
      engine's live federated search and the default-results embed both send it.
      Unrelated page scripts (e.g. the navbar mega-menu's category preloads) and
      the engine's facet-stat auxiliary queries don't — their nbHits must not
-     pollute the tab counts. Defensive: params may be a string or an object. */
+     pollute the tab counts. Defensive: params may be a string or an object.
+     The try/catch is containment, not control flow: the guards below never
+     throw on plain JSON data (so it stays debugger-quiet in normal operation),
+     but a request object reaching us through the non-string passthrough can
+     carry an exotic getter, and one such entry must cost only its own entry
+     rather than discarding every count in the batch. */
   function hasClickAnalytics(r) {
-    if (!r || typeof r !== "object") return false;
-    if (r.clickAnalytics === true) return true;
-    var params = r.params;
-    if (typeof params === "string") {
-      return params.indexOf("clickAnalytics=true") !== -1;
+    try {
+      if (!r || typeof r !== "object") return false;
+      if (r.clickAnalytics === true) return true;
+      var params = r.params;
+      if (typeof params === "string") {
+        return params.indexOf("clickAnalytics=true") !== -1;
+      }
+      return (
+        !!params && typeof params === "object" && params.clickAnalytics === true
+      );
+    } catch (e) {
+      return false; // this entry is not countable — the rest of the batch is
     }
-    return (
-      !!params && typeof params === "object" && params.clickAnalytics === true
-    );
   }
 
   /* Cheap no-throw sniff so JSON.parse only ever sees something that can
