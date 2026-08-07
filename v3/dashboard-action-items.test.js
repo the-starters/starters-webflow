@@ -56,6 +56,17 @@ function row({ height = 20, cls = 'dash-hero_action-item', attrs = {} } = {}) {
   return element({ attrs: { class: cls, ...attrs }, height })
 }
 
+// A document has querySelector/querySelectorAll but no setAttribute.
+function documentLike({ children = [], withBody = true } = {}) {
+  const root = element({ children })
+  return {
+    body: withBody ? root : null,
+    documentElement: element({ children }),
+    querySelector: (selector) => root.querySelector(selector),
+    querySelectorAll: (selector) => root.querySelectorAll(selector),
+  }
+}
+
 test('countPendingItems counts only visible leaf rows', () => {
   const scope = element({
     children: [
@@ -144,4 +155,87 @@ test('render emits actionItemsChanged only when the count changes', () => {
 
   delete global.CustomEvent
   delete global.dispatchEvent
+})
+
+test('document-wide scope writes the count attribute to body', () => {
+  const total = element({ attrs: { 'data-action-element': 'total' }, text: '4' })
+  const doc = documentLike({ children: [total, row({ height: 20 })] })
+
+  const panel = api.createPanel(doc)
+
+  assert.equal(panel.render(), 1)
+  assert.equal(total.textContent, '1')
+  assert.equal(doc.body.attributes[api.COUNT_ATTR], '1')
+})
+
+test('document scope without a body falls back to documentElement', () => {
+  const doc = documentLike({ children: [row({ height: 20 })], withBody: false })
+
+  api.createPanel(doc).render()
+
+  assert.equal(doc.documentElement.attributes[api.COUNT_ATTR], '1')
+})
+
+test('resolveScopes prefers authored wrappers', () => {
+  const wrapper = element({ attrs: { 'data-action-element': 'wrapper' } })
+  const doc = documentLike({ children: [wrapper] })
+
+  assert.deepEqual(api.resolveScopes(doc), [wrapper])
+})
+
+test('resolveScopes falls back to the document for any authored chrome', () => {
+  ;['loading', 'empty', 'total'].forEach((name) => {
+    const doc = documentLike({
+      children: [element({ attrs: { 'data-action-element': name } })],
+    })
+    assert.deepEqual(api.resolveScopes(doc), [doc], name)
+  })
+
+  const bare = documentLike({ children: [row({ height: 20 })] })
+  assert.deepEqual(api.resolveScopes(bare), [])
+})
+
+test('render scheduler coalesces mutation bursts into one render', () => {
+  const frames = []
+  const previous = global.requestAnimationFrame
+  global.requestAnimationFrame = (cb) => frames.push(cb)
+
+  let renders = 0
+  const schedule = api.createRenderScheduler(() => {
+    renders += 1
+  })
+
+  schedule()
+  schedule()
+  schedule()
+  assert.equal(frames.length, 1)
+  assert.equal(renders, 0)
+
+  frames.shift()()
+  assert.equal(renders, 1)
+
+  schedule()
+  assert.equal(frames.length, 1)
+
+  if (previous) global.requestAnimationFrame = previous
+  else delete global.requestAnimationFrame
+})
+
+test('render scheduler falls back to setTimeout without rAF', async () => {
+  const previous = global.requestAnimationFrame
+  delete global.requestAnimationFrame
+
+  let renders = 0
+  const schedule = api.createRenderScheduler(() => {
+    renders += 1
+  })
+
+  schedule()
+  schedule()
+  assert.equal(renders, 0)
+
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  assert.equal(renders, 1)
+
+  if (previous) global.requestAnimationFrame = previous
 })
