@@ -66,6 +66,13 @@ class Element {
     if (selector === 'input, select, textarea') return this.controls || []
     if (selector === 'label') return this.labels || []
     if (selector === '[data-project-field]') return this.children
+    const feePanels = /^\[data-input-filter-item="([^"]+)"\]$/.exec(selector)
+    if (feePanels) {
+      const matches = this.filterItems && this.filterItems[feePanels[1]]
+      if (matches) return matches
+      const panel = this.feePanels && this.feePanels[feePanels[1]]
+      return panel ? [panel] : []
+    }
     // Keyed on the exact filter-item value so the canonical and legacy panel
     // grammars stay distinguishable. `panelControls` is authoritative when a
     // test supplies it; otherwise the shorthand buckets answer for the
@@ -842,6 +849,90 @@ test('hourly requires the cadence-specific positive cap', () => {
     const { api } = load({ form })
     assert.match(api.validationError(api.serialize(form)), scenario.error)
   }
+})
+
+test('Hours Cap Period shows and enables only its matching maximum-hours field', () => {
+  const form = projectForm({ engagement_type: 'Ongoing Hourly' })
+  const panel = new Element({ 'data-input-filter-item': 'hourly' })
+  const frequency = nativeField('Frequency', 'Per month', { tagName: 'SELECT' })
+  const controls = [
+    nativeField('Maximum-Hours-Billed', '40', { id: 'max-total', required: '' }),
+    nativeField('Maximum-Hours-Billed-per-Week', '20', { id: 'max-week', required: '' }),
+    nativeField('Maximum-Hours-Billed-per-Month', '80', { id: 'max-month', required: '' }),
+  ]
+  const labels = controls.map((control) => labelElement(control.getAttribute('id')))
+
+  controls.forEach((control, index) => {
+    const group = new Element({ class: 'app-form_input_group' })
+    group.controls = [control]
+    group.labels = [labels[index]]
+    group.parentElement = panel
+    control.parentElement = group
+    control.form = form
+    control.group = group
+  })
+  frequency.form = form
+  panel.children = [frequency, ...controls]
+  panel.labels = labels
+  panel.parentElement = form
+  form.feePanels = { hourly: panel }
+
+  const { api } = load({ form })
+  api.syncDurationFields(form)
+
+  assert.equal(controls[0].hidden, true)
+  assert.equal(controls[0].disabled, true)
+  assert.equal(controls[1].hidden, true)
+  assert.equal(controls[1].disabled, true)
+  assert.equal(controls[2].hidden, false)
+  assert.equal(controls[2].disabled, false)
+  assert.equal(controls[2].group.hidden, false)
+  assert.equal(labels[2].hidden, false)
+  assert.equal(frequency.value, 'Per month')
+
+  assert.equal(controls[0].getAttribute('required'), null)
+  assert.equal(controls[1].getAttribute('required'), null)
+  assert.equal(controls[2].getAttribute('required'), '')
+})
+
+test('Hours Cap Period hides every maximum-hours field outside Hourly without clearing values', () => {
+  const form = projectForm({ engagement_type: 'Weekly Recurring' })
+  const panel = new Element({ 'data-input-filter-item': 'hourly' })
+  const frequency = nativeField('Frequency', 'Per week', { tagName: 'SELECT' })
+  const weekly = nativeField('Maximum-Hours-Billed-per-Week', '20', { id: 'max-week' })
+  const group = new Element({ class: 'app-form_input_group' })
+  group.controls = [weekly]
+  weekly.parentElement = group
+  weekly.form = form
+  group.parentElement = panel
+  panel.children = [frequency, weekly]
+  panel.parentElement = form
+  form.feePanels = { hourly: panel }
+
+  const { api } = load({ form })
+  api.syncHoursCapFields(form)
+
+  assert.equal(weekly.hidden, true)
+  assert.equal(weekly.disabled, true)
+  assert.equal(weekly.value, '20')
+  assert.equal(frequency.value, 'Per week')
+})
+
+test('top-level fee panel lookup ignores nested Hours Cap Period items with the same value', () => {
+  const form = projectForm({ engagement_type: 'Weekly Recurring', weekly_rate: '' })
+  form.children = form.children.filter((child) => child.getAttribute('data-project-field') !== 'weekly_rate')
+  const hourly = new Element({ 'data-input-filter-item': 'hourly' })
+  const nestedWeekly = new Element({ 'data-input-filter-item': 'weekly' })
+  const weekly = new Element({ 'data-input-filter-item': 'weekly' })
+  nestedWeekly.parentElement = hourly
+  hourly.parentElement = form
+  weekly.parentElement = form
+  nestedWeekly.children = [nativeField('Amount', '999')]
+  weekly.children = [nativeField('Amount', '1250')]
+  form.filterItems = { weekly: [nestedWeekly, weekly] }
+
+  const { api } = load({ form })
+  assert.equal(api.serialize(form).payload.weekly_rate, 1250)
 })
 
 test('standard flat fee requires a future end date before calling Xano', () => {

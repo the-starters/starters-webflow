@@ -45,6 +45,8 @@
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
   var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
+  var HOURS_CAP_HIDDEN_ATTR = 'data-project-hours-cap-hidden'
+  var MONTHLY_END_DATE_HIDDEN_ATTR = 'data-project-monthly-end-date-hidden'
   var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname]'
   var MEMBER_NAME_FIELD = 'Hiring-Manager-Name'
   var SMART_FILL_TRIGGER_SELECTOR = '[data-sp-fill="button"]'
@@ -547,9 +549,18 @@
 
   function engagementPanel(form, engagement) {
     var values = ENGAGEMENT_PANEL_VALUES[engagement] || []
-    if (!form || !form.querySelector) return null
+    if (!form || !form.querySelectorAll) return null
     for (var i = 0; i < values.length; i += 1) {
-      var panel = form.querySelector('[data-input-filter-item="' + values[i] + '"]')
+      var selector = '[data-input-filter-item="' + values[i] + '"]'
+      var panels = Array.prototype.slice.call(form.querySelectorAll(selector))
+      var panel = panels.find(function (candidate) {
+        var ancestor = candidate && candidate.parentElement
+        while (ancestor && ancestor !== form) {
+          if (ancestor.getAttribute && ancestor.getAttribute('data-input-filter-item') !== null) return false
+          ancestor = ancestor.parentElement
+        }
+        return true
+      })
       if (panel) return panel
     }
     return null
@@ -623,6 +634,37 @@
     if (node.removeAttribute) node.removeAttribute('aria-hidden')
   }
 
+  // The one place a conditional control's visibility is written, so every
+  // `data-project-*-hidden` marker provably means the same thing: hidden implies
+  // disabled, not `required`, and hidden together with its labels and its
+  // exclusive wrapper. `required` restoration is the caller's policy - some
+  // re-derive it, some stash it for syncActiveRequired.
+  function setFieldVisibility(field, group, labels, marker, visible) {
+    if (!field) return
+    if (!visible) {
+      field.required = false
+      field.disabled = true
+      if (field.setAttribute) {
+        field.setAttribute('disabled', '')
+        field.setAttribute(marker, 'true')
+        field.removeAttribute('required')
+      }
+      hideElement(field)
+      labels.forEach(hideElement)
+      hideElement(group)
+      return
+    }
+
+    field.disabled = false
+    if (field.removeAttribute) {
+      field.removeAttribute('disabled')
+      field.removeAttribute(marker)
+    }
+    showElement(group)
+    labels.forEach(showElement)
+    showElement(field)
+  }
+
   function contractChoice(form) {
     return form && form.querySelector
       ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked') || form.querySelector('input[type="radio"]:checked')
@@ -641,37 +683,20 @@
     var field = invoiceFrequencyControl(form)
     if (!field) return
     var type = readContractType(form)
-    var group = inputGroup(field, form)
-    var labels = labelsFor(form, field)
-    var hidden = type === 'own_contract'
+    var visible = type !== 'own_contract'
 
-    if (hidden) {
-      field.disabled = true
-      field.required = false
-      if (field.setAttribute) {
-        field.setAttribute('disabled', '')
-        field.setAttribute(INVOICE_FREQUENCY_HIDDEN_ATTR, 'true')
-        field.removeAttribute('required')
-        field.removeAttribute(REQUIRED_STASH_ATTR)
-      }
-      hideElement(field)
-      labels.forEach(hideElement)
-      hideElement(group)
-      return
-    }
+    setFieldVisibility(field, inputGroup(field, form), labelsFor(form, field), INVOICE_FREQUENCY_HIDDEN_ATTR, visible)
 
-    field.disabled = false
+    // Invoice Frequency re-derives `required` from the contract type on every
+    // sync, so it never leaves a stash behind for syncActiveRequired to restore.
+    if (field.removeAttribute) field.removeAttribute(REQUIRED_STASH_ATTR)
+    if (!visible) return
     field.required = type === 'standard'
-    if (field.removeAttribute) {
-      field.removeAttribute('disabled')
-      field.removeAttribute(INVOICE_FREQUENCY_HIDDEN_ATTR)
-      field.removeAttribute(REQUIRED_STASH_ATTR)
-      if (!field.required) field.removeAttribute('required')
+    if (field.required) {
+      if (field.setAttribute) field.setAttribute('required', '')
+    } else if (field.removeAttribute) {
+      field.removeAttribute('required')
     }
-    if (field.required && field.setAttribute) field.setAttribute('required', '')
-    showElement(group)
-    labels.forEach(showElement)
-    showElement(field)
   }
 
   function syncMonthlyDurationField(form) {
@@ -682,16 +707,7 @@
     var panel = engagementPanel(form, 'monthly') || form
     controls.forEach(function (field) {
       field.value = ''
-      field.disabled = true
-      field.required = false
-      if (field.setAttribute) {
-        field.setAttribute('disabled', '')
-        field.setAttribute('data-project-monthly-end-date-hidden', 'true')
-        field.removeAttribute('required')
-      }
-      hideElement(field)
-      labelsFor(panel, field).forEach(hideElement)
-      hideElement(inputGroup(field, form))
+      setFieldVisibility(field, inputGroup(field, form), labelsFor(panel, field), MONTHLY_END_DATE_HIDDEN_ATTR, false)
     })
   }
 
@@ -722,9 +738,44 @@
     }
   }
 
+  function syncHoursCapFields(form) {
+    var panel = engagementPanel(form, 'hourly')
+    if (!panel) return
+    var frequencyField = attributedField(panel, 'hourly_billing_frequency') || namedField(panel, 'Frequency')
+    var selected = readEngagement(form) === 'hourly'
+      ? canonicalHourlyFrequency(fieldValue(frequencyField))
+      : ''
+    var fields = [
+      { frequency: 'one_time', semantic: 'maximum_total_hours', native: 'Maximum-Hours-Billed' },
+      { frequency: 'weekly', semantic: 'maximum_hours_per_week', native: 'Maximum-Hours-Billed-per-Week' },
+      { frequency: 'monthly', semantic: 'maximum_hours_per_month', native: 'Maximum-Hours-Billed-per-Month' },
+    ]
+
+    fields.forEach(function (spec) {
+      var field = attributedField(panel, spec.semantic) || namedField(panel, spec.native)
+      if (!field) return
+      var visible = selected === spec.frequency
+
+      // Stash before the shared writer drops `required`, so syncActiveRequired
+      // can restore it when this cadence becomes the selected one again.
+      if (!visible) {
+        var authoredRequired = field.getAttribute && field.getAttribute('required') !== null
+        if (authoredRequired && field.getAttribute(REQUIRED_STASH_ATTR) === null) {
+          field.setAttribute(REQUIRED_STASH_ATTR, 'true')
+        }
+      }
+
+      // `inputGroup` stops at any `data-input-filter-item` ancestor: while the
+      // Designer cutover is pending, form-input-filter still owns those nodes,
+      // so hide only this control and its own labels rather than fighting it.
+      setFieldVisibility(field, inputGroup(field, panel), labelsFor(panel, field), HOURS_CAP_HIDDEN_ATTR, visible)
+    })
+  }
+
   function syncDurationFields(form) {
     syncMonthlyDurationField(form)
     syncHourlyDurationChoice(form)
+    syncHoursCapFields(form)
     syncInvoiceFrequencyField(form)
   }
 
@@ -1150,6 +1201,7 @@
     formatCurrentDate: formatCurrentDate,
     fillCurrentDates: fillCurrentDates,
     syncInvoiceFrequencyField: syncInvoiceFrequencyField,
+    syncHoursCapFields: syncHoursCapFields,
     syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,
