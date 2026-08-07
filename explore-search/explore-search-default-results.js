@@ -36,18 +36,21 @@
  *   site three browse widgets (the cancel-membership expert lists) sit EARLIER
  *   in document order than the search UI, so a bare
  *   document.querySelector('[wf-algolia-element="results"]') resolves to a
- *   browse widget's container instead of the search one. This embed therefore
- *   resolves the results container relative to [wf-algolia-element="search-wrapper"]
- *   first, then falls back to the container that actually holds federated
- *   sections, then to the first container not owned by a browse widget.
+ *   browse widget's container instead of the search one — which is exactly the
+ *   bug that stopped the default lists from ever painting. This embed instead
+ *   walks a ladder: the search wrapper's own results container, else the
+ *   container that actually holds federated sections, else the first container
+ *   not owned by a browse widget. Every rung skips browse-owned containers.
  * - Sections are looked up inside that results container first and, only if
- *   that yields nothing, document-wide — so a page whose sections are nested
- *   correctly behaves exactly as before.
- * - If no section exists yet when this runs, the embed no longer bails for
- *   good: it polls (same interval/timeout discipline as the engine wait) until
- *   sections appear, then runs the normal pipeline. Templates captured live
- *   are best-effort in that case (the engine detaches them early), so the
- *   retry path still routes through the step-2 recovery below.
+ *   that yields nothing, document-wide (minus browse-owned ones) — so a page
+ *   whose sections are nested correctly behaves exactly as before.
+ * - Nothing resolved here is treated as final. Those three browse widgets are
+ *   removed by Memberstack gating shortly after load, and attribute binding
+ *   can settle late, so the set of look-alike containers CHANGES during the
+ *   load window. If the markup is not usable yet the embed re-resolves and
+ *   retries on a poll instead of bailing for good, and start() re-derives the
+ *   results container from the sections it actually found — a transient miss
+ *   must never become a permanent one.
  *
  * Behavior / timing:
  * - Rendering goes through the engine's own public API: WfAlgolia.multiSearch
@@ -55,22 +58,30 @@
  *   for each hit (which stamps class wf-algolia-injected, so the engine's own
  *   pre-render sweep removes these clones when a real search renders).
  * - cloneAndPopulate needs the section's hit-card TEMPLATE element, but the
- *   engine DETACHES those templates from the DOM when it initializes. This
- *   embed captures them with a two-step, race-proof strategy:
- *     1. Live DOM: if a deferred run beats engine init (the normal Webflow
- *        case — init is queued via Webflow.push and drains around
- *        DOMContentLoaded), clone each section's direct-child template in
- *        place.
- *     2. Fallback: if the engine already detached them (e.g. a cached engine
- *        module that initialized before this deferred script ran), re-fetch
- *        the current page's HTML and parse the templates back out, matching
- *        each to its section by wf-algolia-index. This is why the templates
- *        must be authored in the page markup (they are, hidden).
+ *   engine DETACHES those templates from the DOM when it initializes. The
+ *   engine is loaded <script async> in the HEAD while these embeds are
+ *   deferred, so who wins that race is genuinely NON-DETERMINISTIC — it turns
+ *   on network timing, not on execution order. Both paths below are therefore
+ *   normal paths, not a happy path plus an edge case:
+ *     1. Live DOM: if this embed runs before the engine has initialized, clone
+ *        each section's direct-child template in place. Best-effort.
+ *     2. Recovery: if the engine already detached them — or if sections only
+ *        turned up on the retry poll, by which time the engine has almost
+ *        certainly initialized — re-fetch the current page's HTML and parse
+ *        the templates back out, matching each to its section by
+ *        wf-algolia-index (scoped the same careful way as the live lookup, so
+ *        a browse widget's template is never mistaken for a section's). This
+ *        is why the templates must be authored in the page markup.
  * - It then waits (polling) for window.WfAlgolia, which only exists AFTER the
- *   engine initializes. On a ~15s timeout it bails quietly, leaving native
- *   behavior intact (fail-safe).
- * - The results container stays authored display:none until the first default
- *   render completes, so there is no empty flash.
+ *   engine initializes. Both waits share ONE ~15s deadline measured from
+ *   init, so the total is bounded at ~15s rather than compounding; on expiry
+ *   it bails quietly, leaving native behavior intact (fail-safe).
+ * - showEl(resultsEl) clears any inline display the engine set. Note the
+ *   container is NOT authored display:none in the current markup (it carries
+ *   no style attribute at all), so that call is a no-op on first render and
+ *   the no-empty-flash behavior actually comes from explore-search-transitions
+ *   plus explore-search-hide-empty. It is kept because the engine DOES set
+ *   inline display:none later (empty query / Escape / outside click).
  * - It does NOT touch tab counts. explore-search-tab-counts.js owns those: it
  *   intercepts the engine's Algolia responses, remembers each query's counts
  *   in memory, and repaints from that memory on every input event. So even a
@@ -97,16 +108,30 @@
   var SECTION_SELECTOR = '[wf-algolia-element="section"][wf-algolia-index]';
   var RESULTS_SELECTOR = '[wf-algolia-element="results"]';
   var BROWSE_SELECTOR = '[wf-algolia-element="browse"]';
+  var WRAPPER_SELECTOR = '[wf-algolia-element="search-wrapper"]';
+  var INPUT_SELECTOR = 'input[wf-algolia-element="search-input"]';
+  var TEMPLATE_SELECTOR = ':scope > [wf-algolia-element="template"]';
+  var NO_RESULTS_SELECTOR = '[wf-algolia-element="no-results"]';
+
+  /* ONE deadline for the whole embed, measured from init and shared by the
+     markup wait and the engine wait. Chaining a fresh timeout onto each would
+     let a slow page keep this alive for twice as long for no benefit: the
+     engine is <script async> in the head and resolves in a few hundred ms in
+     practice, so if it is still missing 15s into the page it is not coming. */
+  var deadline = Date.now() + ENGINE_TIMEOUT_MS;
+  function pastDeadline() {
+    return Date.now() > deadline;
+  }
 
   try {
-    /* --- Locate the feature markup (defer = DOM parsed) --- */
+    /* --- Locate the feature markup ---
+       Nothing here is resolved once and trusted forever: the browse widgets
+       that create the look-alike containers are removed after load, so every
+       lookup is re-runnable and the retry poll re-runs them. */
 
-    /* The SEARCH widget's wrapper. Everything is resolved relative to it when
-       it exists, because browse widgets on the same page own look-alike
-       [wf-algolia-element="results"] containers of their own. */
-    var wrapperEl = document.querySelector(
-      '[wf-algolia-element="search-wrapper"]'
-    );
+    var resultsEl = null;
+    var input = null;
+    var noResultsEl = null;
 
     function inBrowseWidget(el) {
       try {
@@ -119,43 +144,76 @@
       return false;
     }
 
-    function resolveResultsEl() {
-      /* 1. The search wrapper's own results container (the correct answer on
-            the live markup). */
-      if (wrapperEl) {
-        var scoped = wrapperEl.querySelector(RESULTS_SELECTOR);
-        if (scoped) return scoped;
-      }
-      var all = document.querySelectorAll(RESULTS_SELECTOR);
-      var i;
-      /* 2. The container that actually holds federated sections. */
-      for (i = 0; i < all.length; i++) {
-        if (all[i].querySelector(SECTION_SELECTOR)) return all[i];
-      }
-      /* 3. The first container not owned by a browse widget. */
-      for (i = 0; i < all.length; i++) {
+    /* First match that is not owned by a browse widget. Works on the live
+       document and on a DOMParser document alike (step-2 recovery reuses it). */
+    function firstOutsideBrowse(root, selector) {
+      if (!root) return null;
+      var all = root.querySelectorAll(selector);
+      for (var i = 0; i < all.length; i++) {
         if (!inBrowseWidget(all[i])) return all[i];
       }
-      return all.length ? all[0] : null;
+      return null;
     }
 
-    var resultsEl = resolveResultsEl();
-    var input =
-      (wrapperEl &&
-        wrapperEl.querySelector('input[wf-algolia-element="search-input"]')) ||
-      document.querySelector('input[wf-algolia-element="search-input"]');
-    if (!resultsEl || !input) return; // feature absent — bail quietly
+    /* Ladder, every rung skipping browse-owned containers, each falling
+       THROUGH to the next rather than committing to a bad match. */
+    function resolveResultsEl(root) {
+      var scope = root || document;
+      /* 1. The search wrapper's own results container. */
+      var hit = firstOutsideBrowse(
+        scope.querySelector(WRAPPER_SELECTOR),
+        RESULTS_SELECTOR
+      );
+      if (hit) return hit;
+      /* 2. The container that actually holds federated sections. */
+      var all = scope.querySelectorAll(RESULTS_SELECTOR);
+      var i;
+      for (i = 0; i < all.length; i++) {
+        if (!inBrowseWidget(all[i]) && all[i].querySelector(SECTION_SELECTOR)) {
+          return all[i];
+        }
+      }
+      /* 3. Any container at all that a browse widget does not own. */
+      return firstOutsideBrowse(scope, RESULTS_SELECTOR);
+    }
 
-    /* Resolved once the sections are in hand (see start()). */
-    var noResultsEl = null;
+    function resolveInput(root) {
+      var scope = root || document;
+      return (
+        firstOutsideBrowse(scope.querySelector(WRAPPER_SELECTOR), INPUT_SELECTOR) ||
+        firstOutsideBrowse(scope, INPUT_SELECTOR)
+      );
+    }
+
+    /* Re-resolve the container and the input. Never downgrades a good match to
+       null, so a container that disappears mid-flight leaves the last known
+       one in place. Returns whether we now have both. */
+    function resolveMarkup() {
+      var r = resolveResultsEl(document);
+      if (r) resultsEl = r;
+      var i = resolveInput(document);
+      if (i) input = i;
+      return !!(resultsEl && input);
+    }
+
+    resolveMarkup();
 
     /* Sections live inside the results container on correct markup. Only if
        that yields nothing do we widen to the document, so pages that nest
-       their sections properly keep the exact behavior they had before. */
+       their sections properly keep the exact behavior they had before. Either
+       way, browse-owned sections are never adopted. */
     function findSections() {
-      var scoped = resultsEl.querySelectorAll(SECTION_SELECTOR);
-      if (scoped.length) return scoped;
-      return document.querySelectorAll(SECTION_SELECTOR);
+      var scoped = resultsEl
+        ? resultsEl.querySelectorAll(SECTION_SELECTOR)
+        : [];
+      var source = scoped.length
+        ? scoped
+        : document.querySelectorAll(SECTION_SELECTOR);
+      var out = [];
+      for (var i = 0; i < source.length; i++) {
+        if (!inBrowseWidget(source[i])) out.push(source[i]);
+      }
+      return out;
     }
 
     /* --- Small helpers --- */
@@ -171,7 +229,8 @@
     }
 
     function inputValue() {
-      return (input.value || "").trim();
+      /* input can still be unresolved while the retry poll is running. */
+      return ((input && input.value) || "").trim();
     }
 
     /* Show helper — replicates the engine's wf-algolia-display rule: honor the
@@ -330,7 +389,6 @@
 
     /* --- Wait for the engine, then observe + do the initial render --- */
     function waitForEngineThenRender() {
-      var started = Date.now();
       var pollTimer = setInterval(function () {
         if (
           window.WfAlgolia &&
@@ -340,7 +398,7 @@
           clearInterval(pollTimer);
           startObserver();
           renderDefaults();
-        } else if (Date.now() - started > ENGINE_TIMEOUT_MS) {
+        } else if (pastDeadline()) {
           clearInterval(pollTimer); // give up quietly, native behavior intact
         }
       }, ENGINE_POLL_MS);
@@ -362,18 +420,22 @@
         .then(function (html) {
           try {
             var doc = new DOMParser().parseFromString(html, "text/html");
+            /* The parsed page carries the SAME look-alike containers the live
+               one does, so resolve inside it with the same care: prefer the
+               search wrapper's results container, and never accept a section
+               owned by a browse widget. */
+            var srcRoot = resolveResultsEl(doc) || doc;
             pairs.forEach(function (p) {
               if (p.templateClone) return;
-              var srcSection = doc.querySelector(
+              var selector =
                 '[wf-algolia-element="section"][wf-algolia-index="' +
-                  p.indexName +
-                  '"]'
-              );
+                p.indexName +
+                '"]';
+              var srcSection =
+                firstOutsideBrowse(srcRoot, selector) ||
+                firstOutsideBrowse(doc, selector);
               var srcTpl =
-                srcSection &&
-                srcSection.querySelector(
-                  ':scope > [wf-algolia-element="template"]'
-                );
+                srcSection && srcSection.querySelector(TEMPLATE_SELECTOR);
               if (srcTpl) {
                 p.templateClone = document.importNode(srcTpl, true);
               }
@@ -389,35 +451,54 @@
     }
 
     /* --- Entry point: build the section pairs, capture their templates as
-       early as possible (the engine detaches them shortly after it inits),
-       then hand off to the recovery/engine-wait chain. --- */
-    function start(sectionEls) {
-      if (started) return;
-      started = true;
+       early as possible, then hand off to the recovery/engine-wait chain.
 
-      noResultsEl = resultsEl.querySelector(
-        '[wf-algolia-element="no-results"]'
-      );
+       Returns TRUE only when it has committed to a usable set of sections.
+       Anything less leaves every flag untouched so the caller keeps retrying —
+       a section authored with an empty wf-algolia-index (a CMS placeholder
+       still binding) matches the selector but yields no pair, and that must
+       not be mistaken for "done". --- */
+    function start(sections) {
+      if (started) return true;
+      if (!sections || !sections.length) return false;
 
-      Array.prototype.forEach.call(sectionEls, function (section) {
+      /* Trust the sections we actually found over anything resolved earlier:
+         re-derive the container from them, so the cards we paint and the
+         container we reveal/observe can never be two different elements. */
+      var owner = null;
+      try {
+        if (sections[0] && typeof sections[0].closest === "function") {
+          owner = sections[0].closest(RESULTS_SELECTOR);
+        }
+      } catch (e) {
+        /* fall through to the ladder */
+      }
+      if (owner && inBrowseWidget(owner)) owner = null;
+      resultsEl = owner || resolveResultsEl(document) || resultsEl;
+      if (!resultsEl || !input) return false;
+
+      var built = [];
+      Array.prototype.forEach.call(sections, function (section) {
         var indexName = section.getAttribute("wf-algolia-index");
-        if (!indexName) return;
-        pairs.push({
+        if (!indexName) return; // unbound placeholder — skip, stay retryable
+        built.push({
           section: section,
           indexName: indexName,
           cap: capFor(section),
           templateClone: null
         });
       });
-      if (!pairs.length) return; // nothing usable — bail quietly
+      if (!built.length) return false; // nothing usable YET — keep polling
 
-      /* --- Step 1: capture templates from the live DOM (wins the race in the
-         normal Webflow case, where engine init is deferred to the ready-queue).
+      started = true;
+      pairs = built;
+      noResultsEl = resultsEl.querySelector(NO_RESULTS_SELECTOR);
+
+      /* --- Step 1: capture templates from the live DOM. Best-effort only —
+         the engine is async in the head, so it may already have detached them.
          Anything missed here is recovered from the page HTML by step 2. */
       pairs.forEach(function (p) {
-        var tpl = p.section.querySelector(
-          ':scope > [wf-algolia-element="template"]'
-        );
+        var tpl = p.section.querySelector(TEMPLATE_SELECTOR);
         if (tpl) {
           p.templateClone = tpl.cloneNode(true);
         } else {
@@ -426,21 +507,21 @@
       });
 
       ensureTemplatesThenStart();
+      return true;
     }
 
-    /* Sections absent right now is NOT fatal: markup can still be settling
-       (CMS list wrappers are flattened after DOMContentLoaded, i.e. after every
-       deferred script). Poll on the same schedule as the engine wait and give
-       up just as quietly when it times out. */
-    function waitForSectionsThenStart() {
-      var began = Date.now();
+    /* Markup that is not usable YET is not markup that is absent. The results
+       container, the input and the sections can all still be settling (the
+       browse widgets that shadow the container are removed after load, and CMS
+       attribute binding lands late), so re-resolve all three on every tick and
+       only stop when start() reports success or the shared deadline expires. */
+    function waitForMarkupThenStart() {
       var pollTimer = setInterval(function () {
         try {
-          var found = findSections();
-          if (found.length) {
+          resolveMarkup();
+          if (start(findSections())) {
             clearInterval(pollTimer);
-            start(found);
-          } else if (Date.now() - began > ENGINE_TIMEOUT_MS) {
+          } else if (pastDeadline()) {
             clearInterval(pollTimer); // give up quietly, native behavior intact
           }
         } catch (e) {
@@ -449,12 +530,7 @@
       }, ENGINE_POLL_MS);
     }
 
-    var initialSections = findSections();
-    if (initialSections.length) {
-      start(initialSections);
-    } else {
-      waitForSectionsThenStart();
-    }
+    if (!start(findSections())) waitForMarkupThenStart();
   } catch (e) {
     /* never break the page */
   }
