@@ -12,7 +12,7 @@ const OPPORTUNITIES_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'opportu
 class Element {
   constructor(attrs = {}) {
     this.attrs = { ...attrs }
-    this.value = attrs.value || ''
+    this._value = attrs.value || ''
     this.type = attrs.type || 'text'
     this.checked = attrs.checked !== false
     this.disabled = attrs.disabled === true
@@ -20,10 +20,29 @@ class Element {
     this.textContent = ''
     this.style = { display: '' }
     this.children = []
+    this.tagName = attrs.tagName || 'INPUT'
+    this.options = attrs.options || []
+    this.events = []
   }
+  // A native <select> reports the value of whichever option is selected, so the
+  // fixture must too: writing `option.selected` is the only thing the adapter
+  // does to a select.
+  get value() {
+    if (this.tagName === 'SELECT' && this.options) {
+      const selected = this.options.find((option) => option.selected)
+      if (selected) return selected.value
+    }
+    return this._value
+  }
+  set value(next) { this._value = next }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return this.attrs[name] ?? null }
   removeAttribute(name) { delete this.attrs[name] }
+  dispatchEvent(event) { this.events.push(event.type) }
+  click() {
+    this.checked = this.type === 'checkbox' ? !this.checked : true
+    this.events.push('click')
+  }
   matches(selector) { return selector.includes('[data-project-form-v3="brand"] form') && this.attrs['data-project-form-v3'] === 'brand' }
   closest(selector) {
     if (selector.includes('[data-project-form-v3="brand"] form')) return this.form || (this.matches(selector) ? this : null)
@@ -116,6 +135,7 @@ function documentFixture(form) {
     listeners,
     addEventListener(name, handler, capture) { listeners[name] = { handler, capture } },
     dispatchEvent(event) { this.event = event },
+    querySelectorAll() { return [] },
     querySelector(selector) {
       if (selector === 'dialog[data-modal-target="generate-contract"] #pushMemID') return form.querySelector('[data-project-field="starter_memberstack_id"]')
       return selector.includes('[data-project-form-v3="brand"] form') ? form : null
@@ -137,6 +157,9 @@ function load(options = {}) {
     }) } },
     StartersTrack: { track(name, payload) { calls.push({ name, payload }) } },
     CustomEvent: class CustomEvent { constructor(name, init) { this.type = name; this.detail = init.detail } },
+    Event: class Event { constructor(name) { this.type = name } },
+    $memberstackDom: options.memberstack,
+    setTimeout: options.setTimeout,
     WeakMap,
     Uint32Array,
     Date,
@@ -161,6 +184,176 @@ test('normalizes ids, money, dates, and supported engagement values', () => {
   assert.equal(api.canonicalHourlyFrequency('One Time'), 'one_time')
   assert.equal(api.canonicalInvoiceFrequency('Bi-Weekly'), 'bi_weekly')
   assert.equal(api.canonicalInvoiceFrequency('Upon completion of the project'), 'upon_completion')
+})
+
+test('prefills the native hiring-manager field from the signed-in Memberstack member', async () => {
+  const form = projectForm()
+  const manager = nativeField('Hiring-Manager-Name', '')
+  form.children.push(manager)
+  const document = documentFixture(form)
+  document.querySelectorAll = (selector) => selector.includes('Hiring-Manager-Name') ? [manager] : []
+  const memberstack = {
+    getCurrentMember: async () => ({
+      data: { customFields: { 'free-user': 'Jai', 'last-name': 'Indolwani' } },
+    }),
+  }
+  const { api, window } = load({ form, document, memberstack })
+
+  assert.equal(await api.fillMemberName(document, window, 0), true)
+  assert.equal(manager.value, 'Jai Indolwani')
+  assert.deepEqual(manager.events, ['input', 'change'])
+})
+
+test('smart-fill resolves fee structure and invoice frequency by native name', () => {
+  const form = projectForm()
+  form.children = form.children.filter((child) => child.getAttribute('data-project-field') !== 'invoice_frequency')
+  const fee = nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [
+      { value: '', textContent: 'Select one...' },
+      { value: 'flat_fee', textContent: 'Flat Fee' },
+    ],
+    'data-sp-fill': 'input',
+    'data-sp-fill-category': 'fee-structure',
+  })
+  const invoice = nativeField('invoice-frequency', '', {
+    tagName: 'SELECT',
+    options: [
+      { value: '', textContent: 'Select one...' },
+      { value: 'bi_weekly', textContent: 'Bi-Weekly' },
+    ],
+    // Mirrors the current Designer mistake. Native-name resolution must keep
+    // an invoice preset from writing the fee-structure select.
+    'data-sp-fill': 'input',
+    'data-sp-fill-category': 'fee-structure',
+  })
+  form.children.push(fee, invoice)
+  const document = documentFixture(form)
+  document.querySelectorAll = (selector) => selector.includes('[data-sp-fill="input"]') ? [fee, invoice] : []
+  const { api } = load({ form, document })
+
+  assert.equal(api.applySmartFill(document, 'fee-structure', 'flat_fee'), true)
+  assert.equal(api.applySmartFill(document, 'invoice-frequency', 'bi_weekly'), true)
+  assert.equal(fee.value, 'flat_fee')
+  assert.equal(invoice.value, 'bi_weekly')
+  assert.deepEqual(fee.events, ['input', 'change'])
+  assert.deepEqual(invoice.events, ['input', 'change'])
+})
+
+test('prefills the hiring-manager field whatever the Designer label casing', async () => {
+  const form = projectForm()
+  const manager = nativeField('Hiring-manager-name', '')
+  form.children.push(manager)
+  const document = documentFixture(form)
+  const memberstack = {
+    getCurrentMember: async () => ({ data: { customFields: { 'free-user': 'Jai', 'last-name': 'Indolwani' } } }),
+  }
+  const { api, window } = load({ form, document, memberstack })
+
+  assert.equal(await api.fillMemberName(document, window, 0), true)
+  assert.equal(manager.value, 'Jai Indolwani')
+})
+
+test('never reads Memberstack again once every hiring-manager target is filled', async () => {
+  const form = projectForm()
+  form.children.push(nativeField('Hiring-Manager-Name', 'Jai Indolwani'))
+  const document = documentFixture(form)
+  let reads = 0
+  const memberstack = {
+    getCurrentMember: async () => {
+      reads += 1
+      return { data: { customFields: { 'free-user': 'Jai' } } }
+    },
+  }
+  const { api, window } = load({ form, document, memberstack })
+
+  assert.equal(await api.fillMemberName(document, window, 0), false)
+  assert.equal(reads, 0)
+})
+
+test('smart-fill widens a collapsed fee-structure resolution to the whole radio group', () => {
+  const form = projectForm()
+  const flat = nativeField('Fee-Structure', 'Flat Fee', { type: 'radio', checked: false })
+  const weekly = nativeField('Fee-Structure', 'Weekly Recurring', { type: 'radio', checked: true })
+  form.children.push(flat, weekly)
+  const document = documentFixture(form)
+  const { api } = load({ form, document })
+
+  assert.equal(api.smartFillTarget(document, 'fee-structure'), weekly)
+  assert.equal(api.applySmartFill(document, 'fee-structure', 'Flat Fee'), true)
+  assert.equal(flat.checked, true)
+  assert.deepEqual(flat.events, ['click'])
+})
+
+function taggedCheckbox(attrs = {}) {
+  const form = projectForm()
+  const checkbox = new Element({ type: 'checkbox', 'data-sp-fill': 'input', 'data-sp-fill-category': 'ongoing', ...attrs })
+  const document = documentFixture(form)
+  document.querySelectorAll = (selector) => selector.includes('[data-sp-fill="input"]') ? [checkbox] : []
+  return { checkbox, document, api: load({ form, document }).api }
+}
+
+test('a false preset never turns a smart-fill checkbox on', () => {
+  const off = taggedCheckbox({ checked: false })
+  assert.equal(off.api.applySmartFill(off.document, 'ongoing', 'false'), true)
+  assert.equal(off.checkbox.checked, false)
+  assert.deepEqual(off.checkbox.events, [])
+
+  const on = taggedCheckbox({ checked: true, value: 'false' })
+  assert.equal(on.api.applySmartFill(on.document, 'ongoing', 'false'), true)
+  assert.equal(on.checkbox.checked, false)
+})
+
+test('a smart-fill checkbox accepts its own value and ignores an unrecognized preset', () => {
+  const own = taggedCheckbox({ checked: false, value: 'Yes' })
+  assert.equal(own.api.applySmartFill(own.document, 'ongoing', 'yes'), true)
+  assert.equal(own.checkbox.checked, true)
+
+  const unknown = taggedCheckbox({ checked: false, value: 'Yes' })
+  assert.equal(unknown.api.applySmartFill(unknown.document, 'ongoing', 'maybe'), false)
+  assert.equal(unknown.checkbox.checked, false)
+})
+
+test('smart-fill selects the resolved option even when option values repeat', () => {
+  const form = projectForm()
+  const duplicated = { value: 'monthly', textContent: 'Monthly Basis' }
+  const invoice = nativeField('invoice-frequency', '', {
+    tagName: 'SELECT',
+    options: [
+      { value: '', textContent: 'Select one...' },
+      { value: 'monthly', textContent: 'Monthly' },
+      duplicated,
+    ],
+  })
+  form.children = form.children.filter((child) => child.getAttribute('data-project-field') !== 'invoice_frequency')
+  form.children.push(invoice)
+  const document = documentFixture(form)
+  const { api } = load({ form, document })
+
+  assert.equal(api.applySmartFill(document, 'invoice-frequency', 'Monthly Basis'), true)
+  assert.equal(duplicated.selected, true)
+  assert.equal(invoice.value, 'monthly')
+  assert.equal(api.serialize(form).payload.invoice_frequency, 'monthly')
+})
+
+test('current-date migration fills tagged blank fields once without clobbering edits', () => {
+  const { api, window } = load()
+  const form = new Element()
+  const blank = nativeField('startDateInput', '', { tagName: 'INPUT', 'data-set-current-date': 'mm/dd/yy' })
+  const authored = nativeField('startDateInput', '09/01/2026', { tagName: 'INPUT', 'data-set-current-date': 'mm/dd/yy' })
+  form.querySelectorAll = (selector) => selector === '[data-set-current-date]' ? [blank, authored] : []
+  // Local-time construction: formatCurrentDate reads local accessors, so a UTC
+  // instant would make this assertion fail at negative offsets.
+  window.Date = class FixedDate extends Date {
+    constructor() { super(2026, 7, 7) }
+  }
+
+  assert.equal(api.fillCurrentDates(form, window), 1)
+  assert.equal(blank.value, '08/07/2026')
+  assert.equal(authored.value, '09/01/2026')
+  assert.equal(blank.getAttribute('data-set-current-date-inited'), 'true')
+  assert.equal(authored.getAttribute('data-set-current-date-inited'), 'true')
+  assert.equal(api.fillCurrentDates(form, window), 0)
 })
 
 test('serializes only explicitly marked fields into the Xano contract', () => {

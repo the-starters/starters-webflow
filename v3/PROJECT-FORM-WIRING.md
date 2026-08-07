@@ -36,9 +36,10 @@ adapter reads the established `#pushMemID` contract scoped to
 `data-modal-target="generate-contract"`. Do not edit or bind the separate
 `start-project` modal.
 
-No per-field attributes are required. The adapter uses an explicit allowlist of
-the form's native Webflow names. Webflow derives a native control name from its
-Designer label, so the allowlist is matched case- and separator-insensitively:
+No per-field attributes are required for serialization. The adapter uses an
+explicit allowlist of the form's native Webflow names. Webflow derives a native
+control name from its Designer label, so the allowlist is matched case- and
+separator-insensitively:
 `Invoice Frequency`, `Invoice-frequency`, and `invoice_frequency` all resolve to
 the same allowlisted control.
 
@@ -156,8 +157,65 @@ reorganization that moves the contract choice ahead of the pricing fields needs
 no change here.
 
 Hiring Manager, Company, Email, and display-name fields remain UI/prefill
-fields only. Xano derives authoritative Brand and Starter records from the
+fields only; the hiring-manager name is prefilled here (see below) but is never
+serialized. Xano derives authoritative Brand and Starter records from the
 authenticated Brand plus the selected Starter Memberstack identity.
+
+## Prefill behaviors owned here
+
+Three behaviors that used to live in `/hire/<slug>` Webflow Code Embeds are part
+of this adapter, so the form's authored attributes keep working with no embed on
+the page. None of them generate markup. The two prefills run when the adapter
+installs and again each time a Hire trigger opens the modal — CMS content and
+Memberstack often settle after page load — while the preset filling is a
+delegated click, so a CMS-rendered trigger needs no rebinding. The
+`freelancer-cms/` copies of the same embeds stay authoritative for the other CMS
+pages that still load them; do not paste them back onto `/hire/<slug>`. A copy
+still published on this page is harmless — both implementations skip a control
+that is already filled and share the `data-set-current-date-inited` marker — but
+the embed on this page should be deleted the next time Webflow is edited, so the
+behavior has one owner.
+
+**Hiring-manager prefill.** Fills any blank `[data-mscustom-fullname]` control
+in the form plus the native `Hiring-Manager-Name` control, resolved
+case- and separator-insensitively like every other named control here. The name
+is `$memberstackDom.getCurrentMember()`'s first plus last custom field, taking
+the first non-empty of `free-user`, `first-name`, `First Name`, `firstName`,
+`first_name`, `firstname` and of the matching last-name keys — `free-user` is
+this site's legacy first-name key. Memberstack is polled every 100ms for up to
+50 tries and then abandoned silently. An already-filled control is never
+overwritten and never costs a Memberstack read, so a Brand's own edit survives
+reopening the modal.
+
+**CMS attribute presets ("smart fill").** A delegated click on a
+`[data-sp-fill="button"]` trigger applies every `data-sp-fill-category` /
+`data-sp-fill-value` pair on that trigger and its descendants. It does not
+suppress the click, so the same node can also be the Hire modal trigger. Each
+category resolves to one control inside this form: `fee_structure` to the
+authored `Fee-Structure` control and `invoice_frequency` to the invoice-frequency
+control the serializer reads, and every other category — plus either of those two
+when its authored control is missing — to a `[data-sp-fill="input"]` field whose
+category matches exactly, then case- and separator-insensitively. The two remain
+independent — a fee-structure preset can never write the invoice select, and a
+CMS card may preset either, both, or neither. Values are applied the way a Brand
+would: a select matches an option by value then by visible text (case-insensitive
+fallback each time) and selects that exact option, so duplicate option values
+stay distinguishable; a radio preset widens to the whole same-named group and
+clicks it, so Webflow's conditional panels react; a checkbox honors an explicit
+`true`/`false` or its own value and leaves the authored state alone for anything
+else; any other control has its value set. A disabled control is never touched,
+and every write reaches the rest of the page the way a Brand's would: radios and
+checkboxes through a real `click()`, everything else through a dispatched
+`input`/`change` pair.
+
+**Current-date initialization.** Blank `[data-set-current-date]` controls in the
+form receive today's date, formatted by jQuery UI's datepicker when it is loaded
+and by an `mm`/`dd`/`yy` token fallback when it is not. The format comes from the
+attribute's own value, then `data-input-datepicker-format`, then `mm/dd/yy`. A
+control that already holds a value keeps it, a non-field element receives text
+content instead, and every visited control is marked
+`data-set-current-date-inited="true"` so reopening the modal never overwrites a
+Brand's chosen date.
 
 ## Authored states
 
@@ -182,7 +240,10 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
 
 1. Verify exactly one target form exists inside `data-modal-target="generate-contract"`.
 2. Open it from every responsive Hire trigger and confirm the selected Starter
-   identity is present before review.
+   identity is present before review, that the hiring-manager name arrives
+   prefilled, that a CMS preset card fills only its own fields, and that the
+   authored current-date control defaults to today and keeps a Brand's edit when
+   the modal is reopened.
 3. Exercise Flat Fee; fixed and ongoing Hourly with One Time, Weekly, and
    Monthly caps; fixed and ongoing Monthly; fixed and ongoing Weekly; Standard
    Contract; and My Own Contract validation without issuing a request for
