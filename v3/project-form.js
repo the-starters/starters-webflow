@@ -45,6 +45,7 @@
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
   var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
+  var HOURS_CAP_HIDDEN_ATTR = 'data-project-hours-cap-hidden'
   var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname]'
   var MEMBER_NAME_FIELD = 'Hiring-Manager-Name'
   var SMART_FILL_TRIGGER_SELECTOR = '[data-sp-fill="button"]'
@@ -547,9 +548,24 @@
 
   function engagementPanel(form, engagement) {
     var values = ENGAGEMENT_PANEL_VALUES[engagement] || []
-    if (!form || !form.querySelector) return null
+    if (!form) return null
     for (var i = 0; i < values.length; i += 1) {
-      var panel = form.querySelector('[data-input-filter-item="' + values[i] + '"]')
+      var selector = '[data-input-filter-item="' + values[i] + '"]'
+      var panels = form.querySelectorAll
+        ? Array.prototype.slice.call(form.querySelectorAll(selector))
+        : []
+      if (!panels.length && form.querySelector) {
+        var fallback = form.querySelector(selector)
+        if (fallback) panels.push(fallback)
+      }
+      var panel = panels.find(function (candidate) {
+        var ancestor = candidate && candidate.parentElement
+        while (ancestor && ancestor !== form) {
+          if (ancestor.getAttribute && ancestor.getAttribute('data-input-filter-item') !== null) return false
+          ancestor = ancestor.parentElement
+        }
+        return true
+      })
       if (panel) return panel
     }
     return null
@@ -722,9 +738,74 @@
     }
   }
 
+  function hoursCapGroup(field, panel) {
+    var group = inputGroup(field, panel)
+    if (group) return group
+    var node = field && field.parentElement
+    while (node && node !== panel) {
+      if (
+        node.getAttribute &&
+        node.getAttribute('data-input-filter-item') !== null &&
+        wrapsOnly(node, field)
+      ) return node
+      node = node.parentElement
+    }
+    return null
+  }
+
+  function syncHoursCapFields(form) {
+    var panel = engagementPanel(form, 'hourly')
+    if (!panel) return
+    var frequencyField = attributedField(panel, 'hourly_billing_frequency') || namedField(panel, 'Frequency')
+    var selected = readEngagement(form) === 'hourly'
+      ? canonicalHourlyFrequency(fieldValue(frequencyField))
+      : ''
+    var fields = [
+      { frequency: 'one_time', semantic: 'maximum_total_hours', native: 'Maximum-Hours-Billed' },
+      { frequency: 'weekly', semantic: 'maximum_hours_per_week', native: 'Maximum-Hours-Billed-per-Week' },
+      { frequency: 'monthly', semantic: 'maximum_hours_per_month', native: 'Maximum-Hours-Billed-per-Month' },
+    ]
+
+    fields.forEach(function (spec) {
+      var field = attributedField(panel, spec.semantic) || namedField(panel, spec.native)
+      if (!field) return
+      var group = hoursCapGroup(field, panel)
+      var labels = labelsFor(panel, field)
+      var visible = selected === spec.frequency
+
+      if (!visible) {
+        var authoredRequired = field.getAttribute && field.getAttribute('required') !== null
+        if (authoredRequired && field.getAttribute(REQUIRED_STASH_ATTR) === null) {
+          field.setAttribute(REQUIRED_STASH_ATTR, 'true')
+        }
+        field.required = false
+        field.disabled = true
+        if (field.setAttribute) {
+          field.setAttribute('disabled', '')
+          field.setAttribute(HOURS_CAP_HIDDEN_ATTR, 'true')
+          field.removeAttribute('required')
+        }
+        hideElement(field)
+        labels.forEach(hideElement)
+        hideElement(group)
+        return
+      }
+
+      field.disabled = false
+      if (field.removeAttribute) {
+        field.removeAttribute('disabled')
+        field.removeAttribute(HOURS_CAP_HIDDEN_ATTR)
+      }
+      showElement(group)
+      labels.forEach(showElement)
+      showElement(field)
+    })
+  }
+
   function syncDurationFields(form) {
     syncMonthlyDurationField(form)
     syncHourlyDurationChoice(form)
+    syncHoursCapFields(form)
     syncInvoiceFrequencyField(form)
   }
 
@@ -1150,6 +1231,7 @@
     formatCurrentDate: formatCurrentDate,
     fillCurrentDates: fillCurrentDates,
     syncInvoiceFrequencyField: syncInvoiceFrequencyField,
+    syncHoursCapFields: syncHoursCapFields,
     syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,

@@ -166,9 +166,11 @@ visible-text match working as a third path.
 The active Hourly panel's Hours Cap Period select is a separate contract. Keep
 the native Webflow field name `Frequency` until the adapter is migrated to a
 semantic field attribute; the user-facing label is deliberately different from
-that legacy name. Each option reveals exactly one maximum-hours control through
-a plain Designer condition on that select — never through a nested
-`data-input-filter` list, for the reason below.
+that legacy name. `project-form.js` reveals exactly one maximum-hours control
+for the selected option. Remove `data-input-filter="wrapper"`,
+`data-input-filter="select"`, `data-input-filter="list"`, and every nested
+`data-input-filter-item` from this Hours Cap Period group; those attributes must
+not own the same controls as the adapter.
 
 | Hours Cap Period option | Option value | Maximum-hours control it reveals | Visible maximum-hours label |
 | --- | --- | --- | --- |
@@ -183,7 +185,9 @@ Because `form-input-filter` matches every `[data-input-filter-item]` descendant
 of its list and the canonical values are generic, the Fee Structure filter group
 must not contain a nested one. The Hours Cap Period select shares those generic
 values, so a nested `[data-input-filter-item="weekly"]` inside the hourly panel
-would shadow the Weekly fee panel. Invoice Frequency is likewise not a second
+would shadow the Weekly fee panel. The adapter also rejects nested items while
+resolving top-level fee panels, which keeps serialization fail-safe during the
+Designer cutover. Invoice Frequency is likewise not a second
 `data-input-filter` controller: it is one independent select named
 `invoice-frequency`, and this adapter owns its Standard/My Own Contract
 visibility.
