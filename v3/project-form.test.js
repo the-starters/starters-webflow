@@ -431,6 +431,12 @@ test('fails closed if the standard-contract Designer field is missing', () => {
   assert.equal(api.validationError(serialized), 'Choose an invoice frequency.')
 })
 
+test('uses hours-cap language when the hourly cap period is missing', () => {
+  const form = projectForm({ engagement_type: 'Ongoing Hourly', hourly_rate: '100', hourly_billing_frequency: '' })
+  const { api } = load({ form })
+  assert.equal(api.validationError(api.serialize(form)), 'Choose an hours cap period.')
+})
+
 test('supports every authored pricing mode and keeps only its applicable commercial fields', async (t) => {
   const cases = [
     {

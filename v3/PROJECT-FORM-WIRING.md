@@ -133,7 +133,10 @@ separate from pricing:
 - contract choice becomes `standard` or `own_contract`;
 - invoice frequency becomes `weekly`, `bi_weekly`, `monthly`, or
   `upon_completion`, serialized from its own select and never derived from the
-  hourly billing frequency;
+  hourly Hours Cap Period;
+- Hours Cap Period becomes `one_time`, `weekly`, or `monthly` and is serialized
+  to the compatibility key `hourly_billing_frequency`; it controls which
+  maximum-permitted-hours field applies and does not control invoicing;
 - Xano derives the PandaDoc template key. The browser never chooses a template
   UUID or sends Brand/Starter authority fields.
 
@@ -149,6 +152,21 @@ panel attributes change.
 | Ongoing Hourly | `hourly` | `data-input-filter-item="hourly"` | `Ongoing Hourly` |
 | Weekly Recurring | `weekly` | `data-input-filter-item="weekly"` | `Weekly Recurring` |
 | Monthly Recurring | `monthly` | `data-input-filter-item="monthly"` | `Monthly Recurring` |
+
+The active Hourly panel uses this separate contract. Keep the native Webflow
+field name `Frequency` until the adapter is migrated to a semantic field
+attribute; the user-facing label is deliberately different from that legacy
+name.
+
+| Hours Cap Period option | Option value | Maximum-hours panel attribute | Visible maximum-hours label |
+| --- | --- | --- | --- |
+| Entire project | `one_time` | `data-input-filter-item="one_time"` | Maximum permitted hours for the entire project |
+| Per week | `weekly` | `data-input-filter-item="weekly"` | Maximum permitted hours per week |
+| Per month | `monthly` | `data-input-filter-item="monthly"` | Maximum permitted hours per month |
+
+The independent Invoice Frequency select must not carry
+`data-input-filter="select"`; otherwise its `weekly` and `monthly` values can
+drive the Fee Structure panel list.
 
 The adapter accepts those canonical panel values first and retains the legacy
 values in the rightmost column as a transition reader. This permits the CDN
@@ -288,7 +306,7 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    legacy panel attributes and again after the Designer cutover to the canonical
    values in the table above; both must behave identically.
 4. Confirm Standard Contract requires an invoice frequency and serializes it
-   independently of the hourly billing frequency, that My Own Contract hides
+   independently of the hourly Hours Cap Period, that My Own Contract hides
    the select and omits `invoice_frequency` from the payload, and that
    switching back to Standard Contract restores the previous selection.
 5. With the approved production canary and PandaDoc create worker #33 held
