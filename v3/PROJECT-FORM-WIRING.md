@@ -153,26 +153,6 @@ panel attributes change.
 | Weekly Recurring | `weekly` | `data-input-filter-item="weekly"` | `Weekly Recurring` |
 | Monthly Recurring | `monthly` | `data-input-filter-item="monthly"` | `Monthly Recurring` |
 
-The active Hourly panel uses this separate contract. Keep the native Webflow
-field name `Frequency` until the adapter is migrated to a semantic field
-attribute; the user-facing label is deliberately different from that legacy
-name. Each option reveals exactly one maximum-hours control through a plain
-Designer condition on that select — never through a nested `data-input-filter`
-list, which would shadow the fee panels as described below.
-
-| Hours Cap Period option | Option value | Maximum-hours control it reveals | Visible maximum-hours label |
-| --- | --- | --- | --- |
-| Entire project | `one_time` | `Maximum-Hours-Billed` | Maximum permitted hours for the entire project |
-| Per week | `weekly` | `Maximum-Hours-Billed-per-Week` | Maximum permitted hours per week |
-| Per month | `monthly` | `Maximum-Hours-Billed-per-Month` | Maximum permitted hours per month |
-
-The adapter also accepts the visible labels as option values, so relabeling the
-select in the Designer stays safe if an option loses its explicit value.
-
-The independent Invoice Frequency select must not carry
-`data-input-filter="select"`; otherwise its `weekly` and `monthly` values can
-drive the Fee Structure panel list.
-
 The adapter accepts those canonical panel values first and retains the legacy
 values in the rightmost column as a transition reader. This permits the CDN
 release to precede the Designer attribute cutover without hiding every fee
@@ -183,14 +163,27 @@ grammar fills the authored control — select or radio group — whichever gramm
 its own options carry; on a select, leaving the labels unchanged keeps the
 visible-text match working as a third path.
 
+The active Hourly panel's Hours Cap Period select is a separate contract. Keep
+the native Webflow field name `Frequency` until the adapter is migrated to a
+semantic field attribute; the user-facing label is deliberately different from
+that legacy name. Each option reveals exactly one maximum-hours control through
+a plain Designer condition on that select — never through a nested
+`data-input-filter` list, for the reason below.
+
+| Hours Cap Period option | Option value | Maximum-hours control it reveals | Visible maximum-hours label |
+| --- | --- | --- | --- |
+| Entire project | `one_time` | `Maximum-Hours-Billed` | Maximum permitted hours for the entire project |
+| Per week | `weekly` | `Maximum-Hours-Billed-per-Week` | Maximum permitted hours per week |
+| Per month | `monthly` | `Maximum-Hours-Billed-per-Month` | Maximum permitted hours per month |
+
+The adapter also accepts those visible labels as option values, so relabeling
+the select in the Designer stays safe if an option loses its explicit value.
+
 Because `form-input-filter` matches every `[data-input-filter-item]` descendant
 of its list and the canonical values are generic, the Fee Structure filter group
-must not contain a nested one. The hourly `Frequency` (Hours Cap Period) select
-— whose own values are `one_time`, `weekly`, and `monthly` — gates the three
-maximum-hours controls
-through plain Designer conditions, not a second `data-input-filter` list inside
-the hourly panel; a nested `[data-input-filter-item="weekly"]` there would
-shadow the Weekly fee panel. Invoice Frequency is likewise not a second
+must not contain a nested one. The Hours Cap Period select shares those generic
+values, so a nested `[data-input-filter-item="weekly"]` inside the hourly panel
+would shadow the Weekly fee panel. Invoice Frequency is likewise not a second
 `data-input-filter` controller: it is one independent select named
 `invoice-frequency`, and this adapter owns its Standard/My Own Contract
 visibility.
@@ -304,13 +297,14 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    prefilled, that a CMS preset card fills only its own fields, and that the
    authored current-date control defaults to today and keeps a Brand's edit when
    the modal is reopened.
-3. Exercise Flat Fee; fixed and ongoing Hourly with One Time, Weekly, and
-   Monthly caps; fixed and ongoing Monthly; fixed and ongoing Weekly; Standard
-   Contract; and My Own Contract validation without issuing a request for
-   invalid inputs. Confirm Monthly shows no end-date field and serializes only
-   `number_of_months` as its duration source. Run that pass once against the
-   legacy panel attributes and again after the Designer cutover to the canonical
-   values in the table above; both must behave identically.
+3. Exercise Flat Fee; fixed and ongoing Hourly with the Entire project, Per
+   week, and Per month hours caps; fixed and ongoing Monthly; fixed and ongoing
+   Weekly; Standard Contract; and My Own Contract validation without issuing a
+   request for invalid inputs. Confirm Monthly shows no end-date field and
+   serializes only `number_of_months` as its duration source. Run that pass once
+   against the legacy panel attributes and again after the Designer cutover to
+   the canonical values in the Fee Structure table above; both must behave
+   identically.
 4. Confirm Standard Contract requires an invoice frequency and serializes it
    independently of the hourly Hours Cap Period, that My Own Contract hides
    the select and omits `invoice_frequency` from the payload, and that
