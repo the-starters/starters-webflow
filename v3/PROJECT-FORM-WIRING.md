@@ -70,9 +70,20 @@ Repeated date/rate controls remain in their authored fee panels:
 
 The adapter selects the visible authored conditional panel, with a nonblank
 fallback for test and preview DOMs. Hidden blank controls never replace the
-active value. Monthly and Weekly fixed end dates are server-derived from their
-count, matching V2. The adapter therefore hard-clears `estimated_end_date` for
-those two modes so a stale hidden date can never contradict the count.
+active value. The selected fee panel is resolved in exactly one place, so the
+duration sync and the serializer can never disagree about which panel is
+active: a `data-project-field="engagement_type"` control wins, otherwise the
+authored native `Fee-Structure` control. Monthly and Weekly fixed end dates are
+server-derived from their count, matching V2. The adapter therefore hard-clears
+`estimated_end_date` for those two modes so a stale hidden date can never
+contradict the count.
+
+The Monthly end-date control is always hidden on the control itself, so the
+hide never depends on a particular Designer wrapper class. The adapter then
+also hides the nearest wrapping element, preferring `app-form_input_group` so
+the authored label travels with the input. It stops at the first ancestor that
+wraps another control and never touches the `data-input-filter-item` panel,
+which form-input-filter owns, so no sibling field can be hidden by accident.
 
 The authored Hourly panel supports either a fixed end date or the explicit
 "No end date" checkbox. The adapter makes those alternatives mutually valid:

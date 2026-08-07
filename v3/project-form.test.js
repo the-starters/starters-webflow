@@ -44,6 +44,7 @@ class Element {
     return null
   }
   querySelectorAll(selector) {
+    if (selector === 'input, select, textarea') return this.controls || []
     if (selector === '[data-project-field]') return this.children
     if (selector === '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]') return this.monthlyEndDates || []
     if (selector === '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]') return this.hourlyEndDates || []
@@ -290,6 +291,7 @@ test('hides the contradictory monthly end date and serializes count as the only 
   const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { required: '' })
   monthlyEndDate.parentElement = group
   monthlyEndDate.form = form
+  group.controls = [monthlyEndDate]
   group.parentElement = form
   form.monthlyEndDates = [monthlyEndDate]
 
@@ -297,6 +299,8 @@ test('hides the contradictory monthly end date and serializes count as the only 
   assert.equal(monthlyEndDate.value, '')
   assert.equal(monthlyEndDate.disabled, true)
   assert.equal(monthlyEndDate.required, false)
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(monthlyEndDate.style.display, 'none')
   assert.equal(monthlyEndDate.getAttribute('data-project-monthly-end-date-hidden'), 'true')
   assert.equal(group.hidden, true)
   assert.equal(group.style.display, 'none')
@@ -304,6 +308,90 @@ test('hides the contradictory monthly end date and serializes count as the only 
   const serialized = api.serialize(form)
   assert.equal(serialized.payload.number_of_months, 6)
   assert.equal(serialized.payload.estimated_end_date, null)
+})
+
+test('hides the monthly end date even without the authored input-group wrapper', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { required: '' })
+  monthlyEndDate.form = form
+  form.monthlyEndDates = [monthlyEndDate]
+
+  load({ form })
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(monthlyEndDate.style.display, 'none')
+  assert.equal(monthlyEndDate.disabled, true)
+  assert.equal(monthlyEndDate.value, '')
+})
+
+test('hides an unclassed exclusive wrapper but never one holding a sibling control', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027')
+  const wrapper = new Element()
+  wrapper.controls = [monthlyEndDate]
+  wrapper.parentElement = form
+  monthlyEndDate.parentElement = wrapper
+  monthlyEndDate.form = form
+  form.monthlyEndDates = [monthlyEndDate]
+  load({ form })
+  assert.equal(wrapper.hidden, true)
+  assert.equal(wrapper.style.display, 'none')
+
+  const shared = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const sharedEndDate = nativeField('endDateInput', '03/01/2027')
+  const startDate = nativeField('startDateInput', '08/20/2026')
+  const row = new Element({ class: 'app-form_input_group' })
+  row.controls = [startDate, sharedEndDate]
+  row.parentElement = shared
+  sharedEndDate.parentElement = row
+  sharedEndDate.form = shared
+  shared.monthlyEndDates = [sharedEndDate]
+  load({ form: shared })
+  assert.equal(row.hidden, false)
+  assert.equal(row.style.display, '')
+  assert.equal(sharedEndDate.hidden, true)
+  assert.equal(startDate.hidden, false)
+})
+
+test('never hides the conditional fee panel itself', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const panel = new Element({ 'data-input-filter-item': 'Monthly Recurring' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027')
+  panel.controls = [monthlyEndDate]
+  panel.parentElement = form
+  monthlyEndDate.parentElement = panel
+  monthlyEndDate.form = form
+  form.monthlyEndDates = [monthlyEndDate]
+
+  load({ form })
+  assert.equal(panel.hidden, false)
+  assert.equal(panel.style.display, '')
+  assert.equal(monthlyEndDate.hidden, true)
+})
+
+test('duration sync and serialization resolve the selected engagement identically', () => {
+  const form = projectForm({
+    engagement_type: 'Ongoing Hourly',
+    hourly_rate: '150',
+    hourly_billing_frequency: 'Weekly',
+    maximum_hours_per_week: '20',
+    estimated_end_date: '2026-10-15',
+  })
+  // A stale native control disagreeing with the semantic attribute must not
+  // send the sync and the serializer to different panels.
+  form.children.push(nativeField('Fee-Structure', 'Monthly Recurring'))
+  const endDate = nativeField('endDateInput', '10/15/2026')
+  const ongoing = nativeField('no-end-date', 'on', { type: 'checkbox', checked: false, required: '' })
+  endDate.form = form
+  ongoing.form = form
+  form.hourlyEndDates = [endDate]
+  form.hourlyOngoingChoices = [ongoing]
+
+  const { api } = load({ form })
+  const payload = api.serialize(form).payload
+  assert.equal(payload.engagement_type, 'hourly')
+  assert.equal(ongoing.required, false)
+  assert.equal(endDate.disabled, false)
+  assert.equal(api.validationError({ payload }), '')
 })
 
 test('weekly and monthly never leak a stale conditional-panel end date', () => {

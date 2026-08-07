@@ -235,6 +235,34 @@
     return controls && controls.length ? controls[0] : null
   }
 
+  // Mirrors how serialize() resolves a `[data-project-field]` value: skip
+  // unchecked radios, and let a later populated control replace an earlier
+  // blank one.
+  function attributedField(form, name) {
+    var fields = form && form.querySelectorAll ? form.querySelectorAll('[' + FIELD_ATTR + ']') : []
+    var chosen = null
+    Array.prototype.forEach.call(fields, function (field) {
+      if (clean(field.getAttribute && field.getAttribute(FIELD_ATTR)) !== name) return
+      if (clean(field.type).toLowerCase() === 'radio' && !field.checked) return
+      if (chosen && !fieldValue(field)) return
+      chosen = field
+    })
+    return chosen
+  }
+
+  function engagementControl(form) {
+    return namedField(form, 'Fee-Structure') || namedField(form, 'fee-structure')
+  }
+
+  // Single source of truth for "which fee panel is selected". The duration sync
+  // and the serializer must never disagree about it, so both read it here: the
+  // semantic data attribute wins, then the authored native control.
+  function readEngagement(form) {
+    var attributed = attributedField(form, 'engagement_type')
+    if (attributed) return canonicalEngagement(fieldValue(attributed))
+    return canonicalEngagement(fieldValue(engagementControl(form)))
+  }
+
   function engagementPanel(form, engagement) {
     var label = ENGAGEMENT_PANEL_LABELS[engagement]
     return label && form && form.querySelector
@@ -246,14 +274,37 @@
     return namedField(panel || form, names)
   }
 
+  // True when `node` wraps no interactive control other than `field`, so hiding
+  // it cannot take a sibling Designer field down with it.
+  function wrapsOnly(node, field) {
+    if (!node || !node.querySelectorAll) return false
+    var controls = node.querySelectorAll('input, select, textarea')
+    return !Array.prototype.some.call(controls, function (control) { return control !== field })
+  }
+
+  // Prefer the authored `app-form_input_group` wrapper, but never depend on it:
+  // fall back to the closest exclusive ancestor so the label travels with the
+  // control on any Designer markup. Conditional panels stay untouched because
+  // form-input-filter owns their visibility.
   function inputGroup(field, form) {
     var node = field && field.parentElement
+    var fallback = null
     while (node && node !== form) {
+      if (node.getAttribute && node.getAttribute('data-input-filter-item') !== null) break
+      if (!wrapsOnly(node, field)) break
+      fallback = node
       var classes = clean(node.getAttribute && node.getAttribute('class')).split(/\s+/)
       if (classes.indexOf('app-form_input_group') !== -1) return node
       node = node.parentElement
     }
-    return null
+    return fallback
+  }
+
+  function hideElement(node) {
+    if (!node) return
+    node.hidden = true
+    if (node.style) node.style.display = 'none'
+    if (node.setAttribute) node.setAttribute('aria-hidden', 'true')
   }
 
   function syncMonthlyDurationField(form) {
@@ -265,22 +316,16 @@
       field.required = false
       if (field.setAttribute) {
         field.setAttribute('disabled', '')
-        field.setAttribute('aria-hidden', 'true')
         field.setAttribute('data-project-monthly-end-date-hidden', 'true')
         field.removeAttribute('required')
       }
-      var group = inputGroup(field, form)
-      if (!group) return
-      group.hidden = true
-      group.style.display = 'none'
-      if (group.setAttribute) group.setAttribute('aria-hidden', 'true')
+      hideElement(field)
+      hideElement(inputGroup(field, form))
     })
   }
 
   function syncHourlyDurationChoice(form) {
-    var engagement = canonicalEngagement(fieldValue(namedField(form, ['Fee-Structure', 'fee-structure']))) ||
-      canonicalEngagement(fieldValue(formField(form, 'engagement_type')))
-    if (engagement !== 'hourly') return
+    if (readEngagement(form) !== 'hourly') return
     var endDate = firstControl(form, HOURLY_END_DATE_SELECTOR)
     var ongoing = firstControl(form, HOURLY_ONGOING_SELECTOR)
     if (!endDate || !ongoing) return
@@ -383,10 +428,10 @@
     // panel and never lets a hidden blank panel win.
     setPayloadValue(payload, 'title', namedField(form, 'Project-Name'))
     setPayloadValue(payload, 'service', namedField(form, 'Services'))
-    setPayloadValue(payload, 'engagement_type', namedField(form, 'Fee-Structure') || namedField(form, 'fee-structure'))
+    setPayloadValue(payload, 'engagement_type', engagementControl(form))
     setPayloadValue(payload, 'project_scope', namedField(form, 'Project-Scope'))
 
-    var authoredEngagement = canonicalEngagement(payload.engagement_type)
+    var authoredEngagement = readEngagement(form)
     var authoredPanel = engagementPanel(form, authoredEngagement)
     setPayloadValue(payload, 'start_date', panelField(form, authoredPanel, 'startDateInput'))
     setPayloadValue(payload, 'estimated_end_date', panelField(form, authoredPanel, 'endDateInput'))
