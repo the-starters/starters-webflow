@@ -90,7 +90,7 @@ Do not discard local changes unless the user explicitly asks.
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`, including `?with=<memberstack id>` deep links that open (creating if needed) the one-on-one conversation with that member
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
-- `v3/project-form.js` — authenticated V3 direct-hire adapter for the Designer-owned Contract Generation form on `/hire/<slug>`; see [`v3/PROJECT-FORM-WIRING.md`](v3/PROJECT-FORM-WIRING.md) for the field, state, and release contract
+- `v3/project-form.js` — authenticated V3 direct-hire adapter for the Designer-owned Contract Generation form on `/hire/<slug>`; also owns the Memberstack hiring-manager prefill, CMS `data-sp-fill` attribute presets, and `data-set-current-date` initialization that the page's Code Embeds used to provide; see [`v3/PROJECT-FORM-WIRING.md`](v3/PROJECT-FORM-WIRING.md) for the field, prefill, state, and release contract
 - `opportunities---create.js` — dedicated `/opportunities---create` controller; binds the same `[data-opp-form="create"]` contract through the shared Opportunities 3.0 core
 - `starters-list/apply-button-disable.js`
 - `starters-list/range-backfill.js`

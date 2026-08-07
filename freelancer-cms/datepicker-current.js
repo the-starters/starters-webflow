@@ -1,4 +1,7 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/freelancer-cms/datepicker-current
+// Not for /hire/<slug>: v3/project-form.js owns this behavior on the Contract
+// Generation form (see v3/PROJECT-FORM-WIRING.md). The docs site above predates
+// that migration and still describes it as embed-owned.
 
   (function () {
     'use strict'
