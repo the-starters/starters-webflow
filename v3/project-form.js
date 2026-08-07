@@ -43,7 +43,7 @@
   var MONTHLY_END_DATE_SELECTOR = '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]'
   var HOURLY_END_DATE_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]'
   var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
-  var INVOICE_FREQUENCY_NAMES = ['invoice-frequency', 'Invoice-Frequency', 'invoice_frequency', 'Invoice Frequency']
+  var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
@@ -213,10 +213,20 @@
     return form.reportValidity()
   }
 
+  // Webflow derives a native control name from its Designer label, keeping the
+  // author's capitalization and turning spaces into hyphens. Match on a
+  // separator- and case-insensitive form so a label typed "Invoice frequency"
+  // still resolves to the same allowlisted control as "Invoice-Frequency".
+  function normalizedName(value) {
+    return clean(value).toLowerCase().replace(/[\s_-]+/g, '_')
+  }
+
   function namedControls(form, name) {
-    return form && form.querySelectorAll
-      ? form.querySelectorAll('[name="' + name + '"]')
-      : []
+    var wanted = normalizedName(name)
+    if (!wanted || !form || !form.querySelectorAll) return []
+    return Array.prototype.filter.call(form.querySelectorAll('[name]'), function (field) {
+      return normalizedName(field.getAttribute ? field.getAttribute('name') : field.name) === wanted
+    })
   }
 
   function namedField(form, names) {
@@ -253,7 +263,7 @@
   }
 
   function engagementControl(form) {
-    return namedField(form, 'Fee-Structure') || namedField(form, 'fee-structure')
+    return namedField(form, 'Fee-Structure')
   }
 
   // Single source of truth for "which fee panel is selected". The duration sync
@@ -351,7 +361,7 @@
   }
 
   function invoiceFrequencyControl(form) {
-    return attributedField(form, 'invoice_frequency') || namedField(form, INVOICE_FREQUENCY_NAMES)
+    return attributedField(form, 'invoice_frequency') || namedField(form, INVOICE_FREQUENCY_NAME)
   }
 
   function syncInvoiceFrequencyField(form) {
@@ -444,23 +454,21 @@
     syncInvoiceFrequencyField(form)
   }
 
+  // The only place a payload field is normalized. Both entry points - the
+  // `data-project-field` sweep and the native-name allowlist - go through it so
+  // a field can never normalize differently depending on how it was resolved.
+  function normalizePayloadValue(name, value) {
+    if (INTEGER_FIELDS[name]) return positiveId(value)
+    if (NUMERIC_FIELDS[name]) return numberValue(value)
+    if (name === 'start_date' || name === 'estimated_end_date') return dateValue(value) || null
+    if (name === 'hourly_billing_frequency') return canonicalHourlyFrequency(value) || null
+    if (name === 'invoice_frequency') return canonicalInvoiceFrequency(value) || null
+    return value
+  }
+
   function setPayloadValue(payload, name, field) {
     if (!field || Object.prototype.hasOwnProperty.call(payload, name)) return
-    var value = fieldValue(field)
-    if (INTEGER_FIELDS[name]) {
-      payload[name] = positiveId(value)
-    } else if (NUMERIC_FIELDS[name]) {
-      var numeric = numberValue(value)
-      payload[name] = INTEGER_FIELDS[name] && numeric != null ? Math.trunc(numeric) : numeric
-    } else if (name === 'start_date' || name === 'estimated_end_date') {
-      payload[name] = dateValue(value) || null
-    } else if (name === 'hourly_billing_frequency') {
-      payload[name] = canonicalHourlyFrequency(value) || null
-    } else if (name === 'invoice_frequency') {
-      payload[name] = canonicalInvoiceFrequency(value) || null
-    } else {
-      payload[name] = value
-    }
+    payload[name] = normalizePayloadValue(name, fieldValue(field))
   }
 
   function canonicalEngagement(value) {
@@ -504,22 +512,7 @@
       // Prefer the populated control rather than allowing a hidden blank panel
       // to win by DOM order.
       if (Object.prototype.hasOwnProperty.call(payload, name) && !value) return
-      if (INTEGER_FIELDS[name]) {
-        payload[name] = positiveId(value)
-      } else if (NUMERIC_FIELDS[name]) {
-        var numeric = numberValue(value)
-        payload[name] = name === 'number_of_weeks' || name === 'number_of_months'
-          ? (numeric == null ? null : Math.trunc(numeric))
-          : numeric
-      } else if (name === 'start_date' || name === 'estimated_end_date') {
-        payload[name] = dateValue(value) || null
-      } else if (name === 'hourly_billing_frequency') {
-        payload[name] = canonicalHourlyFrequency(value) || null
-      } else if (name === 'invoice_frequency') {
-        payload[name] = canonicalInvoiceFrequency(value) || null
-      } else {
-        payload[name] = value
-      }
+      payload[name] = normalizePayloadValue(name, value)
     })
 
     // The authored form predates this adapter and already exposes stable native
@@ -533,7 +526,7 @@
     setPayloadValue(payload, 'project_scope', namedField(form, 'Project-Scope'))
     if (!canonicalInvoiceFrequency(payload.invoice_frequency)) {
       delete payload.invoice_frequency
-      setPayloadValue(payload, 'invoice_frequency', namedField(form, INVOICE_FREQUENCY_NAMES))
+      setPayloadValue(payload, 'invoice_frequency', namedField(form, INVOICE_FREQUENCY_NAME))
     }
 
     var authoredEngagement = readEngagement(form)
@@ -565,7 +558,10 @@
 
     payload.engagement_type = canonicalEngagement(payload.engagement_type)
     payload.contract_type = readContractType(form)
-    if (payload.contract_type === 'own_contract') payload.invoice_frequency = null
+    // Own Contract has no generated invoice schedule. Leave the key out rather
+    // than sending an empty one, so the only shape Xano ever sees for an absent
+    // invoice frequency is the absent key.
+    if (payload.contract_type === 'own_contract') delete payload.invoice_frequency
 
     // Webflow keeps inactive conditional panels in the DOM. Clear their stale
     // commercial values so only the selected pricing contract crosses the API.
