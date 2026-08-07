@@ -1,7 +1,7 @@
 /**
  * /complete-profile — the submit spinner, and the dim behind it.
  *
- * @release vX.Y.Z
+ * @release v1.59.125
  *
  * ONE job: while the Complete-profile form is submitting, show the designer's
  * loader and fade back what is behind it. It never submits anything, never
@@ -298,7 +298,7 @@
     // Keep in sync with the @release line in this file's header comment; the
     // v3/complete-profile-loader.test.js drift guard asserts they match. The
     // placeholder is replaced with the real tag at release time.
-    release: 'vX.Y.Z',
+    release: 'v1.59.125',
     state: state,
     show: show,
     hide: hide,
