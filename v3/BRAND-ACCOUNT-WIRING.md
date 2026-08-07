@@ -227,6 +227,23 @@ projection.
 
 - Invalid Build Account fields do not call Memberstack.
 - Duplicate submits while one save is running are ignored.
+- A successful submit that actually initiated a redirect never releases the
+  form. It stays `aria-busy="true"`, the submit button stays disabled, and the
+  button spinner keeps running until the page unloads. `location.assign()` only
+  queues a navigation, so the promise chain settles while the browser is still
+  fetching the destination, and releasing there would hand the member back a
+  live-looking form for the whole of that window. The `/complete-profile` submit
+  loader ([`v3/COMPLETE-PROFILE-LOADER-WIRING.md`](COMPLETE-PROFILE-LOADER-WIRING.md))
+  watches that attribute and depends on this.
+- The latch is scoped to the path that called `location.assign()`. A successful
+  submit with no redirect URL resolved, and every error, release the form as
+  before. An `assign()` that throws also releases it.
+- Accepted consequence: if the navigation is cancelled rather than completed
+  (Stop pressed, a declined `beforeunload` prompt, a destination that does not
+  navigate), the form stays locked and the submit button stays disabled until
+  the member reloads. Before the latch the button always came back. This was a
+  deliberate trade for masking the redirect, which is the common case; the
+  cancelled-navigation case is rare and self-heals on reload.
 - Custom-field and email assignments retry once only on timeout, 429, or 5xx.
 - Build Account writes ordinary fields, any changed login email, and the
   completion marker before attempting one reset/set-password email.

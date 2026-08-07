@@ -345,6 +345,61 @@ Run its focused test with:
 node --test v3/complete-profile-back.test.js
 ```
 
+## Complete-profile submit loader
+
+`complete-profile-loader.js` shows the authored `[data-complete-profile-loader]`
+element while the Complete-profile form is submitting and fades the form layout
+behind it. It exists because a durable submit through
+`brand-account-controller.js` is several round trips long, and until now the page
+said nothing while they ran: the button greyed out and then the page sat there.
+On a slow connection that reads as a dead form, and a member who believes a form
+is dead starts clicking things. The module submits nothing, reads no member,
+holds no role contract, and makes no network request.
+
+The signal is `aria-busy` on the form, watched with a `MutationObserver` and read
+once at init in case a submit somehow beat the script to the page. It binds no
+`submit` handler and never touches the submit button, because double-submit is
+already the controller's guard and two owners of one button is how a form ends up
+permanently disabled.
+
+This ships with a scoped change to `brand-account-controller.js`. On a successful
+submit that initiated a redirect, `bindForm()` now latches busy so the form stays
+`aria-busy="true"` until the page unloads, which is what keeps the loader up
+across the navigation; `location.assign()` only queues a redirect, so the old
+code released the form while the browser was still fetching the destination. The
+reasoning and the accepted cancelled-navigation consequence live under Failure
+semantics in [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md). Busy therefore
+clears on an error, and on a success that resolved no redirect URL.
+
+Show and hide are inline `display` writes, because Webflow's Display:None
+compiles to a class rule that a stylesheet write would lose to. Minimum display
+comes from the loader's own `data-loader` attribute and must be wholly numeric:
+`1s` and `1000px` fall back to the 200ms default rather than parsing as 1 and
+1000, which would silently defeat the anti-flash window. Every show also arms a
+5000ms fail-open cap that hides the loader and restores the dim whatever
+`aria-busy` says, because a full-page overlay must never be able to trap a
+member. Since the redirect latch, that cap is the normal end of a successful
+session whenever the navigation takes longer than five seconds.
+
+Dim targets are optional and skipped individually. A target that **contains** the
+loader is skipped too, with a staging warning, because opacity on an ancestor
+creates a rendering group its children cannot escape and `pointer-events: none`
+inherits, so dimming it would fade the spinner itself and make it inert. The page
+uses a single dim target on the form layout: opacity multiplies down the tree, so
+nesting a second one inside it would land the photo at `0.04`. A missing loader
+element is an immediate silent bail with the exported `show`/`hide` replaced by
+no-ops, which is what makes the file safe to load site-wide, and an
+authored-visible loader is force-hidden once at init as a self-heal. Needs the
+Designer checklist plus one page-level embed; see
+[COMPLETE-PROFILE-LOADER-WIRING.md](COMPLETE-PROFILE-LOADER-WIRING.md).
+
+Run its focused tests with:
+
+```sh
+node --test v3/complete-profile-loader.test.js
+node --test v3/brand-account-controller.test.js
+```
+
 ## Brand account and Starter email sync
 
 `brand-account-controller.js` aligns the native Brand signup plan with

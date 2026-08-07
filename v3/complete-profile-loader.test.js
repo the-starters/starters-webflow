@@ -100,6 +100,16 @@ function element({ selectors = [], attributes = {}, style = {}, children = [] } 
     for (const observer of node.observers.slice()) observer.deliver()
   }
   node.querySelector = (selector) => matchIn(node.children, selector)
+  // Self-or-descendant, the same answer Node.contains() gives. The module uses
+  // it to refuse to dim an ancestor of the loader.
+  node.contains = (other) => {
+    if (!other) return false
+    if (other === node) return true
+    for (const child of node.children) {
+      if (child.contains(other)) return true
+    }
+    return false
+  }
   for (const child of children) child.parentElement = node
   return node
 }
@@ -128,6 +138,12 @@ function pageMarkup({
   dimPhotoMissing = false,
   dimFormStyle = {},
   busy = null,
+  // The half-finished Designer edit: the dim attribute lands on the element that
+  // still wraps the loader, because step 2 was done without step 1.
+  dimFormContainsLoader = false,
+  // A loader with no parent at all, plus a decoy first form in the document.
+  loaderParentless = false,
+  decoyForm = false,
 } = {}) {
   const formAttributes = {}
   if (busy !== null) formAttributes[BUSY] = busy
@@ -147,15 +163,28 @@ function pageMarkup({
     style: { display: loaderVisible ? '' : 'none' },
   })
 
+  const loaderIsLoose = loaderParentless || dimFormContainsLoader
+
   const containerChildren = []
   if (!formMissing && formInContainer) containerChildren.push(form)
-  if (!loaderMissing) containerChildren.push(loader)
+  if (!loaderMissing && !loaderIsLoose) containerChildren.push(loader)
   const container = element({ selectors: ['.container'], children: containerChildren })
 
-  const dimForm = element({ selectors: [FORM_DIM_SELECTOR], style: dimFormStyle })
+  const dimForm = element({
+    selectors: [FORM_DIM_SELECTOR],
+    style: dimFormStyle,
+    children: dimFormContainsLoader && !loaderMissing ? [loader] : [],
+  })
   const dimPhoto = element({ selectors: [PHOTO_DIM_SELECTOR] })
 
-  const roots = [container]
+  const roots = []
+  // Pushed FIRST so a bare document.querySelector('form') would find this and
+  // not the profile form — which is the mistake the id fallback must avoid.
+  const decoy = element({ selectors: ['form'] })
+  if (decoyForm) roots.push(decoy)
+  roots.push(container)
+  // A loader with no parent is still reachable from the document.
+  if (loaderParentless && !loaderMissing) roots.push(loader)
   // A form outside the container is still reachable by id — the fallback path.
   if (!formMissing && !formInContainer) roots.push(form)
   if (!dimFormMissing) roots.push(dimForm)
@@ -163,6 +192,7 @@ function pageMarkup({
 
   return {
     container,
+    decoy,
     form: formMissing ? null : form,
     loader: loaderMissing ? null : loader,
     dimForm: dimFormMissing ? null : dimForm,
@@ -247,6 +277,7 @@ function loadModule(options = {}) {
     context,
     document,
     dimForm: markup.dimForm,
+    decoy: markup.decoy,
     dimPhoto: markup.dimPhoto,
     form: markup.form,
     loader: markup.loader,
@@ -281,6 +312,19 @@ test('no loader element means no observer, no writes, and a named bail', () => {
   assert.deepEqual(loaded.logs.warn, [])
 })
 
+test('the exported show/hide are inert after a no-loader bail', () => {
+  // This file loads site-wide, so the console surface exists on pages with no
+  // form. Calling it must not half-run against state that was never initialized.
+  const loaded = loadModule({ loaderMissing: true })
+
+  assert.doesNotThrow(() => loaded.api.show())
+  assert.doesNotThrow(() => loaded.api.hide())
+  assert.equal(loaded.api.state.showing, false)
+  assert.equal(loaded.api.state.shows, 0)
+  assert.equal(loaded.api.state.minMs, DEFAULT_MIN_MS)
+  assert.equal(loaded.dimForm.style.opacity, '')
+})
+
 test('a loader with no form to watch bails and warns on staging', () => {
   const loaded = loadModule({ formMissing: true })
   assert.equal(loaded.api.state.reason, 'no-form')
@@ -292,6 +336,28 @@ test('the form is found by id when it is not the loader parent’s child', () =>
   const loaded = loadModule({ formInContainer: false })
   assert.equal(loaded.api.state.booted, true)
   assert.equal(loaded.form.observers.length, 1)
+})
+
+test('a parentless loader resolves the form by id, never the first form on the page', () => {
+  // The scoped lookup must not degrade into document.querySelector('form'):
+  // the first form on the real page is the nav search form, and binding the
+  // spinner to it would mask the wrong submit. Wrong form is worse than none.
+  const loaded = loadModule({ loaderParentless: true, decoyForm: true })
+
+  assert.equal(loaded.api.state.booted, true)
+  assert.equal(loaded.form.observers.length, 1, 'the profile form is observed')
+  assert.equal(loaded.decoy.observers.length, 0, 'the decoy form is not')
+})
+
+test('a parentless loader with no id-matching form bails rather than grabbing a decoy', () => {
+  const loaded = loadModule({
+    loaderParentless: true,
+    decoyForm: true,
+    formMissing: true,
+  })
+
+  assert.equal(loaded.api.state.reason, 'no-form')
+  assert.equal(loaded.decoy.observers.length, 0)
 })
 
 test('init force-hides a loader the Designer shipped visible', () => {
@@ -310,9 +376,32 @@ test('the module boots watching the busy attribute and reads the authored min di
 })
 
 test('a missing or non-numeric data-loader falls back to the 200ms default', () => {
-  assert.equal(loadModule({ minMsAttribute: null }).api.state.minMs, DEFAULT_MIN_MS)
-  assert.equal(loadModule({ minMsAttribute: 'soon' }).api.state.minMs, DEFAULT_MIN_MS)
-  assert.equal(loadModule({ minMsAttribute: '-5' }).api.state.minMs, DEFAULT_MIN_MS)
+  for (const value of [
+    null,
+    'soon',
+    '-5',
+    '',
+    '   ',
+    // The dangerous ones: parseInt reads these as 1 and 1000, so a plausible
+    // Designer typo would silently shrink or fake the anti-flash window.
+    '1s',
+    '1000px',
+    '1.5',
+    'NaN',
+    'Infinity',
+  ]) {
+    assert.equal(
+      loadModule({ minMsAttribute: value }).api.state.minMs,
+      DEFAULT_MIN_MS,
+      JSON.stringify(value),
+    )
+  }
+})
+
+test('a wholly numeric data-loader is honored, padding included', () => {
+  assert.equal(loadModule({ minMsAttribute: '1000' }).api.state.minMs, 1000)
+  // Copy-paste often carries whitespace; that alone should not defeat it.
+  assert.equal(loadModule({ minMsAttribute: ' 1000 ' }).api.state.minMs, 1000)
   assert.equal(loadModule({ minMsAttribute: '0' }).api.state.minMs, 0)
 })
 
@@ -359,6 +448,36 @@ test('missing dim targets are skipped silently and the loader still shows', () =
   assert.equal(loaded.loader.style.display, 'flex')
   assert.equal(loaded.api.state.dimCount, 0)
   // Absent attributes are the expected first state in production, not an error.
+  assert.deepEqual(loaded.logs.warn, [])
+})
+
+test('a dim target that contains the loader is skipped, and the spinner stays healthy', () => {
+  // The half-finished Designer edit: the attribute went onto the element that
+  // still wraps the loader. Dimming it would fade the spinner to 0.2 and make it
+  // inert, because opacity on an ancestor creates a rendering group its children
+  // cannot escape and pointer-events: none inherits.
+  const loaded = loadModule({ dimFormContainsLoader: true })
+  setBusy(loaded, 'true')
+
+  assert.equal(loaded.loader.style.display, 'flex')
+  assert.equal(loaded.dimForm.style.opacity, '', 'the wrapper must not be dimmed')
+  assert.equal(loaded.dimForm.style.pointerEvents, '')
+  // The sibling target is unaffected — the skip is per-target, not global.
+  assertDimmed(loaded.dimPhoto, 'profile-photo')
+  assert.equal(loaded.api.state.dimCount, 1)
+  // And the author is told, on staging, exactly what to move.
+  assert.equal(loaded.logs.warn.length, 1)
+  assert.match(loaded.logs.warn[0], /contains the loader/)
+  assert.match(loaded.logs.warn[0], /Move the loader out/)
+})
+
+test('the same target is dimmed normally once the loader is moved out of it', () => {
+  // The other branch of the guard: identical markup, loader no longer inside.
+  const loaded = loadModule()
+  setBusy(loaded, 'true')
+
+  assertDimmed(loaded.dimForm, 'form')
+  assert.equal(loaded.api.state.dimCount, 2)
   assert.deepEqual(loaded.logs.warn, [])
 })
 
@@ -418,6 +537,10 @@ test('hiding restores the dim targets, including the values the page authored', 
   assert.equal(loaded.dimPhoto.style.opacity, '')
   assert.equal(loaded.dimPhoto.style.pointerEvents, '')
 
+  // dimCount reports APPLIED dim, so it drops the moment the styles come off —
+  // not one transition later when the captured values are finally released.
+  assert.equal(loaded.api.state.dimCount, 0)
+
   // The transition survives one beat so the fade back in animates, then goes.
   assert.equal(loaded.dimForm.style.transition, DIM_TRANSITION)
   await loaded.clock.advance(200)
@@ -451,8 +574,7 @@ test('an idle form that was never busy is left completely alone', () => {
 test('a successful submit keeps the loader up for the whole redirect window', async () => {
   // The real success shape as of the redirect latch in
   // v3/brand-account-controller.js: aria-busy goes true and is NEVER cleared,
-  // because location.assign() only queues the navigation and the controller
-  // deliberately stays busy until the page unloads.
+  // because the controller deliberately stays busy until the page unloads.
   const loaded = loadModule()
   setBusy(loaded, 'true')
 

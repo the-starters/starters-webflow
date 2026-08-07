@@ -23,20 +23,23 @@
  * ends.
  *
  * THE CONTROLLER GUARANTEE THIS MODULE DEPENDS ON. On a successful submit that
- * initiates a redirect, the controller now deliberately does NOT clear busy: the
- * form stays `aria-busy="true"` until the page unloads. That behaviour was added
- * alongside this module and is load-bearing for it. `location.assign()` only
- * QUEUES a navigation, so the controller's promise chain settles while the
- * browser is still fetching the destination — and the old code cleared busy
- * right there, which would drop this loader and hand the member back a
- * live-looking form for exactly the window the loader exists to mask. So
- * `aria-busy="false"` is now, in practice, the ERROR path: the path where the
- * member is staying on the page and needs the form back.
+ * initiates a redirect, the controller deliberately does NOT clear busy: the
+ * form stays `aria-busy="true"` until the page unloads, so this loader stays up
+ * across the navigation. That latch was added alongside this module and is
+ * load-bearing for it. The reasoning lives at the `redirecting` flag in
+ * `bindForm()` in v3/brand-account-controller.js; the short version is that
+ * `location.assign()` only queues a navigation, so the old code released the
+ * form while the browser was still fetching the destination.
  *
- * If anyone ever reverts that latch, this module does not break — it just stops
- * covering the redirect, which is the most valuable second it covers. There is a
- * controller test pinning it (`a successful submit that initiated a redirect
- * stays busy until the page unloads`).
+ * So busy clears on two paths, both of which leave the member on this page and
+ * wanting the form back: an error, and a success that did NOT initiate a
+ * redirect (no redirect URL resolved). A success that DID initiate one never
+ * clears it.
+ *
+ * If anyone reverts that latch, this module does not break. It just stops
+ * covering the redirect, which is the most valuable second it covers. A
+ * controller test pins it: `a successful submit that initiated a redirect stays
+ * busy until the page unloads`.
  *
  * This module is a pure observer of that attribute. It deliberately does not
  * bind `submit`, and deliberately does not touch the submit button:
@@ -45,31 +48,40 @@
  *
  * THE DESIGNER CONTRACT (one required hook, two optional):
  *
- *   [data-complete-profile-loader]  the loader element, AUTHORED HIDDEN, a
- *                                   sibling AFTER the </form> inside the same
- *                                   parent container. Its `data-loader`
- *                                   attribute carries the minimum display time
- *                                   in milliseconds. Shown with an INLINE
- *                                   `display: flex` and hidden with an INLINE
- *                                   `display: none`, because the Designer's
- *                                   Display:None usually compiles to a class
- *                                   rule and a class rule would beat anything
- *                                   this module wrote to the stylesheet.
+ *   [data-complete-profile-loader]  the loader element, AUTHORED HIDDEN, and
+ *                                   OUTSIDE any dim target (see below). Its
+ *                                   `data-loader` attribute carries the minimum
+ *                                   display time in milliseconds. Shown with an
+ *                                   INLINE `display: flex` and hidden with an
+ *                                   INLINE `display: none`, because the
+ *                                   Designer's Display:None usually compiles to
+ *                                   a class rule and a class rule would beat
+ *                                   anything this module wrote to the
+ *                                   stylesheet.
  *   [data-complete-profile-element="form"]           dim target, optional.
  *   [data-complete-profile-element="profile-photo"]  dim target, optional.
  *
- * A missing loader is the bail: no observer, no writes, no exports beyond the
- * diagnostics surface. That is what makes this file safe to load site-wide even
- * though it is only wanted on one page. Missing DIM targets are skipped
- * silently and individually — the spinner still shows, it just has nothing to
- * fade behind it. Both dim attributes are pending Designer work at the time of
- * writing, so "absent" is the expected first state in production, not an error.
+ * A missing loader is the bail: no observer, no writes, and the exported
+ * show/hide replaced by no-ops. That is what makes this file safe to load
+ * site-wide even though it is only wanted on one page. Missing DIM targets are
+ * skipped silently and individually: the spinner still shows, it just has
+ * nothing to fade behind it, and "absent" is a supported state rather than an
+ * error.
+ *
+ * A dim target that CONTAINS the loader is skipped too, with a staging warning.
+ * Opacity on an ancestor creates a rendering group its children cannot escape,
+ * and `pointer-events: none` inherits, so dimming such an element would fade the
+ * spinner to 0.2 and make it inert: the feature looking broken at the exact
+ * moment it is meant to reassure. Losing the dim and keeping a healthy spinner
+ * is the better half to keep, and it makes a half-finished Designer edit
+ * (attribute added before the loader was moved out) degrade quietly.
  *
  * MINIMUM DISPLAY. A spinner that appears and vanishes inside 80ms is a flash of
  * noise, so once shown the loader stays for at least `data-loader` milliseconds
- * (1000 as authored). A missing or non-numeric value falls back to 200ms, the
- * same default the sibling explore-search list loader uses. When `aria-busy`
- * goes false before that window is up, the hide is deferred, not skipped.
+ * (1000 as authored). The value must be wholly numeric; a missing, malformed or
+ * unit-suffixed one ("1s", "1000px") falls back to 200ms, the same default the
+ * sibling explore-search list loader uses. When `aria-busy` goes false before
+ * that window is up, the hide is deferred, not skipped.
  *
  * FAIL-OPEN, and why it is not optional. Every show arms a 5000ms hard cap. If
  * the cap fires while the loader is still up, the loader hides and the dim is
@@ -241,6 +253,25 @@
     }
   }
 
+  /**
+   * The authored minimum-display value, or the 200ms default.
+   *
+   * Strict on purpose. `parseInt` is happy to read "1s" as 1 and "1000px" as
+   * 1000, so a plausible-looking typo in the Designer would silently defeat the
+   * anti-flash window (in the "1s" case, reduce it to a single millisecond)
+   * without anything to see in the markup. Only a wholly numeric value counts;
+   * surrounding whitespace is forgiven because a copy-paste often carries it.
+   * Anything else falls back to the default rather than to a guess.
+   */
+  function parseMinMs(raw) {
+    if (typeof raw !== 'string') return DEFAULT_MIN_MS
+    var trimmed = raw.trim()
+    if (!/^\d+$/.test(trimmed)) return DEFAULT_MIN_MS
+    var value = Number(trimmed)
+    if (!isFinite(value) || value < 0) return DEFAULT_MIN_MS
+    return value
+  }
+
   /* -------------------------------- the loader ------------------------------ */
 
   var loader = find(LOADER_SELECTOR)
@@ -282,14 +313,19 @@
 
   if (!loader) {
     state.reason = 'no-loader'
+    // Inert stand-ins. Everything below this line, `minMs` included, is never
+    // initialized on a page with no loader, so the real show()/hide() would
+    // half-run against undefined state. This file loads site-wide, so those
+    // functions are reachable from the console on pages that have nothing to do
+    // with the form.
+    window.StartersCompleteProfileLoader.show = function () {}
+    window.StartersCompleteProfileLoader.hide = function () {}
     // No warning: this file is safe to load site-wide, and every page that is
     // not /complete-profile would otherwise log on staging.
     return
   }
 
-  var minMs = DEFAULT_MIN_MS
-  var authored = parseInt(loader.getAttribute(MIN_MS_ATTRIBUTE), 10)
-  if (isFinite(authored) && authored >= 0) minMs = authored
+  var minMs = parseMinMs(loader.getAttribute(MIN_MS_ATTRIBUTE))
   state.minMs = minMs
 
   /* Self-heal. The contract says author the loader hidden, but a Designer edit
@@ -300,9 +336,15 @@
 
   /* The form is the loader's SIBLING, so resolve it from the shared parent
      first; the id is the fallback for the day the Designer re-nests either one.
-     No form means no aria-busy to watch and nothing this module can do. */
-  var form =
-    find('form', loader.parentElement || null) || find(FORM_SELECTOR) || null
+     No form means no aria-busy to watch and nothing this module can do.
+
+     The parent check is load-bearing, not defensive noise: find() falls back to
+     `document` when handed a null root, so a parentless loader would turn the
+     "scoped" lookup into `document.querySelector('form')` — the FIRST form in
+     the page, which here is the nav search form, not the profile form — and the
+     id fallback would never be consulted. Wrong form is worse than no form. */
+  var parent = loader.parentElement || null
+  var form = (parent && find('form', parent)) || find(FORM_SELECTOR) || null
 
   if (!form) {
     state.reason = 'no-form'
@@ -321,6 +363,20 @@
    */
   var dimmed = []
 
+  /**
+   * True when this candidate is an ancestor of the loader (or the loader
+   * itself). A browser without `contains` reads as "no", which keeps the old
+   * behaviour rather than silently dropping every dim target.
+   */
+  function containsLoader(element) {
+    try {
+      if (!element || typeof element.contains !== 'function') return false
+      return element.contains(loader)
+    } catch (error) {
+      return false
+    }
+  }
+
   function entryFor(element) {
     for (var index = 0; index < dimmed.length; index += 1) {
       if (dimmed[index].element === element) return dimmed[index]
@@ -334,6 +390,20 @@
       if (!element) {
         // Expected until the Designer adds the attributes. Not a warning.
         note('no ' + DIM_SELECTORS[index] + ' on this page; skipping it.')
+        continue
+      }
+      if (containsLoader(element)) {
+        // Dimming an ancestor of the loader would dim the loader. Opacity on an
+        // ancestor creates a rendering group its children cannot escape, and
+        // pointer-events: none inherits, so the spinner would fade to 0.2 and go
+        // inert — the feature looking broken at the exact moment it is meant to
+        // reassure. Skipping loses the dim and keeps a healthy spinner, which is
+        // the better half to keep.
+        warn(
+          DIM_SELECTORS[index] +
+            ' contains the loader, so dimming it would dim the spinner too;' +
+            ' skipping it. Move the loader out of that element.',
+        )
         continue
       }
       var entry = entryFor(element)
@@ -366,6 +436,10 @@
       setStyle(entry.element, 'opacity', entry.opacity)
       setStyle(entry.element, 'pointerEvents', entry.pointerEvents)
     }
+    // The dim is off the page as of this write. `dimmed` itself stays populated
+    // for one transition so a re-show can reuse the captured values, but
+    // reporting that count as applied dim would be a lie for those 200ms.
+    state.dimCount = 0
   }
 
   function releaseDimmed() {
@@ -373,6 +447,8 @@
       setStyle(dimmed[index].element, 'transition', dimmed[index].transition)
     }
     dimmed = []
+    // Already zeroed by undimTargets(); repeated here so the invariant holds if
+    // releaseDimmed() is ever reached by another path.
     state.dimCount = 0
   }
 

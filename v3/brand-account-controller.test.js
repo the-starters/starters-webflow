@@ -377,20 +377,16 @@ test('Build Account writes ordinary fields, changed email, then completion in or
   assert.deepEqual(plain(environment.calls[4].payload), { email: 'ada+new@example.com' })
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
   // A redirect was initiated, so the form stays busy until the page unloads.
-  // `location.assign()` only QUEUES the navigation: clearing busy here would
-  // re-enable the button and drop the page's submit loader while the browser is
-  // still fetching /brand-dashboard.
+  // See the `redirecting` flag in bindForm() for why.
   assert.equal(buildForm.getAttribute('aria-busy'), 'true')
   assert.equal(buildForm.submit.disabled, true)
 })
 
 // --- The redirect busy latch --------------------------------------------------
 //
-// `location.assign()` only QUEUES a navigation. The promise chain settles while
-// the browser is still fetching the destination, so releasing the form there
-// re-enables the submit button and drops the page's submit loader
-// (v3/complete-profile-loader.js watches exactly this attribute) for the whole
-// of that window. The latch is scoped strictly to the path that called assign.
+// Rationale lives at the `redirecting` flag in bindForm(). These three tests pin
+// its boundary: latched on the path that called assign, released on the two that
+// leave the member here. v3/complete-profile-loader.js watches this attribute.
 
 test('a successful submit that initiated a redirect stays busy until the page unloads', async () => {
   const environment = loadController({ currentEmail: 'old@example.com' })
