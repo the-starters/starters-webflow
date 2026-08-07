@@ -43,11 +43,10 @@
   // conditional branch is hidden, so it can be put back unchanged.
   var REQUIRED_STASH_ATTR = 'data-project-required-hidden'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
-  var MONTHLY_END_DATE_SELECTOR = '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]'
-  var HOURLY_END_DATE_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]'
-  var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
   var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
+  var HOURS_CAP_HIDDEN_ATTR = 'data-project-hours-cap-hidden'
+  var MONTHLY_END_DATE_HIDDEN_ATTR = 'data-project-monthly-end-date-hidden'
   var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname]'
   var MEMBER_NAME_FIELD = 'Hiring-Manager-Name'
   var SMART_FILL_TRIGGER_SELECTOR = '[data-sp-fill="button"]'
@@ -72,11 +71,32 @@
     monthly: 'monthly',
   }
 
-  var ENGAGEMENT_PANEL_LABELS = {
-    flat_fee: 'Flat Fee',
-    hourly: 'Ongoing Hourly',
-    weekly: 'Weekly Recurring',
-    monthly: 'Monthly Recurring',
+  // The V3 Designer contract uses canonical filter-item values. Keep the
+  // legacy display labels as a transition reader so the CDN script can ship
+  // before the separately governed Webflow attribute cutover. Canonical value
+  // first: every panel lookup in this module resolves in this order.
+  var ENGAGEMENT_PANEL_VALUES = {
+    flat_fee: ['flat_fee', 'Flat Fee'],
+    hourly: ['hourly', 'Ongoing Hourly'],
+    weekly: ['weekly', 'Weekly Recurring'],
+    monthly: ['monthly', 'Monthly Recurring'],
+  }
+
+  // One table drives both readers, so retiring the transition labels after the
+  // Designer cutover is a single edit that cannot leave the two disagreeing.
+  function panelSelectors(engagement, control) {
+    return (ENGAGEMENT_PANEL_VALUES[engagement] || []).map(function (value) {
+      return '[data-input-filter-item="' + value + '"] ' + control
+    })
+  }
+
+  var MONTHLY_END_DATE_SELECTORS = panelSelectors('monthly', '[name="endDateInput"]')
+  var HOURLY_END_DATE_SELECTORS = panelSelectors('hourly', '[name="endDateInput"]')
+  var HOURLY_ONGOING_SELECTORS = panelSelectors('hourly', '[name="no-end-date"]')
+
+  var SMART_FILL_CANONICALIZERS = {
+    fee_structure: canonicalEngagement,
+    invoice_frequency: canonicalInvoiceFrequency,
   }
 
   var NUMERIC_FIELDS = {
@@ -298,12 +318,21 @@
     var tag = clean(first.tagName).toUpperCase()
     var wanted = value == null ? '' : String(value)
     var lower = wanted.toLowerCase()
+    // Fee-structure and invoice-frequency presets and their authored options
+    // are cut over on separate schedules, so match the preset the same way the
+    // serializer reads the control: literally first, then by canonical value.
+    var canonical = SMART_FILL_CANONICALIZERS[normalizedName(category)] || null
+    var wantedCanonical = canonical ? canonical(wanted) : ''
     if (tag === 'SELECT') {
       var options = Array.prototype.slice.call(first.options || [])
       var option = options.find(function (item) { return item.value === wanted }) ||
         options.find(function (item) { return clean(item.value).toLowerCase() === lower }) ||
         options.find(function (item) { return clean(item.textContent) === wanted }) ||
         options.find(function (item) { return clean(item.textContent).toLowerCase() === lower })
+      if (!option && wantedCanonical) {
+        option = options.find(function (item) { return canonical(item.value) === wantedCanonical }) ||
+          options.find(function (item) { return canonical(item.textContent) === wantedCanonical })
+      }
       if (!option || first.disabled) return false
       // Select the matched option directly, so a select carrying duplicate
       // option values keeps the option the preset actually resolved.
@@ -316,6 +345,9 @@
       var group = fields.length > 1 ? fields : radioGroup(documentObject, first)
       var radio = group.find(function (item) { return clean(item.value) === wanted }) ||
         group.find(function (item) { return clean(item.value).toLowerCase() === lower })
+      if (!radio && wantedCanonical) {
+        radio = group.find(function (item) { return canonical(item.value) === wantedCanonical })
+      }
       if (!radio || radio.disabled) return false
       if (!radio.checked && typeof radio.click === 'function') radio.click()
       return true
@@ -467,10 +499,24 @@
       candidates[0]
   }
 
-  function firstControl(form, selector) {
+  // A comma-joined selector list resolves in document order, which would let a
+  // legacy panel outrank the canonical one. Try each selector in turn instead,
+  // so this matches how engagementPanel() picks the same panel.
+  function firstControl(form, selectors) {
     if (!form || !form.querySelectorAll) return null
-    var controls = form.querySelectorAll(selector)
-    return controls && controls.length ? controls[0] : null
+    for (var i = 0; i < selectors.length; i += 1) {
+      var controls = form.querySelectorAll(selectors[i])
+      if (controls && controls.length) return controls[0]
+    }
+    return null
+  }
+
+  function allControls(form, selectors) {
+    if (!form || !form.querySelectorAll) return []
+    return selectors.reduce(function (found, selector) {
+      Array.prototype.push.apply(found, Array.prototype.slice.call(form.querySelectorAll(selector) || []))
+      return found
+    }, [])
   }
 
   // Mirrors how serialize() resolves a `[data-project-field]` value: skip
@@ -502,10 +548,22 @@
   }
 
   function engagementPanel(form, engagement) {
-    var label = ENGAGEMENT_PANEL_LABELS[engagement]
-    return label && form && form.querySelector
-      ? form.querySelector('[data-input-filter-item="' + label + '"]')
-      : null
+    var values = ENGAGEMENT_PANEL_VALUES[engagement] || []
+    if (!form || !form.querySelectorAll) return null
+    for (var i = 0; i < values.length; i += 1) {
+      var selector = '[data-input-filter-item="' + values[i] + '"]'
+      var panels = Array.prototype.slice.call(form.querySelectorAll(selector))
+      var panel = panels.find(function (candidate) {
+        var ancestor = candidate && candidate.parentElement
+        while (ancestor && ancestor !== form) {
+          if (ancestor.getAttribute && ancestor.getAttribute('data-input-filter-item') !== null) return false
+          ancestor = ancestor.parentElement
+        }
+        return true
+      })
+      if (panel) return panel
+    }
+    return null
   }
 
   function panelField(form, panel, names) {
@@ -576,6 +634,37 @@
     if (node.removeAttribute) node.removeAttribute('aria-hidden')
   }
 
+  // The one place a conditional control's visibility is written, so every
+  // `data-project-*-hidden` marker provably means the same thing: hidden implies
+  // disabled, not `required`, and hidden together with its labels and its
+  // exclusive wrapper. `required` restoration is the caller's policy - some
+  // re-derive it, some stash it for syncActiveRequired.
+  function setFieldVisibility(field, group, labels, marker, visible) {
+    if (!field) return
+    if (!visible) {
+      field.required = false
+      field.disabled = true
+      if (field.setAttribute) {
+        field.setAttribute('disabled', '')
+        field.setAttribute(marker, 'true')
+        field.removeAttribute('required')
+      }
+      hideElement(field)
+      labels.forEach(hideElement)
+      hideElement(group)
+      return
+    }
+
+    field.disabled = false
+    if (field.removeAttribute) {
+      field.removeAttribute('disabled')
+      field.removeAttribute(marker)
+    }
+    showElement(group)
+    labels.forEach(showElement)
+    showElement(field)
+  }
+
   function contractChoice(form) {
     return form && form.querySelector
       ? form.querySelector(CONTRACT_CHOICE_SELECTOR + ':checked') || form.querySelector('input[type="radio"]:checked')
@@ -594,63 +683,38 @@
     var field = invoiceFrequencyControl(form)
     if (!field) return
     var type = readContractType(form)
-    var group = inputGroup(field, form)
-    var labels = labelsFor(form, field)
-    var hidden = type === 'own_contract'
+    var visible = type !== 'own_contract'
 
-    if (hidden) {
-      field.disabled = true
-      field.required = false
-      if (field.setAttribute) {
-        field.setAttribute('disabled', '')
-        field.setAttribute(INVOICE_FREQUENCY_HIDDEN_ATTR, 'true')
-        field.removeAttribute('required')
-        field.removeAttribute(REQUIRED_STASH_ATTR)
-      }
-      hideElement(field)
-      labels.forEach(hideElement)
-      hideElement(group)
-      return
-    }
+    setFieldVisibility(field, inputGroup(field, form), labelsFor(form, field), INVOICE_FREQUENCY_HIDDEN_ATTR, visible)
 
-    field.disabled = false
+    // Invoice Frequency re-derives `required` from the contract type on every
+    // sync, so it never leaves a stash behind for syncActiveRequired to restore.
+    if (field.removeAttribute) field.removeAttribute(REQUIRED_STASH_ATTR)
+    if (!visible) return
     field.required = type === 'standard'
-    if (field.removeAttribute) {
-      field.removeAttribute('disabled')
-      field.removeAttribute(INVOICE_FREQUENCY_HIDDEN_ATTR)
-      field.removeAttribute(REQUIRED_STASH_ATTR)
-      if (!field.required) field.removeAttribute('required')
+    if (field.required) {
+      if (field.setAttribute) field.setAttribute('required', '')
+    } else if (field.removeAttribute) {
+      field.removeAttribute('required')
     }
-    if (field.required && field.setAttribute) field.setAttribute('required', '')
-    showElement(group)
-    labels.forEach(showElement)
-    showElement(field)
   }
 
   function syncMonthlyDurationField(form) {
-    if (!form || !form.querySelectorAll) return
-    var controls = form.querySelectorAll(MONTHLY_END_DATE_SELECTOR)
-    if (!controls || !controls.length) return
+    // Monthly never submits an end date, so clear the control in every monthly
+    // panel a mid-cutover page carries rather than only the resolved one.
+    var controls = allControls(form, MONTHLY_END_DATE_SELECTORS)
+    if (!controls.length) return
     var panel = engagementPanel(form, 'monthly') || form
-    Array.prototype.forEach.call(controls, function (field) {
+    controls.forEach(function (field) {
       field.value = ''
-      field.disabled = true
-      field.required = false
-      if (field.setAttribute) {
-        field.setAttribute('disabled', '')
-        field.setAttribute('data-project-monthly-end-date-hidden', 'true')
-        field.removeAttribute('required')
-      }
-      hideElement(field)
-      labelsFor(panel, field).forEach(hideElement)
-      hideElement(inputGroup(field, form))
+      setFieldVisibility(field, inputGroup(field, form), labelsFor(panel, field), MONTHLY_END_DATE_HIDDEN_ATTR, false)
     })
   }
 
   function syncHourlyDurationChoice(form) {
     if (readEngagement(form) !== 'hourly') return
-    var endDate = firstControl(form, HOURLY_END_DATE_SELECTOR)
-    var ongoing = firstControl(form, HOURLY_ONGOING_SELECTOR)
+    var endDate = firstControl(form, HOURLY_END_DATE_SELECTORS)
+    var ongoing = firstControl(form, HOURLY_ONGOING_SELECTORS)
     if (!endDate || !ongoing) return
 
     if (ongoing.checked) {
@@ -674,9 +738,44 @@
     }
   }
 
+  function syncHoursCapFields(form) {
+    var panel = engagementPanel(form, 'hourly')
+    if (!panel) return
+    var frequencyField = attributedField(panel, 'hourly_billing_frequency') || namedField(panel, 'Frequency')
+    var selected = readEngagement(form) === 'hourly'
+      ? canonicalHourlyFrequency(fieldValue(frequencyField))
+      : ''
+    var fields = [
+      { frequency: 'one_time', semantic: 'maximum_total_hours', native: 'Maximum-Hours-Billed' },
+      { frequency: 'weekly', semantic: 'maximum_hours_per_week', native: 'Maximum-Hours-Billed-per-Week' },
+      { frequency: 'monthly', semantic: 'maximum_hours_per_month', native: 'Maximum-Hours-Billed-per-Month' },
+    ]
+
+    fields.forEach(function (spec) {
+      var field = attributedField(panel, spec.semantic) || namedField(panel, spec.native)
+      if (!field) return
+      var visible = selected === spec.frequency
+
+      // Stash before the shared writer drops `required`, so syncActiveRequired
+      // can restore it when this cadence becomes the selected one again.
+      if (!visible) {
+        var authoredRequired = field.getAttribute && field.getAttribute('required') !== null
+        if (authoredRequired && field.getAttribute(REQUIRED_STASH_ATTR) === null) {
+          field.setAttribute(REQUIRED_STASH_ATTR, 'true')
+        }
+      }
+
+      // `inputGroup` stops at any `data-input-filter-item` ancestor: while the
+      // Designer cutover is pending, form-input-filter still owns those nodes,
+      // so hide only this control and its own labels rather than fighting it.
+      setFieldVisibility(field, inputGroup(field, panel), labelsFor(panel, field), HOURS_CAP_HIDDEN_ATTR, visible)
+    })
+  }
+
   function syncDurationFields(form) {
     syncMonthlyDurationField(form)
     syncHourlyDurationChoice(form)
+    syncHoursCapFields(form)
     syncInvoiceFrequencyField(form)
   }
 
@@ -711,7 +810,9 @@
 
   function canonicalHourlyFrequency(value) {
     var normalized = clean(value).toLowerCase().replace(/[\s-]+/g, '_')
-    if (normalized === 'one_time' || normalized === 'weekly' || normalized === 'monthly') return normalized
+    if (normalized === 'one_time' || normalized === 'entire_project' || normalized === 'for_the_entire_project') return 'one_time'
+    if (normalized === 'weekly' || normalized === 'per_week') return 'weekly'
+    if (normalized === 'monthly' || normalized === 'per_month') return 'monthly'
     return ''
   }
 
@@ -840,10 +941,10 @@
     if (!clean(payload.project_scope)) return 'Add the project scope.'
     if (payload.engagement_type === 'flat_fee' && !(payload.total_cost > 0)) return 'Enter a total project cost.'
     if (payload.engagement_type === 'hourly' && !(payload.hourly_rate > 0)) return 'Enter an hourly rate.'
-    if (payload.engagement_type === 'hourly' && !payload.hourly_billing_frequency) return 'Choose an hourly billing frequency.'
-    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'one_time' && !(payload.maximum_total_hours > 0)) return 'Enter the maximum total hours.'
-    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'weekly' && !(payload.maximum_hours_per_week > 0)) return 'Enter the maximum hours per week.'
-    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'monthly' && !(payload.maximum_hours_per_month > 0)) return 'Enter the maximum hours per month.'
+    if (payload.engagement_type === 'hourly' && !payload.hourly_billing_frequency) return 'Choose an hours cap period.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'one_time' && !(payload.maximum_total_hours > 0)) return 'Enter the maximum permitted hours for the entire project.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'weekly' && !(payload.maximum_hours_per_week > 0)) return 'Enter the maximum permitted hours per week.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'monthly' && !(payload.maximum_hours_per_month > 0)) return 'Enter the maximum permitted hours per month.'
     if (payload.contract_type === 'standard' && payload.engagement_type === 'flat_fee' && !payload.estimated_end_date) return 'Enter an estimated end date.'
     if (payload.estimated_end_date && payload.estimated_end_date <= payload.start_date) return 'The estimated end date must be after the start date.'
     if (payload.engagement_type === 'weekly' && !(payload.weekly_rate > 0)) return 'Enter a weekly rate.'
@@ -1100,6 +1201,7 @@
     formatCurrentDate: formatCurrentDate,
     fillCurrentDates: fillCurrentDates,
     syncInvoiceFrequencyField: syncInvoiceFrequencyField,
+    syncHoursCapFields: syncHoursCapFields,
     syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,
