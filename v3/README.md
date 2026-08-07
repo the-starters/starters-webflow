@@ -572,6 +572,26 @@ Run its focused tests with:
 node --test v3/messages-profile.test.js v3/messages.test.js
 ```
 
+## Direct-hire project form
+
+`project-form.js` is the authenticated V3 direct-hire adapter for the
+Designer-owned Brand **Contract Generation** form on `/hire/<slug>`: it posts
+the form to Xano `POST projects/create-direct/v3` through the existing
+authenticated `window.Opp30` Memberstack-to-Xano bridge, and also owns the
+Memberstack hiring-manager prefill, the CMS `data-sp-fill` attribute presets,
+and the `data-set-current-date` initialization that the page's Code Embeds used
+to provide. It is deliberately scoped to the
+`[data-modal-trigger="generate-contract"]` triggers and the
+`dialog[data-modal-target="generate-contract"]` modal, and generates no form
+HTML. The authoritative field, prefill, state, and release contract lives in
+[PROJECT-FORM-WIRING.md](PROJECT-FORM-WIRING.md).
+
+Run its focused test with:
+
+```sh
+node --test v3/project-form.test.js
+```
+
 ## All Starters favorites
 
 `all-starters-favorites.js` decorates Starter favourite controls and binds the
@@ -997,6 +1017,49 @@ Run its focused test with:
 
 ```sh
 node --test v3/onboarding-profile-preview.test.js
+```
+
+## Onboarding done redirect
+
+`onboarding-done-redirect.js` is the **read half** of the `/starter-onboarding`
+completion pair: on load it raises the shared `[data-page-spinner]`, trades the
+Memberstack JWT for a Xano token, reads
+`starters_onboarding/get_freelancers`, and replaces to `/starter-dashboard`
+only on a literal `onboarding_done === true` — keeping an already-finished
+member out of the onboarding flow when they arrive via bookmark, back button,
+or stale link. Everything inconclusive fails open and renders the page as
+authored, because the redirect is a UX courtesy and never a security boundary.
+It never writes to Xano; the post-submit journey belongs entirely to its
+pinned pair, `patch-onboarding-status.js` (below) — never ship one half
+without the other. The authoritative wiring, QA order, and troubleshooting
+live in [ONBOARDING-DONE-REDIRECT-WIRING.md](ONBOARDING-DONE-REDIRECT-WIRING.md).
+
+Run its focused test with:
+
+```sh
+node --test v3/onboarding-done-redirect.test.js
+```
+
+## Onboarding patch status
+
+`patch-onboarding-status.js` is the **write half** of the same
+`/starter-onboarding` pair: it detects completion from Webflow's own
+`.w-form-done` success state (one `MutationObserver` per `.w-form` wrapper, so
+a click that only means "tried" never counts), then raises the shared spinner,
+hides the submitted form, `PATCH`es
+`starters_onboarding/set_onboarding_status` with retries and fresh token
+trades, and takes the member to `/starter-dashboard` once the write settles
+either way — a missed mark self-heals on a later visit. It never reads status
+and never routes anyone except its own member after their own submit.
+`window.StartersPatchOnboardingStatus.markOnboardingDone()` exercises the
+write by hand on staging. Installs only as a pinned pair with
+`onboarding-done-redirect.js` (above); the authoritative wiring lives in
+[ONBOARDING-PATCH-STATUS-WIRING.md](ONBOARDING-PATCH-STATUS-WIRING.md).
+
+Run its focused test with:
+
+```sh
+node --test v3/patch-onboarding-status.test.js
 ```
 
 ## Xano grabber (live value mirror)
@@ -1707,6 +1770,33 @@ Run the focused checks with:
 node --check v3/reviews.js
 node --check v3/reviews.test.js
 node --test v3/reviews.test.js
+```
+
+## Starter Dashboard messages tile
+
+`starter-dashboard-messages.js` binds the Messages tile on `/starter-dashboard`
+to the member's recent TalkJS conversations, merging two sources: Xano
+`starter/messages/recent` (a TalkJS REST proxy, which is what lets already-read
+conversations appear) and the TalkJS JS SDK `session.unreads` (live unread
+state, sender name/photo enrichment, and the unread-count badge). When the Xano
+endpoint is unavailable the tile degrades to unreads-only, and it shows the
+authored empty state when there are no conversations at all.
+
+Wiring is wf-xano-style and multi-instance: each
+`data-messages-element="wrapper"` scopes one rendered instance containing
+`list`, `template` (the first card), `empty`, `loading`, `total` (unread
+count), and `view-all`, with card fields `name` (alias `title`),
+`name_initials`, `preview`, `time`, and an optional `avatar` container inside
+the template. `data-messages-format="uppercase|lowercase"` transforms a bound
+element's text, and an optional `data-messages-limit="<n>"` on the wrapper caps
+rendered cards (default 8). All instances share one TalkJS session and one Xano
+fetch; the original class-based selectors (legacy wrapper `#messages`) remain
+as fallbacks.
+
+Run its focused test with:
+
+```sh
+node --test v3/starter-dashboard-messages.test.js
 ```
 
 ## Starter Dashboard points and rank tile
