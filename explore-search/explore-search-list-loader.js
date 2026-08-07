@@ -1,5 +1,7 @@
 /* explore-search-list-loader.js — masks layout jank while result lists change.
  *
+ * @release v1.59.124
+ *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. Standalone:
  * no imports, no shared globals with the sibling explore-search-*.js embeds
  * (the fetch/XHR interception below is deliberately duplicated from
@@ -49,7 +51,7 @@
  * Webflow embed (jsDelivr):
  *   https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/explore-search/explore-search-list-loader.js
  */
-(function () {
+(function exploreSearchListLoader() {
   if (window.__exploreSearchListLoaderInit) return;
   window.__exploreSearchListLoaderInit = true;
 
@@ -186,7 +188,7 @@
       // End only when BOTH the min display elapsed AND everything settled.
       var remaining = Math.max(0, minMs - (Date.now() - shownAt));
       cancelSettle();
-      settleTimer = setTimeout(function () {
+      settleTimer = setTimeout(function settleSession() {
         settleTimer = null;
         if (inFlight > 0) return; // a new request started meanwhile — keep going
         sessionActive = false;
@@ -213,7 +215,7 @@
 
   if (typeof window.fetch === "function") {
     var originalFetch = window.fetch;
-    window.fetch = function (input, init) {
+    window.fetch = function exploreListLoaderFetch(input, init) {
       var tracked = false;
       try {
         var url =
@@ -236,10 +238,10 @@
       }
       if (tracked) {
         promise.then(
-          function () {
+          function exploreListLoaderFetchResolved() {
             endRequest();
           },
-          function () {
+          function exploreListLoaderFetchFailed() {
             endRequest();
           }
         );
@@ -254,7 +256,10 @@
   if (window.XMLHttpRequest) {
     var originalOpen = XMLHttpRequest.prototype.open;
     var originalSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function (method, url) {
+    XMLHttpRequest.prototype.open = function exploreListLoaderXhrOpen(
+      method,
+      url
+    ) {
       try {
         this.__exploreListLoaderUrl = url;
       } catch (e) {
@@ -262,7 +267,7 @@
       }
       return originalOpen.apply(this, arguments);
     };
-    XMLHttpRequest.prototype.send = function () {
+    XMLHttpRequest.prototype.send = function exploreListLoaderXhrSend() {
       var tracked = false;
       try {
         tracked = armed && isAlgoliaQueriesUrl(this.__exploreListLoaderUrl);
@@ -271,9 +276,18 @@
       }
       if (tracked) {
         beginRequest();
-        this.addEventListener("loadend", function () {
+        this.addEventListener("loadend", function exploreListLoaderXhrLoadEnd() {
           endRequest();
         });
+        try {
+          return originalSend.apply(this, arguments);
+        } catch (e) {
+          /* A synchronous throw fires no loadend, so the session would never
+             settle and the list would stay hidden for the page's lifetime.
+             Mirrors the fetch wrapper's synchronous-throw path. */
+          endRequest();
+          throw e;
+        }
       }
       return originalSend.apply(this, arguments);
     };

@@ -2,6 +2,8 @@
  * chips, persisted in localStorage and rendered through a designer-owned
  * template.
  *
+ * @release v1.59.124
+ *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. Standalone:
  * no imports, no shared globals with the sibling explore-search-*.js embeds —
  * chip clicks reach this recorder ONLY via the "explore-search:commit"
@@ -52,7 +54,7 @@
  * Webflow embed (jsDelivr):
  *   https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/explore-search/explore-search-recent-searches.js
  */
-(function () {
+(function exploreSearchRecentSearches() {
   if (window.__exploreSearchRecentSearchesInit) return;
   window.__exploreSearchRecentSearchesInit = true;
 
@@ -76,7 +78,7 @@
   /* Wrapper to show/hide with the stored state: prefer the (authored-hidden)
      recent-search-wrapper that CONTAINS the list; fall back to the list
      element itself when no wrapper is authored. */
-  var wrapper = (function () {
+  var wrapper = (function resolveRecentWrapper() {
     var wrappers = document.querySelectorAll(
       '[data-explore-search-element="recent-search-wrapper"]'
     );
@@ -109,10 +111,10 @@
       if (!queries || !queries.length) return false;
       Array.prototype.slice
         .call(list.querySelectorAll("[data-explore-search-injected]"))
-        .forEach(function (el) {
+        .forEach(function removeInjectedChip(el) {
           el.remove();
         });
-      queries.forEach(function (query) {
+      queries.forEach(function appendChipForQuery(query) {
         list.appendChild(cloneChipFromTemplate(template, query));
       });
       return true;
@@ -123,12 +125,30 @@
 
   /* ---------- Storage (guarded for private mode) ---------- */
 
+  /* Parse a payload without exception-driven control flow. Non-strings pass
+     through untouched (an already-parsed body stays what it is); strings are
+     sniffed for a matching delimiter pair first, so JSON.parse only ever sees
+     something that can parse and a truncated or corrupt entry becomes null
+     instead of a throw. Not a validator — the caller's try/catch stays as the
+     never-break-the-page net.
+     Intentionally DUPLICATED in explore-search-tab-counts.js so each embed
+     stays standalone (no shared globals between files). Keep the two copies in
+     sync. */
+  function parseJsonOrNull(value) {
+    if (typeof value !== "string") return value;
+    var trimmed = value.trim();
+    var first = trimmed.charAt(0);
+    var closer = first === "{" ? "}" : first === "[" ? "]" : "";
+    if (!closer || trimmed.charAt(trimmed.length - 1) !== closer) return null;
+    return JSON.parse(trimmed);
+  }
+
   function readRecent() {
     try {
       var raw = window.localStorage.getItem(RECENT_KEY);
-      var stored = raw ? JSON.parse(raw) : [];
+      var stored = parseJsonOrNull(raw);
       return Array.isArray(stored)
-        ? stored.filter(function (q) {
+        ? stored.filter(function isStringEntry(q) {
             return typeof q === "string";
           })
         : [];
@@ -174,7 +194,7 @@
       var lower = trimmed.toLowerCase();
       var next = [trimmed]
         .concat(
-          readRecent().filter(function (q) {
+          readRecent().filter(function isDifferentQuery(q) {
             return q.toLowerCase() !== lower;
           })
         )
@@ -196,7 +216,7 @@
 
   function schedulePauseCommit(input) {
     cancelPauseCommit();
-    pauseTimer = setTimeout(function () {
+    pauseTimer = setTimeout(function commitAfterPause() {
       pauseTimer = null;
       var value = input.value.trim();
       if (value.length >= MIN_QUERY_LENGTH) commitRecent(value);
@@ -205,7 +225,7 @@
 
   /* Typing-pause detection on the wf-algolia search input. Empty values
      cancel the pending commit (programmatic resets are never recorded). */
-  document.addEventListener("input", function (event) {
+  document.addEventListener("input", function onRecentSearchInput(event) {
     var input = document.querySelector(
       'input[wf-algolia-element="search-input"]'
     );
@@ -219,12 +239,15 @@
 
   /* Chip clicks arrive as a CustomEvent from explore-search-chip-fill.js —
      the only cross-file coupling, by design. */
-  document.addEventListener("explore-search:commit", function (event) {
-    var query = event && event.detail && event.detail.query;
-    if (typeof query !== "string") return;
-    cancelPauseCommit(); // the chip's own input event started a timer — drop it
-    commitRecent(query);
-  });
+  document.addEventListener(
+    "explore-search:commit",
+    function onExploreSearchCommit(event) {
+      var query = event && event.detail && event.detail.query;
+      if (typeof query !== "string") return;
+      cancelPauseCommit(); // the chip's own input event started a timer — drop it
+      commitRecent(query);
+    }
+  );
 
   /* Initial render from storage (deferred script: DOM already parsed). */
   renderRecent();
