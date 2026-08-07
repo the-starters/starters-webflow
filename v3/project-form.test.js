@@ -39,10 +39,17 @@ class Element {
     if (selector === '[data-project-form-state="success"]') return this.success || null
     if (selector === '.w-form-fail') return this.nativeError || null
     if (selector === '.w-form-done') return this.nativeSuccess || null
+    const feePanel = /^\[data-input-filter-item="([^"]+)"\]$/.exec(selector)
+    if (feePanel) return (this.feePanels && this.feePanels[feePanel[1]]) || null
     return null
   }
   querySelectorAll(selector) {
+    if (selector === 'input, select, textarea') return this.controls || []
+    if (selector === 'label') return this.labels || []
     if (selector === '[data-project-field]') return this.children
+    if (selector === '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]') return this.monthlyEndDates || []
+    if (selector === '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]') return this.hourlyEndDates || []
+    if (selector === '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]') return this.hourlyOngoingChoices || []
     if (selector.startsWith('[required]')) {
       return this.children.filter((child) => child.getAttribute('required') !== null || child.getAttribute('data-project-required-hidden') !== null)
     }
@@ -63,6 +70,10 @@ function field(name, value, attrs = {}) {
 
 function nativeField(name, value, attrs = {}) {
   return new Element({ name, value, ...attrs })
+}
+
+function labelElement(forId) {
+  return new Element({ for: forId })
 }
 
 function projectForm(values = {}) {
@@ -245,6 +256,365 @@ test('supports every authored pricing mode and keeps only its applicable commerc
       for (const name of scenario.cleared) assert.equal(serialized.payload[name], null, name)
     })
   }
+})
+
+test('serializes all 11 PandaDoc contract outcomes into the canonical Xano input contract', async (t) => {
+  const cases = [
+    { id: 'PD-V3-01', values: { engagement_type: 'Flat Fee', total_cost: '5000', estimated_end_date: '2026-10-15' }, expected: { engagement_type: 'flat_fee', estimated_end_date: '2026-10-15' } },
+    { id: 'PD-V3-02', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'Weekly', hourly_rate: '150', maximum_hours_per_week: '20', estimated_end_date: '2026-10-15' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'weekly', estimated_end_date: '2026-10-15' } },
+    { id: 'PD-V3-03', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'Monthly', hourly_rate: '150', maximum_hours_per_month: '80', estimated_end_date: '2026-10-15' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'monthly', estimated_end_date: '2026-10-15' } },
+    { id: 'PD-V3-04', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'Weekly', hourly_rate: '150', maximum_hours_per_week: '20', estimated_end_date: '' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'weekly', estimated_end_date: null } },
+    { id: 'PD-V3-05', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'Monthly', hourly_rate: '150', maximum_hours_per_month: '80', estimated_end_date: '' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'monthly', estimated_end_date: null } },
+    { id: 'PD-V3-06', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'One Time', hourly_rate: '150', maximum_total_hours: '40', estimated_end_date: '2026-10-15' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'one_time', estimated_end_date: '2026-10-15' } },
+    { id: 'PD-V3-07', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'One Time', hourly_rate: '150', maximum_total_hours: '40', estimated_end_date: '' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'one_time', estimated_end_date: null } },
+    { id: 'PD-V3-08', values: { engagement_type: 'Monthly Recurring', monthly_rate: '4500', number_of_months: '6', estimated_end_date: '2026-12-31' }, expected: { engagement_type: 'monthly', number_of_months: 6, estimated_end_date: null } },
+    { id: 'PD-V3-09', values: { engagement_type: 'Monthly Recurring', monthly_rate: '4500', number_of_months: '', estimated_end_date: '2026-12-31' }, expected: { engagement_type: 'monthly', number_of_months: null, estimated_end_date: null } },
+    { id: 'PD-V3-10', values: { engagement_type: 'Weekly Recurring', weekly_rate: '1250', number_of_weeks: '8', estimated_end_date: '2026-12-31' }, expected: { engagement_type: 'weekly', number_of_weeks: 8, estimated_end_date: null } },
+    { id: 'PD-V3-11', values: { engagement_type: 'Weekly Recurring', weekly_rate: '1250', number_of_weeks: '', estimated_end_date: '2026-12-31' }, expected: { engagement_type: 'weekly', number_of_weeks: null, estimated_end_date: null } },
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.id, () => {
+      const form = projectForm(scenario.values)
+      const { api } = load({ form })
+      const serialized = api.serialize(form)
+      assert.equal(api.validationError(serialized), '')
+      for (const [name, value] of Object.entries(scenario.expected)) {
+        assert.equal(serialized.payload[name], value, name)
+      }
+    })
+  }
+})
+
+test('hides the contradictory monthly end date and serializes count as the only duration source', () => {
+  const form = projectForm({
+    engagement_type: 'Monthly Recurring',
+    number_of_months: '6',
+    estimated_end_date: '2027-03-01',
+  })
+  const group = new Element({ class: 'app-form_input_group' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { required: '' })
+  monthlyEndDate.parentElement = group
+  monthlyEndDate.form = form
+  group.controls = [monthlyEndDate]
+  group.parentElement = form
+  form.monthlyEndDates = [monthlyEndDate]
+
+  const { api } = load({ form })
+  assert.equal(monthlyEndDate.value, '')
+  assert.equal(monthlyEndDate.disabled, true)
+  assert.equal(monthlyEndDate.required, false)
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(monthlyEndDate.style.display, 'none')
+  assert.equal(monthlyEndDate.getAttribute('data-project-monthly-end-date-hidden'), 'true')
+  assert.equal(group.hidden, true)
+  assert.equal(group.style.display, 'none')
+
+  const serialized = api.serialize(form)
+  assert.equal(serialized.payload.number_of_months, 6)
+  assert.equal(serialized.payload.estimated_end_date, null)
+})
+
+test('hides the monthly end date even without the authored input-group wrapper', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { required: '' })
+  monthlyEndDate.form = form
+  form.monthlyEndDates = [monthlyEndDate]
+
+  load({ form })
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(monthlyEndDate.style.display, 'none')
+  assert.equal(monthlyEndDate.disabled, true)
+  assert.equal(monthlyEndDate.value, '')
+})
+
+test('hides an unclassed exclusive wrapper but never one holding a sibling control', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027')
+  const wrapper = new Element()
+  wrapper.controls = [monthlyEndDate]
+  wrapper.parentElement = form
+  monthlyEndDate.parentElement = wrapper
+  monthlyEndDate.form = form
+  form.monthlyEndDates = [monthlyEndDate]
+  load({ form })
+  assert.equal(wrapper.hidden, true)
+  assert.equal(wrapper.style.display, 'none')
+
+  const shared = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const sharedEndDate = nativeField('endDateInput', '03/01/2027')
+  const startDate = nativeField('startDateInput', '08/20/2026')
+  const row = new Element({ class: 'app-form_input_group' })
+  row.controls = [startDate, sharedEndDate]
+  row.parentElement = shared
+  sharedEndDate.parentElement = row
+  sharedEndDate.form = shared
+  shared.monthlyEndDates = [sharedEndDate]
+  load({ form: shared })
+  assert.equal(row.hidden, false)
+  assert.equal(row.style.display, '')
+  assert.equal(sharedEndDate.hidden, true)
+  assert.equal(startDate.hidden, false)
+})
+
+test('hides the end date caption with the control when they share a date row', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { id: 'Monthly-End-Date' })
+  const startDate = nativeField('startDateInput', '08/20/2026', { id: 'Monthly-Start-Date' })
+  const endLabel = labelElement('Monthly-End-Date')
+  const startLabel = labelElement('Monthly-Start-Date')
+  const row = new Element({ class: 'app-form_input_group' })
+  row.controls = [startDate, monthlyEndDate]
+  row.labels = [startLabel, endLabel]
+  row.parentElement = form
+  monthlyEndDate.parentElement = row
+  monthlyEndDate.form = form
+  form.labels = [startLabel, endLabel]
+  form.monthlyEndDates = [monthlyEndDate]
+
+  load({ form })
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(endLabel.hidden, true)
+  assert.equal(endLabel.style.display, 'none')
+  assert.equal(row.hidden, false)
+  assert.equal(startDate.hidden, false)
+  assert.equal(startLabel.hidden, false)
+})
+
+test('hides only the end date and its caption beside a date-picker companion input', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { id: 'Monthly-End-Date' })
+  const companion = nativeField('endDateInput-alt', 'March 1, 2027')
+  const endLabel = labelElement('Monthly-End-Date')
+  const group = new Element({ class: 'app-form_input_group' })
+  group.controls = [monthlyEndDate, companion]
+  group.labels = [endLabel]
+  group.parentElement = form
+  monthlyEndDate.parentElement = group
+  monthlyEndDate.form = form
+  form.labels = [endLabel]
+  form.monthlyEndDates = [monthlyEndDate]
+
+  load({ form })
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(endLabel.hidden, true)
+  assert.equal(group.hidden, false)
+  assert.equal(group.style.display, '')
+  assert.equal(companion.hidden, false)
+})
+
+test('hides the exclusive wrapper with its own caption but never a foreign caption', () => {
+  const owned = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const ownedEndDate = nativeField('endDateInput', '03/01/2027', { id: 'Monthly-End-Date' })
+  const ownLabel = labelElement('Monthly-End-Date')
+  const ownGroup = new Element({ class: 'app-form_input_group' })
+  ownGroup.controls = [ownedEndDate]
+  ownGroup.labels = [ownLabel]
+  ownGroup.parentElement = owned
+  ownedEndDate.parentElement = ownGroup
+  ownedEndDate.form = owned
+  owned.labels = [ownLabel]
+  owned.monthlyEndDates = [ownedEndDate]
+  load({ form: owned })
+  assert.equal(ownGroup.hidden, true)
+  assert.equal(ownLabel.hidden, true)
+
+  const foreign = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const foreignEndDate = nativeField('endDateInput', '03/01/2027', { id: 'Monthly-End-Date' })
+  const foreignLabel = labelElement('Monthly-Number-of-Months')
+  const sharedGroup = new Element({ class: 'app-form_input_group' })
+  sharedGroup.controls = [foreignEndDate]
+  sharedGroup.labels = [foreignLabel]
+  sharedGroup.parentElement = foreign
+  foreignEndDate.parentElement = sharedGroup
+  foreignEndDate.form = foreign
+  foreign.labels = [foreignLabel]
+  foreign.monthlyEndDates = [foreignEndDate]
+  load({ form: foreign })
+  assert.equal(foreignEndDate.hidden, true)
+  assert.equal(sharedGroup.hidden, false)
+  assert.equal(foreignLabel.hidden, false)
+})
+
+test('never touches the hourly caption when both panels share the Designer end-date id', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { id: 'endDateInput' })
+  const hourlyEndDate = nativeField('endDateInput', '10/15/2026', { id: 'endDateInput' })
+  const monthlyLabel = labelElement('endDateInput')
+  const hourlyLabel = labelElement('endDateInput')
+  const monthlyPanel = new Element({ 'data-input-filter-item': 'Monthly Recurring' })
+  const hourlyPanel = new Element({ 'data-input-filter-item': 'Ongoing Hourly' })
+  monthlyPanel.controls = [monthlyEndDate]
+  monthlyPanel.labels = [monthlyLabel]
+  hourlyPanel.controls = [hourlyEndDate]
+  hourlyPanel.labels = [hourlyLabel]
+  monthlyEndDate.parentElement = monthlyPanel
+  monthlyEndDate.form = form
+  form.feePanels = { 'Monthly Recurring': monthlyPanel, 'Ongoing Hourly': hourlyPanel }
+  form.labels = [monthlyLabel, hourlyLabel]
+  form.monthlyEndDates = [monthlyEndDate]
+  form.hourlyEndDates = [hourlyEndDate]
+
+  load({ form })
+  assert.equal(monthlyEndDate.hidden, true)
+  assert.equal(monthlyLabel.hidden, true)
+  assert.equal(monthlyPanel.hidden, false)
+  assert.equal(hourlyLabel.hidden, false)
+  assert.equal(hourlyLabel.style.display, '')
+  assert.equal(hourlyEndDate.hidden, false)
+  assert.equal(hourlyEndDate.disabled, false)
+  assert.equal(hourlyEndDate.value, '10/15/2026')
+})
+
+test('never hides the conditional fee panel itself', () => {
+  const form = projectForm({ engagement_type: 'Monthly Recurring', number_of_months: '6' })
+  const panel = new Element({ 'data-input-filter-item': 'Monthly Recurring' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027')
+  panel.controls = [monthlyEndDate]
+  panel.parentElement = form
+  monthlyEndDate.parentElement = panel
+  monthlyEndDate.form = form
+  form.monthlyEndDates = [monthlyEndDate]
+
+  load({ form })
+  assert.equal(panel.hidden, false)
+  assert.equal(panel.style.display, '')
+  assert.equal(monthlyEndDate.hidden, true)
+})
+
+test('duration sync and serialization resolve the selected engagement identically', () => {
+  const form = projectForm({
+    engagement_type: 'Ongoing Hourly',
+    hourly_rate: '150',
+    hourly_billing_frequency: 'Weekly',
+    maximum_hours_per_week: '20',
+    estimated_end_date: '2026-10-15',
+  })
+  // A stale native control disagreeing with the semantic attribute must not
+  // send the sync and the serializer to different panels.
+  form.children.push(nativeField('Fee-Structure', 'Monthly Recurring'))
+  const endDate = nativeField('endDateInput', '10/15/2026')
+  const ongoing = nativeField('no-end-date', 'on', { type: 'checkbox', checked: false, required: '' })
+  endDate.form = form
+  ongoing.form = form
+  form.hourlyEndDates = [endDate]
+  form.hourlyOngoingChoices = [ongoing]
+
+  const { api } = load({ form })
+  const payload = api.serialize(form).payload
+  assert.equal(payload.engagement_type, 'hourly')
+  assert.equal(ongoing.required, false)
+  assert.equal(endDate.disabled, false)
+  assert.equal(api.validationError({ payload }), '')
+})
+
+test('weekly and monthly never leak a stale conditional-panel end date', () => {
+  for (const scenario of [
+    { engagement_type: 'Weekly Recurring', number_of_weeks: '8', number_of_months: '' },
+    { engagement_type: 'Monthly Recurring', number_of_weeks: '', number_of_months: '6' },
+  ]) {
+    const form = projectForm({ ...scenario, estimated_end_date: '2027-03-01' })
+    const { api } = load({ form })
+    assert.equal(api.serialize(form).payload.estimated_end_date, null)
+  }
+})
+
+test('confirmation-step serialization scopes repeated controls to the selected fee panel', () => {
+  const form = projectForm()
+  form.children = form.children.filter((child) => ![
+    'engagement_type',
+    'start_date',
+    'estimated_end_date',
+    'total_cost',
+    'paid_upfront_pct',
+    'hourly_rate',
+    'weekly_rate',
+    'monthly_rate',
+    'hourly_billing_frequency',
+    'maximum_total_hours',
+    'maximum_hours_per_week',
+    'maximum_hours_per_month',
+    'number_of_weeks',
+    'number_of_months',
+  ].includes(child.getAttribute('data-project-field')))
+  form.children.push(nativeField('Fee-Structure', 'Monthly Recurring', { disabled: true }))
+
+  const flatPanel = new Element()
+  flatPanel.children = [
+    nativeField('startDateInput', '08/01/2026', { disabled: true }),
+    nativeField('endDateInput', '09/01/2026', { disabled: true }),
+    nativeField('Amount', '9999', { disabled: true }),
+    nativeField('Percent-Paid-Upfront', '50', { disabled: true }),
+  ]
+  const monthlyPanel = new Element()
+  monthlyPanel.children = [
+    nativeField('startDateInput', '08/20/2026', { disabled: true }),
+    nativeField('endDateInput', '12/31/2026', { disabled: true }),
+    nativeField('Amount', '4500', { disabled: true }),
+    nativeField('Number-of-Months', '6', { disabled: true }),
+  ]
+  form.feePanels = { 'Flat Fee': flatPanel, 'Monthly Recurring': monthlyPanel }
+
+  const { api } = load({ form })
+  const payload = api.serialize(form).payload
+  assert.equal(payload.engagement_type, 'monthly')
+  assert.equal(payload.start_date, '2026-08-20')
+  assert.equal(payload.monthly_rate, 4500)
+  assert.equal(payload.number_of_months, 6)
+  assert.equal(payload.estimated_end_date, null)
+  assert.equal(payload.total_cost, null)
+  assert.equal(payload.paid_upfront_pct, null)
+})
+
+test('fixed hourly accepts an end date without requiring the ongoing checkbox', () => {
+  const form = projectForm({
+    engagement_type: 'Ongoing Hourly',
+    hourly_rate: '150',
+    hourly_billing_frequency: 'Weekly',
+    maximum_hours_per_week: '20',
+    estimated_end_date: '2026-10-15',
+  })
+  const endDate = nativeField('endDateInput', '10/15/2026')
+  const ongoing = nativeField('no-end-date', 'on', { type: 'checkbox', checked: false, required: '' })
+  endDate.form = form
+  ongoing.form = form
+  form.hourlyEndDates = [endDate]
+  form.hourlyOngoingChoices = [ongoing]
+
+  const { api } = load({ form })
+  api.syncDurationFields(form)
+  assert.equal(endDate.disabled, false)
+  assert.equal(ongoing.required, false)
+  assert.equal(api.validationError(api.serialize(form)), '')
+})
+
+test('hourly requires the cadence-specific positive cap', () => {
+  const scenarios = [
+    { frequency: 'One Time', error: /maximum total hours/ },
+    { frequency: 'Weekly', error: /maximum hours per week/ },
+    { frequency: 'Monthly', error: /maximum hours per month/ },
+  ]
+  for (const scenario of scenarios) {
+    const form = projectForm({
+      engagement_type: 'Ongoing Hourly',
+      hourly_rate: '150',
+      hourly_billing_frequency: scenario.frequency,
+      maximum_total_hours: '',
+      maximum_hours_per_week: '',
+      maximum_hours_per_month: '',
+    })
+    const { api } = load({ form })
+    assert.match(api.validationError(api.serialize(form)), scenario.error)
+  }
+})
+
+test('standard flat fee requires a future end date before calling Xano', () => {
+  const missing = projectForm({ engagement_type: 'Flat Fee', total_cost: '5000', estimated_end_date: '' })
+  const invalid = projectForm({ engagement_type: 'Flat Fee', total_cost: '5000', start_date: '2026-08-20', estimated_end_date: '2026-08-19' })
+  const missingApi = load({ form: missing }).api
+  const invalidApi = load({ form: invalid }).api
+  assert.match(missingApi.validationError(missingApi.serialize(missing)), /estimated end date/)
+  assert.match(invalidApi.validationError(invalidApi.serialize(invalid)), /must be after/)
 })
 
 test('keeps pricing separate from the authored own-contract choice', () => {
