@@ -39,10 +39,15 @@ class Element {
     if (selector === '[data-project-form-state="success"]') return this.success || null
     if (selector === '.w-form-fail') return this.nativeError || null
     if (selector === '.w-form-done') return this.nativeSuccess || null
+    const feePanel = /^\[data-input-filter-item="([^"]+)"\]$/.exec(selector)
+    if (feePanel) return (this.feePanels && this.feePanels[feePanel[1]]) || null
     return null
   }
   querySelectorAll(selector) {
     if (selector === '[data-project-field]') return this.children
+    if (selector === '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]') return this.monthlyEndDates || []
+    if (selector === '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]') return this.hourlyEndDates || []
+    if (selector === '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]') return this.hourlyOngoingChoices || []
     if (selector.startsWith('[required]')) {
       return this.children.filter((child) => child.getAttribute('required') !== null || child.getAttribute('data-project-required-hidden') !== null)
     }
@@ -245,6 +250,169 @@ test('supports every authored pricing mode and keeps only its applicable commerc
       for (const name of scenario.cleared) assert.equal(serialized.payload[name], null, name)
     })
   }
+})
+
+test('serializes all 11 PandaDoc contract outcomes into the canonical Xano input contract', async (t) => {
+  const cases = [
+    { id: 'PD-V3-01', values: { engagement_type: 'Flat Fee', total_cost: '5000', estimated_end_date: '2026-10-15' }, expected: { engagement_type: 'flat_fee', estimated_end_date: '2026-10-15' } },
+    { id: 'PD-V3-02', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'Weekly', hourly_rate: '150', maximum_hours_per_week: '20', estimated_end_date: '2026-10-15' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'weekly', estimated_end_date: '2026-10-15' } },
+    { id: 'PD-V3-03', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'Monthly', hourly_rate: '150', maximum_hours_per_month: '80', estimated_end_date: '2026-10-15' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'monthly', estimated_end_date: '2026-10-15' } },
+    { id: 'PD-V3-04', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'Weekly', hourly_rate: '150', maximum_hours_per_week: '20', estimated_end_date: '' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'weekly', estimated_end_date: null } },
+    { id: 'PD-V3-05', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'Monthly', hourly_rate: '150', maximum_hours_per_month: '80', estimated_end_date: '' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'monthly', estimated_end_date: null } },
+    { id: 'PD-V3-06', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'One Time', hourly_rate: '150', maximum_total_hours: '40', estimated_end_date: '2026-10-15' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'one_time', estimated_end_date: '2026-10-15' } },
+    { id: 'PD-V3-07', values: { engagement_type: 'Ongoing Hourly', hourly_billing_frequency: 'One Time', hourly_rate: '150', maximum_total_hours: '40', estimated_end_date: '' }, expected: { engagement_type: 'hourly', hourly_billing_frequency: 'one_time', estimated_end_date: null } },
+    { id: 'PD-V3-08', values: { engagement_type: 'Monthly Recurring', monthly_rate: '4500', number_of_months: '6', estimated_end_date: '2026-12-31' }, expected: { engagement_type: 'monthly', number_of_months: 6, estimated_end_date: null } },
+    { id: 'PD-V3-09', values: { engagement_type: 'Monthly Recurring', monthly_rate: '4500', number_of_months: '', estimated_end_date: '2026-12-31' }, expected: { engagement_type: 'monthly', number_of_months: null, estimated_end_date: null } },
+    { id: 'PD-V3-10', values: { engagement_type: 'Weekly Recurring', weekly_rate: '1250', number_of_weeks: '8', estimated_end_date: '2026-12-31' }, expected: { engagement_type: 'weekly', number_of_weeks: 8, estimated_end_date: null } },
+    { id: 'PD-V3-11', values: { engagement_type: 'Weekly Recurring', weekly_rate: '1250', number_of_weeks: '', estimated_end_date: '2026-12-31' }, expected: { engagement_type: 'weekly', number_of_weeks: null, estimated_end_date: null } },
+  ]
+
+  for (const scenario of cases) {
+    await t.test(scenario.id, () => {
+      const form = projectForm(scenario.values)
+      const { api } = load({ form })
+      const serialized = api.serialize(form)
+      assert.equal(api.validationError(serialized), '')
+      for (const [name, value] of Object.entries(scenario.expected)) {
+        assert.equal(serialized.payload[name], value, name)
+      }
+    })
+  }
+})
+
+test('hides the contradictory monthly end date and serializes count as the only duration source', () => {
+  const form = projectForm({
+    engagement_type: 'Monthly Recurring',
+    number_of_months: '6',
+    estimated_end_date: '2027-03-01',
+  })
+  const group = new Element({ class: 'app-form_input_group' })
+  const monthlyEndDate = nativeField('endDateInput', '03/01/2027', { required: '' })
+  monthlyEndDate.parentElement = group
+  monthlyEndDate.form = form
+  group.parentElement = form
+  form.monthlyEndDates = [monthlyEndDate]
+
+  const { api } = load({ form })
+  assert.equal(monthlyEndDate.value, '')
+  assert.equal(monthlyEndDate.disabled, true)
+  assert.equal(monthlyEndDate.required, false)
+  assert.equal(monthlyEndDate.getAttribute('data-project-monthly-end-date-hidden'), 'true')
+  assert.equal(group.hidden, true)
+  assert.equal(group.style.display, 'none')
+
+  const serialized = api.serialize(form)
+  assert.equal(serialized.payload.number_of_months, 6)
+  assert.equal(serialized.payload.estimated_end_date, null)
+})
+
+test('weekly and monthly never leak a stale conditional-panel end date', () => {
+  for (const scenario of [
+    { engagement_type: 'Weekly Recurring', number_of_weeks: '8', number_of_months: '' },
+    { engagement_type: 'Monthly Recurring', number_of_weeks: '', number_of_months: '6' },
+  ]) {
+    const form = projectForm({ ...scenario, estimated_end_date: '2027-03-01' })
+    const { api } = load({ form })
+    assert.equal(api.serialize(form).payload.estimated_end_date, null)
+  }
+})
+
+test('confirmation-step serialization scopes repeated controls to the selected fee panel', () => {
+  const form = projectForm()
+  form.children = form.children.filter((child) => ![
+    'engagement_type',
+    'start_date',
+    'estimated_end_date',
+    'total_cost',
+    'paid_upfront_pct',
+    'hourly_rate',
+    'weekly_rate',
+    'monthly_rate',
+    'hourly_billing_frequency',
+    'maximum_total_hours',
+    'maximum_hours_per_week',
+    'maximum_hours_per_month',
+    'number_of_weeks',
+    'number_of_months',
+  ].includes(child.getAttribute('data-project-field')))
+  form.children.push(nativeField('Fee-Structure', 'Monthly Recurring', { disabled: true }))
+
+  const flatPanel = new Element()
+  flatPanel.children = [
+    nativeField('startDateInput', '08/01/2026', { disabled: true }),
+    nativeField('endDateInput', '09/01/2026', { disabled: true }),
+    nativeField('Amount', '9999', { disabled: true }),
+    nativeField('Percent-Paid-Upfront', '50', { disabled: true }),
+  ]
+  const monthlyPanel = new Element()
+  monthlyPanel.children = [
+    nativeField('startDateInput', '08/20/2026', { disabled: true }),
+    nativeField('endDateInput', '12/31/2026', { disabled: true }),
+    nativeField('Amount', '4500', { disabled: true }),
+    nativeField('Number-of-Months', '6', { disabled: true }),
+  ]
+  form.feePanels = { 'Flat Fee': flatPanel, 'Monthly Recurring': monthlyPanel }
+
+  const { api } = load({ form })
+  const payload = api.serialize(form).payload
+  assert.equal(payload.engagement_type, 'monthly')
+  assert.equal(payload.start_date, '2026-08-20')
+  assert.equal(payload.monthly_rate, 4500)
+  assert.equal(payload.number_of_months, 6)
+  assert.equal(payload.estimated_end_date, null)
+  assert.equal(payload.total_cost, null)
+  assert.equal(payload.paid_upfront_pct, null)
+})
+
+test('fixed hourly accepts an end date without requiring the ongoing checkbox', () => {
+  const form = projectForm({
+    engagement_type: 'Ongoing Hourly',
+    hourly_rate: '150',
+    hourly_billing_frequency: 'Weekly',
+    maximum_hours_per_week: '20',
+    estimated_end_date: '2026-10-15',
+  })
+  const endDate = nativeField('endDateInput', '10/15/2026')
+  const ongoing = nativeField('no-end-date', 'on', { type: 'checkbox', checked: false, required: '' })
+  endDate.form = form
+  ongoing.form = form
+  form.hourlyEndDates = [endDate]
+  form.hourlyOngoingChoices = [ongoing]
+
+  const { api } = load({ form })
+  api.syncDurationFields(form)
+  assert.equal(endDate.disabled, false)
+  assert.equal(ongoing.required, false)
+  assert.equal(api.validationError(api.serialize(form)), '')
+})
+
+test('hourly requires the cadence-specific positive cap', () => {
+  const scenarios = [
+    { frequency: 'One Time', error: /maximum total hours/ },
+    { frequency: 'Weekly', error: /maximum hours per week/ },
+    { frequency: 'Monthly', error: /maximum hours per month/ },
+  ]
+  for (const scenario of scenarios) {
+    const form = projectForm({
+      engagement_type: 'Ongoing Hourly',
+      hourly_rate: '150',
+      hourly_billing_frequency: scenario.frequency,
+      maximum_total_hours: '',
+      maximum_hours_per_week: '',
+      maximum_hours_per_month: '',
+    })
+    const { api } = load({ form })
+    assert.match(api.validationError(api.serialize(form)), scenario.error)
+  }
+})
+
+test('standard flat fee requires a future end date before calling Xano', () => {
+  const missing = projectForm({ engagement_type: 'Flat Fee', total_cost: '5000', estimated_end_date: '' })
+  const invalid = projectForm({ engagement_type: 'Flat Fee', total_cost: '5000', start_date: '2026-08-20', estimated_end_date: '2026-08-19' })
+  const missingApi = load({ form: missing }).api
+  const invalidApi = load({ form: invalid }).api
+  assert.match(missingApi.validationError(missingApi.serialize(missing)), /estimated end date/)
+  assert.match(invalidApi.validationError(invalidApi.serialize(invalid)), /must be after/)
 })
 
 test('keeps pricing separate from the authored own-contract choice', () => {

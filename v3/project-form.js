@@ -40,6 +40,9 @@
   // conditional branch is hidden, so it can be put back unchanged.
   var REQUIRED_STASH_ATTR = 'data-project-required-hidden'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
+  var MONTHLY_END_DATE_SELECTOR = '[data-input-filter-item="Monthly Recurring"] [name="endDateInput"]'
+  var HOURLY_END_DATE_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="endDateInput"]'
+  var HOURLY_ONGOING_SELECTOR = '[data-input-filter-item="Ongoing Hourly"] [name="no-end-date"]'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   var ENGAGEMENT_TYPES = {
@@ -53,6 +56,13 @@
     weekly: 'weekly',
     'monthly recurring': 'monthly',
     monthly: 'monthly',
+  }
+
+  var ENGAGEMENT_PANEL_LABELS = {
+    flat_fee: 'Flat Fee',
+    hourly: 'Ongoing Hourly',
+    weekly: 'Weekly Recurring',
+    monthly: 'Monthly Recurring',
   }
 
   var NUMERIC_FIELDS = {
@@ -195,6 +205,7 @@
   }
 
   function reportActiveValidity(form) {
+    syncDurationFields(form)
     syncActiveRequired(form)
     if (!form || typeof form.reportValidity !== 'function') return true
     return form.reportValidity()
@@ -216,6 +227,88 @@
       candidates.find(activeControl) ||
       candidates.find(function (field) { return fieldValue(field) }) ||
       candidates[0]
+  }
+
+  function firstControl(form, selector) {
+    if (!form || !form.querySelectorAll) return null
+    var controls = form.querySelectorAll(selector)
+    return controls && controls.length ? controls[0] : null
+  }
+
+  function engagementPanel(form, engagement) {
+    var label = ENGAGEMENT_PANEL_LABELS[engagement]
+    return label && form && form.querySelector
+      ? form.querySelector('[data-input-filter-item="' + label + '"]')
+      : null
+  }
+
+  function panelField(form, panel, names) {
+    return namedField(panel || form, names)
+  }
+
+  function inputGroup(field, form) {
+    var node = field && field.parentElement
+    while (node && node !== form) {
+      var classes = clean(node.getAttribute && node.getAttribute('class')).split(/\s+/)
+      if (classes.indexOf('app-form_input_group') !== -1) return node
+      node = node.parentElement
+    }
+    return null
+  }
+
+  function syncMonthlyDurationField(form) {
+    if (!form || !form.querySelectorAll) return
+    var controls = form.querySelectorAll(MONTHLY_END_DATE_SELECTOR)
+    Array.prototype.forEach.call(controls, function (field) {
+      field.value = ''
+      field.disabled = true
+      field.required = false
+      if (field.setAttribute) {
+        field.setAttribute('disabled', '')
+        field.setAttribute('aria-hidden', 'true')
+        field.setAttribute('data-project-monthly-end-date-hidden', 'true')
+        field.removeAttribute('required')
+      }
+      var group = inputGroup(field, form)
+      if (!group) return
+      group.hidden = true
+      group.style.display = 'none'
+      if (group.setAttribute) group.setAttribute('aria-hidden', 'true')
+    })
+  }
+
+  function syncHourlyDurationChoice(form) {
+    var engagement = canonicalEngagement(fieldValue(namedField(form, ['Fee-Structure', 'fee-structure']))) ||
+      canonicalEngagement(fieldValue(formField(form, 'engagement_type')))
+    if (engagement !== 'hourly') return
+    var endDate = firstControl(form, HOURLY_END_DATE_SELECTOR)
+    var ongoing = firstControl(form, HOURLY_ONGOING_SELECTOR)
+    if (!endDate || !ongoing) return
+
+    if (ongoing.checked) {
+      endDate.value = ''
+      endDate.disabled = true
+      if (endDate.setAttribute) endDate.setAttribute('disabled', '')
+    } else {
+      endDate.disabled = false
+      if (endDate.removeAttribute) endDate.removeAttribute('disabled')
+    }
+
+    // Fixed hourly uses the date. Ongoing hourly requires the explicit authored
+    // checkbox. Requiring the checkbox unconditionally makes the fixed branch
+    // impossible to submit even when a valid end date is present.
+    var endDateProvided = Boolean(dateValue(endDate.value))
+    ongoing.required = !endDateProvided
+    if (ongoing.required) {
+      if (ongoing.setAttribute) ongoing.setAttribute('required', '')
+    } else if (ongoing.removeAttribute) {
+      ongoing.removeAttribute('required')
+    }
+  }
+
+  function syncDurationFields(form) {
+    syncMonthlyDurationField(form)
+    syncHourlyDurationChoice(form)
   }
 
   function setPayloadValue(payload, name, field) {
@@ -291,19 +384,21 @@
     setPayloadValue(payload, 'title', namedField(form, 'Project-Name'))
     setPayloadValue(payload, 'service', namedField(form, 'Services'))
     setPayloadValue(payload, 'engagement_type', namedField(form, 'Fee-Structure') || namedField(form, 'fee-structure'))
-    setPayloadValue(payload, 'start_date', namedField(form, 'startDateInput'))
-    setPayloadValue(payload, 'estimated_end_date', namedField(form, 'endDateInput'))
     setPayloadValue(payload, 'project_scope', namedField(form, 'Project-Scope'))
-    setPayloadValue(payload, 'paid_upfront_pct', namedField(form, 'Percent-Paid-Upfront'))
-    setPayloadValue(payload, 'maximum_total_hours', namedField(form, 'Maximum-Hours-Billed'))
-    setPayloadValue(payload, 'maximum_hours_per_week', namedField(form, 'Maximum-Hours-Billed-per-Week'))
-    setPayloadValue(payload, 'maximum_hours_per_month', namedField(form, 'Maximum-Hours-Billed-per-Month'))
-    setPayloadValue(payload, 'number_of_weeks', namedField(form, 'Number-of-Weeks'))
-    setPayloadValue(payload, 'number_of_months', namedField(form, 'Number-of-Months'))
 
-    var authoredAmount = namedField(form, 'Amount')
-    var authoredFrequency = namedField(form, 'Frequency')
     var authoredEngagement = canonicalEngagement(payload.engagement_type)
+    var authoredPanel = engagementPanel(form, authoredEngagement)
+    setPayloadValue(payload, 'start_date', panelField(form, authoredPanel, 'startDateInput'))
+    setPayloadValue(payload, 'estimated_end_date', panelField(form, authoredPanel, 'endDateInput'))
+    setPayloadValue(payload, 'paid_upfront_pct', panelField(form, authoredPanel, 'Percent-Paid-Upfront'))
+    setPayloadValue(payload, 'maximum_total_hours', panelField(form, authoredPanel, 'Maximum-Hours-Billed'))
+    setPayloadValue(payload, 'maximum_hours_per_week', panelField(form, authoredPanel, 'Maximum-Hours-Billed-per-Week'))
+    setPayloadValue(payload, 'maximum_hours_per_month', panelField(form, authoredPanel, 'Maximum-Hours-Billed-per-Month'))
+    setPayloadValue(payload, 'number_of_weeks', panelField(form, authoredPanel, 'Number-of-Weeks'))
+    setPayloadValue(payload, 'number_of_months', panelField(form, authoredPanel, 'Number-of-Months'))
+
+    var authoredAmount = panelField(form, authoredPanel, 'Amount')
+    var authoredFrequency = panelField(form, authoredPanel, 'Frequency')
     if (authoredEngagement === 'flat_fee') setPayloadValue(payload, 'total_cost', authoredAmount)
     if (authoredEngagement === 'hourly') {
       setPayloadValue(payload, 'hourly_rate', authoredAmount)
@@ -354,6 +449,12 @@
       payload.monthly_rate = null
       payload.number_of_months = null
     }
+    // V2 derives monthly and weekly fixed end dates from their count. Never
+    // leak a stale or visibly authored end-date value from another Webflow
+    // conditional panel into those server-owned duration branches.
+    if (payload.engagement_type === 'weekly' || payload.engagement_type === 'monthly') {
+      payload.estimated_end_date = null
+    }
     return { payload: payload }
   }
 
@@ -369,6 +470,11 @@
     if (payload.engagement_type === 'flat_fee' && !(payload.total_cost > 0)) return 'Enter a total project cost.'
     if (payload.engagement_type === 'hourly' && !(payload.hourly_rate > 0)) return 'Enter an hourly rate.'
     if (payload.engagement_type === 'hourly' && !payload.hourly_billing_frequency) return 'Choose an hourly billing frequency.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'one_time' && !(payload.maximum_total_hours > 0)) return 'Enter the maximum total hours.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'weekly' && !(payload.maximum_hours_per_week > 0)) return 'Enter the maximum hours per week.'
+    if (payload.engagement_type === 'hourly' && payload.hourly_billing_frequency === 'monthly' && !(payload.maximum_hours_per_month > 0)) return 'Enter the maximum hours per month.'
+    if (payload.contract_type === 'standard' && payload.engagement_type === 'flat_fee' && !payload.estimated_end_date) return 'Enter an estimated end date.'
+    if (payload.estimated_end_date && payload.estimated_end_date <= payload.start_date) return 'The estimated end date must be after the start date.'
     if (payload.engagement_type === 'weekly' && !(payload.weekly_rate > 0)) return 'Enter a weekly rate.'
     if (payload.engagement_type === 'monthly' && !(payload.monthly_rate > 0)) return 'Enter a monthly rate.'
     if (payload.paid_upfront_pct != null && (payload.paid_upfront_pct < 0 || payload.paid_upfront_pct > 100)) {
@@ -463,6 +569,7 @@
       formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
     }
+    syncDurationFields(form)
     syncActiveRequired(form)
     if (!fieldValue(documentObject.querySelector(SELECTED_STARTER_SELECTOR))) {
       setStatus(form, 'error', 'The selected Starter could not be identified. Reload and try again.')
@@ -560,19 +667,27 @@
       // the last point at which the authored required state can be corrected
       // ahead of the browser's interactive validation.
       var clickedForm = target && target.closest ? target.closest(FORM_SELECTOR) : null
-      if (clickedForm) syncActiveRequired(clickedForm)
+      if (clickedForm) {
+        syncDurationFields(clickedForm)
+        syncActiveRequired(clickedForm)
+      }
     })
     documentObject.addEventListener('change', function (event) {
       // Switching fee structure or contract type swaps which conditional panel
       // is visible; keep required aligned for implicit (Enter key) submission.
       var field = event.target
       var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
-      if (form) syncActiveRequired(form)
+      if (form) {
+        syncDurationFields(form)
+        syncActiveRequired(form)
+      }
     })
     documentObject.addEventListener('input', function (event) {
       var field = event.target
       var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
       if (!form || field.getAttribute(FIELD_ATTR) === 'idempotency_key') return
+      syncDurationFields(form)
+      syncActiveRequired(form)
       var formState = state(form)
       if (formState.active) return
       formState.key = ''
@@ -586,6 +701,9 @@
       event.stopImmediatePropagation()
       submit(form, globalObject, documentObject)
     }, true)
+
+    var initialForm = documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
+    if (initialForm) syncDurationFields(initialForm)
   }
 
   var api = {
@@ -595,6 +713,7 @@
     canonicalEngagement: canonicalEngagement,
     canonicalContractType: canonicalContractType,
     canonicalHourlyFrequency: canonicalHourlyFrequency,
+    syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,
     createIdempotencyKey: createIdempotencyKey,

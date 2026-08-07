@@ -48,15 +48,15 @@ uses an explicit allowlist of the form's existing native Webflow names:
 | `paid_upfront_pct` | `Percent-Paid-Upfront` | optional, 0-100 |
 | `hourly_rate` | Ongoing Hourly `Amount` | required for Ongoing Hourly |
 | `hourly_billing_frequency` | Hourly `Frequency` | One Time, Weekly, or Monthly; required for Hourly |
-| `maximum_total_hours` | `Maximum-Hours-Billed` | optional one-time cap |
-| `maximum_hours_per_week` | `Maximum-Hours-Billed-per-Week` | optional weekly cap |
-| `maximum_hours_per_month` | `Maximum-Hours-Billed-per-Month` | optional monthly cap |
+| `maximum_total_hours` | `Maximum-Hours-Billed` | required positive cap for One Time hourly |
+| `maximum_hours_per_week` | `Maximum-Hours-Billed-per-Week` | required positive cap for Weekly hourly |
+| `maximum_hours_per_month` | `Maximum-Hours-Billed-per-Month` | required positive cap for Monthly hourly |
 | `monthly_rate` | Monthly Recurring `Amount` | required for Monthly Recurring |
 | `number_of_months` | `Number-of-Months` | optional for ongoing Monthly |
 | `weekly_rate` | Weekly Recurring `Amount` | required for Weekly Recurring |
 | `number_of_weeks` | `Number-of-Weeks` | optional for ongoing Weekly |
 | `start_date` | active fee panel start date | required |
-| `estimated_end_date` | active fee panel end date | optional |
+| `estimated_end_date` | Flat Fee or Ongoing Hourly end date | required for Standard Flat Fee; optional for fixed/ongoing Hourly; never submitted for Monthly/Weekly |
 | `project_scope` | `Project-Scope` | required |
 
 Repeated date/rate controls remain in their authored fee panels:
@@ -65,12 +65,20 @@ Repeated date/rate controls remain in their authored fee panels:
 | --- | --- |
 | Flat Fee | `startDateInput`, `endDateInput`, `Amount`, `Percent-Paid-Upfront` |
 | Ongoing Hourly | `startDateInput`, `endDateInput`, `Amount`, `Frequency`, and the three maximum-hours controls |
-| Monthly Recurring | `startDateInput`, `endDateInput`, `Amount`, `Number-of-Months` |
+| Monthly Recurring | `startDateInput`, `Amount`, `Number-of-Months`; the legacy `endDateInput` is hidden, disabled, and cleared by the adapter |
 | Weekly Recurring | `startDateInput`, `Amount`, `Number-of-Weeks` |
 
 The adapter selects the visible authored conditional panel, with a nonblank
 fallback for test and preview DOMs. Hidden blank controls never replace the
-active value.
+active value. Monthly and Weekly fixed end dates are server-derived from their
+count, matching V2. The adapter therefore hard-clears `estimated_end_date` for
+those two modes so a stale hidden date can never contradict the count.
+
+The authored Hourly panel supports either a fixed end date or the explicit
+"No end date" checkbox. The adapter makes those alternatives mutually valid:
+an entered end date removes the checkbox requirement, while a checked ongoing
+choice clears and disables the end date. This avoids the former state where a
+valid fixed-hourly date was still blocked by an unchecked required checkbox.
 
 Webflow keeps conditional branches in the native form when they are hidden, and
 the browser runs interactive validation before it dispatches `submit`. A
@@ -124,9 +132,11 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
 1. Verify exactly one target form exists inside `data-modal-target="generate-contract"`.
 2. Open it from every responsive Hire trigger and confirm the selected Starter
    identity is present before review.
-3. Exercise Flat Fee; Ongoing Hourly with One Time, Weekly, and Monthly caps;
-   Monthly; Weekly; Standard Contract; and My Own Contract validation without
-   issuing a request for invalid inputs.
+3. Exercise Flat Fee; fixed and ongoing Hourly with One Time, Weekly, and
+   Monthly caps; fixed and ongoing Monthly; fixed and ongoing Weekly; Standard
+   Contract; and My Own Contract validation without issuing a request for
+   invalid inputs. Confirm Monthly shows no end-date field and serializes only
+   `number_of_months` as its duration source.
 4. With the approved production canary and PandaDoc create worker #33 held
    inactive, verify exactly one authenticated `projects/create-direct/v3`
    request and no Airtable/Make/PandaDoc browser request or browser secret.
