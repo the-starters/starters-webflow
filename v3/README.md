@@ -1865,7 +1865,11 @@ recovery.
 Each root reflects the selected state in `data-stripe-connect-status` and
 `data-stripe-connect-view`. The module also emits
 `starterStripeConnectReady`, `starterStripeConnectRedirect`, and
-`starterStripeConnectError` events for diagnostics.
+`starterStripeConnectError` events. `starterStripeConnectRedirect` is
+diagnostics only, but `starterStripeConnectReady` and
+`starterStripeConnectError` are load-bearing: the
+[Action Items panel](#dashboard-action-items-panel) settles its loading card on
+either of them, so keep dispatching both on every terminal outcome.
 
 ### Isolated sandbox flow
 
@@ -1897,4 +1901,65 @@ Run its focused tests with:
 
 ```sh
 node --test v3/starter-dashboard-stripe-connect.test.js
+```
+
+## Dashboard Action Items panel
+
+`dashboard-action-items.js` owns the chrome of the Action Items panel on the
+Starter and Brand dashboards. The panel itself is shared infrastructure: the
+feature scripts that contribute rows (Stripe Connect, calls, projects, and
+future sections) still own their own rows and show or hide them themselves.
+This controller never shows, hides, or edits a feature row. It only renders the
+loading card, the "all caught up" empty card, and the live count.
+
+Load it on `/starter-dashboard` and `/brand-dashboard`:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/dashboard-action-items.js"></script>
+```
+
+The Designer grammar is the `data-action-element` vocabulary already authored on
+the Brand dashboard:
+
+| Value | Purpose |
+| --- | --- |
+| `wrapper` | Panel scope root. Optional; with no wrapper anywhere on the page the controller falls back to a single document-wide panel whenever any `loading`, `empty`, or `total` chrome is authored, which is what the Starter dashboard still uses. A page with neither a wrapper nor chrome stays untouched |
+| `list` | List container; informational only |
+| `loading` | Loading card, visible until the panel first settles |
+| `empty` | "All caught up" card, visible once settled with zero items |
+| `total` | Text node that receives the live count, replacing the static authored `4` |
+| `item` | An actionable row |
+
+A row counts as pending when its bounding rect has height, so `display:none`
+rows, rows inside a hidden group, and a known zero-height stray row are all
+excluded. Only leaf matches count: a group element that also carries the row
+marker but contains matching descendants is skipped, so a section never
+double-counts.
+
+Rows are matched by `[data-action-element="item"]` **or** the authored
+`.dash-hero_action-item` class. The class fallback is a deliberate, accepted
+exception to the sitewide attributes-only rule in the top-level
+[`README.md`](../README.md#sync-safety): both dashboards ship class-marked rows
+today, including component-driven ones that cannot take the attribute yet. It
+is also recorded in the module header. Remove the fallback once every row
+carries `data-action-element="item"`.
+
+The panel settles — and only then may the empty card appear — at the first of:
+an item becoming visible, one of the `starterStripeConnectReady` /
+`starterStripeConnectError` readiness events, or a 4-second timeout. Until it
+settles the loading card stays up, so a slow feature controller never flashes
+a false "all caught up".
+
+Every render also writes the count to `data-action-items-count` on the scope
+(on `<body>`, or `<html>` if there is no body, when the scope is the document)
+and dispatches an `actionItemsChanged` `CustomEvent` with `{ detail: { count } }`
+on `window` — but only when the count actually changes. A `MutationObserver`
+watching `childList` plus the `style`, `class`, and `hidden` attributes keeps
+all of it live; renders are coalesced to one per animation frame (falling back
+to a `setTimeout`) because Webflow IX2 writes inline styles every frame.
+
+Run its focused tests with:
+
+```sh
+node --test v3/dashboard-action-items.test.js
 ```
