@@ -36,8 +36,16 @@ adapter reads the established `#pushMemID` contract scoped to
 `data-modal-target="generate-contract"`. Do not edit or bind the separate
 `start-project` modal.
 
-No new Designer elements or per-field attributes are required. The adapter
-uses an explicit allowlist of the form's existing native Webflow names:
+No per-field attributes are required. The adapter uses an explicit allowlist of
+the form's native Webflow names. Webflow derives a native control name from its
+Designer label, so the allowlist is matched case- and separator-insensitively:
+`Invoice Frequency`, `Invoice-frequency`, and `invoice_frequency` all resolve to
+the same allowlisted control.
+
+The one control the Standard Contract branch depends on is a native Invoice
+Frequency select offering Weekly, Bi-Weekly, Monthly, and Upon completion of the
+project. It is Designer-owned like every other field here; if it is missing or
+left blank, the adapter fails closed instead of submitting.
 
 | Backend field | Existing Designer control | Notes |
 | --- | --- | --- |
@@ -58,6 +66,7 @@ uses an explicit allowlist of the form's existing native Webflow names:
 | `start_date` | active fee panel start date | required |
 | `estimated_end_date` | Flat Fee or Ongoing Hourly end date | required for Standard Flat Fee; optional for fixed/ongoing Hourly; never submitted for Monthly/Weekly; when present it must be after `start_date` |
 | `project_scope` | `Project-Scope` | required |
+| `invoice_frequency` | `Invoice-Frequency` | Weekly, Bi-Weekly, Monthly, or Upon completion of the project; its own select, independent of Hourly `Frequency`; required for Standard Contract and omitted for My Own Contract |
 
 Repeated date/rate controls remain in their authored fee panels:
 
@@ -121,8 +130,30 @@ separate from pricing:
 
 - fee structure becomes `flat_fee`, `hourly`, `monthly`, or `weekly`;
 - contract choice becomes `standard` or `own_contract`;
+- invoice frequency becomes `weekly`, `bi_weekly`, `monthly`, or
+  `upon_completion`, serialized from its own select and never derived from the
+  hourly billing frequency;
 - Xano derives the PandaDoc template key. The browser never chooses a template
   UUID or sends Brand/Starter authority fields.
+
+Invoice frequency belongs to the contract rather than the pricing model, so the
+adapter syncs it from the contract choice alongside the duration sync at each of
+the points above. Standard Contract shows, enables, and requires the select. My
+Own Contract hides and disables it, marks it
+`data-project-invoice-frequency-hidden`, and leaves the key out of the payload
+entirely, so the only shape Xano ever sees for an absent invoice schedule is the
+absent key. The adapter never rewrites the control's value, so returning to
+Standard Contract restores the Brand's previous selection. It hides and reveals
+the control, its authored `<label for="...">`, and the nearest exclusive wrapper
+through the same conservative walk as the Monthly end date, so a shared row
+holding another control keeps whatever visibility form-input-filter gave it. A
+Standard contract whose invoice frequency is missing or blank fails closed with
+"Choose an invoice frequency." before any request is issued.
+
+Both the contract choice and the invoice-frequency select are resolved anywhere
+in the form, not within a particular step wrapper, so a Designer step
+reorganization that moves the contract choice ahead of the pricing fields needs
+no change here.
 
 Hiring Manager, Company, Email, and display-name fields remain UI/prefill
 fields only. Xano derives authoritative Brand and Starter records from the
@@ -157,12 +188,16 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    Contract; and My Own Contract validation without issuing a request for
    invalid inputs. Confirm Monthly shows no end-date field and serializes only
    `number_of_months` as its duration source.
-4. With the approved production canary and PandaDoc create worker #33 held
+4. Confirm Standard Contract requires an invoice frequency and serializes it
+   independently of the hourly billing frequency, that My Own Contract hides
+   the select and omits `invoice_frequency` from the payload, and that
+   switching back to Standard Contract restores the previous selection.
+5. With the approved production canary and PandaDoc create worker #33 held
    inactive, verify exactly one authenticated `projects/create-direct/v3`
    request and no Airtable/Make/PandaDoc browser request or browser secret.
-5. Read Xano back and verify `creation_context=direct_hire`, null opportunity
+6. Read Xano back and verify `creation_context=direct_hire`, null opportunity
    and application IDs, exact Brand/Starter IDs, lifecycle event, and one
    PandaDoc outbox item.
-6. Verify no PandaDoc document ID or document exists during the no-send canary.
-7. Replay the exact request and prove `replayed=true` with no duplicate project,
+7. Verify no PandaDoc document ID or document exists during the no-send canary.
+8. Replay the exact request and prove `replayed=true` with no duplicate project,
    event, document, or outbox row.
