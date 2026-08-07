@@ -269,9 +269,87 @@ test('invoiceProjectContext prefers a bound brand field over the pipe-split head
   const heading = invoiceProjectContext(invoiceCard({ heading_display: 'Growth | Ops | Acme Co' }))
   assert.equal(heading.brand, 'Acme Co')
 
+  // The authored V3 project card binds the brand as wf-xano-bind="company_name"
+  // and its heading as "#<id> | <brand>", so the bound field must win over the
+  // heading split rather than the other way round.
+  const authored = invoiceProjectContext(
+    invoiceCard({
+      heading_display: '#1123 | Stale Heading',
+      company_name: 'Northwind Coffee',
+      title: 'Growth Marketing Lead',
+    }),
+  )
+  assert.equal(authored.brand, 'Northwind Coffee')
+  assert.equal(authored.title, 'Growth Marketing Lead')
+
   assert.equal(invoiceProjectContext(invoiceCard({}, '0')), null)
   assert.equal(invoiceProjectContext(invoiceCard({}, '-4')), null)
   assert.equal(invoiceProjectContext(null), null)
+})
+
+// The Generate Invoice modal's success screen as the authored Webflow component
+// renders it: brand/project/amount binds (there is no status hook), and a
+// "View in Stripe" design-system button whose visible element is the
+// .button_main-wrap div wrapping an invisible a.clickable_link overlay that
+// carries the "#invoice-payment-link" placeholder href.
+function invoiceModalFixture() {
+  const wrap = { style: {} }
+  const link = {
+    href: '#invoice-payment-link',
+    style: {},
+    closest: (selector) => (selector === '.button_main-wrap' ? wrap : null),
+  }
+  const binds = {
+    brand: { textContent: '' },
+    project: { textContent: '' },
+    amount: { textContent: '$1,000.00' },
+  }
+  const form = { style: {} }
+  const done = { style: {} }
+  const modal = {
+    querySelector: (selector) => {
+      if (selector === 'form') return form
+      if (selector === '.w-form-done') return done
+      if (selector === 'a[href="#invoice-payment-link"]') return link
+      return null
+    },
+    querySelectorAll: (selector) => {
+      const match = /^\[data-wf-invoice-bind="([\w-]+)"\]$/.exec(selector)
+      const field = match && match[1]
+      return field && binds[field] ? [binds[field]] : []
+    },
+  }
+  return { binds, done, form, link, modal, wrap }
+}
+
+test('the success screen shows and hides the Stripe button, not just its overlay anchor', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const { paintInvoiceSuccess } = bridge.window.Opp30
+  const context = { brand: 'Northwind Coffee', title: 'Growth Marketing Lead' }
+
+  const paid = invoiceModalFixture()
+  paintInvoiceSuccess(
+    paid.modal,
+    { status: 'unpaid', payment_link: 'https://buy.stripe.com/test_link' },
+    context,
+    2500.5,
+  )
+  assert.equal(paid.form.style.display, 'none')
+  assert.equal(paid.done.style.display, 'block')
+  assert.equal(paid.binds.brand.textContent, 'Northwind Coffee')
+  assert.equal(paid.binds.project.textContent, 'Growth Marketing Lead')
+  assert.equal(paid.binds.amount.textContent, '$2,500.50')
+  assert.equal(paid.link.href, 'https://buy.stripe.com/test_link')
+  assert.equal(paid.link.target, '_blank')
+  assert.equal(paid.link.rel, 'noopener noreferrer')
+  assert.equal(paid.wrap.style.display, '')
+
+  // Without a payment_link the styled button itself has to go: hiding only the
+  // overlay anchor would leave a visible, dead "View in Stripe" button.
+  const unpayable = invoiceModalFixture()
+  paintInvoiceSuccess(unpayable.modal, { status: 'unpaid' }, context, 10)
+  assert.equal(unpayable.wrap.style.display, 'none')
+  assert.equal(unpayable.link.href, '#invoice-payment-link')
 })
 
 test('openInvoiceModal opens through modal.js and only falls back to showModal', async () => {

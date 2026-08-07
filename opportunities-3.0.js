@@ -1416,7 +1416,8 @@
     if (!card) return null
     const projectId = parseInt(card.getAttribute('data-wf-xano-id') || '', 10)
     if (!(projectId > 0)) return null
-    // Prefer a bound brand/company field; the "Title | Brand" heading split is
+    // Prefer a bound brand/company field — on the authored V3 project card that
+    // field is wf-xano-bind="company_name". The "Title | Brand" heading split is
     // only a fallback, and a title containing a pipe makes the last segment the
     // closest guess at the brand.
     const heading = cardFieldText(card, 'heading_display')
@@ -1425,7 +1426,11 @@
       card,
       projectId,
       title: cardFieldText(card, 'title'),
-      brand: cardFieldText(card, 'brand') || cardFieldText(card, 'company') || headingBrand,
+      brand:
+        cardFieldText(card, 'brand') ||
+        cardFieldText(card, 'company') ||
+        cardFieldText(card, 'company_name') ||
+        headingBrand,
     }
   }
 
@@ -1457,6 +1462,17 @@
     return (
       $('[data-wf-invoice="payment-link"]', modal) || $('a[href="#invoice-payment-link"]', modal)
     )
+  }
+
+  // The authored "View in Stripe" control is a design-system button: the visible
+  // element is the .button_main-wrap div and the anchor inside it is an
+  // invisible overlay (the same shape step-flow.js and form-validation.js
+  // resolve with "button, a.clickable_link, .clickable_btn"). Toggling display
+  // on the anchor alone would leave the styled button on the success screen with
+  // nothing behind it, so show/hide the wrapper instead.
+  function invoicePaymentLinkWrap(link) {
+    if (!link) return null
+    return (link.closest && link.closest('.button_main-wrap')) || link
   }
 
   function invoiceError(modal, message) {
@@ -1503,8 +1519,8 @@
       delete form.dataset.invoiceIdempotencyKey
     }
     if (done) done.style.display = ''
-    const link = invoicePaymentLinkEl(modal)
-    if (link) link.style.display = ''
+    const linkWrap = invoicePaymentLinkWrap(invoicePaymentLinkEl(modal))
+    if (linkWrap) linkWrap.style.display = ''
     clearInvoiceError(modal)
   }
 
@@ -1558,18 +1574,19 @@
     invoiceBind(modal, 'status', (result && result.status) || 'unpaid')
     const link = invoicePaymentLinkEl(modal)
     if (!link) return
+    const linkWrap = invoicePaymentLinkWrap(link)
     const paymentLink = result && result.payment_link
     if (!paymentLink) {
       // The authored anchor still points at its "#invoice-payment-link"
       // placeholder, so showing it would be a dead pay button.
-      link.style.display = 'none'
+      linkWrap.style.display = 'none'
       console.warn('[opp30:invoice] invoice created without a payment_link; pay CTA hidden', result)
       return
     }
     link.href = paymentLink
     link.target = '_blank'
     link.rel = 'noopener noreferrer'
-    link.style.display = ''
+    linkWrap.style.display = ''
   }
 
   function invoiceErrorMessage(err) {
@@ -3737,6 +3754,7 @@
     formatInvoiceAmount,
     normalizeInvoiceAmount,
     openInvoiceModal,
+    paintInvoiceSuccess,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,
