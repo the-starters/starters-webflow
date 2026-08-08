@@ -1619,16 +1619,14 @@ the member explicitly switches back to All and that replacement is loading or
 fails.
 Missing-instance, unresolved unfiltered, confirmed-unfiltered-empty, and
 auth-transition states remain hidden.
-The existing Designer-owned project `Show more` control is upgraded to wf-xano
-append pagination. Author it with `wf-xano-element="load-more"`; the controller
-also supports the existing `.button_main-wrap` whose `.button_main-text` is
-exactly `Show more`. It preserves rendered cards and the active status filter,
-disables the control and shows its authored `data-opp-loading="true"` state
-while requesting the next canonical page, then hides it for empty, exhausted,
-or single-page results. An append error keeps the control available for retry;
-initial, replacement-error, missing-instance, and auth-transition states fail
-closed. Call controls reveal the next six matching canonical rows under the
-active client-side filter and hide when that filtered list is exhausted.
+The existing Designer-owned project `Show more` control stays hidden and out of
+the accessibility tree. The current Brand and Starter Projects endpoints return
+each member's complete owned collection and ignore `page`/`per_page`; presenting
+client append pagination would therefore duplicate rows for larger collections.
+Restore this control only after those endpoints implement real server pagination
+and return authoritative paging metadata. Call controls reveal the next six
+matching canonical rows under the active client-side filter and hide when that
+filtered list is exhausted.
 
 On Brand only, the same resolved Memberstack snapshot paints the existing hero
 through the Designer custom-attribute contract, never through styling classes:
