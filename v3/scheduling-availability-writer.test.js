@@ -235,6 +235,9 @@ function buildDom(options) {
   steps['setup-form'].appendChild(buttons.submit)
 
   buttons.managerSubmit = new El('a', { 'availability-action-btn': 'manager-submit' })
+  const managerSubmitText = new El('span', { class: 'button_main-text' })
+  managerSubmitText.textContent = 'Confirm'
+  buttons.managerSubmit.appendChild(managerSubmitText)
   steps['how-to-manage'].appendChild(buttons.managerSubmit)
 
   buttons.preRedirect = new El('a', { 'availability-action-btn': 'pre-redirect' })
@@ -285,6 +288,18 @@ function buildDom(options) {
     platform: new El('div', { 'config-manager': '', 'data-type': 'platform' }),
     calendar: new El('div', { 'config-manager': '', 'data-type': 'calendar' }),
   }
+  const platformTitle = new El('p')
+  platformTitle.textContent = 'Use platform availability'
+  const platformBody = new El('p')
+  platformBody.textContent = 'Legacy platform copy'
+  managers.platform.appendChild(platformTitle)
+  managers.platform.appendChild(platformBody)
+  const calendarTitle = new El('p')
+  calendarTitle.textContent = 'Connect your calendar'
+  const calendarBody = new El('p')
+  calendarBody.textContent = 'Sync with Google or Outlook'
+  managers.calendar.appendChild(calendarTitle)
+  managers.calendar.appendChild(calendarBody)
   root.appendChild(managers.platform)
   root.appendChild(managers.calendar)
   root.appendChild(new El('div', { 'config-manager-element': '' }))
@@ -839,7 +854,7 @@ test('refuses to write when the member session changed after bootstrap', async (
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriteError'))
 })
 
-test('choosing own-calendar clears grant data and lands on success-calendar', async () => {
+test('choosing own-calendar clears grant data and opens Google OAuth directly', async () => {
   let cleared = false
   const result = loadWriter({
     storage: TZ_CACHED,
@@ -874,12 +889,15 @@ test('choosing own-calendar clears grant data and lands on success-calendar', as
   assert.deepEqual(clear.body, { member_id: 'member-a' })
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, null)
-  assert.equal(result.dom.steps['success-calendar'].style.display, 'block')
+  assert.equal(result.dom.steps['success-calendar'].style.display, 'none')
+  assert.equal(result.dom.steps['pre-redirect'].style.display, 'block')
+  assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
   const paths = result.calls.map((call) => call.path)
   const clearIndex = paths.indexOf('/starter/clear_calendar_data/v3')
   const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', clearIndex + 1)
   assert.ok(canonicalReadIndex > clearIndex)
+  assert.ok(paths.indexOf('/grants/oauth/v3') > canonicalReadIndex)
 })
 
 test('own-calendar prefers the page bookings-aware clearGrantData composite', async () => {
@@ -1093,6 +1111,24 @@ test('calendar connection copy describes the explicit same-tab handoff', async (
   assert.equal(
     result.dom.steps['pre-redirect'].querySelector('.heading-style-h1').textContent,
     'Opening Google Calendar…',
+  )
+  assert.equal(
+    result.dom.managers.calendar.querySelectorAll('p')[0].textContent,
+    'Connect Google Calendar',
+  )
+  assert.equal(
+    result.dom.managers.calendar.querySelectorAll('p')[1].textContent,
+    'Check your real calendar for conflicts so brands only see times when you’re free.',
+  )
+  assert.equal(
+    result.dom.buttons.managerSubmit.querySelector('.button_main-text').textContent,
+    'Use platform availability',
+  )
+
+  result.dom.managers.calendar.click()
+  assert.equal(
+    result.dom.buttons.managerSubmit.querySelector('.button_main-text').textContent,
+    'Connect Google Calendar',
   )
 })
 
