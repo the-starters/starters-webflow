@@ -696,13 +696,67 @@ test('Brand project cards expose only canonical actions for their current lifecy
   await new Promise(setImmediate)
 
   assert.equal(contract.control.getAttribute('data-project-action'), 'contract')
-  assert.equal(contract.wrap.style.display, '')
+  assert.equal(contract.wrap.style.display, 'none')
   assert.equal(end.control.getAttribute('wf-xano-link'), null)
   assert.equal(end.control.getAttribute('data-project-action'), 'end')
   assert.equal(end.wrap.style.display, 'none')
   assert.equal(review.control.getAttribute('wf-xano-link'), null)
   assert.equal(review.control.getAttribute('href'), '#review-starter')
   assert.equal(review.wrap.style.display, '')
+})
+
+test('Starter project cards keep completed contracts off the signing-session route', async () => {
+  const contract = el('a', { href: '#contract' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'View Contract'
+  const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    [card],
+  )
+  const contractRequests = []
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            pandadoc_document_id: 'doc-675',
+            contract_status: 'completed',
+          }],
+        })
+      }
+      if (url.includes('/contracts/link/v3')) {
+        contractRequests.push(url)
+        return response({ url: 'https://app.pandadoc.com/s/completed-contract' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.equal(contract.getAttribute('data-project-action'), 'contract')
+  assert.equal(wrap.style.display, 'none')
+  assert.equal(wrap.getAttribute('aria-hidden'), 'true')
+
+  bridge.dispatchDocument('click', clickEvent(contract).event)
+  await new Promise(setImmediate)
+  assert.deepEqual(contractRequests, [])
 })
 
 test('View Contract is limited to recipient-viewable canonical document states', async () => {
@@ -725,7 +779,7 @@ test('View Contract is limited to recipient-viewable canonical document states',
   canonicalStates.forEach((contractStatus) => {
     assert.equal(
       isViewable({ pandadoc_document_id: 'doc-675', contract_status: contractStatus }),
-      ['sent', 'viewed', 'partial', 'completed'].includes(contractStatus),
+      ['sent', 'viewed', 'partial'].includes(contractStatus),
       contractStatus,
     )
   })
@@ -756,15 +810,15 @@ test('View Contract uses cached authorization when the canonical refresh transie
         return response({
           items: [{
             id: 675,
-            lifecycle_state: 'completed',
+            lifecycle_state: 'contract_sent',
             pandadoc_document_id: 'doc-675',
-            contract_status: 'completed',
+            contract_status: 'sent',
           }],
         })
       }
       if (url.includes('/contracts/link/v3')) {
         requests.push(url)
-        return response({ url: 'https://app.pandadoc.com/s/completed-contract' })
+        return response({ url: 'https://app.pandadoc.com/s/sent-contract' })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -787,7 +841,7 @@ test('View Contract uses cached authorization when the canonical refresh transie
   assert.ok(await waitFor(() => requests.length === 1))
   assert.equal(listCount, 2)
   assert.match(requests[0], /\/contracts\/link\/v3$/)
-  assert.equal(contractWindow.location.href, 'https://app.pandadoc.com/s/completed-contract')
+  assert.equal(contractWindow.location.href, 'https://app.pandadoc.com/s/sent-contract')
   assert.equal(contractWindow.opener, null)
 })
 

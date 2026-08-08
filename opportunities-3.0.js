@@ -1894,7 +1894,9 @@
     '[wf-xano-link="review_starter"], [data-project-action="review"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
-  const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial', 'completed'])
+  // This action calls PandaDoc's recipient view/sign session endpoint. Completed
+  // documents require the separate protected-PDF delivery contract.
+  const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
   let projectWorkflowRole = ''
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null

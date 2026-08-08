@@ -635,8 +635,8 @@ project-card, modal, form, or button markup.
 
 View Contract accepts `a[href="#contract"]` or
 `[data-project-action="contract"]`, is shown only when the project has a PandaDoc
-document id and canonical `contract_status` is `sent`, `viewed`, `partial`, or
-`completed`, and requests a fresh recipient-scoped URL from authenticated Xano
+document id and canonical `contract_status` is `sent`, `viewed`, or `partial`,
+and requests a fresh recipient-scoped URL from authenticated Xano
 `contracts/link/v3`. The URL opens in a new tab when the browser permits it and
 falls back to the current tab. No PandaDoc credential or stored contract URL is
 exposed in the page. `not_requested`, `create_pending`, `uploaded`, `draft`,
@@ -644,8 +644,9 @@ exposed in the page. `not_requested`, `create_pending`, `uploaded`, `draft`,
 ownership, environment, canonical contract state, and the live PandaDoc document
 status before minting the one-hour session, so stale browser data cannot expose a
 draft or terminally unavailable document. Sent or partially signed documents open
-the recipient's view/sign session; completed documents open the same recipient
-session in PandaDoc's read-only completed-document view. On click, the controller
+the recipient's view/sign session. Completed documents require a separate
+authenticated protected-PDF delivery endpoint and remain hidden until that path is
+implemented and verified. On click, the controller
 first tries to refresh the canonical project list. A transient list failure may
 fall back to the already role-gated cached project only to request this link; the
 authenticated Xano endpoint remains the final authorization and state check.
