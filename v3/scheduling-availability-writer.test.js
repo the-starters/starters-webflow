@@ -698,7 +698,27 @@ test('existing schedule without a manager opens the how-to-manage step', async (
 })
 
 test('form submit writes the authenticated member id and reaches the success step', async () => {
-  const result = loadWriter({ storage: TZ_CACHED })
+  let canonicalAvailability = defaultAvailability()
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/update_availability/v3': (body) => {
+        canonicalAvailability = body.availability
+        return { status: 200, body: { id: 1 } }
+      },
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: canonicalAvailability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+    },
+  })
   await settle()
 
   result.dom.fields.days[1].checked = true
@@ -943,6 +963,7 @@ test('platform setup failure shows config-request-error and writes nothing', asy
     0,
   )
   assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {
@@ -1128,6 +1149,7 @@ test('config update rejection lands on config-request-error', async () => {
   await settle()
 
   assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
 test('removing an override returns its days to the general schedule', async () => {
@@ -1153,6 +1175,50 @@ test('removing an override returns its days to the general schedule', async () =
     result.calls.filter((c) => c.path === '/scheduler/configurations/update/v3').length,
     2,
   )
+  const paths = result.calls.map((call) => call.path)
+  const updateIndex = paths.indexOf('/starter/update_availability/v3')
+  const configIndex = paths.lastIndexOf('/scheduler/configurations/update/v3')
+  const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', configIndex + 1)
+  assert.ok(updateIndex > -1 && configIndex > updateIndex)
+  assert.ok(canonicalReadIndex > configIndex)
+})
+
+test('rejects malformed canonical availability after a mutation', async () => {
+  let starterReads = 0
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => {
+        starterReads += 1
+        return {
+          status: 200,
+          body:
+            starterReads === 1
+              ? {
+                  id: 1,
+                  timezone: 'Asia/Manila',
+                  availability,
+                  nylas_grant_id: null,
+                  nylas_calendar_id: null,
+                }
+              : { id: 1, timezone: 'Asia/Manila', availability: null },
+        }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.fields.days[0].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
 test('an OAuth code on this page exchanges the grant and finishes the connect flow', async () => {

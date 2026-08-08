@@ -181,6 +181,11 @@
     return state
   }
 
+  function publishCalendarConnectionError() {
+    connectionError = true
+    return publishCalendarConnectionState('error')
+  }
+
   function memberScopeChangedError() {
     return Object.assign(new Error('Member session changed during write'), {
       code: 'MEMBER_SCOPE_CHANGED',
@@ -607,6 +612,9 @@
     try {
       const starter = await readStarterRecord()
       const canonicalAvailability = starter && starter.availability
+      if (!isAvailability(canonicalAvailability)) {
+        throw new Error('Canonical scheduling reader returned invalid availability')
+      }
       const nextGrantId = (starter && starter.nylas_grant_id) || null
       const nextConfigs = nextGrantId ? await getConfigs(nextGrantId, true) : []
 
@@ -614,16 +622,13 @@
       grantEmail = (starter && starter.nylas_grant_email) || null
       grantCalendarId = (starter && starter.nylas_calendar_id) || null
       configs = nextConfigs
-      if (isAvailability(canonicalAvailability)) {
-        availability = canonicalAvailability
-        window.STARTER_AVAILABILITY = canonicalAvailability
-        writeAvailabilityCache()
-      }
+      availability = canonicalAvailability
+      window.STARTER_AVAILABILITY = canonicalAvailability
+      writeAvailabilityCache()
       connectionError = false
       return publishCalendarConnectionState()
     } catch (error) {
-      connectionError = true
-      publishCalendarConnectionState('error')
+      publishCalendarConnectionError()
       throw error
     }
   }
@@ -749,14 +754,12 @@
         payload,
       )
       if (res && res.response && res.response.status === 200) return true
-      connectionError = true
-      publishCalendarConnectionState('error')
+      publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] configuration request rejected')
       return null
     } catch (error) {
-      connectionError = true
-      publishCalendarConnectionState('error')
+      publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] configuration request failed:', error && error.message)
       return null
@@ -785,14 +788,12 @@
     // Unlike the legacy inline writer, a failed update must not be replaced
     // by the success step — setupConfigs already switched to the error step.
     // Rate-gated starters may legitimately carry a single (free) config.
-    if (
-      configsResponse.length > 0 &&
-      configsResponse.every(Boolean) &&
-      !removeAvail
-    ) {
+    const succeeded = configsResponse.length > 0 && configsResponse.every(Boolean)
+    if (succeeded && !removeAvail) {
       switchStep('success')
     }
     if (step) setLoader(false, step)
+    return succeeded
   }
 
   /* ------------------------------------------------------------------ */
@@ -973,10 +974,11 @@
 
       availability.items[availId] = avail
       await updateAvail()
-      renderAvail()
-      emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
 
       if (initialState) {
+        await refreshCanonicalConnectionState()
+        renderAvail()
+        emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
         switchStep('default')
         qsa('[config-initial-element="setup-form"]').forEach(function (el) {
           el.style.display = 'none'
@@ -986,6 +988,9 @@
       }
 
       if (availability.manager === null) {
+        await refreshCanonicalConnectionState()
+        renderAvail()
+        emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
         switchStep('how-to-manage')
         setLoader(false, step)
         return
@@ -993,20 +998,30 @@
 
       if (grantId) {
         if (configs.length !== 0) {
-          await updateConfigs(step)
+          const updated = await updateConfigs(step)
+          if (!updated) throw new Error('Scheduler configuration update failed')
+          await refreshCanonicalConnectionState()
+          renderAvail()
+          emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
+          setLoader(false, step)
+          return
         } else {
           await createConfigPair()
-          refreshCanonicalConnectionSoon(500)
+          await refreshCanonicalConnectionState()
+          renderAvail()
+          emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
           switchStep('default')
           setLoader(false, step)
+          return
         }
-      } else {
-        // Deliberate fix vs legacy: a grant-less save used to leave the user
-        // stranded on the form with no feedback even though it succeeded.
-        switchStep('default')
-        setLoader(false, step)
       }
+      await refreshCanonicalConnectionState()
+      renderAvail()
+      emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
+      switchStep('default')
+      setLoader(false, step)
     } catch (error) {
+      publishCalendarConnectionError()
       setLoader(false, step)
       switchStep('config-request-error')
       console.warn('[scheduling-writer] availability save failed:', error && error.message)
@@ -1058,6 +1073,7 @@
           switchStep('success')
           emit('starterSchedulingWriteSuccess', { action: 'manager-platform' })
         } else {
+          publishCalendarConnectionError()
           switchStep('config-request-error')
           console.warn('[scheduling-writer] virtual calendar setup failed')
         }
@@ -1078,6 +1094,7 @@
         emit('starterSchedulingWriteSuccess', { action: 'manager-calendar' })
       }
     } catch (error) {
+      publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] manager change failed:', error && error.message)
       emit('starterSchedulingWriteError', {
@@ -1116,12 +1133,12 @@
         grantEmail = null
         grantCalendarId = null
         configs = []
-        connectionError = true
-        publishCalendarConnectionState('error')
+        publishCalendarConnectionError()
       }
 
       if (virtual.status !== 200) await updateAvail()
     } catch (error) {
+      publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] disconnect failed:', error && error.message)
       emit('starterSchedulingWriteError', {
@@ -1159,6 +1176,7 @@
         window.open(url, '_blank')
         switchStep('reload-page')
       } catch (error) {
+        publishCalendarConnectionError()
         switchStep('config-request-error')
         console.warn('[scheduling-writer] OAuth redirect failed:', error && error.message)
         emit('starterSchedulingWriteError', {
@@ -1183,10 +1201,15 @@
 
     try {
       await updateAvail()
+      if (grantId && configs.length !== 0) {
+        const updated = await updateConfigs(null, true)
+        if (!updated) throw new Error('Scheduler configuration update failed')
+      }
+      await refreshCanonicalConnectionState()
       renderAvail()
       emit('starterSchedulingWriteSuccess', { action: 'availability-remove' })
-      if (grantId && configs.length !== 0) updateConfigs(null, true)
     } catch (error) {
+      publishCalendarConnectionError()
       switchStep('config-request-error')
       console.warn('[scheduling-writer] availability remove failed:', error && error.message)
       emit('starterSchedulingWriteError', {
@@ -1237,14 +1260,29 @@
   /* ------------------------------------------------------------------ */
 
   function isAvailability(value) {
-    return Boolean(
-      value &&
-        typeof value === 'object' &&
-        !Array.isArray(value) &&
-        value.items &&
-        typeof value.items === 'object' &&
-        !Array.isArray(value.items),
-    )
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      !value.items ||
+      typeof value.items !== 'object' ||
+      Array.isArray(value.items) ||
+      !Object.prototype.hasOwnProperty.call(value, 'manager') ||
+      (value.manager !== null && value.manager !== 'platform' && value.manager !== 'calendar')
+    ) {
+      return false
+    }
+    return Object.keys(value.items).every(function (key) {
+      const item = value.items[key]
+      return Boolean(
+        item &&
+          typeof item === 'object' &&
+          !Array.isArray(item) &&
+          Array.isArray(item.days) &&
+          typeof item.start === 'string' &&
+          typeof item.end === 'string',
+      )
+    })
   }
 
   function availabilityFromInitializer() {
@@ -1392,7 +1430,7 @@
           connectedCalendar = connectedCalendar || 'google'
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
-          connectionError = true
+          publishCalendarConnectionError()
           if (error && error.code === 'OAUTH_CALLBACK_INVALID') clearOAuthCallback()
           switchStep('config-request-error')
           console.warn('[scheduling-writer] OAuth grant save failed:', error && error.message)
@@ -1485,7 +1523,9 @@
             availability.manager = previousManager || null
             try {
               await updateAvail()
+              await refreshCanonicalConnectionState()
             } catch (error) {
+              publishCalendarConnectionError()
               console.warn(
                 '[scheduling-writer] manager restore failed:',
                 error && error.message,
@@ -1517,8 +1557,7 @@
       emit('starterSchedulingWriterReady', { memberId: sessionMemberId })
       return 'ready'
     } catch (error) {
-      connectionError = true
-      publishCalendarConnectionState('error')
+      publishCalendarConnectionError()
       setStatus('error')
       console.warn('[scheduling-writer] initialization failed:', error && error.message)
       emit('starterSchedulingWriteError', {

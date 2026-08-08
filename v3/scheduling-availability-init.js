@@ -95,32 +95,29 @@
   }
 
   async function readStarter(memberId) {
-    if (typeof window.xanoAuthFetch === 'function') {
-      const response = await window.xanoAuthFetch(STARTER_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ member_id: memberId }),
-      })
-      const starter = await response.json().catch(function () {
-        throw new Error('V3 scheduling reader returned invalid JSON')
-      })
-      if (!response.ok) {
-        throw new Error('V3 scheduling reader failed (' + response.status + ')')
-      }
-      if (starter === null) return null
-      if (
-        typeof starter !== 'object' ||
-        Array.isArray(starter) ||
-        !Object.prototype.hasOwnProperty.call(starter, 'availability')
-      ) {
-        throw new Error('V3 scheduling reader returned invalid data')
-      }
-      return starter
+    if (typeof window.xanoAuthFetch !== 'function') {
+      throw new Error('Authenticated V3 scheduling reader not available')
     }
-    if (typeof window.getStarterByMemberId === 'function') {
-      return window.getStarterByMemberId(memberId)
+    const response = await window.xanoAuthFetch(STARTER_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ member_id: memberId }),
+    })
+    const starter = await response.json().catch(function () {
+      throw new Error('V3 scheduling reader returned invalid JSON')
+    })
+    if (!response.ok) {
+      throw new Error('V3 scheduling reader failed (' + response.status + ')')
     }
-    throw new Error('Legacy scheduling availability reader not available')
+    if (starter === null) return null
+    if (
+      typeof starter !== 'object' ||
+      Array.isArray(starter) ||
+      !Object.prototype.hasOwnProperty.call(starter, 'availability')
+    ) {
+      throw new Error('V3 scheduling reader returned invalid data')
+    }
+    return starter
   }
 
   function resolveTestMemberOverride() {
@@ -235,9 +232,14 @@
     actions.forEach(function (action) {
       action.setAttribute('data-calendar-connection-state', state)
       action.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false')
-      action.style.display = state === 'connected' ? 'none' : 'flex'
+      action.style.display = 'flex'
       bindStep(action, function () {
         if (activeConnectionState === 'error') return 'config-request-error'
+        if (activeConnectionState === 'connected') {
+          return Object.keys((availability && availability.items) || {}).length > 0
+            ? 'default'
+            : 'setup-form'
+        }
         return Object.keys((availability && availability.items) || {}).length > 0
           ? 'how-to-manage'
           : 'setup-form'

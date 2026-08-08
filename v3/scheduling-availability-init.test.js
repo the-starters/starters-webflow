@@ -294,7 +294,7 @@ test('keeps the Calendar action usable while canonical connection state is loadi
   assert.equal(result.steps[1].style.display, 'block')
 })
 
-test('hides the Calendar action only after grant, calendar, and config proof', async () => {
+test('keeps the Calendar action available for connected availability management', async () => {
   const availability = {
     items: { general: { days: [1], start: '09:00', end: '18:00' } },
     manager: 'calendar',
@@ -325,7 +325,9 @@ test('hides the Calendar action only after grant, calendar, and config proof', a
   })
 
   assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'connected')
-  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionAction.style.display, 'flex')
+  result.connectionAction.click()
+  assert.equal(result.steps[0].style.display, 'block')
   result.update.click()
   assert.equal(result.steps[0].style.display, 'block')
 })
@@ -362,6 +364,23 @@ test('keeps the hero action available when the page scheduling reader is missing
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
   assert.equal(result.events[0].type, 'starterSchedulingAvailabilityError')
+})
+
+test('rejects the legacy page reader when authenticated fetch is unavailable', async () => {
+  let pageReaderCalls = 0
+  const result = loadInitializer({
+    getStarterByMemberId: async () => {
+      pageReaderCalls += 1
+      return { availability: { items: {}, manager: null } }
+    },
+  })
+  await settle()
+
+  assert.equal(pageReaderCalls, 0)
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
+  assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'error')
+  result.init.click()
+  assert.equal(result.steps[3].style.display, 'block')
 })
 
 test('uses the authenticated V3 reader without calling the broken page helper', async () => {
@@ -489,9 +508,9 @@ test('revalidates canonical state instead of trusting a fresh availability cache
         availability,
       }),
     },
-    getStarterByMemberId: async () => {
+    xanoAuthFetch: async () => {
       calls += 1
-      return { availability }
+      return { ok: true, status: 200, json: async () => ({ availability }) }
     },
   })
   await settle()
@@ -510,9 +529,9 @@ test('revalidates expired member-scoped availability', async () => {
         availability: { items: { stale: {} }, manager: 'platform' },
       }),
     },
-    getStarterByMemberId: async () => {
+    xanoAuthFetch: async () => {
       calls += 1
-      return null
+      return { ok: true, status: 200, json: async () => null }
     },
   })
   await settle()
