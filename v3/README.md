@@ -1605,28 +1605,19 @@ that section are non-empty. A selected status that has no matching rows does
 not hide the wrapper, so the member can return to All.
 
 The same controller owns filter-wrapper visibility for the existing wf-xano
-Projects lists keyed `dash-projects` and `dash-brand-projects`. Each instance's
+Projects lists keyed `dash-projects` and `dash-brand-projects`. Both wrappers keep
+wf-xano's default remote filtering contract. Each instance's
 `.tabs-button_component.is-dashboard` stays hidden until a successful wf-xano
 state proves that the unfiltered canonical list contains at least one item, or
 until the member selects a status filter that they must be able to switch away
-from. Once the full-list state is known to contain projects, the filter controls
-stay visible while a local status selection is applied, including when that
-selection has no matching rows. Status navigation does not change the wf-xano
-request params or issue a replacement request. The selected status is preserved
-across an auth-triggered or explicit canonical refresh and reapplied after the
-unfiltered result succeeds.
-Missing-instance, unresolved unfiltered, confirmed-unfiltered-empty, and
-auth-transition states remain hidden.
-Both Projects instances use wf-xano's canonical-id keyed reconciliation. Status
-changes only show or hide existing cards; when auth changes or an explicit
-refresh reads fresh Xano state, matching project cards are updated and reused
-instead of destroying and cloning their full nested details trees.
-The initial authenticated All result is also retained only in page memory for
-status navigation. Selecting All, Active, Incomplete, Completed, or Pending
-shows/hides those already-authorized canonical cards without another request or
-DOM rebuild. An auth change clears that snapshot; the existing explicit project
-refresh reloads All from Xano and reapplies the selected status. Nothing is
-persisted to localStorage or shared across members, tabs, or page loads.
+from. Once projects are known to exist, the controls stay visible during every
+later loading/error transition and when a selected status returns no matching
+rows, so the member can always switch filters. Each status change continues
+through wf-xano's normal Xano request path. Missing-instance, unresolved
+unfiltered, confirmed-unfiltered-empty, and auth-transition states remain hidden.
+Xano remains authoritative for every filter result, and every fetch uses
+`cache: 'no-store'`. Nothing is persisted to localStorage or shared across
+members, tabs, or page loads.
 The existing Designer-owned project `Show more` control stays hidden and out of
 the accessibility tree. The current Brand and Starter Projects endpoints return
 each member's complete owned collection and ignore `page`/`per_page`; presenting

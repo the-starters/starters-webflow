@@ -667,7 +667,6 @@ test('an empty selected filter stays visible without issuing a hidden All probe'
 
   vm.runInNewContext(source, { document, Intl, window })
   window.WfXano[0]({ get: (key) => (key === 'dash-projects' ? instance : null) })
-  assert.equal(instance.keyed, true)
   assert.deepEqual(params, [])
   assert.equal(filters.hidden, false)
 
@@ -686,22 +685,12 @@ test('an empty selected filter stays visible without issuing a hidden All probe'
   assert.equal(filters.hidden, false)
 })
 
-test('a selected filter stays hidden until an auth reload resolves', () => {
+test('project navigation stays hidden until the remote auth reload resolves', () => {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const filters = element()
-  const all = element({ 'wf-xano-filter': 'status', 'wf-xano-value': '*' })
-  all.type = 'radio'
-  all.value = '*'
-  const pending = element({ 'wf-xano-filter': 'status', 'wf-xano-value': 'pending' })
-  pending.type = 'radio'
-  pending.value = 'pending'
-  const pendingCard = element({ 'data-wf-xano-id': '1' })
-  const completedCard = element({ 'data-wf-xano-id': '2' })
   const project = element({ 'wf-xano-instance': 'dash-projects' })
   project.querySelector = (selector) =>
     selector === '.tabs-button_component.is-dashboard' ? filters : null
-  project.querySelectorAll = (selector) =>
-    selector === '[wf-xano-item][data-wf-xano-id]' ? [pendingCard, completedCard] : []
   const document = {
     readyState: 'complete',
     querySelectorAll(selector) {
@@ -713,21 +702,13 @@ test('a selected filter stays hidden until an auth reload resolves', () => {
     document,
     location: { pathname: '/starter-dashboard' },
   }
-  const params = []
   let stateChange
   let subscriber
   const instance = {
-    qa(selector) {
-      if (selector === '.tabs-button_component.is-dashboard') return [filters]
-      if (selector === '[wf-xano-filter="status"]') return [all, pending]
-      return []
-    },
+    qa: () => [filters],
     root: project,
     on(name, handler) {
       if (name === 'stateChange') stateChange = handler
-    },
-    setParam(field, value) {
-      params.push([field, value])
     },
     subscribe(selector, handler) {
       subscriber = (state) => handler(selector(state))
@@ -748,9 +729,6 @@ test('a selected filter stays hidden until an auth reload resolves', () => {
   vm.runInNewContext(source, { document, Intl, window })
   window.WfXano[0]({ get: (key) => (key === 'dash-projects' ? instance : null) })
   assert.equal(filters.hidden, false)
-  instance.setParam('status', 'pending')
-  assert.equal(pending.checked, true)
-  assert.equal(completedCard.hidden, true)
 
   stateChange({ reason: 'auth:change' })
   assert.equal(filters.hidden, true)
@@ -778,21 +756,10 @@ test('a selected filter stays hidden until an auth reload resolves', () => {
 
   subscriber({
     status: 'success',
-    data: {
-      total: 2,
-      items: [
-        { id: 1, status: 'pending' },
-        { id: 2, status: 'completed' },
-      ],
-    },
-    query: { params: {} },
+    data: { total: 0 },
+    query: { params: { status: 'pending' } },
   })
   assert.equal(filters.hidden, false)
-  assert.equal(pending.checked, true)
-  assert.equal(all.checked, false)
-  assert.equal(pendingCard.hidden, false)
-  assert.equal(completedCard.hidden, true)
-  assert.deepEqual(params, [])
 })
 
 test('project Show more stays hidden while project endpoints return complete collections', () => {
@@ -839,7 +806,7 @@ test('project Show more stays hidden while project endpoints return complete col
   assert.equal(loads, 0)
 })
 
-test('both project dashboards enable canonical keyed reconciliation before subscribing', () => {
+test('both project dashboards leave remote filtering to the default wf-xano contract', () => {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const keys = ['dash-projects', 'dash-brand-projects']
   const roots = Object.fromEntries(
@@ -851,19 +818,26 @@ test('both project dashboards enable canonical keyed reconciliation before subsc
       return [key, { filters, root }]
     }),
   )
-  const keyedWhenSubscribed = {}
+  const snapshots = {}
   const instances = Object.fromEntries(
     keys.map((key) => [
       key,
       {
+        filterMode: 'remote',
         keyed: false,
         keyField: 'id',
         root: roots[key].root,
         qa: () => [roots[key].filters],
         on() {},
         subscribe(selector, handler) {
-          keyedWhenSubscribed[key] = this.keyed
-          handler(selector({ status: 'success', data: { total: 1 }, query: { params: {} } }))
+          snapshots[key] = { filterMode: this.filterMode, keyed: this.keyed }
+          handler(
+            selector({
+              status: 'success',
+              data: { total: 1 },
+              query: { params: {} },
+            }),
+          )
         },
       },
     ]),
@@ -882,64 +856,7 @@ test('both project dashboards enable canonical keyed reconciliation before subsc
   window.WfXano[0]({ get: (key) => instances[key] || null })
 
   keys.forEach((key) => {
-    assert.equal(keyedWhenSubscribed[key], true)
-    assert.equal(instances[key].keyed, true)
-    assert.equal(instances[key].keyField, 'id')
+    assert.deepEqual(snapshots[key], { filterMode: 'remote', keyed: false })
+    assert.equal(roots[key].filters.hidden, false)
   })
-})
-
-test('project status filters reuse the in-memory canonical list without a replacement request', async () => {
-  const pendingCard = element({ 'data-wf-xano-id': '1' })
-  const completedCard = element({ 'data-wf-xano-id': '2' })
-  const root = element({ 'wf-xano-instance': 'dash-projects' })
-  root.querySelectorAll = (selector) =>
-    selector === '[wf-xano-item][data-wf-xano-id]' ? [pendingCard, completedCard] : []
-  const all = element({ 'wf-xano-filter': 'status', 'wf-xano-value': '*' })
-  all.type = 'radio'
-  all.value = '*'
-  const pending = element({ 'wf-xano-filter': 'status', 'wf-xano-value': 'pending' })
-  pending.type = 'radio'
-  pending.value = 'pending'
-  const total = element()
-  const empty = element()
-  const remoteParams = []
-  const instance = {
-    emptyEl: empty,
-    root,
-    qa(selector) {
-      if (selector === '[wf-xano-filter="status"]') return [all, pending]
-      if (selector === '[wf-xano-element="total"]') return [total]
-      return []
-    },
-    setParam(field, value) {
-      remoteParams.push([field, value])
-      return Promise.resolve('remote')
-    },
-  }
-  const memory = {
-    allItems: [
-      { id: 1, status: 'pending' },
-      { id: 2, status: 'completed' },
-    ],
-    localStatus: '',
-  }
-
-  assert.equal(api.wireProjectMemoryFilter(instance, memory), true)
-  const pendingResult = await instance.setParam('status', 'pending')
-  assert.deepEqual(pendingResult, { local: true, status: 'pending', total: 1 })
-  assert.deepEqual(remoteParams, [])
-  assert.equal(pendingCard.hidden, false)
-  assert.equal(completedCard.hidden, true)
-  assert.equal(pending.checked, true)
-  assert.equal(all.checked, false)
-  assert.equal(total.textContent, '1')
-  assert.equal(empty.hidden, true)
-
-  await instance.setParam('status', '*')
-  assert.equal(pendingCard.hidden, false)
-  assert.equal(completedCard.hidden, false)
-  assert.equal(total.textContent, '2')
-  assert.equal(all.checked, true)
-  await instance.setParam('search', 'sample')
-  assert.deepEqual(remoteParams, [['search', 'sample']])
 })

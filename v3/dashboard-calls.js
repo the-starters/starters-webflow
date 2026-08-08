@@ -426,79 +426,6 @@
     })
   }
 
-  function enableProjectKeyedReconciliation(instance) {
-    if (!instance || !instance.root) return false
-    // Project cards are large, nested trees. Reconcile them by the canonical
-    // project id so a status replacement reuses matching cards instead of
-    // destroying and cloning the entire collection. The response remains
-    // Xano-canonical; this changes only wf-xano's DOM reconciliation strategy.
-    instance.keyed = true
-    return true
-  }
-
-  function projectItemId(item) {
-    const value = item && (item.id != null ? item.id : item.project_id)
-    return value == null ? '' : clean(value)
-  }
-
-  function projectItemStatus(item) {
-    return clean(item && item.status).toLowerCase()
-  }
-
-  function applyProjectMemoryFilter(instance, memory) {
-    if (!instance || !instance.root || !memory || !Array.isArray(memory.allItems)) return 0
-    const status = clean(memory.localStatus).toLowerCase()
-    const visibleIds = new Set(
-      memory.allItems
-        .filter(function (item) {
-          return !status || projectItemStatus(item) === status
-        })
-        .map(projectItemId)
-        .filter(Boolean),
-    )
-    const cards = Array.prototype.slice.call(
-      instance.root.querySelectorAll('[wf-xano-item][data-wf-xano-id]'),
-    )
-    cards.forEach(function (card) {
-      show(card, !status || visibleIds.has(clean(card.getAttribute('data-wf-xano-id'))))
-    })
-
-    const controls =
-      typeof instance.qa === 'function' ? instance.qa('[wf-xano-filter="status"]') : []
-    controls.forEach(function (control) {
-      const raw = control.getAttribute('wf-xano-value') || control.value || ''
-      const value = raw === '*' ? '' : clean(raw).toLowerCase()
-      const active = value === status
-      if (control.type === 'radio') control.checked = active
-      const face = typeof control.closest === 'function' ? control.closest('label') || control : control
-      if (face.classList) face.classList.toggle('is-active', active)
-    })
-
-    const total = status ? visibleIds.size : memory.allItems.length
-    if (typeof instance.qa === 'function') {
-      instance.qa('[wf-xano-element="total"]').forEach(function (element) {
-        element.textContent = String(total)
-      })
-    }
-    show(instance.emptyEl, total === 0)
-    if (instance.root.classList) instance.root.classList.toggle('is-wf-xano-empty', total === 0)
-    return total
-  }
-
-  function wireProjectMemoryFilter(instance, memory) {
-    if (!instance || typeof instance.setParam !== 'function' || !memory) return false
-    if (instance.__startersProjectMemoryFilterBound) return true
-    const remoteSetParam = instance.setParam.bind(instance)
-    instance.__startersProjectMemoryFilterBound = true
-    instance.setParam = function (field, value) {
-      if (clean(field).toLowerCase() !== 'status') return remoteSetParam(field, value)
-      memory.localStatus = value == null || value === '*' ? '' : clean(value).toLowerCase()
-      const total = applyProjectMemoryFilter(instance, memory)
-      return Promise.resolve({ local: true, status: memory.localStatus, total: total })
-    }
-    return true
-  }
-
   function hideProjectControls() {
     PROJECT_INSTANCE_KEYS.forEach(function (key) {
       document
@@ -526,7 +453,6 @@
       PROJECT_INSTANCE_KEYS.forEach(function (key) {
         const instance = wfx && typeof wfx.get === 'function' ? wfx.get(key) : null
         if (!instance || typeof instance.subscribe !== 'function') return
-        enableProjectKeyedReconciliation(instance)
         wireProjectLoadMore(instance)
         const selector = '.tabs-button_component.is-dashboard'
         const filters =
@@ -539,10 +465,7 @@
           hasAny: false,
           navigationVisible: false,
           authTransition: false,
-          allItems: [],
-          localStatus: '',
         }
-        wireProjectMemoryFilter(instance, memory)
         const reveal = function (visible) {
           filters.forEach(function (filter) {
             show(filter, visible)
@@ -556,7 +479,6 @@
             memory.hasAny = false
             memory.navigationVisible = false
             memory.authTransition = true
-            memory.allItems = []
             reveal(false)
           })
         }
@@ -565,15 +487,6 @@
             return state
           },
           function (state) {
-            if (
-              state &&
-              state.status === 'success' &&
-              state.data &&
-              Array.isArray(state.data.items)
-            ) {
-              memory.allItems = state.data.items.slice()
-              applyProjectMemoryFilter(instance, memory)
-            }
             reveal(projectFilterVisible(state, memory))
           },
         )
@@ -797,9 +710,6 @@
     normalizeBooking,
     profileValues,
     findProjectLoadMore,
-    enableProjectKeyedReconciliation,
-    applyProjectMemoryFilter,
-    wireProjectMemoryFilter,
     projectFilterIsActive,
     projectFilterVisible,
     wireProjectLoadMore,
