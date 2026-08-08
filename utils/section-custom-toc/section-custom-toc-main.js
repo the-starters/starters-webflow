@@ -1,4 +1,4 @@
-// Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/section-custom-toc
+// Docs: https://wf-starter-embeds-docs.vercel.app/docs/utils/section-custom-toc
 /**
  * Section table of contents — attribute-driven, auto-scrolling section nav.
  *
