@@ -26,6 +26,42 @@ function control(attributes = {}) {
   }
 }
 
+function nativeModal() {
+  const listeners = new Map()
+  return {
+    attributes: { 'data-modal-target': 'set-availability' },
+    open: false,
+    showModalCalls: 0,
+    closeCalls: 0,
+    addEventListener(name, listener) {
+      listeners.set(name, listener)
+    },
+    close() {
+      this.closeCalls += 1
+      this.open = false
+    },
+    dispatch(name, event = {}) {
+      const listener = listeners.get(name)
+      if (listener) listener(event)
+    },
+    getAttribute(name) {
+      return this.attributes[name] ?? null
+    },
+    removeAttribute(name) {
+      delete this.attributes[name]
+      if (name === 'open') this.open = false
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value)
+      if (name === 'open') this.open = true
+    },
+    showModal() {
+      this.showModalCalls += 1
+      this.open = true
+    },
+  }
+}
+
 function loadInitializer(options = {}) {
   const init = control({ 'init-availability': '' })
   const update = control({ 'update-availability': '' })
@@ -37,6 +73,7 @@ function loadInitializer(options = {}) {
   const storage = new Map(Object.entries(options.storage || {}))
   const events = []
   const document = {
+    body: { style: {} },
     readyState: 'complete',
     documentElement: {
       setAttribute(name, value) {
@@ -47,6 +84,9 @@ function loadInitializer(options = {}) {
       if (selector === '[init-availability]') return init
       if (selector === '[update-availability]') return update
       if (selector === '[calendar-connection-action]') return connectionAction
+      if (selector === 'dialog[data-modal-target="set-availability"]') {
+        return options.modal || null
+      }
       if (
         selector ===
         '[init-availability], [update-availability], [calendar-connection-action]'
@@ -93,6 +133,7 @@ function loadInitializer(options = {}) {
     getStarterByMemberId: options.getStarterByMemberId,
     xanoAuthFetch: options.xanoAuthFetch,
     $memberstackDom: options.memberstack,
+    lumos: options.lumos,
     addEventListener(name, listener) {
       if (!windowListeners.has(name)) windowListeners.set(name, [])
       windowListeners.get(name).push(listener)
@@ -139,6 +180,81 @@ function loadInitializer(options = {}) {
 async function settle() {
   await new Promise(setImmediate)
 }
+
+test('Calendar controls fall back to the native dialog when the shared modal engine is absent', async () => {
+  const modal = nativeModal()
+  const result = loadInitializer({
+    modal,
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    }),
+  })
+  await settle()
+
+  result.connectionAction.click()
+  await settle()
+
+  assert.equal(modal.open, true)
+  assert.equal(modal.showModalCalls, 1)
+  assert.equal(
+    result.steps.find((step) => step.getAttribute('availability-step') === 'setup-form').style
+      .display,
+    'block',
+  )
+
+  let cancelPrevented = false
+  modal.dispatch('cancel', {
+    preventDefault() {
+      cancelPrevented = true
+    },
+  })
+  assert.equal(cancelPrevented, true)
+  assert.equal(modal.open, false)
+
+  result.connectionAction.click()
+  await settle()
+  modal.dispatch('click', {
+    target: {
+      closest(selector) {
+        return selector === '[data-modal-close]' ? {} : null
+      },
+    },
+  })
+  assert.equal(modal.open, false)
+  assert.equal(modal.closeCalls, 2)
+})
+
+test('Calendar controls prefer the shared modal registry and do not double-open the dialog', async () => {
+  const modal = nativeModal()
+  let registryOpenCalls = 0
+  const result = loadInitializer({
+    modal,
+    lumos: {
+      modal: {
+        open(id) {
+          registryOpenCalls += 1
+          assert.equal(id, 'set-availability')
+          modal.open = true
+        },
+      },
+    },
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    }),
+  })
+  await settle()
+
+  result.init.click()
+  await settle()
+
+  assert.equal(registryOpenCalls, 1)
+  assert.equal(modal.open, true)
+  assert.equal(modal.showModalCalls, 0)
+})
 
 test('does not install on an unapproved production path', () => {
   const result = loadInitializer({

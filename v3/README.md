@@ -1821,10 +1821,13 @@ Safety boundary:
   timezone cache is member-scoped (`starter-timezone:<memberId>`).
 
 Legacy UI-step semantics kept. Published-markup audit (2026-07-21) of the
-`dialog[data-modal-target="set-availability"]` shell — the lumos modal engine
-owns open/close via the hero `data-modal-trigger` buttons (which are also the
-`[init-availability]`/`[update-availability]` controls); the writer only
-switches steps inside it. All **11** step wrappers exist:
+`dialog[data-modal-target="set-availability"]` shell: the lumos modal engine
+normally owns open/close via the hero and Action Items `data-modal-trigger`
+buttons. If that shared registry is absent or does not open the dialog, the
+availability initializer falls back to the native `showModal()`/`close()`
+contract after the trigger click has bubbled. The fallback is scoped to this
+one authored dialog and preserves its cancel and `[data-modal-close]` controls;
+the writer only switches steps inside it. All **11** step wrappers exist:
 
 | `availability-step` | contents the writer drives |
 | --- | --- |
