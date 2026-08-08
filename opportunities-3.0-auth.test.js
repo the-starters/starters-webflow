@@ -366,13 +366,19 @@ for (const role of ['starter', 'brand']) {
     label.textContent = 'Project timeline'
     const timeline = el('p', { 'wf-xano-bind': 'value' })
     timeline.textContent = '2026-08-06 - 2026-08-31'
+    const directTimeline = el('p', { 'wf-xano-bind': 'timeline_display' })
+    directTimeline.textContent = 'Direct fallback'
     const detailRow = el('div', { 'data-wf-xano-nest-clone': '' }, [label, timeline])
     const details = el(
       'div',
       { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'contract_details' },
       [detailRow],
     )
-    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '676' }, [details])
+    const card = el(
+      'div',
+      { class: 'project_item', 'data-wf-xano-id': '676' },
+      [directTimeline, details],
+    )
     const root = el(
       'div',
       {
@@ -412,6 +418,7 @@ for (const role of ['starter', 'brand']) {
       },
     )
     assert.ok(await waitFor(() => timeline.textContent === 'August 6–31, 2026'))
+    assert.equal(directTimeline.textContent, 'Direct fallback')
   })
 }
 

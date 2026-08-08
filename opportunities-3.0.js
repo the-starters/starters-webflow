@@ -2109,8 +2109,6 @@
 
   function projectTimelineTarget(card) {
     if (!card) return null
-    const direct = $(PROJECT_TIMELINE_FIELD_SELECTOR, card)
-    if (direct) return direct
     for (const details of $$(PROJECT_CONTRACT_DETAILS_SELECTOR, card)) {
       for (const row of $$(PROJECT_CONTRACT_DETAIL_ROW_SELECTOR, details)) {
         const label = $('[wf-xano-bind="label"]', row)
@@ -2119,7 +2117,7 @@
         if (value) return value
       }
     }
-    return null
+    return $(PROJECT_TIMELINE_FIELD_SELECTOR, card)
   }
 
   function paintProjectTimeline(card, project) {
