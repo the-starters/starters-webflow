@@ -1703,6 +1703,13 @@ Webflow markup contract:
   clickable component carries `data-modal-trigger="set-availability"`. The row
   stays Designer-authored; the initializer only shows/hides it and selects an
   existing native modal step.
+- The hero and Dashboard Calendar triggers share the authored
+  `dialog[data-modal-target="set-availability"]`. Lumos normally owns its
+  open/close lifecycle. After a trigger click has bubbled, the initializer uses
+  the registry when available, then falls back to the dialog's native
+  `showModal()`/`close()` contract only if the dialog is still closed. This
+  fallback is scoped to this dialog and preserves its cancel and
+  `[data-modal-close]` controls.
 - Modal panels use `availability-step="setup-form"` for first-time setup and
   `availability-step="default"` for an existing schedule.
 - Published CSS should keep both controls hidden until initialization completes.
@@ -1812,10 +1819,9 @@ Safety boundary:
   timezone cache is member-scoped (`starter-timezone:<memberId>`).
 
 Legacy UI-step semantics kept. Published-markup audit (2026-07-21) of the
-`dialog[data-modal-target="set-availability"]` shell — the lumos modal engine
-owns open/close via the hero `data-modal-trigger` buttons (which are also the
-`[init-availability]`/`[update-availability]` controls); the writer only
-switches steps inside it. All **11** step wrappers exist:
+shared `dialog[data-modal-target="set-availability"]` shell: the initializer
+owns the open/close fallback documented above; the writer only switches steps
+inside it. All **11** step wrappers exist:
 
 | `availability-step` | contents the writer drives |
 | --- | --- |

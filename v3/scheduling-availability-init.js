@@ -216,6 +216,48 @@
     })
   }
 
+  function closeNativeAvailabilityModal(modal) {
+    if (typeof modal.close === 'function') modal.close()
+    else modal.removeAttribute('open')
+    if (document.body) document.body.style.overflow = ''
+    window.dispatchEvent(new CustomEvent('modal-close', { detail: { modal: modal } }))
+  }
+
+  function bindNativeAvailabilityModalFallback(modal) {
+    if (modal.__tsAvailabilityModalFallbackBound) return
+    modal.__tsAvailabilityModalFallbackBound = true
+    modal.addEventListener('cancel', function (event) {
+      event.preventDefault()
+      closeNativeAvailabilityModal(modal)
+    })
+    modal.addEventListener('click', function (event) {
+      if (!event.target.closest || !event.target.closest('[data-modal-close]')) return
+      closeNativeAvailabilityModal(modal)
+    })
+  }
+
+  function ensureAvailabilityModalOpen() {
+    // The shared modal engine normally opens the dialog from the same click
+    // during event bubbling. Defer this check until that handler has had its
+    // turn, then fail over only when the registry was absent or did not open.
+    Promise.resolve().then(function () {
+      const modal = document.querySelector('dialog[data-modal-target="set-availability"]')
+      if (!modal || modal.open) return
+
+      const modalSystem = window.lumos && window.lumos.modal
+      if (modalSystem && typeof modalSystem.open === 'function') {
+        modalSystem.open('set-availability')
+        if (modal.open) return
+      }
+
+      bindNativeAvailabilityModalFallback(modal)
+      if (document.body) document.body.style.overflow = 'hidden'
+      if (typeof modal.showModal === 'function') modal.showModal()
+      else modal.setAttribute('open', '')
+      window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal: modal } }))
+    })
+  }
+
   function bindStep(control, resolveStep) {
     if (!control) return
     control.__tsAvailabilityStepResolver = resolveStep
@@ -224,6 +266,7 @@
     control.addEventListener('click', function () {
       const stepName = control.__tsAvailabilityStepResolver()
       if (stepName) showStep(stepName)
+      ensureAvailabilityModalOpen()
     })
   }
 
