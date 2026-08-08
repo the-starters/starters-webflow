@@ -761,13 +761,17 @@ test('a selected filter stays hidden until an auth reload resolves', () => {
   assert.deepEqual(params, [])
 })
 
-test('project Show more appends the next page and hides when exhausted', () => {
-  const listeners = {}
+test('project Show more stays hidden while project endpoints return complete collections', () => {
   const label = element()
   label.textContent = 'Show more'
   const control = element()
-  control.addEventListener = (name, listener) => {
-    listeners[name] = listener
+  let listeners = 0
+  let disabledClass = false
+  control.classList.toggle = (name, force) => {
+    if (name === 'is-disabled') disabledClass = force
+  }
+  control.addEventListener = () => {
+    listeners += 1
   }
   control.closest = () => null
   control.querySelector = (selector) =>
@@ -777,8 +781,6 @@ test('project Show more appends the next page and hides when exhausted', () => {
     if (selector === '.button_main-wrap') return [control]
     return []
   }
-  let subscriber
-  let stateChange
   let loads = 0
   const instance = {
     appendMode: false,
@@ -787,110 +789,18 @@ test('project Show more appends the next page and hides when exhausted', () => {
     loadNext() {
       loads += 1
     },
-    on(name, listener) {
-      if (name === 'stateChange') stateChange = listener
-    },
-    subscribe(selector, handler) {
-      subscriber = (state) => handler(selector(state))
-      subscriber({
-        status: 'success',
-        data: { hasMore: false },
-        query: { page: 1, params: {} },
-      })
-    },
   }
 
   api.wireProjectLoadMore(instance)
-  assert.equal(instance.loadMode, 'more')
-  assert.equal(instance.appendMode, true)
-  assert.equal(control.hidden, true)
-  assert.equal(control.attributes['wf-xano-element'], 'load-more')
-  assert.equal(control.attributes.role, 'button')
-  assert.equal(control.attributes.tabindex, '0')
-
-  subscriber({
-    status: 'success',
-    data: { hasMore: true },
-    query: { page: 1, params: { status: 'active' } },
-  })
-  assert.equal(control.hidden, false)
-  assert.equal(control.attributes['aria-disabled'], 'false')
-  listeners.click({ preventDefault() {} })
-  assert.equal(loads, 1)
-
-  subscriber({
-    status: 'loading',
-    data: { hasMore: true },
-    query: { page: 2, params: { status: 'active' } },
-  })
-  assert.equal(control.hidden, false)
-  assert.equal(control.attributes['data-opp-loading'], 'true')
-  listeners.click({ preventDefault() {} })
-  assert.equal(loads, 1)
-
-  subscriber({
-    status: 'error',
-    data: { hasMore: true },
-    query: { page: 1, params: { status: 'active' } },
-  })
-  assert.equal(control.hidden, false)
-  assert.equal(control.attributes['aria-disabled'], 'false')
-  listeners.click({ preventDefault() {} })
-  assert.equal(loads, 2)
-
-  subscriber({
-    status: 'success',
-    data: { hasMore: false },
-    query: { page: 2, params: { status: 'active' } },
-  })
+  assert.equal(instance.loadMode, 'pagination')
+  assert.equal(instance.appendMode, false)
   assert.equal(control.hidden, true)
   assert.equal(control.attributes['aria-disabled'], 'true')
-
-  subscriber({
-    status: 'success',
-    data: { hasMore: true },
-    query: { page: 1, params: { status: 'active' } },
-  })
-  stateChange({ reason: 'auth:change' })
-  assert.equal(control.hidden, true)
-})
-
-test('project Show more hides after a replacement filter request fails', () => {
-  const control = element()
-  const memory = {
-    appendRequest: false,
-    hasMore: false,
-    lastSuccessQuery: null,
-  }
-
-  api.setProjectLoadMoreState(
-    [control],
-    {
-      status: 'success',
-      data: { hasMore: true },
-      query: { page: 1, params: { status: 'active' } },
-    },
-    memory,
-  )
-  api.setProjectLoadMoreState(
-    [control],
-    {
-      status: 'loading',
-      data: { hasMore: true },
-      query: { page: 1, params: { status: 'completed' } },
-    },
-    memory,
-  )
-  api.setProjectLoadMoreState(
-    [control],
-    {
-      status: 'error',
-      data: { hasMore: false },
-      query: { page: 1, params: { status: 'completed' } },
-    },
-    memory,
-  )
-
-  assert.equal(control.hidden, true)
-  assert.equal(control.attributes['aria-disabled'], 'true')
+  assert.equal(control.attributes['aria-hidden'], 'true')
+  assert.equal(control.attributes['aria-busy'], 'false')
+  assert.equal(control.attributes['data-opp-loading'], 'false')
+  assert.equal(disabledClass, true)
+  assert.equal(control.attributes['wf-xano-element'], undefined)
+  assert.equal(listeners, 0)
+  assert.equal(loads, 0)
 })

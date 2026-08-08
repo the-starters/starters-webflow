@@ -406,101 +406,24 @@
       })
   }
 
-  function setProjectLoadMoreState(controls, state, memory) {
-    const snapshot = state || {}
-    const query = snapshot.query || {}
-    const params = query.params || {}
-    const previousQuery = memory.lastSuccessQuery
-    const sameParams =
-      previousQuery &&
-      Object.keys(params).length === Object.keys(previousQuery.params).length &&
-      Object.keys(params).every(function (key) {
-        return params[key] === previousQuery.params[key]
-      })
-    if (snapshot.status === 'loading') {
-      memory.appendRequest = Boolean(
-        sameParams && Number(query.page) === Number(previousQuery.page) + 1,
-      )
-    }
-    if (snapshot.status === 'success') {
-      memory.hasMore = Boolean(snapshot.data && snapshot.data.hasMore)
-      memory.lastSuccessQuery = {
-        page: Number(query.page) || 1,
-        params: Object.assign({}, params),
-      }
-      memory.appendRequest = false
-    }
-    if (snapshot.status === 'idle' || snapshot.status === 'destroyed') {
-      memory.hasMore = false
-      memory.lastSuccessQuery = null
-      memory.appendRequest = false
-    }
-    const loading = snapshot.status === 'loading'
-    const error = snapshot.status === 'error'
-    const visible =
-      memory.hasMore &&
-      (snapshot.status === 'success' || ((loading || error) && memory.appendRequest))
-    controls.forEach(function (control) {
-      show(control, visible)
-      control.setAttribute('data-opp-loading', loading ? 'true' : 'false')
-      control.setAttribute('aria-busy', loading ? 'true' : 'false')
-      control.setAttribute('aria-disabled', loading || !visible ? 'true' : 'false')
-      if (control.classList) {
-        control.classList.toggle('is-disabled', loading || !visible)
-      }
-    })
-  }
-
   function wireProjectLoadMore(instance) {
-    if (!instance || !instance.root || typeof instance.subscribe !== 'function') return
+    if (!instance || !instance.root) return
     const controls = findProjectLoadMore(instance.root)
     if (!controls.length) return
-    const memory = {
-      appendRequest: false,
-      hasMore: false,
-      lastSuccessQuery: null,
-    }
 
-    // The authored project control predates wf-xano's load-more grammar.
-    // Keep the Designer-owned element, but give it canonical append behavior.
-    instance.loadMode = 'more'
-    instance.appendMode = true
+    // Both Projects endpoints currently return the complete owned collection
+    // and ignore page/per_page. Keep the Designer-owned control out of the
+    // interaction and accessibility trees until those endpoints implement
+    // real server pagination; loadNext would append duplicate rows for members
+    // whose complete collection exceeds wf-xano's client page size.
     controls.forEach(function (control) {
-      const wasCanonical = control.getAttribute('wf-xano-element') === 'load-more'
-      control.setAttribute('wf-xano-element', 'load-more')
-      if (!control.getAttribute('role')) control.setAttribute('role', 'button')
-      if (!control.getAttribute('tabindex')) control.setAttribute('tabindex', '0')
       show(control, false)
-      if (wasCanonical || control.__startersProjectLoadMoreBound) return
-      control.__startersProjectLoadMoreBound = true
-      const activate = function (event) {
-        if (event) event.preventDefault()
-        if (control.getAttribute('aria-disabled') === 'true') return
-        if (typeof instance.loadNext === 'function') instance.loadNext()
-      }
-      control.addEventListener('click', activate)
-      control.addEventListener('keydown', function (event) {
-        if (!event || (event.key !== 'Enter' && event.key !== ' ')) return
-        activate(event)
-      })
+      control.setAttribute('aria-hidden', 'true')
+      control.setAttribute('aria-disabled', 'true')
+      control.setAttribute('aria-busy', 'false')
+      control.setAttribute('data-opp-loading', 'false')
+      if (control.classList) control.classList.toggle('is-disabled', true)
     })
-    if (typeof instance.on === 'function') {
-      instance.on('stateChange', function (change) {
-        if (!change || change.reason !== 'auth:change') return
-        memory.hasMore = false
-        memory.lastSuccessQuery = null
-        memory.appendRequest = false
-        setProjectLoadMoreState(controls, { status: 'idle' }, memory)
-      })
-    }
-    instance.subscribe(
-      function (state) {
-        return state
-      },
-      function (state) {
-        setProjectLoadMoreState(controls, state, memory)
-      },
-    )
   }
 
   function hideProjectControls() {
@@ -789,7 +712,6 @@
     findProjectLoadMore,
     projectFilterIsActive,
     projectFilterVisible,
-    setProjectLoadMoreState,
     wireProjectLoadMore,
     roleForPath,
     sectionBookings,
