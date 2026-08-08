@@ -1614,6 +1614,9 @@ stay visible throughout replacement loading and error states. A selected status
 that has no matching rows also keeps the controls visible. The controller does
 not issue a hidden unfiltered probe or rewrite the selected status; this avoids
 rendering a replacement All list while the member is waiting on another filter.
+After a selected status exposes the controls, they also remain available while
+the member explicitly switches back to All and that replacement is loading or
+fails.
 Missing-instance, unresolved unfiltered, confirmed-unfiltered-empty, and
 auth-transition states remain hidden.
 The existing Designer-owned project `Show more` control is upgraded to wf-xano

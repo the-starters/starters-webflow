@@ -564,7 +564,25 @@ test('an active project filter remains usable before the full list is known', ()
     ),
     true,
   )
-  assert.deepEqual(memory, { known: false, hasAny: false })
+  assert.deepEqual(memory, {
+    known: false,
+    hasAny: false,
+    navigationVisible: true,
+  })
+  assert.equal(
+    api.projectFilterVisible(
+      { status: 'loading', query: { params: {} } },
+      memory,
+    ),
+    true,
+  )
+  assert.equal(
+    api.projectFilterVisible(
+      { status: 'error', query: { params: {} } },
+      memory,
+    ),
+    true,
+  )
 })
 
 test('an unresolved unfiltered project list stays hidden', () => {
@@ -633,6 +651,7 @@ test('an empty selected filter stays visible without issuing a hidden All probe'
     query: { params: { status: 'active' } },
   }
   const params = []
+  let subscriber
   const instance = {
     qa: () => [filters],
     root: project,
@@ -641,13 +660,28 @@ test('an empty selected filter stays visible without issuing a hidden All probe'
       params.push([field, value])
     },
     subscribe(selector, handler) {
-      handler(selector(state))
+      subscriber = (next) => handler(selector(next))
+      subscriber(state)
     },
   }
 
   vm.runInNewContext(source, { document, Intl, window })
   window.WfXano[0]({ get: (key) => (key === 'dash-projects' ? instance : null) })
   assert.deepEqual(params, [])
+  assert.equal(filters.hidden, false)
+
+  subscriber({
+    status: 'loading',
+    data: { total: 0 },
+    query: { params: {} },
+  })
+  assert.equal(filters.hidden, false)
+
+  subscriber({
+    status: 'error',
+    data: { total: 0 },
+    query: { params: {} },
+  })
   assert.equal(filters.hidden, false)
 })
 

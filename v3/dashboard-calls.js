@@ -373,13 +373,17 @@
       }
     }
 
+    if (activeFilter) memory.navigationVisible = true
+
     // Once an unfiltered result proves projects exist, keep the controls
     // available throughout later loading/error transitions so the member can
     // switch away from the current filter. Before that proof exists, an active
     // filter is itself enough reason to keep its navigation visible. Do not
     // probe All behind the member's back: rendering that replacement list can
     // strand a selected empty filter on its loading state before it is restored.
-    return memory.known ? memory.hasAny : activeFilter
+    return memory.known
+      ? memory.hasAny
+      : Boolean(activeFilter || memory.navigationVisible)
   }
 
   function findProjectLoadMore(root) {
@@ -536,6 +540,7 @@
         const memory = {
           known: false,
           hasAny: false,
+          navigationVisible: false,
           authTransition: false,
         }
         const reveal = function (visible) {
@@ -549,6 +554,7 @@
             if (!change || change.reason !== 'auth:change') return
             memory.known = false
             memory.hasAny = false
+            memory.navigationVisible = false
             memory.authTransition = true
             reveal(false)
           })
