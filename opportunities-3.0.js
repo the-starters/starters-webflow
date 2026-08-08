@@ -1898,6 +1898,9 @@
   // documents require the separate protected-PDF delivery contract.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
   const PROJECT_TIMELINE_FIELD_SELECTOR = '[wf-xano-bind="timeline_display"]'
+  const PROJECT_CONTRACT_DETAILS_SELECTOR =
+    '[wf-xano-element="nest-target"][wf-xano-field="contract_details"]'
+  const PROJECT_CONTRACT_DETAIL_ROW_SELECTOR = '[data-wf-xano-nest-clone]'
   const PROJECT_TIMELINE_MONTHS = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
@@ -2104,9 +2107,22 @@
     return projectDateLabel(start) + ' – ' + projectDateLabel(end)
   }
 
+  function projectTimelineTarget(card) {
+    if (!card) return null
+    for (const details of $$(PROJECT_CONTRACT_DETAILS_SELECTOR, card)) {
+      for (const row of $$(PROJECT_CONTRACT_DETAIL_ROW_SELECTOR, details)) {
+        const label = $('[wf-xano-bind="label"]', row)
+        if (!label || label.textContent.trim().toLowerCase() !== 'project timeline') continue
+        const value = $('[wf-xano-bind="value"]', row)
+        if (value) return value
+      }
+    }
+    return $(PROJECT_TIMELINE_FIELD_SELECTOR, card)
+  }
+
   function paintProjectTimeline(card, project) {
     if (!card || !project) return
-    const target = $(PROJECT_TIMELINE_FIELD_SELECTOR, card)
+    const target = projectTimelineTarget(card)
     if (!target) return
     const label = formatProjectTimeline(project)
     if (label && target.textContent.trim() !== label) target.textContent = label

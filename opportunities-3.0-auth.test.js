@@ -361,10 +361,24 @@ test('project timelines use compact readable calendar ranges without timezone sh
 })
 
 for (const role of ['starter', 'brand']) {
-  test(`${role} dashboard paints the shared timeline_display field from canonical project dates`, async () => {
-    const timeline = el('div', { 'wf-xano-bind': 'timeline_display' })
+  test(`${role} dashboard paints the live nested Project timeline value from canonical dates`, async () => {
+    const label = el('p', { 'wf-xano-bind': 'label' })
+    label.textContent = 'Project timeline'
+    const timeline = el('p', { 'wf-xano-bind': 'value' })
     timeline.textContent = '2026-08-06 - 2026-08-31'
-    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '676' }, [timeline])
+    const directTimeline = el('p', { 'wf-xano-bind': 'timeline_display' })
+    directTimeline.textContent = 'Direct fallback'
+    const detailRow = el('div', { 'data-wf-xano-nest-clone': '' }, [label, timeline])
+    const details = el(
+      'div',
+      { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'contract_details' },
+      [detailRow],
+    )
+    const card = el(
+      'div',
+      { class: 'project_item', 'data-wf-xano-id': '676' },
+      [directTimeline, details],
+    )
     const root = el(
       'div',
       {
@@ -404,8 +418,53 @@ for (const role of ['starter', 'brand']) {
       },
     )
     assert.ok(await waitFor(() => timeline.textContent === 'August 6–31, 2026'))
+    assert.equal(directTimeline.textContent, 'Direct fallback')
   })
 }
+
+test('project dashboard keeps the direct timeline_display binding as a fallback', async () => {
+  const timeline = el('p', { 'wf-xano-bind': 'timeline_display' })
+  timeline.textContent = '2026-08-06 - 2026-08-31'
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '676' }, [timeline])
+  const root = el(
+    'div',
+    {
+      'wf-xano-instance': 'dash-projects',
+      'wf-xano-source': 'opp30:starter/projects/mine',
+    },
+    [card],
+  )
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 676,
+            lifecycle_state: 'active',
+            start_date: '2026-08-06',
+            end_date: '2026-08-31',
+            timeline_display: '2026-08-06 - 2026-08-31',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => timeline.textContent === 'August 6–31, 2026'))
+})
 
 test('Brand dashboard action wiring starts only after the stable paid-Brand gate', async () => {
   const requests = []
