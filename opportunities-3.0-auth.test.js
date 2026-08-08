@@ -696,7 +696,7 @@ test('Brand project cards expose only canonical actions for their current lifecy
   await new Promise(setImmediate)
 
   assert.equal(contract.control.getAttribute('data-project-action'), 'contract')
-  assert.equal(contract.wrap.style.display, '')
+  assert.equal(contract.wrap.style.display, 'none')
   assert.equal(end.control.getAttribute('wf-xano-link'), null)
   assert.equal(end.control.getAttribute('data-project-action'), 'end')
   assert.equal(end.wrap.style.display, 'none')
@@ -725,7 +725,7 @@ test('View Contract is limited to recipient-viewable canonical document states',
   canonicalStates.forEach((contractStatus) => {
     assert.equal(
       isViewable({ pandadoc_document_id: 'doc-675', contract_status: contractStatus }),
-      ['sent', 'viewed', 'partial', 'completed'].includes(contractStatus),
+      ['sent', 'viewed', 'partial'].includes(contractStatus),
       contractStatus,
     )
   })
@@ -756,15 +756,15 @@ test('View Contract uses cached authorization when the canonical refresh transie
         return response({
           items: [{
             id: 675,
-            lifecycle_state: 'completed',
+            lifecycle_state: 'contract_sent',
             pandadoc_document_id: 'doc-675',
-            contract_status: 'completed',
+            contract_status: 'sent',
           }],
         })
       }
       if (url.includes('/contracts/link/v3')) {
         requests.push(url)
-        return response({ url: 'https://app.pandadoc.com/s/completed-contract' })
+        return response({ url: 'https://app.pandadoc.com/s/sent-contract' })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -787,7 +787,7 @@ test('View Contract uses cached authorization when the canonical refresh transie
   assert.ok(await waitFor(() => requests.length === 1))
   assert.equal(listCount, 2)
   assert.match(requests[0], /\/contracts\/link\/v3$/)
-  assert.equal(contractWindow.location.href, 'https://app.pandadoc.com/s/completed-contract')
+  assert.equal(contractWindow.location.href, 'https://app.pandadoc.com/s/sent-contract')
   assert.equal(contractWindow.opener, null)
 })
 
