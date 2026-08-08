@@ -806,7 +806,7 @@ test('project Show more stays hidden while project endpoints return complete col
   assert.equal(loads, 0)
 })
 
-test('both project dashboards leave remote filtering to the default wf-xano contract', () => {
+test('both project dashboards leave remote filtering to the default wf-xano contract', async () => {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const keys = ['dash-projects', 'dash-brand-projects']
   const roots = Object.fromEntries(
@@ -819,6 +819,7 @@ test('both project dashboards leave remote filtering to the default wf-xano cont
     }),
   )
   const snapshots = {}
+  const params = {}
   const instances = Object.fromEntries(
     keys.map((key) => [
       key,
@@ -829,6 +830,10 @@ test('both project dashboards leave remote filtering to the default wf-xano cont
         root: roots[key].root,
         qa: () => [roots[key].filters],
         on() {},
+        setParam(field, value) {
+          params[key] = [field, value]
+          return Promise.resolve(key)
+        },
         subscribe(selector, handler) {
           snapshots[key] = { filterMode: this.filterMode, keyed: this.keyed }
           handler(
@@ -859,4 +864,13 @@ test('both project dashboards leave remote filtering to the default wf-xano cont
     assert.deepEqual(snapshots[key], { filterMode: 'remote', keyed: false })
     assert.equal(roots[key].filters.hidden, false)
   })
+
+  const results = await Promise.all(
+    keys.map((key) => instances[key].setParam('status', 'completed')),
+  )
+  assert.deepEqual(params, {
+    'dash-projects': ['status', 'completed'],
+    'dash-brand-projects': ['status', 'completed'],
+  })
+  assert.deepEqual(results, keys)
 })
