@@ -2042,16 +2042,15 @@
 
   function decorateProjectCard(card) {
     const project = projectContextFromCard(card)
-    if (!project || !project.lifecycle_state && !project.status) return
-    const state = lifecycleState(project)
     const contract = $(PROJECT_CONTRACT_SELECTOR, card)
-    const end = $(PROJECT_END_SELECTOR, card)
-    const review = $(PROJECT_REVIEW_SELECTOR, card)
-
     if (contract) {
       contract.setAttribute('data-project-action', 'contract')
       setProjectActionVisible(contract, projectContractIsViewable(project))
     }
+    if (!project || !project.lifecycle_state && !project.status) return
+    const state = lifecycleState(project)
+    const end = $(PROJECT_END_SELECTOR, card)
+    const review = $(PROJECT_REVIEW_SELECTOR, card)
 
     if (end) {
       end.removeAttribute('wf-xano-link')
@@ -2080,13 +2079,25 @@
   }
 
   function decorateProjectCards() {
-    if (!projectWorkflowRole || projectRoleForPath() !== projectWorkflowRole) return
+    const role = projectRoleForPath()
+    if (!role) return
+    if (!projectWorkflowRole || role !== projectWorkflowRole) {
+      $$(PROJECT_CARD_SELECTOR).forEach((card) => {
+        const contract = $(PROJECT_CONTRACT_SELECTOR, card)
+        if (!contract) return
+        contract.setAttribute('data-project-action', 'contract')
+        setProjectActionVisible(contract, false)
+      })
+      return
+    }
     $$(PROJECT_CARD_SELECTOR).forEach(decorateProjectCard)
   }
 
   function observeProjectCards() {
     if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
-    const root = $('[wf-xano-instance="dash-brand-projects"], [wf-xano-instance="dash-projects"]')
+    const root =
+      $('[wf-xano-instance="dash-brand-projects"], [wf-xano-instance="dash-projects"]') ||
+      document.documentElement
     if (!root || typeof MutationObserver !== 'function') return
     let queued = false
     projectWorkflowObserver = new MutationObserver(() => {
@@ -2464,6 +2475,10 @@
     clearReviewSubmissionKey(reviewModal && $('form', reviewModal))
     if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
     projectWorkflowObserver = null
+    if (projectRoleForPath()) {
+      decorateProjectCards()
+      observeProjectCards()
+    }
   }
 
   function wireProjectWorkflowListeners(role) {
@@ -2543,6 +2558,11 @@
       return false
     }
     wireProjectWorkflowListeners(role)
+    // Webflow authors these controls visible. Hide contracts before the async
+    // project projection arrives, and keep newly rendered cards fail-closed.
+    // Canonical sent/viewed/partial rows are revealed by the refresh below.
+    decorateProjectCards()
+    observeProjectCards()
     try {
       await refreshProjectWorkflow(role)
       return true
@@ -4557,8 +4577,16 @@
     wireModals()
     const p = location.pathname
     const normalizedPath = normalizedPagePath(p)
-    if (normalizedPath === '/starter-dashboard') initStarterDashboardOpportunityMatch()
-    else if (normalizedPath === '/brand-dashboard') initProjectDashboardWorkflow('brand')
+    if (normalizedPath === '/starter-dashboard') {
+      decorateProjectCards()
+      observeProjectCards()
+      initStarterDashboardOpportunityMatch()
+    }
+    else if (normalizedPath === '/brand-dashboard') {
+      decorateProjectCards()
+      observeProjectCards()
+      initProjectDashboardWorkflow('brand')
+    }
     else if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/[^/]+\/?$/)) initOppDetailByRole()
     // Merged feed (bare /opportunities, launched 2026-07): matches neither the

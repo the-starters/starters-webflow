@@ -651,6 +651,11 @@ implemented and verified. On click, the controller
 first tries to refresh the canonical project list. A transient list failure may
 fall back to the already role-gated cached project only to request this link; the
 authenticated Xano endpoint remains the final authorization and state check.
+The Webflow-authored control fails closed from dashboard boot: it stays hidden
+while Memberstack resolves, while the project list is pending or unavailable,
+and when a project card renders before its canonical row. A card is revealed
+only after that row supplies both an allowed state and a PandaDoc document id.
+This gate never changes the separate Starter invoice control.
 
 The existing `[wf-xano-link="project-end"]` control is upgraded to
 `data-project-action="end"`. Its label and mutation follow canonical lifecycle
