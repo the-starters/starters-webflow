@@ -226,6 +226,140 @@ test('invoiceCreate sends the V3 invoice payload through the authenticated Xano 
   })
 })
 
+test('project dashboard actions use the authenticated canonical endpoints', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) return response({ items: [{ id: 675 }] })
+      if (url.includes('/contracts/link/v3')) return response({ url: 'https://app.pandadoc.com/s/test' })
+      if (url.includes('/projects/action/v3')) {
+        return response({ project: { id: 675, lifecycle_state: 'completion_requested' } })
+      }
+      if (url.includes('/brand/reviews/submit')) return response({ review_id: 42 })
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+
+  await bridge.API.brandProjectList()
+  await bridge.API.contractLink(675)
+  await bridge.API.projectAction({
+    project_id: 675,
+    expected_version: 3,
+    action: 'complete',
+    reason: '',
+    idempotency_key: 'project-action-ui:675:3:complete:test',
+  })
+  await bridge.API.brandReviewSubmit({
+    project_id: 675,
+    rating: 5,
+    review_text: 'Excellent collaboration.',
+    idempotency_key: 'review-ui:675:test',
+  })
+
+  assert.deepEqual(
+    requests.slice(1).map(({ url }) => new URL(url).pathname.split('/api:opp30/')[1]),
+    [
+      'brand/projects/mine',
+      'contracts/link/v3',
+      'projects/action/v3',
+      'brand/reviews/submit',
+    ],
+  )
+  assert.deepEqual(JSON.parse(requests[3].init.body), {
+    project_id: 675,
+    expected_version: 3,
+    action: 'complete',
+    reason: '',
+    idempotency_key: 'project-action-ui:675:3:complete:test',
+  })
+})
+
+test('project lifecycle intent covers cancellation, completion and early termination', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const intent = bridge.window.Opp30.projectActionIntent
+  const plain = (value) => value == null ? value : JSON.parse(JSON.stringify(value))
+
+  assert.deepEqual(
+    plain(intent({ lifecycle_state: 'pending' }, () => true, () => '')),
+    { action: 'cancel', reason: 'canceled_before_activation' },
+  )
+  assert.equal(intent({ lifecycle_state: 'pending' }, () => false, () => ''), null)
+  assert.deepEqual(
+    plain(intent({ lifecycle_state: 'active' }, () => true, () => 'COMPLETE')),
+    { action: 'complete', reason: '' },
+  )
+  assert.deepEqual(
+    plain(intent({ lifecycle_state: 'active' }, () => true, () => 'Scope changed')),
+    { action: 'terminate', reason: 'Scope changed' },
+  )
+  assert.deepEqual(
+    plain(intent({ lifecycle_state: 'completion_requested' }, () => true, () => '')),
+    { action: 'complete', reason: '' },
+  )
+  assert.deepEqual(
+    plain(intent(
+      { lifecycle_state: 'termination_requested', end_reason: 'Scope changed' },
+      () => true,
+      () => '',
+    )),
+    { action: 'terminate', reason: 'Scope changed' },
+  )
+  assert.equal(intent({ lifecycle_state: 'completed' }, () => true, () => 'COMPLETE'), null)
+})
+
+test('Brand dashboard action wiring starts only after the stable paid-Brand gate', async () => {
+  const requests = []
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      requests.push(url)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 2 }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember, pathname: '/brand-dashboard', routeGuard: true },
+  )
+  await new Promise(setImmediate)
+  assert.equal(requests.filter((url) => url.includes('/brand/projects/mine')).length, 1)
+
+  const wrongRoleRequests = []
+  await loadBridge(
+    async (input) => {
+      wrongRoleRequests.push(String(input))
+      return response({})
+    },
+    { member: talentMember, pathname: '/brand-dashboard', routeGuard: true },
+  )
+  await new Promise(setImmediate)
+  assert.equal(wrongRoleRequests.some((url) => url.includes('/brand/projects/mine')), false)
+
+  const legacyFallbackRequests = []
+  await loadBridge(
+    async (input) => {
+      legacyFallbackRequests.push(String(input))
+      return response({})
+    },
+    {
+      member: {
+        ...talentMember,
+        customFields: { 'brands-dashboard-url': '/brand-dashboard' },
+      },
+      pathname: '/brand-dashboard',
+      routeGuard: false,
+    },
+  )
+  await new Promise(setImmediate)
+  assert.equal(legacyFallbackRequests.some((url) => url.includes('/brand/projects/mine')), false)
+})
+
 test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
   const bridge = await loadBridge(async () => response({}))
 
@@ -340,6 +474,18 @@ test('invoice listeners teardown and rebind with Memberstack scope changes', asy
 function el(tag, attrs = {}, children = []) {
   const attributes = new Map(Object.entries(attrs))
   const node = { tag, attributes, children, parent: null, dataset: {}, style: {} }
+  node.classList = {
+    add: (...names) => {
+      const classes = new Set((attributes.get('class') || '').split(/\s+/).filter(Boolean))
+      names.forEach((name) => classes.add(name))
+      attributes.set('class', [...classes].join(' '))
+    },
+    remove: (...names) => {
+      const classes = new Set((attributes.get('class') || '').split(/\s+/).filter(Boolean))
+      names.forEach((name) => classes.delete(name))
+      attributes.set('class', [...classes].join(' '))
+    },
+  }
   if (tag === 'button' || tag === 'input') node.disabled = false
   children.forEach((child) => {
     child.parent = node
@@ -480,6 +626,268 @@ function clickEvent(target) {
     },
   }
 }
+
+test('Brand project cards expose only canonical actions for their current lifecycle state', async () => {
+  const action = (tag, attrs, label) => {
+    const control = el(tag, attrs)
+    const text = el('div', { class: 'button_main-text' })
+    const wrap = el('div', { class: 'button_main-wrap' }, [control, text])
+    text.textContent = label
+    return { control, text, wrap }
+  }
+  const contract = action('a', { href: '#contract' }, 'View Contract')
+  const end = action('button', { 'wf-xano-link': 'project-end' }, 'End Project')
+  const review = action(
+    'a',
+    { href: '/messages', 'wf-xano-link': 'review_starter' },
+    'Review Starter',
+  )
+  const card = el(
+    'div',
+    { class: 'project_item', 'data-wf-xano-id': '675' },
+    [contract.wrap, end.wrap, review.wrap],
+  )
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const querySelector = (selector) =>
+    selectorMatches(root, selector) ? root : root.querySelector(selector)
+  const querySelectorAll = (selector) =>
+    [root, ...descendants(root)].filter((node) => selectorMatches(node, selector))
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            status: 'completed',
+            lifecycle_state: 'completed',
+            lifecycle_version: 4,
+            pandadoc_document_id: 'doc-675',
+            review_eligible: true,
+            has_review: false,
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector,
+      querySelectorAll,
+      routeGuard: true,
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.equal(contract.control.getAttribute('data-project-action'), 'contract')
+  assert.equal(contract.wrap.style.display, '')
+  assert.equal(end.control.getAttribute('wf-xano-link'), null)
+  assert.equal(end.control.getAttribute('data-project-action'), 'end')
+  assert.equal(end.wrap.style.display, 'none')
+  assert.equal(review.control.getAttribute('wf-xano-link'), null)
+  assert.equal(review.control.getAttribute('href'), '#review-starter')
+  assert.equal(review.wrap.style.display, '')
+})
+
+test('project action context includes every canonical project page', async () => {
+  const secondPageEnd = el('button', { 'wf-xano-link': 'project-end' })
+  const secondPageLabel = el('div', { class: 'button_main-text' })
+  secondPageLabel.textContent = 'End Project'
+  const secondPageWrap = el('div', { class: 'button_main-wrap' }, [secondPageEnd, secondPageLabel])
+  const secondPageCard = el(
+    'div',
+    { class: 'project_item', 'data-wf-xano-id': '676' },
+    [secondPageWrap],
+  )
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [secondPageCard],
+  )
+  const requests = []
+
+  await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        const body = JSON.parse(init.body)
+        requests.push(body)
+        return body.page === 1
+          ? response({
+              items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 1 }],
+              itemsTotal: 2,
+              curPage: 1,
+              nextPage: 2,
+            })
+          : response({
+              items: [{ id: 676, lifecycle_state: 'pending', lifecycle_version: 1 }],
+              itemsTotal: 2,
+              curPage: 2,
+              nextPage: null,
+            })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => requests.length === 2))
+  assert.deepEqual(requests, [{ page: 1, per_page: 100 }, { page: 2, per_page: 100 }])
+  assert.equal(secondPageEnd.getAttribute('data-project-action'), 'end')
+  assert.equal(secondPageLabel.textContent, 'Cancel Project')
+})
+
+test('lifecycle actions refresh and require a canonical version before mutation', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const requests = []
+  let listCount = 0
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listCount += 1
+        requests.push({ type: 'list' })
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'active',
+            lifecycle_version: listCount === 1 ? 1 : listCount === 2 ? 2 : null,
+          }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        requests.push({ type: 'action', body: JSON.parse(init.body) })
+        return response({ project: { id: 675, lifecycle_state: 'completion_requested' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => listCount === 1))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  assert.ok(await waitFor(() => requests.some((request) => request.type === 'action')))
+  const actionRequest = requests.find((request) => request.type === 'action')
+  assert.equal(actionRequest.body.expected_version, 2)
+  assert.deepEqual(requests.slice(0, 3).map((request) => request.type), ['list', 'list', 'action'])
+
+  assert.ok(await waitFor(() => listCount === 3))
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  await new Promise(setImmediate)
+  assert.equal(requests.filter((request) => request.type === 'action').length, 1)
+})
+
+test('review retries reuse their idempotency key until success', async () => {
+  const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
+  const reviewLabel = el('div', { class: 'button_main-text' })
+  reviewLabel.textContent = 'Review Starter'
+  const reviewWrap = el('div', { class: 'button_main-wrap' }, [review, reviewLabel])
+  const card = el(
+    'div',
+    { class: 'project_item', 'data-wf-xano-id': '675' },
+    [reviewWrap],
+  )
+  const rating = el('input', { name: 'Call-Rating' })
+  rating.value = '5'
+  const feedback = el('input', { name: 'Public-Feedback' })
+  feedback.value = 'Excellent collaboration.'
+  const submit = el('button', { type: 'submit' })
+  const form = el('form', {}, [rating, feedback, submit])
+  form.reset = () => {}
+  const done = el('div', { class: 'w-form-done' })
+  const fail = el('div', { class: 'w-form-fail' })
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [form, done, fail])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card, modal],
+  )
+  const reviewBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            lifecycle_version: 4,
+            review_eligible: true,
+            has_review: false,
+          }],
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewBodies.push(JSON.parse(init.body))
+        return reviewBodies.length === 1
+          ? response({ message: 'Temporary failure' }, false, 503)
+          : response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  assert.ok(await waitFor(() => review.getAttribute('data-project-action') === 'review'))
+  bridge.dispatchDocument('click', clickEvent(review).event)
+  await new Promise(setImmediate)
+
+  const submitEvent = () => ({
+    target: form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  bridge.dispatchDocument('submit', submitEvent())
+  assert.ok(await waitFor(() => reviewBodies.length === 1 && fail.style.display === 'block'))
+  bridge.dispatchDocument('submit', submitEvent())
+  assert.ok(await waitFor(() => reviewBodies.length === 2))
+
+  assert.equal(reviewBodies[0].idempotency_key, reviewBodies[1].idempotency_key)
+  assert.equal(form.dataset.projectReviewKey, undefined)
+})
 
 test('the authored type=button invoice CTA requests the native form submit', async () => {
   const bridge = await loadBridge(async () => response({}))
