@@ -8,10 +8,11 @@
  *   data-points-element="root|loading|content|error|state-refreshing|
  *   state-ineligible|state-quarantined|state-missing-role|points|
  *   overall-card|overall-rank|overall-cohort-size|overall-tie|role-card|
- *   role-rank|role-label|role-cohort-size|role-tie"
+ *   role-rank|role-label|role-cohort-size|role-tie|rank-message"
  *
- * State copy and its containers are authored in Webflow. This controller only
- * binds authenticated values and selects which authored state is visible.
+ * State copy and its containers are authored in Webflow. This controller binds
+ * authenticated values, formats compact rank positions, and selects which
+ * authored state is visible.
  */
 ;(function (global) {
   'use strict'
@@ -44,6 +45,31 @@
     return Number.isFinite(parsed) ? parsed : null
   }
 
+  function ordinal(value) {
+    const rank = number(value)
+    if (!rank) return ''
+    const remainder100 = rank % 100
+    const remainder10 = rank % 10
+    const suffix =
+      remainder100 >= 11 && remainder100 <= 13
+        ? 'th'
+        : remainder10 === 1
+          ? 'st'
+          : remainder10 === 2
+            ? 'nd'
+            : remainder10 === 3
+              ? 'rd'
+              : 'th'
+    return rank.toLocaleString() + suffix
+  }
+
+  function position(rank, cohortSize) {
+    const cohort = number(cohortSize)
+    const ranked = ordinal(rank)
+    if (!ranked || !cohort) return ''
+    return ranked + '/' + cohort.toLocaleString()
+  }
+
   function viewModel(summary) {
     const totalPoints = number(summary && summary.total_points) || 0
     const status = String((summary && summary.rank_status) || 'refreshing')
@@ -65,7 +91,7 @@
       const overallRank = number(summary.overall_rank)
       const overallSize = number(summary.overall_cohort_size)
       if (overallRank && overallSize) {
-        model.overallRank = '#' + overallRank
+        model.overallRank = position(overallRank, overallSize)
         model.overallCohortSize = overallSize.toLocaleString()
         model.overallTied = number(summary.overall_tie_count) > 1
       } else {
@@ -77,7 +103,7 @@
 
       const role = summary.primary_role
       if (role && number(role.rank) && number(role.cohort_size)) {
-        model.roleRank = '#' + number(role.rank)
+        model.roleRank = position(role.rank, role.cohort_size)
         model.roleLabel = String(role.label || 'Primary role')
         model.roleCohortSize = number(role.cohort_size).toLocaleString()
         model.roleTied = number(role.tie_count) > 1
@@ -119,6 +145,23 @@
     if (element) element.textContent = value
   }
 
+  function subline(root, cohortName, value) {
+    const cohort = find(root, cohortName)
+    if (!cohort) return
+
+    const row = cohort.parentElement
+    if (row) {
+      Array.prototype.forEach.call(row.childNodes, function (node) {
+        if (node === cohort) return
+        if (node.nodeType === 1) show(node, false)
+        else if (node.nodeType === 3) node.textContent = ''
+      })
+    }
+
+    cohort.textContent = value
+    show(cohort, Boolean(value))
+  }
+
   function showState(root, activeName) {
     STATE_ELEMENTS.forEach(function (name) {
       show(find(root, name), name === activeName)
@@ -131,15 +174,21 @@
     show(find(root, 'content'), true)
     show(find(root, 'role-card'), model.showRoleCard)
     show(find(root, 'overall-card'), model.status === 'ready')
-    show(find(root, 'overall-tie'), model.overallTied)
-    show(find(root, 'role-tie'), model.showRoleCard && model.roleTied)
+    show(find(root, 'overall-tie'), false)
+    show(find(root, 'role-tie'), false)
+    show(find(root, 'role-label'), false)
+    show(find(root, 'rank-message'), false)
     text(root, 'points', model.totalPoints)
     text(root, 'overall-rank', model.overallRank)
     text(root, 'overall-cohort-size', model.overallCohortSize)
     text(root, 'role-rank', model.roleRank)
     text(root, 'role-label', model.roleLabel)
     text(root, 'role-cohort-size', model.roleCohortSize)
+    subline(root, 'overall-cohort-size', 'Starters Overall')
+    subline(root, 'role-cohort-size', model.roleLabel)
     root.setAttribute('data-points-status', model.status)
+    root.setAttribute('data-overall-tied', String(model.overallTied))
+    root.setAttribute('data-role-tied', String(model.roleTied))
     root.setAttribute(
       'data-points-view',
       model.stateElement.replace(/^state-/, '') || 'ready',
@@ -269,6 +318,8 @@
   const testApi = {
     fetchSummary,
     mount,
+    ordinal,
+    position,
     render,
     renderError,
     renderLoading,

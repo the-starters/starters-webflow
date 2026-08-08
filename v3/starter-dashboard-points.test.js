@@ -10,11 +10,22 @@ const selector = (name) => '[' + ATTR + '="' + name + '"]'
 class FakeElement {
   constructor(name = '') {
     this.attributes = new Map()
+    this.childNodes = []
     this.children = new Map()
     this.hidden = false
     this.name = name
+    this.nodeType = 1
+    this.parentElement = null
+    this.previousElementSibling = null
     this.style = {}
     this.textContent = ''
+  }
+
+  append(...nodes) {
+    nodes.forEach((node) => {
+      this.childNodes.push(node)
+      if (node.nodeType === 1) node.parentElement = this
+    })
   }
 
   querySelector(value) {
@@ -28,6 +39,20 @@ class FakeElement {
   getAttribute(name) {
     return this.attributes.get(name) || null
   }
+}
+
+class FakeText {
+  constructor(value) {
+    this.nodeType = 3
+    this.textContent = value
+  }
+}
+
+function visibleText(node) {
+  if (node.nodeType === 3) return node.textContent
+  if (node.hidden || node.style.display === 'none') return ''
+  if (!node.childNodes.length) return node.textContent
+  return node.childNodes.map(visibleText).join('')
 }
 
 function tile(options = {}) {
@@ -58,45 +83,84 @@ function tile(options = {}) {
   for (const [name, element] of Object.entries(elements)) {
     if (!omitted.has(name)) root.children.set(selector(name), element)
   }
+  const roleRow = new FakeElement('role-row')
+  const rolePrefix = new FakeElement('role-prefix')
+  rolePrefix.textContent = 'Out of '
+  const roleSuffix = new FakeElement('role-suffix')
+  roleSuffix.textContent = ' eligible Starters'
+  roleRow.append(rolePrefix, elements['role-cohort-size'], roleSuffix)
+
+  const overallRow = new FakeElement('overall-row')
+  const overallPrefix = new FakeText('Out of ')
+  const overallSuffix = new FakeText(' eligible Starters')
+  overallRow.append(
+    overallPrefix,
+    elements['overall-cohort-size'],
+    overallSuffix,
+  )
+
+  elements.roleRow = roleRow
+  elements.rolePrefix = rolePrefix
+  elements.roleSuffix = roleSuffix
+  elements.overallRow = overallRow
+  elements.overallPrefix = overallPrefix
+  elements.overallSuffix = overallSuffix
   return { root, elements }
 }
 
-test('ready state renders points plus overall and primary-role ranks', () => {
+test('ready state renders compact rank positions and clear sublines', () => {
   const { root, elements } = tile()
 
   api.render(root, {
     total_points: 12500,
     rank_status: 'ready',
-    overall_rank: 12,
-    overall_cohort_size: 680,
+    overall_rank: 284,
+    overall_cohort_size: 703,
     overall_tie_count: 3,
     primary_role: {
       label: 'CMO',
-      rank: 3,
-      cohort_size: 48,
+      rank: 6,
+      cohort_size: 21,
       tie_count: 2,
     },
   })
 
   assert.equal(root.getAttribute('data-points-status'), 'ready')
   assert.equal(elements.points.textContent, '12,500')
-  assert.equal(elements['overall-rank'].textContent, '#12')
-  assert.equal(elements['overall-cohort-size'].textContent, '680')
-  assert.equal(elements['overall-tie'].style.display, '')
-  assert.equal(elements['role-rank'].textContent, '#3')
+  assert.equal(elements['overall-rank'].textContent, '284th/703')
+  assert.equal(elements['overall-cohort-size'].textContent, 'Starters Overall')
+  assert.equal(elements['overall-cohort-size'].style.display, '')
+  assert.equal(visibleText(elements.overallRow), 'Starters Overall')
+  assert.deepEqual(elements.overallRow.childNodes, [
+    elements.overallPrefix,
+    elements['overall-cohort-size'],
+    elements.overallSuffix,
+  ])
+  assert.equal(elements['overall-tie'].style.display, 'none')
+  assert.equal(elements['role-rank'].textContent, '6th/21')
   assert.equal(elements['role-label'].textContent, 'CMO')
-  assert.equal(elements['role-cohort-size'].textContent, '48')
-  assert.equal(elements['role-tie'].style.display, '')
+  assert.equal(elements['role-label'].style.display, 'none')
+  assert.equal(elements['role-cohort-size'].textContent, 'CMO')
+  assert.equal(elements['role-cohort-size'].style.display, '')
+  assert.equal(visibleText(elements.roleRow), 'CMO')
+  assert.deepEqual(elements.roleRow.childNodes, [
+    elements.rolePrefix,
+    elements['role-cohort-size'],
+    elements.roleSuffix,
+  ])
+  assert.equal(elements['role-tie'].style.display, 'none')
   assert.equal(elements.loading.style.display, 'none')
   assert.equal(elements.error.style.display, 'none')
   assert.equal(elements['state-refreshing'].style.display, 'none')
   assert.equal(elements.content.style.display, '')
   assert.equal(elements['role-card'].style.display, '')
   assert.equal(elements['overall-card'].style.display, '')
+  assert.equal(root.getAttribute('data-overall-tied'), 'true')
+  assert.equal(root.getAttribute('data-role-tied'), 'true')
   assert.equal(root.getAttribute('data-points-view'), 'ready')
 })
 
-test('ready state hides authored tie labels for unique ranks', () => {
+test('ready state hides authored tie labels regardless of tie count', () => {
   const { root, elements } = tile()
   elements['overall-tie'].textContent = 'Tied'
   elements['role-tie'].textContent = 'Tied'
@@ -119,6 +183,17 @@ test('ready state hides authored tie labels for unique ranks', () => {
   assert.equal(elements['role-tie'].style.display, 'none')
   assert.equal(elements['overall-tie'].textContent, 'Tied')
   assert.equal(elements['role-tie'].textContent, 'Tied')
+})
+
+test('position formatting handles ordinal suffix exceptions', () => {
+  assert.equal(api.position(1, 21), '1st/21')
+  assert.equal(api.position(2, 21), '2nd/21')
+  assert.equal(api.position(3, 21), '3rd/21')
+  assert.equal(api.position(11, 703), '11th/703')
+  assert.equal(api.position(12, 703), '12th/703')
+  assert.equal(api.position(13, 703), '13th/703')
+  assert.equal(api.position(21, 703), '21st/703')
+  assert.equal(api.position(284, 703), '284th/703')
 })
 
 test('refreshing state keeps points visible and reveals authored guidance', () => {
@@ -220,7 +295,7 @@ test('missing primary role keeps overall rank and shows setup guidance', () => {
 
   assert.equal(root.getAttribute('data-points-status'), 'ready')
   assert.equal(root.getAttribute('data-points-view'), 'missing-role')
-  assert.equal(elements['overall-rank'].textContent, '#600')
+  assert.equal(elements['overall-rank'].textContent, '600th/680')
   assert.equal(elements['role-card'].style.display, '')
   assert.equal(elements['role-rank'].textContent, '')
   assert.equal(elements['role-label'].textContent, '')
