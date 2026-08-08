@@ -1607,12 +1607,18 @@ not hide the wrapper, so the member can return to All.
 The same controller owns filter-wrapper visibility for the existing wf-xano
 Projects lists keyed `dash-projects` and `dash-brand-projects`. Each instance's
 `.tabs-button_component.is-dashboard` stays hidden until a successful wf-xano
-state proves that the unfiltered canonical list contains at least one item. A
-zero-result status filter does not hide the controls once that full-list state
-is known. When a page loads directly with an empty status filter selected, the
-controller temporarily probes the unfiltered list, restores the selected
-status, and reveals the controls only if that probe found projects. Loading,
-error, missing-instance, unknown-total, and auth-transition states fail closed.
+state proves that the unfiltered canonical list contains at least one item, or
+until the member selects a status filter that they must be able to switch away
+from. Once the full-list state is known to contain projects, the filter controls
+stay visible throughout replacement loading and error states. A selected status
+that has no matching rows also keeps the controls visible. The controller does
+not issue a hidden unfiltered probe or rewrite the selected status; this avoids
+rendering a replacement All list while the member is waiting on another filter.
+After a selected status exposes the controls, they also remain available while
+the member explicitly switches back to All and that replacement is loading or
+fails.
+Missing-instance, unresolved unfiltered, confirmed-unfiltered-empty, and
+auth-transition states remain hidden.
 The existing Designer-owned project `Show more` control is upgraded to wf-xano
 append pagination. Author it with `wf-xano-element="load-more"`; the controller
 also supports the existing `.button_main-wrap` whose `.button_main-text` is
