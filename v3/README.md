@@ -1686,8 +1686,8 @@ calendar, or scheduler configuration can change independently of saved hours,
 so the cache is write-through compatibility state rather than connection proof.
 The initializer reads `/api:tCpV3oqd/starter/get_by_memberstack/v3` through
 `window.xanoAuthFetch`, safely treating a JSON `null` response as a first-time
-V3 starter. It falls back to the page-provided
-`window.getStarterByMemberId(memberId)` only when the auth helper is unavailable.
+V3 starter. The authenticated helper is required; an unavailable helper fails
+closed instead of falling back to the page-provided unauthenticated reader.
 The canonical profile reader is not used because its `Availability` field is the
 workload range, not the legacy scheduling object. Failed or malformed reads, or a
 Memberstack member change or logout during the read, set the document status and
