@@ -759,6 +759,109 @@ test('Starter project cards keep completed contracts off the signing-session rou
   assert.deepEqual(contractRequests, [])
 })
 
+test('View Contract stays hidden until canonical project context authorizes it', async () => {
+  const contract = el('a', { href: '#contract' })
+  const invoice = el('a', { href: '#generate-invoice' })
+  const contractWrap = el('div', { class: 'button_main-wrap' }, [contract])
+  const invoiceWrap = el('div', { class: 'button_main-wrap' }, [invoice])
+  const card = el(
+    'div',
+    { class: 'project_item', 'data-wf-xano-id': '680' },
+    [contractWrap, invoiceWrap],
+  )
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    [card],
+  )
+  const projectList = deferred()
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) return projectList.promise
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  assert.ok(await waitFor(() => contract.getAttribute('data-project-action') === 'contract'))
+
+  assert.equal(contractWrap.style.display, 'none')
+  assert.equal(contractWrap.getAttribute('aria-hidden'), 'true')
+  assert.equal(invoiceWrap.style.display, undefined)
+  assert.equal(invoiceWrap.getAttribute('aria-hidden'), null)
+
+  projectList.resolve(response({
+    items: [{
+      id: 680,
+      lifecycle_state: 'contract_sent',
+      pandadoc_document_id: 'doc-680',
+      contract_status: 'sent',
+    }],
+  }))
+  assert.ok(await waitFor(() => contractWrap.style.display === ''))
+  assert.equal(contractWrap.getAttribute('aria-hidden'), 'false')
+  assert.equal(invoiceWrap.style.display, undefined)
+  assert.equal(invoiceWrap.getAttribute('aria-hidden'), null)
+})
+
+test('View Contract fails closed when a project card renders after dashboard boot', async () => {
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+  )
+  const projectList = deferred()
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) return projectList.promise
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  const contract = el('a', { href: '#contract' })
+  const wrap = el('div', { class: 'button_main-wrap' }, [contract])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '680' }, [wrap])
+  card.parent = root
+  root.children.push(card)
+  bridge.notifyMutations([{ addedNodes: [card] }])
+  await new Promise(setImmediate)
+
+  assert.equal(contract.getAttribute('data-project-action'), 'contract')
+  assert.equal(wrap.style.display, 'none')
+  assert.equal(wrap.getAttribute('aria-hidden'), 'true')
+
+  projectList.resolve(response({
+    items: [{
+      id: 680,
+      lifecycle_state: 'contract_sent',
+      pandadoc_document_id: 'doc-680',
+      contract_status: 'sent',
+    }],
+  }))
+  assert.ok(await waitFor(() => wrap.style.display === ''))
+  assert.equal(wrap.getAttribute('aria-hidden'), 'false')
+})
+
 test('View Contract is limited to recipient-viewable canonical document states', async () => {
   const bridge = await loadBridge(async () => response({}))
   const isViewable = bridge.window.Opp30.projectContractIsViewable
