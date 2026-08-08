@@ -147,10 +147,19 @@
 
   function subline(root, cohortName, value) {
     const cohort = find(root, cohortName)
-    const prefix = cohort && cohort.previousElementSibling
-    if (!cohort || !prefix) return
-    prefix.textContent = value
-    show(cohort, false)
+    if (!cohort) return
+
+    const row = cohort.parentElement
+    if (row) {
+      Array.prototype.forEach.call(row.childNodes, function (node) {
+        if (node === cohort) return
+        if (node.nodeType === 1) show(node, false)
+        else if (node.nodeType === 3) node.textContent = ''
+      })
+    }
+
+    cohort.textContent = value
+    show(cohort, Boolean(value))
   }
 
   function showState(root, activeName) {

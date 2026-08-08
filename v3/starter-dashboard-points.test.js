@@ -10,12 +10,22 @@ const selector = (name) => '[' + ATTR + '="' + name + '"]'
 class FakeElement {
   constructor(name = '') {
     this.attributes = new Map()
+    this.childNodes = []
     this.children = new Map()
     this.hidden = false
     this.name = name
+    this.nodeType = 1
+    this.parentElement = null
     this.previousElementSibling = null
     this.style = {}
     this.textContent = ''
+  }
+
+  append(...nodes) {
+    nodes.forEach((node) => {
+      this.childNodes.push(node)
+      if (node.nodeType === 1) node.parentElement = this
+    })
   }
 
   querySelector(value) {
@@ -29,6 +39,20 @@ class FakeElement {
   getAttribute(name) {
     return this.attributes.get(name) || null
   }
+}
+
+class FakeText {
+  constructor(value) {
+    this.nodeType = 3
+    this.textContent = value
+  }
+}
+
+function visibleText(node) {
+  if (node.nodeType === 3) return node.textContent
+  if (node.hidden || node.style.display === 'none') return ''
+  if (!node.childNodes.length) return node.textContent
+  return node.childNodes.map(visibleText).join('')
 }
 
 function tile(options = {}) {
@@ -59,12 +83,28 @@ function tile(options = {}) {
   for (const [name, element] of Object.entries(elements)) {
     if (!omitted.has(name)) root.children.set(selector(name), element)
   }
+  const roleRow = new FakeElement('role-row')
   const rolePrefix = new FakeElement('role-prefix')
-  const overallPrefix = new FakeElement('overall-prefix')
-  elements['role-cohort-size'].previousElementSibling = rolePrefix
-  elements['overall-cohort-size'].previousElementSibling = overallPrefix
+  rolePrefix.textContent = 'Out of '
+  const roleSuffix = new FakeElement('role-suffix')
+  roleSuffix.textContent = ' eligible Starters'
+  roleRow.append(rolePrefix, elements['role-cohort-size'], roleSuffix)
+
+  const overallRow = new FakeElement('overall-row')
+  const overallPrefix = new FakeText('Out of ')
+  const overallSuffix = new FakeText(' eligible Starters')
+  overallRow.append(
+    overallPrefix,
+    elements['overall-cohort-size'],
+    overallSuffix,
+  )
+
+  elements.roleRow = roleRow
   elements.rolePrefix = rolePrefix
+  elements.roleSuffix = roleSuffix
+  elements.overallRow = overallRow
   elements.overallPrefix = overallPrefix
+  elements.overallSuffix = overallSuffix
   return { root, elements }
 }
 
@@ -88,16 +128,26 @@ test('ready state renders compact rank positions and clear sublines', () => {
   assert.equal(root.getAttribute('data-points-status'), 'ready')
   assert.equal(elements.points.textContent, '12,500')
   assert.equal(elements['overall-rank'].textContent, '284th/703')
-  assert.equal(elements['overall-cohort-size'].textContent, '703')
-  assert.equal(elements['overall-cohort-size'].style.display, 'none')
-  assert.equal(elements.overallPrefix.textContent, 'Starters Overall')
+  assert.equal(elements['overall-cohort-size'].textContent, 'Starters Overall')
+  assert.equal(elements['overall-cohort-size'].style.display, '')
+  assert.equal(visibleText(elements.overallRow), 'Starters Overall')
+  assert.deepEqual(elements.overallRow.childNodes, [
+    elements.overallPrefix,
+    elements['overall-cohort-size'],
+    elements.overallSuffix,
+  ])
   assert.equal(elements['overall-tie'].style.display, 'none')
   assert.equal(elements['role-rank'].textContent, '6th/21')
   assert.equal(elements['role-label'].textContent, 'CMO')
   assert.equal(elements['role-label'].style.display, 'none')
-  assert.equal(elements['role-cohort-size'].textContent, '21')
-  assert.equal(elements['role-cohort-size'].style.display, 'none')
-  assert.equal(elements.rolePrefix.textContent, 'CMO')
+  assert.equal(elements['role-cohort-size'].textContent, 'CMO')
+  assert.equal(elements['role-cohort-size'].style.display, '')
+  assert.equal(visibleText(elements.roleRow), 'CMO')
+  assert.deepEqual(elements.roleRow.childNodes, [
+    elements.rolePrefix,
+    elements['role-cohort-size'],
+    elements.roleSuffix,
+  ])
   assert.equal(elements['role-tie'].style.display, 'none')
   assert.equal(elements.loading.style.display, 'none')
   assert.equal(elements.error.style.display, 'none')

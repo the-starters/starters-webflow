@@ -2134,12 +2134,12 @@ use these values:
 | `points` | Canonical ledger total |
 | `overall-card` | Overall-rank card wrapper; visible only when rank status is ready |
 | `overall-rank` | Compact overall position, for example `284th/703` |
-| `overall-cohort-size` | Overall cohort hook; its number is folded into `overall-rank` and the authored line becomes `Starters Overall` |
+| `overall-cohort-size` | Overall authored-row hook; its number is folded into `overall-rank` and the complete row becomes `Starters Overall` |
 | `overall-tie` | Legacy Designer-authored tie label; kept hidden in the compact presentation |
 | `role-card` | Primary-role rank card wrapper |
 | `role-rank` | Compact primary-role position, for example `6th/21` |
 | `role-label` | Primary-role name; rendered on the authored subline |
-| `role-cohort-size` | Primary-role cohort hook; its number is folded into `role-rank` |
+| `role-cohort-size` | Primary-role authored-row hook; its number is folded into `role-rank` and the complete row becomes the role name |
 | `role-tie` | Legacy Designer-authored tie label; kept hidden in the compact presentation |
 
 The script never calculates points or rank in the browser. It trades the active
@@ -2154,9 +2154,11 @@ No state renders raw `N/A`.
 All state containers, links, and styling live in Webflow. The controller does
 not create markup or inject state sentences. For ready ranks it combines the
 canonical rank and cohort into an ordinal position (`6th/21`), uses the existing
-authored small-text rows for the role name and `Starters Overall`, and keeps the
-legacy tie labels hidden. Xano tie counts remain part of the read model and rank
-semantics; only the compact presentation omits the word “Tied”.
+cohort hook in each authored small-text row for the role name and `Starters
+Overall`, suppresses that row's former surrounding copy such as `Out of` and
+`eligible Starters` without replacing its markup, and keeps the legacy tie
+labels hidden. Xano tie counts remain part of the read model and rank semantics;
+only the compact presentation omits the word “Tied”.
 
 Each root reflects its resolved state onto `data-points-status`
 (`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so
