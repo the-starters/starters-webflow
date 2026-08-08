@@ -1610,20 +1610,23 @@ Projects lists keyed `dash-projects` and `dash-brand-projects`. Each instance's
 state proves that the unfiltered canonical list contains at least one item, or
 until the member selects a status filter that they must be able to switch away
 from. Once the full-list state is known to contain projects, the filter controls
-stay visible throughout replacement loading and error states. A selected status
-that has no matching rows also keeps the controls visible. The controller does
-not issue a hidden unfiltered probe or rewrite the selected status; this avoids
-rendering a replacement All list while the member is waiting on another filter.
-After a selected status exposes the controls, they also remain available while
-the member explicitly switches back to All and that replacement is loading or
-fails.
+stay visible while a local status selection is applied, including when that
+selection has no matching rows. Status navigation does not change the wf-xano
+request params or issue a replacement request. The selected status is preserved
+across an auth-triggered or explicit canonical refresh and reapplied after the
+unfiltered result succeeds.
 Missing-instance, unresolved unfiltered, confirmed-unfiltered-empty, and
 auth-transition states remain hidden.
 Both Projects instances use wf-xano's canonical-id keyed reconciliation. Status
-changes still read fresh Xano state, but matching project cards are updated and
-reused instead of destroying and cloning their full nested details trees. This
-is a page-rendering optimization, not a browser data cache; auth changes and
-explicit refreshes continue to fetch canonical rows.
+changes only show or hide existing cards; when auth changes or an explicit
+refresh reads fresh Xano state, matching project cards are updated and reused
+instead of destroying and cloning their full nested details trees.
+The initial authenticated All result is also retained only in page memory for
+status navigation. Selecting All, Active, Incomplete, Completed, or Pending
+shows/hides those already-authorized canonical cards without another request or
+DOM rebuild. An auth change clears that snapshot; the existing explicit project
+refresh reloads All from Xano and reapplies the selected status. Nothing is
+persisted to localStorage or shared across members, tabs, or page loads.
 The existing Designer-owned project `Show more` control stays hidden and out of
 the accessibility tree. The current Brand and Starter Projects endpoints return
 each member's complete owned collection and ignore `page`/`per_page`; presenting
