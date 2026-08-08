@@ -8,7 +8,7 @@ const source = fs.readFileSync(require.resolve('./quiz-attribution.js'), 'utf8')
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.119'
+const RELEASE = 'v1.59.130'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -89,10 +89,14 @@ function extractLiteral(name) {
  *
  * @param {object} [initial] Pre-existing cookies, name to raw value.
  * @param {boolean} [readOnly] Swallow writes, like a browser with cookies off.
+ * @param {string[]} [forms] `data-ms-form` values present on the page, one entry
+ *     per form element (e.g. `['signup', 'profile']`). Order is irrelevant; only
+ *     the counts per kind are read.
  */
-function documentDouble(initial, readOnly) {
+function documentDouble(initial, readOnly, forms) {
     const jar = new Map(Object.entries(initial || {}))
     const writes = []
+    const formKinds = forms || []
 
     return {
         readyState: 'complete',
@@ -101,6 +105,16 @@ function documentDouble(initial, readOnly) {
         writes,
         addEventListener(name, handler) {
             this.listeners.push([name, handler])
+        },
+        // Only the two selectors the script uses are modelled. Anything else
+        // matches nothing, which is the honest answer for a page double that
+        // holds no elements.
+        querySelectorAll(selector) {
+            const match = /^form\[data-ms-form="([a-z-]+)"\]$/.exec(
+                String(selector),
+            )
+            if (!match) return []
+            return formKinds.filter((kind) => kind === match[1])
         },
         get cookie() {
             return Array.from(jar.entries())
@@ -121,7 +135,19 @@ function documentDouble(initial, readOnly) {
  * Runs the script against a fake browser and returns everything it touched.
  */
 function boot(options = {}) {
-    const document = documentDouble(options.cookies, options.readOnlyCookies)
+    const document = documentDouble(
+        options.cookies,
+        options.readOnlyCookies,
+        options.forms,
+    )
+    // A DOM the script cannot query at all: an old engine with no
+    // querySelectorAll, or one that raises on the call.
+    if (options.noQuerySelectorAll) delete document.querySelectorAll
+    if (options.querySelectorThrows) {
+        document.querySelectorAll = () => {
+            throw new Error('no DOM here')
+        }
+    }
     const session = new Map(Object.entries(options.session || {}))
     const fbqCalls = []
     const warnings = []
@@ -580,6 +606,221 @@ test('does not watch auth outside the signup pages', async () => {
         assert.deepEqual(harness.authHandlers, [], pathname)
         assert.deepEqual(harness.fbqCalls, [], pathname)
         assert.deepEqual(harness.updateCalls, [], pathname)
+    }
+})
+
+/* -------------------------- signup surface detection ---------------------- */
+
+test('the mapped paths arm from the path alone, with no signup form present', async () => {
+    // The path map is the safety net: these two are hand-audited, so they must
+    // keep arming even if their markup stops matching the detection selector.
+    for (const pathname of ['/quiz', '/sign-up']) {
+        const harness = boot({ member: null, pathname, forms: [] })
+        await harness.settle()
+        assert.equal(harness.authHandlers.length, 1, pathname)
+    }
+})
+
+test('the mapped paths keep their own directSave, form or no form', async () => {
+    // /quiz stays false because quiz-results.js owns that write. Detection would
+    // have said true, so this proves the map is consulted first and wins.
+    const quiz = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/quiz',
+        forms: ['signup'],
+    })
+    await quiz.settle()
+    quiz.authHandlers[0](loggedInMember)
+    await quiz.settle()
+    await quiz.settle()
+
+    assert.equal(quiz.fbqCalls.length, 1)
+    assert.deepEqual(quiz.updateCalls, [])
+    assert.equal(quiz.pendingSave(), undefined)
+
+    const signUp = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        forms: ['signup'],
+    })
+    await signUp.settle()
+    signUp.authHandlers[0](loggedInMember)
+    await signUp.settle()
+    await signUp.settle()
+
+    assert.equal(signUp.updateCalls.length, 1)
+})
+
+test('a mapped path is not vetoed by a login form on the same page', async () => {
+    // The veto guards the detection branch only. Rewriting /quiz or /sign-up to
+    // also host a login form is a deliberate change, not an accident to protect
+    // against, and silently unwatching them would lose a shipped conversion.
+    for (const pathname of ['/quiz', '/sign-up']) {
+        const harness = boot({
+            member: null,
+            pathname,
+            forms: ['signup', 'login'],
+        })
+        await harness.settle()
+        assert.equal(harness.authHandlers.length, 1, pathname)
+        assert.deepEqual(harness.warnings, [], pathname)
+    }
+})
+
+test('an unmapped page with a signup form arms and direct-saves', async () => {
+    // The /all-starters signup modal. Its form is display:none inside a
+    // <dialog> until the modal opens, and detection deliberately never asks.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/all-starters',
+        forms: ['profile', 'signup', 'profile'],
+    })
+    await harness.settle()
+
+    assert.equal(harness.authHandlers.length, 1)
+    harness.authHandlers[0](loggedInMember)
+
+    // Marked synchronously, because the modal's redirect reloads the page.
+    assert.equal(harness.pendingSave(), 'true')
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(plain(harness.fbqCalls), [
+        ['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }],
+    ])
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-source': 'facebook',
+            'utm-campaign': 'summer',
+            fbclid: 'IwAR123',
+            'event-id': 'evt_fixed',
+        },
+    ])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('a page with both a signup and a login form is not watched', async () => {
+    // Fail safe: a login there would look like a registration, firing a false
+    // CompleteRegistration and stamping this browser's UTM values onto a member
+    // who already has their own.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/some-combined-page',
+        forms: ['signup', 'login'],
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.deepEqual(harness.updateCalls, [])
+    assert.ok(
+        harness.warnings.some((message) => /signup watch not armed/.test(message)),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+})
+
+test('the ambiguous-page warning stays off production', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        member: null,
+        pathname: '/some-combined-page',
+        forms: ['signup', 'login'],
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.deepEqual(harness.warnings, [])
+})
+
+test('an unmapped page with no signup form is not watched', async () => {
+    for (const forms of [[], ['profile'], ['login'], ['profile', 'login']]) {
+        const harness = boot({
+            member: null,
+            pathname: '/brand-dashboard',
+            forms,
+        })
+        await harness.settle()
+        assert.deepEqual(harness.authHandlers, [], JSON.stringify(forms))
+        assert.deepEqual(harness.warnings, [], JSON.stringify(forms))
+    }
+})
+
+test('rearm arms a form injected after load and never registers a second listener', async () => {
+    // The harness passes this array straight through to querySelectorAll, so
+    // pushing to it is a form appearing in the DOM after DOMContentLoaded.
+    const forms = []
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/all-starters',
+        forms,
+    })
+    await harness.settle()
+    assert.deepEqual(harness.authHandlers, [])
+
+    forms.push('signup')
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+
+    // Redundant calls are a no-op. A second onAuthChange listener would fire
+    // CompleteRegistration twice and start two competing saves.
+    assert.equal(harness.api.rearm(), true)
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fbqCalls.length, 1)
+    assert.equal(harness.updateCalls.length, 1)
+})
+
+test('rearm on a page that already armed at load does not double-register', async () => {
+    const harness = boot({ member: null, pathname: '/sign-up' })
+    await harness.settle()
+
+    assert.equal(harness.authHandlers.length, 1)
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+})
+
+test('rearm reports false on a page with nothing to watch', async () => {
+    const harness = boot({ member: null, pathname: '/brand-dashboard' })
+    await harness.settle()
+
+    assert.equal(harness.api.rearm(), false)
+    assert.deepEqual(harness.authHandlers, [])
+})
+
+test('an unqueryable DOM reads as no forms instead of throwing', async () => {
+    // A mapped path still arms from the path alone, and an unmapped one simply
+    // does not arm. Neither raises anything into the page.
+    const mapped = boot({
+        member: null,
+        pathname: '/sign-up',
+        noQuerySelectorAll: true,
+    })
+    await mapped.settle()
+    assert.equal(mapped.authHandlers.length, 1)
+
+    for (const broken of [
+        { noQuerySelectorAll: true },
+        { querySelectorThrows: true },
+    ]) {
+        const harness = boot(
+            Object.assign({ member: null, pathname: '/all-starters' }, broken),
+        )
+        await harness.settle()
+        assert.deepEqual(harness.authHandlers, [], JSON.stringify(broken))
+        assert.equal(harness.api.rearm(), false, JSON.stringify(broken))
     }
 })
 

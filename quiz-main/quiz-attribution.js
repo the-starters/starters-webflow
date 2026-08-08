@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.119
+ * @release v1.59.130
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code), not only on the
  * quiz funnel: a paid click can land on any page, and the cookies written here
@@ -44,13 +44,49 @@
  * is a value Memberstack silently drops on one of the two signup routes. The
  * quiz-attribution.test.js drift guard asserts both maps still match.
  *
- * Signup pages. Two pages can turn a visitor into a member: `/quiz` (the funnel
- * signup, followed by `/quiz-results`) and `/sign-up` (the direct signup,
- * followed by `/brand-dashboard`). Both carry exactly one Memberstack signup
- * form and no login form, so on either page a logged-out to logged-in transition
- * can only be that form succeeding. Logins live on `/login` and
- * `/starter-login`, which is why they are not in the list. Policy for each path
- * lives in one `SIGNUP_PATH_POLICY` map (`directSave` true only for `/sign-up`).
+ * Signup pages. A page arms the signup watch when either its normalized path is
+ * in the `SIGNUP_PATH_POLICY` map, or the page carries at least one Memberstack
+ * signup form (`form[data-ms-form="signup"]`) and no login form
+ * (`form[data-ms-form="login"]`). The path map is checked first and its policy
+ * is used verbatim, so the two hand-audited pages provably cannot regress if the
+ * markup on them ever changes: `/quiz` (the funnel signup, followed by
+ * `/quiz-results`) and `/sign-up` (the direct signup, followed by
+ * `/brand-dashboard`). Form detection is what covers every other signup surface,
+ * starting with the signup modal on `/all-starters`. It reuses the attribute
+ * Memberstack already needs, so a new signup surface needs no Designer work and
+ * no edit here to be attributed.
+ *
+ * The login form is a veto, and it applies to the detection branch only. On a
+ * page carrying both kinds of form, a logged-out to logged-in transition could
+ * be either one, and reading a login as a signup would fire a false
+ * CompleteRegistration and stamp this browser's UTM values onto an existing
+ * member who already has their own. A missed attribution is the cheaper of the
+ * two failures, so an ambiguous page is not watched at all and says why in a
+ * staging-only warning. Pure login pages such as `/login` and `/starter-login`
+ * fall out of the same rule: no signup form, no watch.
+ *
+ * Detection counts forms present in the DOM and deliberately does not test
+ * whether they are visible. The `/all-starters` modal lives in a `<dialog>` that
+ * is display:none until it opens, so any visibility check would skip the exact
+ * form this covers. Presence alone is safe because detection only arms a watch:
+ * the pixel and the field save fire on the Memberstack auth transition, so a
+ * form nobody can reach fires nothing.
+ *
+ * `directSave` says whether this script writes the attribution fields itself.
+ * `/quiz` is mapped to false because `quiz-results.js` runs on the very next
+ * page and writes those same fields as part of its own single quiz save; two
+ * writers for one signup is a race, not a redundancy. That is a script-to-script
+ * dependency rather than a preference, and it is the reason the path map has to
+ * keep being consulted before detection: fold the two branches together and
+ * `/quiz` silently starts double-writing. Pages armed by detection direct-save,
+ * the same as `/sign-up`.
+ *
+ * The scan runs once during init, off the DOM as it stands at DOMContentLoaded.
+ * `window.StartersAttribution.rearm()` re-runs it for a future caller that
+ * injects a signup form later, mirroring the sibling `v3/starters-ms-redirect.js`
+ * and its `apply()`. It returns whether the watch is armed and is a no-op once it
+ * is: a second `onAuthChange` listener would fire CompleteRegistration twice and
+ * start two competing saves.
  *
  * CompleteRegistration. The Meta Pixel base snippet lives in Webflow site-head
  * custom code (pixel 775648331097942); this file never installs it and only
@@ -66,25 +102,30 @@
  * A `sessionStorage` flag makes the fire once-per-session, which is what covers
  * the refresh double-fire: Memberstack replays the authenticated state on the
  * next load, and without the flag that would look like a second registration.
- * The flag is shared by both signup pages, so one session yields one event.
+ * The flag is shared by every signup surface, so one session yields one event.
  *
  * Field persistence. `/quiz` needs nothing here: `quiz-results.js` runs right
- * after it and writes the attribution fields alongside the quiz summary. The
- * direct `/sign-up` route has no such follow-up page, so this script writes the
- * fields itself, and it has to survive the form's own
- * `redirect="/brand-dashboard"` cutting the request off mid-flight. The order is
- * therefore: snapshot the non-empty field values into
- * `startersAttributionPendingFields`, set `startersAttributionPendingSave`, then
- * call `updateMember`, then clear both only once the write is confirmed. Every
- * page load checks that marker and re-attempts the write from the snapshot (not
- * from live cookies), so a save killed by the redirect completes on
- * `/brand-dashboard` with the values the signup captured. A marker found while
+ * after it and writes the attribution fields alongside the quiz summary. Every
+ * other signup route has no such follow-up writer, so this script writes the
+ * fields itself, and it has to survive the form's own redirect cutting the
+ * request off mid-flight (`/sign-up` sends the browser to `/brand-dashboard`;
+ * the `/all-starters` modal reloads the same page to reopen itself, which cuts
+ * the request off just as effectively). The order is therefore: snapshot the
+ * non-empty field values into `startersAttributionPendingFields`, set
+ * `startersAttributionPendingSave`, then call `updateMember`, then clear both
+ * only once the write is confirmed. Every page load checks that marker and
+ * re-attempts the write from the snapshot (not from live cookies), so a save
+ * killed by any redirect completes on the page the signup landed on, with the
+ * values the signup captured. This runs sitewide and needed no change for the
+ * modal: a same-page redirect is just another page load. A marker found while
  * Memberstack reports the visitor logged out is stale and gets cleared without a
  * write, unless a stale marker was already present at load and this page's own
  * signup re-raised it while that retry's member read was still in flight.
  *
  * Debug: `window.StartersAttribution.getParams()` returns the current cookie
- * values. Diagnostics are staging-only (`*.webflow.io`, localhost, 127.0.0.1,
+ * values, and `window.StartersAttribution.rearm()` reports (and, if a signup form
+ * has appeared since load, starts) the signup watch. Diagnostics are staging-only
+ * (`*.webflow.io`, localhost, 127.0.0.1,
  * `*.trycloudflare.com`) or with `window.STARTERS_DEBUG === true`; production
  * stays silent. Nothing in this file may throw into the page, so every browser
  * API it touches is wrapped.
@@ -95,7 +136,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.119'
+    var RELEASE = 'v1.59.130'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -138,15 +179,25 @@
     // Every cookie this script owns, in FIELD_IDS contract order.
     var COOKIE_NAMES = Object.keys(FIELD_IDS)
 
-    // One path -> policy map for pages that can turn a visitor into a member.
-    // Each has exactly one Memberstack signup form and no login form, so the
-    // logged-out to logged-in transition is unambiguous there. Logins (/login,
-    // /starter-login) are deliberately absent. `directSave` is true only when
-    // this script (not quiz-results.js) must write the attribution fields.
+    // One path -> policy map for the two hand-audited pages that can turn a
+    // visitor into a member. Each has exactly one Memberstack signup form and no
+    // login form, so the logged-out to logged-in transition is unambiguous
+    // there. Logins (/login, /starter-login) are deliberately absent. This map
+    // is consulted BEFORE the form detection below and wins outright, so those
+    // two pages keep behaving exactly as they do today whatever their markup
+    // becomes. `directSave` is true only when this script (not quiz-results.js)
+    // must write the attribution fields, which is why /quiz is false: see
+    // detectedSignupPolicy for why that coupling has to stay.
     var SIGNUP_PATH_POLICY = {
         '/quiz': { directSave: false },
         '/sign-up': { directSave: true },
     }
+
+    // Memberstack's own markers, reused on purpose: every signup surface already
+    // carries them, so a new one is attributed with no Designer work and no edit
+    // here. A login form on the same page is a veto (see detectedSignupPolicy).
+    var SIGNUP_FORM_SELECTOR = 'form[data-ms-form="signup"]'
+    var LOGIN_FORM_SELECTOR = 'form[data-ms-form="login"]'
 
     var COMPLETE_REGISTRATION_EVENT = 'CompleteRegistration'
     var FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -390,6 +441,70 @@
      */
     var signupPolicyFor = function (pathname) {
         return SIGNUP_PATH_POLICY[normalizePath(pathname)] || null
+    }
+
+    /**
+     * @param {string} selector
+     * @returns {number} Matching elements, 0 when the DOM cannot be queried.
+     */
+    var countElements = function (selector) {
+        try {
+            if (!document || typeof document.querySelectorAll !== 'function') {
+                return 0
+            }
+            var found = document.querySelectorAll(selector)
+            return (found && found.length) || 0
+        } catch (error) {
+            // An unqueryable DOM reads as "no forms here", which only costs the
+            // watch on a page the path map does not already cover.
+            return 0
+        }
+    }
+
+    /**
+     * Policy for a page recognised by its markup rather than by its path.
+     *
+     * Presence only: no visibility test, because the /all-starters signup form
+     * sits in a `<dialog>` that is display:none until it opens, and that is the
+     * exact form this is here to find. Safe, because this only arms a watch; the
+     * pixel and the save fire on the Memberstack auth transition, so a form
+     * nobody can reach fires nothing.
+     *
+     * `directSave` is true here. It is false for /quiz only because
+     * quiz-results.js writes those same fields on the next page as part of its
+     * single quiz save, and two writers for one signup is a race. That is a
+     * script-to-script dependency, not a style choice: SIGNUP_PATH_POLICY must
+     * keep being checked before this function, or /quiz starts double-writing.
+     *
+     * @returns {{ directSave: boolean } | null}
+     */
+    var detectedSignupPolicy = function () {
+        if (!countElements(SIGNUP_FORM_SELECTOR)) return null
+
+        if (countElements(LOGIN_FORM_SELECTOR)) {
+            // Fail safe. On a page with both, a logged-out to logged-in
+            // transition could be either form, and reading a login as a signup
+            // would fire a false CompleteRegistration and stamp this browser's
+            // UTM values onto a member who already has their own. A missed
+            // attribution is the cheaper failure.
+            warn(
+                'signup and login forms on one page, signup watch not armed. ' +
+                    'A login here would look like a registration.',
+            )
+            return null
+        }
+
+        return { directSave: true }
+    }
+
+    /**
+     * Mapped path first and verbatim, markup detection second.
+     *
+     * @param {string} pathname
+     * @returns {{ directSave: boolean } | null}
+     */
+    var resolveSignupPolicy = function (pathname) {
+        return signupPolicyFor(pathname) || detectedSignupPolicy()
     }
 
     /**
@@ -715,18 +830,22 @@
         await savePendingAttribution(memberstack)
     }
 
+    // True from the moment a watch is claimed for this page until the page is
+    // gone, released only when the claim could not be completed. A second
+    // onAuthChange listener would fire CompleteRegistration twice and start two
+    // competing saves, so rearm() has to be able to see that one already exists.
+    var signupWatchArmed = false
+
     /**
-     * Watches a signup page for its logged-out to logged-in transition.
+     * Watches this page for its logged-out to logged-in transition.
      *
+     * @param {{ directSave: boolean }} policy
      * @returns {Promise<void>}
      */
-    var wireCompleteRegistration = async function () {
-        var pathname = (window.location && window.location.pathname) || ''
-        var policy = signupPolicyFor(pathname)
-        if (!policy) return
-
+    var watchSignupTransition = async function (policy) {
         var memberstack = await waitForMemberstack()
         if (!memberstack) {
+            signupWatchArmed = false
             warn('Memberstack never loaded, CompleteRegistration is unwatched')
             return
         }
@@ -745,7 +864,10 @@
             seenLoggedOut = null
         }
 
-        if (typeof memberstack.onAuthChange !== 'function') return
+        if (typeof memberstack.onAuthChange !== 'function') {
+            signupWatchArmed = false
+            return
+        }
 
         memberstack.onAuthChange(function (payload) {
             try {
@@ -766,6 +888,35 @@
                 /* attribution must never break the signup */
             }
         })
+    }
+
+    /**
+     * Resolves this page's policy and, when there is one, starts the watch.
+     *
+     * The claim is taken synchronously, before waitForMemberstack's first await,
+     * so two calls in the same tick cannot both reach onAuthChange. A claim that
+     * cannot be completed is released again, which is what leaves a later
+     * rearm() free to retry.
+     *
+     * @returns {boolean} True when a watch is armed or being armed.
+     */
+    var armSignupWatch = function () {
+        try {
+            if (signupWatchArmed) return true
+
+            var pathname = (window.location && window.location.pathname) || ''
+            var policy = resolveSignupPolicy(pathname)
+            if (!policy) return false
+
+            signupWatchArmed = true
+            runSafely(function () {
+                return watchSignupTransition(policy)
+            }, 'CompleteRegistration wiring failed')
+            return true
+        } catch (error) {
+            warn('signup watch could not be armed')
+            return false
+        }
     }
 
     /* ---------------------------------- boot -------------------------------- */
@@ -801,9 +952,11 @@
             warn('capture failed')
         }
 
-        runSafely(wireCompleteRegistration, 'CompleteRegistration wiring failed')
+        // One scan of the DOM as it stands now; rearm() covers a form injected
+        // later.
+        armSignupWatch()
         // Sitewide, not just on the signup pages: this is the step that finishes a
-        // /sign-up save the redirect to /brand-dashboard cut short.
+        // direct save that the signup form's own redirect cut short.
         runSafely(retryPendingSave, 'pending attribution save failed')
     }
 
@@ -812,6 +965,9 @@
         // quiz-attribution.test.js drift guard asserts they match.
         release: RELEASE,
         getParams: getParams,
+        // For a caller that injects a signup form after DOMContentLoaded, like
+        // v3/starters-ms-redirect.js exposes apply(). A no-op once armed.
+        rearm: armSignupWatch,
     }
 
     if (document.readyState === 'loading') {

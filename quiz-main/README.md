@@ -289,7 +289,7 @@ drops a write to a field it does not know.
 
 Which script writes them depends on the signup route. A `/quiz` signup is followed
 by `/quiz-results`, so `quiz-results.js` writes the fields there as part of its
-single quiz save. A direct `/sign-up` signup has no follow-up page, so
+single quiz save. Every other signup route has no follow-up writer, so
 `quiz-attribution.js` writes them itself. The map therefore exists in both files.
 Keep the two copies in step: a field ID present in only one of them is a value
 Memberstack silently drops on one of the two routes. The
@@ -297,17 +297,49 @@ Memberstack silently drops on one of the two routes. The
 
 ### Signup pages
 
-Two pages can turn a visitor into a member, and both are watched:
+A page arms the signup watch when **either** of these is true, in this order:
+
+1. its path is in the script's `SIGNUP_PATH_POLICY` map, or
+2. it carries at least one `form[data-ms-form="signup"]` and no
+   `form[data-ms-form="login"]`.
+
+The path map holds the two hand-audited pages and its policy is used verbatim:
 
 | Page | After signup | Who writes the fields |
 | --- | --- | --- |
 | `/quiz` | `/quiz-results` | `quiz-results.js` |
 | `/sign-up` | `/brand-dashboard` | `quiz-attribution.js` |
 
-Each of those pages carries exactly one Memberstack signup form and no login form,
-which is what makes the logged-out to logged-in transition a reliable signal there.
-Logins happen on `/login` and `/starter-login`, so those pages are deliberately not
-watched. Path matching ignores case and a single trailing slash.
+Path matching ignores case and a single trailing slash. Because the map is checked
+first, those two keep behaving exactly as they do today whatever happens to their
+markup, and `/quiz` in particular keeps deferring its field write to
+`quiz-results.js` rather than racing it.
+
+Rule 2 is what covers every other signup surface, starting with the signup modal on
+`/all-starters`. It reuses the `data-ms-form="signup"` attribute Memberstack already
+needs, so a new signup surface needs no Designer work and no edit to the script.
+Detection counts forms present in the DOM and never checks whether they are visible,
+because that modal's form sits in a `<dialog>` that is `display:none` until it opens.
+Presence alone is safe: detection only arms a watch, and the pixel and the field save
+both fire on the Memberstack auth transition, so a form nobody can reach fires
+nothing. A page armed this way direct-saves the fields.
+
+A login form on the same page is a veto, and it applies to rule 2 only. A page with
+both kinds cannot tell a signup apart from a login, and reading a login as a signup
+would fire a false `CompleteRegistration` and stamp that browser's UTM values onto a
+member who already has their own. A missed attribution is the cheaper failure, so an
+ambiguous page is not watched at all and says why in a staging-only warning. Pure
+login pages such as `/login` and `/starter-login` fall out of the same rule: no
+signup form, no watch.
+
+The scan runs once at `DOMContentLoaded`. `window.StartersAttribution.rearm()` re-runs
+it for a caller that injects a signup form later, the same shape as
+`window.StartersMsRedirect.apply()` in `v3/starters-ms-redirect.js`. It returns whether
+the watch is armed and is a no-op once it is, because a second `onAuthChange` listener
+would fire `CompleteRegistration` twice.
+
+The script binds no form or submit listeners of any kind. It reads the DOM to decide
+whether to watch, and nothing more.
 
 ### CompleteRegistration
 
@@ -325,15 +357,18 @@ later transition. Treating a failed `getCurrentMember` as logged out would fire
 the pixel and start a spurious field save on the next auth replay.
 
 A `sessionStorage.startersCompleteRegistrationFired` flag limits the event to one
-fire per browser session, and both signup pages share that one flag. This is what
-covers a refresh: Memberstack replays the authenticated state on the next load,
+fire per browser session, and every signup surface shares that one flag. This is
+what covers a refresh: Memberstack replays the authenticated state on the next load,
 and without the flag the replay would look like a second registration.
 
 ### Direct signup field save
 
-The `/sign-up` form carries `redirect="/brand-dashboard"`, so the browser can
-navigate away while the `updateMember` request is still in flight. The save is
-therefore written to survive being cut off:
+A signup form's own redirect can navigate the browser away while the `updateMember`
+request is still in flight. The `/sign-up` form carries
+`redirect="/brand-dashboard"`; the `/all-starters` modal redirects to
+`/all-starters?modal-id=signup-modal`, which reloads the same page to reopen the
+modal and cuts the request off just as effectively. The save is therefore written to
+survive being cut off:
 
 1. On the transition, the non-empty attribution cookies are snapshotted into
    `sessionStorage.startersAttributionPendingFields` (field ID keys), and
@@ -345,8 +380,8 @@ therefore written to survive being cut off:
 
 Every page load checks that marker, and a page that finds it waits for
 Memberstack, confirms a logged-in member, and re-attempts the write from the
-snapshot (not from live cookies). That is what completes on `/brand-dashboard` a
-save the redirect killed on `/sign-up`, without letting a fresh ad click between
+snapshot (not from live cookies). That is what completes on the landing page a
+save the redirect killed on the signup page, without letting a fresh ad click between
 those two pages overwrite the values the signup captured. A marker left over from
 before snapshots existed (or when storage was blocked on the signup page) falls
 back to live cookies.
@@ -364,7 +399,9 @@ throws into the page. With cookies blocked there is nothing to persist, so the
 marker is cleared without a write rather than retried on every page forever.
 
 `window.StartersAttribution.getParams()` returns the current cookie values for
-debugging, and `window.StartersAttribution.release` reports the shipped version.
+debugging, `window.StartersAttribution.rearm()` reports (and, where a signup form
+has appeared since load, starts) the signup watch, and
+`window.StartersAttribution.release` reports the shipped version.
 Console warnings are staging-only (`*.webflow.io`, localhost, `127.0.0.1`,
 `*.trycloudflare.com`) or with `window.STARTERS_DEBUG === true`, so production
 stays silent.
