@@ -1690,10 +1690,12 @@ V3 starter. It falls back to the page-provided
 `window.getStarterByMemberId(memberId)` only when the auth helper is unavailable.
 The canonical profile reader is not used because its `Availability` field is the
 workload range, not the legacy scheduling object. Failed or malformed reads, or a
-Memberstack member change or logout during the read, keep both actions hidden and
-set the document status to `error`; when the live Memberstack client is available,
-its logged-out result is authoritative over stale `memberReady` data. Initialization
-can be retried with
+Memberstack member change or logout during the read, set the document status and
+Calendar connection state to `error` without claiming connection or availability
+readiness. The Designer-authored hero trigger and Dashboard Calendar action row
+remain available and route the shared native modal to `config-request-error`. When
+the live Memberstack client is available, its logged-out result is authoritative
+over stale `memberReady` data. Initialization can be retried with
 `window.StarterSchedulingAvailability.initialize()`.
 
 Webflow markup contract:
