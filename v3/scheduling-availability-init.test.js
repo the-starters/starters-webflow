@@ -232,7 +232,7 @@ test('rejects an empty availability array when grant data already exists', async
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
 })
@@ -251,7 +251,7 @@ test('rejects an empty availability object when grant data already exists', asyn
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
 })
@@ -352,11 +352,11 @@ test('renders partial provider state as reconnect and keeps the CTA actionable',
   assert.equal(result.steps[2].style.display, 'block')
 })
 
-test('keeps actions hidden when the page scheduling reader is missing', async () => {
+test('keeps the hero action available when the page scheduling reader is missing', async () => {
   const result = loadInitializer()
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
   assert.equal(result.events[0].type, 'starterSchedulingAvailabilityError')
@@ -394,7 +394,7 @@ test('rejects a 404 instead of treating it as confirmed first-time setup', async
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
 })
@@ -409,7 +409,7 @@ test('rejects a legacy starter response without availability', async () => {
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
 })
@@ -424,7 +424,7 @@ test('rejects null availability on an existing legacy starter', async () => {
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
 })
@@ -447,7 +447,7 @@ test('rejects a member switch while scheduling availability is loading', async (
   resolveStarter({ availability: { items: { general: {} }, manager: 'platform' } })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
   assert.equal(result.window.STARTER_AVAILABILITY, null)
@@ -471,7 +471,7 @@ test('rejects logout while scheduling availability is loading', async () => {
   resolveStarter({ availability: { items: { general: {} }, manager: 'platform' } })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
   assert.equal(result.window.STARTER_AVAILABILITY, null)
@@ -520,7 +520,7 @@ test('revalidates expired member-scoped availability', async () => {
   assert.equal(result.events[0].detail.source, 'default')
 })
 
-test('read failures keep availability actions hidden in an error state', async () => {
+test('read failures keep hero and Action Items entries available in error state', async () => {
   const result = loadInitializer({
     storage: { 'starter-scheduling-availability:member-a': 'not-json' },
     getStarterByMemberId: async () => {
@@ -529,7 +529,7 @@ test('read failures keep availability actions hidden in an error state', async (
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.steps[0].style.display, 'none')
   assert.equal(result.steps[1].style.display, 'none')
@@ -538,7 +538,12 @@ test('read failures keep availability actions hidden in an error state', async (
   assert.equal(result.window.STARTER_AVAILABILITY, null)
   assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'error')
   assert.equal(result.connectionAction.style.display, 'flex')
+  result.init.click()
+  assert.equal(result.steps[3].style.display, 'block')
+  result.steps[0].style.display = 'block'
+  result.steps[3].style.display = 'none'
   result.connectionAction.click()
+  assert.equal(result.steps[0].style.display, 'none')
   assert.equal(result.steps[3].style.display, 'block')
 })
 
@@ -548,7 +553,7 @@ test('rejects malformed saved availability instead of treating it as absent', as
   })
   await settle()
 
-  assert.equal(result.init.style.display, 'none')
+  assert.equal(result.init.style.display, 'flex')
   assert.equal(result.update.style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
 })

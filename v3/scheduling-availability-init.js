@@ -295,9 +295,19 @@
   }
 
   function renderError() {
-    document.querySelectorAll('[init-availability], [update-availability]').forEach(function (control) {
+    const controls = Array.from(
+      document.querySelectorAll('[init-availability], [update-availability]'),
+    )
+    controls.forEach(function (control) {
       control.style.display = 'none'
     })
+    const heroControl = document.querySelector('[init-availability]')
+    if (heroControl) {
+      heroControl.style.display = 'flex'
+      bindStep(heroControl, function () {
+        return 'config-request-error'
+      })
+    }
     document.querySelectorAll('[availability-step]').forEach(function (step) {
       step.style.display = 'none'
     })
