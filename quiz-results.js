@@ -2007,6 +2007,42 @@
     }
 
     /**
+     * Display-name overrides for role slugs that formatSlugTitle mangles
+     * (acronyms, and one plural). Keyed on the RAW stored slug.
+     *
+     * KEEP IN SYNC across:
+     *   quiz-results.js
+     *   algolia-result-modifiers/roles.js
+     *   starters-list-filter/custom-algolia-scripts/filters-text.js
+     *   v3/saved-starters-roles.js
+     *   v3/onboarding-profile-preview.js
+     */
+    const ROLE_NAMES = {
+        'ui-ux-designer': 'UI/UX Designer',
+        'cro-expert': 'CRO Expert',
+        'seo-marketer': 'SEO Marketer',
+        'crm-marketer': 'CRM Marketer',
+        'cx-director': 'CX Director',
+        'pr-directors': 'PR Director',
+        'ai-automation-expert': 'AI Automation Expert',
+        'e-commerce-manager': 'E-Commerce Manager',
+    }
+
+    /**
+     * Resolves a role slug to its display name, falling back to plain title
+     * case. Card role text lands in `.expert-card_service-text`, which is
+     * `text-transform: capitalize` — that only uppercases word-initial letters
+     * and never lowercases, so "UI/UX Designer" survives it intact.
+     *
+     * @param {string | null | undefined} slug Raw role slug from Algolia.
+     * @returns {string} Display-ready role name.
+     */
+    function formatRoleName(slug) {
+        const key = normalize(slug).toLowerCase()
+        return ROLE_NAMES[key] || formatSlugTitle(slug)
+    }
+
+    /**
      * Converts text into a URL-style slug for matching category identifiers.
      *
      * @param {string | null | undefined} value Text to slugify.
@@ -3334,7 +3370,7 @@
                 name: normalize(hit.name),
                 slug: normalize(hit.slug),
                 profilePhoto: normalize(hit['profile-photo']),
-                roles: normalizeAlgoliaList(hit.roles).map(formatSlugTitle),
+                roles: normalizeAlgoliaList(hit.roles).map(formatRoleName),
                 functions: normalizeAlgoliaList(hit.functions).map(
                     formatSlugTitle,
                 ),
