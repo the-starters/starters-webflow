@@ -57,6 +57,13 @@ async function loadBridge(
       listeners.push(listener)
       documentListeners.set(type, listeners)
     },
+    removeEventListener(type, listener) {
+      const listeners = documentListeners.get(type) || []
+      documentListeners.set(
+        type,
+        listeners.filter((candidate) => candidate !== listener),
+      )
+    },
     createElement() {
       return { addEventListener() {}, setAttribute() {}, style: {} }
     },
@@ -150,6 +157,9 @@ async function loadBridge(
     dispatchDocument(type, event) {
       for (const listener of documentListeners.get(type) || []) listener(event)
     },
+    documentListenerCount(type) {
+      return (documentListeners.get(type) || []).length
+    },
   }
 }
 
@@ -226,6 +236,101 @@ test('invoice helpers turn the Stripe prerequisite into an actionable dashboard 
     'Connect your Stripe account from the dashboard before generating invoices.',
   )
   assert.equal(bridge.window.Opp30.formatInvoiceAmount(25.5), '$25.50')
+})
+
+test('invoice behavior binds only on exact normalized invoice routes', async () => {
+  const starter = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/opportunities/match-context')) {
+        return response({ category_refs: [] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember, pathname: '/starter-dashboard', routeGuard: true },
+  )
+  assert.ok(await waitFor(() => starter.window.__opp30InvoicesWired === true))
+
+  const starterSlash = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/starter/opportunities/match-context')) {
+        return response({ category_refs: [] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember, pathname: '/starter-dashboard/', routeGuard: true },
+  )
+  assert.ok(await waitFor(() => starterSlash.window.__opp30InvoicesWired === true))
+
+  const similarStarter = await loadBridge(async () => response({}), {
+    member: talentMember,
+    pathname: '/starter-dashboard---availability-stage',
+    routeGuard: true,
+  })
+  assert.equal(similarStarter.window.__opp30InvoicesWired, undefined)
+
+  const preview = await loadBridge(async () => response({}), { pathname: '/all-modals/' })
+  assert.equal(preview.window.__opp30InvoicesWired, true)
+
+  const nestedPreview = await loadBridge(async () => response({}), {
+    pathname: '/internal/all-modals',
+  })
+  assert.equal(nestedPreview.window.__opp30InvoicesWired, undefined)
+
+  const brand = await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    pathname: '/brand-dashboard',
+    routeGuard: true,
+  })
+  await Promise.resolve()
+  assert.equal(brand.window.__opp30InvoicesWired, undefined)
+})
+
+test('invoice behavior requires the canonical Talent plan role', async () => {
+  const ambiguousLegacyBrand = {
+    ...paidBrandMember,
+    customFields: {
+      'brands-dashboard-url': '/brand-dashboard',
+      'freelancer-dashboard-url': '/starter-dashboard',
+    },
+  }
+  const wrongRole = await loadBridge(async () => response({ category_refs: [] }), {
+    member: ambiguousLegacyBrand,
+    pathname: '/starter-dashboard',
+    routeGuard: false,
+  })
+  await Promise.resolve()
+  assert.equal(wrongRole.window.__opp30InvoicesWired, undefined)
+})
+
+test('invoice listeners teardown and rebind with Memberstack scope changes', async () => {
+  const secondTalentMember = { ...talentMember, id: 'm-talent-2' }
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/starter/opportunities/match-context')) {
+        return response({ category_refs: [] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember, pathname: '/starter-dashboard', routeGuard: true },
+  )
+  assert.ok(await waitFor(() => bridge.window.__opp30InvoicesWired === true))
+  assert.equal(bridge.documentListenerCount('submit'), 1)
+
+  bridge.authChange(paidBrandMember)
+  assert.equal(bridge.window.__opp30InvoicesWired, undefined)
+  assert.equal(bridge.documentListenerCount('submit'), 0)
+
+  bridge.authChange(secondTalentMember)
+  assert.equal(bridge.window.__opp30InvoicesWired, true)
+  assert.equal(bridge.documentListenerCount('submit'), 1)
+
+  bridge.authChange(null)
+  assert.equal(bridge.window.__opp30InvoicesWired, undefined)
+  assert.equal(bridge.documentListenerCount('submit'), 0)
 })
 
 // A minimal element graph with attribute-accurate matches()/closest()/query*,

@@ -625,8 +625,10 @@ closed, `closed` takes precedence and hides those actions as usual.
 ## Opportunities 3.0 Invoice Generation
 
 `opportunities-3.0.js` drives the Webflow-authored Generate Invoice modal used by
-the Starter dashboard project list. The delegation is armed once per page and
-stays inert wherever that modal and its project cards are not authored. It binds
+the Starter dashboard project list. The delegation is armed only after the
+Starter dashboard resolves an authenticated Talent member (and on the internal
+`/all-modals` component-preview page); Brand dashboard sessions never receive
+the invoice click or submit behavior. It binds
 only existing elements and generates no markup, and it does not touch the V2
 Airtable/Make invoice chain; the browser holds no Airtable or Make credentials.
 
