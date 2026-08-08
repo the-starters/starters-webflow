@@ -188,34 +188,51 @@ function boot(options = {}) {
     const memberReads = []
     let releaseMember = () => {}
 
-    const memberstack = options.noMemberstack
-        ? undefined
-        : {
-              getCurrentMember: async () => {
-                  if (options.memberThrows) throw new Error('no session')
-                  memberReads.push(true)
-                  // First read only: the signup watch's starting-state probe.
-                  // Lets a test prove an unreadable start is not treated as
-                  // "arrived logged out".
-                  if (options.firstMemberThrows && memberReads.length === 1) {
-                      throw new Error('no session')
-                  }
-                  // The registration watch reads first, the pending-save retry
-                  // second. Holding only the second read lets a test interleave a
-                  // signup transition with a still-pending retry.
-                  if (options.holdSecondMemberRead && memberReads.length === 2) {
-                      return new Promise((resolve) => {
-                          releaseMember = () =>
-                              resolve({ data: options.heldMember || null })
-                      })
-                  }
-                  return { data: options.member || null }
-              },
-              onAuthChange(handler) {
-                  authHandlers.push(handler)
-              },
-          }
-    if (memberstack && !options.noUpdateMember) {
+    let authChangeCalls = 0
+    /**
+     * `onAuthChange` as the page sees it. `authChangeThrowsOnce` makes the
+     * first registration raise and every later one work, which is the only
+     * shape that can tell "the claim stayed taken after a throw" apart from
+     * "the claim was released and the retry happened to throw as well".
+     */
+    const registerAuthHandler = (handler) => {
+        authChangeCalls += 1
+        if (options.authChangeThrowsOnce && authChangeCalls === 1) {
+            throw new Error('onAuthChange blew up')
+        }
+        authHandlers.push(handler)
+    }
+
+    // Always built, even when the page is not given it: `noMemberstack` only
+    // withholds it from `window`, so `attachMemberstack()` can hand the same
+    // double over later as a late-loading Memberstack.
+    const memberstack = {
+        getCurrentMember: async () => {
+            if (options.memberThrows) throw new Error('no session')
+            memberReads.push(true)
+            // First read only: the signup watch's starting-state probe.
+            // Lets a test prove an unreadable start is not treated as
+            // "arrived logged out".
+            if (options.firstMemberThrows && memberReads.length === 1) {
+                throw new Error('no session')
+            }
+            // The registration watch reads first, the pending-save retry
+            // second. Holding only the second read lets a test interleave a
+            // signup transition with a still-pending retry.
+            if (options.holdSecondMemberRead && memberReads.length === 2) {
+                return new Promise((resolve) => {
+                    releaseMember = () =>
+                        resolve({ data: options.heldMember || null })
+                })
+            }
+            return { data: options.member || null }
+        },
+        onAuthChange: registerAuthHandler,
+    }
+    // A Memberstack build with no onAuthChange on it at all: loaded, but with
+    // nothing for the watch to hook onto.
+    if (options.noOnAuthChange) delete memberstack.onAuthChange
+    if (!options.noUpdateMember) {
         memberstack.updateMember = async (payload) => {
             updateCalls.push(payload)
             if (options.updateFails) throw new Error('Memberstack said no')
@@ -224,7 +241,7 @@ function boot(options = {}) {
     }
 
     const window = {
-        $memberstackDom: memberstack,
+        $memberstackDom: options.noMemberstack ? undefined : memberstack,
         location: {
             hostname: options.hostname || 'the-starters-3-0.webflow.io',
             pathname: options.pathname === undefined ? '/quiz' : options.pathname,
@@ -256,6 +273,25 @@ function boot(options = {}) {
             : setTimeout,
         window,
     }
+
+    // `runClockForward` is the other way to survive that deadline: instead of
+    // parking the poll it runs every tick at once and moves a fake clock on by
+    // the delay it was handed, so the ten second wait gives up in the same turn
+    // of the event loop. A test that needs to see what the script does AFTER
+    // the wait times out uses this; `parkTimers` only avoids the wait.
+    if (options.runClockForward) {
+        let skew = 0
+        context.setTimeout = (handler, delay) => {
+            skew += Number(delay) || 0
+            handler()
+        }
+        context.Date = class extends Date {
+            static now() {
+                return Date.now() + skew
+            }
+        }
+    }
+
     vm.runInNewContext(source, context)
 
     return {
@@ -279,6 +315,14 @@ function boot(options = {}) {
         },
         releaseMember: () => releaseMember(),
         savedFields: () => plain(updateCalls.map((call) => call.customFields)),
+        // Memberstack turning up after the page gave up waiting for it.
+        attachMemberstack: () => {
+            window.$memberstackDom = memberstack
+        },
+        // The same build finally exposing onAuthChange.
+        attachOnAuthChange: () => {
+            memberstack.onAuthChange = registerAuthHandler
+        },
     }
 }
 
@@ -948,6 +992,90 @@ test('rearm reports false on a page with nothing to watch', async () => {
 
     assert.equal(harness.api.rearm(), false)
     assert.deepEqual(harness.authHandlers, [])
+})
+
+test('a watch that never found Memberstack gives its claim back', async () => {
+    // The claim is taken synchronously so two same-tick calls cannot both
+    // register a listener, so a watch that cannot be established has to hand it
+    // back or rearm() is a no-op for the life of the page that still reports
+    // true.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        noMemberstack: true,
+        runClockForward: true,
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.ok(
+        harness.warnings.some((message) =>
+            /Memberstack never loaded/.test(message),
+        ),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+
+    // Memberstack turns up late. If the claim had latched, this rearm would
+    // report an armed watch and register nothing.
+    harness.attachMemberstack()
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    assert.equal(harness.fbqCalls.length, 1)
+})
+
+test('a Memberstack with no onAuthChange gives the claim back too', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        noOnAuthChange: true,
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    // Silent on purpose: the warnings this path does and does not emit are
+    // unchanged by the claim moving to a single owner.
+    assert.deepEqual(harness.warnings, [])
+
+    harness.attachOnAuthChange()
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+})
+
+test('a throwing onAuthChange keeps the claim, deliberately', async () => {
+    // The one path that does NOT release. A throw out of onAuthChange leaves us
+    // unable to know whether the listener registered before it threw, so the
+    // claim stays taken: a second registration would fire CompleteRegistration
+    // twice and start two competing saves, and a missed attribution is the
+    // cheaper failure. The double works on its second call, so a released claim
+    // would show up here as a listener.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        authChangeThrowsOnce: true,
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.ok(
+        harness.warnings.some((message) =>
+            /CompleteRegistration wiring failed/.test(message),
+        ),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.deepEqual(harness.authHandlers, [])
+    assert.deepEqual(harness.fbqCalls, [])
 })
 
 test('an unqueryable DOM reads as no forms instead of throwing', async () => {

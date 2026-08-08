@@ -462,19 +462,20 @@
 
     /**
      * @param {string} selector
-     * @returns {number} Matching elements, 0 when the DOM cannot be queried.
+     * @returns {boolean} True when the page holds at least one match. False
+     *     when it holds none, and false when it cannot be queried at all.
      */
-    var countElements = function (selector) {
+    var hasElementMatching = function (selector) {
         try {
             if (!document || typeof document.querySelectorAll !== 'function') {
-                return 0
+                return false
             }
             var found = document.querySelectorAll(selector)
-            return (found && found.length) || 0
+            return Boolean(found && found.length)
         } catch (error) {
             // An unqueryable DOM reads as "no forms here", which only costs the
             // watch on a page the path map does not already cover.
-            return 0
+            return false
         }
     }
 
@@ -496,9 +497,9 @@
      * @returns {{ directSave: boolean } | null}
      */
     var detectedSignupPolicy = function () {
-        if (!countElements(SIGNUP_FORM_SELECTOR)) return null
+        if (!hasElementMatching(SIGNUP_FORM_SELECTOR)) return null
 
-        if (countElements(LOGIN_FORM_SELECTOR)) {
+        if (hasElementMatching(LOGIN_FORM_SELECTOR)) {
             // Fail safe. On a page with both, a logged-out to logged-in
             // transition could be either form, and reading a login as a signup
             // would fire a false CompleteRegistration and stamp this browser's
@@ -848,23 +849,39 @@
     }
 
     // True from the moment a watch is claimed for this page until the page is
-    // gone, released only when the claim could not be completed. A second
-    // onAuthChange listener would fire CompleteRegistration twice and start two
-    // competing saves, so rearm() has to be able to see that one already exists.
+    // gone, released only when the watch reports back that it could not be
+    // established. A second onAuthChange listener would fire
+    // CompleteRegistration twice and start two competing saves, so rearm() has
+    // to be able to see that one already exists.
+    //
+    // armSignupWatch is the ONLY function that assigns this, deliberately.
+    // watchSignupTransition reports its outcome as a return value instead of
+    // clearing the flag itself, so correctness no longer depends on every
+    // future exit path in that async function remembering to release: an added
+    // early return can at worst report the wrong thing, not latch the claim
+    // true forever and quietly turn rearm() into a no-op that still says true.
     var signupWatchArmed = false
 
     /**
      * Watches this page for its logged-out to logged-in transition.
      *
+     * Never touches signupWatchArmed; it reports back instead, and
+     * armSignupWatch owns the flag. A throw on the way to (or out of)
+     * onAuthChange rejects this promise rather than returning, so the caller
+     * never hears "not established" for that path, which is what deliberately
+     * leaves the claim taken. See armSignupWatch for why that is the behaviour
+     * we want.
+     *
      * @param {{ directSave: boolean }} policy
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>} True when the onAuthChange listener was
+     *     actually registered, false when it could not be: no Memberstack, or
+     *     a Memberstack with no onAuthChange on it.
      */
     var watchSignupTransition = async function (policy) {
         var memberstack = await waitForMemberstack()
         if (!memberstack) {
-            signupWatchArmed = false
             warn('Memberstack never loaded, CompleteRegistration is unwatched')
-            return
+            return false
         }
 
         // Tri-state on purpose. true = arrived logged out (arm for transition).
@@ -882,8 +899,7 @@
         }
 
         if (typeof memberstack.onAuthChange !== 'function') {
-            signupWatchArmed = false
-            return
+            return false
         }
 
         memberstack.onAuthChange(function (payload) {
@@ -905,15 +921,30 @@
                 /* attribution must never break the signup */
             }
         })
+
+        return true
     }
 
     /**
      * Resolves this page's policy and, when there is one, starts the watch.
      *
-     * The claim is taken synchronously, before waitForMemberstack's first await,
-     * so two calls in the same tick cannot both reach onAuthChange. A claim that
-     * cannot be completed is released again, which is what leaves a later
-     * rearm() free to retry.
+     * The only writer of signupWatchArmed, and the claim is taken synchronously,
+     * before waitForMemberstack's first await, so two calls in the same tick
+     * cannot both reach onAuthChange.
+     *
+     * Exactly one path releases the claim: the watch resolving false, meaning it
+     * reached its end without registering a listener (no Memberstack, or a
+     * Memberstack with no onAuthChange). That release is what leaves a later
+     * rearm() free to retry instead of reporting a watch that does not exist.
+     *
+     * The claim is deliberately NOT released when the watch rejects. If
+     * memberstack.onAuthChange itself throws, runSafely catches the rejection,
+     * the .then below never runs, and the claim stays taken for the life of the
+     * page. That is intentional: we cannot know whether the listener registered
+     * before the throw, so releasing would risk a second registration on the
+     * next rearm(), and two listeners fire CompleteRegistration twice and start
+     * two competing member saves. By the same cost asymmetry the rest of this
+     * file is built on, a missed attribution is much cheaper than a double fire.
      *
      * @returns {boolean} True when a watch is armed or being armed.
      */
@@ -927,7 +958,9 @@
 
             signupWatchArmed = true
             runSafely(function () {
-                return watchSignupTransition(policy)
+                return watchSignupTransition(policy).then(function (armed) {
+                    if (!armed) signupWatchArmed = false
+                })
             }, 'CompleteRegistration wiring failed')
             return true
         } catch (error) {
