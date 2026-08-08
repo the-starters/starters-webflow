@@ -4,7 +4,7 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-const source = fs.readFileSync(require.resolve('./quiz-attribution.js'), 'utf8')
+const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8')
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
@@ -75,7 +75,7 @@ function extractLiteralFrom(src, name, keyword = 'var') {
 }
 
 /**
- * @param {string} name Declared constant name in quiz-attribution.js.
+ * @param {string} name Declared constant name in signup-attribution.js.
  */
 function extractLiteral(name) {
     return extractLiteralFrom(source, name, 'var')
@@ -496,7 +496,7 @@ test('the header and README document all eight verified field IDs', () => {
     for (const [cookie, field] of Object.entries(FIELD_IDS)) {
         const row = new RegExp('`' + cookie + '` -> `' + field + '`')
         assert.match(header, row, `${cookie} missing from the script header`)
-        assert.match(readme, row, `${cookie} missing from quiz-main/README.md`)
+        assert.match(readme, row, `${cookie} missing from v3/README.md`)
     }
     // Exactly eight mapping rows in the header: an extra one would be a field
     // that does not exist in the Memberstack app config.
@@ -1342,7 +1342,7 @@ test('the file is raw CDN-safe JavaScript', () => {
 
 test('the header release marker matches the exposed release', () => {
     const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-    assert.ok(marker, 'no "@release vX.Y.Z" line in the quiz-attribution.js header')
+    assert.ok(marker, 'no "@release vX.Y.Z" line in the signup-attribution.js header')
     assert.equal(marker[1], RELEASE)
     assert.equal(boot().api.release, RELEASE)
 })

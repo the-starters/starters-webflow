@@ -3,11 +3,13 @@
  *
  * @release v1.59.130
  *
- * Loaded site-wide with `defer` (Webflow site-wide custom code), not only on the
- * quiz funnel: a paid click can land on any page, and the cookies written here
- * are what a later signup saves onto the brand-new Memberstack member. Every
- * page load re-runs the capture, so a visitor who arrives on the blog and signs
- * up three pages later still carries their click through.
+ * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
+ * one funnel, which is why it lives here in `v3/` alongside the other standalone
+ * sitewide behaviours and not in `quiz-main/`: a paid click can land on any
+ * page, and the cookies written here are what a later signup saves onto the
+ * brand-new Memberstack member. Every page load re-runs the capture, so a
+ * visitor who arrives on the blog and signs up three pages later still carries
+ * their click through. Wiring and the field-ID table live in `v3/README.md`.
  *
  * Cookie contract. All first-party, written with a 72 hour TTL on `path=/`, and
  * named exactly like the value they carry:
@@ -39,10 +41,11 @@
  *   `fbp` -> `fbp`
  *   `event_id` -> `event-id`
  *
- * The same map is duplicated in `quiz-results.js`, which owns the write for the
- * quiz funnel. Keep the two in step: a field ID that exists in only one of them
- * is a value Memberstack silently drops on one of the two signup routes. The
- * quiz-attribution.test.js drift guard asserts both maps still match.
+ * The same map is duplicated in the repo-root `quiz-results.js`, which owns the
+ * write for the quiz funnel. Keep the two in step: a field ID that exists in
+ * only one of them is a value Memberstack silently drops on one of the two
+ * signup routes. The
+ * signup-attribution.test.js drift guard asserts both maps still match.
  *
  * Signup pages. A page arms the signup watch when either its normalized path is
  * in the `SIGNUP_PATH_POLICY` map, or the page carries at least one Memberstack
@@ -88,10 +91,12 @@
  *
  * The scan runs once during init, off the DOM as it stands at DOMContentLoaded.
  * `window.StartersAttribution.rearm()` re-runs it for a future caller that
- * injects a signup form later, mirroring the sibling `v3/starters-ms-redirect.js`
- * and its `apply()`. It returns whether the watch is armed and is a no-op once it
- * is: a second `onAuthChange` listener would fire CompleteRegistration twice and
- * start two competing saves.
+ * injects a signup form later, mirroring `starters-ms-redirect.js` next door and
+ * its `apply()`. The two are a pair: that module rewrites the `redirect` on the
+ * same `form[data-ms-form="signup"]` this one detects, so a caller that injects a
+ * signup modal wants both re-run. It returns whether the watch is armed and is a
+ * no-op once it is: a second `onAuthChange` listener would fire
+ * CompleteRegistration twice and start two competing saves.
  *
  * CompleteRegistration. The Meta Pixel base snippet lives in Webflow site-head
  * custom code (pixel 775648331097942); this file never installs it and only
@@ -974,7 +979,7 @@
 
     window.StartersAttribution = {
         // Keep in sync with the @release line in this file's header comment; the
-        // quiz-attribution.test.js drift guard asserts they match.
+        // signup-attribution.test.js drift guard asserts they match.
         release: RELEASE,
         getParams: getParams,
         // For a caller that injects a signup form after DOMContentLoaded, like
