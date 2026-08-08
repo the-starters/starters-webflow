@@ -634,9 +634,12 @@ inside an existing `.project_item[data-wf-xano-id]`; that row id is the canonica
 `project_id`. The controller decorates Webflow-authored controls and never creates
 project-card, modal, form, or button markup.
 
-The shared `wf-xano-bind="timeline_display"` value is repainted from each
-canonical project's `start_date` and `end_date` (falling back to
-`estimated_end_date`) as a readable calendar range. Same-month ranges collapse
+The shared Project timeline value is repainted from each canonical project's
+`start_date` and `end_date` (falling back to `estimated_end_date`) as a readable
+calendar range. The current Webflow component renders it as the
+`wf-xano-bind="value"` inside the `contract_details` nested row whose bound label
+is `Project timeline`; a direct `wf-xano-bind="timeline_display"` remains a
+forward-compatible fallback. Same-month ranges collapse
 to `August 6–31, 2026`; cross-month ranges use
 `August 28 – September 12, 2026`; cross-year ranges keep both years; and a
 missing end date reads `Starting August 6, 2026 · Ongoing`. Date-only values

@@ -361,10 +361,18 @@ test('project timelines use compact readable calendar ranges without timezone sh
 })
 
 for (const role of ['starter', 'brand']) {
-  test(`${role} dashboard paints the shared timeline_display field from canonical project dates`, async () => {
-    const timeline = el('div', { 'wf-xano-bind': 'timeline_display' })
+  test(`${role} dashboard paints the live nested Project timeline value from canonical dates`, async () => {
+    const label = el('p', { 'wf-xano-bind': 'label' })
+    label.textContent = 'Project timeline'
+    const timeline = el('p', { 'wf-xano-bind': 'value' })
     timeline.textContent = '2026-08-06 - 2026-08-31'
-    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '676' }, [timeline])
+    const detailRow = el('div', { 'data-wf-xano-nest-clone': '' }, [label, timeline])
+    const details = el(
+      'div',
+      { 'wf-xano-element': 'nest-target', 'wf-xano-field': 'contract_details' },
+      [detailRow],
+    )
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '676' }, [details])
     const root = el(
       'div',
       {
