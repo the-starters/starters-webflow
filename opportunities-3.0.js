@@ -1894,6 +1894,7 @@
     '[wf-xano-link="review_starter"], [data-project-action="review"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
+  const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial', 'completed'])
   let projectWorkflowRole = ''
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null
@@ -2026,6 +2027,12 @@
     ).trim().toLowerCase()
   }
 
+  function projectContractIsViewable(project) {
+    const documentId = String(project && project.pandadoc_document_id || '').trim()
+    const contractStatus = String(project && project.contract_status || '').trim().toLowerCase()
+    return Boolean(documentId) && PROJECT_VIEWABLE_CONTRACT_STATES.has(contractStatus)
+  }
+
   function decorateProjectCard(card) {
     const project = projectContextFromCard(card)
     if (!project || !project.lifecycle_state && !project.status) return
@@ -2035,9 +2042,8 @@
     const review = $(PROJECT_REVIEW_SELECTOR, card)
 
     if (contract) {
-      const hasContract = Boolean(String(project.pandadoc_document_id || '').trim())
       contract.setAttribute('data-project-action', 'contract')
-      setProjectActionVisible(contract, hasContract)
+      setProjectActionVisible(contract, projectContractIsViewable(project))
     }
 
     if (end) {
@@ -2195,9 +2201,14 @@
   }
 
   async function openProjectContract(action, card) {
-    const project = await currentProjectContext(card)
+    const project = await currentProjectContext(card, true)
     if (!project) {
       showProjectActionFeedback(action, 'Project details unavailable', true)
+      return
+    }
+    if (!projectContractIsViewable(project)) {
+      setProjectActionVisible(action, false)
+      showProjectActionFeedback(action, 'Contract is not available yet', true)
       return
     }
     const pending = projectActionWrap(action)
@@ -4606,6 +4617,7 @@
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,
     projectActionIntent,
+    projectContractIsViewable,
     projectMutationFeedback,
     projectActionErrorMessage,
     initProjectDashboardWorkflow,

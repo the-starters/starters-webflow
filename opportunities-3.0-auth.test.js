@@ -669,6 +669,7 @@ test('Brand project cards expose only canonical actions for their current lifecy
             lifecycle_state: 'completed',
             lifecycle_version: 4,
             pandadoc_document_id: 'doc-675',
+            contract_status: 'completed',
             review_eligible: true,
             has_review: false,
           }],
@@ -694,6 +695,34 @@ test('Brand project cards expose only canonical actions for their current lifecy
   assert.equal(review.control.getAttribute('wf-xano-link'), null)
   assert.equal(review.control.getAttribute('href'), '#review-starter')
   assert.equal(review.wrap.style.display, '')
+})
+
+test('View Contract is limited to recipient-viewable canonical document states', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const isViewable = bridge.window.Opp30.projectContractIsViewable
+  const canonicalStates = [
+    'not_requested',
+    'create_pending',
+    'uploaded',
+    'draft',
+    'sent',
+    'viewed',
+    'partial',
+    'completed',
+    'declined',
+    'expired',
+    'error',
+  ]
+
+  canonicalStates.forEach((contractStatus) => {
+    assert.equal(
+      isViewable({ pandadoc_document_id: 'doc-675', contract_status: contractStatus }),
+      ['sent', 'viewed', 'partial', 'completed'].includes(contractStatus),
+      contractStatus,
+    )
+  })
+  assert.equal(isViewable({ contract_status: 'completed' }), false)
+  assert.equal(isViewable({ pandadoc_document_id: 'doc-675' }), false)
 })
 
 test('project action context includes every canonical project page', async () => {
