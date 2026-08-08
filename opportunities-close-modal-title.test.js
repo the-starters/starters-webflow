@@ -9,10 +9,11 @@ const core = fs.readFileSync(require.resolve('./opportunities-3.0.js'), 'utf8')
 // through closest()/matches()/querySelectorAll() on live ancestors, so the
 // wiring can only be exercised against a real tree rather than per-selector
 // stubs.
-const COMPOUND = /^(?:([a-zA-Z][\w-]*)|\.([\w-]+)|\[([\w-]+)(?:([*^$]?=)"([^"]*)")?\]|:([\w-]+))/
+const COMPOUND =
+  /^(?:([a-zA-Z][\w-]*)|\.([\w-]+)|\[([\w-]+)(?:([*^$]?=)"([^"]*)")?\]|:([\w-]+)|#([\w-]+))/
 
 function parseCompound(text) {
-  const spec = { tag: '', classes: [], attrs: [], pseudos: [] }
+  const spec = { tag: '', ids: [], classes: [], attrs: [], pseudos: [] }
   let rest = text
   while (rest) {
     const match = rest.match(COMPOUND)
@@ -20,7 +21,8 @@ function parseCompound(text) {
     if (match[1]) spec.tag = match[1].toLowerCase()
     else if (match[2]) spec.classes.push(match[2])
     else if (match[3]) spec.attrs.push({ name: match[3], op: match[4] || '', value: match[5] || '' })
-    else spec.pseudos.push(match[6])
+    else if (match[6]) spec.pseudos.push(match[6])
+    else spec.ids.push(match[7])
     rest = rest.slice(match[0].length)
   }
   return spec
@@ -28,6 +30,7 @@ function parseCompound(text) {
 
 function matchesCompound(el, spec) {
   if (spec.tag && el.tag !== spec.tag) return false
+  if (!spec.ids.every((id) => el.getAttribute('id') === id)) return false
   if (!spec.classes.every((cls) => el.classes.includes(cls))) return false
   if (spec.pseudos.some((pseudo) => pseudo !== 'checked' || el.checked !== true)) return false
   return spec.attrs.every(({ name, op, value }) => {

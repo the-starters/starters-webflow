@@ -641,20 +641,41 @@ native `dialog[data-modal-target="generate-invoice"]` component, opened through
 lock, and focus restore all still run; direct `showModal()` remains only as a
 fallback for pages without `modal.js`.
 
-The modal keeps its authored Webflow form. `Amount` and `Description` are
-resolved by id or input name. The amount is rounded to cents and must land
-between $0.01 and $1,000,000, otherwise the inline message `Enter an amount
-between $0.01 and $1,000,000.` is shown and nothing is sent. A submit from a
-modal that was opened without a project card fails closed with `Open Generate
-Invoice from the project you want to bill, so we know which project to
-invoice.`.
+The modal keeps its authored Webflow form. The shared button component currently
+renders the visible Send Invoice control as `type="button"` even with its Button
+Type prop enabled, so a click would never reach the form. A narrow fallback
+converts that one click into the form's native `requestSubmit()`, which keeps
+Webflow's own constraint validation and every gate below. It only fires for the
+control inside `form#wf-form-Generate-Invoice` when that form sits inside the
+`generate-invoice` dialog, and it resolves that control in one place: an
+authored `[data-wf-invoice="submit"]` wins, then a real `[type="submit"]` (which
+needs no fallback and is left alone), and only then the single
+`[data-button-style="primary"]` wrapper in the form. `data-button-style` is a
+theming attribute rather than a behaviour hook, so a second primary-styled
+button in that form makes the inference ambiguous and the fallback fails closed
+with a console warning instead of turning another button into an invoice submit
+— author `[data-wf-invoice="submit"]` on the Send Invoice `.button_main-wrap` to
+settle it. A wrapper marked disabled by attribute (`data-validate-disabled`,
+`data-button-theme="disabled"`, `aria-disabled="true"`) is never converted.
+
+`Amount` and `Description` are resolved by id or input name. The amount is
+rounded to cents and must land between $0.01 and $1,000,000, otherwise the
+inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
+nothing is sent. A submit from a modal that was opened without a project card
+fails closed with `Open Generate Invoice from the project you want to bill, so
+we know which project to invoice.`.
 
 A valid submit posts `project_id`, `amount`, `description`, and
 `idempotency_key` to Xano `POST invoices/create/v3` through the same
 authenticated Memberstack-to-Xano bridge as the rest of the file. The
 idempotency key (`invoice-v3-<project_id>-<uuid>`) is stored on the form, so a
 retry after a failure reuses it and is cleared once an invoice is created. The
-submit control is disabled while the request is in flight. After a success the
+resolved submit control is disabled while the request is in flight, by the same
+design-system convention `form-validation.js` uses: the wrapper takes
+`aria-disabled="true"`; when it already has a `data-button-theme`, that theme is
+temporarily replaced with `disabled` and restored afterwards. The actionable
+element inside the wrapper takes the native `disabled` property, so a second
+click is visibly refused. After a success the
 wf-xano project list is refreshed best-effort; a failed refresh never reports a
 created invoice as failed.
 
