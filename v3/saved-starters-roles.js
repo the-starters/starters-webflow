@@ -78,6 +78,7 @@
   //   algolia-result-modifiers/roles.js
   //   starters-list-filter/custom-algolia-scripts/filters-text.js
   //   v3/onboarding-profile-preview.js
+  //   quiz-results.js
   var ROLE_NAMES = {
     'ui-ux-designer': 'UI/UX Designer',
     'cro-expert': 'CRO Expert',

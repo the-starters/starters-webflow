@@ -21,6 +21,7 @@
   //   algolia-result-modifiers/roles.js
   //   v3/saved-starters-roles.js
   //   v3/onboarding-profile-preview.js
+  //   quiz-results.js
   var ROLE_NAMES = {
     'ui-ux-designer': 'UI/UX Designer',
     'cro-expert': 'CRO Expert',
@@ -32,21 +33,88 @@
     'e-commerce-manager': 'E-Commerce Manager'
   };
 
+  // Display-name overrides for SKILL slugs. Same problem as roles: skills are
+  // stored as slugs ("ab-testing"), and humanize() only title-cases words, so
+  // every acronym comes out wrong ("Ab Testing").
+  //
+  // Most of this map was harvested from the Algolia index itself: a handful of
+  // records carry an unsplit, comma-joined skill LIST as a single facet value
+  // (see the dirty-data note in the README), and those strings spell the
+  // canonical display names. Those entries are authoritative, not guesses.
+  // The rest follow the house style those entries establish: a trailing
+  // acronym goes in parentheses, a leading/standalone acronym is uppercased.
+  //
+  // Keyed on the RAW stored slug. No key here collides with a ROLE_NAMES key.
+  var SKILL_NAMES = {
+    // — canonical names found verbatim in the index —
+    'ab-testing': 'A/B Testing',
+    'tiktok-ads': 'TikTok Ads',
+    'tiktok-organic': 'TikTok (Organic)',
+    'youtube-ads': 'YouTube Ads',
+    'youtube-organic': 'YouTube (Organic)',
+    'instagram-organic': 'Instagram (Organic)',
+    'pinterest-organic': 'Pinterest (Organic)',
+    'amazon-e-commerce': 'Amazon E-Commerce',
+    'walmart-e-commerce': 'Walmart E-Commerce',
+    'amazon-seo': 'Amazon SEO',
+    'ai-automation': 'AI Automation',
+    'ai-strategy': 'AI Strategy',
+    'ai-agents': 'AI Agents',
+    'user-interface-ui-design': 'User Interface (UI) Design',
+    'agile-frameworks-scrum-kanban': 'Agile Frameworks (Scrum & Kanban)',
+    'software-development-lifecycle-sdlc': 'Software Development Lifecycle (SDLC)',
+    'rag-retrieval-augmented-generation': 'RAG (Retrieval-Augmented Generation)',
+    'ltv-cac-analysis': 'LTV / CAC Analysis',
+    'co-manufacturer-management': 'Co-Manufacturer Management',
+    'fp-a': 'FP&A',
+
+    // — house style applied to the remaining mangled acronyms —
+    'conversion-rate-optimization-cro': 'Conversion Rate Optimization (CRO)',
+    'search-engine-optimization-seo': 'Search Engine Optimization (SEO)',
+    'user-experience-ux-design': 'User Experience (UX) Design',
+    'content-creation-ugc': 'Content Creation (UGC)',
+    'revenue-recognition-asc-606': 'Revenue Recognition (ASC 606)',
+    'crm-strategy': 'CRM Strategy',
+    'sms-marketing': 'SMS Marketing',
+    'ugc-sourcing': 'UGC Sourcing',
+    'amazon-ppc': 'Amazon PPC',
+    'esp-migration': 'ESP Migration',
+    'dsp-management': 'DSP Management',
+    'llm-evaluations': 'LLM Evaluations',
+    'llmops': 'LLMOps',
+    'tiktok-shop': 'TikTok Shop',
+    'customgpts': 'CustomGPTs',
+    'html': 'HTML',
+    'css': 'CSS',
+    'sql': 'SQL'
+  };
+
   // This file re-reads and rewrites the SAME nodes on every engine response, so
   // every emitted label must map to itself on the next pass or the text
   // oscillates. Not every display value is a humanize() fixed point:
-  // humanize("E-Commerce Manager") drops the hyphen. So already-mapped labels
-  // are matched back to themselves here, keyed on the lowercased display value.
-  var ROLE_DISPLAY = Object.create(null);
-  Object.keys(ROLE_NAMES).forEach(function (slug) {
-    ROLE_DISPLAY[ROLE_NAMES[slug].toLowerCase()] = ROLE_NAMES[slug];
+  // humanize("E-Commerce Manager") drops the hyphen, and humanize("A/B Testing")
+  // would survive but humanize("LTV / CAC Analysis") must not be re-split. So
+  // already-mapped labels are matched back to themselves here, keyed on the
+  // lowercased display value. Both maps feed it.
+  var VALUE_DISPLAY = Object.create(null);
+  [ROLE_NAMES, SKILL_NAMES].forEach(function (map) {
+    Object.keys(map).forEach(function (slug) {
+      VALUE_DISPLAY[map[slug].toLowerCase()] = map[slug];
+    });
   });
 
-  // Applies to every field, not just "roles": the keys are exact role slugs, so
-  // no other facet value can collide with one.
-  function prettyRole(raw) {
+  // Deliberately consulted for EVERY field, not just "roles"/"skills": the keys
+  // are exact stored slugs, so no other facet value can collide with one.
+  // Verified against the live index 2026-08-08 — none of these 46 keys appears
+  // as a value in tools, industries, availability, country, city, state,
+  // categories.lvl0/lvl1 or work-history.company. The role keys appear only in
+  // the roles facet, which is where they belong.
+  //
+  // Returns null when the value has no override, so callers fall through to
+  // humanize().
+  function lookupDisplayName(raw) {
     var key = raw.trim().toLowerCase();
-    return ROLE_NAMES[key] || ROLE_DISPLAY[key] || null;
+    return ROLE_NAMES[key] || SKILL_NAMES[key] || VALUE_DISPLAY[key] || null;
   }
 
   function humanize(s) {
@@ -68,7 +136,7 @@
     }
     // Rate range chips from WF-Algolia already come formatted ("30 – 500", "$30 – $500")
     if (field === "rate") return raw;
-    return prettyRole(raw) || humanize(raw);
+    return lookupDisplayName(raw) || humanize(raw);
   }
 
   function processSlot(el) {
@@ -85,7 +153,7 @@
     if (idx === -1) {
       // A bare chip carries just the value, so it takes the same
       // map-then-humanize path a "Field: value" chip's value half takes.
-      var whole = prettyRole(raw) || humanize(raw);
+      var whole = lookupDisplayName(raw) || humanize(raw);
       if (whole !== raw) el.textContent = whole;
       return;
     }
