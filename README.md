@@ -52,7 +52,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, sends authenticated members whose completion marker has outlived missing or malformed answer JSON to `/quiz?retake=true&quizDataMissing=1`, keeps diagnostics opt-in through `starterQuizDebug`, uses the `Freelancers3.0-dev` Algolia index for freelancer recommendations by default, and rides the ad-attribution cookies written by `quiz-main/quiz-attribution.js` into the same `updateMember` call as `starter-quiz` (verified Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone)
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
-- `opportunities-3.0.js` — Opportunities 3.0 page and starter-dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`, and drives the Starter dashboard's native Generate Invoice modal against the authenticated Xano `invoices/create/v3` endpoint
+- `opportunities-3.0.js` — Opportunities 3.0 page and dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`, drives authenticated canonical project actions on both role dashboards, and keeps Generate Invoice Starter-only
 - `v3/auth-route.js` — V3-only login/signup router consuming the sitewide route guard's stable role contract, with role-scoped `next` destinations; canonical `next=/dashboard` resolves directly to the role home. Talent logins fork on funnel position via Xano `starters_onboarding/get_build_profile_status`: `build_profile_done` false → `/build-profile/select-profile`, true with `onboarding_done` not literally `true` → `/starter-onboarding` (wins over any stored `next`), both true → normal routing. **Paid Brands (2026-08-06)** take a parallel check on `starters_onboarding/get_brand_profile_status`: `has_record` true + `brand_profile_done` false → `/complete-profile` (wins over `next`); marker `thestarters:v3-brand-profile-completed` short-circuits as done with no network. `brand-free` and unmapped stay zero-network. Every inconclusive answer fails open (4s budget). Installs on `/login`, `/starter-login`, and `/auth-route`; never on `/sign-up`. Wiring: [`v3/AUTH-ROUTE-WIRING.md`](v3/AUTH-ROUTE-WIRING.md)
 
 - `v3/talent-application.js` — `/freelancer-application/step-1` intake controller; suppresses the native Webflow/Zapier submission, posts `form[application-form]` to Xano, and continues successful applicants to step 2
@@ -621,6 +621,56 @@ Brand-side application archiving is private bookkeeping and does not add an
 `archived` talent UI state. An archived application still paints as `applied` or
 `edited`, so Withdraw and Edit Application remain available; if its opportunity is
 closed, `closed` takes precedence and hides those actions as usual.
+
+## Opportunities 3.0 Project Dashboard Actions
+
+`opportunities-3.0.js` binds project actions only on the exact
+`/brand-dashboard` and `/starter-dashboard` routes, after Memberstack resolves a
+paid Brand or Talent member respectively. It reads the full authenticated project
+list from Xano `brand/projects/mine` or `starter/projects/mine`, following the
+paged response until every canonical project is available. Each action must be
+inside an existing `.project_item[data-wf-xano-id]`; that row id is the canonical
+`project_id`. The controller decorates Webflow-authored controls and never creates
+project-card, modal, form, or button markup.
+
+View Contract accepts `a[href="#contract"]` or
+`[data-project-action="contract"]`, is shown only when the project has a PandaDoc
+document id, and requests a fresh signed URL from authenticated Xano
+`contracts/link/v3`. The URL opens in a new tab when the browser permits it and
+falls back to the current tab. No PandaDoc credential or stored contract URL is
+exposed in the page.
+
+The existing `[wf-xano-link="project-end"]` control is upgraded to
+`data-project-action="end"`. Its label and mutation follow canonical lifecycle
+state: pending projects can be canceled, active projects can request completion
+or an early termination with a required reason, and a counterparty can confirm a
+pending completion or termination request. Terminal projects expose no lifecycle
+action. Immediately before every mutation the controller refreshes the canonical
+project, requires a nonnegative `lifecycle_version`, and posts `project_id`,
+`expected_version`, `action`, `reason`, and a retry-stable idempotency key to
+`projects/action/v3`. A stale-version response refreshes the project list and asks
+the member to retry instead of replaying an obsolete intent.
+
+Brand-only Review Starter controls accept `[wf-xano-link="review_starter"]` or
+`[data-project-action="review"]` and appear only when Xano reports
+`review_eligible` without an existing review. The existing
+`data-modal-target="rate-starter-call"` form submits a 1–5 rating and 10–4,000
+character public review to authenticated `brand/reviews/submit`, reusing its
+idempotency key across retries. Private Feedback stays hidden because this flow
+does not send private Starter feedback. Starter sessions never receive review
+submission wiring.
+
+All project-action listeners, cached rows, and pending review context are
+discarded when the signed-in Memberstack account changes. The new account must
+pass the exact route and stable plan-role gate before the workflow can bind
+again. These browser actions use only the Memberstack-to-Xano authentication
+bridge; they do not expose Airtable, Make, PandaDoc, or other service credentials.
+
+Run the focused project-action regressions with:
+
+```sh
+node --test opportunities-3.0-auth.test.js
+```
 
 ## Opportunities 3.0 Invoice Generation
 
