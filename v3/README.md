@@ -1720,17 +1720,19 @@ Runtime contract:
   partial or stale provider state is `reconnect`.
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
-- `window.STARTER_SCHEDULING_CONNECTION` contains only the non-secret
-  connection summary: state, boolean grant/calendar flags, configuration count,
-  and manager. Provider identifiers are never exposed through this object.
-- `starterSchedulingAvailabilityReady` carries `{ memberId, source, state }`;
+- `window.STARTER_SCHEDULING_CONNECTION` contains only non-secret connection
+  state. The initializer always supplies `state`; once the writer runs, it also
+  supplies boolean grant/calendar flags, configuration count, and manager.
+  Provider identifiers are never exposed through this object.
+- `starterSchedulingAvailabilityReady` carries
+  `{ memberId, source, state, connectionState }`;
   `source` is `starter`, `default`, or `query-test`, and `state` is
   `init`, `update`, or `null` when neither control exists. For `query-test`,
   `memberId` is the selected test member rather than the authenticated member.
 - `starterSchedulingConnectionStateChanged` carries the non-secret connection
   summary and repaints both the hero entry point and Calendar action row. The
-  row is visible for disconnected/reconnect/error, hidden while loading, and
-  hidden only after connected proof.
+  row remains visible and actionable for loading/disconnected/reconnect/error,
+  and is hidden only after connected proof.
 - `starterSchedulingAvailabilityError` carries `{ message }` after a failed read.
 - `window.StarterSchedulingAvailability` exposes `initialize()` for retries,
   `normalizeAvailability(value)` for the legacy object or JSON-string shape,
@@ -1907,7 +1909,8 @@ Runtime contract:
   OAuth return opens the existing `config-request-error` panel without a grant
   write.
 - `window.StarterSchedulingAvailabilityWriter` exposes `initialize()` for
-  retries plus `switchStep`, `daysAlias`, and `getAvailArray`.
+  retries plus `switchStep`, `daysAlias`, `getAvailArray`, and
+  `publishCalendarConnectionState`.
 
 Run its focused test with:
 
@@ -2327,10 +2330,11 @@ is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
 The panel settles — and only then may the empty card appear — at the first of:
-an item becoming visible, a Stripe readiness/error event, a Calendar connection
-state/availability error event, or a 4-second timeout. Until it settles the
-loading card stays up, so a slow feature controller never flashes a false
-"all caught up".
+an item becoming visible, a Stripe readiness/error event, a terminal Calendar
+connection state or availability error event, or a 4-second timeout. A Calendar
+`loading` event alone does not settle the panel. Until it settles the loading
+card stays up, so a slow feature controller never flashes a false "all caught
+up".
 
 Every render also writes the count to `data-action-items-count` on the scope
 (on `<body>`, or `<html>` if there is no body, when the scope is the document)
