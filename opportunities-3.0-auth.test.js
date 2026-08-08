@@ -287,6 +287,14 @@ test('project lifecycle intent covers cancellation, completion and early termina
     plain(intent({ lifecycle_state: 'pending' }, () => true, () => '')),
     { action: 'cancel', reason: 'canceled_before_activation' },
   )
+  assert.deepEqual(
+    plain(intent(
+      { status: 'pending', lifecycle_state: 'contract_sent' },
+      () => true,
+      () => 'COMPLETE',
+    )),
+    { action: 'cancel', reason: 'canceled_before_activation' },
+  )
   assert.equal(intent({ lifecycle_state: 'pending' }, () => false, () => ''), null)
   assert.deepEqual(
     plain(intent({ lifecycle_state: 'active' }, () => true, () => 'COMPLETE')),
@@ -728,7 +736,12 @@ test('project action context includes every canonical project page', async () =>
               nextPage: 2,
             })
           : response({
-              items: [{ id: 676, lifecycle_state: 'pending', lifecycle_version: 1 }],
+              items: [{
+                id: 676,
+                status: 'pending',
+                lifecycle_state: 'contract_sent',
+                lifecycle_version: 1,
+              }],
               itemsTotal: 2,
               curPage: 2,
               nextPage: null,
