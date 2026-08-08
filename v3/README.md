@@ -1818,7 +1818,7 @@ Safety boundary:
   legacy unscoped `starter-availability` localStorage key is gone; the
   timezone cache is member-scoped (`starter-timezone:<memberId>`).
 
-Legacy UI-step semantics kept. Published-markup audit (2026-07-21) of the
+Designer UI-step contract retained. Published-markup audit (2026-07-21) of the
 shared `dialog[data-modal-target="set-availability"]` shell: the initializer
 owns the open/close fallback documented above; the writer only switches steps
 inside it. All **11** step wrappers exist:
@@ -1834,10 +1834,11 @@ inside it. All **11** step wrappers exist:
 | `success-calendar` | `pre-redirect` action |
 | `reload-page` | legacy fallback only; the current same-tab OAuth handoff returns directly to the dashboard callback |
 
-The own-calendar success step is normalized at runtime to make the two phases explicit:
-availability is already saved, and `Connect Google Calendar` is a separate user action. That click
-prepares the authenticated hosted OAuth URL and navigates the current tab. It intentionally avoids
-delayed `window.open`, which browsers block after asynchronous Xano requests, and removes the
+The own-calendar success step is normalized at runtime to make the two phases
+explicit: availability is already saved, and `Connect Google Calendar` is a
+separate user action. That click prepares the authenticated hosted OAuth URL
+and navigates the current tab. It intentionally avoids delayed `window.open`,
+which browsers block after asynchronous Xano requests, and removes the
 misleading `Done` -> `Refresh the page` dead end.
 
 Only `setup-form`, `how-to-manage`, and `disconnect-calendar` carry a
@@ -1937,15 +1938,16 @@ node v3/scheduling-availability-writer.test.js
 
 ## Calendar OAuth return (no separate page)
 
-There is no `/connect-success` page in V3. `grants/oauth/v3` redirects the
-OAuth tab to the same approved Starter scheduling page. The writer accepts both
+There is no `/connect-success` page in V3. `grants/oauth/v3` returns the current
+tab to the same approved Starter scheduling page. The writer accepts both
 the authorization-code return (`?code&state`) and Nylas hosted-auth success
 return (`?success=true&grant_id&email&provider&state`). It captures and strips
 all OAuth parameters before fallible bootstrap work. The callback fields needed
-for validation (`code` or `grant_id`, `state`, and `success`) stay in that tab's
-`sessionStorage` for at most 15 minutes so a reload after Memberstack login, or
-a transient grant-save failure, can resume the same handoff. The writer clears
-the saved callback and member-scoped intent only after `grants/add/v3` succeeds,
+for validation (`code` or `grant_id`, `state`, and `success`) stay in the current
+tab's `sessionStorage` for at most 15 minutes so a reload after Memberstack
+login, or a transient grant-save failure, can resume the same handoff. The
+writer clears the saved callback and member-scoped intent only after
+`grants/add/v3` succeeds,
 or clears the callback immediately when validation fails; expired or malformed
 state is also discarded. Provider access tokens are never stored in the
 browser, and the returned `email` and `provider` are neither retained nor
