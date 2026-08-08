@@ -1854,6 +1854,14 @@ legacy grant custom-field mirrors are not connection authority and cannot make
 a missing or stale Xano connection appear ready. A grant-less save returns to
 the `default` step instead of legacy's silent dead-end on the form.
 
+Connection mutations follow the same authority rule. OAuth persistence,
+virtual-calendar setup, manager changes, and disconnect/clear flows treat their
+write responses only as acknowledgements. Before publishing a terminal Calendar
+state, the writer re-reads the authenticated `availability_v3` projection and
+then reads `nylas_configurations_v3` for the grant returned by that projection.
+If either canonical read fails, the UI remains in the authored error path rather
+than inferring readiness from a mutation response.
+
 Deliberately NOT ported from the legacy inline writer:
 
 - the hardcoded test member id and dashboard/onboarding redirects;

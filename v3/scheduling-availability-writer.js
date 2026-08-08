@@ -598,6 +598,36 @@
     }
   }
 
+  // Every terminal connection state must come from a fresh canonical read.
+  // Mutation responses are acknowledgements, not scheduling authority: re-read
+  // availability_v3 through the authenticated Starter projection, then read
+  // configurations for the grant returned by that row before repainting UI.
+  async function refreshCanonicalConnectionState() {
+    publishCalendarConnectionState('loading')
+    try {
+      const starter = await readStarterRecord()
+      const canonicalAvailability = starter && starter.availability
+      const nextGrantId = (starter && starter.nylas_grant_id) || null
+      const nextConfigs = nextGrantId ? await getConfigs(nextGrantId, true) : []
+
+      grantId = nextGrantId
+      grantEmail = (starter && starter.nylas_grant_email) || null
+      grantCalendarId = (starter && starter.nylas_calendar_id) || null
+      configs = nextConfigs
+      if (isAvailability(canonicalAvailability)) {
+        availability = canonicalAvailability
+        window.STARTER_AVAILABILITY = canonicalAvailability
+        writeAvailabilityCache()
+      }
+      connectionError = false
+      return publishCalendarConnectionState()
+    } catch (error) {
+      connectionError = true
+      publishCalendarConnectionState('error')
+      throw error
+    }
+  }
+
   // The paid-call rate comes from the page's `#price` input (Designer-bound,
   // like V2) with the shared localStorage key as fallback. Without a resolved
   // positive rate, no paid configuration is created — a bookable $0 "paid"
@@ -733,15 +763,15 @@
     }
   }
 
-  async function refreshConfigsSoon(delay) {
+  async function refreshCanonicalConnectionSoon(delay) {
     setTimeout(async function () {
       try {
-        configs = (await getConfigs(grantId, true)) || []
-        connectionError = false
-        publishCalendarConnectionState()
+        await refreshCanonicalConnectionState()
       } catch (error) {
-        connectionError = true
-        publishCalendarConnectionState('error')
+        console.warn(
+          '[scheduling-writer] canonical connection refresh failed:',
+          error && error.message,
+        )
       }
     }, delay)
   }
@@ -966,7 +996,7 @@
           await updateConfigs(step)
         } else {
           await createConfigPair()
-          refreshConfigsSoon(500)
+          refreshCanonicalConnectionSoon(500)
           switchStep('default')
           setLoader(false, step)
         }
@@ -1006,6 +1036,7 @@
     try {
       if (activeManager === 'platform') {
         switchStep('virtual-connect')
+        publishCalendarConnectionState('loading')
         const memberId = await writeMemberId()
         const virtual = await createVirtualCalendarFlow(memberId)
         if (virtual.status === 200) {
@@ -1014,12 +1045,10 @@
           grantCalendarId = virtual.calendar_id
 
           await createConfigPair()
-          connectionError = false
-          publishCalendarConnectionState()
-          refreshConfigsSoon(500)
 
           availability.manager = activeManager
           await updateAvail()
+          await refreshCanonicalConnectionState()
           try {
             window.localStorage.setItem('prev-availability-manager', activeManager)
           } catch (error) {
@@ -1033,6 +1062,7 @@
           console.warn('[scheduling-writer] virtual calendar setup failed')
         }
       } else {
+        publishCalendarConnectionState('loading')
         const memberId = await writeMemberId()
         await clearGrant(memberId, grantId)
         grantId = null
@@ -1044,8 +1074,7 @@
           await updateAvail()
         }
         switchStep('success-calendar')
-        connectionError = false
-        publishCalendarConnectionState()
+        await refreshCanonicalConnectionState()
         emit('starterSchedulingWriteSuccess', { action: 'manager-calendar' })
       }
     } catch (error) {
@@ -1062,6 +1091,7 @@
   async function handleDisconnectCalendar(step) {
     setLoader(true, step)
     try {
+      publishCalendarConnectionState('loading')
       const memberId = await writeMemberId()
       await clearGrant(memberId, grantId)
       availability.manager = null
@@ -1073,11 +1103,10 @@
         grantCalendarId = virtual.calendar_id
 
         await createConfigPair()
-        connectionError = false
-        publishCalendarConnectionState()
-        refreshConfigsSoon(500)
 
         availability.manager = 'platform'
+        await updateAvail()
+        await refreshCanonicalConnectionState()
         switchStep('success-disconnect')
         emit('starterSchedulingWriteSuccess', { action: 'disconnect-calendar' })
       } else {
@@ -1091,7 +1120,7 @@
         publishCalendarConnectionState('error')
       }
 
-      await updateAvail()
+      if (virtual.status !== 200) await updateAvail()
     } catch (error) {
       switchStep('config-request-error')
       console.warn('[scheduling-writer] disconnect failed:', error && error.message)
@@ -1359,9 +1388,7 @@
           }
           clearOAuthIntent(memberId)
           clearOAuthCallback()
-          grantId = grant.grant_id
-          grantEmail = grant.email || null
-          grantCalendarId = grant.calendar_id || null
+          await refreshCanonicalConnectionState()
           connectedCalendar = connectedCalendar || 'google'
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
@@ -1380,7 +1407,7 @@
         configs = (await getConfigs(grantId, true)) || []
         if (isStagingHost && !configs.length && !connectedCalendar) {
           await createConfigPair()
-          refreshConfigsSoon(500)
+          refreshCanonicalConnectionSoon(500)
         }
       }
 
@@ -1396,7 +1423,7 @@
         availability.manager = 'calendar'
         await updateAvail()
         await createConfigPair()
-        refreshConfigsSoon(1000)
+        await refreshCanonicalConnectionState()
         switchStep('default')
       }
 

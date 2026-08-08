@@ -788,7 +788,30 @@ test('refuses to write when the member session changed after bootstrap', async (
 })
 
 test('choosing own-calendar clears grant data and lands on success-calendar', async () => {
-  const result = loadWriter({ storage: TZ_CACHED })
+  let cleared = false
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/clear_calendar_data/v3': () => {
+        cleared = true
+        return { status: 200, body: { id: 1 } }
+      },
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: {
+            ...defaultAvailability(),
+            manager: cleared ? null : 'platform',
+          },
+          nylas_grant_id: cleared ? null : 'grant-1',
+          nylas_grant_email: cleared ? null : 'grant@example.com',
+          nylas_calendar_id: cleared ? null : 'cal-1',
+        },
+      }),
+    },
+  })
   await settle()
 
   result.dom.managers.calendar.click()
@@ -800,6 +823,11 @@ test('choosing own-calendar clears grant data and lands on success-calendar', as
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, null)
   assert.equal(result.dom.steps['success-calendar'].style.display, 'block')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
+  const paths = result.calls.map((call) => call.path)
+  const clearIndex = paths.indexOf('/starter/clear_calendar_data/v3')
+  const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', clearIndex + 1)
+  assert.ok(canonicalReadIndex > clearIndex)
 })
 
 test('own-calendar prefers the page bookings-aware clearGrantData composite', async () => {
@@ -824,7 +852,42 @@ test('own-calendar prefers the page bookings-aware clearGrantData composite', as
 test('choosing platform creates the virtual calendar chain and configs', async () => {
   const availability = defaultAvailability()
   availability.manager = null
-  const result = loadWriter({ availability, storage: TZ_CACHED })
+  let virtualPersisted = false
+  let configCreated = false
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: {
+            ...availability,
+            manager: virtualPersisted ? 'platform' : null,
+          },
+          nylas_grant_id: virtualPersisted ? 'vgrant-1' : null,
+          nylas_grant_email: virtualPersisted ? 'virtual@example.com' : null,
+          nylas_calendar_id: virtualPersisted ? 'vcal-1' : null,
+        },
+      }),
+      '/grants/add_virtual/v3': () => {
+        virtualPersisted = true
+        return { status: 200, body: { id: 5 } }
+      },
+      '/scheduler/configurations/create/v3': () => {
+        configCreated = true
+        return { status: 200, body: { response: { status: 200 } } }
+      },
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: configCreated
+          ? [{ config_id: 'cfg-free', grant_id: 'vgrant-1', is_paid: false }]
+          : [],
+      }),
+    },
+  })
   await settle()
 
   result.dom.managers.platform.click()
@@ -849,6 +912,14 @@ test('choosing platform creates the virtual calendar chain and configs', async (
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, 'platform')
   assert.equal(result.dom.steps.success.style.display, 'block')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', calendarIndex + 1)
+  const canonicalConfigIndex = paths.indexOf(
+    '/nylas_configurations/get_all/v3',
+    canonicalReadIndex + 1,
+  )
+  assert.ok(canonicalReadIndex > calendarIndex)
+  assert.ok(canonicalConfigIndex > canonicalReadIndex)
 })
 
 test('platform setup failure shows config-request-error and writes nothing', async () => {
@@ -875,7 +946,45 @@ test('platform setup failure shows config-request-error and writes nothing', asy
 })
 
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {
-  const result = loadWriter({ storage: TZ_CACHED })
+  let virtualPersisted = false
+  let configCreated = false
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/grants/add_virtual/v3': () => {
+        virtualPersisted = true
+        return { status: 200, body: { id: 5 } }
+      },
+      '/scheduler/configurations/create/v3': () => {
+        configCreated = true
+        return { status: 200, body: { response: { status: 200 } } }
+      },
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: {
+            ...defaultAvailability(),
+            manager: virtualPersisted ? 'platform' : 'calendar',
+          },
+          nylas_grant_id: virtualPersisted ? 'vgrant-1' : 'grant-1',
+          nylas_grant_email: virtualPersisted ? 'virtual@example.com' : 'grant@example.com',
+          nylas_calendar_id: virtualPersisted ? 'vcal-1' : 'cal-1',
+        },
+      }),
+      '/nylas_configurations/get_all/v3': (body) => ({
+        status: 200,
+        body:
+          body.grant_id === 'vgrant-1' && configCreated
+            ? [{ config_id: 'cfg-free', grant_id: 'vgrant-1', is_paid: false }]
+            : [
+                { config_id: 'cfg-free-old', grant_id: 'grant-1', is_paid: false },
+                { config_id: 'cfg-paid-old', grant_id: 'grant-1', is_paid: true },
+              ],
+      }),
+    },
+  })
   await settle()
 
   result.clickAction(result.dom.buttons.disconnectConfirm)
@@ -894,6 +1003,15 @@ test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virt
   assert.equal(update.body.member_id, 'member-a')
   assert.equal(update.body.availability.manager, 'platform')
   assert.equal(result.dom.steps['success-disconnect'].style.display, 'block')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+
+  const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', calendarIndex + 1)
+  const canonicalConfigIndex = paths.indexOf(
+    '/nylas_configurations/get_all/v3',
+    canonicalReadIndex + 1,
+  )
+  assert.ok(canonicalReadIndex > calendarIndex)
+  assert.ok(canonicalConfigIndex > canonicalReadIndex)
 
   const loader = result.dom.steps['disconnect-calendar'].querySelector('[data-custom-loader]')
   assert.match(loader.getAttribute('style'), /visibility: hidden/)
@@ -1042,14 +1160,38 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
   delete member.customFields['nylas-grant-id']
   const availability = defaultAvailability()
   availability.manager = null
+  let starterReads = 0
+  let configCreated = false
   const result = loadWriter({
     member,
     availability,
     search: '?code=abc123&state=member-a',
     storage: TZ_CACHED,
     routes: {
-      // A freshly connected grant has no Nylas configurations yet.
-      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+      '/starter/get_by_memberstack/v3': () => {
+        starterReads += 1
+        return {
+          status: 200,
+          body: {
+            id: 1,
+            timezone: 'Asia/Manila',
+            availability: availability,
+            nylas_grant_id: starterReads === 1 ? null : 'grant-9',
+            nylas_grant_email: starterReads === 1 ? null : 'g@example.com',
+            nylas_calendar_id: starterReads === 1 ? null : 'cal-9',
+          },
+        }
+      },
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: configCreated
+          ? [{ config_id: 'cfg-new', grant_id: 'grant-9', is_paid: false }]
+          : [],
+      }),
+      '/scheduler/configurations/create/v3': () => {
+        configCreated = true
+        return { status: 200, body: { response: { status: 200 } } }
+      },
     },
   })
   await settle()
@@ -1064,11 +1206,22 @@ test('an OAuth code on this page exchanges the grant and finishes the connect fl
   })
   assert.ok(result.historyCalls.length >= 1, 'code/state stripped from the URL')
 
+  const paths = result.calls.map((call) => call.path)
+  const addIndex = paths.indexOf('/grants/add/v3')
+  const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', addIndex + 1)
+  const canonicalConfigIndex = paths.indexOf(
+    '/nylas_configurations/get_all/v3',
+    canonicalReadIndex + 1,
+  )
+  assert.ok(addIndex > -1 && canonicalReadIndex > addIndex)
+  assert.ok(canonicalConfigIndex > canonicalReadIndex)
+
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, 'calendar')
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
   assert.equal(creates.length, 1)
   assert.equal(creates[0].body.grant_id, 'grant-9')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.equal(result.dom.steps.default.style.display, 'block')
   assert.equal(result.status(), 'ready')
 })
