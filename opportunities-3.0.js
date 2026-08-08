@@ -326,8 +326,10 @@
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     projectCreate: (payload) => call('projects/create/v3', { body: payload }),
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
-    brandProjectList: () => call('brand/projects/mine', { body: {} }),
-    starterProjectList: () => call('starter/projects/mine', { body: {} }),
+    brandProjectList: (page = 1, per_page = 100) =>
+      call('brand/projects/mine', { body: { page, per_page } }),
+    starterProjectList: (page = 1, per_page = 100) =>
+      call('starter/projects/mine', { body: { page, per_page } }),
     contractLink: (project_id) => call('contracts/link/v3', { body: { project_id } }),
     projectAction: (payload) => call('projects/action/v3', { body: payload }),
     brandReviewSubmit: (payload) => call('brand/reviews/submit', { body: payload }),
@@ -1919,6 +1921,48 @@
         : []
   }
 
+  async function fetchProjectWorkflowItems(role) {
+    const items = []
+    const seenProjectIds = new Set()
+    const seenPages = new Set()
+    let page = 1
+    while (!seenPages.has(page)) {
+      seenPages.add(page)
+      const result =
+        role === 'brand'
+          ? await API.brandProjectList(page)
+          : await API.starterProjectList(page)
+      const batch = projectItems(result)
+      let added = 0
+      batch.forEach((item) => {
+        const id = Number(item && (item.project_id || item.id))
+        if (!(id > 0) || seenProjectIds.has(id)) return
+        seenProjectIds.add(id)
+        items.push(item)
+        added += 1
+      })
+      if (Array.isArray(result)) break
+
+      const currentPage = Number(result && result.curPage)
+      const nextPage = Number(result && result.nextPage)
+      const itemsTotal = Number(result && result.itemsTotal)
+      if (Number.isInteger(nextPage) && nextPage > 0 && !seenPages.has(nextPage)) {
+        page = nextPage
+      } else if (
+        Number.isInteger(itemsTotal) &&
+        itemsTotal > items.length &&
+        added > 0
+      ) {
+        page = Number.isInteger(currentPage) && currentPage > 0 ? currentPage + 1 : page + 1
+      } else if (Number.isInteger(itemsTotal) && itemsTotal > items.length) {
+        throw new Error('Project pagination did not advance')
+      } else {
+        break
+      }
+    }
+    return items
+  }
+
   function projectIdFromCard(card) {
     const id = parseInt(card && card.getAttribute('data-wf-xano-id'), 10)
     return id > 0 ? id : 0
@@ -2047,17 +2091,16 @@
     if (!role || projectRoleForPath() !== role) return null
     if (projectWorkflowRefresh) return projectWorkflowRefresh
     const request = (async () => {
-      const result =
-        role === 'brand' ? await API.brandProjectList() : await API.starterProjectList()
+      const items = await fetchProjectWorkflowItems(role)
       if (projectWorkflowRole !== role || projectRoleForPath() !== role) return null
       projectWorkflowItems = new Map(
-        projectItems(result)
+        items
           .map((item) => [Number(item && (item.project_id || item.id)), item])
           .filter(([id]) => id > 0),
       )
       decorateProjectCards()
       observeProjectCards()
-      return result
+      return items
     })()
     projectWorkflowRefresh = request
     try {
@@ -2067,12 +2110,20 @@
     }
   }
 
-  async function currentProjectContext(card) {
-    let project = projectContextFromCard(card)
+  async function currentProjectContext(card, refresh = false) {
+    let project = refresh ? null : projectContextFromCard(card)
     if (project && (project.lifecycle_state || project.status)) return project
     await refreshProjectWorkflow()
     project = projectContextFromCard(card)
     return project && (project.lifecycle_state || project.status) ? project : null
+  }
+
+  function projectLifecycleVersion(project) {
+    if (!project || project.lifecycle_version == null || project.lifecycle_version === '') {
+      return null
+    }
+    const version = Number(project.lifecycle_version)
+    return Number.isInteger(version) && version >= 0 ? version : null
   }
 
   function projectActionErrorMessage(error, fallback) {
@@ -2085,7 +2136,7 @@
   }
 
   function projectActionKey(action, project, actionName) {
-    const version = Number(project.lifecycle_version) || 0
+    const version = projectLifecycleVersion(project)
     const scope = [project.id || project.project_id, version, actionName].join(':')
     if (action.dataset.projectActionScope === scope && action.dataset.projectActionKey) {
       return action.dataset.projectActionKey
@@ -2176,9 +2227,14 @@
   }
 
   async function mutateProjectLifecycle(action, card) {
-    const project = await currentProjectContext(card)
+    const project = await currentProjectContext(card, true)
     if (!project) {
       showProjectActionFeedback(action, 'Project details unavailable', true)
+      return
+    }
+    const lifecycleVersion = projectLifecycleVersion(project)
+    if (lifecycleVersion == null) {
+      showProjectActionFeedback(action, 'Project version unavailable. Please try again.', true)
       return
     }
     const intent = projectActionIntent(project)
@@ -2192,7 +2248,7 @@
     try {
       const result = await API.projectAction({
         project_id: project.id || project.project_id,
-        expected_version: Number(project.lifecycle_version) || 0,
+        expected_version: lifecycleVersion,
         action: intent.action,
         reason: intent.reason,
         idempotency_key: projectActionKey(action, project, intent.action),
@@ -2244,6 +2300,32 @@
     fail.style.display = 'block'
   }
 
+  function reviewSubmissionKey(form, project, rating, reviewText) {
+    let hash = 2166136261
+    const payload = rating + ':' + reviewText
+    for (let index = 0; index < payload.length; index += 1) {
+      hash ^= payload.charCodeAt(index)
+      hash = Math.imul(hash, 16777619)
+    }
+    const scope = (project.id || project.project_id) + ':' + (hash >>> 0).toString(36)
+    if (form.dataset.projectReviewScope === scope && form.dataset.projectReviewKey) {
+      return form.dataset.projectReviewKey
+    }
+    const uuid =
+      window.crypto && typeof window.crypto.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
+    form.dataset.projectReviewScope = scope
+    form.dataset.projectReviewKey = 'review-ui:' + scope + ':' + uuid
+    return form.dataset.projectReviewKey
+  }
+
+  function clearReviewSubmissionKey(form) {
+    if (!form) return
+    delete form.dataset.projectReviewScope
+    delete form.dataset.projectReviewKey
+  }
+
   function prepareProjectReview(project) {
     const modal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
     if (!modal || !project || !project.review_eligible || project.has_review) return false
@@ -2254,6 +2336,7 @@
     if (form) {
       form.reset()
       form.style.display = ''
+      clearReviewSubmissionKey(form)
     }
     if (done) done.style.display = ''
     if (fail) fail.style.display = ''
@@ -2309,11 +2392,9 @@
         project_id: project.id || project.project_id,
         rating,
         review_text: reviewText,
-        idempotency_key: 'review-ui:' + (project.id || project.project_id) + ':' +
-          (window.crypto && typeof window.crypto.randomUUID === 'function'
-            ? window.crypto.randomUUID()
-            : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)),
+        idempotency_key: reviewSubmissionKey(form, project, rating, reviewText),
       })
+      clearReviewSubmissionKey(form)
       form.style.display = 'none'
       const done = $('.w-form-done', modal)
       if (done) done.style.display = 'block'
@@ -2349,6 +2430,8 @@
     projectWorkflowRefresh = null
     activeReviewProject = null
     reviewSubmitting = false
+    const reviewModal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
+    clearReviewSubmissionKey(reviewModal && $('form', reviewModal))
     if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
     projectWorkflowObserver = null
   }
@@ -2418,10 +2501,17 @@
 
   async function initProjectDashboardWorkflow(role, authorizedMember = null) {
     const expected = role === 'brand' ? 'brand' : 'freelancer'
+    if (projectRoleForPath() !== role) return false
+    const member = authorizedMember || await gateOrRedirect(expected)
+    const requiredRole = role === 'brand' ? 'brand-paid' : 'talent'
     if (
-      projectRoleForPath() !== role ||
-      (!authorizedMember && !(await gateOrRedirect(expected)))
-    ) return false
+      !member ||
+      member.id !== _cacheMemberId ||
+      memberPlanRole(member) !== requiredRole
+    ) {
+      unwireProjectDashboardWorkflow()
+      return false
+    }
     wireProjectWorkflowListeners(role)
     try {
       await refreshProjectWorkflow(role)
