@@ -238,7 +238,36 @@ function buildDom(options) {
   steps['how-to-manage'].appendChild(buttons.managerSubmit)
 
   buttons.preRedirect = new El('a', { 'availability-action-btn': 'pre-redirect' })
-  steps['how-to-manage'].appendChild(buttons.preRedirect)
+  const preRedirectButtonText = new El('span', { class: 'button_main-text' })
+  preRedirectButtonText.textContent = 'Done'
+  buttons.preRedirect.appendChild(preRedirectButtonText)
+
+  const savedHeadline = new El('div', { class: 'set-availability_success-headline' })
+  const savedTitle = new El('p', { class: 'heading-style-h1' })
+  savedTitle.textContent = 'Availability saved'
+  const savedBody = new El('p')
+  savedBody.textContent = 'Legacy saved copy'
+  savedHeadline.appendChild(savedTitle)
+  savedHeadline.appendChild(savedBody)
+  const connectHeadline = new El('div', { class: 'set-availability_success-headline' })
+  const connectTitle = new El('p', { class: 'heading-style-h1' })
+  connectTitle.textContent = 'Redirecting to calendar...'
+  const connectBody = new El('p')
+  connectBody.textContent = 'Legacy redirect copy'
+  connectHeadline.appendChild(connectTitle)
+  connectHeadline.appendChild(connectBody)
+  steps['success-calendar'].appendChild(savedHeadline)
+  steps['success-calendar'].appendChild(connectHeadline)
+  steps['success-calendar'].appendChild(buttons.preRedirect)
+
+  const redirectHeadline = new El('div', { class: 'set-availability_success-headline' })
+  const redirectTitle = new El('p', { class: 'heading-style-h1' })
+  redirectTitle.textContent = 'Connecting calendar...'
+  const redirectBody = new El('p')
+  redirectBody.textContent = 'Legacy connecting copy'
+  redirectHeadline.appendChild(redirectTitle)
+  redirectHeadline.appendChild(redirectBody)
+  steps['pre-redirect'].appendChild(redirectHeadline)
 
   // Mirrors the published markup: the calendar change-manager-link doubles as
   // the disconnect-confirm navigation into the disconnect-calendar step.
@@ -354,6 +383,7 @@ function loadWriter(options = {}) {
   const timers = []
   const calls = []
   const opened = []
+  const assigned = []
   const historyCalls = []
   const events = []
   const warnings = []
@@ -409,6 +439,7 @@ function loadWriter(options = {}) {
       search: options.search || '',
       pathname: options.pathname || '/starter-dashboard---availability-stage',
       origin: options.origin || 'https://the-starters-3-0.webflow.io',
+      assign: (url) => assigned.push(url),
     },
     localStorage: {
       getItem: (key) => (storage.has(key) ? storage.get(key) : null),
@@ -482,6 +513,7 @@ function loadWriter(options = {}) {
 
   return {
     calls,
+    assigned,
     clickAction,
     dom,
     events,
@@ -1038,13 +1070,38 @@ test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virt
   assert.match(loader.getAttribute('style'), /visibility: hidden/)
 })
 
-test('pre-redirect sends the authenticated member id as OAuth state', async () => {
+test('calendar connection copy describes the explicit same-tab handoff', async () => {
+  const result = loadWriter({ storage: TZ_CACHED })
+  await settle()
+
+  const successHeadlines = result.dom.steps['success-calendar'].querySelectorAll(
+    '.set-availability_success-headline',
+  )
+  assert.equal(successHeadlines[0].querySelector('p').textContent, 'Availability saved')
+  assert.equal(
+    successHeadlines[0].querySelectorAll('p')[1].textContent,
+    'Your hours are saved, but your calendar is not connected yet. Connect it before accepting call requests to prevent booking conflicts.',
+  )
+  assert.equal(
+    successHeadlines[1].querySelector('p').textContent,
+    'Connect your Google Calendar',
+  )
+  assert.equal(
+    result.dom.buttons.preRedirect.querySelector('.button_main-text').textContent,
+    'Connect Google Calendar',
+  )
+  assert.equal(
+    result.dom.steps['pre-redirect'].querySelector('.heading-style-h1').textContent,
+    'Opening Google Calendar…',
+  )
+})
+
+test('pre-redirect sends the authenticated member id as OAuth state and navigates same-tab', async () => {
   const result = loadWriter({ storage: TZ_CACHED })
   await settle()
 
   result.clickAction(result.dom.buttons.preRedirect)
   assert.equal(result.dom.steps['pre-redirect'].style.display, 'block')
-  result.flushTimers()
   await settle()
 
   const oauth = result.calls.find((c) => c.path === '/grants/oauth/v3')
@@ -1054,21 +1111,20 @@ test('pre-redirect sends the authenticated member id as OAuth state', async () =
     in_redirect_uri:
       'https://the-starters-3-0.webflow.io/starter-dashboard---availability-stage',
   })
-  assert.deepEqual(result.opened, [{ url: 'https://nylas.example/oauth', target: '_blank' }])
-  assert.equal(result.dom.steps['reload-page'].style.display, 'block')
+  assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
+  assert.deepEqual(result.opened, [])
 })
 
 test('pre-redirect aborts when the member session changed', async () => {
   const result = loadWriter({ storage: TZ_CACHED })
   await settle()
 
-  result.clickAction(result.dom.buttons.preRedirect)
   result.harness.setActiveMember({ id: 'member-b', customFields: {} })
-  result.flushTimers()
+  result.clickAction(result.dom.buttons.preRedirect)
   await settle()
 
   assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
-  assert.equal(result.opened.length, 0)
+  assert.equal(result.assigned.length, 0)
   assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
 })
 
@@ -1095,7 +1151,6 @@ test('production pre-redirect persists timezone and uses the canonical host', as
 
   assert.equal(result.calls.filter((c) => c.path === '/starter/set_timezone/v3').length, 0)
   result.clickAction(result.dom.buttons.preRedirect)
-  result.flushTimers()
   await settle()
 
   const paths = result.calls.map((c) => c.path)

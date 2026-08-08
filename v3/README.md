@@ -1818,7 +1818,7 @@ Safety boundary:
   legacy unscoped `starter-availability` localStorage key is gone; the
   timezone cache is member-scoped (`starter-timezone:<memberId>`).
 
-Legacy UI-step semantics kept. Published-markup audit (2026-07-21) of the
+Designer UI-step contract retained. Published-markup audit (2026-07-21) of the
 shared `dialog[data-modal-target="set-availability"]` shell: the initializer
 owns the open/close fallback documented above; the writer only switches steps
 inside it. All **11** step wrappers exist:
@@ -1829,10 +1829,17 @@ inside it. All **11** step wrappers exist:
 | `setup-form` | `[availability-form]` (3 `set-availability-group` wrappers: days/start/end), back → default, `submit` + `[btn-text]`, `config-initial-element="setup-form"`, loader |
 | `how-to-manage` | two `[config-manager]` tiles (platform pre-`is-active`), `manager-submit`, back, loader |
 | `disconnect-calendar` | confirm screen: `disconnect-calendar` action, back, loader |
-| `virtual-connect`, `pre-redirect` | passive status screens |
+| `virtual-connect`, `pre-redirect` | passive status screens; `pre-redirect` remains visible while the same-tab hosted OAuth URL is prepared |
 | `success`, `success-disconnect`, `config-request-error` | back → default |
 | `success-calendar` | `pre-redirect` action |
-| `reload-page` | `[availability-popup-close]` |
+| `reload-page` | legacy fallback only; the current same-tab OAuth handoff returns directly to the dashboard callback |
+
+The own-calendar success step is normalized at runtime to make the two phases
+explicit: availability is already saved, and `Connect Google Calendar` is a
+separate user action. That click prepares the authenticated hosted OAuth URL
+and navigates the current tab. It intentionally avoids delayed `window.open`,
+which browsers block after asynchronous Xano requests, and removes the
+misleading `Done` -> `Refresh the page` dead end.
 
 Only `setup-form`, `how-to-manage`, and `disconnect-calendar` carry a
 step-scoped `[data-custom-loader]`; `setLoader` is a safe no-op on the rest
@@ -1931,15 +1938,16 @@ node v3/scheduling-availability-writer.test.js
 
 ## Calendar OAuth return (no separate page)
 
-There is no `/connect-success` page in V3. `grants/oauth/v3` redirects the
-OAuth tab to the same approved Starter scheduling page. The writer accepts both
+There is no `/connect-success` page in V3. `grants/oauth/v3` returns the current
+tab to the same approved Starter scheduling page. The writer accepts both
 the authorization-code return (`?code&state`) and Nylas hosted-auth success
 return (`?success=true&grant_id&email&provider&state`). It captures and strips
 all OAuth parameters before fallible bootstrap work. The callback fields needed
-for validation (`code` or `grant_id`, `state`, and `success`) stay in that tab's
-`sessionStorage` for at most 15 minutes so a reload after Memberstack login, or
-a transient grant-save failure, can resume the same handoff. The writer clears
-the saved callback and member-scoped intent only after `grants/add/v3` succeeds,
+for validation (`code` or `grant_id`, `state`, and `success`) stay in the current
+tab's `sessionStorage` for at most 15 minutes so a reload after Memberstack
+login, or a transient grant-save failure, can resume the same handoff. The
+writer clears the saved callback and member-scoped intent only after
+`grants/add/v3` succeeds,
 or clears the callback immediately when validation fails; expired or malformed
 state is also discarded. Provider access tokens are never stored in the
 browser, and the returned `email` and `provider` are neither retained nor
@@ -1957,8 +1965,9 @@ URI. For hosted auth, `success` must be exactly `true`, and only the returned
 `grant_id` is forwarded as callback identity. `grants/add/v3` performs the
 authoritative server-side code exchange or grant verification and persists the
 result in one authenticated call. The writer then continues the existing
-configuration flow. The original tab shows the modal's `reload-page` step,
-matching the legacy UX.
+configuration flow in the same tab. After the verified grant and scheduler
+configurations are created, the modal returns to its default dashboard state;
+the legacy `reload-page` step is not part of the current handoff.
 Booking confirmation/reschedule/cancel links baked into scheduler configurations
 also point at this page, where the bookings embed owns `booking_ref` handling.
 
