@@ -2021,8 +2021,13 @@
   }
 
   function lifecycleState(project) {
+    const dashboardStatus = String((project && project.status) || '').trim().toLowerCase()
+    // The lifecycle column can already be more specific while a contract is still
+    // awaiting activation. Xano's cancel action intentionally authorizes that phase
+    // from status=pending, so pending must win over the finer lifecycle value here.
+    if (dashboardStatus === 'pending') return 'pending'
     return String(
-      (project && (project.lifecycle_state || project.status)) || '',
+      (project && (project.lifecycle_state || dashboardStatus)) || '',
     ).trim().toLowerCase()
   }
 

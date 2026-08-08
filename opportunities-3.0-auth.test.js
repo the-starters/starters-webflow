@@ -728,7 +728,12 @@ test('project action context includes every canonical project page', async () =>
               nextPage: 2,
             })
           : response({
-              items: [{ id: 676, lifecycle_state: 'pending', lifecycle_version: 1 }],
+              items: [{
+                id: 676,
+                status: 'pending',
+                lifecycle_state: 'contract_sent',
+                lifecycle_version: 1,
+              }],
               itemsTotal: 2,
               curPage: 2,
               nextPage: null,
