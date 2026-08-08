@@ -4,15 +4,6 @@ const test = require('node:test')
 global.window = global
 const api = require('./dashboard-action-items.js')
 
-test('settles on both Stripe and Calendar feature readiness', () => {
-  assert.deepEqual(api.SETTLE_EVENTS, [
-    'starterStripeConnectReady',
-    'starterStripeConnectError',
-    'starterSchedulingConnectionStateChanged',
-    'starterSchedulingAvailabilityError',
-  ])
-})
-
 function element({ attrs = {}, height = 0, children = [], text = '' } = {}) {
   const el = {
     attributes: { ...attrs },
@@ -75,6 +66,55 @@ function documentLike({ children = [], withBody = true } = {}) {
     querySelectorAll: (selector) => root.querySelectorAll(selector),
   }
 }
+
+test('Calendar readiness events settle mounted loading and empty states', () => {
+  const previous = {
+    addEventListener: global.addEventListener,
+    dispatchEvent: global.dispatchEvent,
+    document: global.document,
+    setTimeout: global.setTimeout,
+  }
+
+  try {
+    ;[
+      'starterSchedulingConnectionStateChanged',
+      'starterSchedulingAvailabilityError',
+    ].forEach((eventName) => {
+      const listeners = new Map()
+      const loading = element({ attrs: { 'data-action-element': 'loading' } })
+      const empty = element({ attrs: { 'data-action-element': 'empty' } })
+      const wrapper = element({
+        attrs: { 'data-action-element': 'wrapper' },
+        children: [loading, empty],
+      })
+
+      global.document = documentLike({ children: [wrapper] })
+      global.addEventListener = (name, listener) => {
+        const handlers = listeners.get(name) || []
+        handlers.push(listener)
+        listeners.set(name, handlers)
+      }
+      global.dispatchEvent = (event) => {
+        ;(listeners.get(event.type) || []).forEach((listener) => listener(event))
+        return true
+      }
+      global.setTimeout = () => 1
+
+      api.mount()
+      assert.equal(loading.style.display, '', eventName)
+      assert.equal(empty.style.display, 'none', eventName)
+
+      global.dispatchEvent({ type: eventName })
+      assert.equal(loading.style.display, 'none', eventName)
+      assert.equal(empty.style.display, '', eventName)
+    })
+  } finally {
+    Object.entries(previous).forEach(([name, value]) => {
+      if (value === undefined) delete global[name]
+      else global[name] = value
+    })
+  }
+})
 
 test('countPendingItems counts only visible leaf rows', () => {
   const scope = element({
