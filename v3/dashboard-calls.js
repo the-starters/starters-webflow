@@ -357,17 +357,23 @@
     const activeFilter = projectFilterIsActive(query.params)
     const total = projectTotal(snapshot)
 
-    if (snapshot.status !== 'success' || !Number.isFinite(total)) return false
-
-    if (total > 0) {
-      memory.known = true
-      memory.hasAny = true
-    } else if (!activeFilter) {
-      memory.known = true
-      memory.hasAny = false
+    if (snapshot.status === 'success' && Number.isFinite(total)) {
+      if (total > 0) {
+        memory.known = true
+        memory.hasAny = true
+      } else if (!activeFilter) {
+        memory.known = true
+        memory.hasAny = false
+      }
     }
 
-    return memory.known && memory.hasAny
+    // Once an unfiltered result proves projects exist, keep the controls
+    // available throughout later loading/error transitions so the member can
+    // switch away from the current filter. Before that proof exists, an active
+    // filter is itself enough reason to keep its navigation visible. Do not
+    // probe All behind the member's back: rendering that replacement list can
+    // strand a selected empty filter on its loading state before it is restored.
+    return memory.known ? memory.hasAny : activeFilter
   }
 
   function findProjectLoadMore(root) {
@@ -524,8 +530,6 @@
         const memory = {
           known: false,
           hasAny: false,
-          probeAttempted: false,
-          probeStatus: '',
         }
         const reveal = function (visible) {
           filters.forEach(function (filter) {
@@ -538,55 +542,15 @@
             if (!change || change.reason !== 'auth:change') return
             memory.known = false
             memory.hasAny = false
-            memory.probeAttempted = false
-            memory.probeStatus = ''
             reveal(false)
           })
         }
-        let latestState = null
-        let scheduled = false
         instance.subscribe(
           function (state) {
             return state
           },
           function (state) {
-            latestState = state
-            if (scheduled) return
-            scheduled = true
-            Promise.resolve().then(function () {
-              scheduled = false
-              const snapshot = latestState || {}
-              const params = (snapshot.query && snapshot.query.params) || {}
-              const activeFilter = projectFilterIsActive(params)
-
-              if (
-                memory.probeStatus &&
-                (snapshot.status === 'error' ||
-                  (snapshot.status === 'success' && !activeFilter))
-              ) {
-                projectFilterVisible(snapshot, memory)
-                const status = memory.probeStatus
-                memory.probeStatus = ''
-                reveal(false)
-                instance.setParam('status', status)
-                return
-              }
-
-              reveal(projectFilterVisible(snapshot, memory))
-              if (
-                snapshot.status === 'success' &&
-                activeFilter &&
-                projectTotal(snapshot) === 0 &&
-                !memory.known &&
-                !memory.probeAttempted &&
-                typeof instance.setParam === 'function'
-              ) {
-                memory.probeAttempted = true
-                memory.probeStatus = clean(params.status)
-                reveal(false)
-                instance.setParam('status', '')
-              }
-            })
+            reveal(projectFilterVisible(state, memory))
           },
         )
       })

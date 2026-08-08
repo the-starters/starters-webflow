@@ -526,11 +526,11 @@ test('project filters remain usable when only the selected filter is empty', () 
   )
 })
 
-test('project filters fail closed outside authoritative success states', () => {
+test('project filters stay visible while a known project list changes filters', () => {
   const memory = { known: true, hasAny: true }
-  assert.equal(api.projectFilterVisible({ status: 'loading' }, memory), false)
-  assert.equal(api.projectFilterVisible({ status: 'error' }, memory), false)
-  assert.equal(api.projectFilterVisible({}, memory), false)
+  assert.equal(api.projectFilterVisible({ status: 'loading' }, memory), true)
+  assert.equal(api.projectFilterVisible({ status: 'error' }, memory), true)
+  assert.equal(api.projectFilterVisible({}, memory), true)
   assert.equal(
     api.projectFilterVisible(
       {
@@ -540,12 +540,19 @@ test('project filters fail closed outside authoritative success states', () => {
       },
       memory,
     ),
-    false,
+    true,
   )
 })
 
-test('a deep-linked empty project filter stays hidden until the full list is known', () => {
+test('an active project filter remains usable before the full list is known', () => {
   const memory = { known: false, hasAny: false }
+  assert.equal(
+    api.projectFilterVisible(
+      { status: 'loading', query: { params: { status: 'incomplete' } } },
+      memory,
+    ),
+    true,
+  )
   assert.equal(
     api.projectFilterVisible(
       {
@@ -555,9 +562,27 @@ test('a deep-linked empty project filter stays hidden until the full list is kno
       },
       memory,
     ),
-    false,
+    true,
   )
   assert.deepEqual(memory, { known: false, hasAny: false })
+})
+
+test('an unresolved unfiltered project list stays hidden', () => {
+  const memory = { known: false, hasAny: false }
+  assert.equal(
+    api.projectFilterVisible(
+      { status: 'loading', query: { params: {} } },
+      memory,
+    ),
+    false,
+  )
+  assert.equal(
+    api.projectFilterVisible(
+      { status: 'error', query: { params: {} } },
+      memory,
+    ),
+    false,
+  )
 })
 
 test('project filters hide synchronously before wf-xano is available', () => {
@@ -585,7 +610,7 @@ test('project filters hide synchronously before wf-xano is available', () => {
   assert.equal(window.WfXano.length, 1)
 })
 
-test('a deep-linked empty filter probes All before becoming visible', async () => {
+test('an empty selected filter stays visible without issuing a hidden All probe', () => {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
   const filters = element()
   const project = element({ 'wf-xano-instance': 'dash-projects' })
@@ -607,7 +632,6 @@ test('a deep-linked empty filter probes All before becoming visible', async () =
     data: { total: 0 },
     query: { params: { status: 'active' } },
   }
-  let subscriber
   const params = []
   const instance = {
     qa: () => [filters],
@@ -615,41 +639,15 @@ test('a deep-linked empty filter probes All before becoming visible', async () =
     on() {},
     setParam(field, value) {
       params.push([field, value])
-      state = {
-        status: 'loading',
-        data: state.data,
-        query: { params: value ? { [field]: value } : {} },
-      }
-      subscriber(state)
     },
     subscribe(selector, handler) {
-      subscriber = (next) => handler(selector(next))
-      subscriber(state)
+      handler(selector(state))
     },
   }
 
-  vm.runInNewContext(source, { document, Intl, Promise, window })
+  vm.runInNewContext(source, { document, Intl, window })
   window.WfXano[0]({ get: (key) => (key === 'dash-projects' ? instance : null) })
-  await new Promise(setImmediate)
-  assert.deepEqual(params, [['status', '']])
-  assert.equal(filters.hidden, true)
-
-  state = { status: 'success', data: { total: 3 }, query: { params: {} } }
-  subscriber(state)
-  await new Promise(setImmediate)
-  assert.deepEqual(params, [
-    ['status', ''],
-    ['status', 'active'],
-  ])
-  assert.equal(filters.hidden, true)
-
-  state = {
-    status: 'success',
-    data: { total: 0 },
-    query: { params: { status: 'active' } },
-  }
-  subscriber(state)
-  await new Promise(setImmediate)
+  assert.deepEqual(params, [])
   assert.equal(filters.hidden, false)
 })
 
