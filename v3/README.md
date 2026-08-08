@@ -2133,14 +2133,14 @@ use these values:
 | `state-missing-role` | Designer-owned primary-role setup guidance |
 | `points` | Canonical ledger total |
 | `overall-card` | Overall-rank card wrapper; visible only when rank status is ready |
-| `overall-rank` | Overall competition rank |
-| `overall-cohort-size` | Overall cohort size only; surrounding copy stays in Webflow |
-| `overall-tie` | Designer-authored tie label; shown only when multiple eligible Starters share the overall score |
+| `overall-rank` | Compact overall position, for example `284th/703` |
+| `overall-cohort-size` | Overall cohort hook; its number is folded into `overall-rank` and the authored line becomes `Starters Overall` |
+| `overall-tie` | Legacy Designer-authored tie label; kept hidden in the compact presentation |
 | `role-card` | Primary-role rank card wrapper |
-| `role-rank` | Primary-role competition rank |
-| `role-label` | Primary-role name only; surrounding copy stays in Webflow |
-| `role-cohort-size` | Primary-role cohort size only; surrounding copy stays in Webflow |
-| `role-tie` | Designer-authored tie label; shown only when multiple Starters share the role score |
+| `role-rank` | Compact primary-role position, for example `6th/21` |
+| `role-label` | Primary-role name; rendered on the authored subline |
+| `role-cohort-size` | Primary-role cohort hook; its number is folded into `role-rank` |
+| `role-tie` | Legacy Designer-authored tie label; kept hidden in the compact presentation |
 
 The script never calculates points or rank in the browser. It trades the active
 Memberstack session for a Xano token and renders only the authenticated summary.
@@ -2151,13 +2151,12 @@ reveal their matching Designer-authored state blocks. Missing primary roles keep
 the overall-rank card and reveal the authored setup state inside the role card.
 No state renders raw `N/A`.
 
-All state containers, copy, links, and styling live in Webflow. The controller
-does not create markup or inject state sentences. It only binds the dynamic
-points/rank/role/cohort values, clears stale dynamic values, and selects the
-matching authored state element. Tie labels are also authored and styled in
-Webflow; the controller only toggles their visibility from Xano tie counts.
-Keep surrounding phrases such as “Out of”,
-“eligible Starters”, and “Rank” outside the dynamic hooks.
+All state containers, links, and styling live in Webflow. The controller does
+not create markup or inject state sentences. For ready ranks it combines the
+canonical rank and cohort into an ordinal position (`6th/21`), uses the existing
+authored small-text rows for the role name and `Starters Overall`, and keeps the
+legacy tie labels hidden. Xano tie counts remain part of the read model and rank
+semantics; only the compact presentation omits the word “Tied”.
 
 Each root reflects its resolved state onto `data-points-status`
 (`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so

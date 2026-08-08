@@ -13,6 +13,7 @@ class FakeElement {
     this.children = new Map()
     this.hidden = false
     this.name = name
+    this.previousElementSibling = null
     this.style = {}
     this.textContent = ''
   }
@@ -58,45 +59,58 @@ function tile(options = {}) {
   for (const [name, element] of Object.entries(elements)) {
     if (!omitted.has(name)) root.children.set(selector(name), element)
   }
+  const rolePrefix = new FakeElement('role-prefix')
+  const overallPrefix = new FakeElement('overall-prefix')
+  elements['role-cohort-size'].previousElementSibling = rolePrefix
+  elements['overall-cohort-size'].previousElementSibling = overallPrefix
+  elements.rolePrefix = rolePrefix
+  elements.overallPrefix = overallPrefix
   return { root, elements }
 }
 
-test('ready state renders points plus overall and primary-role ranks', () => {
+test('ready state renders compact rank positions and clear sublines', () => {
   const { root, elements } = tile()
 
   api.render(root, {
     total_points: 12500,
     rank_status: 'ready',
-    overall_rank: 12,
-    overall_cohort_size: 680,
+    overall_rank: 284,
+    overall_cohort_size: 703,
     overall_tie_count: 3,
     primary_role: {
       label: 'CMO',
-      rank: 3,
-      cohort_size: 48,
+      rank: 6,
+      cohort_size: 21,
       tie_count: 2,
     },
   })
 
   assert.equal(root.getAttribute('data-points-status'), 'ready')
   assert.equal(elements.points.textContent, '12,500')
-  assert.equal(elements['overall-rank'].textContent, '#12')
-  assert.equal(elements['overall-cohort-size'].textContent, '680')
-  assert.equal(elements['overall-tie'].style.display, '')
-  assert.equal(elements['role-rank'].textContent, '#3')
+  assert.equal(elements['overall-rank'].textContent, '284th/703')
+  assert.equal(elements['overall-cohort-size'].textContent, '703')
+  assert.equal(elements['overall-cohort-size'].style.display, 'none')
+  assert.equal(elements.overallPrefix.textContent, 'Starters Overall')
+  assert.equal(elements['overall-tie'].style.display, 'none')
+  assert.equal(elements['role-rank'].textContent, '6th/21')
   assert.equal(elements['role-label'].textContent, 'CMO')
-  assert.equal(elements['role-cohort-size'].textContent, '48')
-  assert.equal(elements['role-tie'].style.display, '')
+  assert.equal(elements['role-label'].style.display, 'none')
+  assert.equal(elements['role-cohort-size'].textContent, '21')
+  assert.equal(elements['role-cohort-size'].style.display, 'none')
+  assert.equal(elements.rolePrefix.textContent, 'CMO')
+  assert.equal(elements['role-tie'].style.display, 'none')
   assert.equal(elements.loading.style.display, 'none')
   assert.equal(elements.error.style.display, 'none')
   assert.equal(elements['state-refreshing'].style.display, 'none')
   assert.equal(elements.content.style.display, '')
   assert.equal(elements['role-card'].style.display, '')
   assert.equal(elements['overall-card'].style.display, '')
+  assert.equal(root.getAttribute('data-overall-tied'), 'true')
+  assert.equal(root.getAttribute('data-role-tied'), 'true')
   assert.equal(root.getAttribute('data-points-view'), 'ready')
 })
 
-test('ready state hides authored tie labels for unique ranks', () => {
+test('ready state hides authored tie labels regardless of tie count', () => {
   const { root, elements } = tile()
   elements['overall-tie'].textContent = 'Tied'
   elements['role-tie'].textContent = 'Tied'
@@ -119,6 +133,17 @@ test('ready state hides authored tie labels for unique ranks', () => {
   assert.equal(elements['role-tie'].style.display, 'none')
   assert.equal(elements['overall-tie'].textContent, 'Tied')
   assert.equal(elements['role-tie'].textContent, 'Tied')
+})
+
+test('position formatting handles ordinal suffix exceptions', () => {
+  assert.equal(api.position(1, 21), '1st/21')
+  assert.equal(api.position(2, 21), '2nd/21')
+  assert.equal(api.position(3, 21), '3rd/21')
+  assert.equal(api.position(11, 703), '11th/703')
+  assert.equal(api.position(12, 703), '12th/703')
+  assert.equal(api.position(13, 703), '13th/703')
+  assert.equal(api.position(21, 703), '21st/703')
+  assert.equal(api.position(284, 703), '284th/703')
 })
 
 test('refreshing state keeps points visible and reveals authored guidance', () => {
@@ -220,7 +245,7 @@ test('missing primary role keeps overall rank and shows setup guidance', () => {
 
   assert.equal(root.getAttribute('data-points-status'), 'ready')
   assert.equal(root.getAttribute('data-points-view'), 'missing-role')
-  assert.equal(elements['overall-rank'].textContent, '#600')
+  assert.equal(elements['overall-rank'].textContent, '600th/680')
   assert.equal(elements['role-card'].style.display, '')
   assert.equal(elements['role-rank'].textContent, '')
   assert.equal(elements['role-label'].textContent, '')
