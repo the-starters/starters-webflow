@@ -356,8 +356,14 @@
     const query = snapshot.query || {}
     const activeFilter = projectFilterIsActive(query.params)
     const total = projectTotal(snapshot)
+    const resolved = snapshot.status === 'success' && Number.isFinite(total)
 
-    if (snapshot.status === 'success' && Number.isFinite(total)) {
+    if (memory.authTransition) {
+      if (!resolved) return false
+      memory.authTransition = false
+    }
+
+    if (resolved) {
       if (total > 0) {
         memory.known = true
         memory.hasAny = true
@@ -530,6 +536,7 @@
         const memory = {
           known: false,
           hasAny: false,
+          authTransition: false,
         }
         const reveal = function (visible) {
           filters.forEach(function (filter) {
@@ -542,6 +549,7 @@
             if (!change || change.reason !== 'auth:change') return
             memory.known = false
             memory.hasAny = false
+            memory.authTransition = true
             reveal(false)
           })
         }

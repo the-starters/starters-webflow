@@ -651,6 +651,82 @@ test('an empty selected filter stays visible without issuing a hidden All probe'
   assert.equal(filters.hidden, false)
 })
 
+test('a selected filter stays hidden until an auth reload resolves', () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const filters = element()
+  const project = element({ 'wf-xano-instance': 'dash-projects' })
+  project.querySelector = (selector) =>
+    selector === '.tabs-button_component.is-dashboard' ? filters : null
+  const document = {
+    readyState: 'complete',
+    querySelectorAll(selector) {
+      if (selector === '[wf-xano-instance="dash-projects"]') return [project]
+      return []
+    },
+  }
+  const window = {
+    document,
+    location: { pathname: '/starter-dashboard' },
+  }
+  const params = []
+  let stateChange
+  let subscriber
+  const instance = {
+    qa: () => [filters],
+    root: project,
+    on(name, handler) {
+      if (name === 'stateChange') stateChange = handler
+    },
+    setParam(field, value) {
+      params.push([field, value])
+    },
+    subscribe(selector, handler) {
+      subscriber = (state) => handler(selector(state))
+      subscriber({
+        status: 'success',
+        data: { total: 1 },
+        query: { params: { status: 'active' } },
+      })
+    },
+  }
+
+  vm.runInNewContext(source, { document, Intl, window })
+  window.WfXano[0]({ get: (key) => (key === 'dash-projects' ? instance : null) })
+  assert.equal(filters.hidden, false)
+
+  stateChange({ reason: 'auth:change' })
+  assert.equal(filters.hidden, true)
+
+  subscriber({
+    status: 'loading',
+    data: { total: 1 },
+    query: { params: { status: 'active' } },
+  })
+  assert.equal(filters.hidden, true)
+
+  subscriber({
+    status: 'error',
+    data: { total: 1 },
+    query: { params: { status: 'active' } },
+  })
+  assert.equal(filters.hidden, true)
+
+  subscriber({
+    status: 'success',
+    data: {},
+    query: { params: { status: 'active' } },
+  })
+  assert.equal(filters.hidden, true)
+
+  subscriber({
+    status: 'success',
+    data: { total: 0 },
+    query: { params: { status: 'active' } },
+  })
+  assert.equal(filters.hidden, false)
+  assert.deepEqual(params, [])
+})
+
 test('project Show more appends the next page and hides when exhausted', () => {
   const listeners = {}
   const label = element()
