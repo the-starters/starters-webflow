@@ -228,6 +228,37 @@ test('invoice helpers turn the Stripe prerequisite into an actionable dashboard 
   assert.equal(bridge.window.Opp30.formatInvoiceAmount(25.5), '$25.50')
 })
 
+test('invoice behavior binds only after Starter dashboard Talent authorization', async () => {
+  const starter = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/opportunities/match-context')) {
+        return response({ category_refs: [] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember, pathname: '/starter-dashboard', routeGuard: true },
+  )
+  assert.ok(await waitFor(() => starter.window.__opp30InvoicesWired === true))
+
+  const brand = await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    pathname: '/brand-dashboard',
+    routeGuard: true,
+  })
+  await Promise.resolve()
+  assert.equal(brand.window.__opp30InvoicesWired, undefined)
+
+  const wrongRole = await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    pathname: '/starter-dashboard',
+    routeGuard: true,
+  })
+  await Promise.resolve()
+  assert.equal(wrongRole.window.__opp30InvoicesWired, undefined)
+})
+
 // A minimal element graph with attribute-accurate matches()/closest()/query*,
 // so the invoice submit guards are exercised against real selector semantics
 // instead of a substring match that would still pass if the selector were

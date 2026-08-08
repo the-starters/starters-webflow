@@ -2656,6 +2656,12 @@
   async function initStarterDashboardOpportunityMatch() {
     try {
       if (!(await gateOrRedirect('freelancer'))) return
+      // Generate Invoice is a Starter-only capability in Xano. Bind its UI
+      // only after this page has resolved an authenticated Talent member, so a
+      // Brand session can never inherit the modal click/submit behavior even
+      // if the shared Project Item component is misconfigured or briefly
+      // visible during a redirect.
+      wireInvoiceWorkflow()
       const context = await getTalentMatchContext()
       const categoryRefs = filterValues(contextValue(context, 'category_refs'))
       window.Opp30TalentMatchContext = context
@@ -3808,7 +3814,6 @@
     prepareOpportunityStatusControls()
     prepareOpportunityLoadingControls()
     wireModals()
-    wireInvoiceWorkflow()
     const p = location.pathname
     if (p.includes('starter-dashboard')) initStarterDashboardOpportunityMatch()
     else if (p.includes('opportunities-details---brand-view')) initBrandDetail()
@@ -3841,7 +3846,9 @@
     ) {
       loadOpportunityMatchDebug()
     }
-    // /all-modals: only wireModals() (already called) — no data fetch
+    // /all-modals is the component-preview surface. Keep the authored invoice
+    // modal interactive there without enabling it on any production Brand page.
+    if (p.includes('all-modals')) wireInvoiceWorkflow()
   }
 
   // The CDN script is loaded with `defer` on opportunity pages, so the modal
