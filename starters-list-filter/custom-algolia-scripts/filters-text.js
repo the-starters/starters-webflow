@@ -1,5 +1,15 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/filters-text
 
+/* filters-text.js — humanizes wf-algolia facet labels and selected-filter chips.
+ *
+ * @release v1.59.131
+ *
+ * The marker matters more here than usual: these scripts sit inside a
+ * data-ms-content="paid-plans" block, so a logged-out browser never loads them
+ * and cannot be used to confirm a deploy. Grep the CDN-served file for this
+ * line instead — see this folder's README.
+ */
+
 (function () {
   var FIELD_LABELS = {
     "functions": "Function",
