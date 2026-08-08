@@ -426,6 +426,16 @@
     })
   }
 
+  function enableProjectKeyedReconciliation(instance) {
+    if (!instance || !instance.root) return false
+    // Project cards are large, nested trees. Reconcile them by the canonical
+    // project id so a status replacement reuses matching cards instead of
+    // destroying and cloning the entire collection. The response remains
+    // Xano-canonical; this changes only wf-xano's DOM reconciliation strategy.
+    instance.keyed = true
+    return true
+  }
+
   function hideProjectControls() {
     PROJECT_INSTANCE_KEYS.forEach(function (key) {
       document
@@ -453,6 +463,7 @@
       PROJECT_INSTANCE_KEYS.forEach(function (key) {
         const instance = wfx && typeof wfx.get === 'function' ? wfx.get(key) : null
         if (!instance || typeof instance.subscribe !== 'function') return
+        enableProjectKeyedReconciliation(instance)
         wireProjectLoadMore(instance)
         const selector = '.tabs-button_component.is-dashboard'
         const filters =
@@ -710,6 +721,7 @@
     normalizeBooking,
     profileValues,
     findProjectLoadMore,
+    enableProjectKeyedReconciliation,
     projectFilterIsActive,
     projectFilterVisible,
     wireProjectLoadMore,
