@@ -301,7 +301,7 @@ A page arms the signup watch when **either** of these is true, in this order:
 
 1. its path is in the script's `SIGNUP_PATH_POLICY` map, or
 2. it carries at least one `form[data-ms-form="signup"]` and no
-   `form[data-ms-form="login"]`.
+   `[data-ms-form="login"]` anywhere on it.
 
 The path map holds the two hand-audited pages and its policy is used verbatim:
 
@@ -324,13 +324,22 @@ Presence alone is safe: detection only arms a watch, and the pixel and the field
 both fire on the Memberstack auth transition, so a form nobody can reach fires
 nothing. A page armed this way direct-saves the fields.
 
-A login form on the same page is a veto, and it applies to rule 2 only. A page with
+A login marker on the same page is a veto, and it applies to rule 2 only. A page with
 both kinds cannot tell a signup apart from a login, and reading a login as a signup
 would fire a false `CompleteRegistration` and stamp that browser's UTM values onto a
 member who already has their own. A missed attribution is the cheaper failure, so an
 ambiguous page is not watched at all and says why in a staging-only warning. Pure
 login pages such as `/login` and `/starter-login` fall out of the same rule: no
 signup form, no watch.
+
+The two selectors in rule 2 are deliberately asymmetric. Arming is anchored to a real
+`form` element, because arming claims a signup happens here and that claim wants
+proof. The veto is not anchored, so it matches `data-ms-form="login"` wherever it
+sits, including on a wrapper `div`. Nothing pins that marker to a `<form>`:
+`v3/auth-route.js` queries it without the prefix, so a login UI wrapped in a div is
+markup nobody would think of as a change. Widening the veto costs at most a missed
+attribution, while narrowing it would cost a false `CompleteRegistration` on every
+login on such a page, which is the failure the veto exists to prevent.
 
 The scan runs once at `DOMContentLoaded`. `window.StartersAttribution.rearm()` re-runs
 it for a caller that injects a signup form later, the same shape as

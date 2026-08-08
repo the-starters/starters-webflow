@@ -82,6 +82,25 @@ function extractLiteral(name) {
 }
 
 /**
+ * A `data-ms-form` marker sitting on something that is not a `<form>` — the
+ * wrapper-div case the prefix-less login selector exists to catch. Drop it into
+ * a `forms` list anywhere a plain string would have put the marker on a real
+ * form element.
+ *
+ * @param {string} kind `data-ms-form` value, e.g. `'login'`.
+ */
+const markerOnDiv = (kind) => ({ kind, isForm: false })
+
+/**
+ * Normalizes one `forms` entry into the element the page holds. A plain string
+ * is the common case: the marker on a real `<form>`.
+ *
+ * @param {string | {kind: string, isForm: boolean}} entry
+ */
+const markerElement = (entry) =>
+    typeof entry === 'string' ? { kind: entry, isForm: true } : entry
+
+/**
  * `document` double whose `cookie` accessor behaves like the browser's: reading
  * returns the whole jar, assigning merges one cookie in. Every assignment is
  * recorded so a test can prove a cookie was NOT rewritten, which is the whole
@@ -89,14 +108,16 @@ function extractLiteral(name) {
  *
  * @param {object} [initial] Pre-existing cookies, name to raw value.
  * @param {boolean} [readOnly] Swallow writes, like a browser with cookies off.
- * @param {string[]} [forms] `data-ms-form` values present on the page, one entry
- *     per form element (e.g. `['signup', 'profile']`). Order is irrelevant; only
- *     the counts per kind are read.
+ * @param {Array<string|object>} [forms] The `data-ms-form` markers present on
+ *     the page, one entry per element carrying one (e.g.
+ *     `['signup', 'profile']`). A string puts the marker on a `<form>`;
+ *     `markerOnDiv('login')` puts it on a non-form element. Order is
+ *     irrelevant; only the counts per selector are read.
  */
 function documentDouble(initial, readOnly, forms) {
     const jar = new Map(Object.entries(initial || {}))
     const writes = []
-    const formKinds = forms || []
+    const markers = forms || []
 
     return {
         readyState: 'complete',
@@ -106,15 +127,26 @@ function documentDouble(initial, readOnly, forms) {
         addEventListener(name, handler) {
             this.listeners.push([name, handler])
         },
-        // Only the two selectors the script uses are modelled. Anything else
-        // matches nothing, which is the honest answer for a page double that
-        // holds no elements.
+        // Only `data-ms-form` selectors are modelled, with and without the
+        // `form` prefix, because the script's two selectors differ by exactly
+        // that prefix and the harness has to keep telling them apart: the
+        // prefixed one matches forms only, the bare one matches any element.
+        // Anything else matches nothing, which is the honest answer for a page
+        // double that holds no other elements.
         querySelectorAll(selector) {
-            const match = /^form\[data-ms-form="([a-z-]+)"\]$/.exec(
+            const match = /^(form)?\[data-ms-form="([a-z-]+)"\]$/.exec(
                 String(selector),
             )
             if (!match) return []
-            return formKinds.filter((kind) => kind === match[1])
+            const formOnly = Boolean(match[1])
+            const kind = match[2]
+            return markers
+                .map(markerElement)
+                .filter(
+                    (element) =>
+                        element.kind === kind &&
+                        (!formOnly || element.isForm === true),
+                )
         },
         get cookie() {
             return Array.from(jar.entries())
@@ -443,6 +475,23 @@ test('SIGNUP_PATH_POLICY covers /quiz and /sign-up with directSave only on /sign
     })
 })
 
+test('the two form selectors keep their deliberate asymmetry', () => {
+    // Arming is anchored to `form`, the veto is not. Losing the prefix on the
+    // signup selector would arm on any stray marker; adding it to the login
+    // selector would let a login wrapped in a div slip past the veto. Pinned as
+    // code because both directions are silent failures in the browser.
+    assert.match(
+        source,
+        /var SIGNUP_FORM_SELECTOR = 'form\[data-ms-form="signup"\]'/,
+        'SIGNUP_FORM_SELECTOR must stay anchored to a real form element',
+    )
+    assert.match(
+        source,
+        /var LOGIN_FORM_SELECTOR = '\[data-ms-form="login"\]'/,
+        'LOGIN_FORM_SELECTOR must match the marker on any element',
+    )
+})
+
 test('the header and README document all eight verified field IDs', () => {
     for (const [cookie, field] of Object.entries(FIELD_IDS)) {
         const row = new RegExp('`' + cookie + '` -> `' + field + '`')
@@ -653,19 +702,69 @@ test('the mapped paths keep their own directSave, form or no form', async () => 
     assert.equal(signUp.updateCalls.length, 1)
 })
 
-test('a mapped path is not vetoed by a login form on the same page', async () => {
+test('a mapped path is not vetoed by a login marker on the same page', async () => {
     // The veto guards the detection branch only. Rewriting /quiz or /sign-up to
     // also host a login form is a deliberate change, not an accident to protect
     // against, and silently unwatching them would lose a shipped conversion.
-    for (const pathname of ['/quiz', '/sign-up']) {
-        const harness = boot({
+    // Both marker shapes, because the widened selector sees both.
+    for (const login of ['login', markerOnDiv('login')]) {
+        for (const pathname of ['/quiz', '/sign-up']) {
+            const label = `${pathname} ${JSON.stringify(login)}`
+            const harness = boot({
+                member: null,
+                pathname,
+                forms: ['signup', login],
+            })
+            await harness.settle()
+            assert.equal(harness.authHandlers.length, 1, label)
+            assert.deepEqual(harness.warnings, [], label)
+        }
+    }
+})
+
+test('a mapped path keeps its own directSave despite a login marker', async () => {
+    // The path map is consulted first and wins outright, so a login marker on
+    // the page changes neither which pages arm nor who writes the fields. /quiz
+    // stays hands-off (quiz-results.js owns that write) and /sign-up still
+    // direct-saves.
+    for (const login of ['login', markerOnDiv('login')]) {
+        const label = JSON.stringify(login)
+
+        const quiz = boot({
+            cookies: clickCookies,
             member: null,
-            pathname,
-            forms: ['signup', 'login'],
+            pathname: '/quiz',
+            forms: ['signup', login],
         })
-        await harness.settle()
-        assert.equal(harness.authHandlers.length, 1, pathname)
-        assert.deepEqual(harness.warnings, [], pathname)
+        await quiz.settle()
+        quiz.authHandlers[0](loggedInMember)
+        await quiz.settle()
+        await quiz.settle()
+
+        assert.equal(quiz.fbqCalls.length, 1, label)
+        assert.deepEqual(quiz.updateCalls, [], label)
+        assert.equal(quiz.pendingSave(), undefined, label)
+
+        const signUp = boot({
+            cookies: clickCookies,
+            member: null,
+            pathname: '/sign-up',
+            forms: ['signup', login],
+        })
+        await signUp.settle()
+        signUp.authHandlers[0](loggedInMember)
+        await signUp.settle()
+        await signUp.settle()
+
+        assert.equal(signUp.fbqCalls.length, 1, label)
+        assert.deepEqual(signUp.savedFields(), [
+            {
+                'utm-source': 'facebook',
+                'utm-campaign': 'summer',
+                fbclid: 'IwAR123',
+                'event-id': 'evt_fixed',
+            },
+        ], label)
     }
 })
 
@@ -723,21 +822,72 @@ test('a page with both a signup and a login form is not watched', async () => {
     )
 })
 
-test('the ambiguous-page warning stays off production', async () => {
+test('a login marker on a non-form element still vetoes the page', async () => {
+    // The reason LOGIN_FORM_SELECTOR drops the `form` prefix. Nothing pins the
+    // marker to a real <form>: v3/auth-route.js queries it bare, so a login UI
+    // wrapped in a div is markup nobody would think of as a change. A prefixed
+    // veto would miss it and fire a false CompleteRegistration on every login
+    // here, which is the exact failure the guard exists to prevent.
     const harness = boot({
-        hostname: 'thestarters.com',
+        cookies: clickCookies,
         member: null,
         pathname: '/some-combined-page',
-        forms: ['signup', 'login'],
+        forms: ['signup', markerOnDiv('login')],
     })
     await harness.settle()
 
     assert.deepEqual(harness.authHandlers, [])
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+    assert.ok(
+        harness.warnings.some((message) => /signup watch not armed/.test(message)),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+})
+
+test('a signup marker on a non-form element does not arm the watch', async () => {
+    // The other half of the asymmetry, and the proof the harness still tells
+    // the two selectors apart rather than matching every marker everywhere.
+    // Arming needs a real <form>, so a bare marker on a wrapper is not enough.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/all-starters',
+        forms: [markerOnDiv('signup')],
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.equal(harness.api.rearm(), false)
+    // Not ambiguous, just unrecognised: no signup form means no warning either.
     assert.deepEqual(harness.warnings, [])
 })
 
+test('the ambiguous-page warning stays off production', async () => {
+    for (const login of ['login', markerOnDiv('login')]) {
+        const harness = boot({
+            hostname: 'thestarters.com',
+            member: null,
+            pathname: '/some-combined-page',
+            forms: ['signup', login],
+        })
+        await harness.settle()
+
+        assert.deepEqual(harness.authHandlers, [], JSON.stringify(login))
+        assert.deepEqual(harness.warnings, [], JSON.stringify(login))
+    }
+})
+
 test('an unmapped page with no signup form is not watched', async () => {
-    for (const forms of [[], ['profile'], ['login'], ['profile', 'login']]) {
+    for (const forms of [
+        [],
+        ['profile'],
+        ['login'],
+        ['profile', 'login'],
+        [markerOnDiv('login')],
+        [markerOnDiv('signup')],
+    ]) {
         const harness = boot({
             member: null,
             pathname: '/brand-dashboard',

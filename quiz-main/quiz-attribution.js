@@ -46,8 +46,8 @@
  *
  * Signup pages. A page arms the signup watch when either its normalized path is
  * in the `SIGNUP_PATH_POLICY` map, or the page carries at least one Memberstack
- * signup form (`form[data-ms-form="signup"]`) and no login form
- * (`form[data-ms-form="login"]`). The path map is checked first and its policy
+ * signup form (`form[data-ms-form="signup"]`) and no login marker anywhere on it
+ * (`[data-ms-form="login"]`). The path map is checked first and its policy
  * is used verbatim, so the two hand-audited pages provably cannot regress if the
  * markup on them ever changes: `/quiz` (the funnel signup, followed by
  * `/quiz-results`) and `/sign-up` (the direct signup, followed by
@@ -64,6 +64,11 @@
  * two failures, so an ambiguous page is not watched at all and says why in a
  * staging-only warning. Pure login pages such as `/login` and `/starter-login`
  * fall out of the same rule: no signup form, no watch.
+ *
+ * The two selectors are deliberately asymmetric: arming requires a real
+ * `<form>`, the veto matches the login marker on any element. Arming is a claim
+ * that a signup happens here and wants proof; the veto only needs a hint that a
+ * login lives here, and it is cheaper to be wrong in that direction.
  *
  * Detection counts forms present in the DOM and deliberately does not test
  * whether they are visible. The `/all-starters` modal lives in a `<dialog>` that
@@ -196,8 +201,15 @@
     // Memberstack's own markers, reused on purpose: every signup surface already
     // carries them, so a new one is attributed with no Designer work and no edit
     // here. A login form on the same page is a veto (see detectedSignupPolicy).
+    // The asymmetry is deliberate. Arming needs proof of a real signup form, so
+    // that selector is anchored to `form`. The veto only needs a hint that a
+    // login lives here, so it matches the marker anywhere: on every login page
+    // today the marker does sit on a `form`, but v3/auth-route.js queries it
+    // without the prefix, so nothing guarantees that stays true. Widening the
+    // veto costs at most a missed attribution; narrowing it would cost a false
+    // CompleteRegistration, which is the failure this guard exists to prevent.
     var SIGNUP_FORM_SELECTOR = 'form[data-ms-form="signup"]'
-    var LOGIN_FORM_SELECTOR = 'form[data-ms-form="login"]'
+    var LOGIN_FORM_SELECTOR = '[data-ms-form="login"]'
 
     var COMPLETE_REGISTRATION_EVENT = 'CompleteRegistration'
     var FIRED_FLAG = 'startersCompleteRegistrationFired'
