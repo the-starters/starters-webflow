@@ -21,8 +21,14 @@ the page keeps loading the old file until someone edits the `src` in Webflow.
 1. Make changes **here first** (or, if a change was made directly in Webflow,
    copy it back here immediately so this folder stays authoritative).
 2. Test locally before landing anything, via `./dev-tunnel.sh` in the parent
-   folder. Point the embed `src` at the tunnel URL, path
-   `/starters-list-filter/<file>.js`.
+   folder. Point the embed `src` at the tunnel URL, using the file's **full
+   path inside this repo** — most of these live one folder down, so it is
+   `/starters-list-filter/custom-algolia-scripts/<file>.js` for six of them
+   (and `/starters-list-filter/custom-algolia-scripts/clear-filter-visibility/clear-filter-visibility.js`),
+   not `/starters-list-filter/<file>.js`. Only `filters-mobile.js`,
+   `modal-mobile.js` and `total-filters.js` sit at this folder's root. Getting
+   this wrong 404s silently and the embed simply never loads — the same trap
+   CLAUDE.md §8 documents.
 3. Commit via the normal PR flow so the history stays clean.
 4. After the PR merges, tag a release (see CLAUDE.md §5).
 5. **Bump the pinned tag in the Webflow embed `src` to the new version and

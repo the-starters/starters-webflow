@@ -21,6 +21,7 @@
   //   algolia-result-modifiers/roles.js
   //   v3/saved-starters-roles.js
   //   v3/onboarding-profile-preview.js
+  //   quiz-results.js
   var ROLE_NAMES = {
     'ui-ux-designer': 'UI/UX Designer',
     'cro-expert': 'CRO Expert',
@@ -102,9 +103,16 @@
     });
   });
 
-  // Applies to every field, not just "roles"/"skills": the keys are exact
-  // stored slugs, so no other facet value can collide with one.
-  function prettyRole(raw) {
+  // Deliberately consulted for EVERY field, not just "roles"/"skills": the keys
+  // are exact stored slugs, so no other facet value can collide with one.
+  // Verified against the live index 2026-08-08 — none of these 46 keys appears
+  // as a value in tools, industries, availability, country, city, state,
+  // categories.lvl0/lvl1 or work-history.company. The role keys appear only in
+  // the roles facet, which is where they belong.
+  //
+  // Returns null when the value has no override, so callers fall through to
+  // humanize().
+  function lookupDisplayName(raw) {
     var key = raw.trim().toLowerCase();
     return ROLE_NAMES[key] || SKILL_NAMES[key] || VALUE_DISPLAY[key] || null;
   }
@@ -128,7 +136,7 @@
     }
     // Rate range chips from WF-Algolia already come formatted ("30 – 500", "$30 – $500")
     if (field === "rate") return raw;
-    return prettyRole(raw) || humanize(raw);
+    return lookupDisplayName(raw) || humanize(raw);
   }
 
   function processSlot(el) {
@@ -145,7 +153,7 @@
     if (idx === -1) {
       // A bare chip carries just the value, so it takes the same
       // map-then-humanize path a "Field: value" chip's value half takes.
-      var whole = prettyRole(raw) || humanize(raw);
+      var whole = lookupDisplayName(raw) || humanize(raw);
       if (whole !== raw) el.textContent = whole;
       return;
     }

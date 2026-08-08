@@ -81,7 +81,7 @@ test('the recommendation binding uses formatRoleName, not formatSlugTitle', () =
 
 test('every mapped role is one plain title-casing would have broken', () => {
     // If a slug already title-cases correctly, the entry is dead weight and
-    // belongs out of the map (and out of the four files it is synced with).
+    // belongs out of the map (and out of the five files it is synced with).
     for (const slug of Object.keys(ROLE_NAMES)) {
         assert.notEqual(
             formatSlugTitle(slug),
