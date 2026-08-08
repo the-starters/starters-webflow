@@ -141,6 +141,46 @@
     return (scope || document).querySelectorAll(selector)
   }
 
+  function setCalendarConnectCopy() {
+    const successStep = qs('[availability-step="success-calendar"]')
+    if (successStep) {
+      const headlines = qsa('.set-availability_success-headline', successStep)
+      const savedTitle = headlines[0] && qs('.heading-style-h1', headlines[0])
+      const savedParagraphs = headlines[0] ? qsa('p', headlines[0]) : []
+      const savedBody = savedParagraphs[1]
+      const connectTitle = headlines[1] && qs('.heading-style-h1', headlines[1])
+      const connectParagraphs = headlines[1] ? qsa('p', headlines[1]) : []
+      const connectBody = connectParagraphs[1]
+      const connectButton = qs(
+        '[availability-action-btn="pre-redirect"] .button_main-text',
+        successStep,
+      )
+
+      if (savedTitle) savedTitle.textContent = 'Availability saved'
+      if (savedBody) {
+        savedBody.textContent = 'Your hours are saved and ready for call requests.'
+      }
+      if (connectTitle) connectTitle.textContent = 'Connect your Google Calendar'
+      if (connectBody) {
+        connectBody.textContent =
+          'Connect Google Calendar to prevent booking conflicts. You’ll return here when setup is complete.'
+      }
+      if (connectButton) connectButton.textContent = 'Connect Google Calendar'
+    }
+
+    const redirectStep = qs('[availability-step="pre-redirect"]')
+    if (redirectStep) {
+      const redirectTitle = qs('.heading-style-h1', redirectStep)
+      const redirectParagraphs = qsa('p', redirectStep)
+      const redirectBody = redirectParagraphs[1]
+      if (redirectTitle) redirectTitle.textContent = 'Opening Google Calendar…'
+      if (redirectBody) {
+        redirectBody.textContent =
+          'Taking you to Google’s secure authorization page. Your availability is already saved.'
+      }
+    }
+  }
+
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
   }
@@ -1150,41 +1190,41 @@
     showManagerActions()
   }
 
-  function handlePreRedirect() {
+  async function handlePreRedirect() {
     switchStep('pre-redirect')
-    setTimeout(async function () {
-      try {
-        // OAuth returns to this same dashboard. Xano derives `state` from the
-        // authenticated member id; the callback must round-trip that exact
-        // value and a recent same-session intent before any grant write.
-        const memberId = await writeMemberId()
-        await ensureTimezone()
-        const redirectUri = oauthRedirectUri()
-        const response = await xanoPost('/grants/oauth/v3', {
-          in_state: memberId,
-          in_provider: 'google',
-          in_redirect_uri: redirectUri,
-        })
-        const url =
-          response &&
-          response.response &&
-          response.response.result &&
-          response.response.result.data &&
-          response.response.result.data.url
-        if (!url) throw new Error('grants/oauth returned no URL')
-        rememberOAuthIntent(memberId, redirectUri)
-        window.open(url, '_blank')
-        switchStep('reload-page')
-      } catch (error) {
-        publishCalendarConnectionError()
-        switchStep('config-request-error')
-        console.warn('[scheduling-writer] OAuth redirect failed:', error && error.message)
-        emit('starterSchedulingWriteError', {
-          action: 'pre-redirect',
-          message: (error && error.message) || 'OAuth redirect failed',
-        })
-      }
-    }, 2500)
+    try {
+      // OAuth returns to this same dashboard. Xano derives `state` from the
+      // authenticated member id; the callback must round-trip that exact
+      // value and a recent same-session intent before any grant write.
+      const memberId = await writeMemberId()
+      await ensureTimezone()
+      const redirectUri = oauthRedirectUri()
+      const response = await xanoPost('/grants/oauth/v3', {
+        in_state: memberId,
+        in_provider: 'google',
+        in_redirect_uri: redirectUri,
+      })
+      const url =
+        response &&
+        response.response &&
+        response.response.result &&
+        response.response.result.data &&
+        response.response.result.data.url
+      if (!url) throw new Error('grants/oauth returned no URL')
+      rememberOAuthIntent(memberId, redirectUri)
+      // A delayed window.open occurs after awaited requests and is blocked by
+      // normal browser popup protection. Same-tab navigation is reliable and
+      // preserves the sessionStorage intent needed by the callback verifier.
+      window.location.assign(url)
+    } catch (error) {
+      publishCalendarConnectionError()
+      switchStep('config-request-error')
+      console.warn('[scheduling-writer] OAuth redirect failed:', error && error.message)
+      emit('starterSchedulingWriteError', {
+        action: 'pre-redirect',
+        message: (error && error.message) || 'OAuth redirect failed',
+      })
+    }
   }
 
   async function handleAvailabilityRemove(item) {
@@ -1509,6 +1549,8 @@
         })
       })
       if (availability.manager !== null) showManagerActions()
+
+      setCalendarConnectCopy()
 
       // Popup close.
       qsa('[availability-popup-close]').forEach(function (btn) {
