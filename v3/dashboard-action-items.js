@@ -43,6 +43,12 @@
     'starterSchedulingConnectionStateChanged',
     'starterSchedulingAvailabilityError',
   ]
+  const TERMINAL_SCHEDULING_STATES = [
+    'connected',
+    'disconnected',
+    'reconnect',
+    'error',
+  ]
   const CHANGED_EVENT = 'actionItemsChanged'
 
   const COUNT_ATTR = 'data-action-items-count'
@@ -183,6 +189,12 @@
     }
   }
 
+  function shouldSettle(name, event) {
+    if (name !== 'starterSchedulingConnectionStateChanged') return true
+    const state = event && event.detail && event.detail.state
+    return TERMINAL_SCHEDULING_STATES.indexOf(state) !== -1
+  }
+
   function mount() {
     const doc = global.document
     const scopes = resolveScopes(doc)
@@ -198,7 +210,8 @@
     renderAll()
 
     SETTLE_EVENTS.forEach(function (name) {
-      global.addEventListener(name, function () {
+      global.addEventListener(name, function (event) {
+        if (!shouldSettle(name, event)) return
         panels.forEach(function (panel) {
           panel.settle()
         })
@@ -234,6 +247,7 @@
     ITEM_SELECTOR,
     SETTLE_EVENTS,
     SETTLE_TIMEOUT_MS,
+    TERMINAL_SCHEDULING_STATES,
     countAttributeTarget,
     countPendingItems,
     createPanel,
@@ -242,6 +256,7 @@
     mount,
     resolveScopes,
     setTotal,
+    shouldSettle,
     show,
   }
 

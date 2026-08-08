@@ -67,7 +67,7 @@ function documentLike({ children = [], withBody = true } = {}) {
   }
 }
 
-test('Calendar readiness events settle mounted loading and empty states', () => {
+test('Calendar loading waits for terminal state before settling', () => {
   const previous = {
     addEventListener: global.addEventListener,
     dispatchEvent: global.dispatchEvent,
@@ -77,9 +77,22 @@ test('Calendar readiness events settle mounted loading and empty states', () => 
 
   try {
     ;[
-      'starterSchedulingConnectionStateChanged',
-      'starterSchedulingAvailabilityError',
-    ].forEach((eventName) => {
+      {
+        eventName: 'starterSchedulingConnectionStateChanged',
+        pendingEvent: {
+          type: 'starterSchedulingConnectionStateChanged',
+          detail: { state: 'loading' },
+        },
+        terminalEvent: {
+          type: 'starterSchedulingConnectionStateChanged',
+          detail: { state: 'connected' },
+        },
+      },
+      {
+        eventName: 'starterSchedulingAvailabilityError',
+        terminalEvent: { type: 'starterSchedulingAvailabilityError' },
+      },
+    ].forEach(({ eventName, pendingEvent, terminalEvent }) => {
       const listeners = new Map()
       const loading = element({ attrs: { 'data-action-element': 'loading' } })
       const empty = element({ attrs: { 'data-action-element': 'empty' } })
@@ -104,7 +117,13 @@ test('Calendar readiness events settle mounted loading and empty states', () => 
       assert.equal(loading.style.display, '', eventName)
       assert.equal(empty.style.display, 'none', eventName)
 
-      global.dispatchEvent({ type: eventName })
+      if (pendingEvent) {
+        global.dispatchEvent(pendingEvent)
+        assert.equal(loading.style.display, '', eventName)
+        assert.equal(empty.style.display, 'none', eventName)
+      }
+
+      global.dispatchEvent(terminalEvent)
       assert.equal(loading.style.display, 'none', eventName)
       assert.equal(empty.style.display, '', eventName)
     })
