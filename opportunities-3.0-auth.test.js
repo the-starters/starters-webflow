@@ -705,6 +705,60 @@ test('Brand project cards expose only canonical actions for their current lifecy
   assert.equal(review.wrap.style.display, '')
 })
 
+test('Starter project cards keep completed contracts off the signing-session route', async () => {
+  const contract = el('a', { href: '#contract' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'View Contract'
+  const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    [card],
+  )
+  const contractRequests = []
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            pandadoc_document_id: 'doc-675',
+            contract_status: 'completed',
+          }],
+        })
+      }
+      if (url.includes('/contracts/link/v3')) {
+        contractRequests.push(url)
+        return response({ url: 'https://app.pandadoc.com/s/completed-contract' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.equal(contract.getAttribute('data-project-action'), 'contract')
+  assert.equal(wrap.style.display, 'none')
+  assert.equal(wrap.getAttribute('aria-hidden'), 'true')
+
+  bridge.dispatchDocument('click', clickEvent(contract).event)
+  await new Promise(setImmediate)
+  assert.deepEqual(contractRequests, [])
+})
+
 test('View Contract is limited to recipient-viewable canonical document states', async () => {
   const bridge = await loadBridge(async () => response({}))
   const isViewable = bridge.window.Opp30.projectContractIsViewable
