@@ -158,7 +158,8 @@
 
       if (savedTitle) savedTitle.textContent = 'Availability saved'
       if (savedBody) {
-        savedBody.textContent = 'Your hours are saved and ready for call requests.'
+        savedBody.textContent =
+          'Your hours are saved, but your calendar is not connected yet. Connect it before accepting call requests to prevent booking conflicts.'
       }
       if (connectTitle) connectTitle.textContent = 'Connect your Google Calendar'
       if (connectBody) {

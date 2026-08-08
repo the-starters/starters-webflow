@@ -1080,7 +1080,7 @@ test('calendar connection copy describes the explicit same-tab handoff', async (
   assert.equal(successHeadlines[0].querySelector('p').textContent, 'Availability saved')
   assert.equal(
     successHeadlines[0].querySelectorAll('p')[1].textContent,
-    'Your hours are saved and ready for call requests.',
+    'Your hours are saved, but your calendar is not connected yet. Connect it before accepting call requests to prevent booking conflicts.',
   )
   assert.equal(
     successHeadlines[1].querySelector('p').textContent,

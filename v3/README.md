@@ -1963,8 +1963,9 @@ URI. For hosted auth, `success` must be exactly `true`, and only the returned
 `grant_id` is forwarded as callback identity. `grants/add/v3` performs the
 authoritative server-side code exchange or grant verification and persists the
 result in one authenticated call. The writer then continues the existing
-configuration flow. The original tab shows the modal's `reload-page` step,
-matching the legacy UX.
+configuration flow in the same tab. After the verified grant and scheduler
+configurations are created, the modal returns to its default dashboard state;
+the legacy `reload-page` step is not part of the current handoff.
 Booking confirmation/reschedule/cancel links baked into scheduler configurations
 also point at this page, where the bookings embed owns `booking_ref` handling.
 
