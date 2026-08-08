@@ -645,7 +645,10 @@ ownership, environment, canonical contract state, and the live PandaDoc document
 status before minting the one-hour session, so stale browser data cannot expose a
 draft or terminally unavailable document. Sent or partially signed documents open
 the recipient's view/sign session; completed documents open the same recipient
-session in PandaDoc's read-only completed-document view.
+session in PandaDoc's read-only completed-document view. On click, the controller
+first tries to refresh the canonical project list. A transient list failure may
+fall back to the already role-gated cached project only to request this link; the
+authenticated Xano endpoint remains the final authorization and state check.
 
 The existing `[wf-xano-link="project-end"]` control is upgraded to
 `data-project-action="end"`. Its label and mutation follow canonical lifecycle
