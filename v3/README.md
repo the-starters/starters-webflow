@@ -1666,8 +1666,9 @@ node --test v3/dashboard-calls.test.js
 
 ## Booking-stage availability initializer
 
-`scheduling-availability-init.js` restores the V2 visibility contract used by
-the staging booking page and canonical `/starter-dashboard`. Published CSS
+`scheduling-availability-init.js` restores the V2 availability visibility
+contract used by the staging booking page and canonical `/starter-dashboard`,
+while keeping it independent from V3 Calendar connection state. Published CSS
 hides both Calendar Settings controls; this initializer resolves the logged-in
 member's saved scheduling availability and reveals exactly one:
 
@@ -1676,11 +1677,13 @@ member's saved scheduling availability and reveals exactly one:
 
 It installs on the Webflow staging hostname and on the exact
 `/starter-dashboard` path at `thestarters.com` and `www.thestarters.com`. It
-uses a five-minute member-scoped local cache for saved availability, accepts
-the legacy scheduling availability shape
+accepts the legacy scheduling availability shape
 (`{ items, manager? }`), and treats a V3 starter without a legacy scheduling row
 as a first-time setup instead of leaving both controls hidden. It also selects
-the correct initial modal step.
+the correct initial modal step. Every boot performs the authenticated canonical
+reader call even when a member-scoped availability cache exists: a grant,
+calendar, or scheduler configuration can change independently of saved hours,
+so the cache is write-through compatibility state rather than connection proof.
 The initializer reads `/api:tCpV3oqd/starter/get_by_memberstack/v3` through
 `window.xanoAuthFetch`, safely treating a JSON `null` response as a first-time
 V3 starter. It falls back to the page-provided
@@ -1697,6 +1700,10 @@ Webflow markup contract:
 
 - The first-time and saved-schedule controls use `[init-availability]` and
   `[update-availability]`, respectively.
+- The Dashboard Calendar action row uses `[calendar-connection-action]` and its
+  clickable component carries `data-modal-trigger="set-availability"`. The row
+  stays Designer-authored; the initializer only shows/hides it and selects an
+  existing native modal step.
 - Modal panels use `availability-step="setup-form"` for first-time setup and
   `availability-step="default"` for an existing schedule.
 - Published CSS should keep both controls hidden until initialization completes.
@@ -1705,16 +1712,28 @@ Runtime contract:
 
 - `data-scheduling-availability-init` on the document root reports `loading`,
   `init`, `update`, `error`, `not-applicable`, or `missing-controls`.
+- `data-scheduling-calendar-state` reports `loading`, `disconnected`,
+  `connected`, `reconnect`, or `error`. `connected` is terminal only after the
+  writer proves a grant, a calendar, and at least one scheduler configuration;
+  partial or stale provider state is `reconnect`.
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
+- `window.STARTER_SCHEDULING_CONNECTION` contains only the non-secret
+  connection summary: state, boolean grant/calendar flags, configuration count,
+  and manager. Provider identifiers are never exposed through this object.
 - `starterSchedulingAvailabilityReady` carries `{ memberId, source, state }`;
-  `source` is `cache`, `starter`, `default`, or `query-test`, and `state` is
+  `source` is `starter`, `default`, or `query-test`, and `state` is
   `init`, `update`, or `null` when neither control exists. For `query-test`,
   `memberId` is the selected test member rather than the authenticated member.
+- `starterSchedulingConnectionStateChanged` carries the non-secret connection
+  summary and repaints both the hero entry point and Calendar action row. The
+  row is visible for disconnected/reconnect/error, hidden while loading, and
+  hidden only after connected proof.
 - `starterSchedulingAvailabilityError` carries `{ message }` after a failed read.
 - `window.StarterSchedulingAvailability` exposes `initialize()` for retries,
   `normalizeAvailability(value)` for the legacy object or JSON-string shape,
-  and `renderState(availability)` for repainting the controls and initial step.
+  `renderState(availability, connectionState)` for repainting the controls and
+  initial step, plus `setConnectionState(state, detail)` for writer events.
 
 This module intentionally owns initialization and visibility only. The writer
 flow lives in `scheduling-availability-writer.js` (below).
@@ -1746,8 +1765,9 @@ Temporary staging QA override (`?test_member_id=`):
   `data-scheduling-test-member="true"` (including after a subsequent read
   error), and a successful ready event reports `source: "query-test"` with the
   override ID as `memberId`.
-- Cached availability stays member-scoped: the override ID gets its own
-  five-minute cache entry and never reuses the authenticated member's cache.
+- Cached availability stays member-scoped: the override ID gets its own cache
+  entry and never reuses the authenticated member's cache. The canonical reader
+  still runs on every boot before any connection state is rendered.
 - The override remains independently staging-host gated. On both custom
   production domains, `test_member_id` is inert and the canonical dashboard
   always reads the authenticated Memberstack member.
@@ -1823,13 +1843,12 @@ Designer follow-up):
   controls are plain), so the legacy manager-restore close branch is
   currently dead but harmless.
 
-Grant state (`nylas_grant_id`/`email`/`calendar_id`) is sourced from the
-scheduling row via an authenticated `get_by_memberstack` read at bootstrap,
-with the Memberstack custom-field mirror as fallback only. The admin PATCH
-that maintains that mirror uses the live Memberstack key, so it cannot write
-Test-Data members — sourcing from the row keeps sandbox QA (and any member
-whose mirror drifts) working. A grant-less save now returns to the `default`
-step instead of legacy's silent dead-end on the form.
+Grant state (`nylas_grant_id`/`email`/`calendar_id`) is sourced only from the
+canonical scheduling row via an authenticated `get_by_memberstack` read at
+bootstrap. Memberstack remains the browser authentication source, but its
+legacy grant custom-field mirrors are not connection authority and cannot make
+a missing or stale Xano connection appear ready. A grant-less save returns to
+the `default` step instead of legacy's silent dead-end on the form.
 
 Deliberately NOT ported from the legacy inline writer:
 
@@ -1880,6 +1899,11 @@ Runtime contract:
 - Events: `starterSchedulingWriterReady` `{ memberId }`,
   `starterSchedulingWriteSuccess` `{ action }`, and
   `starterSchedulingWriteError` `{ action, message }`.
+- `starterSchedulingConnectionStateChanged` carries `{ state, hasGrant,
+  hasCalendar, configurationCount, manager }`. Bootstrap fails closed to
+  `error` when the canonical configuration read fails. An invalid or cancelled
+  OAuth return opens the existing `config-request-error` panel without a grant
+  write.
 - `window.StarterSchedulingAvailabilityWriter` exposes `initialize()` for
   retries plus `switchStep`, `daysAlias`, and `getAvailArray`.
 
@@ -1904,6 +1928,11 @@ or clears the callback immediately when validation fails; expired or malformed
 state is also discarded. Provider access tokens are never stored in the
 browser, and the returned `email` and `provider` are neither retained nor
 trusted.
+
+Nylas-standard OAuth failures (`error`, `error_description`, `error_uri`, or
+`error_code`) are captured without retaining their provider text, stripped from
+the visible URL, and routed to `config-request-error`. They never reach
+`grants/add/v3`; the member can reopen the same native modal and try again.
 
 Before persisting anything, the writer verifies `state` (set server-side from
 the caller's Bearer token) against the logged-in member and, on production,
@@ -2296,10 +2325,10 @@ is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
 The panel settles — and only then may the empty card appear — at the first of:
-an item becoming visible, one of the `starterStripeConnectReady` /
-`starterStripeConnectError` readiness events, or a 4-second timeout. Until it
-settles the loading card stays up, so a slow feature controller never flashes
-a false "all caught up".
+an item becoming visible, a Stripe readiness/error event, a Calendar connection
+state/availability error event, or a 4-second timeout. Until it settles the
+loading card stays up, so a slow feature controller never flashes a false
+"all caught up".
 
 Every render also writes the count to `data-action-items-count` on the scope
 (on `<body>`, or `<html>` if there is no body, when the scope is the document)

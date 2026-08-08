@@ -20,13 +20,17 @@ function control(attributes = {}) {
     getAttribute(name) {
       return this.attributes[name] ?? null
     },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value)
+    },
   }
 }
 
 function loadInitializer(options = {}) {
   const init = control({ 'init-availability': '' })
   const update = control({ 'update-availability': '' })
-  const steps = ['default', 'setup-form'].map((name) =>
+  const connectionAction = control({ 'calendar-connection-action': '' })
+  const steps = ['default', 'setup-form', 'how-to-manage', 'config-request-error'].map((name) =>
     control({ 'availability-step': name }),
   )
   const attributes = new Map()
@@ -42,13 +46,26 @@ function loadInitializer(options = {}) {
     querySelector(selector) {
       if (selector === '[init-availability]') return init
       if (selector === '[update-availability]') return update
-      if (selector === '[init-availability], [update-availability]') {
+      if (selector === '[calendar-connection-action]') return connectionAction
+      if (
+        selector ===
+        '[init-availability], [update-availability], [calendar-connection-action]'
+      ) {
         return options.withoutControls ? null : init
       }
       return null
     },
     querySelectorAll(selector) {
-      return selector === '[availability-step]' ? steps : []
+      if (selector === '[availability-step]') return steps
+      if (selector === '[init-availability]') return options.withoutControls ? [] : [init]
+      if (selector === '[update-availability]') return options.withoutControls ? [] : [update]
+      if (selector === '[calendar-connection-action]') {
+        return options.withoutControls ? [] : [connectionAction]
+      }
+      if (selector === '[init-availability], [update-availability]') {
+        return options.withoutControls ? [] : [init, update]
+      }
+      return []
     },
     addEventListener() {},
   }
@@ -57,6 +74,7 @@ function loadInitializer(options = {}) {
   }
 
   const member = options.member || { id: 'member-a', customFields: {} }
+  const windowListeners = new Map()
   const window = {
     location: {
       hostname: options.hostname || 'the-starters-3-0.webflow.io',
@@ -75,8 +93,13 @@ function loadInitializer(options = {}) {
     getStarterByMemberId: options.getStarterByMemberId,
     xanoAuthFetch: options.xanoAuthFetch,
     $memberstackDom: options.memberstack,
+    addEventListener(name, listener) {
+      if (!windowListeners.has(name)) windowListeners.set(name, [])
+      windowListeners.get(name).push(listener)
+    },
     dispatchEvent(event) {
       events.push(event)
+      for (const listener of windowListeners.get(event.type) || []) listener(event)
     },
   }
 
@@ -100,7 +123,17 @@ function loadInitializer(options = {}) {
     window,
   })
 
-  return { attributes, events, init, steps, storage, update, warnings, window }
+  return {
+    attributes,
+    connectionAction,
+    events,
+    init,
+    steps,
+    storage,
+    update,
+    warnings,
+    window,
+  }
 }
 
 async function settle() {
@@ -242,7 +275,81 @@ test('shows Manage availability when the starter has saved availability', async 
   assert.equal(result.steps[0].style.display, 'block')
   assert.equal(result.steps[1].style.display, 'none')
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'update')
+  assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'reconnect')
+  assert.equal(result.connectionAction.style.display, 'flex')
+  result.update.click()
+  assert.equal(result.steps[2].style.display, 'block')
   assert.equal(result.events[0].detail.source, 'starter')
+})
+
+test('keeps calendar actions hidden while canonical connection state is loading', () => {
+  const result = loadInitializer({
+    xanoAuthFetch: () => new Promise(() => {}),
+  })
+
+  assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'loading')
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionAction.getAttribute('aria-busy'), 'true')
+})
+
+test('hides the Calendar action only after grant, calendar, and config proof', async () => {
+  const availability = {
+    items: { general: { days: [1], start: '09:00', end: '18:00' } },
+    manager: 'calendar',
+  }
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability,
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'loading')
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'connected',
+      hasGrant: true,
+      hasCalendar: true,
+      configurationCount: 1,
+      manager: 'calendar',
+    },
+  })
+
+  assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'connected')
+  assert.equal(result.connectionAction.style.display, 'none')
+  result.update.click()
+  assert.equal(result.steps[0].style.display, 'block')
+})
+
+test('renders partial provider state as reconnect and keeps the CTA actionable', async () => {
+  const availability = {
+    items: { general: { days: [1], start: '09:00', end: '18:00' } },
+    manager: 'calendar',
+  }
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability,
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: '',
+      }),
+    }),
+  })
+  await settle()
+
+  assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'reconnect')
+  assert.equal(result.connectionAction.style.display, 'flex')
+  result.connectionAction.click()
+  assert.equal(result.steps[2].style.display, 'block')
 })
 
 test('keeps actions hidden when the page scheduling reader is missing', async () => {
@@ -370,7 +477,7 @@ test('rejects logout while scheduling availability is loading', async () => {
   assert.equal(result.window.STARTER_AVAILABILITY, null)
 })
 
-test('uses member-scoped cached availability before the legacy endpoint', async () => {
+test('revalidates canonical state instead of trusting a fresh availability cache', async () => {
   let calls = 0
   const availability = { items: { general: {} }, manager: 'platform' }
   const result = loadInitializer({
@@ -382,14 +489,14 @@ test('uses member-scoped cached availability before the legacy endpoint', async 
     },
     getStarterByMemberId: async () => {
       calls += 1
-      return null
+      return { availability }
     },
   })
   await settle()
 
-  assert.equal(calls, 0)
+  assert.equal(calls, 1)
   assert.equal(result.update.style.display, 'flex')
-  assert.equal(result.events[0].detail.source, 'cache')
+  assert.equal(result.events[0].detail.source, 'starter')
 })
 
 test('revalidates expired member-scoped availability', async () => {
@@ -429,6 +536,10 @@ test('read failures keep availability actions hidden in an error state', async (
   assert.equal(result.attributes.get('data-scheduling-availability-init'), 'error')
   assert.equal(result.events[0].type, 'starterSchedulingAvailabilityError')
   assert.equal(result.window.STARTER_AVAILABILITY, null)
+  assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'error')
+  assert.equal(result.connectionAction.style.display, 'flex')
+  result.connectionAction.click()
+  assert.equal(result.steps[3].style.display, 'block')
 })
 
 test('rejects malformed saved availability instead of treating it as absent', async () => {

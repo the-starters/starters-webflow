@@ -4,6 +4,15 @@ const test = require('node:test')
 global.window = global
 const api = require('./dashboard-action-items.js')
 
+test('settles on both Stripe and Calendar feature readiness', () => {
+  assert.deepEqual(api.SETTLE_EVENTS, [
+    'starterStripeConnectReady',
+    'starterStripeConnectError',
+    'starterSchedulingConnectionStateChanged',
+    'starterSchedulingAvailabilityError',
+  ])
+})
+
 function element({ attrs = {}, height = 0, children = [], text = '' } = {}) {
   const el = {
     attributes: { ...attrs },

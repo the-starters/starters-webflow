@@ -21,7 +21,8 @@
  * An item counts as pending when its bounding rect has height (covers
  * display:none rows, hidden ancestor groups, and empty zero-height rows).
  * The panel settles (spinner hides) at the first of: an item becoming
- * visible, a feature controller readiness event, or SETTLE_TIMEOUT_MS.
+ * visible, a Stripe/Calendar feature controller readiness event, or
+ * SETTLE_TIMEOUT_MS.
  */
 ;(function (global) {
   'use strict'
@@ -39,6 +40,8 @@
   const SETTLE_EVENTS = [
     'starterStripeConnectReady',
     'starterStripeConnectError',
+    'starterSchedulingConnectionStateChanged',
+    'starterSchedulingAvailabilityError',
   ]
   const CHANGED_EVENT = 'actionItemsChanged'
 

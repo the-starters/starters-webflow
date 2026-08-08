@@ -88,9 +88,11 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero
   binder for the V3 dashboards; see `v3/README.md` for its Designer markup,
   identity, state, and endpoint contracts
-- `v3/scheduling-availability-init.js` — scheduling availability control
-  initializer; see `v3/README.md` for its authoritative host, path, and safety
-  boundary
+- `v3/scheduling-availability-init.js` — scheduling availability and Calendar
+  connection-state initializer. Saved hours remain independent from canonical
+  grant/calendar/configuration proof, and the Designer-authored Dashboard
+  Calendar CTA follows `loading`/`disconnected`/`connected`/`reconnect`/`error`;
+  see `v3/README.md` for its host, markup, and safety boundary
 - `v3/scheduling-availability-writer.js` — writer counterpart to the
   availability initializer: the versioned port of the legacy V2 availability
   writer flow (form submit, manager selection, Nylas scheduler configuration

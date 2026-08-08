@@ -570,6 +570,107 @@ test('bootstraps a saved schedule: ready state, configs read, cards rendered', a
     'flex',
   )
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriterReady'))
+  assert.equal(
+    result.window.STARTER_SCHEDULING_CONNECTION.state,
+    'connected',
+  )
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(result.window.STARTER_SCHEDULING_CONNECTION)),
+    {
+      state: 'connected',
+      hasGrant: true,
+      hasCalendar: true,
+      configurationCount: 2,
+      manager: 'platform',
+    },
+  )
+  assert.ok(
+    result.events.some(
+      (event) =>
+        event.type === 'starterSchedulingConnectionStateChanged' &&
+        event.detail.state === 'connected',
+    ),
+  )
+})
+
+test('reports disconnected independently of saved availability', async () => {
+  const availability = defaultAvailability()
+  availability.manager = null
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: '',
+          nylas_grant_email: '',
+          nylas_calendar_id: '',
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.status(), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
+  assert.equal(
+    result.calls.filter((call) => call.path === '/nylas_configurations/get_all/v3').length,
+    0,
+  )
+})
+
+test('reports reconnect for partial canonical provider state', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-partial',
+          nylas_grant_email: '',
+          nylas_calendar_id: '',
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({ status: 200, body: [] }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.status(), 'ready')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
+})
+
+test('fails closed when canonical configuration state cannot be read', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 503,
+        body: { message: 'temporarily unavailable' },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.status(), 'error')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.ok(
+    result.events.some(
+      (event) =>
+        event.type === 'starterSchedulingConnectionStateChanged' &&
+        event.detail.state === 'error',
+    ),
+  )
 })
 
 test('first-time setup shows initial elements and keeps bookings hidden', async () => {
@@ -1216,8 +1317,25 @@ test('hosted OAuth callback without success strips its query and performs no wri
   await settle()
 
   assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
   assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
+})
+
+test('OAuth cancellation returns to an actionable error state without writing', async () => {
+  const result = loadWriter({
+    search:
+      '?error=access_denied&error_description=cancelled&error_uri=provider&state=member-a',
+    storage: TZ_CACHED,
+  })
+  await settle()
+
+  assert.ok(result.historyCalls.length >= 1, 'OAuth error fields stripped from the URL')
+  assert.equal(result.calls.filter((c) => c.path === '/grants/add/v3').length, 0)
+  assert.equal(result.dom.steps['config-request-error'].style.display, 'block')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+  assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), false)
 })
 
 test('hosted OAuth callback for a different member performs no writes', async () => {
@@ -1339,7 +1457,7 @@ test('closing the modal resets a saved schedule back to the default step', async
   assert.equal(result.dom.steps['pre-redirect'].style.display, 'none')
 })
 
-test('falls back to Memberstack grant fields when the row has none', async () => {
+test('does not treat stale Memberstack grant mirrors as canonical connection state', async () => {
   const member = MEMBER_A()
   member.customFields['nylas-grant-id'] = 'ms-grant-2'
   const result = loadWriter({
@@ -1354,8 +1472,11 @@ test('falls back to Memberstack grant fields when the row has none', async () =>
   })
   await settle()
 
-  const configsCall = result.calls.find((c) => c.path === '/nylas_configurations/get_all/v3')
-  assert.deepEqual(configsCall.body, { grant_id: 'ms-grant-2' })
+  assert.equal(
+    result.calls.filter((c) => c.path === '/nylas_configurations/get_all/v3').length,
+    0,
+  )
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'reconnect')
 })
 
 test('a grant-less save still lands back on the default step', async () => {

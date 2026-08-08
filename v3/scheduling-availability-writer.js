@@ -25,6 +25,7 @@
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_BASE = XANO_ORIGIN + '/api:tCpV3oqd'
   const STATUS_ATTRIBUTE = 'data-scheduling-availability-writer'
+  const CONNECTION_STATUS_ATTRIBUTE = 'data-scheduling-calendar-state'
   const TEST_MEMBER_ATTRIBUTE = 'data-scheduling-test-member'
   // Shared with scheduling-availability-init.js so a successful write
   // refreshes what the initializer renders on the next load.
@@ -54,13 +55,15 @@
   let activeManager = null
   let timezone = null
   let timezonePersisted = false
+  let connectionError = false
   const oauthCallback = captureOAuthCallback()
 
   function captureOAuthCallback() {
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
     const grantId = params.get('grant_id')
-    if (!code && !grantId) {
+    const hasError = Boolean(params.get('error') || params.get('error_code'))
+    if (!code && !grantId && !hasError) {
       try {
         const raw = window.sessionStorage.getItem(OAUTH_CALLBACK_KEY)
         const stored = raw ? JSON.parse(raw) : null
@@ -69,7 +72,7 @@
           Number.isFinite(stored.capturedAt) &&
           Date.now() - stored.capturedAt >= 0 &&
           Date.now() - stored.capturedAt <= OAUTH_INTENT_MAX_AGE &&
-          (stored.code || stored.grantId)
+          (stored.code || stored.grantId || stored.hasError)
         ) {
           stored.remainingQuery = window.location.search.replace(/^\?/, '')
           return stored
@@ -90,6 +93,7 @@
       grantId: grantId,
       state: params.get('state'),
       success: params.get('success'),
+      hasError: hasError,
       capturedAt: Date.now(),
     }
     try {
@@ -97,7 +101,18 @@
     } catch (error) {
       /* storage unavailable; the in-memory callback can still complete */
     }
-    ;['code', 'grant_id', 'email', 'provider', 'state', 'success'].forEach(function (key) {
+    ;[
+      'code',
+      'grant_id',
+      'email',
+      'provider',
+      'state',
+      'success',
+      'error',
+      'error_description',
+      'error_uri',
+      'error_code',
+    ].forEach(function (key) {
       params.delete(key)
     })
     const remainingQuery = params.toString()
@@ -132,6 +147,38 @@
 
   function emit(name, detail) {
     window.dispatchEvent(new CustomEvent(name, { detail: detail }))
+  }
+
+  function deriveCalendarConnectionState() {
+    const hasGrant = Boolean(grantId)
+    const hasCalendar = Boolean(grantCalendarId)
+    const configurationCount = Array.isArray(configs) ? configs.length : 0
+    if (connectionError) return 'error'
+    if (hasGrant && hasCalendar && configurationCount > 0) return 'connected'
+    if (
+      hasGrant ||
+      hasCalendar ||
+      configurationCount > 0 ||
+      (availability && availability.manager)
+    ) {
+      return 'reconnect'
+    }
+    return 'disconnected'
+  }
+
+  function publishCalendarConnectionState(forcedState) {
+    const state = forcedState || deriveCalendarConnectionState()
+    const detail = {
+      state: state,
+      hasGrant: Boolean(grantId),
+      hasCalendar: Boolean(grantCalendarId),
+      configurationCount: Array.isArray(configs) ? configs.length : 0,
+      manager: (availability && availability.manager) || null,
+    }
+    document.documentElement.setAttribute(CONNECTION_STATUS_ATTRIBUTE, state)
+    window.STARTER_SCHEDULING_CONNECTION = detail
+    emit('starterSchedulingConnectionStateChanged', detail)
+    return state
   }
 
   function memberScopeChangedError() {
@@ -478,15 +525,10 @@
   // not writable for Test-Data members (the admin PATCH uses the live key),
   // so relying on it left sandbox members grant-less in the writer.
   async function readStarterRecord() {
-    try {
-      const starter = await xanoPost('/starter/get_by_memberstack/v3', {
-        member_id: await writeMemberId(),
-      })
-      return starter && typeof starter === 'object' && !Array.isArray(starter) ? starter : null
-    } catch (error) {
-      console.warn('[scheduling-writer] starter read failed:', error && error.message)
-      return null
-    }
+    const starter = await xanoPost('/starter/get_by_memberstack/v3', {
+      member_id: await writeMemberId(),
+    })
+    return starter && typeof starter === 'object' && !Array.isArray(starter) ? starter : null
   }
 
   async function resolveTimezone(starterRecord, allowWrite) {
@@ -544,13 +586,14 @@
   /* Nylas scheduler configurations                                      */
   /* ------------------------------------------------------------------ */
 
-  async function getConfigs(id) {
+  async function getConfigs(id, failOnError) {
     try {
       const response = await xanoPost('/nylas_configurations/get_all/v3', { grant_id: id })
-      if (!Array.isArray(response) || !response.length) return null
+      if (!Array.isArray(response)) throw new Error('Configuration reader returned invalid data')
       return response
     } catch (error) {
       console.warn('[scheduling-writer] getConfigs failed:', error && error.message)
+      if (failOnError) throw error
       return null
     }
   }
@@ -577,8 +620,12 @@
 
   async function createConfigPair() {
     const free = await setupConfigs('free')
-    if (free === null) return null
-    if (resolvePaidRate() > 0) return setupConfigs('paid')
+    if (free === null) throw new Error('Free scheduler configuration failed')
+    if (resolvePaidRate() > 0) {
+      const paid = await setupConfigs('paid')
+      if (paid === null) throw new Error('Paid scheduler configuration failed')
+      return paid
+    }
     console.info('[scheduling-writer] no paid-call rate; skipping paid configuration')
     return free
   }
@@ -672,10 +719,14 @@
         payload,
       )
       if (res && res.response && res.response.status === 200) return true
+      connectionError = true
+      publishCalendarConnectionState('error')
       switchStep('config-request-error')
       console.warn('[scheduling-writer] configuration request rejected')
       return null
     } catch (error) {
+      connectionError = true
+      publishCalendarConnectionState('error')
       switchStep('config-request-error')
       console.warn('[scheduling-writer] configuration request failed:', error && error.message)
       return null
@@ -684,7 +735,14 @@
 
   async function refreshConfigsSoon(delay) {
     setTimeout(async function () {
-      configs = (await getConfigs(grantId)) || []
+      try {
+        configs = (await getConfigs(grantId, true)) || []
+        connectionError = false
+        publishCalendarConnectionState()
+      } catch (error) {
+        connectionError = true
+        publishCalendarConnectionState('error')
+      }
     }, delay)
   }
 
@@ -956,6 +1014,8 @@
           grantCalendarId = virtual.calendar_id
 
           await createConfigPair()
+          connectionError = false
+          publishCalendarConnectionState()
           refreshConfigsSoon(500)
 
           availability.manager = activeManager
@@ -975,11 +1035,17 @@
       } else {
         const memberId = await writeMemberId()
         await clearGrant(memberId, grantId)
+        grantId = null
+        grantEmail = null
+        grantCalendarId = null
+        configs = []
         if (availability.manager !== null) {
           availability.manager = null
           await updateAvail()
         }
         switchStep('success-calendar')
+        connectionError = false
+        publishCalendarConnectionState()
         emit('starterSchedulingWriteSuccess', { action: 'manager-calendar' })
       }
     } catch (error) {
@@ -1007,6 +1073,8 @@
         grantCalendarId = virtual.calendar_id
 
         await createConfigPair()
+        connectionError = false
+        publishCalendarConnectionState()
         refreshConfigsSoon(500)
 
         availability.manager = 'platform'
@@ -1019,6 +1087,8 @@
         grantEmail = null
         grantCalendarId = null
         configs = []
+        connectionError = true
+        publishCalendarConnectionState('error')
       }
 
       await updateAvail()
@@ -1198,6 +1268,11 @@
       memberFields = member.customFields || {}
       timezone = null
       timezonePersisted = false
+      connectionError = false
+      configs = []
+      grantId = null
+      grantEmail = null
+      grantCalendarId = null
 
       availability = await availabilityFromInitializer()
 
@@ -1210,13 +1285,16 @@
         return null
       }
 
+      publishCalendarConnectionState('loading')
+
       initialState = Object.keys(availability.items).length === 0
       const starterRecord = await readStarterRecord()
-      grantId = (starterRecord && starterRecord.nylas_grant_id) || memberFields['nylas-grant-id'] || null
-      grantEmail =
-        (starterRecord && starterRecord.nylas_grant_email) || memberFields['nylas-grant-email'] || null
-      grantCalendarId =
-        (starterRecord && starterRecord.nylas_calendar_id) || memberFields['nylas-calendar-id'] || null
+      // Xano availability_v3 is canonical for scheduling connection state.
+      // Memberstack remains the browser auth source, but its legacy grant
+      // mirrors must never make a missing/stale Xano connection look ready.
+      grantId = (starterRecord && starterRecord.nylas_grant_id) || null
+      grantEmail = (starterRecord && starterRecord.nylas_grant_email) || null
+      grantCalendarId = (starterRecord && starterRecord.nylas_calendar_id) || null
 
       form.addEventListener('submit', function (e) {
         e.preventDefault()
@@ -1257,6 +1335,9 @@
           if (!oauthState || oauthState !== memberId) {
             throw invalidOAuthCallback('OAuth state does not match the logged-in member')
           }
+          if (oauthCallback.hasError) {
+            throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
+          }
           if (oauthGrantId && oauthCallback.success !== 'true') {
             throw invalidOAuthCallback('Hosted OAuth did not report success')
           }
@@ -1284,7 +1365,9 @@
           connectedCalendar = connectedCalendar || 'google'
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
+          connectionError = true
           if (error && error.code === 'OAUTH_CALLBACK_INVALID') clearOAuthCallback()
+          switchStep('config-request-error')
           console.warn('[scheduling-writer] OAuth grant save failed:', error && error.message)
           emit('starterSchedulingWriteError', {
             action: 'oauth-connect',
@@ -1294,7 +1377,7 @@
       }
 
       if (grantId) {
-        configs = (await getConfigs(grantId)) || []
+        configs = (await getConfigs(grantId, true)) || []
         if (isStagingHost && !configs.length && !connectedCalendar) {
           await createConfigPair()
           refreshConfigsSoon(500)
@@ -1402,10 +1485,13 @@
         handleAction(btn, form)
       })
 
+      publishCalendarConnectionState()
       setStatus('ready')
       emit('starterSchedulingWriterReady', { memberId: sessionMemberId })
       return 'ready'
     } catch (error) {
+      connectionError = true
+      publishCalendarConnectionState('error')
       setStatus('error')
       console.warn('[scheduling-writer] initialization failed:', error && error.message)
       emit('starterSchedulingWriteError', {
@@ -1421,6 +1507,7 @@
     switchStep: switchStep,
     daysAlias: daysAlias,
     getAvailArray: getAvailArray,
+    publishCalendarConnectionState: publishCalendarConnectionState,
   }
 
   if (document.readyState === 'loading') {
