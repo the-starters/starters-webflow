@@ -348,6 +348,11 @@
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel))
   const urlParam = (k) => new URL(location.href).searchParams.get(k)
 
+  function normalizedPagePath(value) {
+    const path = String(value || '/').replace(/\/+$/, '')
+    return path || '/'
+  }
+
   function normalizedOpportunityPath(value) {
     if (!value) return ''
     try {
@@ -1073,6 +1078,7 @@
   // applied-ids (which would leak the previous member's opportunities into the feed).
   function resetMemberScopedCaches(memberId) {
     if (memberId === _cacheMemberId) return
+    unwireInvoiceWorkflow()
     _cacheMemberId = memberId
     _memberScopeGeneration += 1
     _xanoToken = null
@@ -1102,7 +1108,14 @@
       return
     }
     _memberScopeAuthChangeWired = true
-    memberstack.onAuthChange((member) => resetMemberScopedCaches(member?.id || null))
+    memberstack.onAuthChange((member) => {
+      resetMemberScopedCaches(member?.id || null)
+      if (normalizedPagePath(location.pathname) === '/all-modals') {
+        wireInvoiceWorkflow()
+      } else {
+        authorizeStarterInvoiceWorkflow(member)
+      }
+    })
   }
 
   /**
@@ -1430,7 +1443,7 @@
   const INVOICE_NO_PROJECT_MESSAGE =
     'Open Generate Invoice from the project you want to bill, so we know which project to invoice.'
   let activeInvoiceProject = null
-  let invoiceSubmitting = false
+  let invoiceWorkflowBinding = null
 
   function invoiceProjectContext(card) {
     if (!card) return null
@@ -1718,99 +1731,149 @@
     return true
   }
 
-  function wireInvoiceWorkflow() {
-    if (window.__opp30InvoicesWired) return
+  function invoiceWorkflowBindingCurrent(binding) {
+    if (invoiceWorkflowBinding !== binding) return false
+    const path = normalizedPagePath(location.pathname)
+    if (binding.generation === null) return path === '/all-modals'
+    return path === '/starter-dashboard' && binding.generation === _memberScopeGeneration
+  }
+
+  function unwireInvoiceWorkflow() {
+    const binding = invoiceWorkflowBinding
+    if (!binding) return
+    invoiceWorkflowBinding = null
+    document.removeEventListener('click', binding.click, true)
+    document.removeEventListener('submit', binding.submit, true)
+    if (binding.submitControl) setInvoiceSubmitDisabled(binding.submitControl, false)
+    activeInvoiceProject = null
+    delete window.__opp30InvoicesWired
+  }
+
+  function authorizeStarterInvoiceWorkflow(member) {
+    if (
+      normalizedPagePath(location.pathname) !== '/starter-dashboard' ||
+      !member ||
+      member.id !== _cacheMemberId ||
+      memberPlanRole(member) !== 'talent'
+    ) {
+      unwireInvoiceWorkflow()
+      return false
+    }
+    wireInvoiceWorkflow(_memberScopeGeneration)
+    return true
+  }
+
+  function wireInvoiceWorkflow(generation = null) {
+    if (
+      invoiceWorkflowBinding &&
+      invoiceWorkflowBinding.generation === generation &&
+      invoiceWorkflowBindingCurrent(invoiceWorkflowBinding)
+    ) {
+      return
+    }
+    unwireInvoiceWorkflow()
+    const binding = { generation, submitting: false, submitControl: null }
     window.__opp30InvoicesWired = true
 
-    document.addEventListener(
-      'click',
-      (event) => {
-        const target = event.target
-        if (requestInvoiceSubmit(target)) {
-          event.preventDefault()
-          event.stopPropagation()
-          return
-        }
-        const action = target && target.closest ? target.closest(INVOICE_ACTION_SELECTOR) : null
-        if (!action) return
-        // Only swallow the click once we know this workflow can handle it —
-        // otherwise modal.js's own trigger delegation must stay reachable.
-        const modal = $(INVOICE_MODAL_SELECTOR)
-        const context = invoiceProjectContext(action.closest(INVOICE_CARD_SELECTOR))
-        if (!modal || !context) {
-          console.error('[opp30:invoice] cannot prepare the Generate Invoice modal', {
-            modal: !!modal,
-            project: context ? context.projectId : null,
-          })
-          return
-        }
+    binding.click = (event) => {
+      if (!invoiceWorkflowBindingCurrent(binding)) {
+        unwireInvoiceWorkflow()
+        return
+      }
+      const target = event.target
+      if (requestInvoiceSubmit(target)) {
         event.preventDefault()
         event.stopPropagation()
-        prepareInvoiceModal(modal, context)
-        showInvoiceModal(modal)
-      },
-      true,
-    )
+        return
+      }
+      const action = target && target.closest ? target.closest(INVOICE_ACTION_SELECTOR) : null
+      if (!action) return
+      // Only swallow the click once we know this workflow can handle it —
+      // otherwise modal.js's own trigger delegation must stay reachable.
+      const modal = $(INVOICE_MODAL_SELECTOR)
+      const context = invoiceProjectContext(action.closest(INVOICE_CARD_SELECTOR))
+      if (!modal || !context) {
+        console.error('[opp30:invoice] cannot prepare the Generate Invoice modal', {
+          modal: !!modal,
+          project: context ? context.projectId : null,
+        })
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      prepareInvoiceModal(modal, context)
+      showInvoiceModal(modal)
+    }
 
-    document.addEventListener(
-      'submit',
-      async (event) => {
-        const form = event.target
-        const modal = form && form.closest && form.closest(INVOICE_MODAL_SELECTOR)
-        if (!modal) return
-        event.preventDefault()
-        event.stopPropagation()
-        if (invoiceSubmitting) return
-        // modal.js's own trigger delegation can open this dialog without any
-        // card, so there is no project to bill until prepareInvoiceModal ran.
-        const context = activeInvoiceProject
-        if (!context) {
-          invoiceError(modal, INVOICE_NO_PROJECT_MESSAGE)
-          return
-        }
+    binding.submit = async (event) => {
+      if (!invoiceWorkflowBindingCurrent(binding)) {
+        unwireInvoiceWorkflow()
+        return
+      }
+      const form = event.target
+      const modal = form && form.closest && form.closest(INVOICE_MODAL_SELECTOR)
+      if (!modal) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (binding.submitting) return
+      // modal.js's own trigger delegation can open this dialog without any
+      // card, so there is no project to bill until prepareInvoiceModal ran.
+      const context = activeInvoiceProject
+      if (!context) {
+        invoiceError(modal, INVOICE_NO_PROJECT_MESSAGE)
+        return
+      }
 
-        const amountInput = $('#Amount', form) || $('[name="Amount"]', form)
-        const descriptionInput = $('#Description', form) || $('[name="Description"]', form)
-        const amount = normalizeInvoiceAmount(amountInput && amountInput.value)
-        if (amount === null) {
-          invoiceError(modal, INVOICE_AMOUNT_MESSAGE)
-          return
-        }
+      const amountInput = $('#Amount', form) || $('[name="Amount"]', form)
+      const descriptionInput = $('#Description', form) || $('[name="Description"]', form)
+      const amount = normalizeInvoiceAmount(amountInput && amountInput.value)
+      if (amount === null) {
+        invoiceError(modal, INVOICE_AMOUNT_MESSAGE)
+        return
+      }
 
-        clearInvoiceError(modal)
-        invoiceSubmitting = true
-        const submit = invoiceSubmitControl(form)
-        setInvoiceSubmitDisabled(submit, true)
+      clearInvoiceError(modal)
+      binding.submitting = true
+      const submit = invoiceSubmitControl(form)
+      binding.submitControl = submit
+      setInvoiceSubmitDisabled(submit, true)
+      try {
+        const result = await API.invoiceCreate({
+          project_id: context.projectId,
+          amount,
+          description: descriptionInput ? descriptionInput.value.trim() : '',
+          idempotency_key: invoiceIdempotencyKey(form, context.projectId),
+        })
+        if (!invoiceWorkflowBindingCurrent(binding)) return
+        paintInvoiceSuccess(modal, result, context, amount)
+        delete form.dataset.invoiceIdempotencyKey
+        // A stale project must never be billed by a later submit from a modal
+        // that was reopened without a card.
+        activeInvoiceProject = null
+        // Feed refresh is cosmetic; never report a created invoice as failed.
         try {
-          const result = await API.invoiceCreate({
-            project_id: context.projectId,
-            amount,
-            description: descriptionInput ? descriptionInput.value.trim() : '',
-            idempotency_key: invoiceIdempotencyKey(form, context.projectId),
-          })
-          paintInvoiceSuccess(modal, result, context, amount)
-          delete form.dataset.invoiceIdempotencyKey
-          // A stale project must never be billed by a later submit from a modal
-          // that was reopened without a card.
-          activeInvoiceProject = null
-          // Feed refresh is cosmetic; never report a created invoice as failed.
-          try {
-            if (window.WfXano && typeof window.WfXano.refresh === 'function') {
-              window.WfXano.refresh(context.card.closest('[wf-xano-source]') || undefined)
-            }
-          } catch (refreshError) {
-            /* non-fatal: the next page load repaints the card */
+          if (window.WfXano && typeof window.WfXano.refresh === 'function') {
+            window.WfXano.refresh(context.card.closest('[wf-xano-source]') || undefined)
           }
-        } catch (err) {
-          console.error('[opp30:invoice]', err)
-          invoiceError(modal, invoiceErrorMessage(err))
-        } finally {
-          invoiceSubmitting = false
+        } catch (refreshError) {
+          /* non-fatal: the next page load repaints the card */
+        }
+      } catch (err) {
+        if (!invoiceWorkflowBindingCurrent(binding)) return
+        console.error('[opp30:invoice]', err)
+        invoiceError(modal, invoiceErrorMessage(err))
+      } finally {
+        if (invoiceWorkflowBindingCurrent(binding)) {
+          binding.submitting = false
+          binding.submitControl = null
           setInvoiceSubmitDisabled(submit, false)
         }
-      },
-      true,
-    )
+      }
+    }
+
+    invoiceWorkflowBinding = binding
+    document.addEventListener('click', binding.click, true)
+    document.addEventListener('submit', binding.submit, true)
   }
 
   // Paint the existing Webflow-authored opportunity review screen. Some
@@ -2655,13 +2718,14 @@
   // state with profile guidance when the starter has no valid matching categories.
   async function initStarterDashboardOpportunityMatch() {
     try {
-      if (!(await gateOrRedirect('freelancer'))) return
+      const member = await gateOrRedirect('freelancer')
+      if (!member) return
       // Generate Invoice is a Starter-only capability in Xano. Bind its UI
       // only after this page has resolved an authenticated Talent member, so a
       // Brand session can never inherit the modal click/submit behavior even
       // if the shared Project Item component is misconfigured or briefly
       // visible during a redirect.
-      wireInvoiceWorkflow()
+      authorizeStarterInvoiceWorkflow(member)
       const context = await getTalentMatchContext()
       const categoryRefs = filterValues(contextValue(context, 'category_refs'))
       window.Opp30TalentMatchContext = context
@@ -3815,7 +3879,8 @@
     prepareOpportunityLoadingControls()
     wireModals()
     const p = location.pathname
-    if (p.includes('starter-dashboard')) initStarterDashboardOpportunityMatch()
+    const normalizedPath = normalizedPagePath(p)
+    if (normalizedPath === '/starter-dashboard') initStarterDashboardOpportunityMatch()
     else if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/[^/]+\/?$/)) initOppDetailByRole()
     // Merged feed (bare /opportunities, launched 2026-07): matches neither the
@@ -3848,7 +3913,7 @@
     }
     // /all-modals is the component-preview surface. Keep the authored invoice
     // modal interactive there without enabling it on any production Brand page.
-    if (p.includes('all-modals')) wireInvoiceWorkflow()
+    if (normalizedPath === '/all-modals') wireInvoiceWorkflow()
   }
 
   // The CDN script is loaded with `defer` on opportunity pages, so the modal
