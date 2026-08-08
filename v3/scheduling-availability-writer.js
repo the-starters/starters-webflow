@@ -142,6 +142,27 @@
   }
 
   function setCalendarConnectCopy() {
+    qsa('[config-manager]').forEach(function (manager) {
+      const paragraphs = qsa('p', manager)
+      const title = paragraphs[0]
+      const body = paragraphs[1]
+      if (manager.dataset.type === 'platform') {
+        if (title) title.textContent = 'Use platform availability'
+        if (body) {
+          body.textContent =
+            'Use your saved hours without checking conflicts in an external calendar.'
+        }
+      } else if (manager.dataset.type === 'calendar') {
+        if (title) title.textContent = 'Connect Google Calendar'
+        if (body) {
+          body.textContent =
+            'Check your real calendar for conflicts so brands only see times when you’re free.'
+        }
+      }
+    })
+
+    setManagerSubmitCopy(activeManager)
+
     const successStep = qs('[availability-step="success-calendar"]')
     if (successStep) {
       const headlines = qsa('.set-availability_success-headline', successStep)
@@ -180,6 +201,14 @@
           'Taking you to Google’s secure authorization page. Your availability is already saved.'
       }
     }
+  }
+
+  function setManagerSubmitCopy(manager) {
+    const label =
+      manager === 'calendar' ? 'Connect Google Calendar' : 'Use platform availability'
+    qsa('[availability-action-btn="manager-submit"] .button_main-text').forEach(function (el) {
+      el.textContent = label
+    })
   }
 
   function setStatus(value) {
@@ -1130,9 +1159,9 @@
           availability.manager = null
           await updateAvail()
         }
-        switchStep('success-calendar')
         await refreshCanonicalConnectionState()
         emit('starterSchedulingWriteSuccess', { action: 'manager-calendar' })
+        await handlePreRedirect()
       }
     } catch (error) {
       publishCalendarConnectionError()
@@ -1535,6 +1564,7 @@
       const activeManagerEl = qs('[config-manager].is-active')
       if (activeManagerEl) {
         activeManager = activeManagerEl.dataset.type
+        setManagerSubmitCopy(activeManager)
         if (activeManager === availability.manager) toggleManagerSubmit(false)
       }
       const managers = qsa('[config-manager]')
@@ -1546,6 +1576,7 @@
           })
           manager.classList.add('is-active')
           activeManager = manager.dataset.type
+          setManagerSubmitCopy(activeManager)
           if (activeManager === availability.manager) toggleManagerSubmit(false)
         })
       })

@@ -1831,15 +1831,17 @@ inside it. All **11** step wrappers exist:
 | `disconnect-calendar` | confirm screen: `disconnect-calendar` action, back, loader |
 | `virtual-connect`, `pre-redirect` | passive status screens; `pre-redirect` remains visible while the same-tab hosted OAuth URL is prepared |
 | `success`, `success-disconnect`, `config-request-error` | back → default |
-| `success-calendar` | `pre-redirect` action |
+| `success-calendar` | retained legacy fallback; the current manager-selection flow bypasses it |
 | `reload-page` | legacy fallback only; the current same-tab OAuth handoff returns directly to the dashboard callback |
 
-The own-calendar success step is normalized at runtime to make the two phases
-explicit: availability is already saved, and `Connect Google Calendar` is a
-separate user action. That click prepares the authenticated hosted OAuth URL
-and navigates the current tab. It intentionally avoids delayed `window.open`,
-which browsers block after asynchronous Xano requests, and removes the
-misleading `Done` -> `Refresh the page` dead end.
+The manager-selection tiles and submit action are normalized at runtime to the
+supported choices: `Use platform availability` or `Connect Google Calendar`.
+Selecting Google clears the previous grant, restores the disconnected state
+from the canonical scheduling row, prepares the authenticated hosted OAuth URL,
+and navigates the current tab without a second confirmation. The same-tab
+handoff intentionally avoids delayed `window.open`, which browsers block after
+asynchronous Xano requests, and preserves the sessionStorage intent required by
+the callback verifier.
 
 Only `setup-form`, `how-to-manage`, and `disconnect-calendar` carry a
 step-scoped `[data-custom-loader]`; `setLoader` is a safe no-op on the rest
