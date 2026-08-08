@@ -806,15 +806,51 @@ test('project Show more stays hidden while project endpoints return complete col
   assert.equal(loads, 0)
 })
 
-test('project status replacements reuse cards through canonical keyed reconciliation', () => {
-  const instance = {
-    keyed: false,
-    keyField: 'id',
-    root: element({ 'wf-xano-instance': 'dash-projects' }),
+test('both project dashboards enable canonical keyed reconciliation before subscribing', () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const keys = ['dash-projects', 'dash-brand-projects']
+  const roots = Object.fromEntries(
+    keys.map((key) => {
+      const filters = element()
+      const root = element({ 'wf-xano-instance': key })
+      root.querySelector = (selector) =>
+        selector === '.tabs-button_component.is-dashboard' ? filters : null
+      return [key, { filters, root }]
+    }),
+  )
+  const keyedWhenSubscribed = {}
+  const instances = Object.fromEntries(
+    keys.map((key) => [
+      key,
+      {
+        keyed: false,
+        keyField: 'id',
+        root: roots[key].root,
+        qa: () => [roots[key].filters],
+        on() {},
+        subscribe(selector, handler) {
+          keyedWhenSubscribed[key] = this.keyed
+          handler(selector({ status: 'success', data: { total: 1 }, query: { params: {} } }))
+        },
+      },
+    ]),
+  )
+  const document = {
+    readyState: 'complete',
+    querySelectorAll(selector) {
+      const match = selector.match(/^\[wf-xano-instance="([^"]+)"\]$/)
+      if (match && roots[match[1]]) return [roots[match[1]].root]
+      return []
+    },
   }
+  const window = { document, location: { pathname: '/starter-dashboard' } }
 
-  assert.equal(api.enableProjectKeyedReconciliation(instance), true)
-  assert.equal(instance.keyed, true)
-  assert.equal(instance.keyField, 'id')
-  assert.equal(api.enableProjectKeyedReconciliation(null), false)
+  vm.runInNewContext(source, { document, Intl, window })
+  window.WfXano[0]({ get: (key) => instances[key] || null })
+
+  keys.forEach((key) => {
+    assert.equal(keyedWhenSubscribed[key], true)
+    assert.equal(instances[key].keyed, true)
+    assert.equal(instances[key].keyField, 'id')
+  })
 })
