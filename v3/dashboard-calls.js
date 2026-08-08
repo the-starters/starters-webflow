@@ -557,7 +557,6 @@
             memory.navigationVisible = false
             memory.authTransition = true
             memory.allItems = []
-            memory.localStatus = ''
             reveal(false)
           })
         }
