@@ -12,50 +12,62 @@
  * section is empty but ANOTHER tab still has hits, the engine keeps no-results
  * hidden and the active tab looks blank, with no message at all.
  *
- * THE INVARIANT (read this before changing anything below):
+ * THE RULE (read this before changing anything below):
  *
- *   This embed only ever ADDS the message in the one case the engine misses,
- *   and NEVER suppresses a reveal the engine performed itself.
+ *   SHOW  iff  the query is NON-EMPTY  AND  the active panel is empty.
+ *   Otherwise RELEASE — remove our own class and never write display.
  *
- * Concretely, it shows the shared no-results element on exactly one condition:
- * the ACTIVE panel is empty AND at least one OTHER panel is populated. That
- * asymmetry IS the engine's blind spot and the entire reason this file exists.
- * In every other state it removes its own class and lets the engine's inline
- * display govern, whatever the engine decided.
+ * That is the whole decision. Two things it deliberately does NOT do:
  *
- * An earlier version instead ran two blanket rules — "empty query => force-hide"
- * and "active panel empty => show" — and the force-hide was actively harmful,
- * on two independent grounds:
+ * - It does NOT require another panel to have hits. Earlier drafts did, on the
+ *   theory that "active empty while another tab has hits" is the engine's exact
+ *   blind spot and anything else is the engine's job. That was wrong, because
+ *   this embed is ADD-ONLY: duplicating a reveal the engine also performs is
+ *   harmless (same element, same visual, one class), whereas requiring another
+ *   populated panel opened a hole with no rescue. tabs.js:325-328 stamps inline
+ *   display:none on EVERY panel-list child at its DOMContentLoaded init, and
+ *   that list provably includes the no-results element (it is authored inside
+ *   panel-list — see below). The engine is <script async> in the head, so if it
+ *   reveals the message BEFORE tabs.js initializes, tabs.js clobbers it. With
+ *   the "another panel populated" condition, the all-empty case no longer
+ *   qualified and nothing could rescue that clobber: blank tab, no explanation.
+ *   Under the rule above the all-empty case is covered by US, not delegated to
+ *   engine behavior we would have to trust and cannot verify.
+ * - It does NOT force-hide anything, ever. There is no hide class. "Not
+ *   showing" means removing our own class, which hands the element straight
+ *   back to whatever inline display the engine and tabs.js set.
  *
- *   1. It can blank a legitimate message. explore-search-default-results.js is
- *      what normally fills both sections on an empty query, and it can
- *      under-deliver: it hides any section whose empty-query fetch returns zero
- *      hits, it swallows multiSearch rejections in a bare .catch(), it gives up
- *      at its shared ~15s deadline, and it bails when no hit-card template can
- *      be recovered. In any of those cases the sections are empty with an empty
- *      search box, the engine may well have revealed the shared message itself,
- *      and force-hiding it left a blank panel with no explanation — the exact
- *      state this feature exists to explain, i.e. strictly worse than the
- *      feature being dead.
- *   2. Independently of any specific trigger, stamping display:none !important
- *      over a reveal the ENGINE performed is wrong on principle. This embed's
- *      remit is to cover the engine's blind spot, never to override the
- *      engine's own correct behavior.
+ * Why the NON-EMPTY query requirement, specifically: it keeps an explicit
+ * cross-embed contract intact. explore-search-default-results.js:332 calls
+ * hideEl(noResultsEl) with the comment "defaults never show the no-results
+ * element" — on an empty query it fills both sections with default items, so a
+ * "no matches" message would be a lie. Our display:block !important would beat
+ * that inline write. Gating on a non-empty query restores that contract without
+ * reintroducing any forcing hide: we simply never ADD a message on a search the
+ * user has not made. It also removes two ways the old rule produced a false
+ * message on an untouched page:
+ *   - a PARTIAL default delivery (one section painted, the other hidden by its
+ *     own 0-hit hideEl(section), or skipped because its template could not be
+ *     recovered) used to satisfy "active empty AND other populated";
+ *   - on CLEAR there is a transient where the engine has hidden the results
+ *     container but the previous render's DOM survives — active section still
+ *     display:none, the other still holding its cards — and default-results only
+ *     repaints after its 150ms debounce plus a multiSearch round-trip. The old
+ *     rule flashed the message across that window with an empty search box.
  *
- * The empty-query behavior is now DERIVED from the invariant rather than
- * special-cased: with defaults painted the active panel has hits, so the SHOW
- * condition is simply not met and no special case is needed.
- *
- * Because of the invariant there is no "hide" class at all. Not showing simply
- * means removing our own class, which hands the element straight back to the
- * engine's (and tabs.js's) inline display. Do not reintroduce a forcing hide.
+ * ACCEPTED RISK of having no hide class: if the engine ever strands its own
+ * reveal — leaves no-results visible while the active panel actually has hits —
+ * this embed cannot correct it. That is the deliberate price of never fighting
+ * the engine, and it is the right trade: a spurious extra message is a much
+ * smaller failure than a blank panel with no explanation, which is what every
+ * forcing-hide variant of this file eventually produced.
  *
  * Required markup — this is the layout as ACTUALLY authored on the live page,
  * which is NOT what an earlier version of this comment claimed: the shared
  * no-results element is a child of the panel-list, not its sibling.
  *
  *   [wf-algolia-element="search-wrapper"]
- *     input[wf-algolia-element="search-input"]      (optional — see below)
+ *     input[wf-algolia-element="search-input"]      (REQUIRED — see below)
  *     [wf-algolia-element="results"]                 (also data-tab-component="wrapper")
  *       [data-tab-component="button-list"]           one button per tab
  *       [data-tab-component="panel-list"]
@@ -70,11 +82,13 @@
  *   exactly that mistake: it counts panel-list's children as panels, logs
  *   "Tab button/panel count mismatch: 2 buttons vs 3 panels", and stamps
  *   data-tab-active="false" plus an inline display:none onto the no-results
- *   element like any other panel. This embed must not repeat it — an "active
- *   panel" holding no section would read as NOT empty and the message would
- *   never show. isPanelCandidate() below rejects it (and honors
- *   data-tab-component-skip, the same signal tabs.js uses, so both files agree
- *   on what counts as a panel).
+ *   element like any other panel. isPanelCandidate() below rejects it.
+ * - isPanelSlot() also honors data-tab-component-skip so an author can take an
+ *   element out of the running the same way tabs.js does. Note this is NOT the
+ *   same test tabs.js uses: tabs.js:55 isTabSlotItem checks ONLY that attribute
+ *   and does not require a section, so the two files can and do disagree about
+ *   what counts as a panel — that disagreement is exactly why tabs.js miscounts
+ *   the no-results element and this file does not.
  * - tabs.js's inline display:none on the no-results element is why the forcing
  *   class needs !important; it is not only the engine writing that style.
  *
@@ -93,11 +107,16 @@
  *   container that carries the tabbed markup, else any container in the
  *   document carrying it, else the first container a browse widget does not
  *   own. Every rung skips browse-owned containers.
- * - Everything else is then derived FROM that container rather than looked up
- *   independently, so two different widgets can never be mixed: the input comes
- *   from the container's own search-wrapper, and the no-results element is
- *   preferred as a direct child of the resolved panel-list (so a future
- *   per-panel "nothing here" element can never be adopted by mistake).
+ * - Everything else is then derived FROM that container, so two different
+ *   widgets can never be mixed. The input in particular is resolved ONLY from
+ *   the resolved container's own search-wrapper — there is deliberately no
+ *   document-wide fallback, because the rule above reads input.value and a
+ *   foreign widget's box is permanently empty, which would silently disable the
+ *   message instead of failing loudly. If our wrapper has no input we treat it
+ *   as ABSENT and never show: a missing input FAILS CLOSED.
+ * - The no-results element is likewise preferred as a direct child of the
+ *   resolved panel-list, so a future per-panel "nothing here" element can never
+ *   be adopted as the shared one.
  * - The browse-guard helpers (inBrowseWidget / firstOutsideBrowse) mirror
  *   explore-search-default-results.js, which fixed the same bug. The ladders
  *   themselves have deliberately DIVERGED — this one gates every rung on the
@@ -115,19 +134,19 @@
  * the engine DETACHES that template when it initializes — so a settled empty
  * section has ZERO children. (An earlier version of this comment claimed every
  * section also keeps a structural section-label child; that is false for this
- * markup, and the no-flash reasoning that rested on it was wrong.) The populated
- * test therefore checks the engine's display signal first and then looks for a
- * non-template child, and the no-flash guarantee comes from the render latch
- * described next, NOT from sections being non-empty at rest.
+ * markup.) The populated test therefore checks the engine's display signal first
+ * and then looks for a non-template child. It is intentionally identical in
+ * semantics to explore-search-hide-empty.js's isSectionPopulated, so the two
+ * embeds can never disagree about whether a section has hits.
  *
- * First-render latch (this is what prevents the first-keystroke flash): between
- * the engine detaching the templates and the first render landing, every section
- * is legitimately empty. Typing inside that window — which can be seconds wide,
- * covering default-results' engine poll, its 150ms debounce, its multiSearch
- * round-trip and, on the template-recovery path, a refetch of the ~950KB page —
- * would otherwise satisfy "active panel empty" and paint the message on
- * keystroke 1. So nothing is shown until at least one .wf-algolia-injected card
- * has appeared inside the results container; after that the latch stays set.
+ * First-render latch: between the engine detaching the templates and the first
+ * render landing, every section is legitimately empty. Typing inside that window
+ * — which can be seconds wide, covering default-results' engine poll, its 150ms
+ * debounce, its multiSearch round-trip and, on the template-recovery path, a
+ * refetch of the ~950KB page — would satisfy "non-empty query AND active panel
+ * empty" and paint the message on keystroke 1. So nothing is shown until at
+ * least one .wf-algolia-injected card has appeared inside the results container;
+ * after that the latch stays set.
  *
  * How it forces the toggle: the shared no-results element carries an inline
  * style.display="none" from BOTH the engine (whenever another tab has hits) and
@@ -147,24 +166,28 @@
  * from a click. tabs.js switches tabs from arrow-key navigation, prev/next
  * controls, its _tabController.makeActive API, autoplay and ?tab-id= deep links,
  * none of which involve a click on the button list; an earlier click-only hook
- * missed every one of those, so the message revealed on the first animation
- * frame against the outgoing panel's height and then jumped. The same hook fired
- * on clicks that changed nothing (the already-active tab, the container padding,
- * the "(0)" count — and twice per click, since each button wraps a <label for>),
- * blanking the message for ~600ms for no reason. So a MutationObserver watches
- * the panel-list for data-tab-active / class changes and arms the guard only
- * when the ACTIVE PANEL IDENTITY ACTUALLY CHANGED. The guard still always clears
- * itself on a timer, so it can never strand the message.
+ * missed every one of those, and also fired on clicks that changed nothing. It
+ * writes data-tab-active on every one of those paths (tabs.js:461/468), so that
+ * one attribute is the whole signal — watching 'class' as well bought nothing
+ * and fired on every injected hit card and every hide-empty toggle.
+ *
+ * The switch guard only runs when there is actually an animation to hide. An
+ * ANIMATED switch keeps the OUTGOING panel visible during the fade, so revealing
+ * the message mid-switch places it against the old height and it jumps once the
+ * layout settles. But tabs.js:505-508 makes every switch an instant display swap
+ * when gsap is undefined, and tabs.js:628-630 deep links pass animate=false
+ * explicitly. Blanking for 400-1500ms in those cases is pure harm: both panels
+ * can be collapsed at once (hide-empty's !important on one, tabs.js's inline
+ * display:none on the other), so the results region drops to zero height and
+ * then pops back. So the guard is gated on gsap being present; otherwise we just
+ * re-evaluate immediately.
  *
  * Evaluations are coalesced onto a single 0ms timeout (not rAF — animation-frame
  * callbacks are suspended while the tab is backgrounded; a plain timeout runs).
  *
  * Bails out quietly if the results / no-results / panel-list / section markup is
- * absent (feature only applies to the tabbed layout). The search input is
- * OPTIONAL: no decision depends on its value any more, it is only an extra
- * re-evaluation trigger, so a page that hides or renames it degrades to
- * observer-driven updates instead of silently doing nothing. Never throws
- * (defensive try/catch) — must not break the page.
+ * absent (feature only applies to the tabbed layout). Never throws (defensive
+ * try/catch) — must not break the page.
  *
  * Webflow embed (jsDelivr):
  *   https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/explore-search/explore-search-tab-no-results.js
@@ -187,6 +210,11 @@
   var TAB_WRAPPER_SELECTOR = '[data-tab-component="wrapper"]';
   var INJECTED_SELECTOR = ".wf-algolia-injected";
   var SKIP_ATTR = "data-tab-component-skip";
+
+  /* Sentinel: a child IS flagged active but is not a real panel, so the state
+     cannot be judged. Deliberately distinct from null ("nothing flagged yet"),
+     because the two must behave differently — see getActivePanel(). */
+  var UNJUDGEABLE = {};
 
   function init() {
     try {
@@ -273,9 +301,8 @@
       var panelList = resultsEl.querySelector(PANEL_LIST_SELECTOR);
       if (!panelList) return; // only applies to the tabbed layout
 
-      /* A candidate panel, ignoring the no-results question (which is resolved
-         just below and would otherwise be circular). Mirrors tabs.js's own
-         notion of a tab slot via data-tab-component-skip. */
+      /* A candidate panel, ignoring the no-results question (resolved just
+         below, which would otherwise be circular). */
       function isPanelSlot(el) {
         if (!el) return false;
         var skip = el.getAttribute(SKIP_ATTR);
@@ -314,20 +341,17 @@
       // Nothing to judge if there are no sections at all.
       if (!resultsEl.querySelector(SECTION_SELECTOR)) return;
 
-      /* The input comes from the SAME widget as the container, never from a
-         document-wide first match — a foreign wrapper's input would report a
-         permanently empty value. It is optional: nothing below reads its value,
-         it only triggers an extra evaluation. */
+      /* The input comes ONLY from the SAME widget as the container. No
+         document-wide fallback on purpose: THE RULE reads input.value, and a
+         foreign widget's box is permanently empty, so falling back would
+         silently disable the message. Absent input => never show (fail closed). */
       var ownWrapper = null;
       try {
         ownWrapper = resultsEl.closest && resultsEl.closest(WRAPPER_SELECTOR);
       } catch (e) {
         ownWrapper = null;
       }
-      var input =
-        firstOutsideBrowse(ownWrapper, INPUT_SELECTOR) ||
-        firstOutsideBrowse(document.querySelector(WRAPPER_SELECTOR), INPUT_SELECTOR) ||
-        firstOutsideBrowse(document, INPUT_SELECTOR);
+      var input = firstOutsideBrowse(ownWrapper, INPUT_SELECTOR);
 
       /* The tab component that owns OUR panel-list. On the live page this is
          the results container itself; resolving it this way (never a bare
@@ -345,7 +369,7 @@
          element carries an inline display:none from the engine (when another
          tab has hits) and from tabs.js (which mis-counts it as a panel), so an
          !important declaration is needed to override those inline rules. There
-         is deliberately no hide rule — see THE INVARIANT above. --- */
+         is deliberately no hide rule — see THE RULE above. --- */
       if (!document.getElementById(STYLE_ID)) {
         var style = document.createElement("style");
         style.id = STYLE_ID;
@@ -360,10 +384,7 @@
         return isPanelSlot(el);
       }
 
-      /* A section is "populated" only if the engine has NOT inline-hidden it AND
-         it has at least one non-template child. Sections are authored with only
-         the hidden template, which the engine detaches at init, so a settled
-         empty section has zero children. */
+      /* Identical in semantics to explore-search-hide-empty.js's version. */
       function isSectionPopulated(section) {
         if (section.style.display === "none") return false;
         var children = section.children;
@@ -382,11 +403,16 @@
         return false;
       }
 
-      /* The active panel is the child tabs.js flagged. If the flagged child is
-         not a real panel (the no-results element, or a skipped slot), the state
-         is NOT JUDGEABLE and this returns null — falling back to a different
-         panel would judge the wrong one. Before tabs.js has run nothing is
-         flagged, so the first candidate stands in for the default-visible tab. */
+      /* Three distinct outcomes, and they must stay distinct:
+           - a real panel element : judge it
+           - UNJUDGEABLE          : something IS flagged active but is not a
+                                    panel (e.g. the no-results element authored
+                                    first, which tabs.js:515 makeActive(0,…)
+                                    would flag). Do not show, do not treat as a
+                                    tab switch, do not latch.
+           - null                 : nothing flagged active yet (tabs.js has not
+                                    run). Fall back to the first candidate, which
+                                    is the default-visible tab. */
       function getActivePanel() {
         var kids = panelList.children;
         var flagged = null;
@@ -398,25 +424,22 @@
           }
           if (!first && isPanelCandidate(child)) first = child;
         }
-        if (flagged) return isPanelCandidate(flagged) ? flagged : null;
+        if (flagged) return isPanelCandidate(flagged) ? flagged : UNJUDGEABLE;
         return first;
       }
 
-      /* THE INVARIANT, in code: show only when the active panel is empty AND
-         some other panel has hits. Anything else is either a state the engine
-         already handles (all panels empty => it reveals the message itself) or
-         a state with nothing to say. */
+      function queryIsEmpty() {
+        // No input resolved => behave as if there were no query at all.
+        if (!input) return true;
+        return ((input.value || "") + "").trim() === "";
+      }
+
+      /* THE RULE, in code. */
       function shouldShow() {
+        if (queryIsEmpty()) return false;
         var active = getActivePanel();
-        if (!active) return false; // not judgeable => never our call
-        if (isPanelPopulated(active)) return false;
-        var kids = panelList.children;
-        for (var i = 0; i < kids.length; i++) {
-          var child = kids[i];
-          if (child === active || !isPanelCandidate(child)) continue;
-          if (isPanelPopulated(child)) return true; // the engine's blind spot
-        }
-        return false;
+        if (!active || active === UNJUDGEABLE) return false;
+        return !isPanelPopulated(active);
       }
 
       function showNoResults() {
@@ -429,8 +452,7 @@
         noResultsEl.classList.remove(SHOW_CLASS);
       }
 
-      /* First-render latch — see the header. Nothing is shown until the engine
-         (or default-results) has actually painted a card at least once. */
+      /* First-render latch — see the header. */
       var hasRenderedOnce = false;
       function engineHasRendered() {
         if (hasRenderedOnce) return true;
@@ -464,12 +486,8 @@
         }
       }
 
-      /* Tab-switch guard. An ANIMATED (GSAP) tab switch keeps the OUTGOING panel
-         visible during the fade, so revealing the message mid-switch places it
-         against the old height and it jumps once the layout settles. While a
-         switch is in flight we withhold the reveal, then re-evaluate.
-         FAIL-SAFE: `switching` ALWAYS clears after the delay, so this can never
-         leave the message stranded. */
+      /* Tab-switch guard — only meaningful while an animation is hiding the
+         swap. FAIL-SAFE: `switching` ALWAYS clears after the delay. */
       var switching = false;
       var switchTimer = null;
       function switchDelayMs() {
@@ -484,6 +502,13 @@
       }
 
       function armSwitchGuard() {
+        /* No gsap => tabs.js swaps display instantly (tabs.js:505-508), so there
+           is no animation to hide and holding the message back would only blank
+           the region while both panels are collapsed. Re-evaluate at once. */
+        if (typeof window.gsap === "undefined") {
+          scheduleEvaluate();
+          return;
+        }
         switching = true;
         releaseNoResults();
         if (switchTimer) clearTimeout(switchTimer);
@@ -542,44 +567,37 @@
           attributeFilter: ["style"]
         });
 
-        /* Tab switches, observed rather than inferred from a click: this covers
-           arrow-key navigation, prev/next controls, _tabController.makeActive,
-           autoplay and ?tab-id= deep links, none of which click the button list.
-           The guard is armed ONLY when the active panel identity actually
-           changed, so a click on the already-active tab (or on padding, or the
-           doubled event from each button's inner <label for>) no longer blanks
-           the message for ~600ms.
-           LOOP-SAFETY: this one DOES watch 'class', and our own writes land on
-           noResultsEl which is a child of panelList — so mutations targeting
-           noResultsEl are ignored outright. Even without that they would be
-           inert (they cannot change which panel is active), but the explicit
-           skip keeps it obviously safe. */
+        /* Tab switches, observed rather than inferred from a click — this covers
+           arrow keys, prev/next, _tabController.makeActive, autoplay and
+           ?tab-id= deep links. data-tab-active alone is the whole signal
+           (tabs.js:461/468 writes it on every path); watching 'class' as well
+           only added noise from injected hit cards and hide-empty toggles.
+           LOOP-SAFETY comes for free: our own writes touch 'class' on
+           noResultsEl, which this filter does not observe at all. */
         var lastActivePanel = getActivePanel();
-        var tabObserver = new MutationObserver(function (mutations) {
-          var relevant = false;
-          for (var i = 0; i < mutations.length; i++) {
-            if (mutations[i].target !== noResultsEl) {
-              relevant = true;
-              break;
-            }
-          }
-          if (!relevant) return;
+        if (lastActivePanel === UNJUDGEABLE) lastActivePanel = null;
+        var tabObserver = new MutationObserver(function () {
           var current = getActivePanel();
-          if (current !== lastActivePanel) {
+          /* UNJUDGEABLE is not a switch and must not latch — otherwise a
+             transiently odd flag would arm the guard and blank the region, and
+             the latch would then treat the recovery as another switch. */
+          if (current !== UNJUDGEABLE && current !== lastActivePanel) {
+            /* Only a real candidate-to-candidate change is a tab switch worth
+               guarding; first resolution (null -> panel) just latches. */
+            var realSwitch = !!(current && lastActivePanel);
             lastActivePanel = current;
-            armSwitchGuard();
+            if (realSwitch) armSwitchGuard();
           }
           scheduleEvaluate();
         });
         tabObserver.observe(panelList, {
           subtree: true,
           attributes: true,
-          attributeFilter: ["data-tab-active", "class"]
+          attributeFilter: ["data-tab-active"]
         });
       }
 
-      // Typing is a strong hint the results are about to change. Nothing reads
-      // the value — this only schedules an evaluation.
+      // Typing changes the query, which THE RULE reads directly.
       if (input) {
         document.addEventListener("input", function (e) {
           if (e.target === input) scheduleEvaluate();
