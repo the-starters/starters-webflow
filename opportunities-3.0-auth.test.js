@@ -677,6 +677,7 @@ test('Brand project cards expose only canonical actions for their current lifecy
             lifecycle_state: 'completed',
             lifecycle_version: 4,
             pandadoc_document_id: 'doc-675',
+            contract_status: 'completed',
             review_eligible: true,
             has_review: false,
           }],
@@ -702,6 +703,92 @@ test('Brand project cards expose only canonical actions for their current lifecy
   assert.equal(review.control.getAttribute('wf-xano-link'), null)
   assert.equal(review.control.getAttribute('href'), '#review-starter')
   assert.equal(review.wrap.style.display, '')
+})
+
+test('View Contract is limited to recipient-viewable canonical document states', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const isViewable = bridge.window.Opp30.projectContractIsViewable
+  const canonicalStates = [
+    'not_requested',
+    'create_pending',
+    'uploaded',
+    'draft',
+    'sent',
+    'viewed',
+    'partial',
+    'completed',
+    'declined',
+    'expired',
+    'error',
+  ]
+
+  canonicalStates.forEach((contractStatus) => {
+    assert.equal(
+      isViewable({ pandadoc_document_id: 'doc-675', contract_status: contractStatus }),
+      ['sent', 'viewed', 'partial', 'completed'].includes(contractStatus),
+      contractStatus,
+    )
+  })
+  assert.equal(isViewable({ contract_status: 'completed' }), false)
+  assert.equal(isViewable({ pandadoc_document_id: 'doc-675' }), false)
+})
+
+test('View Contract uses cached authorization when the canonical refresh transiently fails', async () => {
+  const contract = el('a', { href: '#contract' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'View Contract'
+  const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const requests = []
+  let listCount = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listCount += 1
+        if (listCount > 1) throw new Error('Temporary project list failure')
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            pandadoc_document_id: 'doc-675',
+            contract_status: 'completed',
+          }],
+        })
+      }
+      if (url.includes('/contracts/link/v3')) {
+        requests.push(url)
+        return response({ url: 'https://app.pandadoc.com/s/completed-contract' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  const contractWindow = { closed: false, location: {}, opener: bridge.window }
+  bridge.window.open = () => contractWindow
+  assert.ok(await waitFor(() => listCount === 1))
+
+  bridge.dispatchDocument('click', clickEvent(contract).event)
+
+  assert.ok(await waitFor(() => requests.length === 1))
+  assert.equal(listCount, 2)
+  assert.match(requests[0], /\/contracts\/link\/v3$/)
+  assert.equal(contractWindow.location.href, 'https://app.pandadoc.com/s/completed-contract')
+  assert.equal(contractWindow.opener, null)
 })
 
 test('project action context includes every canonical project page', async () => {
