@@ -1669,9 +1669,10 @@
     return !!(control && control.closest && control.closest(INVOICE_DISABLED_SELECTOR))
   }
 
-  // Mirror form-validation.js's setButtonEnabled: the theme markers go on the
-  // wrapper the click is resolved from, the native property on the actionable
-  // element inside it. A native submit control is its own actionable element.
+  // Follow form-validation.js's split between wrapper markers and the native
+  // property on the actionable element. Preserve an authored wrapper theme;
+  // wrappers without one still receive aria-disabled. A native submit control
+  // is its own actionable element.
   function setInvoiceSubmitDisabled(control, disabled) {
     if (!control || typeof control.setAttribute !== 'function') return
     const actionable =

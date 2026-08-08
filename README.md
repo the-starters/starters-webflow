@@ -658,12 +658,12 @@ with a console warning instead of turning another button into an invoice submit
 settle it. A wrapper marked disabled by attribute (`data-validate-disabled`,
 `data-button-theme="disabled"`, `aria-disabled="true"`) is never converted.
 
-`Amount` and `Description` are resolved by id or input name. The amount is rounded to cents and must land
-between $0.01 and $1,000,000, otherwise the inline message `Enter an amount
-between $0.01 and $1,000,000.` is shown and nothing is sent. A submit from a
-modal that was opened without a project card fails closed with `Open Generate
-Invoice from the project you want to bill, so we know which project to
-invoice.`.
+`Amount` and `Description` are resolved by id or input name. The amount is
+rounded to cents and must land between $0.01 and $1,000,000, otherwise the
+inline message `Enter an amount between $0.01 and $1,000,000.` is shown and
+nothing is sent. A submit from a modal that was opened without a project card
+fails closed with `Open Generate Invoice from the project you want to bill, so
+we know which project to invoice.`.
 
 A valid submit posts `project_id`, `amount`, `description`, and
 `idempotency_key` to Xano `POST invoices/create/v3` through the same
@@ -672,9 +672,10 @@ idempotency key (`invoice-v3-<project_id>-<uuid>`) is stored on the form, so a
 retry after a failure reuses it and is cleared once an invoice is created. The
 resolved submit control is disabled while the request is in flight, by the same
 design-system convention `form-validation.js` uses: the wrapper takes
-`data-button-theme="disabled"` and `aria-disabled="true"` (its original theme is
-restored afterwards) and the actionable element inside it takes the native
-`disabled` property, so a second click is visibly refused. After a success the
+`aria-disabled="true"`; when it already has a `data-button-theme`, that theme is
+temporarily replaced with `disabled` and restored afterwards. The actionable
+element inside the wrapper takes the native `disabled` property, so a second
+click is visibly refused. After a success the
 wf-xano project list is refreshed best-effort; a failed refresh never reports a
 created invoice as failed.
 
