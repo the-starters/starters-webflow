@@ -8,7 +8,7 @@
  *   data-points-element="root|loading|content|error|state-refreshing|
  *   state-ineligible|state-quarantined|state-missing-role|points|
  *   overall-card|overall-rank|overall-cohort-size|overall-tie|role-card|
- *   role-rank|role-label|role-cohort-size|role-tie"
+ *   role-rank|role-label|role-cohort-size|role-tie|rank-message"
  *
  * State copy and its containers are authored in Webflow. This controller binds
  * authenticated values, formats compact rank positions, and selects which

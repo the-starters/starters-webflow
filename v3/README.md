@@ -2141,6 +2141,7 @@ use these values:
 | `role-label` | Primary-role name; rendered on the authored subline |
 | `role-cohort-size` | Primary-role authored-row hook; its number is folded into `role-rank` and the complete row becomes the role name |
 | `role-tie` | Legacy Designer-authored tie label; kept hidden in the compact presentation |
+| `rank-message` | Legacy Designer-authored rank label; kept hidden in the compact presentation |
 
 The script never calculates points or rank in the browser. It trades the active
 Memberstack session for a Xano token and renders only the authenticated summary.
@@ -2158,7 +2159,10 @@ cohort hook in each authored small-text row for the role name and `Starters
 Overall`, suppresses that row's former surrounding copy such as `Out of` and
 `eligible Starters` without replacing its markup, and keeps the legacy tie
 labels hidden. Xano tie counts remain part of the read model and rank semantics;
-only the compact presentation omits the word “Tied”.
+only the compact presentation omits the word “Tied”. The root preserves those
+semantics as `data-overall-tied="true|false"` and
+`data-role-tied="true|false"` for diagnostics without restoring visible tie
+copy.
 
 Each root reflects its resolved state onto `data-points-status`
 (`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so
