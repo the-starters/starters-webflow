@@ -2048,11 +2048,23 @@
   // Parse date-only project fields as calendar parts instead of constructing a
   // local Date. That keeps a 2026-08-06 project on August 6 in every timezone.
   function projectDateParts(value) {
-    const match = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(String(value || '').trim())
+    const match = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2}))?$/.exec(
+      String(value || '').trim(),
+    )
     if (!match) return null
     const year = Number(match[1])
     const month = Number(match[2])
     const day = Number(match[3])
+    const hour = Number(match[4] || 0)
+    const minute = Number(match[5] || 0)
+    const second = Number(match[6] || 0)
+    const offset = match[7] && /^([+-])(\d{2}):(\d{2})$/.exec(match[7])
+    if (
+      hour > 23 ||
+      minute > 59 ||
+      second > 59 ||
+      (offset && (Number(offset[2]) > 23 || Number(offset[3]) > 59))
+    ) return null
     const check = new Date(Date.UTC(year, month - 1, day))
     if (
       check.getUTCFullYear() !== year ||
