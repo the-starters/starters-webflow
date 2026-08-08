@@ -1,10 +1,11 @@
-# Pinned to the local claude agent. Codex has now been SIGKILLed twice on this
-# repo: once at spawn, and again on 2026-08-08 after ~26 minutes inside the
-# review step (`codex exited: signal: killed`), which fails the whole run.
-# `no-mistakes doctor` reporting codex runnable only proves it spawns, not that
-# it survives a long step. Leave this on claude unless codex is proven stable
-# across a full review.
-agent: claude
+# Ordered fallback list: use whichever agent is available, preferring claude.
+# claude is first because codex was SIGKILLed three times on this repo on
+# 2026-08-08 (once at spawn, once ~26 minutes into a review step, once after
+# 3s on retry), and each failure fails the whole run. Note `no-mistakes doctor`
+# reporting codex runnable only proves it spawns, not that it survives a step.
+# If claude is ever unavailable the pipeline falls back to codex rather than
+# refusing to run.
+agent: [claude, codex]
 
 ignore_patterns:
   - "*.min.js"
