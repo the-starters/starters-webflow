@@ -487,6 +487,204 @@ Run its focused test with:
 node --test v3/starters-ms-redirect.test.js
 ```
 
+## Signup attribution
+
+`signup-attribution.js` captures paid-click attribution, reports the signup back
+to Meta, and saves the captured values onto the new member when no other script
+will. It is a sibling of the signup redirect marker above and keys off the same
+`form[data-ms-form="signup"]` element, so a page that injects a signup modal
+wants both modules re-run.
+
+Load it site-wide with `defer`, on every page rather than only on the quiz
+funnel. An ad click can land anywhere on the site, the visitor may sign up
+several pages later, and the pending-save retry described below has to run on
+the page the signup redirects to:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/signup-attribution.js"></script>
+```
+
+The Meta Pixel base snippet is installed separately in the Webflow site-head
+custom code, with pixel ID `775648331097942`. This script never installs the
+pixel. It calls `fbq` only when the pixel has already defined it, so a missing or
+blocked pixel leaves the page working and simply sends no event.
+
+### Cookie contract
+
+Every value is stored in a first-party cookie of the same name, with a 72 hour
+TTL on `path=/`:
+
+| Cookie | Source |
+| --- | --- |
+| `utm_source` | `?utm_source` |
+| `utm_campaign` | `?utm_campaign` |
+| `utm_adset` | `?utm_adset` |
+| `utm_content` | `?utm_content` |
+| `fbclid` | `?fbclid` |
+| `fbc` | Meta's own `_fbc` cookie, copied when ours is unset |
+| `fbp` | Meta's own `_fbp` cookie, copied when ours is unset |
+| `event_id` | `evt_<uuid>`, generated once and then reused |
+
+A parameter only overwrites its cookie when the URL actually carries a non-empty
+value. The freshest click therefore wins, and browsing the rest of the site never
+clears an earlier click. The `_fbc` and `_fbp` copy is re-checked on every page
+load, since the pixel writes those cookies itself and can finish loading after
+this script runs. The event id is reused for the life of the cookie so the
+browser event and any server-side copy of the same registration share one id.
+
+### Attribution Memberstack field IDs
+
+The captured values are written onto the member as custom fields. The field ID is
+the cookie name with underscores replaced by hyphens:
+
+`utm_source` -> `utm-source`
+`utm_campaign` -> `utm-campaign`
+`utm_adset` -> `utm-adset`
+`utm_content` -> `utm-content`
+`fbclid` -> `fbclid`
+`fbc` -> `fbc`
+`fbp` -> `fbp`
+`event_id` -> `event-id`
+
+These eight field IDs are verified to exist in the Memberstack app config. Do not
+rename them without changing the app config first, because Memberstack silently
+drops a write to a field it does not know.
+
+Which script writes them depends on the signup route. A `/quiz` signup is followed
+by `/quiz-results`, so the repo-root `quiz-results.js` writes the fields there as
+part of its single quiz save. Every other signup route has no follow-up writer, so
+`signup-attribution.js` writes them itself. The map therefore exists in both files.
+Keep the two copies in step: a field ID present in only one of them is a value
+Memberstack silently drops on one of the two routes. The
+`signup-attribution.test.js` drift guard asserts both maps still match, and it
+reads the table above out of this file, so the rows have to stay here.
+
+### Attributed signup pages
+
+A page arms the signup watch when **either** of these is true, in this order:
+
+1. its path is in the script's `SIGNUP_PATH_POLICY` map, or
+2. it carries at least one `form[data-ms-form="signup"]` and no
+   `[data-ms-form="login"]` anywhere on it.
+
+The path map holds the two hand-audited pages and its policy is used verbatim:
+
+| Page | After signup | Who writes the fields |
+| --- | --- | --- |
+| `/quiz` | `/quiz-results` | `quiz-results.js` |
+| `/sign-up` | `/brand-dashboard` | `signup-attribution.js` |
+
+Path matching ignores case and a single trailing slash. Because the map is checked
+first, those two keep behaving exactly as they do today whatever happens to their
+markup, and `/quiz` in particular keeps deferring its field write to
+`quiz-results.js` rather than racing it.
+
+Rule 2 is what covers every other signup surface, starting with the signup modal on
+`/all-starters`. It reuses the `data-ms-form="signup"` attribute Memberstack already
+needs, so a new signup surface needs no Designer work and no edit to the script.
+Detection counts forms present in the DOM and never checks whether they are visible,
+because that modal's form sits in a `<dialog>` that is `display:none` until it opens.
+Presence alone is safe: detection only arms a watch, and the pixel and the field save
+both fire on the Memberstack auth transition, so a form nobody can reach fires
+nothing. A page armed this way direct-saves the fields.
+
+A login marker on the same page is a veto, and it applies to rule 2 only. A page with
+both kinds cannot tell a signup apart from a login, and reading a login as a signup
+would fire a false `CompleteRegistration` and stamp that browser's UTM values onto a
+member who already has their own. A missed attribution is the cheaper failure, so an
+ambiguous page is not watched at all and says why in a staging-only warning. Pure
+login pages such as `/login` and `/starter-login` fall out of the same rule: no
+signup form, no watch.
+
+The two selectors in rule 2 are deliberately asymmetric. Arming is anchored to a real
+`form` element, because arming claims a signup happens here and that claim wants
+proof. The veto is not anchored, so it matches `data-ms-form="login"` wherever it
+sits, including on a wrapper `div`. Nothing pins that marker to a `<form>`:
+`auth-route.js` queries it without the prefix, so a login UI wrapped in a div is
+markup nobody would think of as a change. Widening the veto costs at most a missed
+attribution, while narrowing it would cost a false `CompleteRegistration` on every
+login on such a page, which is the failure the veto exists to prevent.
+
+The scan runs once at `DOMContentLoaded`. `window.StartersAttribution.rearm()` re-runs
+it for a caller that injects a signup form later, the same shape as
+`window.StartersMsRedirect.apply()` in `starters-ms-redirect.js`. It returns whether
+the watch is armed and is a no-op once it is, because a second `onAuthChange` listener
+would fire `CompleteRegistration` twice.
+
+The script binds no form or submit listeners of any kind. It reads the DOM to decide
+whether to watch, and nothing more.
+
+### CompleteRegistration
+
+On a signup page the script reads whether the visitor arrived logged out and then
+listens for the Memberstack auth change. The event fires as
+`fbq('track', 'CompleteRegistration', {}, { eventID: <event_id> })` and fires for
+every signup, including one with no ad parameters at all. If `fbq` is not a
+function at that moment the event is skipped and nothing is marked as fired, so a
+pixel that loads later in the session can still report the next transition.
+
+An unreadable starting member state is not treated as logged out. The first
+definitive auth event after that only arms the watch: a logged-in replay is
+ignored (the visitor was already signed in), and a logged-out reading waits for a
+later transition. Treating a failed `getCurrentMember` as logged out would fire
+the pixel and start a spurious field save on the next auth replay.
+
+A `sessionStorage.startersCompleteRegistrationFired` flag limits the event to one
+fire per browser session, and every signup surface shares that one flag. This is
+what covers a refresh: Memberstack replays the authenticated state on the next load,
+and without the flag the replay would look like a second registration.
+
+### Direct signup field save
+
+A signup form's own redirect can navigate the browser away while the `updateMember`
+request is still in flight. The `/sign-up` form carries
+`redirect="/brand-dashboard"`; the `/all-starters` modal redirects to
+`/all-starters?modal-id=signup-modal`, which reloads the same page to reopen the
+modal and cuts the request off just as effectively. The save is therefore written to
+survive being cut off:
+
+1. On the transition, the non-empty attribution cookies are snapshotted into
+   `sessionStorage.startersAttributionPendingFields` (field ID keys), and
+   `sessionStorage.startersAttributionPendingSave` is set, both synchronously.
+   Absent and empty cookies — including whitespace-only values — are omitted, so
+   a later untagged visit never blanks a value an earlier tagged visit captured.
+2. Then `updateMember` is called with that snapshot.
+3. The marker and snapshot are cleared only once the write is confirmed.
+
+Every page load checks that marker, and a page that finds it waits for
+Memberstack, confirms a logged-in member, and re-attempts the write from the
+snapshot (not from live cookies). That is what completes on the landing page a
+save the redirect killed on the signup page, without letting a fresh ad click between
+those two pages overwrite the values the signup captured. A marker left over from
+before snapshots existed (or when storage was blocked on the signup page) falls
+back to live cookies.
+
+A marker found while Memberstack reports the visitor logged out cannot ever be
+filled, so it is cleared without a write. Two states are excluded from that
+cleanup: an unreadable member state is not the same thing as a logged-out one,
+and the narrow race where a stale marker was already present at load, this page's
+own signup re-raised it while that retry's member read was still in flight, and
+the read then comes back logged out. Both leave the marker alone for the next
+load.
+
+A failed or unavailable write leaves the marker set, warns on staging, and never
+throws into the page. With cookies blocked there is nothing to persist, so the
+marker is cleared without a write rather than retried on every page forever.
+
+`window.StartersAttribution.getParams()` returns the current cookie values for
+debugging, `window.StartersAttribution.rearm()` reports (and, where a signup form
+has appeared since load, starts) the signup watch, and
+`window.StartersAttribution.release` reports the shipped version.
+Console warnings are staging-only (`*.webflow.io`, localhost, `127.0.0.1`,
+`*.trycloudflare.com`) or with `window.STARTERS_DEBUG === true`, so production
+stays silent.
+
+Run its focused tests with:
+
+```sh
+node --test v3/signup-attribution.test.js
+```
+
 ## Profile message modal
 
 `messages-profile.js` mounts a TalkJS chatbox with the profiled starter inside

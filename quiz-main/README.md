@@ -230,144 +230,19 @@ attributes must match after trimming. Saved subcategory IDs match the checkbox
 
 ## Ad attribution
 
-`quiz-attribution.js` captures paid-click attribution, reports the signup back to
-Meta, and saves the captured values onto the new member when no other script will.
-Load it site-wide with `defer`, on every page rather than only on the quiz funnel.
-An ad click can land anywhere on the site, the visitor may sign up several pages
-later, and the pending-save retry described below has to run on the page the
-signup redirects to:
+Paid-click attribution moved out of this folder. The script is now
+`v3/signup-attribution.js` and its documentation — the cookie contract, the eight
+verified Memberstack field IDs, the signup-page arming rule, the login veto,
+`rearm()`, the Meta Pixel prerequisite, and the direct-save retry — lives in
+[`v3/README.md`](../v3/README.md#signup-attribution). There is deliberately no
+second copy of the field IDs here: the drift guard exists to stop exactly that.
 
-```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-main/quiz-attribution.js"></script>
-```
-
-The Meta Pixel base snippet is installed separately in the Webflow site-head
-custom code, with pixel ID `775648331097942`. This script never installs the
-pixel. It calls `fbq` only when the pixel has already defined it, so a missing or
-blocked pixel leaves the page working and simply sends no event.
-
-### Cookie contract
-
-Every value is stored in a first-party cookie of the same name, with a 72 hour
-TTL on `path=/`:
-
-| Cookie | Source |
-| --- | --- |
-| `utm_source` | `?utm_source` |
-| `utm_campaign` | `?utm_campaign` |
-| `utm_adset` | `?utm_adset` |
-| `utm_content` | `?utm_content` |
-| `fbclid` | `?fbclid` |
-| `fbc` | Meta's own `_fbc` cookie, copied when ours is unset |
-| `fbp` | Meta's own `_fbp` cookie, copied when ours is unset |
-| `event_id` | `evt_<uuid>`, generated once and then reused |
-
-A parameter only overwrites its cookie when the URL actually carries a non-empty
-value. The freshest click therefore wins, and browsing the rest of the site never
-clears an earlier click. The `_fbc` and `_fbp` copy is re-checked on every page
-load, since the pixel writes those cookies itself and can finish loading after
-this script runs. The event id is reused for the life of the cookie so the
-browser event and any server-side copy of the same registration share one id.
-
-### Memberstack field IDs
-
-The captured values are written onto the member as custom fields. The field ID is
-the cookie name with underscores replaced by hyphens:
-
-`utm_source` -> `utm-source`
-`utm_campaign` -> `utm-campaign`
-`utm_adset` -> `utm-adset`
-`utm_content` -> `utm-content`
-`fbclid` -> `fbclid`
-`fbc` -> `fbc`
-`fbp` -> `fbp`
-`event_id` -> `event-id`
-
-These eight field IDs are verified to exist in the Memberstack app config. Do not
-rename them without changing the app config first, because Memberstack silently
-drops a write to a field it does not know.
-
-Which script writes them depends on the signup route. A `/quiz` signup is followed
-by `/quiz-results`, so `quiz-results.js` writes the fields there as part of its
-single quiz save. A direct `/sign-up` signup has no follow-up page, so
-`quiz-attribution.js` writes them itself. The map therefore exists in both files.
-Keep the two copies in step: a field ID present in only one of them is a value
-Memberstack silently drops on one of the two routes. The
-`quiz-attribution.test.js` drift guard asserts both maps still match.
-
-### Signup pages
-
-Two pages can turn a visitor into a member, and both are watched:
-
-| Page | After signup | Who writes the fields |
-| --- | --- | --- |
-| `/quiz` | `/quiz-results` | `quiz-results.js` |
-| `/sign-up` | `/brand-dashboard` | `quiz-attribution.js` |
-
-Each of those pages carries exactly one Memberstack signup form and no login form,
-which is what makes the logged-out to logged-in transition a reliable signal there.
-Logins happen on `/login` and `/starter-login`, so those pages are deliberately not
-watched. Path matching ignores case and a single trailing slash.
-
-### CompleteRegistration
-
-On a signup page the script reads whether the visitor arrived logged out and then
-listens for the Memberstack auth change. The event fires as
-`fbq('track', 'CompleteRegistration', {}, { eventID: <event_id> })` and fires for
-every signup, including one with no ad parameters at all. If `fbq` is not a
-function at that moment the event is skipped and nothing is marked as fired, so a
-pixel that loads later in the session can still report the next transition.
-
-An unreadable starting member state is not treated as logged out. The first
-definitive auth event after that only arms the watch: a logged-in replay is
-ignored (the visitor was already signed in), and a logged-out reading waits for a
-later transition. Treating a failed `getCurrentMember` as logged out would fire
-the pixel and start a spurious field save on the next auth replay.
-
-A `sessionStorage.startersCompleteRegistrationFired` flag limits the event to one
-fire per browser session, and both signup pages share that one flag. This is what
-covers a refresh: Memberstack replays the authenticated state on the next load,
-and without the flag the replay would look like a second registration.
-
-### Direct signup field save
-
-The `/sign-up` form carries `redirect="/brand-dashboard"`, so the browser can
-navigate away while the `updateMember` request is still in flight. The save is
-therefore written to survive being cut off:
-
-1. On the transition, the non-empty attribution cookies are snapshotted into
-   `sessionStorage.startersAttributionPendingFields` (field ID keys), and
-   `sessionStorage.startersAttributionPendingSave` is set, both synchronously.
-   Absent and empty cookies — including whitespace-only values — are omitted, so
-   a later untagged visit never blanks a value an earlier tagged visit captured.
-2. Then `updateMember` is called with that snapshot.
-3. The marker and snapshot are cleared only once the write is confirmed.
-
-Every page load checks that marker, and a page that finds it waits for
-Memberstack, confirms a logged-in member, and re-attempts the write from the
-snapshot (not from live cookies). That is what completes on `/brand-dashboard` a
-save the redirect killed on `/sign-up`, without letting a fresh ad click between
-those two pages overwrite the values the signup captured. A marker left over from
-before snapshots existed (or when storage was blocked on the signup page) falls
-back to live cookies.
-
-A marker found while Memberstack reports the visitor logged out cannot ever be
-filled, so it is cleared without a write. Two states are excluded from that
-cleanup: an unreadable member state is not the same thing as a logged-out one,
-and the narrow race where a stale marker was already present at load, this page's
-own signup re-raised it while that retry's member read was still in flight, and
-the read then comes back logged out. Both leave the marker alone for the next
-load.
-
-A failed or unavailable write leaves the marker set, warns on staging, and never
-throws into the page. With cookies blocked there is nothing to persist, so the
-marker is cleared without a write rather than retried on every page forever.
-
-`window.StartersAttribution.getParams()` returns the current cookie values for
-debugging, and `window.StartersAttribution.release` reports the shipped version.
-Console warnings are staging-only (`*.webflow.io`, localhost, `127.0.0.1`,
-`*.trycloudflare.com`) or with `window.STARTERS_DEBUG === true`, so production
-stays silent.
+It matters to the quiz because it is the other half of the field write. A `/quiz`
+signup defers its attribution save to `quiz-results.js`, which reads the cookies
+that script wrote and sends them in the same `updateMember` call as
+`starter-quiz`. Two writers for one signup would be a race, so `/quiz` is mapped
+to `directSave: false` there and the coupling has to stay intentional in both
+files.
 
 ## Diagnostics
 

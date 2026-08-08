@@ -4,11 +4,11 @@ const path = require('node:path')
 const test = require('node:test')
 const vm = require('node:vm')
 
-const source = fs.readFileSync(require.resolve('./quiz-attribution.js'), 'utf8')
+const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8')
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.119'
+const RELEASE = 'v1.59.134'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -75,11 +75,30 @@ function extractLiteralFrom(src, name, keyword = 'var') {
 }
 
 /**
- * @param {string} name Declared constant name in quiz-attribution.js.
+ * @param {string} name Declared constant name in signup-attribution.js.
  */
 function extractLiteral(name) {
     return extractLiteralFrom(source, name, 'var')
 }
+
+/**
+ * A `data-ms-form` marker sitting on something that is not a `<form>` — the
+ * wrapper-div case the prefix-less login selector exists to catch. Drop it into
+ * a `forms` list anywhere a plain string would have put the marker on a real
+ * form element.
+ *
+ * @param {string} kind `data-ms-form` value, e.g. `'login'`.
+ */
+const markerOnDiv = (kind) => ({ kind, isForm: false })
+
+/**
+ * Normalizes one `forms` entry into the element the page holds. A plain string
+ * is the common case: the marker on a real `<form>`.
+ *
+ * @param {string | {kind: string, isForm: boolean}} entry
+ */
+const markerElement = (entry) =>
+    typeof entry === 'string' ? { kind: entry, isForm: true } : entry
 
 /**
  * `document` double whose `cookie` accessor behaves like the browser's: reading
@@ -89,10 +108,16 @@ function extractLiteral(name) {
  *
  * @param {object} [initial] Pre-existing cookies, name to raw value.
  * @param {boolean} [readOnly] Swallow writes, like a browser with cookies off.
+ * @param {Array<string|object>} [forms] The `data-ms-form` markers present on
+ *     the page, one entry per element carrying one (e.g.
+ *     `['signup', 'profile']`). A string puts the marker on a `<form>`;
+ *     `markerOnDiv('login')` puts it on a non-form element. Order is
+ *     irrelevant; only the counts per selector are read.
  */
-function documentDouble(initial, readOnly) {
+function documentDouble(initial, readOnly, forms) {
     const jar = new Map(Object.entries(initial || {}))
     const writes = []
+    const markers = forms || []
 
     return {
         readyState: 'complete',
@@ -101,6 +126,27 @@ function documentDouble(initial, readOnly) {
         writes,
         addEventListener(name, handler) {
             this.listeners.push([name, handler])
+        },
+        // Only `data-ms-form` selectors are modelled, with and without the
+        // `form` prefix, because the script's two selectors differ by exactly
+        // that prefix and the harness has to keep telling them apart: the
+        // prefixed one matches forms only, the bare one matches any element.
+        // Anything else matches nothing, which is the honest answer for a page
+        // double that holds no other elements.
+        querySelectorAll(selector) {
+            const match = /^(form)?\[data-ms-form="([a-z-]+)"\]$/.exec(
+                String(selector),
+            )
+            if (!match) return []
+            const formOnly = Boolean(match[1])
+            const kind = match[2]
+            return markers
+                .map(markerElement)
+                .filter(
+                    (element) =>
+                        element.kind === kind &&
+                        (!formOnly || element.isForm === true),
+                )
         },
         get cookie() {
             return Array.from(jar.entries())
@@ -121,7 +167,19 @@ function documentDouble(initial, readOnly) {
  * Runs the script against a fake browser and returns everything it touched.
  */
 function boot(options = {}) {
-    const document = documentDouble(options.cookies, options.readOnlyCookies)
+    const document = documentDouble(
+        options.cookies,
+        options.readOnlyCookies,
+        options.forms,
+    )
+    // A DOM the script cannot query at all: an old engine with no
+    // querySelectorAll, or one that raises on the call.
+    if (options.noQuerySelectorAll) delete document.querySelectorAll
+    if (options.querySelectorThrows) {
+        document.querySelectorAll = () => {
+            throw new Error('no DOM here')
+        }
+    }
     const session = new Map(Object.entries(options.session || {}))
     const fbqCalls = []
     const warnings = []
@@ -130,34 +188,51 @@ function boot(options = {}) {
     const memberReads = []
     let releaseMember = () => {}
 
-    const memberstack = options.noMemberstack
-        ? undefined
-        : {
-              getCurrentMember: async () => {
-                  if (options.memberThrows) throw new Error('no session')
-                  memberReads.push(true)
-                  // First read only: the signup watch's starting-state probe.
-                  // Lets a test prove an unreadable start is not treated as
-                  // "arrived logged out".
-                  if (options.firstMemberThrows && memberReads.length === 1) {
-                      throw new Error('no session')
-                  }
-                  // The registration watch reads first, the pending-save retry
-                  // second. Holding only the second read lets a test interleave a
-                  // signup transition with a still-pending retry.
-                  if (options.holdSecondMemberRead && memberReads.length === 2) {
-                      return new Promise((resolve) => {
-                          releaseMember = () =>
-                              resolve({ data: options.heldMember || null })
-                      })
-                  }
-                  return { data: options.member || null }
-              },
-              onAuthChange(handler) {
-                  authHandlers.push(handler)
-              },
-          }
-    if (memberstack && !options.noUpdateMember) {
+    let authChangeCalls = 0
+    /**
+     * `onAuthChange` as the page sees it. `authChangeThrowsOnce` makes the
+     * first registration raise and every later one work, which is the only
+     * shape that can tell "the claim stayed taken after a throw" apart from
+     * "the claim was released and the retry happened to throw as well".
+     */
+    const registerAuthHandler = (handler) => {
+        authChangeCalls += 1
+        if (options.authChangeThrowsOnce && authChangeCalls === 1) {
+            throw new Error('onAuthChange blew up')
+        }
+        authHandlers.push(handler)
+    }
+
+    // Always built, even when the page is not given it: `noMemberstack` only
+    // withholds it from `window`, so `attachMemberstack()` can hand the same
+    // double over later as a late-loading Memberstack.
+    const memberstack = {
+        getCurrentMember: async () => {
+            if (options.memberThrows) throw new Error('no session')
+            memberReads.push(true)
+            // First read only: the signup watch's starting-state probe.
+            // Lets a test prove an unreadable start is not treated as
+            // "arrived logged out".
+            if (options.firstMemberThrows && memberReads.length === 1) {
+                throw new Error('no session')
+            }
+            // The registration watch reads first, the pending-save retry
+            // second. Holding only the second read lets a test interleave a
+            // signup transition with a still-pending retry.
+            if (options.holdSecondMemberRead && memberReads.length === 2) {
+                return new Promise((resolve) => {
+                    releaseMember = () =>
+                        resolve({ data: options.heldMember || null })
+                })
+            }
+            return { data: options.member || null }
+        },
+        onAuthChange: registerAuthHandler,
+    }
+    // A Memberstack build with no onAuthChange on it at all: loaded, but with
+    // nothing for the watch to hook onto.
+    if (options.noOnAuthChange) delete memberstack.onAuthChange
+    if (!options.noUpdateMember) {
         memberstack.updateMember = async (payload) => {
             updateCalls.push(payload)
             if (options.updateFails) throw new Error('Memberstack said no')
@@ -166,7 +241,7 @@ function boot(options = {}) {
     }
 
     const window = {
-        $memberstackDom: memberstack,
+        $memberstackDom: options.noMemberstack ? undefined : memberstack,
         location: {
             hostname: options.hostname || 'the-starters-3-0.webflow.io',
             pathname: options.pathname === undefined ? '/quiz' : options.pathname,
@@ -198,6 +273,25 @@ function boot(options = {}) {
             : setTimeout,
         window,
     }
+
+    // `runClockForward` is the other way to survive that deadline: instead of
+    // parking the poll it runs every tick at once and moves a fake clock on by
+    // the delay it was handed, so the ten second wait gives up in the same turn
+    // of the event loop. A test that needs to see what the script does AFTER
+    // the wait times out uses this; `parkTimers` only avoids the wait.
+    if (options.runClockForward) {
+        let skew = 0
+        context.setTimeout = (handler, delay) => {
+            skew += Number(delay) || 0
+            handler()
+        }
+        context.Date = class extends Date {
+            static now() {
+                return Date.now() + skew
+            }
+        }
+    }
+
     vm.runInNewContext(source, context)
 
     return {
@@ -221,6 +315,14 @@ function boot(options = {}) {
         },
         releaseMember: () => releaseMember(),
         savedFields: () => plain(updateCalls.map((call) => call.customFields)),
+        // Memberstack turning up after the page gave up waiting for it.
+        attachMemberstack: () => {
+            window.$memberstackDom = memberstack
+        },
+        // The same build finally exposing onAuthChange.
+        attachOnAuthChange: () => {
+            memberstack.onAuthChange = registerAuthHandler
+        },
     }
 }
 
@@ -417,11 +519,28 @@ test('SIGNUP_PATH_POLICY covers /quiz and /sign-up with directSave only on /sign
     })
 })
 
+test('the two form selectors keep their deliberate asymmetry', () => {
+    // Arming is anchored to `form`, the veto is not. Losing the prefix on the
+    // signup selector would arm on any stray marker; adding it to the login
+    // selector would let a login wrapped in a div slip past the veto. Pinned as
+    // code because both directions are silent failures in the browser.
+    assert.match(
+        source,
+        /var SIGNUP_FORM_SELECTOR = 'form\[data-ms-form="signup"\]'/,
+        'SIGNUP_FORM_SELECTOR must stay anchored to a real form element',
+    )
+    assert.match(
+        source,
+        /var LOGIN_FORM_SELECTOR = '\[data-ms-form="login"\]'/,
+        'LOGIN_FORM_SELECTOR must match the marker on any element',
+    )
+})
+
 test('the header and README document all eight verified field IDs', () => {
     for (const [cookie, field] of Object.entries(FIELD_IDS)) {
         const row = new RegExp('`' + cookie + '` -> `' + field + '`')
         assert.match(header, row, `${cookie} missing from the script header`)
-        assert.match(readme, row, `${cookie} missing from quiz-main/README.md`)
+        assert.match(readme, row, `${cookie} missing from v3/README.md`)
     }
     // Exactly eight mapping rows in the header: an extra one would be a field
     // that does not exist in the Memberstack app config.
@@ -580,6 +699,406 @@ test('does not watch auth outside the signup pages', async () => {
         assert.deepEqual(harness.authHandlers, [], pathname)
         assert.deepEqual(harness.fbqCalls, [], pathname)
         assert.deepEqual(harness.updateCalls, [], pathname)
+    }
+})
+
+/* -------------------------- signup surface detection ---------------------- */
+
+test('the mapped paths arm from the path alone, with no signup form present', async () => {
+    // The path map is the safety net: these two are hand-audited, so they must
+    // keep arming even if their markup stops matching the detection selector.
+    for (const pathname of ['/quiz', '/sign-up']) {
+        const harness = boot({ member: null, pathname, forms: [] })
+        await harness.settle()
+        assert.equal(harness.authHandlers.length, 1, pathname)
+    }
+})
+
+test('the mapped paths keep their own directSave, form or no form', async () => {
+    // /quiz stays false because quiz-results.js owns that write. Detection would
+    // have said true, so this proves the map is consulted first and wins.
+    const quiz = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/quiz',
+        forms: ['signup'],
+    })
+    await quiz.settle()
+    quiz.authHandlers[0](loggedInMember)
+    await quiz.settle()
+    await quiz.settle()
+
+    assert.equal(quiz.fbqCalls.length, 1)
+    assert.deepEqual(quiz.updateCalls, [])
+    assert.equal(quiz.pendingSave(), undefined)
+
+    const signUp = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        forms: ['signup'],
+    })
+    await signUp.settle()
+    signUp.authHandlers[0](loggedInMember)
+    await signUp.settle()
+    await signUp.settle()
+
+    assert.equal(signUp.updateCalls.length, 1)
+})
+
+test('a mapped path is not vetoed by a login marker on the same page', async () => {
+    // The veto guards the detection branch only. Rewriting /quiz or /sign-up to
+    // also host a login form is a deliberate change, not an accident to protect
+    // against, and silently unwatching them would lose a shipped conversion.
+    // Both marker shapes, because the widened selector sees both.
+    for (const login of ['login', markerOnDiv('login')]) {
+        for (const pathname of ['/quiz', '/sign-up']) {
+            const label = `${pathname} ${JSON.stringify(login)}`
+            const harness = boot({
+                member: null,
+                pathname,
+                forms: ['signup', login],
+            })
+            await harness.settle()
+            assert.equal(harness.authHandlers.length, 1, label)
+            assert.deepEqual(harness.warnings, [], label)
+        }
+    }
+})
+
+test('a mapped path keeps its own directSave despite a login marker', async () => {
+    // The path map is consulted first and wins outright, so a login marker on
+    // the page changes neither which pages arm nor who writes the fields. /quiz
+    // stays hands-off (quiz-results.js owns that write) and /sign-up still
+    // direct-saves.
+    for (const login of ['login', markerOnDiv('login')]) {
+        const label = JSON.stringify(login)
+
+        const quiz = boot({
+            cookies: clickCookies,
+            member: null,
+            pathname: '/quiz',
+            forms: ['signup', login],
+        })
+        await quiz.settle()
+        quiz.authHandlers[0](loggedInMember)
+        await quiz.settle()
+        await quiz.settle()
+
+        assert.equal(quiz.fbqCalls.length, 1, label)
+        assert.deepEqual(quiz.updateCalls, [], label)
+        assert.equal(quiz.pendingSave(), undefined, label)
+
+        const signUp = boot({
+            cookies: clickCookies,
+            member: null,
+            pathname: '/sign-up',
+            forms: ['signup', login],
+        })
+        await signUp.settle()
+        signUp.authHandlers[0](loggedInMember)
+        await signUp.settle()
+        await signUp.settle()
+
+        assert.equal(signUp.fbqCalls.length, 1, label)
+        assert.deepEqual(signUp.savedFields(), [
+            {
+                'utm-source': 'facebook',
+                'utm-campaign': 'summer',
+                fbclid: 'IwAR123',
+                'event-id': 'evt_fixed',
+            },
+        ], label)
+    }
+})
+
+test('an unmapped page with a signup form arms and direct-saves', async () => {
+    // The /all-starters signup modal. Its form is display:none inside a
+    // <dialog> until the modal opens, and detection deliberately never asks.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/all-starters',
+        forms: ['profile', 'signup', 'profile'],
+    })
+    await harness.settle()
+
+    assert.equal(harness.authHandlers.length, 1)
+    harness.authHandlers[0](loggedInMember)
+
+    // Marked synchronously, because the modal's redirect reloads the page.
+    assert.equal(harness.pendingSave(), 'true')
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(plain(harness.fbqCalls), [
+        ['track', 'CompleteRegistration', {}, { eventID: 'evt_fixed' }],
+    ])
+    assert.deepEqual(harness.savedFields(), [
+        {
+            'utm-source': 'facebook',
+            'utm-campaign': 'summer',
+            fbclid: 'IwAR123',
+            'event-id': 'evt_fixed',
+        },
+    ])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('a page with both a signup and a login form is not watched', async () => {
+    // Fail safe: a login there would look like a registration, firing a false
+    // CompleteRegistration and stamping this browser's UTM values onto a member
+    // who already has their own.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/some-combined-page',
+        forms: ['signup', 'login'],
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.deepEqual(harness.updateCalls, [])
+    assert.ok(
+        harness.warnings.some((message) => /signup watch not armed/.test(message)),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+})
+
+test('a login marker on a non-form element still vetoes the page', async () => {
+    // The reason LOGIN_FORM_SELECTOR drops the `form` prefix. Nothing pins the
+    // marker to a real <form>: v3/auth-route.js queries it bare, so a login UI
+    // wrapped in a div is markup nobody would think of as a change. A prefixed
+    // veto would miss it and fire a false CompleteRegistration on every login
+    // here, which is the exact failure the guard exists to prevent.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/some-combined-page',
+        forms: ['signup', markerOnDiv('login')],
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.deepEqual(harness.fbqCalls, [])
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+    assert.ok(
+        harness.warnings.some((message) => /signup watch not armed/.test(message)),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+})
+
+test('a signup marker on a non-form element does not arm the watch', async () => {
+    // The other half of the asymmetry, and the proof the harness still tells
+    // the two selectors apart rather than matching every marker everywhere.
+    // Arming needs a real <form>, so a bare marker on a wrapper is not enough.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/all-starters',
+        forms: [markerOnDiv('signup')],
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.equal(harness.api.rearm(), false)
+    // Not ambiguous, just unrecognised: no signup form means no warning either.
+    assert.deepEqual(harness.warnings, [])
+})
+
+test('the ambiguous-page warning stays off production', async () => {
+    for (const login of ['login', markerOnDiv('login')]) {
+        const harness = boot({
+            hostname: 'thestarters.com',
+            member: null,
+            pathname: '/some-combined-page',
+            forms: ['signup', login],
+        })
+        await harness.settle()
+
+        assert.deepEqual(harness.authHandlers, [], JSON.stringify(login))
+        assert.deepEqual(harness.warnings, [], JSON.stringify(login))
+    }
+})
+
+test('an unmapped page with no signup form is not watched', async () => {
+    for (const forms of [
+        [],
+        ['profile'],
+        ['login'],
+        ['profile', 'login'],
+        [markerOnDiv('login')],
+        [markerOnDiv('signup')],
+    ]) {
+        const harness = boot({
+            member: null,
+            pathname: '/brand-dashboard',
+            forms,
+        })
+        await harness.settle()
+        assert.deepEqual(harness.authHandlers, [], JSON.stringify(forms))
+        assert.deepEqual(harness.warnings, [], JSON.stringify(forms))
+    }
+})
+
+test('rearm arms a form injected after load and never registers a second listener', async () => {
+    // The harness passes this array straight through to querySelectorAll, so
+    // pushing to it is a form appearing in the DOM after DOMContentLoaded.
+    const forms = []
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/all-starters',
+        forms,
+    })
+    await harness.settle()
+    assert.deepEqual(harness.authHandlers, [])
+
+    forms.push('signup')
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+
+    // Redundant calls are a no-op. A second onAuthChange listener would fire
+    // CompleteRegistration twice and start two competing saves.
+    assert.equal(harness.api.rearm(), true)
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fbqCalls.length, 1)
+    assert.equal(harness.updateCalls.length, 1)
+})
+
+test('rearm on a page that already armed at load does not double-register', async () => {
+    const harness = boot({ member: null, pathname: '/sign-up' })
+    await harness.settle()
+
+    assert.equal(harness.authHandlers.length, 1)
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+})
+
+test('rearm reports false on a page with nothing to watch', async () => {
+    const harness = boot({ member: null, pathname: '/brand-dashboard' })
+    await harness.settle()
+
+    assert.equal(harness.api.rearm(), false)
+    assert.deepEqual(harness.authHandlers, [])
+})
+
+test('a watch that never found Memberstack gives its claim back', async () => {
+    // The claim is taken synchronously so two same-tick calls cannot both
+    // register a listener, so a watch that cannot be established has to hand it
+    // back or rearm() is a no-op for the life of the page that still reports
+    // true.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        noMemberstack: true,
+        runClockForward: true,
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.ok(
+        harness.warnings.some((message) =>
+            /Memberstack never loaded/.test(message),
+        ),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+
+    // Memberstack turns up late. If the claim had latched, this rearm would
+    // report an armed watch and register nothing.
+    harness.attachMemberstack()
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    assert.equal(harness.fbqCalls.length, 1)
+})
+
+test('a Memberstack with no onAuthChange gives the claim back too', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        noOnAuthChange: true,
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    // Silent on purpose: the warnings this path does and does not emit are
+    // unchanged by the claim moving to a single owner.
+    assert.deepEqual(harness.warnings, [])
+
+    harness.attachOnAuthChange()
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.equal(harness.authHandlers.length, 1)
+})
+
+test('a throwing onAuthChange keeps the claim, deliberately', async () => {
+    // The one path that does NOT release. A throw out of onAuthChange leaves us
+    // unable to know whether the listener registered before it threw, so the
+    // claim stays taken: a second registration would fire CompleteRegistration
+    // twice and start two competing saves, and a missed attribution is the
+    // cheaper failure. The double works on its second call, so a released claim
+    // would show up here as a listener.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        authChangeThrowsOnce: true,
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.authHandlers, [])
+    assert.ok(
+        harness.warnings.some((message) =>
+            /CompleteRegistration wiring failed/.test(message),
+        ),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+
+    assert.equal(harness.api.rearm(), true)
+    await harness.settle()
+    assert.deepEqual(harness.authHandlers, [])
+    assert.deepEqual(harness.fbqCalls, [])
+})
+
+test('an unqueryable DOM reads as no forms instead of throwing', async () => {
+    // A mapped path still arms from the path alone, and an unmapped one simply
+    // does not arm. Neither raises anything into the page.
+    const mapped = boot({
+        member: null,
+        pathname: '/sign-up',
+        noQuerySelectorAll: true,
+    })
+    await mapped.settle()
+    assert.equal(mapped.authHandlers.length, 1)
+
+    for (const broken of [
+        { noQuerySelectorAll: true },
+        { querySelectorThrows: true },
+    ]) {
+        const harness = boot(
+            Object.assign({ member: null, pathname: '/all-starters' }, broken),
+        )
+        await harness.settle()
+        assert.deepEqual(harness.authHandlers, [], JSON.stringify(broken))
+        assert.equal(harness.api.rearm(), false, JSON.stringify(broken))
     }
 })
 
@@ -951,7 +1470,7 @@ test('the file is raw CDN-safe JavaScript', () => {
 
 test('the header release marker matches the exposed release', () => {
     const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-    assert.ok(marker, 'no "@release vX.Y.Z" line in the quiz-attribution.js header')
+    assert.ok(marker, 'no "@release vX.Y.Z" line in the signup-attribution.js header')
     assert.equal(marker[1], RELEASE)
     assert.equal(boot().api.release, RELEASE)
 })
