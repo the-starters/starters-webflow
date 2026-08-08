@@ -319,6 +319,94 @@ test('project lifecycle intent covers cancellation, completion and early termina
   assert.equal(intent({ lifecycle_state: 'completed' }, () => true, () => 'COMPLETE'), null)
 })
 
+test('project timelines use compact readable calendar ranges without timezone shifts', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const format = bridge.window.Opp30.formatProjectTimeline
+
+  assert.equal(format({ start_date: '2026-08-06', end_date: '2026-08-31' }), 'August 6–31, 2026')
+  assert.equal(
+    format({ start_date: '2026-08-28', estimated_end_date: '2026-09-12' }),
+    'August 28 – September 12, 2026',
+  )
+  assert.equal(
+    format({ start_date: '2026-12-28', end_date: '2027-01-10' }),
+    'December 28, 2026 – January 10, 2027',
+  )
+  assert.equal(format({ start_date: '2026-08-06' }), 'Starting August 6, 2026 · Ongoing')
+  assert.equal(format({ start_date: '2026-08-06', end_date: '2026-08-06' }), 'August 6, 2026')
+  assert.equal(
+    format({ start_date: '2026-08-06T00:00:00.000Z', end_date: '2026-08-31T23:59:59+08:00' }),
+    'August 6–31, 2026',
+  )
+  assert.equal(
+    format({ start_date: '2026-02-30', timeline_display: '2026-02-30' }),
+    '2026-02-30',
+  )
+  assert.equal(
+    format({ start_date: '2026-08-06Trash', timeline_display: 'Unparseable timeline' }),
+    'Unparseable timeline',
+  )
+  assert.equal(
+    format({ start_date: '2026-08-06T25:00:00Z', timeline_display: 'Invalid timestamp' }),
+    'Invalid timestamp',
+  )
+  assert.equal(
+    format({
+      start_date: '2026-08-06',
+      end_date: 'not-a-date',
+      timeline_display: '2026-08-06 - not-a-date',
+    }),
+    '2026-08-06 - not-a-date',
+  )
+})
+
+for (const role of ['starter', 'brand']) {
+  test(`${role} dashboard paints the shared timeline_display field from canonical project dates`, async () => {
+    const timeline = el('div', { 'wf-xano-bind': 'timeline_display' })
+    timeline.textContent = '2026-08-06 - 2026-08-31'
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '676' }, [timeline])
+    const root = el(
+      'div',
+      {
+        'wf-xano-instance': role === 'brand' ? 'dash-brand-projects' : 'dash-projects',
+        'wf-xano-source': `opp30:${role}/projects/mine`,
+      },
+      [card],
+    )
+    const member = role === 'brand' ? paidBrandMember : talentMember
+    const pathname = role === 'brand' ? '/brand-dashboard' : '/starter-dashboard'
+
+    await loadBridge(
+      async (input) => {
+        const url = String(input)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+        if (url.includes(`/${role}/projects/mine`)) {
+          return response({
+            items: [{
+              id: 676,
+              lifecycle_state: 'active',
+              start_date: '2026-08-06',
+              end_date: '2026-08-31',
+              timeline_display: '2026-08-06 - 2026-08-31',
+            }],
+          })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      },
+      {
+        member,
+        pathname,
+        querySelector: (selector) =>
+          selectorMatches(root, selector) ? root : root.querySelector(selector),
+        querySelectorAll: (selector) =>
+          [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+        routeGuard: true,
+      },
+    )
+    assert.ok(await waitFor(() => timeline.textContent === 'August 6–31, 2026'))
+  })
+}
+
 test('Brand dashboard action wiring starts only after the stable paid-Brand gate', async () => {
   const requests = []
   await loadBridge(
