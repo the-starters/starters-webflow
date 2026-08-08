@@ -1,6 +1,10 @@
-# Codex was previously SIGKILLed at spawn, but `no-mistakes doctor` confirmed
-# it is runnable on 2026-08-08.
-agent: codex
+# Pinned to the local claude agent. Codex has now been SIGKILLed twice on this
+# repo: once at spawn, and again on 2026-08-08 after ~26 minutes inside the
+# review step (`codex exited: signal: killed`), which fails the whole run.
+# `no-mistakes doctor` reporting codex runnable only proves it spawns, not that
+# it survives a long step. Leave this on claude unless codex is proven stable
+# across a full review.
+agent: claude
 
 ignore_patterns:
   - "*.min.js"
