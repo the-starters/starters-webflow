@@ -1897,6 +1897,11 @@
   // This action calls PandaDoc's recipient view/sign session endpoint. Completed
   // documents require the separate protected-PDF delivery contract.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
+  const PROJECT_TIMELINE_FIELD_SELECTOR = '[wf-xano-bind="timeline_display"]'
+  const PROJECT_TIMELINE_MONTHS = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ]
   let projectWorkflowRole = ''
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null
@@ -2040,8 +2045,64 @@
     return Boolean(documentId) && PROJECT_VIEWABLE_CONTRACT_STATES.has(contractStatus)
   }
 
+  // Parse date-only project fields as calendar parts instead of constructing a
+  // local Date. That keeps a 2026-08-06 project on August 6 in every timezone.
+  function projectDateParts(value) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(String(value || '').trim())
+    if (!match) return null
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+    const check = new Date(Date.UTC(year, month - 1, day))
+    if (
+      check.getUTCFullYear() !== year ||
+      check.getUTCMonth() !== month - 1 ||
+      check.getUTCDate() !== day
+    ) return null
+    return { year, month, day }
+  }
+
+  function projectDateLabel(parts) {
+    return PROJECT_TIMELINE_MONTHS[parts.month - 1] + ' ' + parts.day + ', ' + parts.year
+  }
+
+  function formatProjectTimeline(project) {
+    const fallback = String(project && project.timeline_display || '').trim()
+    const startValue = project && project.start_date
+    const endValue = project && (project.end_date || project.estimated_end_date)
+    const start = projectDateParts(startValue)
+    const end = projectDateParts(endValue)
+    if (!start) return fallback
+    // A present but malformed end date is not the same as an ongoing project.
+    // Keep the canonical fallback instead of manufacturing a misleading label.
+    if (endValue && !end) return fallback
+    if (!end) return 'Starting ' + projectDateLabel(start) + ' · Ongoing'
+    if (start.year === end.year && start.month === end.month && start.day === end.day) {
+      return projectDateLabel(start)
+    }
+    if (start.year === end.year && start.month === end.month) {
+      return PROJECT_TIMELINE_MONTHS[start.month - 1] + ' ' + start.day + '–' + end.day + ', ' + start.year
+    }
+    if (start.year === end.year) {
+      return (
+        PROJECT_TIMELINE_MONTHS[start.month - 1] + ' ' + start.day +
+        ' – ' + PROJECT_TIMELINE_MONTHS[end.month - 1] + ' ' + end.day + ', ' + start.year
+      )
+    }
+    return projectDateLabel(start) + ' – ' + projectDateLabel(end)
+  }
+
+  function paintProjectTimeline(card, project) {
+    if (!card || !project) return
+    const target = $(PROJECT_TIMELINE_FIELD_SELECTOR, card)
+    if (!target) return
+    const label = formatProjectTimeline(project)
+    if (label && target.textContent.trim() !== label) target.textContent = label
+  }
+
   function decorateProjectCard(card) {
     const project = projectContextFromCard(card)
+    paintProjectTimeline(card, project)
     const contract = $(PROJECT_CONTRACT_SELECTOR, card)
     if (contract) {
       contract.setAttribute('data-project-action', 'contract')
@@ -4667,6 +4728,7 @@
     projectContractIsViewable,
     projectMutationFeedback,
     projectActionErrorMessage,
+    formatProjectTimeline,
     initProjectDashboardWorkflow,
     opportunityPath,
     pageOppId,

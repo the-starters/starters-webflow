@@ -634,6 +634,15 @@ inside an existing `.project_item[data-wf-xano-id]`; that row id is the canonica
 `project_id`. The controller decorates Webflow-authored controls and never creates
 project-card, modal, form, or button markup.
 
+The shared `wf-xano-bind="timeline_display"` value is repainted from each
+canonical project's `start_date` and `end_date` (falling back to
+`estimated_end_date`) as a readable calendar range. Same-month ranges collapse
+to `August 6–31, 2026`; cross-month ranges use
+`August 28 – September 12, 2026`; cross-year ranges keep both years; and a
+missing end date reads `Starting August 6, 2026 · Ongoing`. Date-only values
+are parsed as calendar parts so the label cannot shift a day across timezones.
+Malformed values fail safely to Xano's authored `timeline_display` text.
+
 View Contract accepts `a[href="#contract"]` or
 `[data-project-action="contract"]`, is shown only when the project has a PandaDoc
 document id and canonical `contract_status` is `sent`, `viewed`, or `partial`,
