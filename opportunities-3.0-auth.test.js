@@ -287,6 +287,14 @@ test('project lifecycle intent covers cancellation, completion and early termina
     plain(intent({ lifecycle_state: 'pending' }, () => true, () => '')),
     { action: 'cancel', reason: 'canceled_before_activation' },
   )
+  assert.deepEqual(
+    plain(intent(
+      { status: 'pending', lifecycle_state: 'contract_sent' },
+      () => true,
+      () => 'COMPLETE',
+    )),
+    { action: 'cancel', reason: 'canceled_before_activation' },
+  )
   assert.equal(intent({ lifecycle_state: 'pending' }, () => false, () => ''), null)
   assert.deepEqual(
     plain(intent({ lifecycle_state: 'active' }, () => true, () => 'COMPLETE')),

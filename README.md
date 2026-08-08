@@ -642,14 +642,16 @@ exposed in the page.
 
 The existing `[wf-xano-link="project-end"]` control is upgraded to
 `data-project-action="end"`. Its label and mutation follow canonical lifecycle
-state: pending projects can be canceled, active projects can request completion
-or an early termination with a required reason, and a counterparty can confirm a
-pending completion or termination request. Terminal projects expose no lifecycle
-action. Immediately before every mutation the controller refreshes the canonical
-project, requires a nonnegative `lifecycle_version`, and posts `project_id`,
-`expected_version`, `action`, `reason`, and a retry-stable idempotency key to
-`projects/action/v3`. A stale-version response refreshes the project list and asks
-the member to retry instead of replaying an obsolete intent.
+state, except that canonical `status=pending` takes precedence over a more specific
+`lifecycle_state` and always exposes the authorized cancel action. Active projects
+can request completion or an early termination with a required reason, and a
+counterparty can confirm a pending completion or termination request. Terminal
+projects expose no lifecycle action. Immediately before every mutation the
+controller refreshes the canonical project, requires a nonnegative
+`lifecycle_version`, and posts `project_id`, `expected_version`, `action`, `reason`,
+and a retry-stable idempotency key to `projects/action/v3`. A stale-version response
+refreshes the project list and asks the member to retry instead of replaying an
+obsolete intent.
 
 Brand-only Review Starter controls accept `[wf-xano-link="review_starter"]` or
 `[data-project-action="review"]` and appear only when Xano reports
