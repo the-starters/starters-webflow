@@ -273,9 +273,23 @@
   function renderConnectionAction(state, availability) {
     const actions = Array.from(document.querySelectorAll('[calendar-connection-action]'))
     actions.forEach(function (action) {
+      // The Calendar entry is a pending Action Item, not a second settings
+      // launcher. Once the canonical provider state is connected, remove the
+      // full authored row so the shared Action Items controller can recalculate
+      // its badge. The class fallback matches dashboard-action-items.js and is
+      // the documented exception until every legacy row has the item attribute.
+      const item =
+        typeof action.closest === 'function'
+          ? action.closest('[data-action-element="item"], .dash-hero_action-item')
+          : null
+      const isConnected = state === 'connected'
+      if (item) {
+        item.hidden = isConnected
+        item.style.display = isConnected ? 'none' : ''
+      }
       action.setAttribute('data-calendar-connection-state', state)
       action.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false')
-      action.style.display = 'flex'
+      action.style.display = isConnected ? 'none' : 'flex'
       bindStep(action, function () {
         if (activeConnectionState === 'error') return 'config-request-error'
         if (activeConnectionState === 'connected') {
