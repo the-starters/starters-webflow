@@ -67,6 +67,74 @@ function documentLike({ children = [], withBody = true } = {}) {
   }
 }
 
+test('Calendar loading waits for terminal state before settling', () => {
+  const previous = {
+    addEventListener: global.addEventListener,
+    dispatchEvent: global.dispatchEvent,
+    document: global.document,
+    setTimeout: global.setTimeout,
+  }
+
+  try {
+    ;[
+      {
+        eventName: 'starterSchedulingConnectionStateChanged',
+        pendingEvent: {
+          type: 'starterSchedulingConnectionStateChanged',
+          detail: { state: 'loading' },
+        },
+        terminalEvent: {
+          type: 'starterSchedulingConnectionStateChanged',
+          detail: { state: 'connected' },
+        },
+      },
+      {
+        eventName: 'starterSchedulingAvailabilityError',
+        terminalEvent: { type: 'starterSchedulingAvailabilityError' },
+      },
+    ].forEach(({ eventName, pendingEvent, terminalEvent }) => {
+      const listeners = new Map()
+      const loading = element({ attrs: { 'data-action-element': 'loading' } })
+      const empty = element({ attrs: { 'data-action-element': 'empty' } })
+      const wrapper = element({
+        attrs: { 'data-action-element': 'wrapper' },
+        children: [loading, empty],
+      })
+
+      global.document = documentLike({ children: [wrapper] })
+      global.addEventListener = (name, listener) => {
+        const handlers = listeners.get(name) || []
+        handlers.push(listener)
+        listeners.set(name, handlers)
+      }
+      global.dispatchEvent = (event) => {
+        ;(listeners.get(event.type) || []).forEach((listener) => listener(event))
+        return true
+      }
+      global.setTimeout = () => 1
+
+      api.mount()
+      assert.equal(loading.style.display, '', eventName)
+      assert.equal(empty.style.display, 'none', eventName)
+
+      if (pendingEvent) {
+        global.dispatchEvent(pendingEvent)
+        assert.equal(loading.style.display, '', eventName)
+        assert.equal(empty.style.display, 'none', eventName)
+      }
+
+      global.dispatchEvent(terminalEvent)
+      assert.equal(loading.style.display, 'none', eventName)
+      assert.equal(empty.style.display, '', eventName)
+    })
+  } finally {
+    Object.entries(previous).forEach(([name, value]) => {
+      if (value === undefined) delete global[name]
+      else global[name] = value
+    })
+  }
+})
+
 test('countPendingItems counts only visible leaf rows', () => {
   const scope = element({
     children: [
