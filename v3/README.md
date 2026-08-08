@@ -1619,6 +1619,11 @@ the member explicitly switches back to All and that replacement is loading or
 fails.
 Missing-instance, unresolved unfiltered, confirmed-unfiltered-empty, and
 auth-transition states remain hidden.
+Both Projects instances use wf-xano's canonical-id keyed reconciliation. Status
+changes still read fresh Xano state, but matching project cards are updated and
+reused instead of destroying and cloning their full nested details trees. This
+is a page-rendering optimization, not a browser data cache; auth changes and
+explicit refreshes continue to fetch canonical rows.
 The existing Designer-owned project `Show more` control stays hidden and out of
 the accessibility tree. The current Brand and Starter Projects endpoints return
 each member's complete owned collection and ignore `page`/`per_page`; presenting

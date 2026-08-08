@@ -667,6 +667,7 @@ test('an empty selected filter stays visible without issuing a hidden All probe'
 
   vm.runInNewContext(source, { document, Intl, window })
   window.WfXano[0]({ get: (key) => (key === 'dash-projects' ? instance : null) })
+  assert.equal(instance.keyed, true)
   assert.deepEqual(params, [])
   assert.equal(filters.hidden, false)
 
@@ -803,4 +804,17 @@ test('project Show more stays hidden while project endpoints return complete col
   assert.equal(control.attributes['wf-xano-element'], undefined)
   assert.equal(listeners, 0)
   assert.equal(loads, 0)
+})
+
+test('project status replacements reuse cards through canonical keyed reconciliation', () => {
+  const instance = {
+    keyed: false,
+    keyField: 'id',
+    root: element({ 'wf-xano-instance': 'dash-projects' }),
+  }
+
+  assert.equal(api.enableProjectKeyedReconciliation(instance), true)
+  assert.equal(instance.keyed, true)
+  assert.equal(instance.keyField, 'id')
+  assert.equal(api.enableProjectKeyedReconciliation(null), false)
 })
