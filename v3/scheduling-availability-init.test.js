@@ -66,6 +66,13 @@ function loadInitializer(options = {}) {
   const init = control({ 'init-availability': '' })
   const update = control({ 'update-availability': '' })
   const connectionAction = control({ 'calendar-connection-action': '' })
+  // Production still uses the documented legacy class fallback for this row.
+  const connectionItem = control({ class: 'dash-hero_action-item' })
+  connectionItem.hidden = false
+  connectionAction.closest = (selector) =>
+    selector === '[data-action-element="item"], .dash-hero_action-item'
+      ? connectionItem
+      : null
   const steps = ['default', 'setup-form', 'how-to-manage', 'config-request-error'].map((name) =>
     control({ 'availability-step': name }),
   )
@@ -167,6 +174,7 @@ function loadInitializer(options = {}) {
   return {
     attributes,
     connectionAction,
+    connectionItem,
     events,
     init,
     steps,
@@ -405,12 +413,14 @@ test('keeps the Calendar action usable while canonical connection state is loadi
 
   assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'loading')
   assert.equal(result.connectionAction.style.display, 'flex')
+  assert.equal(result.connectionItem.hidden, false)
+  assert.equal(result.connectionItem.style.display, '')
   assert.equal(result.connectionAction.getAttribute('aria-busy'), 'true')
   result.connectionAction.click()
   assert.equal(result.steps[1].style.display, 'block')
 })
 
-test('keeps the Calendar action available for connected availability management', async () => {
+test('removes the Calendar Action Item once the canonical connection is ready', async () => {
   const availability = {
     items: { general: { days: [1], start: '09:00', end: '18:00' } },
     manager: 'calendar',
@@ -441,9 +451,9 @@ test('keeps the Calendar action available for connected availability management'
   })
 
   assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'connected')
-  assert.equal(result.connectionAction.style.display, 'flex')
-  result.connectionAction.click()
-  assert.equal(result.steps[0].style.display, 'block')
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
   result.update.click()
   assert.equal(result.steps[0].style.display, 'block')
 })
@@ -468,6 +478,43 @@ test('renders partial provider state as reconnect and keeps the CTA actionable',
 
   assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'reconnect')
   assert.equal(result.connectionAction.style.display, 'flex')
+  assert.equal(result.connectionItem.hidden, false)
+  assert.equal(result.connectionItem.style.display, '')
+  result.connectionAction.click()
+  assert.equal(result.steps[2].style.display, 'block')
+})
+
+test('restores the Calendar Action Item when a connected provider needs reconnect', async () => {
+  const availability = {
+    items: { general: { days: [1], start: '09:00', end: '18:00' } },
+    manager: 'calendar',
+  }
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability,
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'connected' },
+  })
+  assert.equal(result.connectionItem.hidden, true)
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'reconnect' },
+  })
+  assert.equal(result.connectionAction.style.display, 'flex')
+  assert.equal(result.connectionItem.hidden, false)
+  assert.equal(result.connectionItem.style.display, '')
   result.connectionAction.click()
   assert.equal(result.steps[2].style.display, 'block')
 })
