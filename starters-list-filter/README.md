@@ -16,6 +16,29 @@ That pin has a consequence worth spelling out: **merging a fix does not ship it,
 and neither does tagging a new release.** Because the embed names an exact tag,
 the page keeps loading the old file until someone edits the `src` in Webflow.
 
+Verify the pin from the **published page source**, not from this file — an embed
+can be moved into a Designer body embed on `@latest` without either README
+noticing. As of 2026-08-08, `curl` of the published `/all-starters` shows all
+nine at `@v1.59.28`, and no `@latest` variant. They load on `/all-starters`
+only; no other page pulls this folder.
+
+### These scripts are behind a Memberstack paid gate
+
+Worth knowing before you try to QA a change here: the filter block that carries
+these nine `w-embed w-script` tags sits inside a `data-ms-content="paid-plans"`
+section. For a logged-out visitor Memberstack removes that block, so **none of
+these scripts load at all** and the Skills/Tools facet panels never render —
+they are present in the published HTML and absent from the runtime DOM.
+
+Confirmed 2026-08-08: the live DOM of `/all-starters` for a logged-out viewer
+contains 42 `starters-webflow` scripts and zero from this folder, while the
+fetched HTML for the same URL contains all nine.
+
+So a logged-out browser session **cannot** verify a change to these files, and
+an empty result is not evidence the change failed. QA them either through
+`./dev-tunnel.sh` on a page you control, or while signed in as a member on a
+paid plan.
+
 ## Workflow
 
 1. Make changes **here first** (or, if a change was made directly in Webflow,
