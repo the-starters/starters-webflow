@@ -326,6 +326,11 @@
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     projectCreate: (payload) => call('projects/create/v3', { body: payload }),
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
+    brandProjectList: () => call('brand/projects/mine', { body: {} }),
+    starterProjectList: () => call('starter/projects/mine', { body: {} }),
+    contractLink: (project_id) => call('contracts/link/v3', { body: { project_id } }),
+    projectAction: (payload) => call('projects/action/v3', { body: payload }),
+    brandReviewSubmit: (payload) => call('brand/reviews/submit', { body: payload }),
     invoiceCreate: (payload) => call('invoices/create/v3', { body: payload }),
     // starter / talent
     starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
@@ -1079,6 +1084,7 @@
   function resetMemberScopedCaches(memberId) {
     if (memberId === _cacheMemberId) return
     unwireInvoiceWorkflow()
+    unwireProjectDashboardWorkflow()
     _cacheMemberId = memberId
     _memberScopeGeneration += 1
     _xanoToken = null
@@ -1115,6 +1121,7 @@
       } else {
         authorizeStarterInvoiceWorkflow(member)
       }
+      authorizeProjectDashboardWorkflow(member)
     })
   }
 
@@ -1874,6 +1881,555 @@
     invoiceWorkflowBinding = binding
     document.addEventListener('click', binding.click, true)
     document.addEventListener('submit', binding.submit, true)
+  }
+
+  /* ================= PROJECT DASHBOARD ACTIONS ================ */
+  const PROJECT_CARD_SELECTOR = '.project_item[data-wf-xano-id]'
+  const PROJECT_CONTRACT_SELECTOR = 'a[href="#contract"], [data-project-action="contract"]'
+  const PROJECT_END_SELECTOR =
+    '[wf-xano-link="project-end"], [data-project-action="end"]'
+  const PROJECT_REVIEW_SELECTOR =
+    '[wf-xano-link="review_starter"], [data-project-action="review"]'
+  const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
+  const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
+  let projectWorkflowRole = ''
+  let projectWorkflowItems = new Map()
+  let projectWorkflowRefresh = null
+  let projectWorkflowObserver = null
+  let projectWorkflowBinding = null
+  let activeReviewProject = null
+  let reviewSubmitting = false
+
+  function normalizedDashboardPath() {
+    return String(location.pathname || '/').replace(/\/+$/, '') || '/'
+  }
+
+  function projectRoleForPath() {
+    const path = normalizedDashboardPath()
+    if (path === '/brand-dashboard') return 'brand'
+    if (path === '/starter-dashboard') return 'starter'
+    return ''
+  }
+
+  function projectItems(result) {
+    return Array.isArray(result)
+      ? result
+      : Array.isArray(result && result.items)
+        ? result.items
+        : []
+  }
+
+  function projectIdFromCard(card) {
+    const id = parseInt(card && card.getAttribute('data-wf-xano-id'), 10)
+    return id > 0 ? id : 0
+  }
+
+  function projectContextFromCard(card) {
+    const id = projectIdFromCard(card)
+    if (!id) return null
+    return projectWorkflowItems.get(id) || { id, project_id: id }
+  }
+
+  function projectActionWrap(action) {
+    return (action && action.closest && action.closest('.button_main-wrap')) || action
+  }
+
+  function setProjectActionVisible(action, visible) {
+    const wrap = projectActionWrap(action)
+    if (!wrap) return
+    wrap.style.display = visible ? '' : 'none'
+    wrap.setAttribute('aria-hidden', visible ? 'false' : 'true')
+  }
+
+  function projectActionLabel(action) {
+    const wrap = projectActionWrap(action)
+    return wrap && $('.button_main-text', wrap)
+  }
+
+  function setProjectActionLabel(action, label) {
+    const target = projectActionLabel(action)
+    if (!target) return
+    if (!target.dataset.projectActionAuthoredLabel) {
+      target.dataset.projectActionAuthoredLabel = target.textContent.trim()
+    }
+    target.dataset.projectActionRestLabel = label || target.dataset.projectActionAuthoredLabel
+    target.textContent = target.dataset.projectActionRestLabel
+  }
+
+  function showProjectActionFeedback(action, message, isError = false) {
+    const label = projectActionLabel(action)
+    if (!label) {
+      if (isError) console.error('[opp30:project-action]', message)
+      return
+    }
+    if (!label.dataset.projectActionAuthoredLabel) {
+      label.dataset.projectActionAuthoredLabel = label.textContent.trim()
+    }
+    const authored =
+      label.dataset.projectActionRestLabel || label.dataset.projectActionAuthoredLabel
+    label.textContent = message
+    const wrap = projectActionWrap(action)
+    if (wrap) wrap.setAttribute('data-project-action-result', isError ? 'error' : 'success')
+    window.setTimeout(() => {
+      if (label.textContent === message) label.textContent = authored
+      if (wrap) wrap.removeAttribute('data-project-action-result')
+    }, isError ? 6000 : 3500)
+  }
+
+  function lifecycleState(project) {
+    return String(
+      (project && (project.lifecycle_state || project.status)) || '',
+    ).trim().toLowerCase()
+  }
+
+  function decorateProjectCard(card) {
+    const project = projectContextFromCard(card)
+    if (!project || !project.lifecycle_state && !project.status) return
+    const state = lifecycleState(project)
+    const contract = $(PROJECT_CONTRACT_SELECTOR, card)
+    const end = $(PROJECT_END_SELECTOR, card)
+    const review = $(PROJECT_REVIEW_SELECTOR, card)
+
+    if (contract) {
+      const hasContract = Boolean(String(project.pandadoc_document_id || '').trim())
+      contract.setAttribute('data-project-action', 'contract')
+      setProjectActionVisible(contract, hasContract)
+    }
+
+    if (end) {
+      end.removeAttribute('wf-xano-link')
+      end.setAttribute('data-project-action', 'end')
+      setProjectActionVisible(end, !PROJECT_TERMINAL_STATES.has(state))
+      const label =
+        state === 'pending'
+          ? 'Cancel Project'
+          : state === 'completion_requested'
+            ? 'Confirm Completion'
+            : state === 'termination_requested'
+              ? 'Confirm End'
+              : 'End Project'
+      setProjectActionLabel(end, label)
+    }
+
+    if (review) {
+      review.removeAttribute('wf-xano-link')
+      review.setAttribute('data-project-action', 'review')
+      review.setAttribute('href', '#review-starter')
+      setProjectActionVisible(
+        review,
+        projectWorkflowRole === 'brand' && Boolean(project.review_eligible) && !project.has_review,
+      )
+    }
+  }
+
+  function decorateProjectCards() {
+    if (!projectWorkflowRole || projectRoleForPath() !== projectWorkflowRole) return
+    $$(PROJECT_CARD_SELECTOR).forEach(decorateProjectCard)
+  }
+
+  function observeProjectCards() {
+    if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
+    const root = $('[wf-xano-instance="dash-brand-projects"], [wf-xano-instance="dash-projects"]')
+    if (!root || typeof MutationObserver !== 'function') return
+    let queued = false
+    projectWorkflowObserver = new MutationObserver(() => {
+      if (queued) return
+      queued = true
+      Promise.resolve().then(() => {
+        queued = false
+        decorateProjectCards()
+      })
+    })
+    projectWorkflowObserver.observe(root, { childList: true, subtree: true })
+  }
+
+  async function refreshProjectWorkflow(role = projectWorkflowRole) {
+    if (!role || projectRoleForPath() !== role) return null
+    if (projectWorkflowRefresh) return projectWorkflowRefresh
+    const request = (async () => {
+      const result =
+        role === 'brand' ? await API.brandProjectList() : await API.starterProjectList()
+      if (projectWorkflowRole !== role || projectRoleForPath() !== role) return null
+      projectWorkflowItems = new Map(
+        projectItems(result)
+          .map((item) => [Number(item && (item.project_id || item.id)), item])
+          .filter(([id]) => id > 0),
+      )
+      decorateProjectCards()
+      observeProjectCards()
+      return result
+    })()
+    projectWorkflowRefresh = request
+    try {
+      return await request
+    } finally {
+      if (projectWorkflowRefresh === request) projectWorkflowRefresh = null
+    }
+  }
+
+  async function currentProjectContext(card) {
+    let project = projectContextFromCard(card)
+    if (project && (project.lifecycle_state || project.status)) return project
+    await refreshProjectWorkflow()
+    project = projectContextFromCard(card)
+    return project && (project.lifecycle_state || project.status) ? project : null
+  }
+
+  function projectActionErrorMessage(error, fallback) {
+    const message =
+      (error && error.data && error.data.message) || (error && error.message) || fallback
+    if (/project version is stale/i.test(message)) {
+      return 'Project changed. Please try again.'
+    }
+    return message || fallback
+  }
+
+  function projectActionKey(action, project, actionName) {
+    const version = Number(project.lifecycle_version) || 0
+    const scope = [project.id || project.project_id, version, actionName].join(':')
+    if (action.dataset.projectActionScope === scope && action.dataset.projectActionKey) {
+      return action.dataset.projectActionKey
+    }
+    const uuid =
+      window.crypto && typeof window.crypto.randomUUID === 'function'
+        ? window.crypto.randomUUID()
+        : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)
+    action.dataset.projectActionScope = scope
+    action.dataset.projectActionKey = 'project-action-ui:' + scope + ':' + uuid
+    return action.dataset.projectActionKey
+  }
+
+  function projectActionIntent(project, confirmAction = window.confirm, promptAction = window.prompt) {
+    const state = lifecycleState(project)
+    if (!state || PROJECT_TERMINAL_STATES.has(state)) return null
+    if (state === 'pending') {
+      return confirmAction('Cancel this project before it starts?')
+        ? { action: 'cancel', reason: 'canceled_before_activation' }
+        : null
+    }
+    if (state === 'completion_requested') {
+      return confirmAction(
+        'Confirm that the project is complete? The project closes after both sides confirm.',
+      )
+        ? { action: 'complete', reason: '' }
+        : null
+    }
+    if (state === 'termination_requested') {
+      const reason = String(project.end_reason || '').trim()
+      return confirmAction('Confirm ending this project early?')
+        ? { action: 'terminate', reason }
+        : null
+    }
+    const response = promptAction(
+      'Type COMPLETE if the work is finished. To end the project early, enter the reason instead. Leave blank to keep it active.',
+      '',
+    )
+    if (response == null || !String(response).trim()) return null
+    const value = String(response).trim()
+    return /^complete$/i.test(value)
+      ? { action: 'complete', reason: '' }
+      : { action: 'terminate', reason: value }
+  }
+
+  function projectMutationFeedback(project) {
+    const state = lifecycleState(project)
+    return {
+      completion_requested: 'Completion requested',
+      completed: 'Project completed',
+      termination_requested: 'End requested',
+      terminated: 'Project ended',
+      canceled: 'Project canceled',
+      cancelled: 'Project canceled',
+    }[state] || 'Project updated'
+  }
+
+  async function openProjectContract(action, card) {
+    const project = await currentProjectContext(card)
+    if (!project) {
+      showProjectActionFeedback(action, 'Project details unavailable', true)
+      return
+    }
+    const pending = projectActionWrap(action)
+    setOpportunityActionPending(pending, true)
+    let contractWindow = null
+    try {
+      if (typeof window.open === 'function') contractWindow = window.open('', '_blank')
+      const result = await API.contractLink(project.id || project.project_id)
+      const url = String(result && result.url || '').trim()
+      if (!url) throw new Error('Contract link was not returned')
+      if (contractWindow && !contractWindow.closed) {
+        contractWindow.opener = null
+        contractWindow.location.href = url
+      } else {
+        window.location.href = url
+      }
+    } catch (error) {
+      if (contractWindow && !contractWindow.closed) contractWindow.close()
+      showProjectActionFeedback(
+        action,
+        projectActionErrorMessage(error, 'Contract is unavailable. Please try again.'),
+        true,
+      )
+    } finally {
+      setOpportunityActionPending(pending, false)
+    }
+  }
+
+  async function mutateProjectLifecycle(action, card) {
+    const project = await currentProjectContext(card)
+    if (!project) {
+      showProjectActionFeedback(action, 'Project details unavailable', true)
+      return
+    }
+    const intent = projectActionIntent(project)
+    if (!intent) return
+    if (intent.action === 'terminate' && !intent.reason) {
+      showProjectActionFeedback(action, 'A reason is required to end early', true)
+      return
+    }
+    const pending = projectActionWrap(action)
+    setOpportunityActionPending(pending, true)
+    try {
+      const result = await API.projectAction({
+        project_id: project.id || project.project_id,
+        expected_version: Number(project.lifecycle_version) || 0,
+        action: intent.action,
+        reason: intent.reason,
+        idempotency_key: projectActionKey(action, project, intent.action),
+      })
+      const updated = result && result.project
+      if (updated) projectWorkflowItems.set(Number(updated.id), updated)
+      delete action.dataset.projectActionKey
+      delete action.dataset.projectActionScope
+      showProjectActionFeedback(action, projectMutationFeedback(updated || project))
+      await refreshProjectWorkflow()
+      if (window.WfXano && typeof window.WfXano.refresh === 'function') {
+        try {
+          window.WfXano.refresh(card.closest('[wf-xano-source]') || undefined)
+        } catch (error) {
+          /* non-fatal: canonical refresh above already updated action state */
+        }
+      }
+    } catch (error) {
+      showProjectActionFeedback(
+        action,
+        projectActionErrorMessage(error, 'Project update failed. Please try again.'),
+        true,
+      )
+      if (error && error.data && /project version is stale/i.test(error.data.message || '')) {
+        await refreshProjectWorkflow()
+      }
+    } finally {
+      setOpportunityActionPending(pending, false)
+    }
+  }
+
+  function showProjectModal(name, modal) {
+    const entry = window.lumos && window.lumos.modal && window.lumos.modal.list
+      ? window.lumos.modal.list[name]
+      : null
+    if (entry && typeof entry.open === 'function') {
+      entry.open()
+      return
+    }
+    if (typeof modal.showModal === 'function') modal.showModal()
+    else modal.setAttribute('open', '')
+    window.dispatchEvent(new CustomEvent('modal-open', { detail: { modal } }))
+  }
+
+  function reviewError(modal, message) {
+    const fail = $('.w-form-fail', modal)
+    if (!fail) return
+    fail.textContent = message
+    fail.style.display = 'block'
+  }
+
+  function prepareProjectReview(project) {
+    const modal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
+    if (!modal || !project || !project.review_eligible || project.has_review) return false
+    activeReviewProject = project
+    const form = $('form', modal)
+    const done = $('.w-form-done', modal)
+    const fail = $('.w-form-fail', modal)
+    if (form) {
+      form.reset()
+      form.style.display = ''
+    }
+    if (done) done.style.display = ''
+    if (fail) fail.style.display = ''
+    const heading = $('.modal_nav .text-size-large, .modal_nav p', modal)
+    if (heading) heading.textContent = 'Review Starter'
+    const privateFeedback = $('[name="Private-Feedback"]', modal)
+    if (privateFeedback) {
+      const privateWrap = privateFeedback.closest(
+        '.modal_input-group, .modal-form_field-wrap, .form_field-wrap, .field-wrap',
+      )
+      if (privateWrap) privateWrap.style.display = 'none'
+      else privateFeedback.style.display = 'none'
+    }
+    showProjectModal(PROJECT_REVIEW_MODAL_ID, modal)
+    return true
+  }
+
+  async function openProjectReview(action, card) {
+    const project = await currentProjectContext(card)
+    if (!project || !prepareProjectReview(project)) {
+      showProjectActionFeedback(action, 'Review is not available yet', true)
+    }
+  }
+
+  async function submitProjectReview(event, modal) {
+    event.preventDefault()
+    event.stopPropagation()
+    if (reviewSubmitting) return
+    const project = activeReviewProject
+    if (!project || projectWorkflowRole !== 'brand') {
+      reviewError(modal, 'Open Review Starter from the project you want to review.')
+      return
+    }
+    const form = event.target
+    const ratingInput = $('input[name="Call-Rating"]:checked', form)
+    const reviewInput = $('[name="Public-Feedback"]', form)
+    const rating = Number(ratingInput && ratingInput.value)
+    const reviewText = String(reviewInput && reviewInput.value || '').trim()
+    if (!(rating >= 1 && rating <= 5)) {
+      reviewError(modal, 'Choose a rating from 1 to 5 stars.')
+      return
+    }
+    if (reviewText.length < 10 || reviewText.length > 4000) {
+      reviewError(modal, 'Write between 10 and 4,000 characters.')
+      return
+    }
+    reviewSubmitting = true
+    const submit = $('[type="submit"]', form)
+    const pending = projectActionWrap(submit)
+    setOpportunityActionPending(pending, true)
+    try {
+      await API.brandReviewSubmit({
+        project_id: project.id || project.project_id,
+        rating,
+        review_text: reviewText,
+        idempotency_key: 'review-ui:' + (project.id || project.project_id) + ':' +
+          (window.crypto && typeof window.crypto.randomUUID === 'function'
+            ? window.crypto.randomUUID()
+            : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2)),
+      })
+      form.style.display = 'none'
+      const done = $('.w-form-done', modal)
+      if (done) done.style.display = 'block'
+      activeReviewProject = null
+      await refreshProjectWorkflow()
+    } catch (error) {
+      reviewError(modal, projectActionErrorMessage(error, 'Review could not be submitted.'))
+    } finally {
+      reviewSubmitting = false
+      setOpportunityActionPending(pending, false)
+    }
+  }
+
+  function projectWorkflowBindingCurrent(binding) {
+    return Boolean(
+      binding &&
+      projectWorkflowBinding === binding &&
+      projectWorkflowRole === binding.role &&
+      projectRoleForPath() === binding.role &&
+      binding.generation === _memberScopeGeneration,
+    )
+  }
+
+  function unwireProjectDashboardWorkflow() {
+    const binding = projectWorkflowBinding
+    projectWorkflowBinding = null
+    if (binding) {
+      document.removeEventListener('click', binding.click, true)
+      if (binding.submit) document.removeEventListener('submit', binding.submit, true)
+    }
+    projectWorkflowRole = ''
+    projectWorkflowItems = new Map()
+    projectWorkflowRefresh = null
+    activeReviewProject = null
+    reviewSubmitting = false
+    if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
+    projectWorkflowObserver = null
+  }
+
+  function wireProjectWorkflowListeners(role) {
+    if (
+      projectWorkflowBinding &&
+      projectWorkflowBinding.role === role &&
+      projectWorkflowBinding.generation === _memberScopeGeneration &&
+      projectWorkflowBindingCurrent(projectWorkflowBinding)
+    ) return
+    unwireProjectDashboardWorkflow()
+    projectWorkflowRole = role
+    const binding = { role, generation: _memberScopeGeneration, click: null, submit: null }
+    binding.click = async (event) => {
+      if (!projectWorkflowBindingCurrent(binding)) {
+        unwireProjectDashboardWorkflow()
+        return
+      }
+      const target = event.target
+      const action = target && target.closest
+        ? target.closest(
+            PROJECT_CONTRACT_SELECTOR + ', ' + PROJECT_END_SELECTOR + ', ' + PROJECT_REVIEW_SELECTOR,
+          )
+        : null
+      if (!action) return
+      const card = action.closest(PROJECT_CARD_SELECTOR)
+      if (!card) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (action.matches(PROJECT_CONTRACT_SELECTOR)) await openProjectContract(action, card)
+      else if (action.matches(PROJECT_END_SELECTOR)) await mutateProjectLifecycle(action, card)
+      else if (binding.role === 'brand') await openProjectReview(action, card)
+    }
+    document.addEventListener('click', binding.click, true)
+    if (role === 'brand') {
+      binding.submit = (event) => {
+        if (!projectWorkflowBindingCurrent(binding)) {
+          unwireProjectDashboardWorkflow()
+          return
+        }
+        const modal = event.target && event.target.closest
+          ? event.target.closest('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
+          : null
+        if (modal) submitProjectReview(event, modal)
+      }
+      document.addEventListener('submit', binding.submit, true)
+    }
+    projectWorkflowBinding = binding
+  }
+
+  function authorizeProjectDashboardWorkflow(member) {
+    const role = projectRoleForPath()
+    const memberRole = member ? memberPlanRole(member) : ''
+    const allowed =
+      member &&
+      member.id === _cacheMemberId &&
+      ((role === 'starter' && memberRole === 'talent') ||
+        (role === 'brand' && memberRole === 'brand-paid'))
+    if (!allowed) {
+      unwireProjectDashboardWorkflow()
+      return false
+    }
+    initProjectDashboardWorkflow(role, member)
+    return true
+  }
+
+  async function initProjectDashboardWorkflow(role, authorizedMember = null) {
+    const expected = role === 'brand' ? 'brand' : 'freelancer'
+    if (
+      projectRoleForPath() !== role ||
+      (!authorizedMember && !(await gateOrRedirect(expected)))
+    ) return false
+    wireProjectWorkflowListeners(role)
+    try {
+      await refreshProjectWorkflow(role)
+      return true
+    } catch (error) {
+      console.error('[opp30:project-action] failed to load project action context', error)
+      return false
+    }
   }
 
   // Paint the existing Webflow-authored opportunity review screen. Some
@@ -2726,6 +3282,7 @@
       // if the shared Project Item component is misconfigured or briefly
       // visible during a redirect.
       authorizeStarterInvoiceWorkflow(member)
+      await initProjectDashboardWorkflow('starter', member)
       const context = await getTalentMatchContext()
       const categoryRefs = filterValues(contextValue(context, 'category_refs'))
       window.Opp30TalentMatchContext = context
@@ -3881,6 +4438,7 @@
     const p = location.pathname
     const normalizedPath = normalizedPagePath(p)
     if (normalizedPath === '/starter-dashboard') initStarterDashboardOpportunityMatch()
+    else if (normalizedPath === '/brand-dashboard') initProjectDashboardWorkflow('brand')
     else if (p.includes('opportunities-details---brand-view')) initBrandDetail()
     else if (p.match(/^\/opportunities\/[^/]+\/?$/)) initOppDetailByRole()
     // Merged feed (bare /opportunities, launched 2026-07): matches neither the
@@ -3957,6 +4515,10 @@
     requestInvoiceSubmit,
     invoiceSubmitControl,
     setInvoiceSubmitDisabled,
+    projectActionIntent,
+    projectMutationFeedback,
+    projectActionErrorMessage,
+    initProjectDashboardWorkflow,
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,
