@@ -2116,10 +2116,22 @@
     }
   }
 
-  async function currentProjectContext(card, refresh = false) {
-    let project = refresh ? null : projectContextFromCard(card)
+  async function currentProjectContext(card, refresh = false, fallbackOnRefreshFailure = false) {
+    const cachedProject = projectContextFromCard(card)
+    let project = refresh ? null : cachedProject
     if (project && (project.lifecycle_state || project.status)) return project
-    await refreshProjectWorkflow()
+    try {
+      await refreshProjectWorkflow()
+    } catch (error) {
+      if (
+        fallbackOnRefreshFailure &&
+        cachedProject &&
+        (cachedProject.lifecycle_state || cachedProject.status)
+      ) {
+        return cachedProject
+      }
+      throw error
+    }
     project = projectContextFromCard(card)
     return project && (project.lifecycle_state || project.status) ? project : null
   }
@@ -2201,7 +2213,7 @@
   }
 
   async function openProjectContract(action, card) {
-    const project = await currentProjectContext(card, true)
+    const project = await currentProjectContext(card, true, true)
     if (!project) {
       showProjectActionFeedback(action, 'Project details unavailable', true)
       return
