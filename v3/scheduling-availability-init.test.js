@@ -282,14 +282,16 @@ test('shows Manage availability when the starter has saved availability', async 
   assert.equal(result.events[0].detail.source, 'starter')
 })
 
-test('keeps calendar actions hidden while canonical connection state is loading', () => {
+test('keeps the Calendar action usable while canonical connection state is loading', () => {
   const result = loadInitializer({
     xanoAuthFetch: () => new Promise(() => {}),
   })
 
   assert.equal(result.attributes.get('data-scheduling-calendar-state'), 'loading')
-  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionAction.style.display, 'flex')
   assert.equal(result.connectionAction.getAttribute('aria-busy'), 'true')
+  result.connectionAction.click()
+  assert.equal(result.steps[1].style.display, 'block')
 })
 
 test('hides the Calendar action only after grant, calendar, and config proof', async () => {

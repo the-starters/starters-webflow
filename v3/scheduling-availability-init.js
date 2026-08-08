@@ -235,7 +235,7 @@
     actions.forEach(function (action) {
       action.setAttribute('data-calendar-connection-state', state)
       action.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false')
-      action.style.display = state === 'connected' || state === 'loading' ? 'none' : 'flex'
+      action.style.display = state === 'connected' ? 'none' : 'flex'
       bindStep(action, function () {
         if (activeConnectionState === 'error') return 'config-request-error'
         return Object.keys((availability && availability.items) || {}).length > 0
