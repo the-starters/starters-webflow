@@ -1,6 +1,6 @@
 /* explore-search-tab-no-results.js — per-tab "no matches" message for the tabbed federated search.
  *
- * @release v1.59.130
+ * @release v1.59.136
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. Standalone:
  * no imports, no shared globals with the sibling explore-search-*.js embeds.
