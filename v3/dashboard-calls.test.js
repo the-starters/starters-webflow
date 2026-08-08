@@ -854,3 +854,59 @@ test('both project dashboards enable canonical keyed reconciliation before subsc
     assert.equal(instances[key].keyField, 'id')
   })
 })
+
+test('project status filters reuse the in-memory canonical list without a replacement request', async () => {
+  const pendingCard = element({ 'data-wf-xano-id': '1' })
+  const completedCard = element({ 'data-wf-xano-id': '2' })
+  const root = element({ 'wf-xano-instance': 'dash-projects' })
+  root.querySelectorAll = (selector) =>
+    selector === '[wf-xano-item][data-wf-xano-id]' ? [pendingCard, completedCard] : []
+  const all = element({ 'wf-xano-filter': 'status', 'wf-xano-value': '*' })
+  all.type = 'radio'
+  all.value = '*'
+  const pending = element({ 'wf-xano-filter': 'status', 'wf-xano-value': 'pending' })
+  pending.type = 'radio'
+  pending.value = 'pending'
+  const total = element()
+  const empty = element()
+  const remoteParams = []
+  const instance = {
+    emptyEl: empty,
+    root,
+    qa(selector) {
+      if (selector === '[wf-xano-filter="status"]') return [all, pending]
+      if (selector === '[wf-xano-element="total"]') return [total]
+      return []
+    },
+    setParam(field, value) {
+      remoteParams.push([field, value])
+      return Promise.resolve('remote')
+    },
+  }
+  const memory = {
+    allItems: [
+      { id: 1, status: 'pending' },
+      { id: 2, status: 'completed' },
+    ],
+    localStatus: '',
+  }
+
+  assert.equal(api.wireProjectMemoryFilter(instance, memory), true)
+  const pendingResult = await instance.setParam('status', 'pending')
+  assert.deepEqual(pendingResult, { local: true, status: 'pending', total: 1 })
+  assert.deepEqual(remoteParams, [])
+  assert.equal(pendingCard.hidden, false)
+  assert.equal(completedCard.hidden, true)
+  assert.equal(pending.checked, true)
+  assert.equal(all.checked, false)
+  assert.equal(total.textContent, '1')
+  assert.equal(empty.hidden, true)
+
+  await instance.setParam('status', '*')
+  assert.equal(pendingCard.hidden, false)
+  assert.equal(completedCard.hidden, false)
+  assert.equal(total.textContent, '2')
+  assert.equal(all.checked, true)
+  await instance.setParam('search', 'sample')
+  assert.deepEqual(remoteParams, [['search', 'sample']])
+})

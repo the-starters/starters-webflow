@@ -1624,6 +1624,12 @@ changes still read fresh Xano state, but matching project cards are updated and
 reused instead of destroying and cloning their full nested details trees. This
 is a page-rendering optimization, not a browser data cache; auth changes and
 explicit refreshes continue to fetch canonical rows.
+The initial authenticated All result is also retained only in page memory for
+status navigation. Selecting All, Active, Incomplete, Completed, or Pending
+shows/hides those already-authorized canonical cards without another request or
+DOM rebuild. An auth change clears that snapshot; the existing explicit project
+refresh reloads All from Xano and reapplies the selected status. Nothing is
+persisted to localStorage or shared across members, tabs, or page loads.
 The existing Designer-owned project `Show more` control stays hidden and out of
 the accessibility tree. The current Brand and Starter Projects endpoints return
 each member's complete owned collection and ignore `page`/`per_page`; presenting
