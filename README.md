@@ -642,7 +642,9 @@ modal, form, or button markup. At dashboard bootstrap, the controller marks ever
 authored `[wf-xano-element="details-target"]` inside that instance's template
 with `wf-xano-lazy-details`, so wf-xano can defer the project disclosure's nested
 hydration until the member opens it instead of hydrating every disclosure on the
-12-item page during first render.
+12-item page during first render. Within that lazy details target, every
+`[wf-xano-bind="project_scope"]` preserves authored newline characters as visible
+line breaks and wraps unbroken long words instead of widening the project card.
 
 The shared Project timeline value is repainted from each canonical project's
 `start_date` and `end_date` (falling back to `estimated_end_date`) as a readable
