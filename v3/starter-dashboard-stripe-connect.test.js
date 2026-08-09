@@ -518,6 +518,32 @@ test('status reads Xano with a Bearer token and no client-supplied member id', a
   }
 })
 
+test('status reuses the shared dashboard Xano token without a local trade', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+  }
+  const requests = []
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return response({ connected: true, charges_enabled: true, synced_at: 123 })
+  }
+  api.__resetXanoToken()
+
+  try {
+    const status = await api.fetchStatus()
+    assert.equal(status.charges_enabled, true)
+    assert.equal(requests.length, 1)
+    assert.equal(requests.some(({ url }) => String(url).includes('trade-token')), false)
+    assert.equal(requests[0].options.headers.Authorization, 'Bearer shared-xano-token')
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+  }
+})
+
 test('start sends the dashboard return URL and accepts Stripe URLs only', async () => {
   const previous = {
     fetch: global.fetch,

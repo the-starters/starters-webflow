@@ -49,13 +49,17 @@
     const posthog = window.posthog
     if (!posthog || typeof posthog.identify !== 'function') return
 
-    const memberstack = await waitForMemberstackDom()
-    if (!memberstack) return // page without Memberstack — leave visitor anonymous
-
     let member = null
     try {
-      const res = await memberstack.getCurrentMember()
-      member = res && res.data
+      if (window.memberReady && typeof window.memberReady.then === 'function') {
+        member = await window.memberReady
+      }
+      if (!member || !member.id) {
+        const memberstack = await waitForMemberstackDom()
+        if (!memberstack) return // page without Memberstack — leave visitor anonymous
+        const res = await memberstack.getCurrentMember()
+        member = res && res.data
+      }
     } catch (e) {
       return // Memberstack error — do nothing rather than mis-identify
     }

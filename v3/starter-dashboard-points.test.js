@@ -403,3 +403,39 @@ test('summary fetch trades the Memberstack token and sends Xano auth', async () 
     global.fetch = previousFetch
   }
 })
+
+test('summary fetch reuses the shared dashboard Xano token', async () => {
+  const requests = []
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+  }
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.fetch = async (url, options = {}) => {
+    requests.push({ url, options })
+    return {
+      ok: true,
+      json: async () => ({
+        total_points: 32000,
+        rank_status: 'ready',
+        overall_rank: 32,
+        overall_cohort_size: 680,
+      }),
+    }
+  }
+
+  try {
+    const result = await api.fetchSummary({
+      getMemberCookie: async () => {
+        throw new Error('local Memberstack trade should not run')
+      },
+    })
+
+    assert.equal(result.overall_rank, 32)
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].options.headers.Authorization, 'Bearer shared-xano-token')
+  } finally {
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+  }
+})

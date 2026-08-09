@@ -877,7 +877,14 @@
 
     var memberstack = await waitForMemberstack()
     var member = null
-    if (memberstack) {
+    if (window.memberReady && typeof window.memberReady.then === 'function') {
+      try {
+        member = await window.memberReady
+      } catch (error) {
+        member = null
+      }
+    }
+    if ((!member || !member.id) && memberstack) {
       try {
         var response = await memberstack.getCurrentMember()
         member = (response && response.data) || null

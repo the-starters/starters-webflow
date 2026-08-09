@@ -117,17 +117,17 @@
   }
 
   async function currentMemberId() {
+    if (global.memberReady && typeof global.memberReady.then === 'function') {
+      const member = await global.memberReady
+      if (member && member.id) return member.id
+    }
+
     if (
       global.$memberstackDom &&
       typeof global.$memberstackDom.getCurrentMember === 'function'
     ) {
       const result = await global.$memberstackDom.getCurrentMember()
       const member = result && result.data
-      if (member && member.id) return member.id
-    }
-
-    if (global.memberReady && typeof global.memberReady.then === 'function') {
-      const member = await global.memberReady
       if (member && member.id) return member.id
     }
 
@@ -144,6 +144,11 @@
   let xanoTokenPromise = null
 
   async function tradeForXanoToken() {
+    if (typeof global.getXanoAuthToken === 'function') {
+      const token = await global.getXanoAuthToken()
+      if (!token) throw new Error('Shared Xano auth bridge returned no token')
+      return token
+    }
     let memberstack = global.$memberstackDom
     if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
       memberstack = await waitForMemberstackDom()

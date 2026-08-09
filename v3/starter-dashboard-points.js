@@ -253,24 +253,30 @@
   }
 
   async function fetchSummary(memberstack) {
-    const memberstackToken = await memberstack.getMemberCookie()
-    if (!memberstackToken) throw new Error('No Memberstack session')
+    let xanoToken
+    if (typeof global.getXanoAuthToken === 'function') {
+      xanoToken = await global.getXanoAuthToken()
+      if (!xanoToken) throw new Error('Shared Xano auth bridge returned no token')
+    } else {
+      const memberstackToken = await memberstack.getMemberCookie()
+      if (!memberstackToken) throw new Error('No Memberstack session')
 
-    const tradeResponse = await global.fetch(
-      XANO_AUTH_BASE +
-        TRADE_TOKEN_PATH +
-        '?token=' +
-        encodeURIComponent(memberstackToken),
-    )
-    const tradeData = await tradeResponse.json().catch(function () {
-      return null
-    })
-    if (!tradeResponse.ok) throw new Error('Xano token trade failed')
-    const xanoToken =
-      typeof tradeData === 'string'
-        ? tradeData
-        : tradeData && (tradeData.authToken || tradeData.token)
-    if (!xanoToken) throw new Error('Xano token trade returned no token')
+      const tradeResponse = await global.fetch(
+        XANO_AUTH_BASE +
+          TRADE_TOKEN_PATH +
+          '?token=' +
+          encodeURIComponent(memberstackToken),
+      )
+      const tradeData = await tradeResponse.json().catch(function () {
+        return null
+      })
+      if (!tradeResponse.ok) throw new Error('Xano token trade failed')
+      xanoToken =
+        typeof tradeData === 'string'
+          ? tradeData
+          : tradeData && (tradeData.authToken || tradeData.token)
+      if (!xanoToken) throw new Error('Xano token trade returned no token')
+    }
 
     const response = await global.fetch(XANO_OPP_BASE + SUMMARY_PATH, {
       method: 'POST',

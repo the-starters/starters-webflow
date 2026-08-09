@@ -162,6 +162,13 @@
   async function ensureXanoToken(generation = _memberScopeGeneration) {
     assertMemberScopeGeneration(generation)
     if (_xanoToken) return _xanoToken
+    if (typeof window.getXanoAuthToken === 'function') {
+      const sharedToken = await window.getXanoAuthToken()
+      assertMemberScopeGeneration(generation)
+      if (!sharedToken) throw new Error('shared auth bridge returned no token')
+      _xanoToken = sharedToken
+      return sharedToken
+    }
     const msToken = await getMemberstackToken()
     assertMemberScopeGeneration(generation)
     const res = await fetch(
@@ -1241,6 +1248,15 @@
     return false
   }
 
+  async function initialMemberSnapshot(memberstack) {
+    if (window.memberReady && typeof window.memberReady.then === 'function') {
+      const member = await window.memberReady
+      if (member && member.id) return member
+    }
+    const response = await memberstack.getCurrentMember()
+    return response && response.data
+  }
+
   /**
    * Resolve the current member for a page. Wait for an authored route guard;
    * after `allowed`, require the matching plan-ID role but leave redirects to
@@ -1254,7 +1270,7 @@
     if (guardOutcome === 'blocked') return null
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
-    const { data: member } = await memberstack.getCurrentMember()
+    const member = await initialMemberSnapshot(memberstack)
     if (!member || !member.id) {
       resetMemberScopedCaches(null)
       if (guardOutcome !== 'allowed') location.href = loginPathWithNext()
@@ -1333,7 +1349,7 @@
     if (guardOutcome === 'blocked') return null
     const memberstack = await waitForMemberstackDom()
     if (!memberstack) throw new Error('Memberstack not available')
-    const { data: initialMember } = await memberstack.getCurrentMember()
+    const initialMember = await initialMemberSnapshot(memberstack)
     let member = initialMember
     if (!member || !member.id) {
       resetMemberScopedCaches(null)

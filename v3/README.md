@@ -1444,6 +1444,12 @@ Current safety boundary:
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
   code.
+- Dashboard controllers reuse the site-head `window.memberReady` promise for
+  their initial identity snapshot and `window.getXanoAuthToken` for the
+  Opportunities, Points, Messages, and Stripe reads. This keeps one shared
+  Memberstack bootstrap and one in-flight Xano token trade per member session;
+  live identity checks after auth changes and before writes still call
+  Memberstack directly and fail closed on a changed member.
 - Transparently wraps reviewed direct `/v3` requests while the stage adapter
   migrates legacy component callers.
 - Installs synchronously and takes ownership from the legacy bridge in
