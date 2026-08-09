@@ -438,6 +438,45 @@ test('the authored Earnings div redirects only after it is enabled', () => {
   }
 })
 
+test('an Earnings tab with an attached opener is closed without navigation', () => {
+  const previousOpen = global.open
+  const earnings = new FakeElement()
+  let closed = false
+  let navigated = false
+  const stripeTab = {
+    closed: false,
+    close() {
+      closed = true
+      this.closed = true
+    },
+    location: {
+      replace() {
+        navigated = true
+      },
+    },
+  }
+  Object.defineProperty(stripeTab, 'opener', {
+    configurable: true,
+    get: () => global,
+    set: () => {
+      throw new Error('read only')
+    },
+  })
+  global.open = () => stripeTab
+  api.setEarningsAccess([earnings], true)
+
+  try {
+    assert.equal(
+      api.handleEarningsClick(earnings, { preventDefault() {} }),
+      false,
+    )
+    assert.equal(closed, true)
+    assert.equal(navigated, false)
+  } finally {
+    global.open = previousOpen
+  }
+})
+
 test('the authored Earnings div activates from the keyboard once enabled', () => {
   const previousOpen = global.open
   const earnings = new FakeElement()
@@ -822,6 +861,190 @@ test('a blocked popup fails closed before making a Stripe Connect request', asyn
   } finally {
     global.fetch = previous.fetch
     global.open = previous.open
+  }
+})
+
+test('duplicate Connect Stripe activation does not reserve or render another popup', async () => {
+  const previous = {
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const { root, states } = stripeRoot()
+  const connect = new FakeElement()
+  const runner = api.createExclusiveRunner()
+  let resolveMember
+  let openCount = 0
+  const member = new Promise((resolve) => {
+    resolveMember = resolve
+  })
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => {
+    openCount += 1
+    return {
+      closed: false,
+      close() {},
+      location: { replace() {} },
+      opener: global,
+    }
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => member,
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  api.setView(root, 'disconnected')
+  api.__resetXanoToken()
+
+  try {
+    const first = api.startInNewTab(
+      runner,
+      connect,
+      connect,
+      [root],
+      'member-123',
+    )
+    const duplicate = api.startInNewTab(
+      runner,
+      new FakeElement(),
+      connect,
+      [root],
+      'member-123',
+    )
+
+    assert.equal(await duplicate, null)
+    assert.equal(openCount, 1)
+    assert.equal(states.error.style.display, 'none')
+    resolveMember({ data: { id: 'member-123' } })
+    assert.equal(await first, true)
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('returning focus refreshes status and releases Connect Stripe for retry', async () => {
+  const previous = {
+    addEventListener: global.addEventListener,
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+    removeEventListener: global.removeEventListener,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const earnings = new FakeElement()
+  const runner = api.createExclusiveRunner()
+  const listeners = new Map()
+  let openCount = 0
+  let statusCount = 0
+  global.addEventListener = (name, listener) => listeners.set(name, listener)
+  global.removeEventListener = (name, listener) => {
+    if (listeners.get(name) === listener) listeners.delete(name)
+  }
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => {
+    openCount += 1
+    return {
+      closed: false,
+      close() {},
+      location: { replace() {} },
+      opener: global,
+    }
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusCount += 1
+      return response({ connected: false, charges_enabled: false })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  const tiles = api.resolveEarningsTiles([connect, earnings])
+  api.__resetXanoToken()
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      true,
+    )
+    assert.equal(connect.getAttribute('aria-busy'), 'true')
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      null,
+    )
+    assert.equal(openCount, 1)
+
+    await listeners.get('focus')()
+
+    assert.equal(statusCount, 1)
+    assert.equal(connect.getAttribute('aria-busy'), 'false')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      true,
+    )
+    assert.equal(openCount, 2)
+    await listeners.get('focus')()
+  } finally {
+    api.__resetXanoToken()
+    global.addEventListener = previous.addEventListener
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+    global.removeEventListener = previous.removeEventListener
   }
 })
 

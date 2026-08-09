@@ -290,11 +290,17 @@
 
   function createExclusiveRunner() {
     let actionPending = false
-    return function runExclusive(task, latchOnSuccess) {
+    function runExclusive(task, latchOnSuccess) {
       if (actionPending) return Promise.resolve(null)
       actionPending = true
-      return Promise.resolve()
-        .then(task)
+      let result
+      try {
+        result = task()
+      } catch (error) {
+        actionPending = false
+        return Promise.reject(error)
+      }
+      return Promise.resolve(result)
         .then(
           function (result) {
             if (!latchOnSuccess || result !== true) actionPending = false
@@ -306,6 +312,10 @@
           },
         )
     }
+    runExclusive.release = function () {
+      actionPending = false
+    }
+    return runExclusive
   }
 
   function setEarningsAccess(elements, enabled) {
@@ -418,9 +428,10 @@
     if (!stripeTab) return null
     try {
       stripeTab.opener = null
+      if (stripeTab.opener !== null) throw new Error('Unable to detach opener')
     } catch (_error) {
-      // The browser can expose a read-only opener. Navigation remains safe
-      // because every destination is validated before it reaches this tab.
+      closeStripeTab(stripeTab)
+      return null
     }
     return stripeTab
   }
@@ -451,6 +462,25 @@
     } catch (_error) {
       return false
     }
+  }
+
+  function watchStripeTabReturn(stripeTab, onReturn) {
+    if (
+      !stripeTab ||
+      typeof global.addEventListener !== 'function' ||
+      typeof global.removeEventListener !== 'function'
+    ) {
+      return false
+    }
+    let settled = false
+    const handleReturn = function () {
+      if (settled) return null
+      settled = true
+      global.removeEventListener('focus', handleReturn)
+      return Promise.resolve().then(onReturn)
+    }
+    global.addEventListener('focus', handleReturn)
+    return true
   }
 
   function handleEarningsClick(element, event) {
@@ -598,23 +628,46 @@
     connectTile,
     roots,
     memberId,
+    earningsTiles = resolveEarningsTiles([]),
   ) {
-    const stripeTab = reserveStripeTab()
-    if (!stripeTab) {
-      renderRoots(roots, 'error')
-      emit('starterStripeConnectError', {
-        action: 'start',
-        message: 'Browser blocked the Stripe Connect tab',
-      })
-      return Promise.resolve(false)
-    }
-
     return runExclusive(function () {
-      return handleStart(button, connectTile, roots, memberId, stripeTab)
-    }, true).then(function (result) {
-      if (result !== true) closeStripeTab(stripeTab)
-      return result
-    })
+      const stripeTab = reserveStripeTab()
+      if (!stripeTab) {
+        renderRoots(roots, 'error')
+        emit('starterStripeConnectError', {
+          action: 'start',
+          message: 'Browser blocked the Stripe Connect tab',
+        })
+        return false
+      }
+
+      return handleStart(
+        button,
+        connectTile,
+        roots,
+        memberId,
+        stripeTab,
+      ).then(function (result) {
+        if (result !== true) {
+          closeStripeTab(stripeTab)
+          return result
+        }
+
+        const recover = function () {
+          setStartPending(button, connectTile, false)
+          return loadDashboardStatus(roots, false, earningsTiles).finally(
+            function () {
+              runExclusive.release()
+            },
+          )
+        }
+        if (!watchStripeTabReturn(stripeTab, recover)) {
+          setStartPending(button, connectTile, false)
+          runExclusive.release()
+        }
+        return true
+      })
+    }, true)
   }
 
   async function mountDashboard() {
@@ -653,6 +706,7 @@
               connectTile,
               roots,
               memberId,
+              earningsTiles,
             )
           })
         }
@@ -665,6 +719,7 @@
               connectTile,
               roots,
               memberId,
+              earningsTiles,
             )
           })
         })
@@ -679,6 +734,7 @@
               earningsTiles.disconnected,
               roots,
               memberId,
+              earningsTiles,
             )
           })
         })
@@ -817,6 +873,7 @@
     setView,
     startInNewTab,
     startConnect,
+    watchStripeTabReturn,
   }
 
   if (isCommonJs) {
