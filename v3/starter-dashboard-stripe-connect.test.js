@@ -381,6 +381,8 @@ test('earnings opens Stripe only while charges are enabled', () => {
   api.setEarningsAccess([earnings], false)
 
   assert.equal(earnings.getAttribute('href'), null)
+  assert.equal(earnings.getAttribute('target'), null)
+  assert.equal(earnings.getAttribute('rel'), null)
   assert.equal(earnings.getAttribute('aria-disabled'), 'true')
   assert.equal(earnings.getAttribute('tabindex'), '-1')
   assert.equal(earnings.classList.contains('is-disabled'), true)
@@ -388,22 +390,32 @@ test('earnings opens Stripe only while charges are enabled', () => {
   api.setEarningsAccess([earnings], true)
 
   assert.equal(earnings.getAttribute('href'), 'https://dashboard.stripe.com/')
+  assert.equal(earnings.getAttribute('target'), '_blank')
+  assert.equal(earnings.getAttribute('rel'), 'noopener noreferrer')
   assert.equal(earnings.getAttribute('aria-disabled'), 'false')
   assert.equal(earnings.getAttribute('tabindex'), null)
   assert.equal(earnings.classList.contains('is-disabled'), false)
 })
 
 test('the authored Earnings div redirects only after it is enabled', () => {
-  const previousLocation = global.location
+  const previousOpen = global.open
   const earnings = new FakeElement()
   const destinations = []
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace: (value) => destinations.push(value) },
+    opener: global,
+  }
   const event = {
     prevented: false,
     preventDefault() {
       this.prevented = true
     },
   }
-  global.location = { assign: (value) => destinations.push(value) }
+  global.open = () => stripeTab
 
   try {
     api.setEarningsAccess([earnings], false)
@@ -419,13 +431,54 @@ test('the authored Earnings div redirects only after it is enabled', () => {
     assert.equal(api.handleEarningsClick(earnings, event), true)
     assert.equal(event.prevented, true)
     assert.deepEqual(destinations, ['https://dashboard.stripe.com/'])
+    assert.equal(stripeTab.opener, null)
+    assert.equal(stripeTab.closed, false)
   } finally {
-    global.location = previousLocation
+    global.open = previousOpen
+  }
+})
+
+test('an Earnings tab with an attached opener is closed without navigation', () => {
+  const previousOpen = global.open
+  const earnings = new FakeElement()
+  let closed = false
+  let navigated = false
+  const stripeTab = {
+    closed: false,
+    close() {
+      closed = true
+      this.closed = true
+    },
+    location: {
+      replace() {
+        navigated = true
+      },
+    },
+  }
+  Object.defineProperty(stripeTab, 'opener', {
+    configurable: true,
+    get: () => global,
+    set: () => {
+      throw new Error('read only')
+    },
+  })
+  global.open = () => stripeTab
+  api.setEarningsAccess([earnings], true)
+
+  try {
+    assert.equal(
+      api.handleEarningsClick(earnings, { preventDefault() {} }),
+      false,
+    )
+    assert.equal(closed, true)
+    assert.equal(navigated, false)
+  } finally {
+    global.open = previousOpen
   }
 })
 
 test('the authored Earnings div activates from the keyboard once enabled', () => {
-  const previousLocation = global.location
+  const previousOpen = global.open
   const earnings = new FakeElement()
   const destinations = []
   const keydown = (key) => ({
@@ -435,7 +488,12 @@ test('the authored Earnings div activates from the keyboard once enabled', () =>
       this.prevented = true
     },
   })
-  global.location = { assign: (value) => destinations.push(value) }
+  global.open = () => ({
+    closed: false,
+    close() {},
+    location: { replace: (value) => destinations.push(value) },
+    opener: global,
+  })
 
   try {
     api.setEarningsAccess([earnings], false)
@@ -462,7 +520,7 @@ test('the authored Earnings div activates from the keyboard once enabled', () =>
       'https://dashboard.stripe.com/',
     ])
   } finally {
-    global.location = previousLocation
+    global.open = previousOpen
   }
 })
 
@@ -644,6 +702,588 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
   }
 })
 
+test('Connect Stripe reserves and navigates a new tab without leaving the dashboard', async () => {
+  const previous = {
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const openCalls = []
+  const destinations = []
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace: (value) => destinations.push(value) },
+    opener: global,
+  }
+  let fetchCount = 0
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = (...args) => {
+    openCalls.push(args)
+    return stripeTab
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    fetchCount += 1
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  api.__resetXanoToken()
+
+  try {
+    const resultPromise = api.startInNewTab(
+      api.createExclusiveRunner(),
+      connect,
+      connect,
+      [root],
+      'member-123',
+    )
+
+    assert.deepEqual(openCalls, [['about:blank', '_blank']])
+    assert.equal(fetchCount, 0, 'the tab is reserved in the click task')
+    assert.equal(await resultPromise, true)
+    assert.equal(stripeTab.opener, null)
+    assert.equal(stripeTab.closed, false)
+    assert.deepEqual(destinations, [
+      'https://connect.stripe.com/oauth/authorize?client_id=test',
+    ])
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('a failed Connect Stripe request closes the reserved tab and restores recovery UI', async () => {
+  const previous = {
+    console: global.console,
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const { root, states } = stripeRoot()
+  const connect = new FakeElement()
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+    opener: global,
+  }
+  global.console = { ...console, error: () => {} }
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => stripeTab
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({ error: 'invalid account' }, { ok: false, status: 500 })
+  }
+  api.__resetXanoToken()
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        api.createExclusiveRunner(),
+        connect,
+        connect,
+        [root],
+        'member-123',
+      ),
+      false,
+    )
+    assert.equal(stripeTab.closed, true)
+    assert.equal(connect.getAttribute('aria-busy'), 'false')
+    assert.equal(connect.getAttribute('aria-disabled'), 'false')
+    assert.equal(states.error.style.display, '')
+  } finally {
+    api.__resetXanoToken()
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('a blocked popup fails closed before making a Stripe Connect request', async () => {
+  const previous = { fetch: global.fetch, open: global.open }
+  const { root, states } = stripeRoot()
+  let fetchCount = 0
+  global.fetch = async () => {
+    fetchCount += 1
+    return response({})
+  }
+  global.open = () => null
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        api.createExclusiveRunner(),
+        new FakeElement(),
+        new FakeElement(),
+        [root],
+        'member-123',
+      ),
+      false,
+    )
+    assert.equal(fetchCount, 0)
+    assert.equal(states.error.style.display, '')
+  } finally {
+    global.fetch = previous.fetch
+    global.open = previous.open
+  }
+})
+
+test('duplicate Connect Stripe activation does not reserve or render another popup', async () => {
+  const previous = {
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const { root, states } = stripeRoot()
+  const connect = new FakeElement()
+  const runner = api.createExclusiveRunner()
+  let resolveMember
+  let openCount = 0
+  const member = new Promise((resolve) => {
+    resolveMember = resolve
+  })
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => {
+    openCount += 1
+    return {
+      closed: false,
+      close() {},
+      location: { replace() {} },
+      opener: global,
+    }
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => member,
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  api.setView(root, 'disconnected')
+  api.__resetXanoToken()
+
+  try {
+    const first = api.startInNewTab(
+      runner,
+      connect,
+      connect,
+      [root],
+      'member-123',
+    )
+    const duplicate = api.startInNewTab(
+      runner,
+      new FakeElement(),
+      connect,
+      [root],
+      'member-123',
+    )
+
+    assert.equal(await duplicate, null)
+    assert.equal(openCount, 1)
+    assert.equal(states.error.style.display, 'none')
+    resolveMember({ data: { id: 'member-123' } })
+    assert.equal(await first, true)
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('early returning focus waits for start before releasing Stripe retry', async () => {
+  const previous = {
+    addEventListener: global.addEventListener,
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+    removeEventListener: global.removeEventListener,
+    setTimeout: global.setTimeout,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const earnings = new FakeElement()
+  const runner = api.createExclusiveRunner()
+  const listeners = new Map()
+  let resolveMember
+  let openCount = 0
+  let statusCount = 0
+  const member = new Promise((resolve) => {
+    resolveMember = resolve
+  })
+  global.addEventListener = (name, listener) => listeners.set(name, listener)
+  global.removeEventListener = (name, listener) => {
+    if (listeners.get(name) === listener) listeners.delete(name)
+  }
+  global.setTimeout = (callback) => {
+    callback()
+    return 1
+  }
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => {
+    openCount += 1
+    return {
+      closed: false,
+      close() {},
+      location: { replace() {} },
+      opener: global,
+    }
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => member,
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusCount += 1
+      return response({ connected: false, charges_enabled: false })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  const tiles = api.resolveEarningsTiles([connect, earnings])
+  api.__resetXanoToken()
+
+  try {
+    const firstStart = api.startInNewTab(
+      runner,
+      connect,
+      connect,
+      [root],
+      'member-123',
+      tiles,
+    )
+    assert.equal(connect.getAttribute('aria-busy'), 'true')
+    const recovery = listeners.get('focus')()
+    assert.equal(statusCount, 0)
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      null,
+    )
+    assert.equal(openCount, 1)
+
+    resolveMember({ data: { id: 'member-123' } })
+    assert.equal(await firstStart, true)
+    await recovery
+
+    assert.equal(statusCount, 5)
+    assert.equal(connect.getAttribute('aria-busy'), 'false')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      true,
+    )
+    assert.equal(openCount, 2)
+    await listeners.get('focus')()
+  } finally {
+    api.__resetXanoToken()
+    global.addEventListener = previous.addEventListener
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+    global.removeEventListener = previous.removeEventListener
+    global.setTimeout = previous.setTimeout
+  }
+})
+
+test('verified callback signal renders review on the original dashboard', async () => {
+  const previous = {
+    BroadcastChannel: global.BroadcastChannel,
+    addEventListener: global.addEventListener,
+    clearInterval: global.clearInterval,
+    document: global.document,
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+    removeEventListener: global.removeEventListener,
+    setInterval: global.setInterval,
+    setTimeout: global.setTimeout,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const earnings = new FakeElement()
+  const runner = api.createExclusiveRunner()
+  const channels = []
+  let delivery = Promise.resolve()
+  let statusCount = 0
+  class FakeBroadcastChannel {
+    constructor(name) {
+      this.name = name
+      this.onmessage = null
+      channels.push(this)
+    }
+
+    postMessage(data) {
+      delivery = Promise.all(
+        channels
+          .filter((channel) => channel !== this && channel.name === this.name)
+          .map((channel) =>
+            channel.onmessage ? channel.onmessage({ data }) : null,
+          ),
+      )
+    }
+
+    close() {
+      const index = channels.indexOf(this)
+      if (index >= 0) channels.splice(index, 1)
+    }
+  }
+  global.BroadcastChannel = FakeBroadcastChannel
+  global.addEventListener = () => {}
+  global.removeEventListener = () => {}
+  global.setInterval = () => 42
+  global.clearInterval = () => {}
+  global.setTimeout = (callback) => {
+    callback()
+    return 1
+  }
+  global.document = {}
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => ({
+    closed: false,
+    close() {},
+    location: { replace() {} },
+    opener: global,
+  })
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusCount += 1
+      return response({ connected: true, charges_enabled: false })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  const tiles = api.resolveEarningsTiles([connect, earnings])
+  api.__resetXanoToken()
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      true,
+    )
+
+    assert.equal(api.signalStripeReturn('member-123'), true)
+    await delivery
+
+    assert.equal(statusCount, 5)
+    assert.equal(connect.getAttribute('aria-busy'), 'false')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
+  } finally {
+    api.__resetXanoToken()
+    global.BroadcastChannel = previous.BroadcastChannel
+    global.addEventListener = previous.addEventListener
+    global.clearInterval = previous.clearInterval
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+    global.removeEventListener = previous.removeEventListener
+    global.setInterval = previous.setInterval
+    global.setTimeout = previous.setTimeout
+  }
+})
+
+test('closing a background Stripe tab releases recovery without focus', async () => {
+  const previous = {
+    addEventListener: global.addEventListener,
+    clearInterval: global.clearInterval,
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+    removeEventListener: global.removeEventListener,
+    setInterval: global.setInterval,
+    setTimeout: global.setTimeout,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const earnings = new FakeElement()
+  const runner = api.createExclusiveRunner()
+  const listeners = new Map()
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+    opener: global,
+  }
+  let closedTimer
+  let clearedTimer = false
+  let statusCount = 0
+  global.addEventListener = (name, listener) => listeners.set(name, listener)
+  global.removeEventListener = (name, listener) => {
+    if (listeners.get(name) === listener) listeners.delete(name)
+  }
+  global.setInterval = (callback) => {
+    closedTimer = callback
+    return 42
+  }
+  global.clearInterval = (timer) => {
+    if (timer === 42) clearedTimer = true
+  }
+  global.setTimeout = (callback) => {
+    callback()
+    return 1
+  }
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => stripeTab
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusCount += 1
+      return response({ connected: false, charges_enabled: false })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  const tiles = api.resolveEarningsTiles([connect, earnings])
+  api.__resetXanoToken()
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      true,
+    )
+    assert.equal(connect.getAttribute('aria-busy'), 'true')
+
+    stripeTab.closed = true
+    await closedTimer()
+
+    assert.equal(clearedTimer, true)
+    assert.equal(listeners.has('focus'), false)
+    assert.equal(statusCount, 5)
+    assert.equal(connect.getAttribute('aria-busy'), 'false')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
+    assert.equal(await runner(() => 'retry'), 'retry')
+  } finally {
+    api.__resetXanoToken()
+    global.addEventListener = previous.addEventListener
+    global.clearInterval = previous.clearInterval
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+    global.removeEventListener = previous.removeEventListener
+    global.setInterval = previous.setInterval
+    global.setTimeout = previous.setTimeout
+  }
+})
+
 test('sandbox start is staging-only and sends an explicit callback URL', async () => {
   const previous = {
     fetch: global.fetch,
@@ -773,6 +1413,7 @@ test('a persistent 401 rejects without retrying forever', async () => {
 
 test('callback strips OAuth params and exchanges for the live member session', async () => {
   const previous = {
+    BroadcastChannel: global.BroadcastChannel,
     document: global.document,
     fetch: global.fetch,
     history: global.history,
@@ -783,6 +1424,15 @@ test('callback strips OAuth params and exchanges for the live member session', a
   const requests = []
   const historyCalls = []
   const assigned = []
+  const returnMessages = []
+
+  global.BroadcastChannel = class {
+    postMessage(message) {
+      returnMessages.push(message)
+    }
+
+    close() {}
+  }
 
   global.document = {
     title: 'Stripe callback',
@@ -828,8 +1478,12 @@ test('callback strips OAuth params and exchanges for the live member session', a
     assert.deepEqual(assigned, [
       'https://thestarters.com/starter-dashboard?stripe_connect=connected',
     ])
+    assert.deepEqual(returnMessages, [
+      { memberId: 'mem-live', type: 'connected' },
+    ])
     assert.equal(states.error.style.display, 'none')
   } finally {
+    global.BroadcastChannel = previous.BroadcastChannel
     global.document = previous.document
     global.fetch = previous.fetch
     global.history = previous.history

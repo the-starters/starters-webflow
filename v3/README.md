@@ -2267,15 +2267,30 @@ Make redirect while preserving Stripe as the earnings UI for the connected
 Standard account. Both actions work on either a native anchor or an authored
 non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
 `role="button"` with `tabindex="0"` and activates from both click and Enter/Space
-so keyboard users can reach its action.
+so keyboard users can reach its action. Connect Stripe, Complete setup, and
+Payment history and payouts all open in a new tab. Native earnings anchors use
+`target="_blank"` with `rel="noopener noreferrer"`; non-anchor actions reserve
+and navigate a new tab from the activating click or key event.
 
 While a Connect or Complete setup request is in flight, the Connect Stripe tile
 and initiating control stay visible but receive `is-disabled`, `aria-disabled="true"`,
 `aria-busy="true"`, `tabindex="-1"`, and blocked pointer events. This provides
 pending feedback and prevents repeat mouse or keyboard activation. If the start
 request fails, the controller restores their prior tab order and active state
-before showing the authored error card. A successful request keeps them pending
-and the shared action guard latched until Stripe navigation unloads the page.
+before showing the authored error card. The controller reserves a blank tab
+synchronously before the asynchronous Xano request so browser popup protection
+does not discard a legitimate human activation. It closes that tab on any
+request, session, or URL-validation failure. A successful request navigates the
+reserved tab to the validated Stripe URL, keeps the dashboard open, and leaves
+the shared action guard latched while a supported return watcher prevents
+duplicate onboarding tabs. When the dashboard regains focus, the Stripe tab
+closes, or the member-matched callback signals completion, the original
+dashboard re-reads canonical status, restores the pending controls, and releases
+the guard for recovery. A verified callback that has not settled to
+`charges_enabled:true` renders `review`; focus or tab closure without callback
+confirmation returns to the canonical disconnected or incomplete state. If the
+browser exposes none of the return-watcher APIs, the controller releases the
+pending state and guard after the successful tab navigation.
 
 A single in-flight guard is shared
 across every start and refresh control in the dashboard, so a second click on
@@ -2284,7 +2299,7 @@ posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
 URL built against the exact V3 callback instead of falling back to its legacy
 V2 default. It accepts only an HTTPS `connect.stripe.com` URL before
-redirecting.
+navigating the reserved tab.
 
 The dashboard calls `status/v3` immediately. `connected:false` selects
 `disconnected`; `connected:true` with `charges_enabled:false` selects
@@ -2297,8 +2312,9 @@ to the old nightly batch state.
 The callback reads `code` and optional `state`, removes OAuth parameters from
 the visible URL before doing network work, resolves the current Memberstack
 member, rejects a mismatched state, and posts only `{code}` to
-`oauth_exchange/v3` with the Bearer token identifying the member. A successful
-exchange redirects to
+`oauth_exchange/v3` with the Bearer token identifying the member. When
+`BroadcastChannel` is available, a successful exchange signals the original
+dashboard through a member-matched channel, then redirects the callback tab to
 `/starter-dashboard?stripe_connect=connected`, where the dashboard re-reads
 canonical status. Callback errors stay on the authored error state for safe
 recovery.

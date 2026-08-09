@@ -35,6 +35,7 @@
   const SANDBOX_STATE_PREFIX = 'sandbox:'
   const SANDBOX_HOST = 'the-starters-3-0.webflow.io'
   const STRIPE_DASHBOARD_URL = 'https://dashboard.stripe.com/'
+  const RETURN_CHANNEL_NAME = 'starters-stripe-connect-return'
   const DASHBOARD_PATH = '/starter-dashboard'
   const CALLBACK_PATH = '/stripe-connect-callback'
   const MEMBERSTACK_TIMEOUT_MS = 10000
@@ -290,11 +291,17 @@
 
   function createExclusiveRunner() {
     let actionPending = false
-    return function runExclusive(task, latchOnSuccess) {
+    function runExclusive(task, latchOnSuccess) {
       if (actionPending) return Promise.resolve(null)
       actionPending = true
-      return Promise.resolve()
-        .then(task)
+      let result
+      try {
+        result = task()
+      } catch (error) {
+        actionPending = false
+        return Promise.reject(error)
+      }
+      return Promise.resolve(result)
         .then(
           function (result) {
             if (!latchOnSuccess || result !== true) actionPending = false
@@ -306,6 +313,10 @@
           },
         )
     }
+    runExclusive.release = function () {
+      actionPending = false
+    }
+    return runExclusive
   }
 
   function setEarningsAccess(elements, enabled) {
@@ -316,6 +327,8 @@
       if (enabled) {
         if (element.tagName === 'A') {
           element.setAttribute('href', STRIPE_DASHBOARD_URL)
+          element.setAttribute('target', '_blank')
+          element.setAttribute('rel', 'noopener noreferrer')
           element.removeAttribute('tabindex')
         } else {
           element.setAttribute('role', 'button')
@@ -323,6 +336,8 @@
         }
       } else {
         element.removeAttribute('href')
+        element.removeAttribute('target')
+        element.removeAttribute('rel')
         element.setAttribute('tabindex', '-1')
       }
     })
@@ -408,6 +423,145 @@
     return handleConnectClick(element, event, activate)
   }
 
+  function reserveStripeTab() {
+    if (typeof global.open !== 'function') return null
+    const stripeTab = global.open('about:blank', '_blank')
+    if (!stripeTab) return null
+    try {
+      stripeTab.opener = null
+      if (stripeTab.opener !== null) throw new Error('Unable to detach opener')
+    } catch (_error) {
+      closeStripeTab(stripeTab)
+      return null
+    }
+    return stripeTab
+  }
+
+  function closeStripeTab(stripeTab) {
+    if (!stripeTab || stripeTab.closed || typeof stripeTab.close !== 'function') {
+      return
+    }
+    try {
+      stripeTab.close()
+    } catch (_error) {
+      // A failed or already-detached popup needs no further recovery.
+    }
+  }
+
+  function navigateStripeTab(stripeTab, url) {
+    if (!stripeTab || stripeTab.closed) return false
+    try {
+      if (
+        stripeTab.location &&
+        typeof stripeTab.location.replace === 'function'
+      ) {
+        stripeTab.location.replace(url)
+      } else {
+        stripeTab.location = url
+      }
+      return true
+    } catch (_error) {
+      return false
+    }
+  }
+
+  function signalStripeReturn(memberId) {
+    if (
+      !memberId ||
+      typeof global.document === 'undefined' ||
+      typeof global.BroadcastChannel !== 'function'
+    ) {
+      return false
+    }
+    let channel = null
+    try {
+      channel = new global.BroadcastChannel(RETURN_CHANNEL_NAME)
+      channel.postMessage({ memberId: String(memberId), type: 'connected' })
+      return true
+    } catch (_error) {
+      return false
+    } finally {
+      if (channel && typeof channel.close === 'function') channel.close()
+    }
+  }
+
+  function watchStripeTabReturn(stripeTab, memberId, onReturn) {
+    if (!stripeTab) return false
+    const canWatchFocus =
+      typeof global.addEventListener === 'function' &&
+      typeof global.removeEventListener === 'function'
+    const canWatchClosed =
+      canWatchFocus &&
+      typeof global.setInterval === 'function' &&
+      typeof global.clearInterval === 'function'
+    let returnChannel = null
+    if (
+      memberId &&
+      typeof global.document !== 'undefined' &&
+      typeof global.BroadcastChannel === 'function'
+    ) {
+      try {
+        returnChannel = new global.BroadcastChannel(RETURN_CHANNEL_NAME)
+      } catch (_error) {
+        returnChannel = null
+      }
+    }
+    if (!canWatchFocus && !canWatchClosed && !returnChannel) return false
+    let settled = false
+    let closedTimer = null
+    let handleFocus = null
+    const cleanup = function () {
+      if (handleFocus) global.removeEventListener('focus', handleFocus)
+      if (closedTimer !== null) {
+        global.clearInterval(closedTimer)
+        closedTimer = null
+      }
+      if (returnChannel) {
+        returnChannel.onmessage = null
+        if (typeof returnChannel.close === 'function') returnChannel.close()
+        returnChannel = null
+      }
+    }
+    const handleReturn = function (reason) {
+      if (settled) return null
+      settled = true
+      cleanup()
+      return Promise.resolve(reason).then(onReturn)
+    }
+    if (canWatchFocus) {
+      handleFocus = function () {
+        return handleReturn(stripeTab.closed ? 'closed' : 'focus')
+      }
+      global.addEventListener('focus', handleFocus)
+    }
+    if (returnChannel) {
+      returnChannel.onmessage = function (event) {
+        const message = event && event.data
+        if (
+          !message ||
+          message.type !== 'connected' ||
+          String(message.memberId || '') !== String(memberId)
+        ) {
+          return null
+        }
+        return handleReturn('callback')
+      }
+    }
+    if (canWatchClosed) {
+      closedTimer = global.setInterval(function () {
+        if (stripeTab.closed) return handleReturn('closed')
+        return null
+      }, 500)
+    }
+    return {
+      cancel: function () {
+        if (settled) return
+        settled = true
+        cleanup()
+      },
+    }
+  }
+
   function handleEarningsClick(element, event) {
     if (element.getAttribute('aria-disabled') === 'true') {
       event.preventDefault()
@@ -415,7 +569,11 @@
     }
     if (element.tagName !== 'A') {
       event.preventDefault()
-      global.location.assign(STRIPE_DASHBOARD_URL)
+      const stripeTab = reserveStripeTab()
+      if (!navigateStripeTab(stripeTab, STRIPE_DASHBOARD_URL)) {
+        closeStripeTab(stripeTab)
+        return false
+      }
     }
     return true
   }
@@ -474,11 +632,13 @@
     roots,
     returnedFromStripe,
     earningsTiles = resolveEarningsTiles([]),
+    pollForSettlement = returnedFromStripe,
+    cleanReturnUrl = returnedFromStripe,
   ) {
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
     try {
-      const status = await readSettledStatus(returnedFromStripe)
+      const status = await readSettledStatus(pollForSettlement)
       const view = resolveDashboardView(status, returnedFromStripe)
       renderRoots(roots, view)
       renderEarningsTiles(earningsTiles, view)
@@ -497,13 +657,22 @@
       )
       return null
     } finally {
-      if (returnedFromStripe) cleanReturnMarker()
+      if (cleanReturnUrl) cleanReturnMarker()
     }
   }
 
-  async function handleStart(button, connectTile, roots, bootMemberId) {
+  async function handleStart(
+    button,
+    connectTile,
+    roots,
+    bootMemberId,
+    stripeTab,
+  ) {
     setStartPending(button, connectTile, true)
     try {
+      if (!stripeTab || stripeTab.closed) {
+        throw new Error('Browser blocked the Stripe Connect tab')
+      }
       const activeMemberId = await currentMemberId()
       if (activeMemberId !== bootMemberId) {
         throw new Error('Member session changed before Stripe Connect redirect')
@@ -514,9 +683,12 @@
         throw new Error('Stripe Connect start returned an invalid URL')
       }
       emit('starterStripeConnectRedirect', { mode: result.mode || '' })
-      global.location.assign(result.url)
+      if (!navigateStripeTab(stripeTab, result.url)) {
+        throw new Error('Unable to open the Stripe Connect tab')
+      }
       return true
     } catch (error) {
+      closeStripeTab(stripeTab)
       setStartPending(button, connectTile, false)
       renderRoots(roots, 'error')
       emit('starterStripeConnectError', {
@@ -529,6 +701,83 @@
       )
       return false
     }
+  }
+
+  function startInNewTab(
+    runExclusive,
+    button,
+    connectTile,
+    roots,
+    memberId,
+    earningsTiles = resolveEarningsTiles([]),
+  ) {
+    return runExclusive(function () {
+      const stripeTab = reserveStripeTab()
+      if (!stripeTab) {
+        renderRoots(roots, 'error')
+        emit('starterStripeConnectError', {
+          action: 'start',
+          message: 'Browser blocked the Stripe Connect tab',
+        })
+        return false
+      }
+
+      const recover = function (returnReason) {
+        const returnedFromStripe = returnReason === 'callback'
+        setStartPending(button, connectTile, false)
+        return loadDashboardStatus(
+          roots,
+          returnedFromStripe,
+          earningsTiles,
+          true,
+          false,
+        ).finally(function () {
+          runExclusive.release()
+        })
+      }
+      let settleStart
+      const startSettled = new Promise(function (resolve) {
+        settleStart = resolve
+      })
+      const returnWatcher = watchStripeTabReturn(
+        stripeTab,
+        memberId,
+        function (reason) {
+          return startSettled.then(function (result) {
+            if (result === true) return recover(reason)
+            return null
+          })
+        },
+      )
+
+      return handleStart(
+        button,
+        connectTile,
+        roots,
+        memberId,
+        stripeTab,
+      ).then(
+        function (result) {
+          settleStart(result)
+          if (result !== true) {
+            if (returnWatcher) returnWatcher.cancel()
+            closeStripeTab(stripeTab)
+            return result
+          }
+
+          if (!returnWatcher) {
+            setStartPending(button, connectTile, false)
+            runExclusive.release()
+          }
+          return true
+        },
+        function (error) {
+          settleStart(false)
+          if (returnWatcher) returnWatcher.cancel()
+          throw error
+        },
+      )
+    }, true)
   }
 
   async function mountDashboard() {
@@ -561,17 +810,27 @@
         const connectTile = earningsTiles.disconnected
         const startFromTile = function (event) {
           return handleConnectClick(connectTile, event, function () {
-            runExclusive(function () {
-              return handleStart(connectTile, connectTile, roots, memberId)
-            }, true)
+            startInNewTab(
+              runExclusive,
+              connectTile,
+              connectTile,
+              roots,
+              memberId,
+              earningsTiles,
+            )
           })
         }
         connectTile.addEventListener('click', startFromTile)
         connectTile.addEventListener('keydown', function (event) {
           handleConnectKeydown(connectTile, event, function () {
-            runExclusive(function () {
-              return handleStart(connectTile, connectTile, roots, memberId)
-            }, true)
+            startInNewTab(
+              runExclusive,
+              connectTile,
+              connectTile,
+              roots,
+              memberId,
+              earningsTiles,
+            )
           })
         })
       }
@@ -579,14 +838,14 @@
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
-            runExclusive(function () {
-              return handleStart(
-                button,
-                earningsTiles.disconnected,
-                roots,
-                memberId,
-              )
-            }, true)
+            startInNewTab(
+              runExclusive,
+              button,
+              earningsTiles.disconnected,
+              roots,
+              memberId,
+              earningsTiles,
+            )
           })
         })
         root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
@@ -668,6 +927,7 @@
         throw new Error('Stripe Connect sandbox exchange was not isolated')
       }
 
+      signalStripeReturn(memberId)
       const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
       dashboardUrl.searchParams.set('stripe_connect', 'connected')
       if (sandbox) dashboardUrl.searchParams.set('stripe_connect_sandbox', 'verified')
@@ -706,6 +966,8 @@
     handleEarningsClick,
     handleEarningsKeydown,
     handleStart,
+    navigateStripeTab,
+    reserveStripeTab,
     initialMemberId,
     isStripeUrl,
     loadDashboardStatus,
@@ -720,7 +982,10 @@
     setEarningsAccess,
     setStartPending,
     setView,
+    signalStripeReturn,
+    startInNewTab,
     startConnect,
+    watchStripeTabReturn,
   }
 
   if (isCommonJs) {
