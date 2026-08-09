@@ -762,7 +762,7 @@ test('project navigation stays hidden until the remote auth reload resolves', ()
   assert.equal(filters.hidden, false)
 })
 
-test('project Show more stays hidden while project endpoints return complete collections', () => {
+test('project Show more loads the next server page and hides after the final page', () => {
   const label = element()
   label.textContent = 'Show more'
   const control = element()
@@ -771,8 +771,10 @@ test('project Show more stays hidden while project endpoints return complete col
   control.classList.toggle = (name, force) => {
     if (name === 'is-disabled') disabledClass = force
   }
-  control.addEventListener = () => {
+  let click
+  control.addEventListener = (name, handler) => {
     listeners += 1
+    if (name === 'click') click = handler
   }
   control.closest = () => null
   control.querySelector = (selector) =>
@@ -783,10 +785,16 @@ test('project Show more stays hidden while project endpoints return complete col
     return []
   }
   let loads = 0
+  let repaintState
   const instance = {
     appendMode: false,
     loadMode: 'pagination',
     root,
+    subscribe(handler) {
+      repaintState = handler
+      handler({ status: 'success', data: { hasMore: true } })
+      return () => {}
+    },
     loadNext() {
       loads += 1
     },
@@ -795,15 +803,21 @@ test('project Show more stays hidden while project endpoints return complete col
   api.wireProjectLoadMore(instance)
   assert.equal(instance.loadMode, 'pagination')
   assert.equal(instance.appendMode, false)
-  assert.equal(control.hidden, true)
-  assert.equal(control.attributes['aria-disabled'], 'true')
-  assert.equal(control.attributes['aria-hidden'], 'true')
+  assert.equal(control.hidden, false)
+  assert.equal(control.attributes['aria-disabled'], 'false')
+  assert.equal(control.attributes['aria-hidden'], 'false')
   assert.equal(control.attributes['aria-busy'], 'false')
   assert.equal(control.attributes['data-opp-loading'], 'false')
-  assert.equal(disabledClass, true)
+  assert.equal(disabledClass, false)
   assert.equal(control.attributes['wf-xano-element'], undefined)
-  assert.equal(listeners, 0)
-  assert.equal(loads, 0)
+  assert.equal(listeners, 1)
+  click({ preventDefault() {} })
+  assert.equal(loads, 1)
+  repaintState({ status: 'success', data: { hasMore: false } })
+  assert.equal(control.hidden, true)
+  assert.equal(control.attributes['aria-disabled'], 'true')
+  click({ preventDefault() {} })
+  assert.equal(loads, 1)
 })
 
 test('both project dashboards leave remote filtering to the default wf-xano contract', async () => {

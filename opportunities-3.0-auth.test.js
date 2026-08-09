@@ -37,6 +37,7 @@ async function loadBridge(
     routeGuardDelayMs = null,
     routeGuardScript = false,
     search = '',
+    wfXano = null,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -94,6 +95,7 @@ async function loadBridge(
     setInterval,
     setTimeout,
   }
+  if (wfXano) window.WfXano = wfXano
   window.fetch = fetch
   window.window = window
   const location = {
@@ -513,6 +515,53 @@ test('Brand dashboard action wiring starts only after the stable paid-Brand gate
   )
   await new Promise(setImmediate)
   assert.equal(legacyFallbackRequests.some((url) => url.includes('/brand/projects/mine')), false)
+})
+
+test('project action decoration reuses the wf-xano projection without a duplicate list request', async () => {
+  const requests = []
+  const project = {
+    id: 675,
+    lifecycle_state: 'active',
+    lifecycle_version: 2,
+    contract_status: 'sent',
+  }
+  const state = {
+    status: 'success',
+    data: { items: [project], total: 70 },
+    query: { page: 1, perPage: 20, params: {} },
+    revision: 1,
+  }
+  let subscriptions = 0
+  const instance = {
+    getState: () => state,
+    subscribe(handler) {
+      subscriptions += 1
+      handler(state)
+      return () => {}
+    },
+  }
+  const wfXano = {
+    get(key) {
+      return key === 'dash-brand-projects' ? instance : null
+    },
+  }
+
+  await loadBridge(
+    async (input) => {
+      requests.push(String(input))
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      routeGuard: true,
+      wfXano,
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.equal(subscriptions, 1)
+  assert.equal(requests.some((url) => url.includes('/brand/projects/mine')), false)
 })
 
 test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
@@ -1152,7 +1201,7 @@ test('project action context includes every canonical project page', async () =>
   )
 
   assert.ok(await waitFor(() => requests.length === 2))
-  assert.deepEqual(requests, [{ page: 1, per_page: 100 }, { page: 2, per_page: 100 }])
+  assert.deepEqual(requests, [{ page: 1, per_page: 20 }, { page: 2, per_page: 20 }])
   assert.equal(secondPageEnd.getAttribute('data-project-action'), 'end')
   assert.equal(secondPageLabel.textContent, 'Cancel Project')
 })

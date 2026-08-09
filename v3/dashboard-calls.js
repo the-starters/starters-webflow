@@ -411,18 +411,31 @@
     const controls = findProjectLoadMore(instance.root)
     if (!controls.length) return
 
-    // Both Projects endpoints currently return the complete owned collection
-    // and ignore page/per_page. Keep the Designer-owned control out of the
-    // interaction and accessibility trees until those endpoints implement
-    // real server pagination; loadNext would append duplicate rows for members
-    // whose complete collection exceeds wf-xano's client page size.
     controls.forEach(function (control) {
-      show(control, false)
-      control.setAttribute('aria-hidden', 'true')
-      control.setAttribute('aria-disabled', 'true')
-      control.setAttribute('aria-busy', 'false')
-      control.setAttribute('data-opp-loading', 'false')
-      if (control.classList) control.classList.toggle('is-disabled', true)
+      const nativeControl = control.getAttribute('wf-xano-element') === 'load-more'
+      if (!nativeControl && !control.__startersProjectLoadMoreBound) {
+        control.__startersProjectLoadMoreBound = true
+        control.addEventListener('click', function (event) {
+          if (control.getAttribute('aria-disabled') === 'true') return
+          if (event && typeof event.preventDefault === 'function') event.preventDefault()
+          if (typeof instance.loadNext === 'function') instance.loadNext()
+        })
+      }
+
+      const repaint = function (state) {
+        const data = (state && state.data) || {}
+        const busy = Boolean(state && state.status === 'loading')
+        const available = Boolean(data.hasMore) && !busy
+        show(control, Boolean(data.hasMore) || busy)
+        control.setAttribute('aria-hidden', data.hasMore || busy ? 'false' : 'true')
+        control.setAttribute('aria-disabled', available ? 'false' : 'true')
+        control.setAttribute('aria-busy', busy ? 'true' : 'false')
+        control.setAttribute('data-opp-loading', busy ? 'true' : 'false')
+        if (control.classList) control.classList.toggle('is-disabled', !available)
+      }
+
+      if (typeof instance.subscribe === 'function') instance.subscribe(repaint)
+      else repaint(null)
     })
   }
 

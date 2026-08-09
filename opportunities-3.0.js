@@ -326,9 +326,9 @@
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     projectCreate: (payload) => call('projects/create/v3', { body: payload }),
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
-    brandProjectList: (page = 1, per_page = 100) =>
+    brandProjectList: (page = 1, per_page = 20) =>
       call('brand/projects/mine', { body: { page, per_page } }),
-    starterProjectList: (page = 1, per_page = 100) =>
+    starterProjectList: (page = 1, per_page = 20) =>
       call('starter/projects/mine', { body: { page, per_page } }),
     contractLink: (project_id) => call('contracts/link/v3', { body: { project_id } }),
     projectAction: (payload) => call('projects/action/v3', { body: payload }),
@@ -1910,6 +1910,8 @@
   let projectWorkflowRefresh = null
   let projectWorkflowObserver = null
   let projectWorkflowBinding = null
+  let projectWorkflowProjectionUnsubscribe = null
+  let projectWorkflowProjectionInstance = null
   let activeReviewProject = null
   let reviewSubmitting = false
 
@@ -1972,6 +1974,105 @@
       }
     }
     return items
+  }
+
+  function projectWorkflowInstanceKey(role) {
+    return role === 'brand' ? 'dash-brand-projects' : 'dash-projects'
+  }
+
+  function currentProjectWorkflowInstance(role) {
+    const runtime = window.WfXano
+    if (!runtime || typeof runtime.get !== 'function') return null
+    return runtime.get(projectWorkflowInstanceKey(role))
+  }
+
+  function waitForProjectWorkflowInstance(role) {
+    const existing = currentProjectWorkflowInstance(role)
+    if (existing) return Promise.resolve(existing)
+
+    const runtime = window.WfXano
+    if (!runtime || typeof runtime.push !== 'function') return Promise.resolve(null)
+
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (instance) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(instance || null)
+      }
+      const timer = window.setTimeout(() => finish(null), 10000)
+      runtime.push((wfx) => {
+        const instance = wfx && typeof wfx.get === 'function'
+          ? wfx.get(projectWorkflowInstanceKey(role))
+          : null
+        finish(instance)
+      })
+    })
+  }
+
+  function projectWorkflowStateItems(state) {
+    return state && state.data && Array.isArray(state.data.items)
+      ? state.data.items
+      : []
+  }
+
+  function projectWorkflowItemsMap(items) {
+    return new Map(
+      items
+        .map((item) => [Number(item && (item.project_id || item.id)), item])
+        .filter(([id]) => id > 0),
+    )
+  }
+
+  function applyProjectWorkflowState(role, state) {
+    if (projectWorkflowRole !== role || projectRoleForPath() !== role) return false
+    if (!state || state.status !== 'success') return false
+    projectWorkflowItems = projectWorkflowItemsMap(projectWorkflowStateItems(state))
+    decorateProjectCards()
+    observeProjectCards()
+    return true
+  }
+
+  function bindProjectWorkflowProjection(role, instance) {
+    if (!instance || typeof instance.subscribe !== 'function') return
+    if (projectWorkflowProjectionInstance === instance) return
+    if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
+    projectWorkflowProjectionInstance = instance
+    projectWorkflowProjectionUnsubscribe = instance.subscribe((state) => {
+      applyProjectWorkflowState(role, state)
+    })
+  }
+
+  function waitForProjectWorkflowState(role, instance) {
+    const current = typeof instance.getState === 'function' ? instance.getState() : null
+    if (current && current.status === 'success') return Promise.resolve(current)
+
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let unsubscribe = null
+      const finish = (error, state) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (unsubscribe) unsubscribe()
+        if (error) reject(error)
+        else resolve(state)
+      }
+      const timer = window.setTimeout(
+        () => finish(new Error('Project list did not become ready')),
+        10000,
+      )
+      unsubscribe = instance.subscribe((state) => {
+        if (projectWorkflowRole !== role || projectRoleForPath() !== role) {
+          finish(new Error('Project dashboard scope changed'))
+        } else if (state && state.status === 'success') {
+          finish(null, state)
+        } else if (state && (state.status === 'error' || state.status === 'destroyed')) {
+          finish(new Error('Project list could not be loaded'))
+        }
+      })
+    })
   }
 
   function projectIdFromCard(card) {
@@ -2200,17 +2301,25 @@
     projectWorkflowObserver.observe(root, { childList: true, subtree: true })
   }
 
-  async function refreshProjectWorkflow(role = projectWorkflowRole) {
+  async function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
     if (!role || projectRoleForPath() !== role) return null
     if (projectWorkflowRefresh) return projectWorkflowRefresh
     const request = (async () => {
-      const items = await fetchProjectWorkflowItems(role)
+      const instance = await waitForProjectWorkflowInstance(role)
+      let items
+      if (instance) {
+        bindProjectWorkflowProjection(role, instance)
+        if (reload && typeof instance.refresh === 'function') await instance.refresh()
+        const state = await waitForProjectWorkflowState(role, instance)
+        items = projectWorkflowStateItems(state)
+      } else {
+        // Compatibility for older dashboard surfaces that have not adopted
+        // wf-xano. Current V3 dashboards use the instance state above so the
+        // projects endpoint has exactly one list owner and one request.
+        items = await fetchProjectWorkflowItems(role)
+      }
       if (projectWorkflowRole !== role || projectRoleForPath() !== role) return null
-      projectWorkflowItems = new Map(
-        items
-          .map((item) => [Number(item && (item.project_id || item.id)), item])
-          .filter(([id]) => id > 0),
-      )
+      projectWorkflowItems = projectWorkflowItemsMap(items)
       decorateProjectCards()
       observeProjectCards()
       return items
@@ -2388,14 +2497,7 @@
       delete action.dataset.projectActionKey
       delete action.dataset.projectActionScope
       showProjectActionFeedback(action, projectMutationFeedback(updated || project))
-      await refreshProjectWorkflow()
-      if (window.WfXano && typeof window.WfXano.refresh === 'function') {
-        try {
-          window.WfXano.refresh(card.closest('[wf-xano-source]') || undefined)
-        } catch (error) {
-          /* non-fatal: canonical refresh above already updated action state */
-        }
-      }
+      await refreshProjectWorkflow(projectWorkflowRole, true)
     } catch (error) {
       showProjectActionFeedback(
         action,
@@ -2403,7 +2505,7 @@
         true,
       )
       if (error && error.data && /project version is stale/i.test(error.data.message || '')) {
-        await refreshProjectWorkflow()
+        await refreshProjectWorkflow(projectWorkflowRole, true)
       }
     } finally {
       setOpportunityActionPending(pending, false)
@@ -2529,7 +2631,7 @@
       const done = $('.w-form-done', modal)
       if (done) done.style.display = 'block'
       activeReviewProject = null
-      await refreshProjectWorkflow()
+      await refreshProjectWorkflow(projectWorkflowRole, true)
     } catch (error) {
       reviewError(modal, projectActionErrorMessage(error, 'Review could not be submitted.'))
     } finally {
@@ -2558,6 +2660,9 @@
     projectWorkflowRole = ''
     projectWorkflowItems = new Map()
     projectWorkflowRefresh = null
+    if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
+    projectWorkflowProjectionUnsubscribe = null
+    projectWorkflowProjectionInstance = null
     activeReviewProject = null
     reviewSubmitting = false
     const reviewModal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
