@@ -483,8 +483,8 @@
       if ((!nativeControl || generatedControl) && !control.__startersProjectLoadMoreBound) {
         control.__startersProjectLoadMoreBound = true
         control.addEventListener('click', function (event) {
-          if (control.getAttribute('aria-disabled') === 'true') return
           if (event && typeof event.preventDefault === 'function') event.preventDefault()
+          if (control.getAttribute('aria-disabled') === 'true') return
           if (typeof instance.loadNext === 'function') instance.loadNext()
         })
       }

@@ -899,11 +899,16 @@ test('project pagination creates a scoped Show more control when Webflow omitted
   assert.equal(control.getAttribute('bookings-load-more'), null)
   assert.equal(control.hidden, false)
   assert.equal(control.style.display, '')
-  click({ preventDefault() {} })
+  let prevented = 0
+  click({ preventDefault() { prevented += 1 } })
+  assert.equal(loads, 1)
+  control.setAttribute('aria-disabled', 'true')
+  click({ preventDefault() { prevented += 1 } })
+  assert.equal(prevented, 2)
   assert.equal(loads, 1)
 })
 
-for (const total of [0, 12, 73]) {
+for (const total of [0, 12, 20, 73]) {
   test(`project pagination renders and exhausts ${total} server rows in 12-item pages`, async () => {
     const label = element()
     label.textContent = 'Show more'
