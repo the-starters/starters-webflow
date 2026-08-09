@@ -2252,15 +2252,22 @@ Make redirect while preserving Stripe as the earnings UI for the connected
 Standard account. Both actions work on either a native anchor or an authored
 non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
 `role="button"` with `tabindex="0"` and activates from both click and Enter/Space
-so keyboard users can reach its action.
+so keyboard users can reach its action. Connect Stripe, Complete setup, and
+Payment history and payouts all open in a new tab. Native earnings anchors use
+`target="_blank"` with `rel="noopener noreferrer"`; non-anchor actions reserve
+and navigate a new tab from the activating click or key event.
 
 While a Connect or Complete setup request is in flight, the Connect Stripe tile
 and initiating control stay visible but receive `is-disabled`, `aria-disabled="true"`,
 `aria-busy="true"`, `tabindex="-1"`, and blocked pointer events. This provides
 pending feedback and prevents repeat mouse or keyboard activation. If the start
 request fails, the controller restores their prior tab order and active state
-before showing the authored error card. A successful request keeps them pending
-and the shared action guard latched until Stripe navigation unloads the page.
+before showing the authored error card. The controller reserves a blank tab
+synchronously before the asynchronous Xano request so browser popup protection
+does not discard a legitimate human activation. It closes that tab on any
+request, session, or URL-validation failure. A successful request navigates the
+reserved tab to the validated Stripe URL, keeps the dashboard open, and leaves
+the shared action guard latched to prevent duplicate onboarding tabs.
 
 A single in-flight guard is shared
 across every start and refresh control in the dashboard, so a second click on
@@ -2269,7 +2276,7 @@ posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
 URL built against the exact V3 callback instead of falling back to its legacy
 V2 default. It accepts only an HTTPS `connect.stripe.com` URL before
-redirecting.
+navigating the reserved tab.
 
 The dashboard calls `status/v3` immediately. `connected:false` selects
 `disconnected`; `connected:true` with `charges_enabled:false` selects

@@ -381,6 +381,8 @@ test('earnings opens Stripe only while charges are enabled', () => {
   api.setEarningsAccess([earnings], false)
 
   assert.equal(earnings.getAttribute('href'), null)
+  assert.equal(earnings.getAttribute('target'), null)
+  assert.equal(earnings.getAttribute('rel'), null)
   assert.equal(earnings.getAttribute('aria-disabled'), 'true')
   assert.equal(earnings.getAttribute('tabindex'), '-1')
   assert.equal(earnings.classList.contains('is-disabled'), true)
@@ -388,22 +390,32 @@ test('earnings opens Stripe only while charges are enabled', () => {
   api.setEarningsAccess([earnings], true)
 
   assert.equal(earnings.getAttribute('href'), 'https://dashboard.stripe.com/')
+  assert.equal(earnings.getAttribute('target'), '_blank')
+  assert.equal(earnings.getAttribute('rel'), 'noopener noreferrer')
   assert.equal(earnings.getAttribute('aria-disabled'), 'false')
   assert.equal(earnings.getAttribute('tabindex'), null)
   assert.equal(earnings.classList.contains('is-disabled'), false)
 })
 
 test('the authored Earnings div redirects only after it is enabled', () => {
-  const previousLocation = global.location
+  const previousOpen = global.open
   const earnings = new FakeElement()
   const destinations = []
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace: (value) => destinations.push(value) },
+    opener: global,
+  }
   const event = {
     prevented: false,
     preventDefault() {
       this.prevented = true
     },
   }
-  global.location = { assign: (value) => destinations.push(value) }
+  global.open = () => stripeTab
 
   try {
     api.setEarningsAccess([earnings], false)
@@ -419,13 +431,15 @@ test('the authored Earnings div redirects only after it is enabled', () => {
     assert.equal(api.handleEarningsClick(earnings, event), true)
     assert.equal(event.prevented, true)
     assert.deepEqual(destinations, ['https://dashboard.stripe.com/'])
+    assert.equal(stripeTab.opener, null)
+    assert.equal(stripeTab.closed, false)
   } finally {
-    global.location = previousLocation
+    global.open = previousOpen
   }
 })
 
 test('the authored Earnings div activates from the keyboard once enabled', () => {
-  const previousLocation = global.location
+  const previousOpen = global.open
   const earnings = new FakeElement()
   const destinations = []
   const keydown = (key) => ({
@@ -435,7 +449,12 @@ test('the authored Earnings div activates from the keyboard once enabled', () =>
       this.prevented = true
     },
   })
-  global.location = { assign: (value) => destinations.push(value) }
+  global.open = () => ({
+    closed: false,
+    close() {},
+    location: { replace: (value) => destinations.push(value) },
+    opener: global,
+  })
 
   try {
     api.setEarningsAccess([earnings], false)
@@ -462,7 +481,7 @@ test('the authored Earnings div activates from the keyboard once enabled', () =>
       'https://dashboard.stripe.com/',
     ])
   } finally {
-    global.location = previousLocation
+    global.open = previousOpen
   }
 })
 
@@ -641,6 +660,168 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
   } finally {
     global.fetch = previous.fetch
     global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('Connect Stripe reserves and navigates a new tab without leaving the dashboard', async () => {
+  const previous = {
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const openCalls = []
+  const destinations = []
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace: (value) => destinations.push(value) },
+    opener: global,
+  }
+  let fetchCount = 0
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = (...args) => {
+    openCalls.push(args)
+    return stripeTab
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    fetchCount += 1
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  api.__resetXanoToken()
+
+  try {
+    const resultPromise = api.startInNewTab(
+      api.createExclusiveRunner(),
+      connect,
+      connect,
+      [root],
+      'member-123',
+    )
+
+    assert.deepEqual(openCalls, [['about:blank', '_blank']])
+    assert.equal(fetchCount, 0, 'the tab is reserved in the click task')
+    assert.equal(await resultPromise, true)
+    assert.equal(stripeTab.opener, null)
+    assert.equal(stripeTab.closed, false)
+    assert.deepEqual(destinations, [
+      'https://connect.stripe.com/oauth/authorize?client_id=test',
+    ])
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('a failed Connect Stripe request closes the reserved tab and restores recovery UI', async () => {
+  const previous = {
+    console: global.console,
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const { root, states } = stripeRoot()
+  const connect = new FakeElement()
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+    opener: global,
+  }
+  global.console = { ...console, error: () => {} }
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => stripeTab
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    return response({ error: 'invalid account' }, { ok: false, status: 500 })
+  }
+  api.__resetXanoToken()
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        api.createExclusiveRunner(),
+        connect,
+        connect,
+        [root],
+        'member-123',
+      ),
+      false,
+    )
+    assert.equal(stripeTab.closed, true)
+    assert.equal(connect.getAttribute('aria-busy'), 'false')
+    assert.equal(connect.getAttribute('aria-disabled'), 'false')
+    assert.equal(states.error.style.display, '')
+  } finally {
+    api.__resetXanoToken()
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('a blocked popup fails closed before making a Stripe Connect request', async () => {
+  const previous = { fetch: global.fetch, open: global.open }
+  const { root, states } = stripeRoot()
+  let fetchCount = 0
+  global.fetch = async () => {
+    fetchCount += 1
+    return response({})
+  }
+  global.open = () => null
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        api.createExclusiveRunner(),
+        new FakeElement(),
+        new FakeElement(),
+        [root],
+        'member-123',
+      ),
+      false,
+    )
+    assert.equal(fetchCount, 0)
+    assert.equal(states.error.style.display, '')
+  } finally {
+    global.fetch = previous.fetch
+    global.open = previous.open
   }
 })
 

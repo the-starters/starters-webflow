@@ -316,6 +316,8 @@
       if (enabled) {
         if (element.tagName === 'A') {
           element.setAttribute('href', STRIPE_DASHBOARD_URL)
+          element.setAttribute('target', '_blank')
+          element.setAttribute('rel', 'noopener noreferrer')
           element.removeAttribute('tabindex')
         } else {
           element.setAttribute('role', 'button')
@@ -323,6 +325,8 @@
         }
       } else {
         element.removeAttribute('href')
+        element.removeAttribute('target')
+        element.removeAttribute('rel')
         element.setAttribute('tabindex', '-1')
       }
     })
@@ -408,6 +412,47 @@
     return handleConnectClick(element, event, activate)
   }
 
+  function reserveStripeTab() {
+    if (typeof global.open !== 'function') return null
+    const stripeTab = global.open('about:blank', '_blank')
+    if (!stripeTab) return null
+    try {
+      stripeTab.opener = null
+    } catch (_error) {
+      // The browser can expose a read-only opener. Navigation remains safe
+      // because every destination is validated before it reaches this tab.
+    }
+    return stripeTab
+  }
+
+  function closeStripeTab(stripeTab) {
+    if (!stripeTab || stripeTab.closed || typeof stripeTab.close !== 'function') {
+      return
+    }
+    try {
+      stripeTab.close()
+    } catch (_error) {
+      // A failed or already-detached popup needs no further recovery.
+    }
+  }
+
+  function navigateStripeTab(stripeTab, url) {
+    if (!stripeTab || stripeTab.closed) return false
+    try {
+      if (
+        stripeTab.location &&
+        typeof stripeTab.location.replace === 'function'
+      ) {
+        stripeTab.location.replace(url)
+      } else {
+        stripeTab.location = url
+      }
+      return true
+    } catch (_error) {
+      return false
+    }
+  }
+
   function handleEarningsClick(element, event) {
     if (element.getAttribute('aria-disabled') === 'true') {
       event.preventDefault()
@@ -415,7 +460,11 @@
     }
     if (element.tagName !== 'A') {
       event.preventDefault()
-      global.location.assign(STRIPE_DASHBOARD_URL)
+      const stripeTab = reserveStripeTab()
+      if (!navigateStripeTab(stripeTab, STRIPE_DASHBOARD_URL)) {
+        closeStripeTab(stripeTab)
+        return false
+      }
     }
     return true
   }
@@ -501,9 +550,18 @@
     }
   }
 
-  async function handleStart(button, connectTile, roots, bootMemberId) {
+  async function handleStart(
+    button,
+    connectTile,
+    roots,
+    bootMemberId,
+    stripeTab,
+  ) {
     setStartPending(button, connectTile, true)
     try {
+      if (!stripeTab || stripeTab.closed) {
+        throw new Error('Browser blocked the Stripe Connect tab')
+      }
       const activeMemberId = await currentMemberId()
       if (activeMemberId !== bootMemberId) {
         throw new Error('Member session changed before Stripe Connect redirect')
@@ -514,9 +572,12 @@
         throw new Error('Stripe Connect start returned an invalid URL')
       }
       emit('starterStripeConnectRedirect', { mode: result.mode || '' })
-      global.location.assign(result.url)
+      if (!navigateStripeTab(stripeTab, result.url)) {
+        throw new Error('Unable to open the Stripe Connect tab')
+      }
       return true
     } catch (error) {
+      closeStripeTab(stripeTab)
       setStartPending(button, connectTile, false)
       renderRoots(roots, 'error')
       emit('starterStripeConnectError', {
@@ -529,6 +590,31 @@
       )
       return false
     }
+  }
+
+  function startInNewTab(
+    runExclusive,
+    button,
+    connectTile,
+    roots,
+    memberId,
+  ) {
+    const stripeTab = reserveStripeTab()
+    if (!stripeTab) {
+      renderRoots(roots, 'error')
+      emit('starterStripeConnectError', {
+        action: 'start',
+        message: 'Browser blocked the Stripe Connect tab',
+      })
+      return Promise.resolve(false)
+    }
+
+    return runExclusive(function () {
+      return handleStart(button, connectTile, roots, memberId, stripeTab)
+    }, true).then(function (result) {
+      if (result !== true) closeStripeTab(stripeTab)
+      return result
+    })
   }
 
   async function mountDashboard() {
@@ -561,17 +647,25 @@
         const connectTile = earningsTiles.disconnected
         const startFromTile = function (event) {
           return handleConnectClick(connectTile, event, function () {
-            runExclusive(function () {
-              return handleStart(connectTile, connectTile, roots, memberId)
-            }, true)
+            startInNewTab(
+              runExclusive,
+              connectTile,
+              connectTile,
+              roots,
+              memberId,
+            )
           })
         }
         connectTile.addEventListener('click', startFromTile)
         connectTile.addEventListener('keydown', function (event) {
           handleConnectKeydown(connectTile, event, function () {
-            runExclusive(function () {
-              return handleStart(connectTile, connectTile, roots, memberId)
-            }, true)
+            startInNewTab(
+              runExclusive,
+              connectTile,
+              connectTile,
+              roots,
+              memberId,
+            )
           })
         })
       }
@@ -579,14 +673,13 @@
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
-            runExclusive(function () {
-              return handleStart(
-                button,
-                earningsTiles.disconnected,
-                roots,
-                memberId,
-              )
-            }, true)
+            startInNewTab(
+              runExclusive,
+              button,
+              earningsTiles.disconnected,
+              roots,
+              memberId,
+            )
           })
         })
         root.querySelectorAll(actionSelector('refresh')).forEach(function (button) {
@@ -706,6 +799,8 @@
     handleEarningsClick,
     handleEarningsKeydown,
     handleStart,
+    navigateStripeTab,
+    reserveStripeTab,
     initialMemberId,
     isStripeUrl,
     loadDashboardStatus,
@@ -720,6 +815,7 @@
     setEarningsAccess,
     setStartPending,
     setView,
+    startInNewTab,
     startConnect,
   }
 
