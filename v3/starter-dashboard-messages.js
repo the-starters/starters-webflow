@@ -8,7 +8,7 @@
  *   - Xano `starter/messages/recent` (TalkJS REST proxy) → recent
  *     conversations including already-read ones.
  *   - TalkJS JS SDK → live unread state and the unread count badge.
- * If the Xano endpoint is unavailable the tile degrades to unreads-only.
+ * If the Xano endpoint is unavailable the tile shows no message cards.
  * Shows the empty state when there are no conversations at all.
  *
  * Wiring (wf-xano-style, multi-instance): each `data-messages-element="wrapper"`
@@ -474,6 +474,8 @@
   }
 
   function renderTile(refs, state) {
+    if (!state.recentSettled) return
+
     const unreads = state.unreads || []
     const unreadsById = {}
     unreads.forEach((unread) => {
@@ -481,14 +483,9 @@
       if (id) unreadsById[id] = unread
     })
 
-    let displays
-    if (state.recent) {
-      displays = state.recent.map((conv) => {
-        return displayFromRecent(conv, unreadsById)
-      })
-    } else {
-      displays = unreads.map(displayFromUnread)
-    }
+    const displays = state.recent.map((conv) => {
+      return displayFromRecent(conv, unreadsById)
+    })
 
     const countedUnreadIds = {}
     let unreadCount = 0
@@ -502,11 +499,9 @@
     displays.forEach((display) => {
       if (display.unread) countUnread(display.id)
     })
-    if (state.recent) {
-      unreads.forEach((unread) => {
-        countUnread(unread.conversation && unread.conversation.id)
-      })
-    }
+    unreads.forEach((unread) => {
+      countUnread(unread.conversation && unread.conversation.id)
+    })
 
     if (refs.loadingCard) refs.loadingCard.style.display = 'none'
 
@@ -582,7 +577,7 @@
       return
     }
 
-    const state = { recent: null, unreads: [] }
+    const state = { recent: [], recentSettled: false, unreads: [] }
     const rerender = () => {
       instances.forEach((refs) => {
         try {
@@ -602,16 +597,16 @@
     const recentPromise = fetchRecentConversations(memberstack).catch(
       (error) => {
         console.warn(
-          '[starter-dashboard] Recent conversations unavailable, showing unreads only',
+          '[starter-dashboard] Recent conversations unavailable, hiding message cards',
           error,
         )
-        return null
+        return []
       },
     )
 
     recentPromise.then((items) => {
-      if (!items) return
       state.recent = items
+      state.recentSettled = true
       rerender()
     })
 

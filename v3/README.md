@@ -2107,9 +2107,10 @@ node --test v3/reviews.test.js
 to the member's recent TalkJS conversations, merging two sources: Xano
 `starter/messages/recent` (a TalkJS REST proxy, which is what lets already-read
 conversations appear) and the TalkJS JS SDK `session.unreads` (live unread
-state, sender name/photo enrichment, and the unread-count badge). When the Xano
-endpoint is unavailable the tile degrades to unreads-only, and it shows the
-authored empty state when there are no conversations at all.
+state, sender name/photo enrichment, and the unread-count badge). Card rendering
+waits for the bulk response so SDK timing cannot bypass the participant-identity
+boundary. When the Xano endpoint is unavailable the tile shows no message cards
+rather than rendering identity-incomplete SDK-only entries.
 
 For one-on-one conversations without a conversation-level subject or photo, the
 bulk recent-conversations response supplies `participant_name` and

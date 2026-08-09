@@ -118,6 +118,7 @@ function loadTile(options = {}) {
 
 function loadRenderedRecent(recent, unreads = [], options = {}) {
   const calls = { windows: [], conversations: 0, fetches: 0 }
+  let resolveRecentFetch
   const makeClassList = () => ({
     add() {},
     remove() {},
@@ -250,17 +251,28 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     encodeURIComponent,
     fetch: async () => {
       calls.fetches += 1
-      return {
+      const response = {
         ok: true,
         json: async () => ({
           items: Array.isArray(recent) ? recent : [recent],
         }),
       }
+      if (!options.deferRecent) return response
+      return new Promise((resolve) => {
+        resolveRecentFetch = () => resolve(response)
+      })
     },
     window,
   })
 
-  return { calls, list, total }
+  return {
+    calls,
+    list,
+    total,
+    resolveRecent() {
+      resolveRecentFetch()
+    },
+  }
 }
 
 /**
@@ -491,7 +503,7 @@ test('live unread state preserves bulk participant identity', async () => {
 
 test('SDK-only unread stays out of cards but remains in the badge', async () => {
   const laggingId = 'one:mem_me|mem_lagging'
-  const { list, total } = loadRenderedRecent(
+  const { list, resolveRecent, total } = loadRenderedRecent(
     {
       id: 'one:mem_me|mem_known',
       participant_name: 'Known Brand',
@@ -514,8 +526,14 @@ test('SDK-only unread stays out of cards but remains in the badge', async () => 
         },
       },
     ],
+    { deferRecent: true },
   )
 
+  await settle(5)
+
+  assert.equal(list.children.length, 0)
+
+  resolveRecent()
   await settle()
 
   assert.equal(
