@@ -2267,7 +2267,15 @@ synchronously before the asynchronous Xano request so browser popup protection
 does not discard a legitimate human activation. It closes that tab on any
 request, session, or URL-validation failure. A successful request navigates the
 reserved tab to the validated Stripe URL, keeps the dashboard open, and leaves
-the shared action guard latched to prevent duplicate onboarding tabs.
+the shared action guard latched while a supported return watcher prevents
+duplicate onboarding tabs. When the dashboard regains focus, the Stripe tab
+closes, or the member-matched callback signals completion, the original
+dashboard re-reads canonical status, restores the pending controls, and releases
+the guard for recovery. A verified callback that has not settled to
+`charges_enabled:true` renders `review`; focus or tab closure without callback
+confirmation returns to the canonical disconnected or incomplete state. If the
+browser exposes none of the return-watcher APIs, the controller releases the
+pending state and guard after the successful tab navigation.
 
 A single in-flight guard is shared
 across every start and refresh control in the dashboard, so a second click on
@@ -2289,8 +2297,9 @@ to the old nightly batch state.
 The callback reads `code` and optional `state`, removes OAuth parameters from
 the visible URL before doing network work, resolves the current Memberstack
 member, rejects a mismatched state, and posts only `{code}` to
-`oauth_exchange/v3` with the Bearer token identifying the member. A successful
-exchange redirects to
+`oauth_exchange/v3` with the Bearer token identifying the member. When
+`BroadcastChannel` is available, a successful exchange signals the original
+dashboard through a member-matched channel, then redirects the callback tab to
 `/starter-dashboard?stripe_connect=connected`, where the dashboard re-reads
 canonical status. Callback errors stay on the authored error state for safe
 recovery.
