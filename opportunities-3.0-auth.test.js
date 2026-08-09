@@ -636,7 +636,7 @@ test('project dashboard releases a synchronously failed state waiter', async () 
   assert.ok(await waitFor(() => subscriptions === 2 && unsubscriptions === 1))
 })
 
-test('project lifecycle action reloads cached wf-xano state before mutation', async () => {
+test('project lifecycle replay retries a transient page failure before mutation', async () => {
   const end = el('button', { 'wf-xano-link': 'project-end' })
   const label = el('div', { class: 'button_main-text' })
   label.textContent = 'End Project'
@@ -649,6 +649,7 @@ test('project lifecycle action reloads cached wf-xano state before mutation', as
   )
   const events = []
   const handlers = new Set()
+  let failNextPageTwo = true
   let state = {
     status: 'success',
     data: {
@@ -687,6 +688,17 @@ test('project lifecycle action reloads cached wf-xano state before mutation', as
     },
     loadNext() {
       const page = state.query.page + 1
+      if (page === 2 && failNextPageTwo) {
+        failNextPageTwo = false
+        events.push({ type: 'page:2:error' })
+        state = {
+          status: 'error',
+          data: state.data,
+          query: { page: 1, perPage: 12 },
+        }
+        handlers.forEach((handler) => handler(state))
+        return Promise.resolve()
+      }
       events.push({ type: `page:${page}` })
       return publishPage(page, true)
     },
@@ -728,11 +740,128 @@ test('project lifecycle action reloads cached wf-xano state before mutation', as
 
   assert.ok(await waitFor(() => events.some((event) => event.type === 'action')))
   assert.deepEqual(
-    events.slice(0, 4).map((event) => event.type),
-    ['page:1', 'page:2', 'page:3', 'action'],
+    events.slice(0, 5).map((event) => event.type),
+    ['page:1', 'page:2:error', 'page:2', 'page:3', 'action'],
   )
   assert.equal(events.find((event) => event.type === 'action').body.expected_version, 2)
   assert.equal(state.data.items.length, 36)
+})
+
+test('project lifecycle success survives repeated failure on the same replay page', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const events = []
+  const handlers = new Set()
+  let mutationConfirmed = false
+  let failedAttempts = 0
+  let state = {
+    status: 'success',
+    data: {
+      items: [
+        { id: 675, lifecycle_state: 'active', lifecycle_version: 1 },
+        ...Array.from({ length: 35 }, (_, index) => ({ id: index + 1 })),
+      ],
+      hasMore: true,
+    },
+    query: { page: 3, perPage: 12 },
+  }
+  const pageItems = (page) => {
+    const start = (page - 1) * 12
+    return Array.from({ length: 12 }, (_, index) => {
+      const position = start + index
+      return position === 0
+        ? { id: 675, lifecycle_state: 'active', lifecycle_version: 2 }
+        : { id: position }
+    })
+  }
+  const publishPage = (page, append) => {
+    state = {
+      status: 'success',
+      data: {
+        items: append ? state.data.items.concat(pageItems(page)) : pageItems(page),
+        hasMore: page < 7,
+      },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return Promise.resolve(state)
+  }
+  const instance = {
+    getState: () => state,
+    goToPage(page) {
+      events.push(`page:${page}`)
+      return publishPage(page, false)
+    },
+    loadNext() {
+      const page = state.query.page + 1
+      if (mutationConfirmed && page === 2) {
+        failedAttempts += 1
+        events.push('page:2:error')
+        state = {
+          status: 'error',
+          data: state.data,
+          query: { page: 1, perPage: 12 },
+        }
+        handlers.forEach((handler) => handler(state))
+        return Promise.resolve()
+      }
+      events.push(`page:${page}`)
+      return publishPage(page, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/action/v3')) {
+        mutationConfirmed = true
+        events.push('action')
+        assert.equal(JSON.parse(init.body).expected_version, 2)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+
+  assert.ok(await waitFor(() => failedAttempts === 2 && bridge.consoleErrors.length > 0))
+  const actionIndex = events.indexOf('action')
+  assert.deepEqual(events.slice(actionIndex + 1), ['page:1', 'page:2:error', 'page:2:error'])
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
+  assert.equal(label.textContent, 'Completion requested')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
 })
 
 test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {

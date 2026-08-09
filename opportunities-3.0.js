@@ -2102,12 +2102,33 @@
       throw new Error('Project list cannot preserve loaded pages')
     }
     await instance.goToPage(1)
-    for (let page = 2; page <= loadedPage; page += 1) {
-      const current = typeof instance.getState === 'function' ? instance.getState() : null
-      if (current && current.status === 'success' && current.data && current.data.hasMore === false) {
-        break
+    const first = typeof instance.getState === 'function' ? instance.getState() : null
+    const firstPage = Number(first && first.query && first.query.page)
+    if (!first || first.status !== 'success' || firstPage !== 1) {
+      throw new Error('Project list could not reload page 1')
+    }
+    let confirmedPage = 1
+    while (confirmedPage < loadedPage) {
+      const requestedPage = confirmedPage + 1
+      let lastError = null
+      let advanced = false
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await instance.loadNext()
+        } catch (error) {
+          lastError = error
+        }
+        const current = typeof instance.getState === 'function' ? instance.getState() : null
+        const currentPage = Number(current && current.query && current.query.page)
+        if (current && current.status === 'success' && currentPage === requestedPage) {
+          confirmedPage = currentPage
+          advanced = true
+          break
+        }
       }
-      await instance.loadNext()
+      if (!advanced) {
+        throw lastError || new Error('Project list could not reload page ' + requestedPage)
+      }
     }
   }
 
@@ -2544,8 +2565,8 @@
       if (updated) projectWorkflowItems.set(Number(updated.id), updated)
       delete action.dataset.projectActionKey
       delete action.dataset.projectActionScope
-      showProjectActionFeedback(action, projectMutationFeedback(updated || project))
       await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'lifecycle')
+      showProjectActionFeedback(action, projectMutationFeedback(updated || project))
     } catch (error) {
       showProjectActionFeedback(
         action,
