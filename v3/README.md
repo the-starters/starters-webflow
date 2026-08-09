@@ -2101,10 +2101,11 @@ node --check v3/reviews.test.js
 node --test v3/reviews.test.js
 ```
 
-## Starter Dashboard messages tile
+## Brand and Starter Dashboard messages tile
 
-`starter-dashboard-messages.js` binds the Messages tile on `/starter-dashboard`
-to the member's recent TalkJS conversations, merging two sources: Xano
+`starter-dashboard-messages.js` binds the shared Messages tile on
+`/brand-dashboard` and `/starter-dashboard` to the member's recent TalkJS
+conversations, merging two sources: Xano
 `starter/messages/recent` (a TalkJS REST proxy, which is what lets already-read
 conversations appear) and the TalkJS JS SDK `session.unreads` (live unread
 state, sender name/photo enrichment, and the unread-count badge). Card rendering

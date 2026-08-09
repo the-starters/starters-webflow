@@ -314,9 +314,9 @@
   }
 
   /**
-   * Open the deep-linked one-on-one conversation, creating it when it does not
-   * exist, and select it in the mounted inbox. Returns immediately when there is
-   * no `?with=` parameter, which is every ordinary visit to /messages.
+   * Select an existing `?conversation=` thread without mutation, or open the
+   * `?with=` one-on-one conversation, creating it when needed. Returns
+   * immediately when neither supported deep-link parameter is present.
    */
   async function openDeepLinkConversation(Talk, session, inbox, me, myId) {
     const conversationId = deepLinkConversationId()
