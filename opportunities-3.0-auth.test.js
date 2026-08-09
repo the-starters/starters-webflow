@@ -1271,6 +1271,28 @@ test('invoice behavior binds only on exact normalized invoice routes', async () 
   assert.equal(brand.window.__opp30InvoicesWired, undefined)
 })
 
+test('dashboard boot opts the authored project details template into lazy hydration', async () => {
+  const details = el('div', { 'wf-xano-element': 'details-target' })
+  const template = el('div', { 'wf-xano-element': 'template' }, [details])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': '' },
+    [template],
+  )
+
+  await loadBridge(async () => response({}), {
+    member: paidBrandMember,
+    pathname: '/brand-dashboard',
+    querySelector: (selector) =>
+      selectorMatches(root, selector) ? root : root.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+    routeGuard: true,
+  })
+
+  assert.equal(details.hasAttribute('wf-xano-lazy-details'), true)
+})
+
 test('invoice behavior requires the canonical Talent plan role', async () => {
   const ambiguousLegacyBrand = {
     ...paidBrandMember,
