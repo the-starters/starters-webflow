@@ -1913,6 +1913,8 @@
   let projectWorkflowProjectionUnsubscribe = null
   let projectWorkflowProjectionInstance = null
   let projectWorkflowActionLocks = new Set()
+  let projectWorkflowFeedbackElement = null
+  let projectWorkflowFeedbackTimer = null
   let activeReviewProject = null
   let reviewSubmitting = false
 
@@ -2159,6 +2161,41 @@
   function setProjectLifecyclePending(projectId, pending, fallback = null) {
     const action = currentProjectLifecycleAction(projectId, fallback)
     if (action) setOpportunityActionPending(projectActionWrap(action), pending)
+  }
+
+  function showProjectWorkflowFeedback(message, isError = false) {
+    const root = currentProjectWorkflowRoot(projectWorkflowRole) || document.documentElement
+    if (!root || typeof root.appendChild !== 'function') {
+      console[isError ? 'error' : 'info']('[opp30:project-action]', message)
+      return
+    }
+    let feedback = projectWorkflowFeedbackElement
+    if (!feedback || feedback.parentNode !== root) {
+      feedback = document.createElement('div')
+      feedback.setAttribute('data-project-workflow-feedback', '')
+      feedback.setAttribute('class', 'text-size-small')
+      root.appendChild(feedback)
+      projectWorkflowFeedbackElement = feedback
+    }
+    feedback.setAttribute('role', isError ? 'alert' : 'status')
+    feedback.setAttribute('aria-live', isError ? 'assertive' : 'polite')
+    feedback.setAttribute('data-project-action-result', isError ? 'error' : 'success')
+    feedback.textContent = message
+    feedback.style.display = ''
+    window.clearTimeout(projectWorkflowFeedbackTimer)
+    projectWorkflowFeedbackTimer = window.setTimeout(() => {
+      if (feedback.textContent === message) {
+        feedback.textContent = ''
+        feedback.style.display = 'none'
+        feedback.removeAttribute('data-project-action-result')
+      }
+    }, isError ? 6000 : 3500)
+  }
+
+  function showProjectLifecycleFeedback(projectId, message, isError = false) {
+    const action = currentProjectLifecycleAction(projectId)
+    if (action) showProjectActionFeedback(action, message, isError)
+    else showProjectWorkflowFeedback(message, isError)
   }
 
   function projectActionWrap(action) {
@@ -2563,17 +2600,13 @@
     try {
       const project = await currentProjectContext(card, true)
       if (!project) {
-        showProjectActionFeedback(
-          currentProjectLifecycleAction(projectId, action),
-          'Project details unavailable',
-          true,
-        )
+        showProjectLifecycleFeedback(projectId, 'Project details unavailable', true)
         return
       }
       const lifecycleVersion = projectLifecycleVersion(project)
       if (lifecycleVersion == null) {
-        showProjectActionFeedback(
-          currentProjectLifecycleAction(projectId, action),
+        showProjectLifecycleFeedback(
+          projectId,
           'Project version unavailable. Please try again.',
           true,
         )
@@ -2582,11 +2615,7 @@
       const intent = projectActionIntent(project)
       if (!intent) return
       if (intent.action === 'terminate' && !intent.reason) {
-        showProjectActionFeedback(
-          currentProjectLifecycleAction(projectId, action),
-          'A reason is required to end early',
-          true,
-        )
+        showProjectLifecycleFeedback(projectId, 'A reason is required to end early', true)
         return
       }
       const result = await API.projectAction({
@@ -2601,13 +2630,13 @@
       delete action.dataset.projectActionKey
       delete action.dataset.projectActionScope
       await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'lifecycle')
-      showProjectActionFeedback(
-        currentProjectLifecycleAction(projectId, action),
+      showProjectLifecycleFeedback(
+        projectId,
         projectMutationFeedback(updated || project),
       )
     } catch (error) {
-      showProjectActionFeedback(
-        currentProjectLifecycleAction(projectId, action),
+      showProjectLifecycleFeedback(
+        projectId,
         projectActionErrorMessage(error, 'Project update failed. Please try again.'),
         true,
       )
@@ -2773,6 +2802,13 @@
     projectWorkflowProjectionUnsubscribe = null
     projectWorkflowProjectionInstance = null
     projectWorkflowActionLocks = new Set()
+    window.clearTimeout(projectWorkflowFeedbackTimer)
+    projectWorkflowFeedbackTimer = null
+    if (projectWorkflowFeedbackElement) {
+      projectWorkflowFeedbackElement.textContent = ''
+      projectWorkflowFeedbackElement.style.display = 'none'
+      projectWorkflowFeedbackElement.removeAttribute('data-project-action-result')
+    }
     activeReviewProject = null
     reviewSubmitting = false
     const reviewModal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')

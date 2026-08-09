@@ -66,8 +66,8 @@ async function loadBridge(
         listeners.filter((candidate) => candidate !== listener),
       )
     },
-    createElement() {
-      return { addEventListener() {}, setAttribute() {}, style: {} }
+    createElement(tag) {
+      return el(tag)
     },
     documentElement,
     getElementById: () => null,
@@ -982,6 +982,102 @@ test('project lifecycle success survives repeated failure on the same replay pag
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
 })
 
+test('project lifecycle success uses stable feedback after page-one replay failure', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const handlers = new Set()
+  let refreshCount = 0
+  let mutations = 0
+  let state = {
+    status: 'success',
+    data: {
+      items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 1 }],
+      hasMore: false,
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      refreshCount += 1
+      if (refreshCount === 1) {
+        state = {
+          status: 'success',
+          data: {
+            items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 2 }],
+            hasMore: false,
+          },
+          query: { page: 1, perPage: 12 },
+        }
+      } else {
+        root.children = []
+        state = {
+          status: 'error',
+          data: { items: [], hasMore: false },
+          query: { page: 1, perPage: 12 },
+        }
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve()
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/action/v3')) {
+        mutations += 1
+        assert.equal(JSON.parse(init.body).expected_version, 2)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+
+  assert.ok(await waitFor(() => {
+    const feedback = root.querySelector('[data-project-workflow-feedback]')
+    return feedback && feedback.textContent === 'Completion requested'
+  }))
+  const feedback = root.querySelector('[data-project-workflow-feedback]')
+  assert.equal(mutations, 1)
+  assert.equal(feedback.getAttribute('role'), 'status')
+  assert.equal(feedback.getAttribute('data-project-action-result'), 'success')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
+})
+
 test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
   const bridge = await loadBridge(async () => response({}))
 
@@ -1111,6 +1207,7 @@ function el(tag, attrs = {}, children = []) {
   if (tag === 'button' || tag === 'input') node.disabled = false
   children.forEach((child) => {
     child.parent = node
+    child.parentNode = node
   })
   node.getAttribute = (name) => (attributes.has(name) ? attributes.get(name) : null)
   node.setAttribute = (name, value) => attributes.set(name, String(value))
@@ -1124,6 +1221,12 @@ function el(tag, attrs = {}, children = []) {
     return null
   }
   node.contains = (other) => other === node || descendants(node).includes(other)
+  node.appendChild = (child) => {
+    child.parent = node
+    child.parentNode = node
+    node.children.push(child)
+    return child
+  }
   node.querySelectorAll = (selector) =>
     descendants(node).filter((descendant) => selectorMatches(descendant, selector))
   node.querySelector = (selector) => node.querySelectorAll(selector)[0] || null
