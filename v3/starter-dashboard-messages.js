@@ -35,6 +35,7 @@
   const RECENT_MESSAGES_PATH = '/starter/messages/recent'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
+  const RECENT_MESSAGES_TIMEOUT_MS = 8000
   const MESSAGES_PATH = '/messages'
   const CONVERSATION_PARAM = 'conversation'
   const MAX_PREVIEW_ITEMS = 8
@@ -311,7 +312,7 @@
     return token
   }
 
-  async function fetchRecentConversations(memberstack) {
+  async function requestRecentConversations(memberstack, signal) {
     let xanoToken
     if (typeof window.getXanoAuthToken === 'function') {
       xanoToken = await window.getXanoAuthToken()
@@ -323,6 +324,7 @@
           XANO_TRADE_TOKEN_PATH +
           '?token=' +
           encodeURIComponent(msToken),
+        { signal },
       )
       const tradeData = await tradeRes.json().catch(() => null)
       if (!tradeRes.ok) throw new Error('trade-token failed')
@@ -339,10 +341,37 @@
         'Content-Type': 'application/json',
         Authorization: 'Bearer ' + xanoToken,
       },
+      signal,
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) throw new Error('recent messages request failed')
     return (data && data.items) || []
+  }
+
+  async function fetchRecentConversations(memberstack) {
+    const controller =
+      typeof window.AbortController === 'function'
+        ? new window.AbortController()
+        : null
+    let timer
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(() => {
+        if (controller) controller.abort()
+        reject(new Error('recent messages request timed out'))
+      }, RECENT_MESSAGES_TIMEOUT_MS)
+    })
+
+    try {
+      return await Promise.race([
+        requestRecentConversations(
+          memberstack,
+          controller ? controller.signal : undefined,
+        ),
+        timeout,
+      ])
+    } finally {
+      window.clearTimeout(timer)
+    }
   }
 
   // Normalized card model. `unread` entries come from the SDK (rich sender

@@ -117,8 +117,10 @@ function loadTile(options = {}) {
 }
 
 function loadRenderedRecent(recent, unreads = [], options = {}) {
-  const calls = { windows: [], conversations: 0, fetches: 0 }
+  const calls = { windows: [], conversations: 0, fetches: 0, aborts: 0 }
   let resolveRecentFetch
+  let fireRecentTimeout
+  let scheduledTimeouts = 0
   const makeClassList = () => ({
     add() {},
     remove() {},
@@ -227,8 +229,22 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     location: { assign() {} },
     setInterval,
     clearInterval,
-    setTimeout,
+    setTimeout(callback, delay) {
+      scheduledTimeouts += 1
+      if (options.manualRecentTimeout && scheduledTimeouts === 1) {
+        fireRecentTimeout = callback
+        return 1
+      }
+      return setTimeout(callback, delay)
+    },
     clearTimeout,
+    AbortController: function AbortController() {
+      this.signal = { aborted: false }
+      this.abort = () => {
+        this.signal.aborted = true
+        calls.aborts += 1
+      }
+    },
   }
   const document = {
     addEventListener() {},
@@ -251,6 +267,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     encodeURIComponent,
     fetch: async () => {
       calls.fetches += 1
+      if (options.hangRecent) return new Promise(() => {})
       const response = {
         ok: true,
         json: async () => ({
@@ -267,10 +284,15 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
 
   return {
     calls,
+    empty,
     list,
+    loading,
     total,
     resolveRecent() {
       resolveRecentFetch()
+    },
+    runRecentTimeout() {
+      fireRecentTimeout()
     },
   }
 }
@@ -543,6 +565,23 @@ test('SDK-only unread stays out of cards but remains in the badge', async () => 
     false,
   )
   assert.equal(total.textContent, '1')
+})
+
+test('a stalled bulk request aborts and settles the empty state', async () => {
+  const { calls, empty, list, loading, runRecentTimeout } = loadRenderedRecent(
+    [],
+    [],
+    { hangRecent: true, manualRecentTimeout: true },
+  )
+
+  await settle(5)
+  runRecentTimeout()
+  await settle()
+
+  assert.equal(calls.aborts, 1)
+  assert.equal(list.children.length, 0)
+  assert.equal(loading.style.display, 'none')
+  assert.equal(empty.style.display, '')
 })
 
 test('bulk recent conversations render when TalkJS initialization fails', async () => {
