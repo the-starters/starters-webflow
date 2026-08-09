@@ -544,6 +544,68 @@ test('status reuses the shared dashboard Xano token without a local trade', asyn
   }
 })
 
+test('a shared stale Xano token is force-refreshed after a 401', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+  }
+  const tokenOptions = []
+  const authorizations = []
+  let statusAttempts = 0
+  global.getXanoAuthToken = async (options) => {
+    tokenOptions.push(options)
+    return options && options.forceRefresh ? 'shared-fresh-token' : 'shared-stale-token'
+  }
+  global.fetch = async (url, options) => {
+    authorizations.push(options.headers.Authorization)
+    statusAttempts += 1
+    if (statusAttempts === 1) {
+      return response({ error: 'expired token' }, { ok: false, status: 401 })
+    }
+    return response({ connected: true, charges_enabled: true })
+  }
+  api.__resetXanoToken()
+
+  try {
+    const status = await api.fetchStatus()
+    assert.equal(status.charges_enabled, true)
+    assert.deepEqual(tokenOptions, [undefined, { forceRefresh: true }])
+    assert.deepEqual(authorizations, [
+      'Bearer shared-stale-token',
+      'Bearer shared-fresh-token',
+    ])
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+  }
+})
+
+test('initial identity reuses memberReady while live checks read Memberstack', async () => {
+  const previous = {
+    memberReady: global.memberReady,
+    memberstack: global.$memberstackDom,
+  }
+  let liveReads = 0
+  global.memberReady = Promise.resolve({ id: 'member-at-boot' })
+  global.$memberstackDom = {
+    getCurrentMember: async () => {
+      liveReads += 1
+      return { data: { id: 'member-after-switch' } }
+    },
+  }
+
+  try {
+    assert.equal(await api.initialMemberId(), 'member-at-boot')
+    assert.equal(liveReads, 0)
+    assert.equal(await api.currentMemberId(), 'member-after-switch')
+    assert.equal(liveReads, 1)
+  } finally {
+    global.memberReady = previous.memberReady
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
 test('start sends the dashboard return URL and accepts Stripe URLs only', async () => {
   const previous = {
     fetch: global.fetch,

@@ -117,11 +117,6 @@
   }
 
   async function currentMemberId() {
-    if (global.memberReady && typeof global.memberReady.then === 'function') {
-      const member = await global.memberReady
-      if (member && member.id) return member.id
-    }
-
     if (
       global.$memberstackDom &&
       typeof global.$memberstackDom.getCurrentMember === 'function'
@@ -141,11 +136,22 @@
     throw new Error('No logged-in Memberstack member')
   }
 
+  async function initialMemberId() {
+    if (global.memberReady && typeof global.memberReady.then === 'function') {
+      const member = await global.memberReady
+      if (member && member.id) return member.id
+    }
+
+    return currentMemberId()
+  }
+
   let xanoTokenPromise = null
 
-  async function tradeForXanoToken() {
+  async function tradeForXanoToken(forceRefresh) {
     if (typeof global.getXanoAuthToken === 'function') {
-      const token = await global.getXanoAuthToken()
+      const token = await global.getXanoAuthToken(
+        forceRefresh ? { forceRefresh: true } : undefined,
+      )
       if (!token) throw new Error('Shared Xano auth bridge returned no token')
       return token
     }
@@ -177,9 +183,10 @@
     return token
   }
 
-  function xanoToken() {
+  function xanoToken(forceRefresh) {
+    if (forceRefresh) xanoTokenPromise = null
     if (!xanoTokenPromise) {
-      xanoTokenPromise = tradeForXanoToken().catch(function (error) {
+      xanoTokenPromise = tradeForXanoToken(forceRefresh).catch(function (error) {
         xanoTokenPromise = null
         throw error
       })
@@ -187,9 +194,9 @@
     return xanoTokenPromise
   }
 
-  async function post(path, payload, allowAuthRetry) {
+  async function post(path, payload, allowAuthRetry, forceAuthRefresh) {
     const retryOnAuthFailure = allowAuthRetry !== false
-    const tokenPromise = xanoToken()
+    const tokenPromise = xanoToken(forceAuthRefresh === true)
     const token = await tokenPromise
     const response = await global.fetch(XANO_BASE + path, {
       method: 'POST',
@@ -201,7 +208,7 @@
     })
     if (response.status === 401 && retryOnAuthFailure) {
       if (xanoTokenPromise === tokenPromise) xanoTokenPromise = null
-      return post(path, payload, false)
+      return post(path, payload, false, true)
     }
     const data = await response.json().catch(function () {
       return null
@@ -540,7 +547,7 @@
     const runExclusive = createExclusiveRunner()
 
     try {
-      const memberId = await currentMemberId()
+      const memberId = await initialMemberId()
       if (earningsTiles.ready) {
         const link = earningsTiles.ready
         link.addEventListener('click', function (event) {
@@ -699,6 +706,7 @@
     handleEarningsClick,
     handleEarningsKeydown,
     handleStart,
+    initialMemberId,
     isStripeUrl,
     loadDashboardStatus,
     mountCallback,
