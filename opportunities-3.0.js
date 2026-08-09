@@ -326,9 +326,9 @@
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     projectCreate: (payload) => call('projects/create/v3', { body: payload }),
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
-    brandProjectList: (page = 1, per_page = 20) =>
+    brandProjectList: (page = 1, per_page = 12) =>
       call('brand/projects/mine', { body: { page, per_page } }),
-    starterProjectList: (page = 1, per_page = 20) =>
+    starterProjectList: (page = 1, per_page = 12) =>
       call('starter/projects/mine', { body: { page, per_page } }),
     contractLink: (project_id) => call('contracts/link/v3', { body: { project_id } }),
     projectAction: (payload) => call('projects/action/v3', { body: payload }),
@@ -1980,6 +1980,10 @@
     return role === 'brand' ? 'dash-brand-projects' : 'dash-projects'
   }
 
+  function currentProjectWorkflowRoot(role) {
+    return $('[wf-xano-instance="' + projectWorkflowInstanceKey(role) + '"][wf-xano-source]')
+  }
+
   function currentProjectWorkflowInstance(role) {
     const runtime = window.WfXano
     if (!runtime || typeof runtime.get !== 'function') return null
@@ -1990,8 +1994,10 @@
     const existing = currentProjectWorkflowInstance(role)
     if (existing) return Promise.resolve(existing)
 
-    const runtime = window.WfXano
-    if (!runtime || typeof runtime.push !== 'function') return Promise.resolve(null)
+    if (!currentProjectWorkflowRoot(role)) return Promise.resolve(null)
+    const runtime = window.WfXano || []
+    if (!window.WfXano) window.WfXano = runtime
+    if (typeof runtime.push !== 'function') return Promise.resolve(null)
 
     return new Promise((resolve) => {
       let settled = false
@@ -2074,6 +2080,35 @@
       })
       if (settled && unsubscribe) unsubscribe()
     })
+  }
+
+  async function reloadProjectWorkflowInstance(instance) {
+    const state = typeof instance.getState === 'function' ? instance.getState() : null
+    const statePage = Number(state && state.query && state.query.page)
+    const instancePage = Number(instance && instance.page)
+    const loadedPage = Number.isInteger(statePage) && statePage > 0
+      ? statePage
+      : Number.isInteger(instancePage) && instancePage > 0
+        ? instancePage
+        : 1
+    if (loadedPage === 1) {
+      if (typeof instance.refresh !== 'function') {
+        throw new Error('Project list cannot be refreshed')
+      }
+      await instance.refresh()
+      return
+    }
+    if (typeof instance.goToPage !== 'function' || typeof instance.loadNext !== 'function') {
+      throw new Error('Project list cannot preserve loaded pages')
+    }
+    await instance.goToPage(1)
+    for (let page = 2; page <= loadedPage; page += 1) {
+      const current = typeof instance.getState === 'function' ? instance.getState() : null
+      if (current && current.status === 'success' && current.data && current.data.hasMore === false) {
+        break
+      }
+      await instance.loadNext()
+    }
   }
 
   function projectIdFromCard(card) {
@@ -2310,9 +2345,11 @@
       let items
       if (instance) {
         bindProjectWorkflowProjection(role, instance)
-        if (reload && typeof instance.refresh === 'function') await instance.refresh()
+        if (reload) await reloadProjectWorkflowInstance(instance)
         const state = await waitForProjectWorkflowState(role, instance)
         items = projectWorkflowStateItems(state)
+      } else if (currentProjectWorkflowRoot(role)) {
+        throw new Error('Project list owner is unavailable')
       } else {
         // Compatibility for older dashboard surfaces that have not adopted
         // wf-xano. Current V3 dashboards use the instance state above so the

@@ -385,7 +385,6 @@ for (const role of ['starter', 'brand']) {
       'div',
       {
         'wf-xano-instance': role === 'brand' ? 'dash-brand-projects' : 'dash-projects',
-        'wf-xano-source': `opp30:${role}/projects/mine`,
       },
       [card],
     )
@@ -432,7 +431,6 @@ test('project dashboard keeps the direct timeline_display binding as a fallback'
     'div',
     {
       'wf-xano-instance': 'dash-projects',
-      'wf-xano-source': 'opp30:starter/projects/mine',
     },
     [card],
   )
@@ -528,7 +526,7 @@ test('project action decoration reuses the wf-xano projection without a duplicat
   const state = {
     status: 'success',
     data: { items: [project], total: 70 },
-    query: { page: 1, perPage: 20, params: {} },
+    query: { page: 1, perPage: 12, params: {} },
     revision: 1,
   }
   let subscriptions = 0
@@ -562,6 +560,39 @@ test('project action decoration reuses the wf-xano projection without a duplicat
 
   assert.equal(subscriptions, 1)
   assert.equal(requests.some((url) => url.includes('/brand/projects/mine')), false)
+})
+
+test('current project wrapper fails closed without its keyed wf-xano owner', async () => {
+  const root = el('div', {
+    'wf-xano-instance': 'dash-brand-projects',
+    'wf-xano-source': 'opp30:brand/projects/mine',
+  })
+  const requests = []
+
+  await loadBridge(
+    async (input) => {
+      requests.push(String(input))
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) => selectorMatches(root, selector) ? root : null,
+      querySelectorAll: (selector) => selectorMatches(root, selector) ? [root] : [],
+      routeGuard: true,
+      wfXano: {
+        get() {
+          return null
+        },
+        push(callback) {
+          callback(this)
+        },
+      },
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.deepEqual(requests, [])
 })
 
 test('project dashboard releases a synchronously failed state waiter', async () => {
@@ -613,18 +644,44 @@ test('project lifecycle action reloads cached wf-xano state before mutation', as
   const handlers = new Set()
   let state = {
     status: 'success',
-    data: { items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 1 }] },
+    data: {
+      items: [
+        { id: 675, lifecycle_state: 'active', lifecycle_version: 1 },
+        ...Array.from({ length: 35 }, (_, index) => ({ id: index + 1 })),
+      ],
+      hasMore: true,
+    },
+    query: { page: 3, perPage: 12 },
+  }
+  const pageItems = (page) => {
+    const start = (page - 1) * 12
+    return Array.from({ length: 12 }, (_, index) => {
+      const position = start + index
+      return position === 0
+        ? { id: 675, lifecycle_state: 'active', lifecycle_version: 2 }
+        : { id: position }
+    })
+  }
+  const publishPage = (page, append) => {
+    const items = append ? state.data.items.concat(pageItems(page)) : pageItems(page)
+    state = {
+      status: 'success',
+      data: { items, hasMore: page < 7 },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return Promise.resolve(state)
   }
   const instance = {
     getState: () => state,
-    refresh() {
-      events.push({ type: 'refresh' })
-      state = {
-        status: 'success',
-        data: { items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 2 }] },
-      }
-      handlers.forEach((handler) => handler(state))
-      return Promise.resolve(state)
+    goToPage(page) {
+      events.push({ type: `page:${page}` })
+      return publishPage(page, false)
+    },
+    loadNext() {
+      const page = state.query.page + 1
+      events.push({ type: `page:${page}` })
+      return publishPage(page, true)
     },
     subscribe(handler) {
       handlers.add(handler)
@@ -663,8 +720,12 @@ test('project lifecycle action reloads cached wf-xano state before mutation', as
   bridge.dispatchDocument('click', clickEvent(end).event)
 
   assert.ok(await waitFor(() => events.some((event) => event.type === 'action')))
-  assert.deepEqual(events.slice(0, 2).map((event) => event.type), ['refresh', 'action'])
+  assert.deepEqual(
+    events.slice(0, 4).map((event) => event.type),
+    ['page:1', 'page:2', 'page:3', 'action'],
+  )
   assert.equal(events.find((event) => event.type === 'action').body.expected_version, 2)
+  assert.equal(state.data.items.length, 36)
 })
 
 test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
@@ -956,7 +1017,7 @@ test('Brand project cards expose only canonical actions for their current lifecy
   )
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [card],
   )
   const querySelector = (selector) =>
@@ -1012,7 +1073,7 @@ test('Starter project cards keep completed contracts off the signing-session rou
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    { 'wf-xano-instance': 'dash-projects' },
     [card],
   )
   const contractRequests = []
@@ -1070,7 +1131,7 @@ test('View Contract stays hidden until canonical project context authorizes it',
   )
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    { 'wf-xano-instance': 'dash-projects' },
     [card],
   )
   const projectList = deferred()
@@ -1116,7 +1177,7 @@ test('View Contract stays hidden until canonical project context authorizes it',
 test('View Contract fails closed when a project card renders after dashboard boot', async () => {
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    { 'wf-xano-instance': 'dash-projects' },
   )
   const projectList = deferred()
   const bridge = await loadBridge(
@@ -1197,7 +1258,7 @@ test('View Contract uses cached authorization when the canonical refresh transie
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [card],
   )
   const requests = []
@@ -1259,7 +1320,7 @@ test('project action context includes every canonical project page', async () =>
   )
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [secondPageCard],
   )
   const requests = []
@@ -1304,7 +1365,7 @@ test('project action context includes every canonical project page', async () =>
   )
 
   assert.ok(await waitFor(() => requests.length === 2))
-  assert.deepEqual(requests, [{ page: 1, per_page: 20 }, { page: 2, per_page: 20 }])
+  assert.deepEqual(requests, [{ page: 1, per_page: 12 }, { page: 2, per_page: 12 }])
   assert.equal(secondPageEnd.getAttribute('data-project-action'), 'end')
   assert.equal(secondPageLabel.textContent, 'Cancel Project')
 })
@@ -1317,7 +1378,7 @@ test('lifecycle actions refresh and require a canonical version before mutation'
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [card],
   )
   const requests = []
@@ -1390,7 +1451,7 @@ test('review retries reuse their idempotency key until success', async () => {
   const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [form, done, fail])
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [card, modal],
   )
   const reviewBodies = []
