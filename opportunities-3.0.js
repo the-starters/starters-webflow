@@ -1931,6 +1931,7 @@
   let projectWorkflowActionLocks = new Map()
   let projectWorkflowFeedbackElement = null
   let projectWorkflowFeedbackTimer = null
+  const projectActionFeedbackTimers = new WeakMap()
   let activeReviewProject = null
   let reviewSubmitting = false
 
@@ -2264,7 +2265,16 @@
       target.dataset.projectActionAuthoredLabel = target.textContent.trim()
     }
     target.dataset.projectActionRestLabel = label || target.dataset.projectActionAuthoredLabel
-    target.textContent = target.dataset.projectActionRestLabel
+    const wrap = projectActionWrap(action)
+    if (wrap && wrap.hasAttribute('data-project-action-result')) return
+    // The project-card observer watches childList changes so it can decorate
+    // cards appended by wf-xano. Assigning textContent replaces the label's
+    // text node and therefore wakes that same observer. Avoid a self-sustaining
+    // mutation loop when the label is already correct (for example when lazy
+    // project details are inserted or Show more appends another page).
+    if (target.textContent !== target.dataset.projectActionRestLabel) {
+      target.textContent = target.dataset.projectActionRestLabel
+    }
   }
 
   function showProjectActionFeedback(action, message, isError = false) {
@@ -2280,11 +2290,19 @@
       label.dataset.projectActionRestLabel || label.dataset.projectActionAuthoredLabel
     label.textContent = message
     const wrap = projectActionWrap(action)
-    if (wrap) wrap.setAttribute('data-project-action-result', isError ? 'error' : 'success')
-    window.setTimeout(() => {
+    if (wrap) {
+      window.clearTimeout(projectActionFeedbackTimers.get(wrap))
+      wrap.setAttribute('data-project-action-result', isError ? 'error' : 'success')
+    }
+    const timer = window.setTimeout(() => {
+      if (wrap && projectActionFeedbackTimers.get(wrap) !== timer) return
       if (label.textContent === message) label.textContent = authored
-      if (wrap) wrap.removeAttribute('data-project-action-result')
+      if (wrap) {
+        wrap.removeAttribute('data-project-action-result')
+        projectActionFeedbackTimers.delete(wrap)
+      }
     }, isError ? 6000 : 3500)
+    if (wrap) projectActionFeedbackTimers.set(wrap, timer)
   }
 
   function lifecycleState(project) {

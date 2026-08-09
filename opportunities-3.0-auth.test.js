@@ -571,6 +571,71 @@ test('project action decoration reuses the wf-xano projection without a duplicat
   assert.equal(requests.some((url) => url.includes('/brand/projects/mine')), false)
 })
 
+test('project observer does not rewrite an already-correct action label', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  let labelText = 'Cancel Project'
+  let labelWrites = 0
+  Object.defineProperty(label, 'textContent', {
+    configurable: true,
+    get: () => labelText,
+    set: (value) => {
+      labelWrites += 1
+      labelText = String(value)
+    },
+  })
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const state = {
+    status: 'success',
+    data: { items: [{ id: 675, status: 'pending', lifecycle_state: 'contract_sent' }] },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    subscribe(handler) {
+      handler(state)
+      return () => {}
+    },
+  }
+  const bridge = await loadBridge(
+    async (input) => {
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  await new Promise(setImmediate)
+  labelWrites = 0
+
+  // Opening lazy details or appending a Show more page produces childList
+  // records. The observer may decorate again, but it must not create another
+  // childList record by replacing an unchanged label text node.
+  bridge.notifyMutations([{ type: 'childList', target: card }])
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(label.textContent, 'Cancel Project')
+  assert.equal(labelWrites, 0)
+})
+
 test('current project wrapper fails closed without its keyed wf-xano owner', async () => {
   const root = el('div', {
     'wf-xano-instance': 'dash-brand-projects',
@@ -1102,6 +1167,15 @@ test('project lifecycle success survives repeated failure on the same replay pag
   )
   bridge.window.prompt = () => 'COMPLETE'
   assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+  const timers = []
+  bridge.window.setTimeout = (callback, delay) => {
+    const timer = { callback, delay, canceled: false }
+    timers.push(timer)
+    return timer
+  }
+  bridge.window.clearTimeout = (timer) => {
+    if (timer) timer.canceled = true
+  }
 
   bridge.dispatchDocument('click', clickEvent(end).event)
 
@@ -1111,6 +1185,36 @@ test('project lifecycle success survives repeated failure on the same replay pag
   assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
   assert.equal(label.textContent, 'Completion requested')
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
+
+  bridge.notifyMutations([{ type: 'childList', target: label }])
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(label.textContent, 'Completion requested')
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
+  assert.equal(timers.length, 1)
+  assert.equal(timers[0].delay, 3500)
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  assert.ok(await waitFor(() => timers.length === 2))
+
+  assert.equal(timers[0].canceled, true)
+  assert.equal(timers[1].delay, 6000)
+  assert.equal(label.textContent, 'Project list cannot be refreshed')
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'error')
+
+  timers[0].callback()
+  bridge.notifyMutations([{ type: 'childList', target: label }])
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(label.textContent, 'Project list cannot be refreshed')
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'error')
+
+  timers[1].callback()
+
+  assert.equal(label.textContent, 'End Project')
+  assert.equal(wrap.getAttribute('data-project-action-result'), null)
 })
 
 test('project lifecycle success uses stable feedback after page-one replay failure', async () => {
