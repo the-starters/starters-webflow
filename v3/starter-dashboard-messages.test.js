@@ -492,6 +492,26 @@ test('participant identity overrides conversation metadata', async () => {
   assert.equal(calls.conversations, 0)
 })
 
+test('the dashboard renders at most the 3 newest conversation cards', async () => {
+  const recent = [1, 2, 3, 4].map((index) => ({
+    id: `one:mem_me|mem_other_${index}`,
+    participant_name: `Brand ${index}`,
+    participant_photo_url: null,
+    last_message_text: `Message ${index}`,
+    last_message_at: index,
+    unread: false,
+  }))
+  const { list } = loadRenderedRecent(recent)
+
+  await settle()
+
+  assert.equal(list.children.length, 3)
+  assert.deepEqual(
+    list.children.map((card) => card.fields.name.textContent),
+    ['Brand 4', 'Brand 3', 'Brand 2'],
+  )
+})
+
 test('participant without a photo ignores conversation artwork', async () => {
   const { list } = loadRenderedRecent({
     id: 'one:mem_me|mem_other',

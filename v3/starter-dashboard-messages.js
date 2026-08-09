@@ -38,7 +38,7 @@
   const RECENT_MESSAGES_TIMEOUT_MS = 8000
   const MESSAGES_PATH = '/messages'
   const CONVERSATION_PARAM = 'conversation'
-  const MAX_PREVIEW_ITEMS = 8
+  const MAX_PREVIEW_ITEMS = 3
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
     if (
@@ -270,9 +270,14 @@
     const loadingCard =
       pick(wrapper, 'loading') || (spinner && spinner.closest('.dash_card'))
 
+    const requestedLimit = parseInt(
+      wrapper.getAttribute('data-messages-limit'),
+      10,
+    )
     const limit =
-      parseInt(wrapper.getAttribute('data-messages-limit'), 10) ||
-      MAX_PREVIEW_ITEMS
+      requestedLimit > 0
+        ? Math.min(requestedLimit, MAX_PREVIEW_ITEMS)
+        : MAX_PREVIEW_ITEMS
 
     // Accepted on the wrapper or on the template card itself.
     const unreadClass =
