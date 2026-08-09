@@ -1375,27 +1375,49 @@ test('invoice behavior binds only on exact normalized invoice routes', async () 
   assert.equal(brand.window.__opp30InvoicesWired, undefined)
 })
 
-test('dashboard boot opts the authored project details template into lazy hydration', async () => {
-  const details = el('div', { 'wf-xano-element': 'details-target' })
-  const template = el('div', { 'wf-xano-element': 'template' }, [details])
-  const root = el(
-    'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': '' },
-    [template],
-  )
-
-  await loadBridge(async () => response({}), {
+for (const dashboard of [
+  {
+    label: 'Brand',
+    instance: 'dash-brand-projects',
     member: paidBrandMember,
     pathname: '/brand-dashboard',
-    querySelector: (selector) =>
-      selectorMatches(root, selector) ? root : root.querySelector(selector),
-    querySelectorAll: (selector) =>
-      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
-    routeGuard: true,
-  })
+  },
+  {
+    label: 'Starter',
+    instance: 'dash-projects',
+    member: talentMember,
+    pathname: '/starter-dashboard',
+  },
+]) {
+  test(`${dashboard.label} dashboard prepares lazy project details with multiline scope`, async () => {
+    const scope = el('div', { 'wf-xano-bind': 'project_scope' })
+    const details = el('div', { 'wf-xano-element': 'details-target' }, [scope])
+    const template = el('div', { 'wf-xano-element': 'template' }, [details])
+    const root = el(
+      'div',
+      { 'wf-xano-instance': dashboard.instance, 'wf-xano-source': '' },
+      [template],
+    )
 
-  assert.equal(details.hasAttribute('wf-xano-lazy-details'), true)
-})
+    await loadBridge(async (input) => {
+      const url = String(input)
+      if (url.includes('/starter/opportunities/match-context')) return response({ category_refs: [] })
+      return response({})
+    }, {
+      member: dashboard.member,
+      pathname: dashboard.pathname,
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    })
+
+    assert.equal(details.hasAttribute('wf-xano-lazy-details'), true)
+    assert.equal(scope.style.whiteSpace, 'pre-wrap')
+    assert.equal(scope.style.overflowWrap, 'anywhere')
+  })
+}
 
 test('invoice behavior requires the canonical Talent plan role', async () => {
   const ambiguousLegacyBrand = {

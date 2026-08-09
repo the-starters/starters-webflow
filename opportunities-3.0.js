@@ -1953,7 +1953,13 @@
     const template = root && $('[wf-xano-element="template"]', root)
     if (!template) return 0
     const targets = $$('[wf-xano-element="details-target"]', template)
-    targets.forEach((target) => target.setAttribute('wf-xano-lazy-details', ''))
+    targets.forEach((target) => {
+      target.setAttribute('wf-xano-lazy-details', '')
+      $$('[wf-xano-bind="project_scope"]', target).forEach((scope) => {
+        scope.style.whiteSpace = 'pre-wrap'
+        scope.style.overflowWrap = 'anywhere'
+      })
+    })
     return targets.length
   }
 
