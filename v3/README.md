@@ -1618,12 +1618,16 @@ unfiltered, confirmed-unfiltered-empty, and auth-transition states remain hidden
 Xano remains authoritative for every filter result, and every fetch uses
 `cache: 'no-store'`. Nothing is persisted to localStorage or shared across
 members, tabs, or page loads.
-The existing Designer-owned project `Show more` control stays hidden and out of
-the accessibility tree. The current Brand and Starter Projects endpoints return
-each member's complete owned collection and ignore `page`/`per_page`; presenting
-client append pagination would therefore duplicate rows for larger collections.
-Restore this control only after those endpoints implement real server pagination
-and return authoritative paging metadata. Call controls reveal the next six
+The existing Designer-owned project `Show more` control follows wf-xano's
+authoritative `hasMore` state and appends the next 12-item server page. Brand
+and Starter Projects endpoints must accept `page`/`per_page`, page `core_projects_v3` before
+per-project invoice/profile/review enrichment, and return `itemsTotal`,
+`pageTotal`, `curPage`, `nextPage`, and `prevPage`. `opportunities-3.0.js`
+consumes the same wf-xano instance state for project-action decoration; it must
+not issue a second dashboard list request. Lifecycle and review refreshes replay
+the loaded page range through that instance so appended rows remain visible. A
+direct endpoint fallback remains only for older surfaces without a wf-xano wrapper.
+Call controls reveal the next six
 matching canonical rows under the active client-side filter and hide when that
 filtered list is exhausted.
 

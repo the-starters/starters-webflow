@@ -17,6 +17,7 @@
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
   const PAGE_SIZE = 6
+  const PROJECT_PAGE_SIZE = 12
   const PROJECT_INSTANCE_KEYS = ['dash-projects', 'dash-brand-projects']
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
@@ -406,23 +407,69 @@
       })
   }
 
+  function configureProjectWrappers() {
+    if (!global.document || typeof global.document.querySelectorAll !== 'function') return
+    PROJECT_INSTANCE_KEYS.forEach(function (key) {
+      global.document
+        .querySelectorAll('[wf-xano-instance="' + key + '"][wf-xano-source]')
+        .forEach(function (root) {
+          root.setAttribute('wf-xano-load', 'more')
+          root.setAttribute('wf-xano-per-page', String(PROJECT_PAGE_SIZE))
+        })
+    })
+  }
+
+  function configureProjectInstance(instance) {
+    if (!instance) return false
+    const state = typeof instance.getState === 'function' ? instance.getState() : null
+    const configuredPerPage = Number(
+      state && state.query && state.query.perPage != null
+        ? state.query.perPage
+        : instance.perPage,
+    )
+    const needsReset = Number.isFinite(configuredPerPage) && configuredPerPage !== PROJECT_PAGE_SIZE
+    instance.loadMode = 'more'
+    instance.appendMode = true
+    instance.perPage = PROJECT_PAGE_SIZE
+    if (instance.root) {
+      instance.root.setAttribute('wf-xano-load', 'more')
+      instance.root.setAttribute('wf-xano-per-page', String(PROJECT_PAGE_SIZE))
+    }
+    return needsReset
+  }
+
   function wireProjectLoadMore(instance) {
     if (!instance || !instance.root) return
+    const needsReset = configureProjectInstance(instance)
+    if (needsReset && typeof instance.goToPage === 'function') instance.goToPage(1)
     const controls = findProjectLoadMore(instance.root)
     if (!controls.length) return
 
-    // Both Projects endpoints currently return the complete owned collection
-    // and ignore page/per_page. Keep the Designer-owned control out of the
-    // interaction and accessibility trees until those endpoints implement
-    // real server pagination; loadNext would append duplicate rows for members
-    // whose complete collection exceeds wf-xano's client page size.
     controls.forEach(function (control) {
-      show(control, false)
-      control.setAttribute('aria-hidden', 'true')
-      control.setAttribute('aria-disabled', 'true')
-      control.setAttribute('aria-busy', 'false')
-      control.setAttribute('data-opp-loading', 'false')
-      if (control.classList) control.classList.toggle('is-disabled', true)
+      const nativeControl = control.getAttribute('wf-xano-element') === 'load-more'
+      if (!nativeControl && !control.__startersProjectLoadMoreBound) {
+        control.__startersProjectLoadMoreBound = true
+        control.addEventListener('click', function (event) {
+          if (control.getAttribute('aria-disabled') === 'true') return
+          if (event && typeof event.preventDefault === 'function') event.preventDefault()
+          if (typeof instance.loadNext === 'function') instance.loadNext()
+        })
+      }
+
+      const repaint = function (state) {
+        const data = (state && state.data) || {}
+        const busy = Boolean(state && state.status === 'loading')
+        const available = Boolean(data.hasMore) && !busy
+        show(control, Boolean(data.hasMore) || busy)
+        control.setAttribute('aria-hidden', data.hasMore || busy ? 'false' : 'true')
+        control.setAttribute('aria-disabled', available ? 'false' : 'true')
+        control.setAttribute('aria-busy', busy ? 'true' : 'false')
+        control.setAttribute('data-opp-loading', busy ? 'true' : 'false')
+        if (control.classList) control.classList.toggle('is-disabled', !available)
+      }
+
+      if (typeof instance.subscribe === 'function') instance.subscribe(repaint)
+      else repaint(null)
     })
   }
 
@@ -445,6 +492,7 @@
   }
 
   function wireProjectFilters() {
+    configureProjectWrappers()
     hideProjectControls()
     const queued = global.WfXano || []
     global.WfXano = queued
@@ -709,6 +757,7 @@
     memberMatchesProfile,
     normalizeBooking,
     profileValues,
+    configureProjectWrappers,
     findProjectLoadMore,
     projectFilterIsActive,
     projectFilterVisible,
@@ -717,6 +766,7 @@
     sectionBookings,
     uniqueBookings,
   }
+  if (!isCommonJs) configureProjectWrappers()
   if (isCommonJs) module.exports = api
   else if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot, { once: true })

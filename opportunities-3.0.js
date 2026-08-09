@@ -326,9 +326,9 @@
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     projectCreate: (payload) => call('projects/create/v3', { body: payload }),
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
-    brandProjectList: (page = 1, per_page = 100) =>
+    brandProjectList: (page = 1, per_page = 12) =>
       call('brand/projects/mine', { body: { page, per_page } }),
-    starterProjectList: (page = 1, per_page = 100) =>
+    starterProjectList: (page = 1, per_page = 12) =>
       call('starter/projects/mine', { body: { page, per_page } }),
     contractLink: (project_id) => call('contracts/link/v3', { body: { project_id } }),
     projectAction: (payload) => call('projects/action/v3', { body: payload }),
@@ -1910,6 +1910,11 @@
   let projectWorkflowRefresh = null
   let projectWorkflowObserver = null
   let projectWorkflowBinding = null
+  let projectWorkflowProjectionUnsubscribe = null
+  let projectWorkflowProjectionInstance = null
+  let projectWorkflowActionLocks = new Map()
+  let projectWorkflowFeedbackElement = null
+  let projectWorkflowFeedbackTimer = null
   let activeReviewProject = null
   let reviewSubmitting = false
 
@@ -1974,6 +1979,169 @@
     return items
   }
 
+  function projectWorkflowInstanceKey(role) {
+    return role === 'brand' ? 'dash-brand-projects' : 'dash-projects'
+  }
+
+  function currentProjectWorkflowRoot(role) {
+    return $('[wf-xano-instance="' + projectWorkflowInstanceKey(role) + '"][wf-xano-source]')
+  }
+
+  function currentProjectWorkflowInstance(role) {
+    const runtime = window.WfXano
+    if (!runtime || typeof runtime.get !== 'function') return null
+    return runtime.get(projectWorkflowInstanceKey(role))
+  }
+
+  function waitForProjectWorkflowInstance(role) {
+    const existing = currentProjectWorkflowInstance(role)
+    if (existing) return Promise.resolve(existing)
+
+    if (!currentProjectWorkflowRoot(role)) return Promise.resolve(null)
+    const runtime = window.WfXano || []
+    if (!window.WfXano) window.WfXano = runtime
+    if (typeof runtime.push !== 'function') return Promise.resolve(null)
+
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (instance) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(instance || null)
+      }
+      const timer = window.setTimeout(() => finish(null), 10000)
+      runtime.push((wfx) => {
+        const instance = wfx && typeof wfx.get === 'function'
+          ? wfx.get(projectWorkflowInstanceKey(role))
+          : null
+        finish(instance)
+      })
+    })
+  }
+
+  function projectWorkflowStateItems(state) {
+    return state && state.data && Array.isArray(state.data.items)
+      ? state.data.items
+      : []
+  }
+
+  function projectWorkflowItemsMap(items) {
+    return new Map(
+      items
+        .map((item) => [Number(item && (item.project_id || item.id)), item])
+        .filter(([id]) => id > 0),
+    )
+  }
+
+  function applyProjectWorkflowState(role, state) {
+    if (projectWorkflowRole !== role || projectRoleForPath() !== role) return false
+    if (!state || state.status !== 'success') return false
+    projectWorkflowItems = projectWorkflowItemsMap(projectWorkflowStateItems(state))
+    decorateProjectCards()
+    observeProjectCards()
+    return true
+  }
+
+  function bindProjectWorkflowProjection(role, instance) {
+    if (!instance || typeof instance.subscribe !== 'function') return
+    if (projectWorkflowProjectionInstance === instance) return
+    if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
+    projectWorkflowProjectionInstance = instance
+    projectWorkflowProjectionUnsubscribe = instance.subscribe((state) => {
+      applyProjectWorkflowState(role, state)
+    })
+  }
+
+  function waitForProjectWorkflowState(role, instance) {
+    const current = typeof instance.getState === 'function' ? instance.getState() : null
+    if (current && current.status === 'success') return Promise.resolve(current)
+
+    return new Promise((resolve, reject) => {
+      let settled = false
+      let unsubscribe = null
+      const finish = (error, state) => {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        if (unsubscribe) unsubscribe()
+        if (error) reject(error)
+        else resolve(state)
+      }
+      const timer = window.setTimeout(
+        () => finish(new Error('Project list did not become ready')),
+        10000,
+      )
+      unsubscribe = instance.subscribe((state) => {
+        if (projectWorkflowRole !== role || projectRoleForPath() !== role) {
+          finish(new Error('Project dashboard scope changed'))
+        } else if (state && state.status === 'success') {
+          finish(null, state)
+        } else if (state && (state.status === 'error' || state.status === 'destroyed')) {
+          finish(new Error('Project list could not be loaded'))
+        }
+      })
+      if (settled && unsubscribe) unsubscribe()
+    })
+  }
+
+  async function reloadProjectWorkflowInstance(instance) {
+    const state = typeof instance.getState === 'function' ? instance.getState() : null
+    const statePage = Number(state && state.query && state.query.page)
+    const instancePage = Number(instance && instance.page)
+    const loadedPage = Number.isInteger(statePage) && statePage > 0
+      ? statePage
+      : Number.isInteger(instancePage) && instancePage > 0
+        ? instancePage
+        : 1
+    if (loadedPage === 1) {
+      if (typeof instance.refresh !== 'function') {
+        throw new Error('Project list cannot be refreshed')
+      }
+      await instance.refresh()
+      return
+    }
+    if (typeof instance.goToPage !== 'function' || typeof instance.loadNext !== 'function') {
+      throw new Error('Project list cannot preserve loaded pages')
+    }
+    await instance.goToPage(1)
+    const first = typeof instance.getState === 'function' ? instance.getState() : null
+    const firstPage = Number(first && first.query && first.query.page)
+    if (!first || first.status !== 'success' || firstPage !== 1) {
+      throw new Error('Project list could not reload page 1')
+    }
+    let confirmedPage = 1
+    while (confirmedPage < loadedPage) {
+      const confirmed = typeof instance.getState === 'function' ? instance.getState() : null
+      if (
+        confirmed &&
+        confirmed.status === 'success' &&
+        confirmed.data &&
+        confirmed.data.hasMore === false
+      ) break
+      const requestedPage = confirmedPage + 1
+      let lastError = null
+      let advanced = false
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await instance.loadNext()
+        } catch (error) {
+          lastError = error
+        }
+        const current = typeof instance.getState === 'function' ? instance.getState() : null
+        const currentPage = Number(current && current.query && current.query.page)
+        if (current && current.status === 'success' && currentPage === requestedPage) {
+          confirmedPage = currentPage
+          advanced = true
+          break
+        }
+      }
+      if (!advanced) {
+        throw lastError || new Error('Project list could not reload page ' + requestedPage)
+      }
+    }
+  }
+
   function projectIdFromCard(card) {
     const id = parseInt(card && card.getAttribute('data-wf-xano-id'), 10)
     return id > 0 ? id : 0
@@ -1983,6 +2151,67 @@
     const id = projectIdFromCard(card)
     if (!id) return null
     return projectWorkflowItems.get(id) || { id, project_id: id }
+  }
+
+  function currentProjectLifecycleAction(projectId, fallback = null) {
+    const card = $$(PROJECT_CARD_SELECTOR).find((candidate) => projectIdFromCard(candidate) === projectId)
+    return (card && $(PROJECT_END_SELECTOR, card)) || fallback
+  }
+
+  function currentProjectContractAction(projectId, fallback = null) {
+    const card = $$(PROJECT_CARD_SELECTOR).find((candidate) => projectIdFromCard(candidate) === projectId)
+    return (card && $(PROJECT_CONTRACT_SELECTOR, card)) || fallback
+  }
+
+  function setProjectLifecyclePending(projectId, pending, fallback = null) {
+    const action = currentProjectLifecycleAction(projectId, fallback)
+    if (action) setOpportunityActionPending(projectActionWrap(action), pending)
+  }
+
+  function setProjectContractPending(projectId, pending, fallback = null) {
+    const action = currentProjectContractAction(projectId, fallback)
+    if (action) setOpportunityActionPending(projectActionWrap(action), pending)
+  }
+
+  function showProjectWorkflowFeedback(message, isError = false) {
+    const root = currentProjectWorkflowRoot(projectWorkflowRole) || document.documentElement
+    if (!root || typeof root.appendChild !== 'function') {
+      console[isError ? 'error' : 'info']('[opp30:project-action]', message)
+      return
+    }
+    let feedback = projectWorkflowFeedbackElement
+    if (!feedback || feedback.parentNode !== root) {
+      feedback = document.createElement('div')
+      feedback.setAttribute('data-project-workflow-feedback', '')
+      feedback.setAttribute('class', 'text-size-small')
+      root.appendChild(feedback)
+      projectWorkflowFeedbackElement = feedback
+    }
+    feedback.setAttribute('role', isError ? 'alert' : 'status')
+    feedback.setAttribute('aria-live', isError ? 'assertive' : 'polite')
+    feedback.setAttribute('data-project-action-result', isError ? 'error' : 'success')
+    feedback.textContent = message
+    feedback.style.display = ''
+    window.clearTimeout(projectWorkflowFeedbackTimer)
+    projectWorkflowFeedbackTimer = window.setTimeout(() => {
+      if (feedback.textContent === message) {
+        feedback.textContent = ''
+        feedback.style.display = 'none'
+        feedback.removeAttribute('data-project-action-result')
+      }
+    }, isError ? 6000 : 3500)
+  }
+
+  function showProjectLifecycleFeedback(projectId, message, isError = false) {
+    const action = currentProjectLifecycleAction(projectId)
+    if (action) showProjectActionFeedback(action, message, isError)
+    else showProjectWorkflowFeedback(message, isError)
+  }
+
+  function showProjectContractFeedback(projectId, message, isError = false) {
+    const action = currentProjectContractAction(projectId)
+    if (action) showProjectActionFeedback(action, message, isError)
+    else showProjectWorkflowFeedback(message, isError)
   }
 
   function projectActionWrap(action) {
@@ -2135,6 +2364,9 @@
     if (contract) {
       contract.setAttribute('data-project-action', 'contract')
       setProjectActionVisible(contract, projectContractIsViewable(project))
+      if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
+        setOpportunityActionPending(projectActionWrap(contract), true)
+      }
     }
     if (!project || !project.lifecycle_state && !project.status) return
     const state = lifecycleState(project)
@@ -2154,6 +2386,9 @@
               ? 'Confirm End'
               : 'End Project'
       setProjectActionLabel(end, label)
+      if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'lifecycle') {
+        setOpportunityActionPending(projectActionWrap(end), true)
+      }
     }
 
     if (review) {
@@ -2200,17 +2435,27 @@
     projectWorkflowObserver.observe(root, { childList: true, subtree: true })
   }
 
-  async function refreshProjectWorkflow(role = projectWorkflowRole) {
+  async function refreshProjectWorkflow(role = projectWorkflowRole, reload = false) {
     if (!role || projectRoleForPath() !== role) return null
     if (projectWorkflowRefresh) return projectWorkflowRefresh
     const request = (async () => {
-      const items = await fetchProjectWorkflowItems(role)
+      const instance = await waitForProjectWorkflowInstance(role)
+      let items
+      if (instance) {
+        bindProjectWorkflowProjection(role, instance)
+        if (reload) await reloadProjectWorkflowInstance(instance)
+        const state = await waitForProjectWorkflowState(role, instance)
+        items = projectWorkflowStateItems(state)
+      } else if (currentProjectWorkflowRoot(role)) {
+        throw new Error('Project list owner is unavailable')
+      } else {
+        // Compatibility for older dashboard surfaces that have not adopted
+        // wf-xano. Current V3 dashboards use the instance state above so the
+        // projects endpoint has exactly one list owner and one request.
+        items = await fetchProjectWorkflowItems(role)
+      }
       if (projectWorkflowRole !== role || projectRoleForPath() !== role) return null
-      projectWorkflowItems = new Map(
-        items
-          .map((item) => [Number(item && (item.project_id || item.id)), item])
-          .filter(([id]) => id > 0),
-      )
+      projectWorkflowItems = projectWorkflowItemsMap(items)
       decorateProjectCards()
       observeProjectCards()
       return items
@@ -2228,7 +2473,7 @@
     let project = refresh ? null : cachedProject
     if (project && (project.lifecycle_state || project.status)) return project
     try {
-      await refreshProjectWorkflow()
+      await refreshProjectWorkflow(projectWorkflowRole, refresh)
     } catch (error) {
       if (
         fallbackOnRefreshFailure &&
@@ -2241,6 +2486,16 @@
     }
     project = projectContextFromCard(card)
     return project && (project.lifecycle_state || project.status) ? project : null
+  }
+
+  async function refreshProjectWorkflowBestEffort(role, operation) {
+    try {
+      await refreshProjectWorkflow(role, true)
+      return true
+    } catch (error) {
+      console.error('[opp30:project-action] ' + operation + ' projection refresh failed', error)
+      return false
+    }
   }
 
   function projectLifecycleVersion(project) {
@@ -2320,20 +2575,23 @@
   }
 
   async function openProjectContract(action, card) {
-    const project = await currentProjectContext(card, true, true)
-    if (!project) {
-      showProjectActionFeedback(action, 'Project details unavailable', true)
-      return
-    }
-    if (!projectContractIsViewable(project)) {
-      setProjectActionVisible(action, false)
-      showProjectActionFeedback(action, 'Contract is not available yet', true)
-      return
-    }
-    const pending = projectActionWrap(action)
-    setOpportunityActionPending(pending, true)
+    const projectId = projectIdFromCard(card)
+    if (!projectId || projectWorkflowActionLocks.has(projectId)) return
+    projectWorkflowActionLocks.set(projectId, 'contract')
+    setProjectContractPending(projectId, true, action)
     let contractWindow = null
     try {
+      const project = await currentProjectContext(card, true, true)
+      if (!project) {
+        showProjectContractFeedback(projectId, 'Project details unavailable', true)
+        return
+      }
+      if (!projectContractIsViewable(project)) {
+        const liveAction = currentProjectContractAction(projectId)
+        if (liveAction) setProjectActionVisible(liveAction, false)
+        showProjectContractFeedback(projectId, 'Contract is not available yet', true)
+        return
+      }
       if (typeof window.open === 'function') contractWindow = window.open('', '_blank')
       const result = await API.contractLink(project.id || project.project_id)
       const url = String(result && result.url || '').trim()
@@ -2346,36 +2604,44 @@
       }
     } catch (error) {
       if (contractWindow && !contractWindow.closed) contractWindow.close()
-      showProjectActionFeedback(
-        action,
+      showProjectContractFeedback(
+        projectId,
         projectActionErrorMessage(error, 'Contract is unavailable. Please try again.'),
         true,
       )
     } finally {
-      setOpportunityActionPending(pending, false)
+      projectWorkflowActionLocks.delete(projectId)
+      setProjectContractPending(projectId, false, action)
+      setOpportunityActionPending(projectActionWrap(action), false)
     }
   }
 
   async function mutateProjectLifecycle(action, card) {
-    const project = await currentProjectContext(card, true)
-    if (!project) {
-      showProjectActionFeedback(action, 'Project details unavailable', true)
-      return
-    }
-    const lifecycleVersion = projectLifecycleVersion(project)
-    if (lifecycleVersion == null) {
-      showProjectActionFeedback(action, 'Project version unavailable. Please try again.', true)
-      return
-    }
-    const intent = projectActionIntent(project)
-    if (!intent) return
-    if (intent.action === 'terminate' && !intent.reason) {
-      showProjectActionFeedback(action, 'A reason is required to end early', true)
-      return
-    }
-    const pending = projectActionWrap(action)
-    setOpportunityActionPending(pending, true)
+    const projectId = projectIdFromCard(card)
+    if (!projectId || projectWorkflowActionLocks.has(projectId)) return
+    projectWorkflowActionLocks.set(projectId, 'lifecycle')
+    setProjectLifecyclePending(projectId, true, action)
     try {
+      const project = await currentProjectContext(card, true)
+      if (!project) {
+        showProjectLifecycleFeedback(projectId, 'Project details unavailable', true)
+        return
+      }
+      const lifecycleVersion = projectLifecycleVersion(project)
+      if (lifecycleVersion == null) {
+        showProjectLifecycleFeedback(
+          projectId,
+          'Project version unavailable. Please try again.',
+          true,
+        )
+        return
+      }
+      const intent = projectActionIntent(project)
+      if (!intent) return
+      if (intent.action === 'terminate' && !intent.reason) {
+        showProjectLifecycleFeedback(projectId, 'A reason is required to end early', true)
+        return
+      }
       const result = await API.projectAction({
         project_id: project.id || project.project_id,
         expected_version: lifecycleVersion,
@@ -2387,26 +2653,24 @@
       if (updated) projectWorkflowItems.set(Number(updated.id), updated)
       delete action.dataset.projectActionKey
       delete action.dataset.projectActionScope
-      showProjectActionFeedback(action, projectMutationFeedback(updated || project))
-      await refreshProjectWorkflow()
-      if (window.WfXano && typeof window.WfXano.refresh === 'function') {
-        try {
-          window.WfXano.refresh(card.closest('[wf-xano-source]') || undefined)
-        } catch (error) {
-          /* non-fatal: canonical refresh above already updated action state */
-        }
-      }
+      await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'lifecycle')
+      showProjectLifecycleFeedback(
+        projectId,
+        projectMutationFeedback(updated || project),
+      )
     } catch (error) {
-      showProjectActionFeedback(
-        action,
+      showProjectLifecycleFeedback(
+        projectId,
         projectActionErrorMessage(error, 'Project update failed. Please try again.'),
         true,
       )
       if (error && error.data && /project version is stale/i.test(error.data.message || '')) {
-        await refreshProjectWorkflow()
+        await refreshProjectWorkflow(projectWorkflowRole, true)
       }
     } finally {
-      setOpportunityActionPending(pending, false)
+      projectWorkflowActionLocks.delete(projectId)
+      setProjectLifecyclePending(projectId, false, action)
+      setOpportunityActionPending(projectActionWrap(action), false)
     }
   }
 
@@ -2529,7 +2793,7 @@
       const done = $('.w-form-done', modal)
       if (done) done.style.display = 'block'
       activeReviewProject = null
-      await refreshProjectWorkflow()
+      await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'review')
     } catch (error) {
       reviewError(modal, projectActionErrorMessage(error, 'Review could not be submitted.'))
     } finally {
@@ -2558,6 +2822,17 @@
     projectWorkflowRole = ''
     projectWorkflowItems = new Map()
     projectWorkflowRefresh = null
+    if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
+    projectWorkflowProjectionUnsubscribe = null
+    projectWorkflowProjectionInstance = null
+    projectWorkflowActionLocks = new Map()
+    window.clearTimeout(projectWorkflowFeedbackTimer)
+    projectWorkflowFeedbackTimer = null
+    if (projectWorkflowFeedbackElement) {
+      projectWorkflowFeedbackElement.textContent = ''
+      projectWorkflowFeedbackElement.style.display = 'none'
+      projectWorkflowFeedbackElement.removeAttribute('data-project-action-result')
+    }
     activeReviewProject = null
     reviewSubmitting = false
     const reviewModal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')

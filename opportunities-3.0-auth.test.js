@@ -37,10 +37,12 @@ async function loadBridge(
     routeGuardDelayMs = null,
     routeGuardScript = false,
     search = '',
+    wfXano = null,
   } = {},
 ) {
   const documentListeners = new Map()
   const mutationObservers = []
+  const consoleErrors = []
   let authChange
   const attributes = new Map()
   if (routeGuard) {
@@ -64,8 +66,8 @@ async function loadBridge(
         listeners.filter((candidate) => candidate !== listener),
       )
     },
-    createElement() {
-      return { addEventListener() {}, setAttribute() {}, style: {} }
+    createElement(tag) {
+      return el(tag)
     },
     documentElement,
     getElementById: () => null,
@@ -94,6 +96,7 @@ async function loadBridge(
     setInterval,
     setTimeout,
   }
+  if (wfXano) window.WfXano = wfXano
   window.fetch = fetch
   window.window = window
   const location = {
@@ -126,7 +129,12 @@ async function loadBridge(
     URL,
     URLSearchParams,
     alert() {},
-    console: { error() {}, info() {}, log() {}, warn() {} },
+    console: {
+      error: (...args) => consoleErrors.push(args),
+      info() {},
+      log() {},
+      warn() {},
+    },
     document,
     fetch: (...args) => window.fetch(...args),
     history: { replaceState() {} },
@@ -144,6 +152,7 @@ async function loadBridge(
     API: window.Opp30.API,
     authChange,
     attributes,
+    consoleErrors,
     documentElement,
     fetch: window.fetch,
     location,
@@ -383,7 +392,6 @@ for (const role of ['starter', 'brand']) {
       'div',
       {
         'wf-xano-instance': role === 'brand' ? 'dash-brand-projects' : 'dash-projects',
-        'wf-xano-source': `opp30:${role}/projects/mine`,
       },
       [card],
     )
@@ -430,7 +438,6 @@ test('project dashboard keeps the direct timeline_display binding as a fallback'
     'div',
     {
       'wf-xano-instance': 'dash-projects',
-      'wf-xano-source': 'opp30:starter/projects/mine',
     },
     [card],
   )
@@ -513,6 +520,691 @@ test('Brand dashboard action wiring starts only after the stable paid-Brand gate
   )
   await new Promise(setImmediate)
   assert.equal(legacyFallbackRequests.some((url) => url.includes('/brand/projects/mine')), false)
+})
+
+test('project action decoration reuses the wf-xano projection without a duplicate list request', async () => {
+  const requests = []
+  const project = {
+    id: 675,
+    lifecycle_state: 'active',
+    lifecycle_version: 2,
+    contract_status: 'sent',
+  }
+  const state = {
+    status: 'success',
+    data: { items: [project], total: 70 },
+    query: { page: 1, perPage: 12, params: {} },
+    revision: 1,
+  }
+  let subscriptions = 0
+  const instance = {
+    getState: () => state,
+    subscribe(handler) {
+      subscriptions += 1
+      handler(state)
+      return () => {}
+    },
+  }
+  const wfXano = {
+    get(key) {
+      return key === 'dash-brand-projects' ? instance : null
+    },
+  }
+
+  await loadBridge(
+    async (input) => {
+      requests.push(String(input))
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      routeGuard: true,
+      wfXano,
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.equal(subscriptions, 1)
+  assert.equal(requests.some((url) => url.includes('/brand/projects/mine')), false)
+})
+
+test('current project wrapper fails closed without its keyed wf-xano owner', async () => {
+  const root = el('div', {
+    'wf-xano-instance': 'dash-brand-projects',
+    'wf-xano-source': 'opp30:brand/projects/mine',
+  })
+  const requests = []
+
+  await loadBridge(
+    async (input) => {
+      requests.push(String(input))
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) => selectorMatches(root, selector) ? root : null,
+      querySelectorAll: (selector) => selectorMatches(root, selector) ? [root] : [],
+      routeGuard: true,
+      wfXano: {
+        get() {
+          return null
+        },
+        push(callback) {
+          callback(this)
+        },
+      },
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.deepEqual(requests, [])
+})
+
+test('project dashboard releases a synchronously failed state waiter', async () => {
+  const state = { status: 'error' }
+  let subscriptions = 0
+  let unsubscriptions = 0
+  const instance = {
+    getState: () => state,
+    subscribe(handler) {
+      subscriptions += 1
+      handler(state)
+      return () => {
+        unsubscriptions += 1
+      }
+    },
+  }
+
+  await loadBridge(
+    async (input) => {
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+
+  assert.ok(await waitFor(() => subscriptions === 2 && unsubscriptions === 1))
+})
+
+test('project lifecycle replay retries transient failure and accepts earlier exhaustion', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const events = []
+  const handlers = new Set()
+  let failNextPageTwo = true
+  let state = {
+    status: 'success',
+    data: {
+      items: [
+        { id: 675, lifecycle_state: 'active', lifecycle_version: 1 },
+        ...Array.from({ length: 83 }, (_, index) => ({ id: index + 1 })),
+      ],
+      hasMore: true,
+    },
+    query: { page: 7, perPage: 12 },
+  }
+  const pageItems = (page) => {
+    const start = (page - 1) * 12
+    return Array.from({ length: 12 }, (_, index) => {
+      const position = start + index
+      return position === 0
+        ? { id: 675, lifecycle_state: 'active', lifecycle_version: 2 }
+        : { id: position }
+    })
+  }
+  const publishPage = (page, append) => {
+    const items = append ? state.data.items.concat(pageItems(page)) : pageItems(page)
+    state = {
+      status: 'success',
+      data: { items, hasMore: page < 6 },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return Promise.resolve(state)
+  }
+  const instance = {
+    getState: () => state,
+    goToPage(page) {
+      events.push({ type: `page:${page}` })
+      return publishPage(page, false)
+    },
+    loadNext() {
+      const page = state.query.page + 1
+      if (page === 2 && failNextPageTwo) {
+        failNextPageTwo = false
+        events.push({ type: 'page:2:error' })
+        state = {
+          status: 'error',
+          data: state.data,
+          query: { page: 1, perPage: 12 },
+        }
+        handlers.forEach((handler) => handler(state))
+        return Promise.resolve()
+      }
+      events.push({ type: `page:${page}` })
+      return publishPage(page, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/action/v3')) {
+        events.push({ type: 'action', body: JSON.parse(init.body) })
+        return response({ project: { id: 675, lifecycle_state: 'completion_requested' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+
+  assert.ok(await waitFor(() => events.some((event) => event.type === 'action')))
+  assert.deepEqual(
+    events.slice(0, 8).map((event) => event.type),
+    ['page:1', 'page:2:error', 'page:2', 'page:3', 'page:4', 'page:5', 'page:6', 'action'],
+  )
+  assert.equal(events.find((event) => event.type === 'action').body.expected_version, 2)
+  assert.equal(state.data.items.length, 72)
+})
+
+test('project lifecycle lock follows replacement controls during replay', async () => {
+  const projectCard = (version) => {
+    const end = el('button', { 'wf-xano-link': 'project-end' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'End Project'
+    const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+    return { card, end, label, version, wrap }
+  }
+  let live = projectCard(1)
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [live.card],
+  )
+  const handlers = new Set()
+  const firstPageTwo = deferred()
+  let holdFirstPageTwo = true
+  let prompts = 0
+  let mutations = 0
+  let state = {
+    status: 'success',
+    data: {
+      items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 1 }],
+      hasMore: true,
+    },
+    query: { page: 2, perPage: 12 },
+  }
+  const replaceCard = (version) => {
+    live = projectCard(version)
+    live.card.parent = root
+    root.children = [live.card]
+  }
+  const publishPage = (page, append) => {
+    const pageItems = page === 1
+      ? [{ id: 675, lifecycle_state: 'active', lifecycle_version: 2 }]
+      : Array.from({ length: 12 }, (_, index) => ({ id: 12 + index }))
+    if (page === 1) replaceCard(2)
+    state = {
+      status: 'success',
+      data: {
+        items: append ? state.data.items.concat(pageItems) : pageItems,
+        hasMore: page < 2,
+      },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return state
+  }
+  const instance = {
+    getState: () => state,
+    goToPage(page) {
+      publishPage(page, false)
+      return Promise.resolve(state)
+    },
+    async loadNext() {
+      if (holdFirstPageTwo) {
+        holdFirstPageTwo = false
+        await firstPageTwo.promise
+      }
+      return publishPage(2, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/action/v3')) {
+        mutations += 1
+        assert.equal(JSON.parse(init.body).expected_version, 2)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.prompt = () => {
+    prompts += 1
+    return 'COMPLETE'
+  }
+  assert.ok(await waitFor(() => live.end.getAttribute('data-project-action') === 'end'))
+  const firstAction = live.end
+
+  bridge.dispatchDocument('click', clickEvent(firstAction).event)
+
+  assert.ok(await waitFor(() => live.end !== firstAction && live.wrap.getAttribute('aria-disabled') === 'true'))
+  bridge.dispatchDocument('click', clickEvent(live.end).event)
+  await new Promise(setImmediate)
+  assert.equal(prompts, 0)
+  assert.equal(mutations, 0)
+
+  firstPageTwo.resolve()
+  assert.ok(await waitFor(
+    () => mutations === 1 && live.wrap.getAttribute('aria-disabled') === null,
+  ))
+  assert.equal(prompts, 1)
+})
+
+test('project contract lock follows replacement controls during replay', async () => {
+  const projectCard = () => {
+    const contract = el('a', { href: '#contract' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'View Contract'
+    const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+    return { card, contract, label, wrap }
+  }
+  let live = projectCard()
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [live.card],
+  )
+  const handlers = new Set()
+  const firstPageTwo = deferred()
+  let holdFirstPageTwo = true
+  let opened = 0
+  let linkRequests = 0
+  let state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 675,
+        lifecycle_state: 'contract_sent',
+        pandadoc_document_id: 'doc-675',
+        contract_status: 'sent',
+      }],
+      hasMore: true,
+    },
+    query: { page: 2, perPage: 12 },
+  }
+  const replaceCard = () => {
+    live = projectCard()
+    live.card.parent = root
+    live.card.parentNode = root
+    root.children = [live.card]
+  }
+  const publishPage = (page, append) => {
+    const pageItems = page === 1
+      ? [{
+          id: 675,
+          lifecycle_state: 'contract_sent',
+          pandadoc_document_id: 'doc-675',
+          contract_status: 'sent',
+        }]
+      : Array.from({ length: 12 }, (_, index) => ({ id: 12 + index }))
+    if (page === 1) replaceCard()
+    state = {
+      status: 'success',
+      data: {
+        items: append ? state.data.items.concat(pageItems) : pageItems,
+        hasMore: page < 2,
+      },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return state
+  }
+  const instance = {
+    getState: () => state,
+    goToPage(page) {
+      publishPage(page, false)
+      return Promise.resolve(state)
+    },
+    async loadNext() {
+      if (holdFirstPageTwo) {
+        holdFirstPageTwo = false
+        await firstPageTwo.promise
+      }
+      return publishPage(2, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/contracts/link/v3')) {
+        linkRequests += 1
+        return response({ url: 'https://app.pandadoc.com/s/doc-675' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.open = () => {
+    opened += 1
+    return { closed: false, close() {}, location: {}, opener: bridge.window }
+  }
+  assert.ok(await waitFor(() => live.contract.getAttribute('data-project-action') === 'contract'))
+  await new Promise(setImmediate)
+  const firstAction = live.contract
+
+  bridge.dispatchDocument('click', clickEvent(firstAction).event)
+
+  assert.ok(await waitFor(
+    () => live.contract !== firstAction && live.wrap.getAttribute('aria-disabled') === 'true',
+  ))
+  bridge.dispatchDocument('click', clickEvent(live.contract).event)
+  await new Promise(setImmediate)
+  assert.equal(opened, 0)
+  assert.equal(linkRequests, 0)
+
+  firstPageTwo.resolve()
+  assert.ok(await waitFor(
+    () => linkRequests === 1 && live.wrap.getAttribute('aria-disabled') === null,
+  ))
+  assert.equal(opened, 1)
+})
+
+test('project lifecycle success survives repeated failure on the same replay page', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const events = []
+  const handlers = new Set()
+  let mutationConfirmed = false
+  let failedAttempts = 0
+  let state = {
+    status: 'success',
+    data: {
+      items: [
+        { id: 675, lifecycle_state: 'active', lifecycle_version: 1 },
+        ...Array.from({ length: 35 }, (_, index) => ({ id: index + 1 })),
+      ],
+      hasMore: true,
+    },
+    query: { page: 3, perPage: 12 },
+  }
+  const pageItems = (page) => {
+    const start = (page - 1) * 12
+    return Array.from({ length: 12 }, (_, index) => {
+      const position = start + index
+      return position === 0
+        ? { id: 675, lifecycle_state: 'active', lifecycle_version: 2 }
+        : { id: position }
+    })
+  }
+  const publishPage = (page, append) => {
+    state = {
+      status: 'success',
+      data: {
+        items: append ? state.data.items.concat(pageItems(page)) : pageItems(page),
+        hasMore: page < 7,
+      },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return Promise.resolve(state)
+  }
+  const instance = {
+    getState: () => state,
+    goToPage(page) {
+      events.push(`page:${page}`)
+      return publishPage(page, false)
+    },
+    loadNext() {
+      const page = state.query.page + 1
+      if (mutationConfirmed && page === 2) {
+        failedAttempts += 1
+        events.push('page:2:error')
+        state = {
+          status: 'error',
+          data: state.data,
+          query: { page: 1, perPage: 12 },
+        }
+        handlers.forEach((handler) => handler(state))
+        return Promise.resolve()
+      }
+      events.push(`page:${page}`)
+      return publishPage(page, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/action/v3')) {
+        mutationConfirmed = true
+        events.push('action')
+        assert.equal(JSON.parse(init.body).expected_version, 2)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+
+  assert.ok(await waitFor(() => failedAttempts === 2 && bridge.consoleErrors.length > 0))
+  const actionIndex = events.indexOf('action')
+  assert.deepEqual(events.slice(actionIndex + 1), ['page:1', 'page:2:error', 'page:2:error'])
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
+  assert.equal(label.textContent, 'Completion requested')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
+})
+
+test('project lifecycle success uses stable feedback after page-one replay failure', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const handlers = new Set()
+  let refreshCount = 0
+  let mutations = 0
+  let state = {
+    status: 'success',
+    data: {
+      items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 1 }],
+      hasMore: false,
+    },
+    query: { page: 1, perPage: 12 },
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      refreshCount += 1
+      if (refreshCount === 1) {
+        state = {
+          status: 'success',
+          data: {
+            items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 2 }],
+            hasMore: false,
+          },
+          query: { page: 1, perPage: 12 },
+        }
+      } else {
+        root.children = []
+        state = {
+          status: 'error',
+          data: { items: [], hasMore: false },
+          query: { page: 1, perPage: 12 },
+        }
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve()
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/action/v3')) {
+        mutations += 1
+        assert.equal(JSON.parse(init.body).expected_version, 2)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+
+  assert.ok(await waitFor(() => {
+    const feedback = root.querySelector('[data-project-workflow-feedback]')
+    return feedback && feedback.textContent === 'Completion requested'
+  }))
+  const feedback = root.querySelector('[data-project-workflow-feedback]')
+  assert.equal(mutations, 1)
+  assert.equal(feedback.getAttribute('role'), 'status')
+  assert.equal(feedback.getAttribute('data-project-action-result'), 'success')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
 })
 
 test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
@@ -644,6 +1336,7 @@ function el(tag, attrs = {}, children = []) {
   if (tag === 'button' || tag === 'input') node.disabled = false
   children.forEach((child) => {
     child.parent = node
+    child.parentNode = node
   })
   node.getAttribute = (name) => (attributes.has(name) ? attributes.get(name) : null)
   node.setAttribute = (name, value) => attributes.set(name, String(value))
@@ -657,6 +1350,12 @@ function el(tag, attrs = {}, children = []) {
     return null
   }
   node.contains = (other) => other === node || descendants(node).includes(other)
+  node.appendChild = (child) => {
+    child.parent = node
+    child.parentNode = node
+    node.children.push(child)
+    return child
+  }
   node.querySelectorAll = (selector) =>
     descendants(node).filter((descendant) => selectorMatches(descendant, selector))
   node.querySelector = (selector) => node.querySelectorAll(selector)[0] || null
@@ -804,7 +1503,7 @@ test('Brand project cards expose only canonical actions for their current lifecy
   )
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [card],
   )
   const querySelector = (selector) =>
@@ -860,7 +1559,7 @@ test('Starter project cards keep completed contracts off the signing-session rou
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    { 'wf-xano-instance': 'dash-projects' },
     [card],
   )
   const contractRequests = []
@@ -918,7 +1617,7 @@ test('View Contract stays hidden until canonical project context authorizes it',
   )
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    { 'wf-xano-instance': 'dash-projects' },
     [card],
   )
   const projectList = deferred()
@@ -964,7 +1663,7 @@ test('View Contract stays hidden until canonical project context authorizes it',
 test('View Contract fails closed when a project card renders after dashboard boot', async () => {
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-projects', 'wf-xano-source': 'opp30:starter/projects/mine' },
+    { 'wf-xano-instance': 'dash-projects' },
   )
   const projectList = deferred()
   const bridge = await loadBridge(
@@ -1045,7 +1744,7 @@ test('View Contract uses cached authorization when the canonical refresh transie
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [card],
   )
   const requests = []
@@ -1107,7 +1806,7 @@ test('project action context includes every canonical project page', async () =>
   )
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [secondPageCard],
   )
   const requests = []
@@ -1152,7 +1851,7 @@ test('project action context includes every canonical project page', async () =>
   )
 
   assert.ok(await waitFor(() => requests.length === 2))
-  assert.deepEqual(requests, [{ page: 1, per_page: 100 }, { page: 2, per_page: 100 }])
+  assert.deepEqual(requests, [{ page: 1, per_page: 12 }, { page: 2, per_page: 12 }])
   assert.equal(secondPageEnd.getAttribute('data-project-action'), 'end')
   assert.equal(secondPageLabel.textContent, 'Cancel Project')
 })
@@ -1165,7 +1864,7 @@ test('lifecycle actions refresh and require a canonical version before mutation'
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [card],
   )
   const requests = []
@@ -1216,6 +1915,127 @@ test('lifecycle actions refresh and require a canonical version before mutation'
   assert.equal(requests.filter((request) => request.type === 'action').length, 1)
 })
 
+test('lifecycle success survives a failed projection refresh', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  let listCount = 0
+  let actionCount = 0
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listCount += 1
+        if (listCount === 3) return response({ message: 'Refresh unavailable' }, false, 503)
+        return response({
+          items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: listCount }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionCount += 1
+        assert.equal(JSON.parse(init.body).expected_version, 2)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => listCount === 1))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+
+  assert.ok(await waitFor(() => listCount === 3 && bridge.consoleErrors.length > 0))
+  assert.equal(actionCount, 1)
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
+  assert.equal(label.textContent, 'Completion requested')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
+})
+
+test('review success survives a failed projection refresh', async () => {
+  const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
+  const reviewLabel = el('div', { class: 'button_main-text' })
+  reviewLabel.textContent = 'Review Starter'
+  const reviewWrap = el('div', { class: 'button_main-wrap' }, [review, reviewLabel])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [reviewWrap])
+  const rating = el('input', { name: 'Call-Rating' })
+  rating.value = '5'
+  const feedback = el('input', { name: 'Public-Feedback' })
+  feedback.value = 'Excellent collaboration.'
+  const submit = el('button', { type: 'submit' })
+  const form = el('form', {}, [rating, feedback, submit])
+  form.reset = () => {}
+  const done = el('div', { class: 'w-form-done' })
+  const fail = el('div', { class: 'w-form-fail' })
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [form, done, fail])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
+  let listCount = 0
+  let reviewCount = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listCount += 1
+        if (listCount === 2) return response({ message: 'Refresh unavailable' }, false, 503)
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            lifecycle_version: 4,
+            review_eligible: true,
+            has_review: false,
+          }],
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewCount += 1
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  assert.ok(await waitFor(() => review.getAttribute('data-project-action') === 'review'))
+  bridge.dispatchDocument('click', clickEvent(review).event)
+  await new Promise(setImmediate)
+
+  bridge.dispatchDocument('submit', {
+    target: form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => listCount === 2 && bridge.consoleErrors.length > 0))
+  assert.equal(reviewCount, 1)
+  assert.equal(form.style.display, 'none')
+  assert.equal(done.style.display, 'block')
+  assert.notEqual(fail.style.display, 'block')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /review projection refresh failed/)
+})
+
 test('review retries reuse their idempotency key until success', async () => {
   const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
   const reviewLabel = el('div', { class: 'button_main-text' })
@@ -1238,7 +2058,7 @@ test('review retries reuse their idempotency key until success', async () => {
   const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [form, done, fail])
   const root = el(
     'div',
-    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    { 'wf-xano-instance': 'dash-brand-projects' },
     [card, modal],
   )
   const reviewBodies = []

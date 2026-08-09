@@ -629,12 +629,16 @@ closed, `closed` takes precedence and hides those actions as usual.
 
 `opportunities-3.0.js` binds project actions only on the exact
 `/brand-dashboard` and `/starter-dashboard` routes, after Memberstack resolves a
-paid Brand or Talent member respectively. It reads the full authenticated project
-list from Xano `brand/projects/mine` or `starter/projects/mine`, following the
-paged response until every canonical project is available. Each action must be
-inside an existing `.project_item[data-wf-xano-id]`; that row id is the canonical
-`project_id`. The controller decorates Webflow-authored controls and never creates
-project-card, modal, form, or button markup.
+paid Brand or Talent member respectively. On current dashboards it consumes the
+rendered 12-item page range from the existing `dash-brand-projects` or
+`dash-projects` wf-xano instance, so wf-xano remains the sole list owner and no
+duplicate full-collection request is made. Refreshes replay only the loaded page
+range so appended rows remain visible. Older surfaces without a wf-xano wrapper
+retain a direct paged fallback through Xano `brand/projects/mine` or
+`starter/projects/mine`. Each action must be inside an existing
+`.project_item[data-wf-xano-id]`; that row id is the canonical `project_id`. The
+controller decorates Webflow-authored controls and never creates project-card,
+modal, form, or button markup.
 
 The shared Project timeline value is repainted from each canonical project's
 `start_date` and `end_date` (falling back to `estimated_end_date`) as a readable

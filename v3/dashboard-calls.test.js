@@ -762,7 +762,33 @@ test('project navigation stays hidden until the remote auth reload resolves', ()
   assert.equal(filters.hidden, false)
 })
 
-test('project Show more stays hidden while project endpoints return complete collections', () => {
+test('both current project wrappers are configured for 12-item append pagination', () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const roots = ['dash-projects', 'dash-brand-projects'].map((key) =>
+    element({
+      'wf-xano-instance': key,
+      'wf-xano-source': `opp30:${key === 'dash-projects' ? 'starter' : 'brand'}/projects/mine`,
+    }),
+  )
+  const document = {
+    addEventListener() {},
+    readyState: 'loading',
+    querySelectorAll(selector) {
+      const match = /^\[wf-xano-instance="([^"]+)"\]\[wf-xano-source\]$/.exec(selector)
+      return match ? roots.filter((root) => root.getAttribute('wf-xano-instance') === match[1]) : []
+    },
+  }
+  const window = { document, location: { pathname: '/starter-dashboard' } }
+
+  vm.runInNewContext(source, { document, Intl, window })
+
+  roots.forEach((root) => {
+    assert.equal(root.getAttribute('wf-xano-load'), 'more')
+    assert.equal(root.getAttribute('wf-xano-per-page'), '12')
+  })
+})
+
+test('project Show more loads the next server page and hides after the final page', () => {
   const label = element()
   label.textContent = 'Show more'
   const control = element()
@@ -771,8 +797,10 @@ test('project Show more stays hidden while project endpoints return complete col
   control.classList.toggle = (name, force) => {
     if (name === 'is-disabled') disabledClass = force
   }
-  control.addEventListener = () => {
+  let click
+  control.addEventListener = (name, handler) => {
     listeners += 1
+    if (name === 'click') click = handler
   }
   control.closest = () => null
   control.querySelector = (selector) =>
@@ -783,28 +811,112 @@ test('project Show more stays hidden while project endpoints return complete col
     return []
   }
   let loads = 0
+  let repaintState
   const instance = {
     appendMode: false,
     loadMode: 'pagination',
     root,
+    subscribe(handler) {
+      repaintState = handler
+      handler({ status: 'success', data: { hasMore: true } })
+      return () => {}
+    },
     loadNext() {
       loads += 1
     },
   }
 
   api.wireProjectLoadMore(instance)
-  assert.equal(instance.loadMode, 'pagination')
-  assert.equal(instance.appendMode, false)
-  assert.equal(control.hidden, true)
-  assert.equal(control.attributes['aria-disabled'], 'true')
-  assert.equal(control.attributes['aria-hidden'], 'true')
+  assert.equal(instance.loadMode, 'more')
+  assert.equal(instance.appendMode, true)
+  assert.equal(instance.perPage, 12)
+  assert.equal(root.attributes['wf-xano-load'], 'more')
+  assert.equal(root.attributes['wf-xano-per-page'], '12')
+  assert.equal(control.hidden, false)
+  assert.equal(control.attributes['aria-disabled'], 'false')
+  assert.equal(control.attributes['aria-hidden'], 'false')
   assert.equal(control.attributes['aria-busy'], 'false')
   assert.equal(control.attributes['data-opp-loading'], 'false')
-  assert.equal(disabledClass, true)
+  assert.equal(disabledClass, false)
   assert.equal(control.attributes['wf-xano-element'], undefined)
-  assert.equal(listeners, 0)
-  assert.equal(loads, 0)
+  assert.equal(listeners, 1)
+  click({ preventDefault() {} })
+  assert.equal(loads, 1)
+  repaintState({ status: 'success', data: { hasMore: false } })
+  assert.equal(control.hidden, true)
+  assert.equal(control.attributes['aria-disabled'], 'true')
+  click({ preventDefault() {} })
+  assert.equal(loads, 1)
 })
+
+for (const total of [0, 12, 73]) {
+  test(`project pagination renders and exhausts ${total} server rows in 12-item pages`, async () => {
+    const label = element()
+    label.textContent = 'Show more'
+    const control = element()
+    let click
+    control.addEventListener = (name, handler) => {
+      if (name === 'click') click = handler
+    }
+    control.closest = () => null
+    control.querySelector = (selector) =>
+      selector === '.button_main-text' ? label : null
+    const root = element({
+      'wf-xano-instance': 'dash-projects',
+      'wf-xano-source': 'opp30:starter/projects/mine',
+    })
+    root.querySelectorAll = (selector) => selector === '.button_main-wrap' ? [control] : []
+    const rows = Array.from({ length: total }, (_, index) => ({ id: index + 1 }))
+    const requests = []
+    const subscribers = []
+    let state = { status: 'idle', data: { items: [], hasMore: false } }
+    const publish = (next) => {
+      state = next
+      subscribers.forEach((handler) => handler(state))
+    }
+    const instance = {
+      root,
+      page: 1,
+      getState: () => state,
+      subscribe(handler) {
+        subscribers.push(handler)
+        handler(state)
+        return () => {}
+      },
+      async request(page, append) {
+        requests.push({ page, per_page: this.perPage })
+        const start = (page - 1) * this.perPage
+        const pageRows = rows.slice(start, start + this.perPage)
+        const items = append ? state.data.items.concat(pageRows) : pageRows
+        publish({
+          status: 'success',
+          data: { items, hasMore: start + pageRows.length < rows.length },
+          query: { page, perPage: this.perPage },
+        })
+      },
+      loadNext() {
+        if (!state.data.hasMore) return Promise.resolve()
+        this.page += 1
+        return this.request(this.page, true)
+      },
+    }
+
+    api.wireProjectLoadMore(instance)
+    await instance.request(1, false)
+    while (state.data.hasMore) {
+      const expectedRequests = requests.length + 1
+      click({ preventDefault() {} })
+      await until(() => requests.length === expectedRequests)
+    }
+
+    assert.equal(state.data.items.length, total)
+    assert.deepEqual(state.data.items.map((row) => row.id), rows.map((row) => row.id))
+    assert.equal(requests.length, Math.max(1, Math.ceil(total / 12)))
+    assert.ok(requests.every((request) => request.per_page === 12))
+    assert.equal(control.hidden, true)
+    assert.equal(control.attributes['aria-disabled'], 'true')
+  })
+}
 
 test('both project dashboards leave remote filtering to the default wf-xano contract', async () => {
   const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
