@@ -465,26 +465,42 @@
   }
 
   function watchStripeTabReturn(stripeTab, onReturn) {
-    if (
-      !stripeTab ||
-      typeof global.addEventListener !== 'function' ||
-      typeof global.removeEventListener !== 'function'
-    ) {
-      return false
-    }
+    if (!stripeTab) return false
+    const canWatchFocus =
+      typeof global.addEventListener === 'function' &&
+      typeof global.removeEventListener === 'function'
+    const canWatchClosed =
+      canWatchFocus &&
+      typeof global.setInterval === 'function' &&
+      typeof global.clearInterval === 'function'
+    if (!canWatchFocus && !canWatchClosed) return false
     let settled = false
+    let closedTimer = null
+    const cleanup = function () {
+      if (canWatchFocus) global.removeEventListener('focus', handleReturn)
+      if (closedTimer !== null) {
+        global.clearInterval(closedTimer)
+        closedTimer = null
+      }
+    }
     const handleReturn = function () {
       if (settled) return null
       settled = true
-      global.removeEventListener('focus', handleReturn)
+      cleanup()
       return Promise.resolve().then(onReturn)
     }
-    global.addEventListener('focus', handleReturn)
+    if (canWatchFocus) global.addEventListener('focus', handleReturn)
+    if (canWatchClosed) {
+      closedTimer = global.setInterval(function () {
+        if (stripeTab.closed) return handleReturn()
+        return null
+      }, 500)
+    }
     return {
       cancel: function () {
         if (settled) return
         settled = true
-        global.removeEventListener('focus', handleReturn)
+        cleanup()
       },
     }
   }
@@ -559,11 +575,12 @@
     roots,
     returnedFromStripe,
     earningsTiles = resolveEarningsTiles([]),
+    pollForSettlement = returnedFromStripe,
   ) {
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
     try {
-      const status = await readSettledStatus(returnedFromStripe)
+      const status = await readSettledStatus(pollForSettlement)
       const view = resolveDashboardView(status, returnedFromStripe)
       renderRoots(roots, view)
       renderEarningsTiles(earningsTiles, view)
@@ -649,7 +666,7 @@
 
       const recover = function () {
         setStartPending(button, connectTile, false)
-        return loadDashboardStatus(roots, false, earningsTiles).finally(
+        return loadDashboardStatus(roots, false, earningsTiles, true).finally(
           function () {
             runExclusive.release()
           },

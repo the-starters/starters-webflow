@@ -947,6 +947,7 @@ test('early returning focus waits for start before releasing Stripe retry', asyn
     memberstack: global.$memberstackDom,
     open: global.open,
     removeEventListener: global.removeEventListener,
+    setTimeout: global.setTimeout,
   }
   const { root } = stripeRoot()
   const connect = new FakeElement()
@@ -962,6 +963,10 @@ test('early returning focus waits for start before releasing Stripe retry', asyn
   global.addEventListener = (name, listener) => listeners.set(name, listener)
   global.removeEventListener = (name, listener) => {
     if (listeners.get(name) === listener) listeners.delete(name)
+  }
+  global.setTimeout = (callback) => {
+    callback()
+    return 1
   }
   global.location = {
     hostname: 'thestarters.com',
@@ -1026,7 +1031,7 @@ test('early returning focus waits for start before releasing Stripe retry', asyn
     assert.equal(await firstStart, true)
     await recovery
 
-    assert.equal(statusCount, 1)
+    assert.equal(statusCount, 5)
     assert.equal(connect.getAttribute('aria-busy'), 'false')
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
     assert.equal(
@@ -1050,6 +1055,113 @@ test('early returning focus waits for start before releasing Stripe retry', asyn
     global.$memberstackDom = previous.memberstack
     global.open = previous.open
     global.removeEventListener = previous.removeEventListener
+    global.setTimeout = previous.setTimeout
+  }
+})
+
+test('closing a background Stripe tab releases recovery without focus', async () => {
+  const previous = {
+    addEventListener: global.addEventListener,
+    clearInterval: global.clearInterval,
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+    removeEventListener: global.removeEventListener,
+    setInterval: global.setInterval,
+    setTimeout: global.setTimeout,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const earnings = new FakeElement()
+  const runner = api.createExclusiveRunner()
+  const listeners = new Map()
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+    opener: global,
+  }
+  let closedTimer
+  let clearedTimer = false
+  let statusCount = 0
+  global.addEventListener = (name, listener) => listeners.set(name, listener)
+  global.removeEventListener = (name, listener) => {
+    if (listeners.get(name) === listener) listeners.delete(name)
+  }
+  global.setInterval = (callback) => {
+    closedTimer = callback
+    return 42
+  }
+  global.clearInterval = (timer) => {
+    if (timer === 42) clearedTimer = true
+  }
+  global.setTimeout = (callback) => {
+    callback()
+    return 1
+  }
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => stripeTab
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusCount += 1
+      return response({ connected: false, charges_enabled: false })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  const tiles = api.resolveEarningsTiles([connect, earnings])
+  api.__resetXanoToken()
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      true,
+    )
+    assert.equal(connect.getAttribute('aria-busy'), 'true')
+
+    stripeTab.closed = true
+    await closedTimer()
+
+    assert.equal(clearedTimer, true)
+    assert.equal(listeners.has('focus'), false)
+    assert.equal(statusCount, 5)
+    assert.equal(connect.getAttribute('aria-busy'), 'false')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
+    assert.equal(await runner(() => 'retry'), 'retry')
+  } finally {
+    api.__resetXanoToken()
+    global.addEventListener = previous.addEventListener
+    global.clearInterval = previous.clearInterval
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+    global.removeEventListener = previous.removeEventListener
+    global.setInterval = previous.setInterval
+    global.setTimeout = previous.setTimeout
   }
 })
 
