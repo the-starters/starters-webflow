@@ -625,7 +625,7 @@ test('project observer does not rewrite an already-correct action label', async 
   await new Promise(setImmediate)
   labelWrites = 0
 
-  // Opening lazy details or appending a Load More page produces childList
+  // Opening lazy details or appending a Show more page produces childList
   // records. The observer may decorate again, but it must not create another
   // childList record by replacing an unchanged label text node.
   bridge.notifyMutations([{ type: 'childList', target: card }])
