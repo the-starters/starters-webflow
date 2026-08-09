@@ -262,7 +262,16 @@
     })
   }
 
-  async function currentMember() {
+  async function currentMember(options) {
+    const requireLive = Boolean(options && options.live)
+    if (
+      !requireLive &&
+      window.memberReady &&
+      typeof window.memberReady.then === 'function'
+    ) {
+      const member = await window.memberReady
+      if (member && member.id) return member
+    }
     const memberstack = window.$memberstackDom
     if (memberstack && typeof memberstack.getCurrentMember === 'function') {
       const result = await memberstack.getCurrentMember()
@@ -270,17 +279,13 @@
       if (member && member.id) return member
       throw new Error('No logged-in member')
     }
-    if (window.memberReady && typeof window.memberReady.then === 'function') {
-      const member = await window.memberReady
-      if (member && member.id) return member
-    }
     throw new Error('No logged-in member')
   }
 
   // Writes never trust page state for identity: re-resolve the live session
   // and refuse to send if the member changed since the writer bootstrapped.
   async function writeMemberId() {
-    const member = await currentMember()
+    const member = await currentMember({ live: true })
     if (!sessionMemberId || member.id !== sessionMemberId) {
       throw memberScopeChangedError()
     }

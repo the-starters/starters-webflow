@@ -677,6 +677,15 @@
     })
   }
 
+  async function initialMemberSnapshot(memberstack) {
+    if (window.memberReady && typeof window.memberReady.then === 'function') {
+      var member = await window.memberReady
+      if (member && member.id) return member
+    }
+    var response = await memberstack.getCurrentMember()
+    return response && response.data
+  }
+
   function showGuardError(code) {
     document.documentElement.setAttribute('data-route-guard-error', code)
     window.dispatchEvent(
@@ -769,8 +778,7 @@
       return
     }
 
-    var response = await memberstack.getCurrentMember()
-    var member = response && response.data
+    var member = await initialMemberSnapshot(memberstack)
     if (!member || !member.id) {
       replaceLocation(
         loggedOutDestinationFor(

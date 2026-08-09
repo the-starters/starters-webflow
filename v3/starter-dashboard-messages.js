@@ -1,7 +1,7 @@
 /**
  * Starter Dashboard 3.0 — Messages tile.
  *
- * @release v1.59.108
+ * @release v1.59.151
  *
  * Binds the #messages tile on /starter-dashboard to the member's recent
  * TalkJS conversations. Two data sources, merged:
@@ -312,20 +312,26 @@
   }
 
   async function fetchRecentConversations(memberstack) {
-    const msToken = await getMemberstackToken(memberstack)
-    const tradeRes = await fetch(
-      XANO_AUTH_BASE +
-        XANO_TRADE_TOKEN_PATH +
-        '?token=' +
-        encodeURIComponent(msToken),
-    )
-    const tradeData = await tradeRes.json().catch(() => null)
-    if (!tradeRes.ok) throw new Error('trade-token failed')
-    const xanoToken =
-      typeof tradeData === 'string'
-        ? tradeData
-        : tradeData && (tradeData.authToken || tradeData.token)
-    if (!xanoToken) throw new Error('trade-token returned no token')
+    let xanoToken
+    if (typeof window.getXanoAuthToken === 'function') {
+      xanoToken = await window.getXanoAuthToken()
+      if (!xanoToken) throw new Error('shared auth bridge returned no token')
+    } else {
+      const msToken = await getMemberstackToken(memberstack)
+      const tradeRes = await fetch(
+        XANO_AUTH_BASE +
+          XANO_TRADE_TOKEN_PATH +
+          '?token=' +
+          encodeURIComponent(msToken),
+      )
+      const tradeData = await tradeRes.json().catch(() => null)
+      if (!tradeRes.ok) throw new Error('trade-token failed')
+      xanoToken =
+        typeof tradeData === 'string'
+          ? tradeData
+          : tradeData && (tradeData.authToken || tradeData.token)
+      if (!xanoToken) throw new Error('trade-token returned no token')
+    }
 
     const res = await fetch(XANO_OPP_BASE + RECENT_MESSAGES_PATH, {
       method: 'POST',
@@ -528,8 +534,13 @@
       return
     }
 
-    const response = await memberstack.getCurrentMember()
-    const member = response && response.data
+    let member = null
+    if (window.memberReady && typeof window.memberReady.then === 'function') {
+      member = await window.memberReady
+    }
+    if (!member || !member.id) {
+      member = ((await memberstack.getCurrentMember()) || {}).data
+    }
     if (!member || !member.id) {
       showEmpty()
       return

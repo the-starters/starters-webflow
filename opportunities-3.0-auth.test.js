@@ -38,6 +38,7 @@ async function loadBridge(
     routeGuardScript = false,
     search = '',
     wfXano = null,
+    getXanoAuthToken = null,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -97,6 +98,7 @@ async function loadBridge(
     setTimeout,
   }
   if (wfXano) window.WfXano = wfXano
+  if (getXanoAuthToken) window.getXanoAuthToken = getXanoAuthToken
   window.fetch = fetch
   window.window = window
   const location = {
@@ -2816,6 +2818,25 @@ test('scheduling auth is limited to the exact Xano origin and path prefix', asyn
   assert.equal(requests.every(({ init }) => !init?.headers), true)
   assert.equal(bridge.window.__tsSchedulingAuthBridgeOwner, 'opportunities-3.0')
   assert.equal(typeof bridge.window.__tsSchedulingAuthOriginalFetch, 'function')
+})
+
+test('opportunity calls reuse the shared dashboard Xano token', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init) => {
+      requests.push({ input, init })
+      return response({ items: [] })
+    },
+    {
+      getXanoAuthToken: async () => 'shared-xano-token',
+    },
+  )
+
+  await bridge.window.Opp30.API.starterProjectList(1, 12)
+
+  assert.equal(requests.length, 1)
+  assert.equal(requests.some(({ input }) => String(input).includes('trade-token')), false)
+  assert.equal(requests[0].init.headers.Authorization, 'Bearer shared-xano-token')
 })
 
 test('scheduling auth validates the effective Request URL', async () => {

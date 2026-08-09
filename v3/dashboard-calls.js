@@ -707,9 +707,22 @@
     refs.section.setAttribute('data-bookings-state', 'error')
   }
 
-  async function refreshSession(memberstack, refs, role, generation, currentGeneration) {
+  async function refreshSession(
+    memberstack,
+    refs,
+    role,
+    generation,
+    currentGeneration,
+    useSharedMember,
+  ) {
     try {
-      const current = await memberstack.getCurrentMember()
+      let current =
+        useSharedMember && global.memberReady && typeof global.memberReady.then === 'function'
+          ? await global.memberReady
+          : await memberstack.getCurrentMember()
+      if (useSharedMember && (!current || !(current.data || current).id)) {
+        current = await memberstack.getCurrentMember()
+      }
       if (generation !== currentGeneration()) return
       const member = current && (current.data || current)
       const memberId = clean(member && member.id)
@@ -765,8 +778,11 @@
       return sessionGeneration
     }
     wireBrandProfileRepaint(memberstack, currentGeneration)
+    let restartCount = 0
     const restart = function () {
       sessionGeneration += 1
+      const useSharedMember = restartCount === 0
+      restartCount += 1
       resetIdentityState(refs, role)
       return refreshSession(
         memberstack,
@@ -774,6 +790,7 @@
         role,
         sessionGeneration,
         currentGeneration,
+        useSharedMember,
       )
     }
     if (typeof memberstack.onAuthChange === 'function') {

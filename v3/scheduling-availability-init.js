@@ -146,7 +146,16 @@
     return value
   }
 
-  async function currentMember() {
+  async function currentMember(options) {
+    const preferShared = Boolean(options && options.preferShared)
+    if (
+      preferShared &&
+      window.memberReady &&
+      typeof window.memberReady.then === 'function'
+    ) {
+      const member = await window.memberReady
+      if (member && member.id) return member
+    }
     const memberstack = window.$memberstackDom
     if (memberstack && typeof memberstack.getCurrentMember === 'function') {
       const result = await memberstack.getCurrentMember()
@@ -385,7 +394,7 @@
     setStatus('loading')
     setConnectionState('loading')
     try {
-      const member = await currentMember()
+      const member = await currentMember({ preferShared: true })
       const testMemberId = resolveTestMemberOverride()
       if (testMemberId && typeof window.xanoAuthFetch !== 'function') {
         throw new Error('Authenticated staging test-member reader not available')
