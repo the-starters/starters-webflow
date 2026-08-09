@@ -119,7 +119,7 @@ function loadTile(options = {}) {
 function loadRenderedRecent(recent, unreads = [], options = {}) {
   const calls = { windows: [], conversations: 0, fetches: 0, aborts: 0 }
   let resolveRecentFetch
-  let fireRecentTimeout
+  const recentTimeouts = []
   let scheduledTimeouts = 0
   const makeClassList = () => ({
     add() {},
@@ -231,9 +231,13 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     clearInterval,
     setTimeout(callback, delay) {
       scheduledTimeouts += 1
-      if (options.manualRecentTimeout && scheduledTimeouts === 1) {
-        fireRecentTimeout = callback
-        return 1
+      if (
+        options.manualRecentTimeout &&
+        delay === 15000 &&
+        scheduledTimeouts !== 2
+      ) {
+        recentTimeouts.push(callback)
+        return recentTimeouts.length
       }
       return setTimeout(callback, delay)
     },
@@ -267,6 +271,9 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     encodeURIComponent,
     fetch: async () => {
       calls.fetches += 1
+      if (calls.fetches <= (options.hangAttempts || 0)) {
+        return new Promise(() => {})
+      }
       if (options.hangRecent) return new Promise(() => {})
       const response = {
         ok: true,
@@ -292,7 +299,9 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
       resolveRecentFetch()
     },
     runRecentTimeout() {
-      fireRecentTimeout()
+      const timeout = recentTimeouts.shift()
+      if (!timeout) throw new Error('No recent timeout is pending')
+      timeout()
     },
   }
 }
@@ -609,12 +618,40 @@ test('a stalled bulk request aborts and settles the empty state', async () => {
 
   await settle(5)
   runRecentTimeout()
+  await settle(5)
+  runRecentTimeout()
   await settle()
 
-  assert.equal(calls.aborts, 1)
+  assert.equal(calls.aborts, 2)
+  assert.equal(calls.fetches, 2)
   assert.equal(list.children.length, 0)
   assert.equal(loading.style.display, 'none')
   assert.equal(empty.style.display, '')
+})
+
+test('a timed-out bulk request retries before showing an empty state', async () => {
+  const { calls, empty, list, runRecentTimeout } = loadRenderedRecent(
+    {
+      id: 'one:mem_me|mem_other',
+      participant_name: 'Recovered Brand',
+      participant_photo_url: 'https://cdn.example/recovered.jpg',
+      last_message_text: 'Loaded after retry',
+      last_message_at: 1,
+      unread: false,
+    },
+    [],
+    { hangAttempts: 1, manualRecentTimeout: true },
+  )
+
+  await settle(5)
+  runRecentTimeout()
+  await settle()
+
+  assert.equal(calls.aborts, 1)
+  assert.equal(calls.fetches, 2)
+  assert.equal(list.children.length, 1)
+  assert.equal(list.children[0].fields.name.textContent, 'Recovered Brand')
+  assert.equal(empty.style.display, 'none')
 })
 
 test('bulk recent conversations render when TalkJS initialization fails', async () => {

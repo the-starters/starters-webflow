@@ -37,6 +37,7 @@
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const RECENT_MESSAGES_TIMEOUT_MS = 15000
+  const RECENT_MESSAGES_MAX_ATTEMPTS = 2
   const MESSAGES_PATH = '/messages'
   const CONVERSATION_PARAM = 'conversation'
   const MAX_PREVIEW_ITEMS = 3
@@ -354,7 +355,7 @@
     return (data && data.items) || []
   }
 
-  async function fetchRecentConversations(memberstack) {
+  async function fetchRecentConversationsOnce(memberstack) {
     const controller =
       typeof window.AbortController === 'function'
         ? new window.AbortController()
@@ -378,6 +379,18 @@
     } finally {
       window.clearTimeout(timer)
     }
+  }
+
+  async function fetchRecentConversations(memberstack) {
+    let lastError
+    for (let attempt = 0; attempt < RECENT_MESSAGES_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await fetchRecentConversationsOnce(memberstack)
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError
   }
 
   // Normalized card model. `unread` entries come from the SDK (rich sender
