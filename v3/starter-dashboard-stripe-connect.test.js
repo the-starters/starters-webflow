@@ -939,7 +939,7 @@ test('duplicate Connect Stripe activation does not reserve or render another pop
   }
 })
 
-test('returning focus refreshes status and releases Connect Stripe for retry', async () => {
+test('early returning focus waits for start before releasing Stripe retry', async () => {
   const previous = {
     addEventListener: global.addEventListener,
     fetch: global.fetch,
@@ -953,8 +953,12 @@ test('returning focus refreshes status and releases Connect Stripe for retry', a
   const earnings = new FakeElement()
   const runner = api.createExclusiveRunner()
   const listeners = new Map()
+  let resolveMember
   let openCount = 0
   let statusCount = 0
+  const member = new Promise((resolve) => {
+    resolveMember = resolve
+  })
   global.addEventListener = (name, listener) => listeners.set(name, listener)
   global.removeEventListener = (name, listener) => {
     if (listeners.get(name) === listener) listeners.delete(name)
@@ -974,7 +978,7 @@ test('returning focus refreshes status and releases Connect Stripe for retry', a
     }
   }
   global.$memberstackDom = {
-    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getCurrentMember: async () => member,
     getMemberCookie: async () => 'ms-cookie',
   }
   global.fetch = async (url) => {
@@ -994,18 +998,17 @@ test('returning focus refreshes status and releases Connect Stripe for retry', a
   api.__resetXanoToken()
 
   try {
-    assert.equal(
-      await api.startInNewTab(
-        runner,
-        connect,
-        connect,
-        [root],
-        'member-123',
-        tiles,
-      ),
-      true,
+    const firstStart = api.startInNewTab(
+      runner,
+      connect,
+      connect,
+      [root],
+      'member-123',
+      tiles,
     )
     assert.equal(connect.getAttribute('aria-busy'), 'true')
+    const recovery = listeners.get('focus')()
+    assert.equal(statusCount, 0)
     assert.equal(
       await api.startInNewTab(
         runner,
@@ -1019,7 +1022,9 @@ test('returning focus refreshes status and releases Connect Stripe for retry', a
     )
     assert.equal(openCount, 1)
 
-    await listeners.get('focus')()
+    resolveMember({ data: { id: 'member-123' } })
+    assert.equal(await firstStart, true)
+    await recovery
 
     assert.equal(statusCount, 1)
     assert.equal(connect.getAttribute('aria-busy'), 'false')

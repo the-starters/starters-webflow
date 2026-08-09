@@ -480,7 +480,13 @@
       return Promise.resolve().then(onReturn)
     }
     global.addEventListener('focus', handleReturn)
-    return true
+    return {
+      cancel: function () {
+        if (settled) return
+        settled = true
+        global.removeEventListener('focus', handleReturn)
+      },
+    }
   }
 
   function handleEarningsClick(element, event) {
@@ -641,32 +647,52 @@
         return false
       }
 
+      const recover = function () {
+        setStartPending(button, connectTile, false)
+        return loadDashboardStatus(roots, false, earningsTiles).finally(
+          function () {
+            runExclusive.release()
+          },
+        )
+      }
+      let settleStart
+      const startSettled = new Promise(function (resolve) {
+        settleStart = resolve
+      })
+      const returnWatcher = watchStripeTabReturn(stripeTab, function () {
+        return startSettled.then(function (result) {
+          if (result === true) return recover()
+          return null
+        })
+      })
+
       return handleStart(
         button,
         connectTile,
         roots,
         memberId,
         stripeTab,
-      ).then(function (result) {
-        if (result !== true) {
-          closeStripeTab(stripeTab)
-          return result
-        }
+      ).then(
+        function (result) {
+          settleStart(result)
+          if (result !== true) {
+            if (returnWatcher) returnWatcher.cancel()
+            closeStripeTab(stripeTab)
+            return result
+          }
 
-        const recover = function () {
-          setStartPending(button, connectTile, false)
-          return loadDashboardStatus(roots, false, earningsTiles).finally(
-            function () {
-              runExclusive.release()
-            },
-          )
-        }
-        if (!watchStripeTabReturn(stripeTab, recover)) {
-          setStartPending(button, connectTile, false)
-          runExclusive.release()
-        }
-        return true
-      })
+          if (!returnWatcher) {
+            setStartPending(button, connectTile, false)
+            runExclusive.release()
+          }
+          return true
+        },
+        function (error) {
+          settleStart(false)
+          if (returnWatcher) returnWatcher.cancel()
+          throw error
+        },
+      )
     }, true)
   }
 
