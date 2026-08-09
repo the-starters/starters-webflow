@@ -2390,6 +2390,16 @@
     return project && (project.lifecycle_state || project.status) ? project : null
   }
 
+  async function refreshProjectWorkflowBestEffort(role, operation) {
+    try {
+      await refreshProjectWorkflow(role, true)
+      return true
+    } catch (error) {
+      console.error('[opp30:project-action] ' + operation + ' projection refresh failed', error)
+      return false
+    }
+  }
+
   function projectLifecycleVersion(project) {
     if (!project || project.lifecycle_version == null || project.lifecycle_version === '') {
       return null
@@ -2535,7 +2545,7 @@
       delete action.dataset.projectActionKey
       delete action.dataset.projectActionScope
       showProjectActionFeedback(action, projectMutationFeedback(updated || project))
-      await refreshProjectWorkflow(projectWorkflowRole, true)
+      await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'lifecycle')
     } catch (error) {
       showProjectActionFeedback(
         action,
@@ -2669,7 +2679,7 @@
       const done = $('.w-form-done', modal)
       if (done) done.style.display = 'block'
       activeReviewProject = null
-      await refreshProjectWorkflow(projectWorkflowRole, true)
+      await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'review')
     } catch (error) {
       reviewError(modal, projectActionErrorMessage(error, 'Review could not be submitted.'))
     } finally {

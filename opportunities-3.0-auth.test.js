@@ -42,6 +42,7 @@ async function loadBridge(
 ) {
   const documentListeners = new Map()
   const mutationObservers = []
+  const consoleErrors = []
   let authChange
   const attributes = new Map()
   if (routeGuard) {
@@ -128,7 +129,12 @@ async function loadBridge(
     URL,
     URLSearchParams,
     alert() {},
-    console: { error() {}, info() {}, log() {}, warn() {} },
+    console: {
+      error: (...args) => consoleErrors.push(args),
+      info() {},
+      log() {},
+      warn() {},
+    },
     document,
     fetch: (...args) => window.fetch(...args),
     history: { replaceState() {} },
@@ -146,6 +152,7 @@ async function loadBridge(
     API: window.Opp30.API,
     authChange,
     attributes,
+    consoleErrors,
     documentElement,
     fetch: window.fetch,
     location,
@@ -1427,6 +1434,127 @@ test('lifecycle actions refresh and require a canonical version before mutation'
   bridge.dispatchDocument('click', clickEvent(end).event)
   await new Promise(setImmediate)
   assert.equal(requests.filter((request) => request.type === 'action').length, 1)
+})
+
+test('lifecycle success survives a failed projection refresh', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  let listCount = 0
+  let actionCount = 0
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listCount += 1
+        if (listCount === 3) return response({ message: 'Refresh unavailable' }, false, 503)
+        return response({
+          items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: listCount }],
+        })
+      }
+      if (url.includes('/projects/action/v3')) {
+        actionCount += 1
+        assert.equal(JSON.parse(init.body).expected_version, 2)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => listCount === 1))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+
+  assert.ok(await waitFor(() => listCount === 3 && bridge.consoleErrors.length > 0))
+  assert.equal(actionCount, 1)
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
+  assert.equal(label.textContent, 'Completion requested')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
+})
+
+test('review success survives a failed projection refresh', async () => {
+  const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
+  const reviewLabel = el('div', { class: 'button_main-text' })
+  reviewLabel.textContent = 'Review Starter'
+  const reviewWrap = el('div', { class: 'button_main-wrap' }, [review, reviewLabel])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [reviewWrap])
+  const rating = el('input', { name: 'Call-Rating' })
+  rating.value = '5'
+  const feedback = el('input', { name: 'Public-Feedback' })
+  feedback.value = 'Excellent collaboration.'
+  const submit = el('button', { type: 'submit' })
+  const form = el('form', {}, [rating, feedback, submit])
+  form.reset = () => {}
+  const done = el('div', { class: 'w-form-done' })
+  const fail = el('div', { class: 'w-form-fail' })
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [form, done, fail])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
+  let listCount = 0
+  let reviewCount = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listCount += 1
+        if (listCount === 2) return response({ message: 'Refresh unavailable' }, false, 503)
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            lifecycle_version: 4,
+            review_eligible: true,
+            has_review: false,
+          }],
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewCount += 1
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  assert.ok(await waitFor(() => review.getAttribute('data-project-action') === 'review'))
+  bridge.dispatchDocument('click', clickEvent(review).event)
+  await new Promise(setImmediate)
+
+  bridge.dispatchDocument('submit', {
+    target: form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => listCount === 2 && bridge.consoleErrors.length > 0))
+  assert.equal(reviewCount, 1)
+  assert.equal(form.style.display, 'none')
+  assert.equal(done.style.display, 'block')
+  assert.notEqual(fail.style.display, 'block')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /review projection refresh failed/)
 })
 
 test('review retries reuse their idempotency key until success', async () => {
