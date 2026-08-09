@@ -18,8 +18,9 @@
  * `avatar` container inside the template. `data-messages-format="uppercase|
  * lowercase"` transforms a bound element's text. Optional
  * `data-messages-limit="<n>"` on the wrapper can lower the 3-card maximum.
- * All instances share one TalkJS session + one Xano fetch. The original
- * class-based selectors remain as fallbacks (legacy wrapper: `#messages`).
+ * All instances share one TalkJS session + one bulk recent-conversations
+ * request. The original class-based selectors remain as fallbacks (legacy
+ * wrapper: `#messages`).
  */
 ;(function () {
   'use strict'
