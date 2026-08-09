@@ -865,6 +865,135 @@ test('project lifecycle lock follows replacement controls during replay', async 
   assert.equal(prompts, 1)
 })
 
+test('project contract lock follows replacement controls during replay', async () => {
+  const projectCard = () => {
+    const contract = el('a', { href: '#contract' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'View Contract'
+    const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+    return { card, contract, label, wrap }
+  }
+  let live = projectCard()
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [live.card],
+  )
+  const handlers = new Set()
+  const firstPageTwo = deferred()
+  let holdFirstPageTwo = true
+  let opened = 0
+  let linkRequests = 0
+  let state = {
+    status: 'success',
+    data: {
+      items: [{
+        id: 675,
+        lifecycle_state: 'contract_sent',
+        pandadoc_document_id: 'doc-675',
+        contract_status: 'sent',
+      }],
+      hasMore: true,
+    },
+    query: { page: 2, perPage: 12 },
+  }
+  const replaceCard = () => {
+    live = projectCard()
+    live.card.parent = root
+    live.card.parentNode = root
+    root.children = [live.card]
+  }
+  const publishPage = (page, append) => {
+    const pageItems = page === 1
+      ? [{
+          id: 675,
+          lifecycle_state: 'contract_sent',
+          pandadoc_document_id: 'doc-675',
+          contract_status: 'sent',
+        }]
+      : Array.from({ length: 12 }, (_, index) => ({ id: 12 + index }))
+    if (page === 1) replaceCard()
+    state = {
+      status: 'success',
+      data: {
+        items: append ? state.data.items.concat(pageItems) : pageItems,
+        hasMore: page < 2,
+      },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return state
+  }
+  const instance = {
+    getState: () => state,
+    goToPage(page) {
+      publishPage(page, false)
+      return Promise.resolve(state)
+    },
+    async loadNext() {
+      if (holdFirstPageTwo) {
+        holdFirstPageTwo = false
+        await firstPageTwo.promise
+      }
+      return publishPage(2, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/contracts/link/v3')) {
+        linkRequests += 1
+        return response({ url: 'https://app.pandadoc.com/s/doc-675' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.open = () => {
+    opened += 1
+    return { closed: false, close() {}, location: {}, opener: bridge.window }
+  }
+  assert.ok(await waitFor(() => live.contract.getAttribute('data-project-action') === 'contract'))
+  await new Promise(setImmediate)
+  const firstAction = live.contract
+
+  bridge.dispatchDocument('click', clickEvent(firstAction).event)
+
+  assert.ok(await waitFor(
+    () => live.contract !== firstAction && live.wrap.getAttribute('aria-disabled') === 'true',
+  ))
+  bridge.dispatchDocument('click', clickEvent(live.contract).event)
+  await new Promise(setImmediate)
+  assert.equal(opened, 0)
+  assert.equal(linkRequests, 0)
+
+  firstPageTwo.resolve()
+  assert.ok(await waitFor(
+    () => linkRequests === 1 && live.wrap.getAttribute('aria-disabled') === null,
+  ))
+  assert.equal(opened, 1)
+})
+
 test('project lifecycle success survives repeated failure on the same replay page', async () => {
   const end = el('button', { 'wf-xano-link': 'project-end' })
   const label = el('div', { class: 'button_main-text' })

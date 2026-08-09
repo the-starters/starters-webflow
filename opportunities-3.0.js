@@ -1912,7 +1912,7 @@
   let projectWorkflowBinding = null
   let projectWorkflowProjectionUnsubscribe = null
   let projectWorkflowProjectionInstance = null
-  let projectWorkflowActionLocks = new Set()
+  let projectWorkflowActionLocks = new Map()
   let projectWorkflowFeedbackElement = null
   let projectWorkflowFeedbackTimer = null
   let activeReviewProject = null
@@ -2158,8 +2158,18 @@
     return (card && $(PROJECT_END_SELECTOR, card)) || fallback
   }
 
+  function currentProjectContractAction(projectId, fallback = null) {
+    const card = $$(PROJECT_CARD_SELECTOR).find((candidate) => projectIdFromCard(candidate) === projectId)
+    return (card && $(PROJECT_CONTRACT_SELECTOR, card)) || fallback
+  }
+
   function setProjectLifecyclePending(projectId, pending, fallback = null) {
     const action = currentProjectLifecycleAction(projectId, fallback)
+    if (action) setOpportunityActionPending(projectActionWrap(action), pending)
+  }
+
+  function setProjectContractPending(projectId, pending, fallback = null) {
+    const action = currentProjectContractAction(projectId, fallback)
     if (action) setOpportunityActionPending(projectActionWrap(action), pending)
   }
 
@@ -2194,6 +2204,12 @@
 
   function showProjectLifecycleFeedback(projectId, message, isError = false) {
     const action = currentProjectLifecycleAction(projectId)
+    if (action) showProjectActionFeedback(action, message, isError)
+    else showProjectWorkflowFeedback(message, isError)
+  }
+
+  function showProjectContractFeedback(projectId, message, isError = false) {
+    const action = currentProjectContractAction(projectId)
     if (action) showProjectActionFeedback(action, message, isError)
     else showProjectWorkflowFeedback(message, isError)
   }
@@ -2348,6 +2364,9 @@
     if (contract) {
       contract.setAttribute('data-project-action', 'contract')
       setProjectActionVisible(contract, projectContractIsViewable(project))
+      if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
+        setOpportunityActionPending(projectActionWrap(contract), true)
+      }
     }
     if (!project || !project.lifecycle_state && !project.status) return
     const state = lifecycleState(project)
@@ -2367,7 +2386,7 @@
               ? 'Confirm End'
               : 'End Project'
       setProjectActionLabel(end, label)
-      if (projectWorkflowActionLocks.has(projectIdFromCard(card))) {
+      if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'lifecycle') {
         setOpportunityActionPending(projectActionWrap(end), true)
       }
     }
@@ -2556,20 +2575,23 @@
   }
 
   async function openProjectContract(action, card) {
-    const project = await currentProjectContext(card, true, true)
-    if (!project) {
-      showProjectActionFeedback(action, 'Project details unavailable', true)
-      return
-    }
-    if (!projectContractIsViewable(project)) {
-      setProjectActionVisible(action, false)
-      showProjectActionFeedback(action, 'Contract is not available yet', true)
-      return
-    }
-    const pending = projectActionWrap(action)
-    setOpportunityActionPending(pending, true)
+    const projectId = projectIdFromCard(card)
+    if (!projectId || projectWorkflowActionLocks.has(projectId)) return
+    projectWorkflowActionLocks.set(projectId, 'contract')
+    setProjectContractPending(projectId, true, action)
     let contractWindow = null
     try {
+      const project = await currentProjectContext(card, true, true)
+      if (!project) {
+        showProjectContractFeedback(projectId, 'Project details unavailable', true)
+        return
+      }
+      if (!projectContractIsViewable(project)) {
+        const liveAction = currentProjectContractAction(projectId)
+        if (liveAction) setProjectActionVisible(liveAction, false)
+        showProjectContractFeedback(projectId, 'Contract is not available yet', true)
+        return
+      }
       if (typeof window.open === 'function') contractWindow = window.open('', '_blank')
       const result = await API.contractLink(project.id || project.project_id)
       const url = String(result && result.url || '').trim()
@@ -2582,20 +2604,22 @@
       }
     } catch (error) {
       if (contractWindow && !contractWindow.closed) contractWindow.close()
-      showProjectActionFeedback(
-        action,
+      showProjectContractFeedback(
+        projectId,
         projectActionErrorMessage(error, 'Contract is unavailable. Please try again.'),
         true,
       )
     } finally {
-      setOpportunityActionPending(pending, false)
+      projectWorkflowActionLocks.delete(projectId)
+      setProjectContractPending(projectId, false, action)
+      setOpportunityActionPending(projectActionWrap(action), false)
     }
   }
 
   async function mutateProjectLifecycle(action, card) {
     const projectId = projectIdFromCard(card)
     if (!projectId || projectWorkflowActionLocks.has(projectId)) return
-    projectWorkflowActionLocks.add(projectId)
+    projectWorkflowActionLocks.set(projectId, 'lifecycle')
     setProjectLifecyclePending(projectId, true, action)
     try {
       const project = await currentProjectContext(card, true)
@@ -2801,7 +2825,7 @@
     if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
     projectWorkflowProjectionUnsubscribe = null
     projectWorkflowProjectionInstance = null
-    projectWorkflowActionLocks = new Set()
+    projectWorkflowActionLocks = new Map()
     window.clearTimeout(projectWorkflowFeedbackTimer)
     projectWorkflowFeedbackTimer = null
     if (projectWorkflowFeedbackElement) {
