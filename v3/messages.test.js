@@ -190,6 +190,40 @@ test('a visit without ?with= mounts the inbox and touches no conversation', asyn
   assert.deepEqual(errors, [])
 })
 
+test('?conversation= selects that existing conversation without mutating it', async () => {
+  const conversationId = 'one:mem_me|mem_other'
+  const { calls } = loadMessages({
+    search: '?conversation=' + encodeURIComponent(conversationId),
+  })
+
+  await settle()
+
+  assert.deepEqual(calls.selected, [conversationId])
+  assert.equal(calls.conversations.length, 0)
+})
+
+test('?conversation= takes precedence over ?with=', async () => {
+  const { calls } = loadMessages({
+    search:
+      '?conversation=existing-thread&with=' + encodeURIComponent(OTHER_ID),
+  })
+
+  await settle()
+
+  assert.deepEqual(calls.selected, ['existing-thread'])
+  assert.equal(calls.conversations.length, 0)
+})
+
+test('a malformed conversation id is ignored without breaking the inbox', async () => {
+  const { calls } = loadMessages({ search: '?conversation=%0A' })
+
+  await settle()
+
+  assert.equal(calls.mounted.length, 1)
+  assert.deepEqual(calls.selected, [])
+  assert.equal(calls.conversations.length, 0)
+})
+
 test('the current member syncs a changed login email to the same stable TalkJS user', async () => {
   const updatedMember = member()
   updatedMember.auth.email = 'starter.canary@example.com'

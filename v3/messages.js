@@ -1,15 +1,17 @@
 /**
  * Messages 3.0 — TalkJS inbox bootstrap.
  *
- * @release v1.59.108
+ * @release v1.59.154
  *
  * Self-contained page controller for /messages. It waits for Memberstack,
  * redirects logged-out visitors through the V3 login router while preserving
  * the current path and query, loads TalkJS, syncs the current member's public
  * profile, and mounts the 3.0-themed inbox into #talkjs-container.
  *
- * Deep linking: `/messages?with=<memberstack id>` opens — creating if needed —
- * the one-on-one conversation with that member and selects it in the inbox.
+ * Deep linking: `/messages?conversation=<TalkJS conversation id>` selects an
+ * existing conversation (used by dashboard preview cards). The existing
+ * `/messages?with=<memberstack id>` contract opens — creating if needed — the
+ * one-on-one conversation with that member and selects it in the inbox.
  * `v3/hire-message.js` produces these links from the /hire/<slug> profile pages
  * and leaves the starter's name and photo in a one-shot sessionStorage entry
  * (`starters:hire-message-handoff`) for this module to consume, because TalkJS
@@ -31,6 +33,8 @@
   const TALKJS_TIMEOUT_MS = 15000
   const LOGIN_PATH = '/login'
   const DEEP_LINK_PARAM = 'with'
+  const CONVERSATION_PARAM = 'conversation'
+  const MAX_CONVERSATION_ID_LENGTH = 1024
   const HANDOFF_KEY = 'starters:hire-message-handoff'
   // Memberstack ids are `mem_` + an alphanumeric cuid, with an extra `sb_`
   // segment for Test Mode (sandbox) members. Anything else is a hand-edited or
@@ -233,6 +237,27 @@
   }
 
   /**
+   * Existing TalkJS conversation selected by a dashboard card. Conversation
+   * ids are application-owned strings, so retain the value verbatim apart from
+   * trimming and a defensive size/control-character check.
+   * @returns {string|null}
+   */
+  function deepLinkConversationId() {
+    const raw = new URLSearchParams(window.location.search).get(
+      CONVERSATION_PARAM,
+    )
+    const id = typeof raw === 'string' ? raw.trim() : ''
+    if (
+      !id ||
+      id.length > MAX_CONVERSATION_ID_LENGTH ||
+      /[\u0000-\u001f\u007f]/.test(id)
+    ) {
+      return null
+    }
+    return id
+  }
+
+  /**
    * Read and clear the display fields left by v3/hire-message.js. The entry is
    * rejected unless it names the same member as the URL, so a stale handoff from
    * a different profile can never mislabel this conversation. Always cleared once
@@ -289,11 +314,19 @@
   }
 
   /**
-   * Open the deep-linked one-on-one conversation, creating it when it does not
-   * exist, and select it in the mounted inbox. Returns immediately when there is
-   * no `?with=` parameter, which is every ordinary visit to /messages.
+   * Select an existing `?conversation=` thread without mutation, or open the
+   * `?with=` one-on-one conversation, creating it when needed. Returns
+   * immediately when neither supported deep-link parameter is present.
    */
   async function openDeepLinkConversation(Talk, session, inbox, me, myId) {
+    const conversationId = deepLinkConversationId()
+    if (conversationId) {
+      // TalkJS accepts an existing conversation id directly. This selects it
+      // without creating a new conversation or mutating its participants.
+      await inbox.select(conversationId)
+      return
+    }
+
     const otherId = deepLinkMemberId()
     // A self-link would produce a degenerate conversation with one participant.
     if (!otherId || otherId === myId) return

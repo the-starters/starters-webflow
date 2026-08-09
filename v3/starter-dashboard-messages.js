@@ -1,15 +1,14 @@
 /**
- * Starter Dashboard 3.0 — Messages tile.
+ * Dashboard 3.0 — shared Messages tile.
  *
- * @release v1.59.151
+ * @release v1.59.154
  *
- * Binds the #messages tile on /starter-dashboard to the member's recent
- * TalkJS conversations. Two data sources, merged:
+ * Binds the #messages tile on /starter-dashboard and /brand-dashboard to the
+ * member's recent TalkJS conversations. Two data sources, merged:
  *   - Xano `starter/messages/recent` (TalkJS REST proxy) → recent
  *     conversations including already-read ones.
- *   - TalkJS JS SDK `session.unreads` → live unread state + sender
- *     name/photo enrichment, and the unread count badge.
- * If the Xano endpoint is unavailable the tile degrades to unreads-only.
+ *   - TalkJS JS SDK → live unread state and the unread count badge.
+ * If the Xano endpoint is unavailable the tile shows no message cards.
  * Shows the empty state when there are no conversations at all.
  *
  * Wiring (wf-xano-style, multi-instance): each `data-messages-element="wrapper"`
@@ -18,9 +17,10 @@
  * `name` (alias `title`), `name_initials`, `preview`, `time` and optional
  * `avatar` container inside the template. `data-messages-format="uppercase|
  * lowercase"` transforms a bound element's text. Optional
- * `data-messages-limit="<n>"` on the wrapper caps rendered cards (default 8).
- * All instances share one TalkJS session + one Xano fetch. The original
- * class-based selectors remain as fallbacks (legacy wrapper: `#messages`).
+ * `data-messages-limit="<n>"` on the wrapper can lower the 3-card maximum.
+ * All instances share one TalkJS session + one bulk recent-conversations
+ * request. The original class-based selectors remain as fallbacks (legacy
+ * wrapper: `#messages`).
  */
 ;(function () {
   'use strict'
@@ -36,8 +36,10 @@
   const RECENT_MESSAGES_PATH = '/starter/messages/recent'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
+  const RECENT_MESSAGES_TIMEOUT_MS = 8000
   const MESSAGES_PATH = '/messages'
-  const MAX_PREVIEW_ITEMS = 8
+  const CONVERSATION_PARAM = 'conversation'
+  const MAX_PREVIEW_ITEMS = 3
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
     if (
@@ -269,9 +271,14 @@
     const loadingCard =
       pick(wrapper, 'loading') || (spinner && spinner.closest('.dash_card'))
 
+    const requestedLimit = parseInt(
+      wrapper.getAttribute('data-messages-limit'),
+      10,
+    )
     const limit =
-      parseInt(wrapper.getAttribute('data-messages-limit'), 10) ||
-      MAX_PREVIEW_ITEMS
+      requestedLimit > 0
+        ? Math.min(requestedLimit, MAX_PREVIEW_ITEMS)
+        : MAX_PREVIEW_ITEMS
 
     // Accepted on the wrapper or on the template card itself.
     const unreadClass =
@@ -311,7 +318,7 @@
     return token
   }
 
-  async function fetchRecentConversations(memberstack) {
+  async function requestRecentConversations(memberstack, signal) {
     let xanoToken
     if (typeof window.getXanoAuthToken === 'function') {
       xanoToken = await window.getXanoAuthToken()
@@ -323,6 +330,7 @@
           XANO_TRADE_TOKEN_PATH +
           '?token=' +
           encodeURIComponent(msToken),
+        { signal },
       )
       const tradeData = await tradeRes.json().catch(() => null)
       if (!tradeRes.ok) throw new Error('trade-token failed')
@@ -339,10 +347,37 @@
         'Content-Type': 'application/json',
         Authorization: 'Bearer ' + xanoToken,
       },
+      signal,
     })
     const data = await res.json().catch(() => null)
     if (!res.ok) throw new Error('recent messages request failed')
     return (data && data.items) || []
+  }
+
+  async function fetchRecentConversations(memberstack) {
+    const controller =
+      typeof window.AbortController === 'function'
+        ? new window.AbortController()
+        : null
+    let timer
+    const timeout = new Promise((_, reject) => {
+      timer = window.setTimeout(() => {
+        if (controller) controller.abort()
+        reject(new Error('recent messages request timed out'))
+      }, RECENT_MESSAGES_TIMEOUT_MS)
+    })
+
+    try {
+      return await Promise.race([
+        requestRecentConversations(
+          memberstack,
+          controller ? controller.signal : undefined,
+        ),
+        timeout,
+      ])
+    } finally {
+      window.clearTimeout(timer)
+    }
   }
 
   // Normalized card model. `unread` entries come from the SDK (rich sender
@@ -367,16 +402,51 @@
 
   function displayFromRecent(conv, unreadsById) {
     const enrich = conv.id && unreadsById[conv.id]
-    if (enrich) return displayFromUnread(enrich)
+    const unread = enrich && displayFromUnread(enrich)
+    const hasParticipantName = Object.prototype.hasOwnProperty.call(
+      conv,
+      'participant_name',
+    )
+    const hasParticipantPhoto = Object.prototype.hasOwnProperty.call(
+      conv,
+      'participant_photo_url',
+    )
 
     return {
-      id: conv.id || null,
-      title: conv.subject || 'Conversation',
-      photoUrl: conv.photo_url || null,
-      preview: conv.last_message_text || '',
-      timestamp: conv.last_message_at || null,
-      unread: Boolean(conv.unread),
+      id: conv.id || (unread && unread.id) || null,
+      title: hasParticipantName
+        ? conv.participant_name || 'Conversation'
+        : conv.subject || (unread && unread.title) || 'Conversation',
+      photoUrl: hasParticipantPhoto
+        ? conv.participant_photo_url || null
+        : conv.photo_url || (unread && unread.photoUrl) || null,
+      preview:
+        (unread && unread.preview) || conv.last_message_text || '',
+      timestamp:
+        (unread && unread.timestamp) || conv.last_message_at || null,
+      unread: Boolean(enrich || conv.unread),
     }
+  }
+
+  function conversationPath(conversationId) {
+    if (!conversationId) return MESSAGES_PATH
+    const params = new URLSearchParams()
+    params.set(CONVERSATION_PARAM, conversationId)
+    return MESSAGES_PATH + '?' + params.toString()
+  }
+
+  function bindConversationTarget(target, conversationId) {
+    const path = conversationPath(conversationId)
+    if (target && target.tagName === 'A') {
+      target.href = path
+      target.target = '_blank'
+      target.rel = 'noopener'
+      return
+    }
+
+    target.addEventListener('click', () => {
+      window.open(path, '_blank', 'noopener')
+    })
   }
 
   function renderItem(refs, display) {
@@ -437,14 +507,14 @@
 
     const button = item.querySelector('.clickable_btn')
     const target = button || item
-    target.addEventListener('click', () => {
-      window.location.assign(MESSAGES_PATH)
-    })
+    bindConversationTarget(target, display.id)
 
     return item
   }
 
   function renderTile(refs, state) {
+    if (!state.recentSettled) return
+
     const unreads = state.unreads || []
     const unreadsById = {}
     unreads.forEach((unread) => {
@@ -452,25 +522,25 @@
       if (id) unreadsById[id] = unread
     })
 
-    let displays
-    if (state.recent) {
-      const recentIds = {}
-      displays = state.recent.map((conv) => {
-        if (conv.id) recentIds[conv.id] = true
-        return displayFromRecent(conv, unreadsById)
-      })
-      // Unread conversations the REST snapshot hasn't caught up with yet.
-      unreads.forEach((unread) => {
-        const id = unread.conversation && unread.conversation.id
-        if (!id || !recentIds[id]) displays.push(displayFromUnread(unread))
-      })
-    } else {
-      displays = unreads.map(displayFromUnread)
-    }
+    const displays = state.recent.map((conv) => {
+      return displayFromRecent(conv, unreadsById)
+    })
 
-    const unreadCount = state.recent
-      ? displays.filter((d) => d.unread).length
-      : unreads.length
+    const countedUnreadIds = {}
+    let unreadCount = 0
+    const countUnread = (id) => {
+      if (id) {
+        if (countedUnreadIds[id]) return
+        countedUnreadIds[id] = true
+      }
+      unreadCount += 1
+    }
+    displays.forEach((display) => {
+      if (display.unread) countUnread(display.id)
+    })
+    unreads.forEach((unread) => {
+      countUnread(unread.conversation && unread.conversation.id)
+    })
 
     if (refs.loadingCard) refs.loadingCard.style.display = 'none'
 
@@ -493,17 +563,19 @@
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
 
     displays
-      // Unread first (the tile is capped, so unreads must never be pushed
-      // out by newer read conversations), then most recent within each group.
-      .sort(
-        (a, b) =>
-          (b.unread ? 1 : 0) - (a.unread ? 1 : 0) ||
-          (b.timestamp || 0) - (a.timestamp || 0),
-      )
+      .sort((a, b) => timestampValue(b.timestamp) - timestampValue(a.timestamp))
       .slice(0, refs.limit)
       .forEach((display) => {
         refs.list.appendChild(renderItem(refs, display))
       })
+  }
+
+  function timestampValue(timestamp) {
+    if (!timestamp) return 0
+    const numeric = Number(timestamp)
+    if (Number.isFinite(numeric)) return numeric
+    const parsed = Date.parse(timestamp)
+    return Number.isNaN(parsed) ? 0 : parsed
   }
 
   async function mountTile() {
@@ -546,7 +618,7 @@
       return
     }
 
-    const state = { recent: null, unreads: [] }
+    const state = { recent: [], recentSettled: false, unreads: [] }
     const rerender = () => {
       instances.forEach((refs) => {
         try {
@@ -560,19 +632,24 @@
       })
     }
 
-    // Recent conversations (including read ones) via the Xano proxy.
-    // Non-fatal: the tile degrades to unreads-only if it fails.
-    fetchRecentConversations(memberstack)
-      .then((items) => {
-        state.recent = items
-        rerender()
-      })
-      .catch((error) => {
+    // Start the read snapshot while TalkJS initializes. Attach the rejection
+    // handler immediately so a slower SDK load cannot produce an unhandled
+    // promise rejection.
+    const recentPromise = fetchRecentConversations(memberstack).catch(
+      (error) => {
         console.warn(
-          '[starter-dashboard] Recent conversations unavailable, showing unreads only',
+          '[starter-dashboard] Recent conversations unavailable, hiding message cards',
           error,
         )
-      })
+        return []
+      },
+    )
+
+    recentPromise.then((items) => {
+      state.recent = items
+      state.recentSettled = true
+      rerender()
+    })
 
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))

@@ -2101,15 +2101,30 @@ node --check v3/reviews.test.js
 node --test v3/reviews.test.js
 ```
 
-## Starter Dashboard messages tile
+## Brand and Starter Dashboard messages tile
 
-`starter-dashboard-messages.js` binds the Messages tile on `/starter-dashboard`
-to the member's recent TalkJS conversations, merging two sources: Xano
+`starter-dashboard-messages.js` binds the shared Messages tile on
+`/brand-dashboard` and `/starter-dashboard` to the member's recent TalkJS
+conversations, merging two sources: Xano
 `starter/messages/recent` (a TalkJS REST proxy, which is what lets already-read
 conversations appear) and the TalkJS JS SDK `session.unreads` (live unread
-state, sender name/photo enrichment, and the unread-count badge). When the Xano
-endpoint is unavailable the tile degrades to unreads-only, and it shows the
-authored empty state when there are no conversations at all.
+preview, timestamp, unread state, and the unread-count badge). Card rendering
+waits for the single bulk recent-conversations response, with no per-card API
+requests, so SDK timing cannot bypass the participant-identity boundary. When
+the Xano endpoint is unavailable the tile shows no message cards rather than
+rendering identity-incomplete SDK-only entries.
+
+For one-on-one conversations, the bulk recent-conversations response supplies
+`participant_name` and `participant_photo_url`. When those properties are
+present they are authoritative, including explicit empty values; conversation
+metadata and the SDK sender snapshot are only fallbacks for legacy responses
+that omit them. Live unread data overlays preview, timestamp, and unread state
+without replacing that participant identity. Cards are ordered by last activity
+and capped at the three newest conversations. Each rendered card opens
+`/messages?conversation=<TalkJS conversation id>` in a new tab;
+`messages.js` selects that existing conversation after mounting the inbox
+without creating or mutating a conversation. The existing
+`/messages?with=<memberstack id>` create-or-open flow remains unchanged.
 
 Wiring is wf-xano-style and multi-instance: each
 `data-messages-element="wrapper"` scopes one rendered instance containing
@@ -2117,12 +2132,12 @@ Wiring is wf-xano-style and multi-instance: each
 count), and `view-all`, with card fields `name` (alias `title`),
 `name_initials`, `preview`, `time`, and an optional `avatar` container inside
 the template. `data-messages-format="uppercase|lowercase"` transforms a bound
-element's text, an optional `data-messages-limit="<n>"` on the wrapper caps
-rendered cards (default 8), and `data-messages-class-unread` — on the wrapper
-or on the template card — renames the class toggled on an unread card
-(default `is-new`). All instances share one TalkJS session and one Xano fetch; the
-original class-based selectors (legacy wrapper `#messages`) remain as
-fallbacks.
+element's text, an optional `data-messages-limit="<n>"` on the wrapper can lower
+the default and maximum of 3 rendered cards, and `data-messages-class-unread`
+— on the wrapper or on the template card — renames the class toggled on an
+unread card (default `is-new`). All instances share one TalkJS session and the
+one bulk recent-conversations request; the original class-based selectors
+(legacy wrapper `#messages`) remain as fallbacks.
 
 Run its focused test with:
 

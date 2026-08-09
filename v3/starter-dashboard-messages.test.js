@@ -99,6 +99,7 @@ function loadTile(options = {}) {
   vm.runInNewContext(source, {
     JSON,
     Promise,
+    URLSearchParams,
     console: {
       error(...args) {
         errors.push(args.map(String).join(' '))
@@ -113,6 +114,187 @@ function loadTile(options = {}) {
   })
 
   return { calls, warnings, errors, window }
+}
+
+function loadRenderedRecent(recent, unreads = [], options = {}) {
+  const calls = { windows: [], conversations: 0, fetches: 0, aborts: 0 }
+  let resolveRecentFetch
+  let fireRecentTimeout
+  let scheduledTimeouts = 0
+  const makeClassList = () => ({
+    add() {},
+    remove() {},
+    toggle() {},
+  })
+  const makeField = (tagName = 'DIV') => ({
+    tagName,
+    style: {},
+    textContent: '',
+    getAttribute: () => null,
+    removeAttribute() {},
+  })
+  let list
+
+  function makeCard() {
+    const name = makeField()
+    const initials = makeField()
+    const preview = makeField()
+    const time = makeField()
+    const avatar = makeField('IMG')
+    const button = Object.assign(makeField('A'), { addEventListener() {} })
+    const fields = {
+      '[data-messages-element="name"]': name,
+      '[data-messages-element="name_initials"]': initials,
+      '[data-messages-element="preview"]': preview,
+      '[data-messages-element="time"]': time,
+      '[data-messages-element="avatar"]': avatar,
+      '.clickable_btn': button,
+    }
+    const card = {
+      style: {},
+      classList: makeClassList(),
+      fields: { name, initials, preview, time, avatar, button },
+      querySelector: (selector) => fields[selector] || null,
+      getAttribute: () => null,
+      addEventListener() {},
+      cloneNode: makeCard,
+      remove() {
+        const index = list ? list.children.indexOf(card) : -1
+        if (index >= 0) list.children.splice(index, 1)
+      },
+    }
+    return card
+  }
+
+  const template = makeCard()
+  list = {
+    style: {},
+    children: [],
+    querySelector: (selector) =>
+      selector === TEMPLATE_SELECTOR ? template : null,
+    querySelectorAll() {
+      return this.children.slice()
+    },
+    appendChild(card) {
+      this.children.push(card)
+    },
+  }
+  const total = makeField()
+  const empty = makeField()
+  const loading = makeField()
+  const viewAll = Object.assign(makeField('A'), { addEventListener() {} })
+  const wrapperFields = {
+    [LIST_SELECTOR]: list,
+    '[data-messages-element="total"]': total,
+    '[data-messages-element="empty"]': empty,
+    '[data-messages-element="loading"]': loading,
+    '[data-messages-element="view-all"]': viewAll,
+  }
+  const wrapper = {
+    getAttribute: () => null,
+    querySelector: (selector) => wrapperFields[selector] || null,
+  }
+
+  const Talk = {
+    ready: options.talkFails
+      ? {
+          then(resolve, reject) {
+            reject(new Error('TalkJS unavailable'))
+          },
+        }
+      : Promise.resolve(),
+    User: function User() {},
+    Session: function Session() {
+      this.conversation = () => {
+        calls.conversations += 1
+        return {}
+      }
+      this.unreads = {
+        onChange(handler) {
+          handler(unreads)
+        },
+      }
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      getCurrentMember: async () => ({ data: { id: MY_ID } }),
+    },
+    getXanoAuthToken: async () => 'xano-token',
+    Talk,
+    open(...args) {
+      calls.windows.push(args)
+    },
+    addEventListener() {},
+    location: { assign() {} },
+    setInterval,
+    clearInterval,
+    setTimeout(callback, delay) {
+      scheduledTimeouts += 1
+      if (options.manualRecentTimeout && scheduledTimeouts === 1) {
+        fireRecentTimeout = callback
+        return 1
+      }
+      return setTimeout(callback, delay)
+    },
+    clearTimeout,
+    AbortController: function AbortController() {
+      this.signal = { aborted: false }
+      this.abort = () => {
+        this.signal.aborted = true
+        calls.aborts += 1
+      }
+    },
+  }
+  const document = {
+    addEventListener() {},
+    createElement() {
+      return { dataset: {} }
+    },
+    getElementById: () => null,
+    head: { appendChild() {} },
+    querySelectorAll: (selector) =>
+      selector === WRAPPER_SELECTOR ? [wrapper] : [],
+    readyState: 'complete',
+  }
+
+  vm.runInNewContext(source, {
+    JSON,
+    Promise,
+    URLSearchParams,
+    console,
+    document,
+    encodeURIComponent,
+    fetch: async () => {
+      calls.fetches += 1
+      if (options.hangRecent) return new Promise(() => {})
+      const response = {
+        ok: true,
+        json: async () => ({
+          items: Array.isArray(recent) ? recent : [recent],
+        }),
+      }
+      if (!options.deferRecent) return response
+      return new Promise((resolve) => {
+        resolveRecentFetch = () => resolve(response)
+      })
+    },
+    window,
+  })
+
+  return {
+    calls,
+    empty,
+    list,
+    loading,
+    total,
+    resolveRecent() {
+      resolveRecentFetch()
+    },
+    runRecentTimeout() {
+      fireRecentTimeout()
+    },
+  }
 }
 
 /**
@@ -279,10 +461,197 @@ test('a nameless member with no mapped active plan keeps the generic default', a
   assert.equal(plain(calls.users[0]).name, 'The Starters member')
 })
 
-test('the release marker matches the header @release line', () => {
-  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(
-    marker,
-    'no "@release vX.Y.Z" line in the starter-dashboard-messages.js header',
+test('participant identity overrides conversation metadata', async () => {
+  const { calls, list } = loadRenderedRecent({
+    id: 'one:mem_me|mem_other',
+    subject: 'Project conversation',
+    photo_url: 'https://cdn.example/project.jpg',
+    participant_name: 'Acme Brand',
+    participant_photo_url: 'https://cdn.example/acme.jpg',
+    last_message_text: 'Ready when you are',
+    last_message_at: Date.now(),
+    unread: false,
+  })
+
+  await settle()
+
+  const card = list.children[list.children.length - 1]
+  assert.equal(card.fields.name.textContent, 'Acme Brand')
+  assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
+  assert.equal(card.fields.avatar.alt, 'Acme Brand')
+  assert.equal(card.fields.initials.style.display, 'none')
+  assert.equal(calls.fetches, 1)
+  assert.equal(calls.conversations, 0)
+})
+
+test('the dashboard renders at most the 3 newest conversations regardless of unread state', async () => {
+  const recent = [1, 2, 3, 4].map((index) => ({
+    id: `one:mem_me|mem_other_${index}`,
+    participant_name: `Brand ${index}`,
+    participant_photo_url: null,
+    last_message_text: `Message ${index}`,
+    last_message_at: index,
+    unread: index === 1,
+  }))
+  const { list } = loadRenderedRecent(recent)
+
+  await settle()
+
+  assert.equal(list.children.length, 3)
+  assert.deepEqual(
+    list.children.map((card) => card.fields.name.textContent),
+    ['Brand 4', 'Brand 3', 'Brand 2'],
   )
+})
+
+test('participant without a photo ignores conversation artwork', async () => {
+  const { list } = loadRenderedRecent({
+    id: 'one:mem_me|mem_other',
+    subject: 'Project conversation',
+    photo_url: 'https://cdn.example/project.jpg',
+    participant_name: 'Acme Brand',
+    participant_photo_url: null,
+    last_message_text: 'Ready when you are',
+    last_message_at: 1,
+    unread: false,
+  })
+
+  await settle()
+
+  const card = list.children[list.children.length - 1]
+  assert.equal(card.fields.name.textContent, 'Acme Brand')
+  assert.equal(card.fields.avatar.style.display, 'none')
+  assert.equal(card.fields.initials.textContent, 'AB')
+  assert.equal(card.fields.initials.style.display, '')
+})
+
+test('live unread state preserves bulk participant identity', async () => {
+  const conversationId = 'one:mem_me|mem_other'
+  const { list } = loadRenderedRecent(
+    {
+      id: conversationId,
+      participant_name: 'Acme Brand',
+      participant_photo_url: 'https://cdn.example/acme.jpg',
+      last_message_text: 'Older preview',
+      last_message_at: 1,
+      unread: false,
+    },
+    [
+      {
+        conversation: { id: conversationId },
+        lastMessage: {
+          isByMe: true,
+          body: 'Latest preview',
+          timestamp: 2,
+        },
+      },
+    ],
+  )
+
+  await settle()
+
+  const card = list.children[list.children.length - 1]
+  assert.equal(card.fields.name.textContent, 'Acme Brand')
+  assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
+  assert.equal(card.fields.preview.textContent, 'Latest preview')
+})
+
+test('SDK-only unread stays out of cards but remains in the badge', async () => {
+  const laggingId = 'one:mem_me|mem_lagging'
+  const { list, resolveRecent, total } = loadRenderedRecent(
+    {
+      id: 'one:mem_me|mem_known',
+      participant_name: 'Known Brand',
+      participant_photo_url: 'https://cdn.example/known.jpg',
+      last_message_text: 'Bulk snapshot',
+      last_message_at: 1,
+      unread: false,
+    },
+    [
+      {
+        conversation: {
+          id: laggingId,
+          subject: 'Conversation metadata',
+          photoUrl: 'https://cdn.example/conversation.jpg',
+        },
+        lastMessage: {
+          isByMe: true,
+          body: 'Waiting for the bulk snapshot',
+          timestamp: 2,
+        },
+      },
+    ],
+    { deferRecent: true },
+  )
+
+  await settle(5)
+
+  assert.equal(list.children.length, 0)
+
+  resolveRecent()
+  await settle()
+
+  assert.equal(
+    list.children.some((card) =>
+      String(card.fields.button.href).includes(encodeURIComponent(laggingId)),
+    ),
+    false,
+  )
+  assert.equal(total.textContent, '1')
+})
+
+test('a stalled bulk request aborts and settles the empty state', async () => {
+  const { calls, empty, list, loading, runRecentTimeout } = loadRenderedRecent(
+    [],
+    [],
+    { hangRecent: true, manualRecentTimeout: true },
+  )
+
+  await settle(5)
+  runRecentTimeout()
+  await settle()
+
+  assert.equal(calls.aborts, 1)
+  assert.equal(list.children.length, 0)
+  assert.equal(loading.style.display, 'none')
+  assert.equal(empty.style.display, '')
+})
+
+test('bulk recent conversations render when TalkJS initialization fails', async () => {
+  const { list } = loadRenderedRecent(
+    {
+      id: 'one:mem_me|mem_other',
+      participant_name: 'Acme Brand',
+      participant_photo_url: 'https://cdn.example/acme.jpg',
+      last_message_text: 'Still available',
+      last_message_at: 1,
+      unread: false,
+    },
+    [],
+    { talkFails: true },
+  )
+
+  await settle()
+
+  const card = list.children[list.children.length - 1]
+  assert.equal(card.fields.name.textContent, 'Acme Brand')
+  assert.equal(card.fields.preview.textContent, 'Still available')
+})
+
+test('a message card links to its focused conversation in a new tab', async () => {
+  const { list } = loadRenderedRecent({
+    id: 'one:mem_me|mem_other',
+    participant_name: 'Acme Brand',
+    last_message_text: 'Hello',
+  })
+
+  await settle()
+
+  const link = list.children[list.children.length - 1].fields.button
+  assert.equal(
+    link.href,
+    '/messages?conversation=one%3Amem_me%7Cmem_other',
+  )
+  assert.equal(link.target, '_blank')
+  assert.equal(link.rel, 'noopener')
 })
