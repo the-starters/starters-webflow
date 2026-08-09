@@ -2264,7 +2264,14 @@
       target.dataset.projectActionAuthoredLabel = target.textContent.trim()
     }
     target.dataset.projectActionRestLabel = label || target.dataset.projectActionAuthoredLabel
-    target.textContent = target.dataset.projectActionRestLabel
+    // The project-card observer watches childList changes so it can decorate
+    // cards appended by wf-xano. Assigning textContent replaces the label's
+    // text node and therefore wakes that same observer. Avoid a self-sustaining
+    // mutation loop when the label is already correct (for example when lazy
+    // project details are inserted or Load More appends another page).
+    if (target.textContent !== target.dataset.projectActionRestLabel) {
+      target.textContent = target.dataset.projectActionRestLabel
+    }
   }
 
   function showProjectActionFeedback(action, message, isError = false) {
