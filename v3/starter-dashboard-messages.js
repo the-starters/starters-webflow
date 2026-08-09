@@ -397,19 +397,23 @@
   function displayFromRecent(conv, unreadsById) {
     const enrich = conv.id && unreadsById[conv.id]
     const unread = enrich && displayFromUnread(enrich)
+    const hasParticipantName = Object.prototype.hasOwnProperty.call(
+      conv,
+      'participant_name',
+    )
+    const hasParticipantPhoto = Object.prototype.hasOwnProperty.call(
+      conv,
+      'participant_photo_url',
+    )
 
     return {
       id: conv.id || (unread && unread.id) || null,
-      title:
-        conv.participant_name ||
-        conv.subject ||
-        (unread && unread.title) ||
-        'Conversation',
-      photoUrl:
-        conv.participant_photo_url ||
-        conv.photo_url ||
-        (unread && unread.photoUrl) ||
-        null,
+      title: hasParticipantName
+        ? conv.participant_name || 'Conversation'
+        : conv.subject || (unread && unread.title) || 'Conversation',
+      photoUrl: hasParticipantPhoto
+        ? conv.participant_photo_url || null
+        : conv.photo_url || (unread && unread.photoUrl) || null,
       preview:
         (unread && unread.preview) || conv.last_message_text || '',
       timestamp:

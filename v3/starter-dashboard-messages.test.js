@@ -492,6 +492,27 @@ test('participant identity overrides conversation metadata', async () => {
   assert.equal(calls.conversations, 0)
 })
 
+test('participant without a photo ignores conversation artwork', async () => {
+  const { list } = loadRenderedRecent({
+    id: 'one:mem_me|mem_other',
+    subject: 'Project conversation',
+    photo_url: 'https://cdn.example/project.jpg',
+    participant_name: 'Acme Brand',
+    participant_photo_url: null,
+    last_message_text: 'Ready when you are',
+    last_message_at: 1,
+    unread: false,
+  })
+
+  await settle()
+
+  const card = list.children[list.children.length - 1]
+  assert.equal(card.fields.name.textContent, 'Acme Brand')
+  assert.equal(card.fields.avatar.style.display, 'none')
+  assert.equal(card.fields.initials.textContent, 'AB')
+  assert.equal(card.fields.initials.style.display, '')
+})
+
 test('live unread state preserves bulk participant identity', async () => {
   const conversationId = 'one:mem_me|mem_other'
   const { list } = loadRenderedRecent(
