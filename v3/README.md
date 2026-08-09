@@ -2269,9 +2269,13 @@ Standard account. Both actions work on either a native anchor or an authored
 non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
 `role="button"` with `tabindex="0"` and activates from both click and Enter/Space
 so keyboard users can reach its action. Connect Stripe, Complete setup, and
-Payment history and payouts all open in a new tab. Native earnings anchors use
-`target="_blank"` with `rel="noopener noreferrer"`; non-anchor actions reserve
-and navigate a new tab from the activating click or key event.
+Payment history and payouts all open in a new tab. Native earnings anchors keep
+`target="_blank"` with `rel="noopener noreferrer"` as authored-link safeguards,
+but the controller prevents their native navigation because Webflow handlers can
+otherwise replace the dashboard tab. Both anchors and non-anchor actions reserve
+and navigate a detached-opener tab directly from the activating click or key
+event; a blocked popup or a tab whose opener cannot be detached stays
+fail-closed and never navigates the dashboard.
 
 While a Connect or Complete setup request is in flight, the Connect Stripe tile
 and initiating control stay visible but receive `is-disabled`, `aria-disabled="true"`,
