@@ -1,7 +1,7 @@
 /**
  * Dashboard 3.0 — shared Messages tile.
  *
- * @release v1.59.155
+ * @release v1.59.156
  *
  * Binds the #messages tile on /starter-dashboard and /brand-dashboard to the
  * member's recent TalkJS conversations. Two data sources, merged:
@@ -18,9 +18,9 @@
  * `avatar` container inside the template. `data-messages-format="uppercase|
  * lowercase"` transforms a bound element's text. Optional
  * `data-messages-limit="<n>"` on the wrapper can lower the 3-card maximum.
- * All instances share one TalkJS session + one bulk recent-conversations
- * request. The original class-based selectors remain as fallbacks (legacy
- * wrapper: `#messages`).
+ * All instances share one TalkJS session + one bulk recent-conversations load,
+ * which allows two attempts with a 15-second timeout each. The original
+ * class-based selectors remain as fallbacks (legacy wrapper: `#messages`).
  */
 ;(function () {
   'use strict'
@@ -36,7 +36,8 @@
   const RECENT_MESSAGES_PATH = '/starter/messages/recent'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
-  const RECENT_MESSAGES_TIMEOUT_MS = 8000
+  const RECENT_MESSAGES_TIMEOUT_MS = 15000
+  const RECENT_MESSAGES_MAX_ATTEMPTS = 2
   const MESSAGES_PATH = '/messages'
   const CONVERSATION_PARAM = 'conversation'
   const MAX_PREVIEW_ITEMS = 3
@@ -354,7 +355,7 @@
     return (data && data.items) || []
   }
 
-  async function fetchRecentConversations(memberstack) {
+  async function fetchRecentConversationsOnce(memberstack) {
     const controller =
       typeof window.AbortController === 'function'
         ? new window.AbortController()
@@ -378,6 +379,18 @@
     } finally {
       window.clearTimeout(timer)
     }
+  }
+
+  async function fetchRecentConversations(memberstack) {
+    let lastError
+    for (let attempt = 0; attempt < RECENT_MESSAGES_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await fetchRecentConversationsOnce(memberstack)
+      } catch (error) {
+        lastError = error
+      }
+    }
+    throw lastError
   }
 
   // Normalized card model. `unread` entries come from the SDK (rich sender
