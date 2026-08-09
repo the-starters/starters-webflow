@@ -1397,6 +1397,62 @@ test('dashboard boot opts the authored project details template into lazy hydrat
   assert.equal(details.hasAttribute('wf-xano-lazy-details'), true)
 })
 
+test('Starter dashboard repairs the single authored Show More control before wf-xano boots', async () => {
+  const showMore = el('div', { class: 'button_main-wrap' })
+  showMore.textContent = '  Show   More  '
+  const root = el(
+    'div',
+    {
+      'wf-xano-instance': 'dash-projects',
+      'wf-xano-source': 'opp30:starter/projects/mine',
+      'wf-xano-load': 'more',
+    },
+    [showMore],
+  )
+
+  const bridge = await loadBridge(async () => response({ category_refs: [] }), {
+    member: talentMember,
+    pathname: '/starter-dashboard',
+    querySelector: (selector) =>
+      selectorMatches(root, selector) ? root : root.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+    routeGuard: true,
+  })
+
+  assert.equal(showMore.getAttribute('wf-xano-element'), 'load-more')
+  assert.equal(bridge.window.Opp30.prepareDashboardProjectLoadMore(), 0)
+})
+
+test('Project Show More repair fails closed when the authored control is ambiguous', async () => {
+  const first = el('div', { class: 'button_main-wrap' })
+  const second = el('div', { class: 'button_main-wrap' })
+  first.textContent = 'Show More'
+  second.textContent = 'Show More'
+  const root = el(
+    'div',
+    {
+      'wf-xano-instance': 'dash-projects',
+      'wf-xano-source': 'opp30:starter/projects/mine',
+      'wf-xano-load': 'more',
+    },
+    [first, second],
+  )
+
+  await loadBridge(async () => response({ category_refs: [] }), {
+    member: talentMember,
+    pathname: '/starter-dashboard',
+    querySelector: (selector) =>
+      selectorMatches(root, selector) ? root : root.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+    routeGuard: true,
+  })
+
+  assert.equal(first.hasAttribute('wf-xano-element'), false)
+  assert.equal(second.hasAttribute('wf-xano-element'), false)
+})
+
 test('invoice behavior requires the canonical Talent plan role', async () => {
   const ambiguousLegacyBrand = {
     ...paidBrandMember,

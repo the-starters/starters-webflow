@@ -1957,6 +1957,25 @@
     return targets.length
   }
 
+  // The Starter dashboard's authored Show More control predates the canonical
+  // wf-xano control attribute. Repair that one known markup gap synchronously,
+  // before wf-xano's DOMContentLoaded bootstrap binds controls. Keep this
+  // deliberately fail-closed: only append-mode project wrappers with exactly
+  // one authored Show More button are eligible.
+  function prepareDashboardProjectLoadMore() {
+    const role = projectRoleForPath()
+    if (!role) return 0
+    const root = currentProjectWorkflowRoot(role)
+    if (!root || root.getAttribute('wf-xano-load') !== 'more') return 0
+    if ($('[wf-xano-element="load-more"]', root)) return 0
+    const candidates = $$('.button_main-wrap', root).filter(
+      (control) => String(control.textContent || '').replace(/\s+/g, ' ').trim().toUpperCase() === 'SHOW MORE',
+    )
+    if (candidates.length !== 1) return 0
+    candidates[0].setAttribute('wf-xano-element', 'load-more')
+    return 1
+  }
+
   function projectItems(result) {
     return Array.isArray(result)
       ? result
@@ -5035,6 +5054,7 @@
   // markup is available here before DOMContentLoaded. Claim the category
   // widgets now; the legacy component embed sees its run-once flag and skips.
   prepareDashboardProjectLazyDetails()
+  prepareDashboardProjectLoadMore()
   prepareOpportunityForms()
   initOpportunityCategorySelects()
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)
@@ -5079,6 +5099,7 @@
     projectActionErrorMessage,
     formatProjectTimeline,
     prepareDashboardProjectLazyDetails,
+    prepareDashboardProjectLoadMore,
     initProjectDashboardWorkflow,
     opportunityPath,
     pageOppId,
