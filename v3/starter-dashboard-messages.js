@@ -483,23 +483,30 @@
 
     let displays
     if (state.recent) {
-      const recentIds = {}
       displays = state.recent.map((conv) => {
-        if (conv.id) recentIds[conv.id] = true
         return displayFromRecent(conv, unreadsById)
-      })
-      // Unread conversations the REST snapshot hasn't caught up with yet.
-      unreads.forEach((unread) => {
-        const id = unread.conversation && unread.conversation.id
-        if (!id || !recentIds[id]) displays.push(displayFromUnread(unread))
       })
     } else {
       displays = unreads.map(displayFromUnread)
     }
 
-    const unreadCount = state.recent
-      ? displays.filter((d) => d.unread).length
-      : unreads.length
+    const countedUnreadIds = {}
+    let unreadCount = 0
+    const countUnread = (id) => {
+      if (id) {
+        if (countedUnreadIds[id]) return
+        countedUnreadIds[id] = true
+      }
+      unreadCount += 1
+    }
+    displays.forEach((display) => {
+      if (display.unread) countUnread(display.id)
+    })
+    if (state.recent) {
+      unreads.forEach((unread) => {
+        countUnread(unread.conversation && unread.conversation.id)
+      })
+    }
 
     if (refs.loadingCard) refs.loadingCard.style.display = 'none'
 

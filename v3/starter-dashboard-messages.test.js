@@ -130,6 +130,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     getAttribute: () => null,
     removeAttribute() {},
   })
+  let list
 
   function makeCard() {
     const name = makeField()
@@ -146,7 +147,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
       '[data-messages-element="avatar"]': avatar,
       '.clickable_btn': button,
     }
-    return {
+    const card = {
       style: {},
       classList: makeClassList(),
       fields: { name, initials, preview, time, avatar, button },
@@ -154,17 +155,23 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
       getAttribute: () => null,
       addEventListener() {},
       cloneNode: makeCard,
-      remove() {},
+      remove() {
+        const index = list ? list.children.indexOf(card) : -1
+        if (index >= 0) list.children.splice(index, 1)
+      },
     }
+    return card
   }
 
   const template = makeCard()
-  const list = {
+  list = {
     style: {},
     children: [],
     querySelector: (selector) =>
       selector === TEMPLATE_SELECTOR ? template : null,
-    querySelectorAll: () => [],
+    querySelectorAll() {
+      return this.children.slice()
+    },
     appendChild(card) {
       this.children.push(card)
     },
@@ -253,7 +260,7 @@ function loadRenderedRecent(recent, unreads = [], options = {}) {
     window,
   })
 
-  return { calls, list }
+  return { calls, list, total }
 }
 
 /**
@@ -480,6 +487,44 @@ test('live unread state preserves bulk participant identity', async () => {
   assert.equal(card.fields.name.textContent, 'Acme Brand')
   assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
   assert.equal(card.fields.preview.textContent, 'Latest preview')
+})
+
+test('SDK-only unread stays out of cards but remains in the badge', async () => {
+  const laggingId = 'one:mem_me|mem_lagging'
+  const { list, total } = loadRenderedRecent(
+    {
+      id: 'one:mem_me|mem_known',
+      participant_name: 'Known Brand',
+      participant_photo_url: 'https://cdn.example/known.jpg',
+      last_message_text: 'Bulk snapshot',
+      last_message_at: 1,
+      unread: false,
+    },
+    [
+      {
+        conversation: {
+          id: laggingId,
+          subject: 'Conversation metadata',
+          photoUrl: 'https://cdn.example/conversation.jpg',
+        },
+        lastMessage: {
+          isByMe: true,
+          body: 'Waiting for the bulk snapshot',
+          timestamp: 2,
+        },
+      },
+    ],
+  )
+
+  await settle()
+
+  assert.equal(
+    list.children.some((card) =>
+      String(card.fields.button.href).includes(encodeURIComponent(laggingId)),
+    ),
+    false,
+  )
+  assert.equal(total.textContent, '1')
 })
 
 test('bulk recent conversations render when TalkJS initialization fails', async () => {
