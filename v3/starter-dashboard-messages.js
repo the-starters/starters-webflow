@@ -7,8 +7,7 @@
  * member's recent TalkJS conversations. Two data sources, merged:
  *   - Xano `starter/messages/recent` (TalkJS REST proxy) → recent
  *     conversations including already-read ones.
- *   - TalkJS JS SDK → live unread state, participant name/photo enrichment,
- *     and the unread count badge.
+ *   - TalkJS JS SDK → live unread state and the unread count badge.
  * If the Xano endpoint is unavailable the tile degrades to unreads-only.
  * Shows the empty state when there are no conversations at all.
  *
@@ -368,18 +367,25 @@
 
   function displayFromRecent(conv, unreadsById) {
     const enrich = conv.id && unreadsById[conv.id]
-    if (enrich) return displayFromUnread(enrich)
+    const unread = enrich && displayFromUnread(enrich)
 
     return {
-      id: conv.id || null,
-      // One-on-one conversations normally have no conversation-level subject
-      // or photo. TalkJS participant enrichment supplies the durable fallback
-      // for already-read threads.
-      title: conv.subject || conv.participant_name || 'Conversation',
-      photoUrl: conv.photo_url || conv.participant_photo_url || null,
-      preview: conv.last_message_text || '',
-      timestamp: conv.last_message_at || null,
-      unread: Boolean(conv.unread),
+      id: conv.id || (unread && unread.id) || null,
+      title:
+        conv.subject ||
+        conv.participant_name ||
+        (unread && unread.title) ||
+        'Conversation',
+      photoUrl:
+        conv.photo_url ||
+        conv.participant_photo_url ||
+        (unread && unread.photoUrl) ||
+        null,
+      preview:
+        (unread && unread.preview) || conv.last_message_text || '',
+      timestamp:
+        (unread && unread.timestamp) || conv.last_message_at || null,
+      unread: Boolean(enrich || conv.unread),
     }
   }
 
@@ -401,59 +407,6 @@
 
     target.addEventListener('click', () => {
       window.open(path, '_blank', 'noopener')
-    })
-  }
-
-  function enrichRecentParticipants(session, memberId, conversations, rerender) {
-    if (!session || typeof session.conversation !== 'function') return
-
-    conversations.forEach((conversation) => {
-      if (!conversation || !conversation.id) return
-      if (conversation.subject && conversation.photo_url) return
-
-      let subscription = null
-      const finish = () => {
-        Promise.resolve().then(() => {
-          if (subscription && typeof subscription.unsubscribe === 'function') {
-            subscription.unsubscribe()
-          }
-        })
-      }
-
-      try {
-        subscription = session
-          .conversation(conversation.id)
-          .subscribeParticipants((participants, loadedAll) => {
-            if (!loadedAll || !Array.isArray(participants)) {
-              finish()
-              return
-            }
-
-            const others = participants.filter(
-              (participant) =>
-                participant &&
-                participant.user &&
-                participant.user.id !== memberId,
-            )
-            if (others.length !== 1) {
-              finish()
-              return
-            }
-
-            const other = others[0].user
-            const nextName = other.name || null
-            const nextPhoto = other.photoUrl || null
-            const changed =
-              conversation.participant_name !== nextName ||
-              conversation.participant_photo_url !== nextPhoto
-            conversation.participant_name = nextName
-            conversation.participant_photo_url = nextPhoto
-            if (changed) rerender()
-            finish()
-          })
-      } catch (error) {
-        // The REST snapshot still renders with conversation-level fields.
-      }
     })
   }
 
@@ -660,7 +613,6 @@
       if (!items) return
       state.recent = items
       rerender()
-      enrichRecentParticipants(session, member.id, items, rerender)
     })
 
     session.unreads.onChange((unreads) => {

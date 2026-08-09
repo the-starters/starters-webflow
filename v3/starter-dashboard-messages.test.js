@@ -116,8 +116,8 @@ function loadTile(options = {}) {
   return { calls, warnings, errors, window }
 }
 
-function loadRenderedRecent(recent) {
-  const calls = { windows: [], unsubscribed: 0 }
+function loadRenderedRecent(recent, unreads = []) {
+  const calls = { windows: [], conversations: 0, fetches: 0 }
   const makeClassList = () => ({
     add() {},
     remove() {},
@@ -189,31 +189,13 @@ function loadRenderedRecent(recent) {
     ready: Promise.resolve(),
     User: function User() {},
     Session: function Session() {
-      this.conversation = () => ({
-        subscribeParticipants(handler) {
-          handler(
-            [
-              { user: { id: MY_ID, name: 'Current member' } },
-              {
-                user: {
-                  id: 'mem_other0000000000000000',
-                  name: 'Acme Brand',
-                  photoUrl: 'https://cdn.example/acme.jpg',
-                },
-              },
-            ],
-            true,
-          )
-          return {
-            unsubscribe() {
-              calls.unsubscribed += 1
-            },
-          }
-        },
-      })
+      this.conversation = () => {
+        calls.conversations += 1
+        return {}
+      }
       this.unreads = {
         onChange(handler) {
-          handler([])
+          handler(unreads)
         },
       }
     },
@@ -253,10 +235,15 @@ function loadRenderedRecent(recent) {
     console,
     document,
     encodeURIComponent,
-    fetch: async () => ({
-      ok: true,
-      json: async () => ({ items: [recent] }),
-    }),
+    fetch: async () => {
+      calls.fetches += 1
+      return {
+        ok: true,
+        json: async () => ({
+          items: Array.isArray(recent) ? recent : [recent],
+        }),
+      }
+    },
     window,
   })
 
@@ -440,6 +427,8 @@ test('a read conversation uses the other participant name and avatar', async () 
     id: 'one:mem_me|mem_other',
     subject: null,
     photo_url: null,
+    participant_name: 'Acme Brand',
+    participant_photo_url: 'https://cdn.example/acme.jpg',
     last_message_text: 'Ready when you are',
     last_message_at: Date.now(),
     unread: false,
@@ -452,7 +441,39 @@ test('a read conversation uses the other participant name and avatar', async () 
   assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
   assert.equal(card.fields.avatar.alt, 'Acme Brand')
   assert.equal(card.fields.initials.style.display, 'none')
-  assert.equal(calls.unsubscribed, 1)
+  assert.equal(calls.fetches, 1)
+  assert.equal(calls.conversations, 0)
+})
+
+test('live unread state preserves bulk participant identity', async () => {
+  const conversationId = 'one:mem_me|mem_other'
+  const { list } = loadRenderedRecent(
+    {
+      id: conversationId,
+      participant_name: 'Acme Brand',
+      participant_photo_url: 'https://cdn.example/acme.jpg',
+      last_message_text: 'Older preview',
+      last_message_at: 1,
+      unread: false,
+    },
+    [
+      {
+        conversation: { id: conversationId },
+        lastMessage: {
+          isByMe: true,
+          body: 'Latest preview',
+          timestamp: 2,
+        },
+      },
+    ],
+  )
+
+  await settle()
+
+  const card = list.children[list.children.length - 1]
+  assert.equal(card.fields.name.textContent, 'Acme Brand')
+  assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
+  assert.equal(card.fields.preview.textContent, 'Latest preview')
 })
 
 test('a message card links to its focused conversation in a new tab', async () => {
