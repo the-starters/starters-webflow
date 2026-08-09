@@ -598,6 +598,75 @@ test('project dashboard releases a synchronously failed state waiter', async () 
   assert.ok(await waitFor(() => subscriptions === 2 && unsubscriptions === 1))
 })
 
+test('project lifecycle action reloads cached wf-xano state before mutation', async () => {
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'End Project'
+  const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [card],
+  )
+  const events = []
+  const handlers = new Set()
+  let state = {
+    status: 'success',
+    data: { items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 1 }] },
+  }
+  const instance = {
+    getState: () => state,
+    refresh() {
+      events.push({ type: 'refresh' })
+      state = {
+        status: 'success',
+        data: { items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 2 }] },
+      }
+      handlers.forEach((handler) => handler(state))
+      return Promise.resolve(state)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/action/v3')) {
+        events.push({ type: 'action', body: JSON.parse(init.body) })
+        return response({ project: { id: 675, lifecycle_state: 'completion_requested' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.prompt = () => 'COMPLETE'
+  assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+
+  bridge.dispatchDocument('click', clickEvent(end).event)
+
+  assert.ok(await waitFor(() => events.some((event) => event.type === 'action')))
+  assert.deepEqual(events.slice(0, 2).map((event) => event.type), ['refresh', 'action'])
+  assert.equal(events.find((event) => event.type === 'action').body.expected_version, 2)
+})
+
 test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
   const bridge = await loadBridge(async () => response({}))
 

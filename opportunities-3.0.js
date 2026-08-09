@@ -2338,7 +2338,7 @@
     let project = refresh ? null : cachedProject
     if (project && (project.lifecycle_state || project.status)) return project
     try {
-      await refreshProjectWorkflow()
+      await refreshProjectWorkflow(projectWorkflowRole, refresh)
     } catch (error) {
       if (
         fallbackOnRefreshFailure &&
