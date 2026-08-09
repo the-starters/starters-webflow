@@ -35,6 +35,7 @@
   const SANDBOX_STATE_PREFIX = 'sandbox:'
   const SANDBOX_HOST = 'the-starters-3-0.webflow.io'
   const STRIPE_DASHBOARD_URL = 'https://dashboard.stripe.com/'
+  const RETURN_CHANNEL_NAME = 'starters-stripe-connect-return'
   const DASHBOARD_PATH = '/starter-dashboard'
   const CALLBACK_PATH = '/stripe-connect-callback'
   const MEMBERSTACK_TIMEOUT_MS = 10000
@@ -464,7 +465,27 @@
     }
   }
 
-  function watchStripeTabReturn(stripeTab, onReturn) {
+  function signalStripeReturn(memberId) {
+    if (
+      !memberId ||
+      typeof global.document === 'undefined' ||
+      typeof global.BroadcastChannel !== 'function'
+    ) {
+      return false
+    }
+    let channel = null
+    try {
+      channel = new global.BroadcastChannel(RETURN_CHANNEL_NAME)
+      channel.postMessage({ memberId: String(memberId), type: 'connected' })
+      return true
+    } catch (_error) {
+      return false
+    } finally {
+      if (channel && typeof channel.close === 'function') channel.close()
+    }
+  }
+
+  function watchStripeTabReturn(stripeTab, memberId, onReturn) {
     if (!stripeTab) return false
     const canWatchFocus =
       typeof global.addEventListener === 'function' &&
@@ -473,7 +494,19 @@
       canWatchFocus &&
       typeof global.setInterval === 'function' &&
       typeof global.clearInterval === 'function'
-    if (!canWatchFocus && !canWatchClosed) return false
+    let returnChannel = null
+    if (
+      memberId &&
+      typeof global.document !== 'undefined' &&
+      typeof global.BroadcastChannel === 'function'
+    ) {
+      try {
+        returnChannel = new global.BroadcastChannel(RETURN_CHANNEL_NAME)
+      } catch (_error) {
+        returnChannel = null
+      }
+    }
+    if (!canWatchFocus && !canWatchClosed && !returnChannel) return false
     let settled = false
     let closedTimer = null
     let handleFocus = null
@@ -482,6 +515,11 @@
       if (closedTimer !== null) {
         global.clearInterval(closedTimer)
         closedTimer = null
+      }
+      if (returnChannel) {
+        returnChannel.onmessage = null
+        if (typeof returnChannel.close === 'function') returnChannel.close()
+        returnChannel = null
       }
     }
     const handleReturn = function (reason) {
@@ -495,6 +533,19 @@
         return handleReturn(stripeTab.closed ? 'closed' : 'focus')
       }
       global.addEventListener('focus', handleFocus)
+    }
+    if (returnChannel) {
+      returnChannel.onmessage = function (event) {
+        const message = event && event.data
+        if (
+          !message ||
+          message.type !== 'connected' ||
+          String(message.memberId || '') !== String(memberId)
+        ) {
+          return null
+        }
+        return handleReturn('callback')
+      }
     }
     if (canWatchClosed) {
       closedTimer = global.setInterval(function () {
@@ -672,7 +723,7 @@
       }
 
       const recover = function (returnReason) {
-        const returnedFromStripe = returnReason === 'focus'
+        const returnedFromStripe = returnReason === 'callback'
         setStartPending(button, connectTile, false)
         return loadDashboardStatus(
           roots,
@@ -688,12 +739,16 @@
       const startSettled = new Promise(function (resolve) {
         settleStart = resolve
       })
-      const returnWatcher = watchStripeTabReturn(stripeTab, function (reason) {
-        return startSettled.then(function (result) {
-          if (result === true) return recover(reason)
-          return null
-        })
-      })
+      const returnWatcher = watchStripeTabReturn(
+        stripeTab,
+        memberId,
+        function (reason) {
+          return startSettled.then(function (result) {
+            if (result === true) return recover(reason)
+            return null
+          })
+        },
+      )
 
       return handleStart(
         button,
@@ -872,6 +927,7 @@
         throw new Error('Stripe Connect sandbox exchange was not isolated')
       }
 
+      signalStripeReturn(memberId)
       const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
       dashboardUrl.searchParams.set('stripe_connect', 'connected')
       if (sandbox) dashboardUrl.searchParams.set('stripe_connect_sandbox', 'verified')
@@ -926,6 +982,7 @@
     setEarningsAccess,
     setStartPending,
     setView,
+    signalStripeReturn,
     startInNewTab,
     startConnect,
     watchStripeTabReturn,

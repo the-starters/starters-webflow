@@ -1033,7 +1033,7 @@ test('early returning focus waits for start before releasing Stripe retry', asyn
 
     assert.equal(statusCount, 5)
     assert.equal(connect.getAttribute('aria-busy'), 'false')
-    assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
     assert.equal(
       await api.startInNewTab(
         runner,
@@ -1055,6 +1055,125 @@ test('early returning focus waits for start before releasing Stripe retry', asyn
     global.$memberstackDom = previous.memberstack
     global.open = previous.open
     global.removeEventListener = previous.removeEventListener
+    global.setTimeout = previous.setTimeout
+  }
+})
+
+test('verified callback signal renders review on the original dashboard', async () => {
+  const previous = {
+    BroadcastChannel: global.BroadcastChannel,
+    addEventListener: global.addEventListener,
+    clearInterval: global.clearInterval,
+    document: global.document,
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+    removeEventListener: global.removeEventListener,
+    setInterval: global.setInterval,
+    setTimeout: global.setTimeout,
+  }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const earnings = new FakeElement()
+  const runner = api.createExclusiveRunner()
+  const channels = []
+  let delivery = Promise.resolve()
+  let statusCount = 0
+  class FakeBroadcastChannel {
+    constructor(name) {
+      this.name = name
+      this.onmessage = null
+      channels.push(this)
+    }
+
+    postMessage(data) {
+      delivery = Promise.all(
+        channels
+          .filter((channel) => channel !== this && channel.name === this.name)
+          .map((channel) =>
+            channel.onmessage ? channel.onmessage({ data }) : null,
+          ),
+      )
+    }
+
+    close() {
+      const index = channels.indexOf(this)
+      if (index >= 0) channels.splice(index, 1)
+    }
+  }
+  global.BroadcastChannel = FakeBroadcastChannel
+  global.addEventListener = () => {}
+  global.removeEventListener = () => {}
+  global.setInterval = () => 42
+  global.clearInterval = () => {}
+  global.setTimeout = (callback) => {
+    callback()
+    return 1
+  }
+  global.document = {}
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.open = () => ({
+    closed: false,
+    close() {},
+    location: { replace() {} },
+    opener: global,
+  })
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    if (String(url).includes('/stripe_connect/status/v3')) {
+      statusCount += 1
+      return response({ connected: true, charges_enabled: false })
+    }
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  const tiles = api.resolveEarningsTiles([connect, earnings])
+  api.__resetXanoToken()
+
+  try {
+    assert.equal(
+      await api.startInNewTab(
+        runner,
+        connect,
+        connect,
+        [root],
+        'member-123',
+        tiles,
+      ),
+      true,
+    )
+
+    assert.equal(api.signalStripeReturn('member-123'), true)
+    await delivery
+
+    assert.equal(statusCount, 5)
+    assert.equal(connect.getAttribute('aria-busy'), 'false')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
+  } finally {
+    api.__resetXanoToken()
+    global.BroadcastChannel = previous.BroadcastChannel
+    global.addEventListener = previous.addEventListener
+    global.clearInterval = previous.clearInterval
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+    global.removeEventListener = previous.removeEventListener
+    global.setInterval = previous.setInterval
     global.setTimeout = previous.setTimeout
   }
 })
@@ -1294,6 +1413,7 @@ test('a persistent 401 rejects without retrying forever', async () => {
 
 test('callback strips OAuth params and exchanges for the live member session', async () => {
   const previous = {
+    BroadcastChannel: global.BroadcastChannel,
     document: global.document,
     fetch: global.fetch,
     history: global.history,
@@ -1304,6 +1424,15 @@ test('callback strips OAuth params and exchanges for the live member session', a
   const requests = []
   const historyCalls = []
   const assigned = []
+  const returnMessages = []
+
+  global.BroadcastChannel = class {
+    postMessage(message) {
+      returnMessages.push(message)
+    }
+
+    close() {}
+  }
 
   global.document = {
     title: 'Stripe callback',
@@ -1349,8 +1478,12 @@ test('callback strips OAuth params and exchanges for the live member session', a
     assert.deepEqual(assigned, [
       'https://thestarters.com/starter-dashboard?stripe_connect=connected',
     ])
+    assert.deepEqual(returnMessages, [
+      { memberId: 'mem-live', type: 'connected' },
+    ])
     assert.equal(states.error.style.display, 'none')
   } finally {
+    global.BroadcastChannel = previous.BroadcastChannel
     global.document = previous.document
     global.fetch = previous.fetch
     global.history = previous.history
