@@ -1169,8 +1169,12 @@ test('project lifecycle success survives repeated failure on the same replay pag
   assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
   const timers = []
   bridge.window.setTimeout = (callback, delay) => {
-    timers.push({ callback, delay })
-    return timers.length
+    const timer = { callback, delay, canceled: false }
+    timers.push(timer)
+    return timer
+  }
+  bridge.window.clearTimeout = (timer) => {
+    if (timer) timer.canceled = true
   }
 
   bridge.dispatchDocument('click', clickEvent(end).event)
@@ -1191,7 +1195,23 @@ test('project lifecycle success survives repeated failure on the same replay pag
   assert.equal(timers.length, 1)
   assert.equal(timers[0].delay, 3500)
 
+  bridge.dispatchDocument('click', clickEvent(end).event)
+  assert.ok(await waitFor(() => timers.length === 2))
+
+  assert.equal(timers[0].canceled, true)
+  assert.equal(timers[1].delay, 6000)
+  assert.equal(label.textContent, 'Project list cannot be refreshed')
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'error')
+
   timers[0].callback()
+  bridge.notifyMutations([{ type: 'childList', target: label }])
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(label.textContent, 'Project list cannot be refreshed')
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'error')
+
+  timers[1].callback()
 
   assert.equal(label.textContent, 'End Project')
   assert.equal(wrap.getAttribute('data-project-action-result'), null)

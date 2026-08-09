@@ -1931,6 +1931,7 @@
   let projectWorkflowActionLocks = new Map()
   let projectWorkflowFeedbackElement = null
   let projectWorkflowFeedbackTimer = null
+  const projectActionFeedbackTimers = new WeakMap()
   let activeReviewProject = null
   let reviewSubmitting = false
 
@@ -2289,11 +2290,19 @@
       label.dataset.projectActionRestLabel || label.dataset.projectActionAuthoredLabel
     label.textContent = message
     const wrap = projectActionWrap(action)
-    if (wrap) wrap.setAttribute('data-project-action-result', isError ? 'error' : 'success')
-    window.setTimeout(() => {
+    if (wrap) {
+      window.clearTimeout(projectActionFeedbackTimers.get(wrap))
+      wrap.setAttribute('data-project-action-result', isError ? 'error' : 'success')
+    }
+    const timer = window.setTimeout(() => {
+      if (wrap && projectActionFeedbackTimers.get(wrap) !== timer) return
       if (label.textContent === message) label.textContent = authored
-      if (wrap) wrap.removeAttribute('data-project-action-result')
+      if (wrap) {
+        wrap.removeAttribute('data-project-action-result')
+        projectActionFeedbackTimers.delete(wrap)
+      }
     }, isError ? 6000 : 3500)
+    if (wrap) projectActionFeedbackTimers.set(wrap, timer)
   }
 
   function lifecycleState(project) {
