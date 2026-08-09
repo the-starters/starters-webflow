@@ -1,14 +1,14 @@
 /**
- * Starter Dashboard 3.0 — Messages tile.
+ * Dashboard 3.0 — shared Messages tile.
  *
- * @release v1.59.151
+ * @release v1.59.154
  *
- * Binds the #messages tile on /starter-dashboard to the member's recent
- * TalkJS conversations. Two data sources, merged:
+ * Binds the #messages tile on /starter-dashboard and /brand-dashboard to the
+ * member's recent TalkJS conversations. Two data sources, merged:
  *   - Xano `starter/messages/recent` (TalkJS REST proxy) → recent
  *     conversations including already-read ones.
- *   - TalkJS JS SDK `session.unreads` → live unread state + sender
- *     name/photo enrichment, and the unread count badge.
+ *   - TalkJS JS SDK → live unread state, participant name/photo enrichment,
+ *     and the unread count badge.
  * If the Xano endpoint is unavailable the tile degrades to unreads-only.
  * Shows the empty state when there are no conversations at all.
  *
@@ -37,6 +37,7 @@
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const TALKJS_TIMEOUT_MS = 15000
   const MESSAGES_PATH = '/messages'
+  const CONVERSATION_PARAM = 'conversation'
   const MAX_PREVIEW_ITEMS = 8
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
@@ -371,12 +372,89 @@
 
     return {
       id: conv.id || null,
-      title: conv.subject || 'Conversation',
-      photoUrl: conv.photo_url || null,
+      // One-on-one conversations normally have no conversation-level subject
+      // or photo. TalkJS participant enrichment supplies the durable fallback
+      // for already-read threads.
+      title: conv.subject || conv.participant_name || 'Conversation',
+      photoUrl: conv.photo_url || conv.participant_photo_url || null,
       preview: conv.last_message_text || '',
       timestamp: conv.last_message_at || null,
       unread: Boolean(conv.unread),
     }
+  }
+
+  function conversationPath(conversationId) {
+    if (!conversationId) return MESSAGES_PATH
+    const params = new URLSearchParams()
+    params.set(CONVERSATION_PARAM, conversationId)
+    return MESSAGES_PATH + '?' + params.toString()
+  }
+
+  function bindConversationTarget(target, conversationId) {
+    const path = conversationPath(conversationId)
+    if (target && target.tagName === 'A') {
+      target.href = path
+      target.target = '_blank'
+      target.rel = 'noopener'
+      return
+    }
+
+    target.addEventListener('click', () => {
+      window.open(path, '_blank', 'noopener')
+    })
+  }
+
+  function enrichRecentParticipants(session, memberId, conversations, rerender) {
+    if (!session || typeof session.conversation !== 'function') return
+
+    conversations.forEach((conversation) => {
+      if (!conversation || !conversation.id) return
+      if (conversation.subject && conversation.photo_url) return
+
+      let subscription = null
+      const finish = () => {
+        Promise.resolve().then(() => {
+          if (subscription && typeof subscription.unsubscribe === 'function') {
+            subscription.unsubscribe()
+          }
+        })
+      }
+
+      try {
+        subscription = session
+          .conversation(conversation.id)
+          .subscribeParticipants((participants, loadedAll) => {
+            if (!loadedAll || !Array.isArray(participants)) {
+              finish()
+              return
+            }
+
+            const others = participants.filter(
+              (participant) =>
+                participant &&
+                participant.user &&
+                participant.user.id !== memberId,
+            )
+            if (others.length !== 1) {
+              finish()
+              return
+            }
+
+            const other = others[0].user
+            const nextName = other.name || null
+            const nextPhoto = other.photoUrl || null
+            const changed =
+              conversation.participant_name !== nextName ||
+              conversation.participant_photo_url !== nextPhoto
+            conversation.participant_name = nextName
+            conversation.participant_photo_url = nextPhoto
+            if (changed) rerender()
+            finish()
+          })
+      } catch (error) {
+        // The REST snapshot still renders with conversation-level fields.
+      }
+    })
   }
 
   function renderItem(refs, display) {
@@ -437,9 +515,7 @@
 
     const button = item.querySelector('.clickable_btn')
     const target = button || item
-    target.addEventListener('click', () => {
-      window.location.assign(MESSAGES_PATH)
-    })
+    bindConversationTarget(target, display.id)
 
     return item
   }
@@ -560,25 +636,31 @@
       })
     }
 
-    // Recent conversations (including read ones) via the Xano proxy.
-    // Non-fatal: the tile degrades to unreads-only if it fails.
-    fetchRecentConversations(memberstack)
-      .then((items) => {
-        state.recent = items
-        rerender()
-      })
-      .catch((error) => {
+    // Start the read snapshot while TalkJS initializes. Attach the rejection
+    // handler immediately so a slower SDK load cannot produce an unhandled
+    // promise rejection.
+    const recentPromise = fetchRecentConversations(memberstack).catch(
+      (error) => {
         console.warn(
           '[starter-dashboard] Recent conversations unavailable, showing unreads only',
           error,
         )
-      })
+        return null
+      },
+    )
 
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
     const session = new Talk.Session({
       appId: TALKJS_APP_ID,
       me,
+    })
+
+    recentPromise.then((items) => {
+      if (!items) return
+      state.recent = items
+      rerender()
+      enrichRecentParticipants(session, member.id, items, rerender)
     })
 
     session.unreads.onChange((unreads) => {

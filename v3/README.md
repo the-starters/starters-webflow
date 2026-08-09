@@ -2111,6 +2111,13 @@ state, sender name/photo enrichment, and the unread-count badge). When the Xano
 endpoint is unavailable the tile degrades to unreads-only, and it shows the
 authored empty state when there are no conversations at all.
 
+For already-read one-on-one conversations, the controller resolves the other
+participant from the authenticated TalkJS session because those conversations
+normally have no conversation-level subject or photo. Each rendered card opens
+`/messages?conversation=<TalkJS conversation id>` in a new tab; `messages.js`
+selects that existing conversation after mounting the inbox without creating or
+mutating a conversation.
+
 Wiring is wf-xano-style and multi-instance: each
 `data-messages-element="wrapper"` scopes one rendered instance containing
 `list`, `template` (the first card), `empty`, `loading`, `total` (unread

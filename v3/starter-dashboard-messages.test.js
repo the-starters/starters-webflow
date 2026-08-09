@@ -99,6 +99,7 @@ function loadTile(options = {}) {
   vm.runInNewContext(source, {
     JSON,
     Promise,
+    URLSearchParams,
     console: {
       error(...args) {
         errors.push(args.map(String).join(' '))
@@ -113,6 +114,153 @@ function loadTile(options = {}) {
   })
 
   return { calls, warnings, errors, window }
+}
+
+function loadRenderedRecent(recent) {
+  const calls = { windows: [], unsubscribed: 0 }
+  const makeClassList = () => ({
+    add() {},
+    remove() {},
+    toggle() {},
+  })
+  const makeField = (tagName = 'DIV') => ({
+    tagName,
+    style: {},
+    textContent: '',
+    getAttribute: () => null,
+    removeAttribute() {},
+  })
+
+  function makeCard() {
+    const name = makeField()
+    const initials = makeField()
+    const preview = makeField()
+    const time = makeField()
+    const avatar = makeField('IMG')
+    const button = Object.assign(makeField('A'), { addEventListener() {} })
+    const fields = {
+      '[data-messages-element="name"]': name,
+      '[data-messages-element="name_initials"]': initials,
+      '[data-messages-element="preview"]': preview,
+      '[data-messages-element="time"]': time,
+      '[data-messages-element="avatar"]': avatar,
+      '.clickable_btn': button,
+    }
+    return {
+      style: {},
+      classList: makeClassList(),
+      fields: { name, initials, preview, time, avatar, button },
+      querySelector: (selector) => fields[selector] || null,
+      getAttribute: () => null,
+      addEventListener() {},
+      cloneNode: makeCard,
+      remove() {},
+    }
+  }
+
+  const template = makeCard()
+  const list = {
+    style: {},
+    children: [],
+    querySelector: (selector) =>
+      selector === TEMPLATE_SELECTOR ? template : null,
+    querySelectorAll: () => [],
+    appendChild(card) {
+      this.children.push(card)
+    },
+  }
+  const total = makeField()
+  const empty = makeField()
+  const loading = makeField()
+  const viewAll = Object.assign(makeField('A'), { addEventListener() {} })
+  const wrapperFields = {
+    [LIST_SELECTOR]: list,
+    '[data-messages-element="total"]': total,
+    '[data-messages-element="empty"]': empty,
+    '[data-messages-element="loading"]': loading,
+    '[data-messages-element="view-all"]': viewAll,
+  }
+  const wrapper = {
+    getAttribute: () => null,
+    querySelector: (selector) => wrapperFields[selector] || null,
+  }
+
+  const Talk = {
+    ready: Promise.resolve(),
+    User: function User() {},
+    Session: function Session() {
+      this.conversation = () => ({
+        subscribeParticipants(handler) {
+          handler(
+            [
+              { user: { id: MY_ID, name: 'Current member' } },
+              {
+                user: {
+                  id: 'mem_other0000000000000000',
+                  name: 'Acme Brand',
+                  photoUrl: 'https://cdn.example/acme.jpg',
+                },
+              },
+            ],
+            true,
+          )
+          return {
+            unsubscribe() {
+              calls.unsubscribed += 1
+            },
+          }
+        },
+      })
+      this.unreads = {
+        onChange(handler) {
+          handler([])
+        },
+      }
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      getCurrentMember: async () => ({ data: { id: MY_ID } }),
+    },
+    getXanoAuthToken: async () => 'xano-token',
+    Talk,
+    open(...args) {
+      calls.windows.push(args)
+    },
+    addEventListener() {},
+    location: { assign() {} },
+    setInterval,
+    clearInterval,
+    setTimeout,
+    clearTimeout,
+  }
+  const document = {
+    addEventListener() {},
+    createElement() {
+      return { dataset: {} }
+    },
+    getElementById: () => null,
+    head: { appendChild() {} },
+    querySelectorAll: (selector) =>
+      selector === WRAPPER_SELECTOR ? [wrapper] : [],
+    readyState: 'complete',
+  }
+
+  vm.runInNewContext(source, {
+    JSON,
+    Promise,
+    URLSearchParams,
+    console,
+    document,
+    encodeURIComponent,
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({ items: [recent] }),
+    }),
+    window,
+  })
+
+  return { calls, list }
 }
 
 /**
@@ -285,4 +433,42 @@ test('the release marker matches the header @release line', () => {
     marker,
     'no "@release vX.Y.Z" line in the starter-dashboard-messages.js header',
   )
+})
+
+test('a read conversation uses the other participant name and avatar', async () => {
+  const { calls, list } = loadRenderedRecent({
+    id: 'one:mem_me|mem_other',
+    subject: null,
+    photo_url: null,
+    last_message_text: 'Ready when you are',
+    last_message_at: Date.now(),
+    unread: false,
+  })
+
+  await settle()
+
+  const card = list.children[list.children.length - 1]
+  assert.equal(card.fields.name.textContent, 'Acme Brand')
+  assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
+  assert.equal(card.fields.avatar.alt, 'Acme Brand')
+  assert.equal(card.fields.initials.style.display, 'none')
+  assert.equal(calls.unsubscribed, 1)
+})
+
+test('a message card links to its focused conversation in a new tab', async () => {
+  const { list } = loadRenderedRecent({
+    id: 'one:mem_me|mem_other',
+    participant_name: 'Acme Brand',
+    last_message_text: 'Hello',
+  })
+
+  await settle()
+
+  const link = list.children[list.children.length - 1].fields.button
+  assert.equal(
+    link.href,
+    '/messages?conversation=one%3Amem_me%7Cmem_other',
+  )
+  assert.equal(link.target, '_blank')
+  assert.equal(link.rel, 'noopener')
 })
