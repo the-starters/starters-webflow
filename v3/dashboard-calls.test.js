@@ -29,6 +29,9 @@ function element(attributes = {}) {
     getAttribute(name) {
       return this.attributes[name] || null
     },
+    hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(this.attributes, name)
+    },
     classList: {
       toggle() {},
     },
@@ -845,6 +848,57 @@ test('project Show more loads the next server page and hides after the final pag
   repaintState({ status: 'success', data: { hasMore: false } })
   assert.equal(control.hidden, true)
   assert.equal(control.attributes['aria-disabled'], 'true')
+  click({ preventDefault() {} })
+  assert.equal(loads, 1)
+})
+
+test('project pagination creates a scoped Show more control when Webflow omitted one', () => {
+  let click
+  const label = element()
+  label.textContent = 'Show more'
+  const template = element()
+  template.querySelector = (selector) => selector === '.button_main-text' ? label : null
+  template.cloneNode = () => {
+    const cloneLabel = element()
+    cloneLabel.textContent = 'Show more'
+    const clone = element({ 'bookings-load-more': 'calls', hidden: '' })
+    clone.querySelector = (selector) => selector === '.button_main-text' ? cloneLabel : null
+    clone.closest = () => null
+    clone.addEventListener = (name, handler) => {
+      if (name === 'click') click = handler
+    }
+    return clone
+  }
+  const appended = []
+  const root = element({ 'wf-xano-instance': 'dash-brand-projects' })
+  root.ownerDocument = {
+    querySelectorAll(selector) {
+      return selector === '.button_main-wrap' ? [template] : []
+    },
+  }
+  root.contains = () => false
+  root.appendChild = (child) => appended.push(child)
+  root.querySelectorAll = () => []
+  let loads = 0
+  const instance = {
+    root,
+    subscribe(handler) {
+      handler({ status: 'success', data: { hasMore: true } })
+      return () => {}
+    },
+    loadNext() {
+      loads += 1
+    },
+  }
+
+  api.wireProjectLoadMore(instance)
+  assert.equal(appended.length, 1)
+  const control = appended[0]
+  assert.equal(control.getAttribute('wf-xano-element'), 'load-more')
+  assert.equal(control.getAttribute('wf-xano-instance'), 'dash-brand-projects')
+  assert.equal(control.getAttribute('bookings-load-more'), null)
+  assert.equal(control.hidden, false)
+  assert.equal(control.style.display, '')
   click({ preventDefault() {} })
   assert.equal(loads, 1)
 })
