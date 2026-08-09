@@ -428,11 +428,11 @@ test('the release marker matches the header @release line', () => {
   )
 })
 
-test('a read conversation uses the other participant name and avatar', async () => {
+test('participant identity overrides conversation metadata', async () => {
   const { calls, list } = loadRenderedRecent({
     id: 'one:mem_me|mem_other',
-    subject: null,
-    photo_url: null,
+    subject: 'Project conversation',
+    photo_url: 'https://cdn.example/project.jpg',
     participant_name: 'Acme Brand',
     participant_photo_url: 'https://cdn.example/acme.jpg',
     last_message_text: 'Ready when you are',

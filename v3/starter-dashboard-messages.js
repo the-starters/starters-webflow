@@ -372,13 +372,13 @@
     return {
       id: conv.id || (unread && unread.id) || null,
       title:
-        conv.subject ||
         conv.participant_name ||
+        conv.subject ||
         (unread && unread.title) ||
         'Conversation',
       photoUrl:
-        conv.photo_url ||
         conv.participant_photo_url ||
+        conv.photo_url ||
         (unread && unread.photoUrl) ||
         null,
       preview:
