@@ -567,13 +567,15 @@
       event.preventDefault()
       return false
     }
-    if (element.tagName !== 'A') {
-      event.preventDefault()
-      const stripeTab = reserveStripeTab()
-      if (!navigateStripeTab(stripeTab, STRIPE_DASHBOARD_URL)) {
-        closeStripeTab(stripeTab)
-        return false
-      }
+    // Always own the navigation. Webflow can attach a same-tab redirect to an
+    // authored link even after target="_blank" is set, so relying on native
+    // anchor behavior can replace the dashboard. Reserving the tab directly
+    // keeps anchor and div tiles on the same proven path.
+    event.preventDefault()
+    const stripeTab = reserveStripeTab()
+    if (!navigateStripeTab(stripeTab, STRIPE_DASHBOARD_URL)) {
+      closeStripeTab(stripeTab)
+      return false
     }
     return true
   }

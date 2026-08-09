@@ -397,6 +397,43 @@ test('earnings opens Stripe only while charges are enabled', () => {
   assert.equal(earnings.classList.contains('is-disabled'), false)
 })
 
+test('the authored Earnings link prevents same-tab navigation and reserves a new tab', () => {
+  const previousOpen = global.open
+  const earnings = new FakeElement('A')
+  const destinations = []
+  const openCalls = []
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace: (value) => destinations.push(value) },
+    opener: global,
+  }
+  const event = {
+    prevented: false,
+    preventDefault() {
+      this.prevented = true
+    },
+  }
+  global.open = (...args) => {
+    openCalls.push(args)
+    return stripeTab
+  }
+
+  try {
+    api.setEarningsAccess([earnings], true)
+    assert.equal(api.handleEarningsClick(earnings, event), true)
+    assert.equal(event.prevented, true)
+    assert.deepEqual(openCalls, [['about:blank', '_blank']])
+    assert.deepEqual(destinations, ['https://dashboard.stripe.com/'])
+    assert.equal(stripeTab.opener, null)
+    assert.equal(stripeTab.closed, false)
+  } finally {
+    global.open = previousOpen
+  }
+})
+
 test('the authored Earnings div redirects only after it is enabled', () => {
   const previousOpen = global.open
   const earnings = new FakeElement()
