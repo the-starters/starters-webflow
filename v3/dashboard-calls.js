@@ -407,6 +407,37 @@
       })
   }
 
+  function ensureProjectLoadMore(instance) {
+    if (!instance || !instance.root) return []
+    const existing = findProjectLoadMore(instance.root)
+    if (existing.length) return existing
+
+    const root = instance.root
+    const doc = root.ownerDocument || global.document
+    if (!doc || typeof doc.querySelectorAll !== 'function') return []
+    const template = Array.prototype.slice
+      .call(doc.querySelectorAll('.button_main-wrap'))
+      .find(function (control) {
+        if (control === root || (typeof root.contains === 'function' && root.contains(control))) {
+          return false
+        }
+        const label = control.querySelector && control.querySelector('.button_main-text')
+        return clean(label && label.textContent).toLowerCase() === 'show more'
+      })
+    if (!template || typeof template.cloneNode !== 'function') return []
+
+    const control = template.cloneNode(true)
+    const key = root.getAttribute('wf-xano-instance')
+    control.removeAttribute('bookings-load-more')
+    control.removeAttribute('hidden')
+    control.setAttribute('data-dashboard-project-load-more', '')
+    control.setAttribute('wf-xano-element', 'load-more')
+    if (key) control.setAttribute('wf-xano-instance', key)
+    if (control.style) control.style.display = 'none'
+    root.appendChild(control)
+    return [control]
+  }
+
   function configureProjectWrappers() {
     if (!global.document || typeof global.document.querySelectorAll !== 'function') return
     PROJECT_INSTANCE_KEYS.forEach(function (key) {
@@ -442,16 +473,18 @@
     if (!instance || !instance.root) return
     const needsReset = configureProjectInstance(instance)
     if (needsReset && typeof instance.goToPage === 'function') instance.goToPage(1)
-    const controls = findProjectLoadMore(instance.root)
+    const controls = ensureProjectLoadMore(instance)
     if (!controls.length) return
 
     controls.forEach(function (control) {
       const nativeControl = control.getAttribute('wf-xano-element') === 'load-more'
-      if (!nativeControl && !control.__startersProjectLoadMoreBound) {
+      const generatedControl = control.hasAttribute &&
+        control.hasAttribute('data-dashboard-project-load-more')
+      if ((!nativeControl || generatedControl) && !control.__startersProjectLoadMoreBound) {
         control.__startersProjectLoadMoreBound = true
         control.addEventListener('click', function (event) {
-          if (control.getAttribute('aria-disabled') === 'true') return
           if (event && typeof event.preventDefault === 'function') event.preventDefault()
+          if (control.getAttribute('aria-disabled') === 'true') return
           if (typeof instance.loadNext === 'function') instance.loadNext()
         })
       }
@@ -759,6 +792,7 @@
     profileValues,
     configureProjectWrappers,
     findProjectLoadMore,
+    ensureProjectLoadMore,
     projectFilterIsActive,
     projectFilterVisible,
     wireProjectLoadMore,

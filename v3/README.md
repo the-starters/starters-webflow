@@ -1619,8 +1619,12 @@ Xano remains authoritative for every filter result, and every fetch uses
 `cache: 'no-store'`. Nothing is persisted to localStorage or shared across
 members, tabs, or page loads.
 The existing Designer-owned project `Show more` control follows wf-xano's
-authoritative `hasMore` state and appends the next 12-item server page. Brand
-and Starter Projects endpoints must accept `page`/`per_page`, page `core_projects_v3` before
+authoritative `hasMore` state and appends the next 12-item server page. When a
+Projects wrapper has no authored control, the controller clones an existing
+Webflow `Show more` button, scopes the clone to that wf-xano instance, and wires
+it once; it does not generate new button markup or replace an authored control.
+The control hides when the server pages are exhausted. Brand and Starter
+Projects endpoints must accept `page`/`per_page`, page `core_projects_v3` before
 per-project invoice/profile/review enrichment, and return `itemsTotal`,
 `pageTotal`, `curPage`, `nextPage`, and `prevPage`. `opportunities-3.0.js`
 consumes the same wf-xano instance state for project-action decoration; it must
