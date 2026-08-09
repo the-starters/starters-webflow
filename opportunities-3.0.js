@@ -2072,6 +2072,7 @@
           finish(new Error('Project list could not be loaded'))
         }
       })
+      if (settled && unsubscribe) unsubscribe()
     })
   }
 

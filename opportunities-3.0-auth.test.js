@@ -564,6 +564,40 @@ test('project action decoration reuses the wf-xano projection without a duplicat
   assert.equal(requests.some((url) => url.includes('/brand/projects/mine')), false)
 })
 
+test('project dashboard releases a synchronously failed state waiter', async () => {
+  const state = { status: 'error' }
+  let subscriptions = 0
+  let unsubscriptions = 0
+  const instance = {
+    getState: () => state,
+    subscribe(handler) {
+      subscriptions += 1
+      handler(state)
+      return () => {
+        unsubscriptions += 1
+      }
+    },
+  }
+
+  await loadBridge(
+    async (input) => {
+      throw new Error(`Unexpected request: ${input}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+
+  assert.ok(await waitFor(() => subscriptions === 2 && unsubscriptions === 1))
+})
+
 test('invoice helpers turn the Stripe prerequisite into an actionable dashboard message', async () => {
   const bridge = await loadBridge(async () => response({}))
 
