@@ -1,7 +1,7 @@
 /**
  * Dashboard 3.0 — shared Messages tile.
  *
- * @release v1.59.154
+ * @release v1.59.155
  *
  * Binds the #messages tile on /starter-dashboard and /brand-dashboard to the
  * member's recent TalkJS conversations. Two data sources, merged:
