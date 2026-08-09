@@ -2264,6 +2264,8 @@
       target.dataset.projectActionAuthoredLabel = target.textContent.trim()
     }
     target.dataset.projectActionRestLabel = label || target.dataset.projectActionAuthoredLabel
+    const wrap = projectActionWrap(action)
+    if (wrap && wrap.hasAttribute('data-project-action-result')) return
     // The project-card observer watches childList changes so it can decorate
     // cards appended by wf-xano. Assigning textContent replaces the label's
     // text node and therefore wakes that same observer. Avoid a self-sustaining

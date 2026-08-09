@@ -1167,6 +1167,11 @@ test('project lifecycle success survives repeated failure on the same replay pag
   )
   bridge.window.prompt = () => 'COMPLETE'
   assert.ok(await waitFor(() => end.getAttribute('data-project-action') === 'end'))
+  const timers = []
+  bridge.window.setTimeout = (callback, delay) => {
+    timers.push({ callback, delay })
+    return timers.length
+  }
 
   bridge.dispatchDocument('click', clickEvent(end).event)
 
@@ -1176,6 +1181,20 @@ test('project lifecycle success survives repeated failure on the same replay pag
   assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
   assert.equal(label.textContent, 'Completion requested')
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /lifecycle projection refresh failed/)
+
+  bridge.notifyMutations([{ type: 'childList', target: label }])
+  await Promise.resolve()
+  await Promise.resolve()
+
+  assert.equal(label.textContent, 'Completion requested')
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'success')
+  assert.equal(timers.length, 1)
+  assert.equal(timers[0].delay, 3500)
+
+  timers[0].callback()
+
+  assert.equal(label.textContent, 'End Project')
+  assert.equal(wrap.getAttribute('data-project-action-result'), null)
 })
 
 test('project lifecycle success uses stable feedback after page-one replay failure', async () => {
