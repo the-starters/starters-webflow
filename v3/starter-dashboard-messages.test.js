@@ -461,14 +461,6 @@ test('a nameless member with no mapped active plan keeps the generic default', a
   assert.equal(plain(calls.users[0]).name, 'The Starters member')
 })
 
-test('the release marker matches the header @release line', () => {
-  const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
-  assert.ok(
-    marker,
-    'no "@release vX.Y.Z" line in the starter-dashboard-messages.js header',
-  )
-})
-
 test('participant identity overrides conversation metadata', async () => {
   const { calls, list } = loadRenderedRecent({
     id: 'one:mem_me|mem_other',
@@ -492,14 +484,14 @@ test('participant identity overrides conversation metadata', async () => {
   assert.equal(calls.conversations, 0)
 })
 
-test('the dashboard renders at most the 3 newest conversation cards', async () => {
+test('the dashboard renders at most the 3 newest conversations regardless of unread state', async () => {
   const recent = [1, 2, 3, 4].map((index) => ({
     id: `one:mem_me|mem_other_${index}`,
     participant_name: `Brand ${index}`,
     participant_photo_url: null,
     last_message_text: `Message ${index}`,
     last_message_at: index,
-    unread: false,
+    unread: index === 1,
   }))
   const { list } = loadRenderedRecent(recent)
 

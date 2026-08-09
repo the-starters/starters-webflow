@@ -17,7 +17,7 @@
  * `name` (alias `title`), `name_initials`, `preview`, `time` and optional
  * `avatar` container inside the template. `data-messages-format="uppercase|
  * lowercase"` transforms a bound element's text. Optional
- * `data-messages-limit="<n>"` on the wrapper caps rendered cards (default 8).
+ * `data-messages-limit="<n>"` on the wrapper can lower the 3-card maximum.
  * All instances share one TalkJS session + one Xano fetch. The original
  * class-based selectors remain as fallbacks (legacy wrapper: `#messages`).
  */
@@ -562,17 +562,19 @@
     if (refs.emptyCard) refs.emptyCard.style.display = 'none'
 
     displays
-      // Unread first (the tile is capped, so unreads must never be pushed
-      // out by newer read conversations), then most recent within each group.
-      .sort(
-        (a, b) =>
-          (b.unread ? 1 : 0) - (a.unread ? 1 : 0) ||
-          (b.timestamp || 0) - (a.timestamp || 0),
-      )
+      .sort((a, b) => timestampValue(b.timestamp) - timestampValue(a.timestamp))
       .slice(0, refs.limit)
       .forEach((display) => {
         refs.list.appendChild(renderItem(refs, display))
       })
+  }
+
+  function timestampValue(timestamp) {
+    if (!timestamp) return 0
+    const numeric = Number(timestamp)
+    if (Number.isFinite(numeric)) return numeric
+    const parsed = Date.parse(timestamp)
+    return Number.isNaN(parsed) ? 0 : parsed
   }
 
   async function mountTile() {
