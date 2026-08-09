@@ -1033,7 +1033,7 @@ test('early returning focus waits for start before releasing Stripe retry', asyn
 
     assert.equal(statusCount, 5)
     assert.equal(connect.getAttribute('aria-busy'), 'false')
-    assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
     assert.equal(
       await api.startInNewTab(
         runner,

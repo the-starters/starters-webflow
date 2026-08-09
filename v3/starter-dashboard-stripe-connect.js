@@ -476,23 +476,29 @@
     if (!canWatchFocus && !canWatchClosed) return false
     let settled = false
     let closedTimer = null
+    let handleFocus = null
     const cleanup = function () {
-      if (canWatchFocus) global.removeEventListener('focus', handleReturn)
+      if (handleFocus) global.removeEventListener('focus', handleFocus)
       if (closedTimer !== null) {
         global.clearInterval(closedTimer)
         closedTimer = null
       }
     }
-    const handleReturn = function () {
+    const handleReturn = function (reason) {
       if (settled) return null
       settled = true
       cleanup()
-      return Promise.resolve().then(onReturn)
+      return Promise.resolve(reason).then(onReturn)
     }
-    if (canWatchFocus) global.addEventListener('focus', handleReturn)
+    if (canWatchFocus) {
+      handleFocus = function () {
+        return handleReturn(stripeTab.closed ? 'closed' : 'focus')
+      }
+      global.addEventListener('focus', handleFocus)
+    }
     if (canWatchClosed) {
       closedTimer = global.setInterval(function () {
-        if (stripeTab.closed) return handleReturn()
+        if (stripeTab.closed) return handleReturn('closed')
         return null
       }, 500)
     }
@@ -576,6 +582,7 @@
     returnedFromStripe,
     earningsTiles = resolveEarningsTiles([]),
     pollForSettlement = returnedFromStripe,
+    cleanReturnUrl = returnedFromStripe,
   ) {
     renderRoots(roots, 'loading')
     renderEarningsTiles(earningsTiles, 'loading')
@@ -599,7 +606,7 @@
       )
       return null
     } finally {
-      if (returnedFromStripe) cleanReturnMarker()
+      if (cleanReturnUrl) cleanReturnMarker()
     }
   }
 
@@ -664,21 +671,26 @@
         return false
       }
 
-      const recover = function () {
+      const recover = function (returnReason) {
+        const returnedFromStripe = returnReason === 'focus'
         setStartPending(button, connectTile, false)
-        return loadDashboardStatus(roots, false, earningsTiles, true).finally(
-          function () {
-            runExclusive.release()
-          },
-        )
+        return loadDashboardStatus(
+          roots,
+          returnedFromStripe,
+          earningsTiles,
+          true,
+          false,
+        ).finally(function () {
+          runExclusive.release()
+        })
       }
       let settleStart
       const startSettled = new Promise(function (resolve) {
         settleStart = resolve
       })
-      const returnWatcher = watchStripeTabReturn(stripeTab, function () {
+      const returnWatcher = watchStripeTabReturn(stripeTab, function (reason) {
         return startSettled.then(function (result) {
-          if (result === true) return recover()
+          if (result === true) return recover(reason)
           return null
         })
       })
