@@ -636,7 +636,7 @@ test('project dashboard releases a synchronously failed state waiter', async () 
   assert.ok(await waitFor(() => subscriptions === 2 && unsubscriptions === 1))
 })
 
-test('project lifecycle replay retries a transient page failure before mutation', async () => {
+test('project lifecycle replay retries transient failure and accepts earlier exhaustion', async () => {
   const end = el('button', { 'wf-xano-link': 'project-end' })
   const label = el('div', { class: 'button_main-text' })
   label.textContent = 'End Project'
@@ -655,11 +655,11 @@ test('project lifecycle replay retries a transient page failure before mutation'
     data: {
       items: [
         { id: 675, lifecycle_state: 'active', lifecycle_version: 1 },
-        ...Array.from({ length: 35 }, (_, index) => ({ id: index + 1 })),
+        ...Array.from({ length: 83 }, (_, index) => ({ id: index + 1 })),
       ],
       hasMore: true,
     },
-    query: { page: 3, perPage: 12 },
+    query: { page: 7, perPage: 12 },
   }
   const pageItems = (page) => {
     const start = (page - 1) * 12
@@ -674,7 +674,7 @@ test('project lifecycle replay retries a transient page failure before mutation'
     const items = append ? state.data.items.concat(pageItems(page)) : pageItems(page)
     state = {
       status: 'success',
-      data: { items, hasMore: page < 7 },
+      data: { items, hasMore: page < 6 },
       query: { page, perPage: 12 },
     }
     handlers.forEach((handler) => handler(state))
@@ -740,11 +740,129 @@ test('project lifecycle replay retries a transient page failure before mutation'
 
   assert.ok(await waitFor(() => events.some((event) => event.type === 'action')))
   assert.deepEqual(
-    events.slice(0, 5).map((event) => event.type),
-    ['page:1', 'page:2:error', 'page:2', 'page:3', 'action'],
+    events.slice(0, 8).map((event) => event.type),
+    ['page:1', 'page:2:error', 'page:2', 'page:3', 'page:4', 'page:5', 'page:6', 'action'],
   )
   assert.equal(events.find((event) => event.type === 'action').body.expected_version, 2)
-  assert.equal(state.data.items.length, 36)
+  assert.equal(state.data.items.length, 72)
+})
+
+test('project lifecycle lock follows replacement controls during replay', async () => {
+  const projectCard = (version) => {
+    const end = el('button', { 'wf-xano-link': 'project-end' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'End Project'
+    const wrap = el('div', { class: 'button_main-wrap' }, [end, label])
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+    return { card, end, label, version, wrap }
+  }
+  let live = projectCard(1)
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects', 'wf-xano-source': 'opp30:brand/projects/mine' },
+    [live.card],
+  )
+  const handlers = new Set()
+  const firstPageTwo = deferred()
+  let holdFirstPageTwo = true
+  let prompts = 0
+  let mutations = 0
+  let state = {
+    status: 'success',
+    data: {
+      items: [{ id: 675, lifecycle_state: 'active', lifecycle_version: 1 }],
+      hasMore: true,
+    },
+    query: { page: 2, perPage: 12 },
+  }
+  const replaceCard = (version) => {
+    live = projectCard(version)
+    live.card.parent = root
+    root.children = [live.card]
+  }
+  const publishPage = (page, append) => {
+    const pageItems = page === 1
+      ? [{ id: 675, lifecycle_state: 'active', lifecycle_version: 2 }]
+      : Array.from({ length: 12 }, (_, index) => ({ id: 12 + index }))
+    if (page === 1) replaceCard(2)
+    state = {
+      status: 'success',
+      data: {
+        items: append ? state.data.items.concat(pageItems) : pageItems,
+        hasMore: page < 2,
+      },
+      query: { page, perPage: 12 },
+    }
+    handlers.forEach((handler) => handler(state))
+    return state
+  }
+  const instance = {
+    getState: () => state,
+    goToPage(page) {
+      publishPage(page, false)
+      return Promise.resolve(state)
+    },
+    async loadNext() {
+      if (holdFirstPageTwo) {
+        holdFirstPageTwo = false
+        await firstPageTwo.promise
+      }
+      return publishPage(2, true)
+    },
+    subscribe(handler) {
+      handlers.add(handler)
+      handler(state)
+      return () => handlers.delete(handler)
+    },
+  }
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/action/v3')) {
+        mutations += 1
+        assert.equal(JSON.parse(init.body).expected_version, 2)
+        return response({
+          project: { id: 675, lifecycle_state: 'completion_requested', lifecycle_version: 3 },
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+      wfXano: {
+        get(key) {
+          return key === 'dash-brand-projects' ? instance : null
+        },
+      },
+    },
+  )
+  bridge.window.prompt = () => {
+    prompts += 1
+    return 'COMPLETE'
+  }
+  assert.ok(await waitFor(() => live.end.getAttribute('data-project-action') === 'end'))
+  const firstAction = live.end
+
+  bridge.dispatchDocument('click', clickEvent(firstAction).event)
+
+  assert.ok(await waitFor(() => live.end !== firstAction && live.wrap.getAttribute('aria-disabled') === 'true'))
+  bridge.dispatchDocument('click', clickEvent(live.end).event)
+  await new Promise(setImmediate)
+  assert.equal(prompts, 0)
+  assert.equal(mutations, 0)
+
+  firstPageTwo.resolve()
+  assert.ok(await waitFor(
+    () => mutations === 1 && live.wrap.getAttribute('aria-disabled') === null,
+  ))
+  assert.equal(prompts, 1)
 })
 
 test('project lifecycle success survives repeated failure on the same replay page', async () => {

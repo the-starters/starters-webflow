@@ -1912,6 +1912,7 @@
   let projectWorkflowBinding = null
   let projectWorkflowProjectionUnsubscribe = null
   let projectWorkflowProjectionInstance = null
+  let projectWorkflowActionLocks = new Set()
   let activeReviewProject = null
   let reviewSubmitting = false
 
@@ -2109,6 +2110,13 @@
     }
     let confirmedPage = 1
     while (confirmedPage < loadedPage) {
+      const confirmed = typeof instance.getState === 'function' ? instance.getState() : null
+      if (
+        confirmed &&
+        confirmed.status === 'success' &&
+        confirmed.data &&
+        confirmed.data.hasMore === false
+      ) break
       const requestedPage = confirmedPage + 1
       let lastError = null
       let advanced = false
@@ -2141,6 +2149,16 @@
     const id = projectIdFromCard(card)
     if (!id) return null
     return projectWorkflowItems.get(id) || { id, project_id: id }
+  }
+
+  function currentProjectLifecycleAction(projectId, fallback = null) {
+    const card = $$(PROJECT_CARD_SELECTOR).find((candidate) => projectIdFromCard(candidate) === projectId)
+    return (card && $(PROJECT_END_SELECTOR, card)) || fallback
+  }
+
+  function setProjectLifecyclePending(projectId, pending, fallback = null) {
+    const action = currentProjectLifecycleAction(projectId, fallback)
+    if (action) setOpportunityActionPending(projectActionWrap(action), pending)
   }
 
   function projectActionWrap(action) {
@@ -2312,6 +2330,9 @@
               ? 'Confirm End'
               : 'End Project'
       setProjectActionLabel(end, label)
+      if (projectWorkflowActionLocks.has(projectIdFromCard(card))) {
+        setOpportunityActionPending(projectActionWrap(end), true)
+      }
     }
 
     if (review) {
@@ -2535,25 +2556,39 @@
   }
 
   async function mutateProjectLifecycle(action, card) {
-    const project = await currentProjectContext(card, true)
-    if (!project) {
-      showProjectActionFeedback(action, 'Project details unavailable', true)
-      return
-    }
-    const lifecycleVersion = projectLifecycleVersion(project)
-    if (lifecycleVersion == null) {
-      showProjectActionFeedback(action, 'Project version unavailable. Please try again.', true)
-      return
-    }
-    const intent = projectActionIntent(project)
-    if (!intent) return
-    if (intent.action === 'terminate' && !intent.reason) {
-      showProjectActionFeedback(action, 'A reason is required to end early', true)
-      return
-    }
-    const pending = projectActionWrap(action)
-    setOpportunityActionPending(pending, true)
+    const projectId = projectIdFromCard(card)
+    if (!projectId || projectWorkflowActionLocks.has(projectId)) return
+    projectWorkflowActionLocks.add(projectId)
+    setProjectLifecyclePending(projectId, true, action)
     try {
+      const project = await currentProjectContext(card, true)
+      if (!project) {
+        showProjectActionFeedback(
+          currentProjectLifecycleAction(projectId, action),
+          'Project details unavailable',
+          true,
+        )
+        return
+      }
+      const lifecycleVersion = projectLifecycleVersion(project)
+      if (lifecycleVersion == null) {
+        showProjectActionFeedback(
+          currentProjectLifecycleAction(projectId, action),
+          'Project version unavailable. Please try again.',
+          true,
+        )
+        return
+      }
+      const intent = projectActionIntent(project)
+      if (!intent) return
+      if (intent.action === 'terminate' && !intent.reason) {
+        showProjectActionFeedback(
+          currentProjectLifecycleAction(projectId, action),
+          'A reason is required to end early',
+          true,
+        )
+        return
+      }
       const result = await API.projectAction({
         project_id: project.id || project.project_id,
         expected_version: lifecycleVersion,
@@ -2566,10 +2601,13 @@
       delete action.dataset.projectActionKey
       delete action.dataset.projectActionScope
       await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'lifecycle')
-      showProjectActionFeedback(action, projectMutationFeedback(updated || project))
+      showProjectActionFeedback(
+        currentProjectLifecycleAction(projectId, action),
+        projectMutationFeedback(updated || project),
+      )
     } catch (error) {
       showProjectActionFeedback(
-        action,
+        currentProjectLifecycleAction(projectId, action),
         projectActionErrorMessage(error, 'Project update failed. Please try again.'),
         true,
       )
@@ -2577,7 +2615,9 @@
         await refreshProjectWorkflow(projectWorkflowRole, true)
       }
     } finally {
-      setOpportunityActionPending(pending, false)
+      projectWorkflowActionLocks.delete(projectId)
+      setProjectLifecyclePending(projectId, false, action)
+      setOpportunityActionPending(projectActionWrap(action), false)
     }
   }
 
@@ -2732,6 +2772,7 @@
     if (projectWorkflowProjectionUnsubscribe) projectWorkflowProjectionUnsubscribe()
     projectWorkflowProjectionUnsubscribe = null
     projectWorkflowProjectionInstance = null
+    projectWorkflowActionLocks = new Set()
     activeReviewProject = null
     reviewSubmitting = false
     const reviewModal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
