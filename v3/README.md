@@ -2109,10 +2109,11 @@ conversations, merging two sources: Xano
 `starter/messages/recent` (a TalkJS REST proxy, which is what lets already-read
 conversations appear) and the TalkJS JS SDK `session.unreads` (live unread
 preview, timestamp, unread state, and the unread-count badge). Card rendering
-waits for the single bulk recent-conversations response, with no per-card API
-requests, so SDK timing cannot bypass the participant-identity boundary. When
-the Xano endpoint is unavailable the tile shows no message cards rather than
-rendering identity-incomplete SDK-only entries.
+waits for the shared bulk recent-conversations load, with no per-card API
+requests, so SDK timing cannot bypass the participant-identity boundary. A
+failed attempt is retried once; each attempt has a 15-second timeout and aborts
+if it stalls. When both attempts fail, the tile shows no message cards rather
+than rendering identity-incomplete SDK-only entries.
 
 For one-on-one conversations, the bulk recent-conversations response supplies
 `participant_name` and `participant_photo_url`. When those properties are
@@ -2136,8 +2137,8 @@ element's text, an optional `data-messages-limit="<n>"` on the wrapper can lower
 the default and maximum of 3 rendered cards, and `data-messages-class-unread`
 — on the wrapper or on the template card — renames the class toggled on an
 unread card (default `is-new`). All instances share one TalkJS session and the
-one bulk recent-conversations request; the original class-based selectors
-(legacy wrapper `#messages`) remain as fallbacks.
+same bulk recent-conversations load, including its single retry; the original
+class-based selectors (legacy wrapper `#messages`) remain as fallbacks.
 
 Run its focused test with:
 
