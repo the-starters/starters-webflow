@@ -602,17 +602,17 @@
       },
     )
 
+    recentPromise.then((items) => {
+      if (!items) return
+      state.recent = items
+      rerender()
+    })
+
     const Talk = await waitForTalkJs()
     const me = new Talk.User(talkUserFields(member))
     const session = new Talk.Session({
       appId: TALKJS_APP_ID,
       me,
-    })
-
-    recentPromise.then((items) => {
-      if (!items) return
-      state.recent = items
-      rerender()
     })
 
     session.unreads.onChange((unreads) => {

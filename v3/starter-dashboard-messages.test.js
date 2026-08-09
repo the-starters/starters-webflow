@@ -116,7 +116,7 @@ function loadTile(options = {}) {
   return { calls, warnings, errors, window }
 }
 
-function loadRenderedRecent(recent, unreads = []) {
+function loadRenderedRecent(recent, unreads = [], options = {}) {
   const calls = { windows: [], conversations: 0, fetches: 0 }
   const makeClassList = () => ({
     add() {},
@@ -186,7 +186,13 @@ function loadRenderedRecent(recent, unreads = []) {
   }
 
   const Talk = {
-    ready: Promise.resolve(),
+    ready: options.talkFails
+      ? {
+          then(resolve, reject) {
+            reject(new Error('TalkJS unavailable'))
+          },
+        }
+      : Promise.resolve(),
     User: function User() {},
     Session: function Session() {
       this.conversation = () => {
@@ -474,6 +480,27 @@ test('live unread state preserves bulk participant identity', async () => {
   assert.equal(card.fields.name.textContent, 'Acme Brand')
   assert.equal(card.fields.avatar.src, 'https://cdn.example/acme.jpg')
   assert.equal(card.fields.preview.textContent, 'Latest preview')
+})
+
+test('bulk recent conversations render when TalkJS initialization fails', async () => {
+  const { list } = loadRenderedRecent(
+    {
+      id: 'one:mem_me|mem_other',
+      participant_name: 'Acme Brand',
+      participant_photo_url: 'https://cdn.example/acme.jpg',
+      last_message_text: 'Still available',
+      last_message_at: 1,
+      unread: false,
+    },
+    [],
+    { talkFails: true },
+  )
+
+  await settle()
+
+  const card = list.children[list.children.length - 1]
+  assert.equal(card.fields.name.textContent, 'Acme Brand')
+  assert.equal(card.fields.preview.textContent, 'Still available')
 })
 
 test('a message card links to its focused conversation in a new tab', async () => {
