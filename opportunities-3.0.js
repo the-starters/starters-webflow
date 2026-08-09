@@ -1945,6 +1945,17 @@
     return ''
   }
 
+  function prepareDashboardProjectLazyDetails() {
+    const role = projectRoleForPath()
+    if (!role) return 0
+    const root = currentProjectWorkflowRoot(role)
+    const template = root && $('[wf-xano-element="template"]', root)
+    if (!template) return 0
+    const targets = $$('[wf-xano-element="details-target"]', template)
+    targets.forEach((target) => target.setAttribute('wf-xano-lazy-details', ''))
+    return targets.length
+  }
+
   function projectItems(result) {
     return Array.isArray(result)
       ? result
@@ -5005,6 +5016,7 @@
   // The CDN script is loaded with `defer` on opportunity pages, so the modal
   // markup is available here before DOMContentLoaded. Claim the category
   // widgets now; the legacy component embed sees its run-once flag and skips.
+  prepareDashboardProjectLazyDetails()
   prepareOpportunityForms()
   initOpportunityCategorySelects()
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)
@@ -5048,6 +5060,7 @@
     projectMutationFeedback,
     projectActionErrorMessage,
     formatProjectTimeline,
+    prepareDashboardProjectLazyDetails,
     initProjectDashboardWorkflow,
     opportunityPath,
     pageOppId,

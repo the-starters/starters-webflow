@@ -638,7 +638,11 @@ retain a direct paged fallback through Xano `brand/projects/mine` or
 `starter/projects/mine`. Each action must be inside an existing
 `.project_item[data-wf-xano-id]`; that row id is the canonical `project_id`. The
 controller decorates Webflow-authored controls and never creates project-card,
-modal, form, or button markup.
+modal, form, or button markup. At dashboard bootstrap, the controller marks every
+authored `[wf-xano-element="details-target"]` inside that instance's template
+with `wf-xano-lazy-details`, so wf-xano can defer the project disclosure's nested
+hydration until the member opens it instead of hydrating every disclosure on the
+12-item page during first render.
 
 The shared Project timeline value is repainted from each canonical project's
 `start_date` and `end_date` (falling back to `estimated_end_date`) as a readable
