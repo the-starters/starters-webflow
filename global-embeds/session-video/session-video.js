@@ -42,7 +42,6 @@
  *   [data-session-video="play"]              custom play/pause control
  *   [data-session-video="progress"]          fill element; width is set as a %
  *   [data-session-video="signup-trigger"]    hidden; carries data-modal-trigger
- *   [data-session-video="upsell-trigger"]    hidden; owned by ticket 07
  *
  * NO MODAL ID LIVES IN THIS FILE. The triggers carry the site modal module's own
  * `data-modal-trigger` attribute and this file only clicks them, so which modal
@@ -246,6 +245,13 @@
     this.player.on('play', function () {
       self.onPlay()
     })
+    // An ungated member has BOTH native controls and the custom one, so playback
+    // state has to be driven by the player's events, not only by our own
+    // activations. Without this handler a native pause left `playing` true and
+    // the next custom click called pause() on an already-paused video.
+    this.player.on('pause', function () {
+      self.onPause()
+    })
     this.player.on('seeked', function (data) {
       self.onSeeked(data)
     })
@@ -293,16 +299,32 @@
     if (data && typeof data.duration === 'number') this.duration = data.duration
     this.position = seconds
     this.paint()
-    if (seconds > 0 && !this.startEmitted) {
+    if (this.gated && seconds > 0 && !this.startEmitted) {
       this.startEmitted = true
       emit('session-video-preview-start', this.detail())
     }
     if (this.gated && seconds >= this.cut) this.enforce()
   }
 
+  /**
+   * `aria-pressed` alone announced "Play session video, pressed" while playing,
+   * which reads as a stuck toggle. The label is relabelled too, so the control
+   * always announces the action it will perform.
+   */
+  Controller.prototype.setPlaying = function (playing) {
+    this.playing = playing
+    if (!this.playControl) return
+    this.playControl.setAttribute('aria-pressed', playing ? 'true' : 'false')
+    this.playControl.setAttribute('aria-label', playing ? 'Pause session video' : 'Play session video')
+  }
+
   Controller.prototype.onPlay = function () {
-    if (this.playControl) this.playControl.setAttribute('aria-pressed', 'true')
+    this.setPlaying(true)
     if (this.gated && this.atWall) this.enforce()
+  }
+
+  Controller.prototype.onPause = function () {
+    this.setPlaying(false)
   }
 
   Controller.prototype.onSeeked = function (data) {
@@ -328,7 +350,7 @@
       this.clamping = true
       this.player.setCurrentTime(this.cut)
     }
-    if (this.playControl) this.playControl.setAttribute('aria-pressed', 'false')
+    this.setPlaying(false)
     this.paint()
     this.openWall()
   }
@@ -357,12 +379,13 @@
       return
     }
     if (!this.player) return
+    // Set optimistically AND corrected by the player's own play/pause events, so
+    // the control stays right whether the user drove us or the native controls.
     if (this.playing) {
-      this.playing = false
-      if (this.playControl) this.playControl.setAttribute('aria-pressed', 'false')
+      this.setPlaying(false)
       this.player.pause()
     } else {
-      this.playing = true
+      this.setPlaying(true)
       this.player.play()
     }
   }
@@ -373,10 +396,13 @@
     var at = this.position
     var stage = part(this.root, 'stage')
     if (this.player && typeof this.player.destroy === 'function') this.player.destroy()
-    if (this.frame && stage) {
-      var kids = stage.childNodes
-      var i = kids.indexOf(this.frame)
-      if (i >= 0) kids.splice(i, 1)
+    // childNodes is a NodeList, not an Array: no indexOf, no splice. An earlier
+    // version used both and threw TypeError here in every browser, AFTER the
+    // destroy above, leaving a late-resolving member with a dead iframe and no
+    // controller. The test harness's Array-shaped childNodes hid it.
+    if (this.frame) {
+      if (typeof this.frame.remove === 'function') this.frame.remove()
+      else if (stage && typeof stage.removeChild === 'function') stage.removeChild(this.frame)
     }
     this.atWall = false
     this.clamping = false

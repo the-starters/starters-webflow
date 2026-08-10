@@ -16,16 +16,71 @@ const source = fs.readFileSync(SOURCE_PATH, 'utf8')
 // are driven explicitly instead of waited on.
 // ---------------------------------------------------------------------------
 
+/**
+ * childNodes is deliberately NOT an Array. A real `childNodes` is a NodeList:
+ * length, item(), forEach() and indexed access, but NO indexOf, splice, find,
+ * map or push. An Array here is a fake the DOM does not match, and it silently
+ * greenlit a `kids.indexOf(frame); kids.splice(i, 1)` that threw TypeError in
+ * every browser. Keep this shape narrow so that class of bug fails in the test.
+ */
+class NodeList {
+  constructor() {
+    this._items = []
+  }
+  get length() {
+    return this._items.length
+  }
+  item(i) {
+    return this._items[i] || null
+  }
+  forEach(fn, thisArg) {
+    this._items.forEach(fn, thisArg)
+  }
+  [Symbol.iterator]() {
+    return this._items[Symbol.iterator]()
+  }
+  /** internal, standing in for the parser/DOM mutation the browser does */
+  _insert(node) {
+    this._items.push(node)
+    this._reindex()
+  }
+  _delete(node) {
+    const i = this._items.indexOf(node)
+    if (i < 0) return false
+    this._items.splice(i, 1)
+    this._reindex()
+    return true
+  }
+  _reindex() {
+    let i = 0
+    while (Object.prototype.hasOwnProperty.call(this, String(i))) delete this[i++]
+    this._items.forEach((n, idx) => {
+      this[idx] = n
+    })
+  }
+}
+
 class Element {
   constructor(nodeName, attrs = {}) {
     this.nodeName = String(nodeName).toUpperCase()
     this.nodeType = 1
     this._attrs = new Map(Object.entries(attrs).map(([k, v]) => [k, String(v)]))
     this.style = {}
-    this.childNodes = []
+    this.childNodes = new NodeList()
     this.parentNode = null
     this._listeners = new Map()
     this.clicks = 0
+  }
+
+  remove() {
+    if (this.parentNode) this.parentNode.childNodes._delete(this)
+    this.parentNode = null
+  }
+
+  removeChild(node) {
+    this.childNodes._delete(node)
+    node.parentNode = null
+    return node
   }
 
   getAttribute(name) {
@@ -41,7 +96,7 @@ class Element {
   append(...kids) {
     kids.forEach((k) => {
       k.parentNode = this
-      this.childNodes.push(k)
+      this.childNodes._insert(k)
     })
     return this
   }
@@ -263,7 +318,7 @@ async function setup({
     events,
     logs,
     body,
-    frame: () => stageOf(roots[0]).childNodes.find((c) => c.nodeName === 'IFRAME') || null,
+    frame: () => [...stageOf(roots[0]).childNodes].find((c) => c.nodeName === 'IFRAME') || null,
     trigger: () => roots[0].querySelector('[data-session-video="signup-trigger"]'),
     playControl: () => roots[0].querySelector('[data-session-video="play"]'),
     progress: () => roots[0].querySelector('[data-session-video="progress"]'),
@@ -512,6 +567,44 @@ test('an unrelated key does not operate the control', async () => {
   const s = await setup()
   s.playControl().key('Tab')
   assert.equal(s.players[0].calls.length, 0)
+})
+
+test('a native pause keeps the custom control in sync', async () => {
+  // A member has BOTH native controls and the custom one. Driving the native
+  // controls must not desync ours, or the next custom click does the wrong thing.
+  const s = await setup({ member: 'member' })
+  const p = s.players[0]
+  s.playControl().click() // custom play
+  p.fire('play')
+  p.fire('pause') // user paused with the NATIVE control
+  p.calls.length = 0
+  s.playControl().click()
+  assert.deepEqual(p.calls, [['play']], 'should play again, not pause an already-paused video')
+})
+
+test('a native play keeps the custom control in sync', async () => {
+  const s = await setup({ member: 'member' })
+  const p = s.players[0]
+  p.fire('play') // user pressed the NATIVE play
+  p.calls.length = 0
+  s.playControl().click()
+  assert.deepEqual(p.calls, [['pause']], 'should pause, not issue a second play')
+})
+
+test('the control relabels so it announces the action it will perform', async () => {
+  const s = await setup({ member: 'member' })
+  const p = s.players[0]
+  assert.match(s.playControl().getAttribute('aria-label'), /^Play/)
+  p.fire('play')
+  assert.match(s.playControl().getAttribute('aria-label'), /^Pause/)
+  p.fire('pause')
+  assert.match(s.playControl().getAttribute('aria-label'), /^Play/)
+})
+
+test('preview-start does not fire for a member, who has no preview', async () => {
+  const s = await setup({ member: 'member' })
+  s.players[0].seconds(30)
+  assert.equal(s.events.filter((e) => e.type === 'session-video-preview-start').length, 0)
 })
 
 test('aria-pressed tracks playback', async () => {
