@@ -19,7 +19,7 @@ function response({ ok = true, status = 200, data = {} } = {}) {
     }
 }
 
-function createHarness({ fetch, query = '' } = {}) {
+function createHarness({ fetch, memberstack, query = '', savedState } = {}) {
     const store = new Map()
     const configScript = {
         getAttribute(name) {
@@ -51,6 +51,8 @@ function createHarness({ fetch, query = '' } = {}) {
     }
     const window = {
         __STARTERS_QUIZ_EMAIL_TEST_HOOKS__: true,
+        __startersQuizEmailTestSavedState: savedState,
+        $memberstackDom: memberstack,
         crypto: crypto.webcrypto,
         fetch: fetch || (async () => response()),
         location: { search: query },
@@ -86,6 +88,51 @@ test('does not require native panel elements without the query gate', () => {
 
     assert.ok(harness.hooks)
     assert.equal(harness.window.__startersQuizEmailTesterBooted, true)
+})
+
+test('waits for the results owner to publish the current saved quiz', async () => {
+    let resolveSavedState
+    let settled = false
+    const savedState = {
+        ready: new Promise((resolve) => {
+            resolveSavedState = resolve
+        }),
+    }
+    const harness = createHarness({
+        memberstack: {
+            async getCurrentMember() {
+                return {
+                    data: {
+                        id: 'mem_brand_10',
+                        auth: { email: 'jp+brand10@thestarters.com' },
+                    },
+                }
+            },
+        },
+        savedState,
+    })
+
+    const contextPromise = harness.hooks.readContext().then((context) => {
+        settled = true
+        return context
+    })
+    await new Promise(setImmediate)
+    assert.equal(settled, false)
+
+    resolveSavedState({
+        quiz: {
+            updatedAt: '2026-08-10T09:15:00.000Z',
+            featuredFreelancerIds: ['current-1', 'current-2', 'current-3'],
+        },
+    })
+
+    const context = await contextPromise
+    assert.equal(context.quiz.updatedAt, '2026-08-10T09:15:00.000Z')
+    assert.deepEqual(Array.from(context.quiz.featuredFreelancerIds), [
+        'current-1',
+        'current-2',
+        'current-3',
+    ])
 })
 
 test('renders escaped quiz, Starter, and Learn content', () => {
@@ -226,4 +273,66 @@ test('trades the Memberstack cookie and sends only the controlled payload to Xan
     assert.equal(body.html.length, 1215)
     assert.equal(Object.hasOwn(body, 'recipient'), false)
     assert.equal(harness.store.has('starterQuizEmailTestPendingKey'), false)
+})
+
+test('reuses a retry key only for the same quiz revision', async () => {
+    const requestBodies = []
+    let sendAttempt = 0
+    const harness = createHarness({
+        fetch: async (url, options = {}) => {
+            if (url.includes('/auth/trade-token/v3')) {
+                return response({ data: { authToken: 'xano-auth-token' } })
+            }
+            if (url.endsWith('/quiz_email_test/send/v3')) {
+                requestBodies.push(JSON.parse(options.body))
+                sendAttempt += 1
+                if (sendAttempt < 3) {
+                    return response({
+                        ok: false,
+                        status: 503,
+                        data: { message: 'Ambiguous provider failure' },
+                    })
+                }
+                return response({
+                    data: { ok: true, status: 'sent', audit_id: 456 },
+                })
+            }
+            throw new Error(`Unexpected request: ${url}`)
+        },
+    })
+    const context = {
+        memberstack: {
+            async getMemberCookie() {
+                return 'memberstack-cookie'
+            },
+        },
+    }
+
+    await assert.rejects(
+        harness.hooks.sendMessage(context, {
+            revision: 'quiz-results-email-v3.1:quiz-a',
+            html: '<!doctype html>' + 'a'.repeat(1200),
+        }),
+        /Ambiguous provider failure/,
+    )
+    await assert.rejects(
+        harness.hooks.sendMessage(context, {
+            revision: 'quiz-results-email-v3.1:quiz-a',
+            html: '<!doctype html>' + 'a'.repeat(1200),
+        }),
+        /Ambiguous provider failure/,
+    )
+    await harness.hooks.sendMessage(context, {
+        revision: 'quiz-results-email-v3.1:quiz-b',
+        html: '<!doctype html>' + 'b'.repeat(1200),
+    })
+
+    assert.equal(
+        requestBodies[0].idempotency_key,
+        requestBodies[1].idempotency_key,
+    )
+    assert.notEqual(
+        requestBodies[1].idempotency_key,
+        requestBodies[2].idempotency_key,
+    )
 })

@@ -163,22 +163,28 @@
 
   async function readContext() {
     var memberstack = await waitForMemberstack()
+    var savedState = window.__startersQuizEmailTestSavedState
+    if (!savedState || !savedState.ready || typeof savedState.ready.then !== 'function') {
+      throw new Error('Quiz results state owner is unavailable')
+    }
     var responses = await Promise.all([
       memberstack.getCurrentMember(),
-      memberstack.getMemberJSON(),
+      savedState.ready,
     ])
     var member = unwrapData(responses[0])
-    var memberJson = unwrapData(responses[1])
+    var currentSavedQuiz = responses[1] || {}
 
     if (!member.id) throw new Error('Sign in before using the email tester')
     if (getMemberEmail(member) !== ALLOWED_EMAIL) {
       throw new Error('This production tester is not enabled for the signed-in member')
     }
-    if (!memberJson.starterQuiz || typeof memberJson.starterQuiz !== 'object') {
-      throw new Error('No saved starterQuiz payload was found in Memberstack')
+    if (!currentSavedQuiz.quiz || typeof currentSavedQuiz.quiz !== 'object') {
+      throw new Error(
+        currentSavedQuiz.error || 'No current saved starterQuiz payload was produced',
+      )
     }
 
-    return { memberstack: memberstack, member: member, quiz: memberJson.starterQuiz }
+    return { memberstack: memberstack, member: member, quiz: currentSavedQuiz.quiz }
   }
 
   function getAlgoliaConfig() {
@@ -478,13 +484,19 @@
   }
 
   function newPendingKey(revision) {
-    var current = sessionStorage.getItem(PENDING_KEY)
-    if (current) return current
+    var current = null
+    try {
+      current = JSON.parse(sessionStorage.getItem(PENDING_KEY) || 'null')
+    } catch (ignored) {}
+    if (current && current.revision === revision && current.key) return current.key
     var nonce = window.crypto.randomUUID
       ? window.crypto.randomUUID()
       : String(Date.now()) + '-' + Math.random().toString(16).slice(2)
     var key = 'quiz-email-v3:' + revision.slice(0, 64) + ':' + nonce
-    sessionStorage.setItem(PENDING_KEY, key)
+    sessionStorage.setItem(
+      PENDING_KEY,
+      JSON.stringify({ revision: revision, key: key }),
+    )
     return key
   }
 
@@ -583,6 +595,7 @@
       buildMessage: buildMessage,
       escapeHtml: escapeHtml,
       getMemberEmail: getMemberEmail,
+      readContext: readContext,
       renderEmail: renderEmail,
       sendMessage: sendMessage,
     }
