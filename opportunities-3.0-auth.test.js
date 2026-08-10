@@ -344,6 +344,11 @@ test('project timelines use compact readable calendar ranges without timezone sh
     'December 28, 2026 – January 10, 2027',
   )
   assert.equal(format({ start_date: '2026-08-06' }), 'Starting August 6, 2026 · Ongoing')
+  assert.equal(
+    format({ end_date: '2026-08-04', timeline_display: '- 2026-08-04' }),
+    'Ends August 4, 2026',
+  )
+  assert.equal(format({ estimated_end_date: '2026-08-04' }), 'Ends August 4, 2026')
   assert.equal(format({ start_date: '2026-08-06', end_date: '2026-08-06' }), 'August 6, 2026')
   assert.equal(
     format({ start_date: '2026-08-06T00:00:00.000Z', end_date: '2026-08-31T23:59:59+08:00' }),
@@ -356,6 +361,14 @@ test('project timelines use compact readable calendar ranges without timezone sh
   assert.equal(
     format({ start_date: '2026-08-06Trash', timeline_display: 'Unparseable timeline' }),
     'Unparseable timeline',
+  )
+  assert.equal(
+    format({
+      start_date: 'not-a-date',
+      end_date: '2026-08-04',
+      timeline_display: 'Invalid start - 2026-08-04',
+    }),
+    'Invalid start - 2026-08-04',
   )
   assert.equal(
     format({ start_date: '2026-08-06T25:00:00Z', timeline_display: 'Invalid timestamp' }),

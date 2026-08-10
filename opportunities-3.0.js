@@ -2370,7 +2370,12 @@
     const endValue = project && (project.end_date || project.estimated_end_date)
     const start = projectDateParts(startValue)
     const end = projectDateParts(endValue)
-    if (!start) return fallback
+    if (!start) {
+      // A missing start can still have a valid canonical end. Do not leave the
+      // Xano fallback as an ambiguous ISO fragment such as "- 2026-08-04".
+      if (!startValue && end) return 'Ends ' + projectDateLabel(end)
+      return fallback
+    }
     // A present but malformed end date is not the same as an ongoing project.
     // Keep the canonical fallback instead of manufacturing a misleading label.
     if (endValue && !end) return fallback
