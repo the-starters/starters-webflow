@@ -2803,7 +2803,6 @@
       target.removeAttribute('data-project-review-starter-name')
     })
     const form = $('form', modal)
-    clearReviewSubmissionKey(form)
     if (resetForm && form) form.reset()
   }
 
@@ -2842,7 +2841,6 @@
     if (form) {
       form.reset()
       form.style.display = ''
-      clearReviewSubmissionKey(form)
     }
     if (done) done.style.display = ''
     if (fail) fail.style.display = ''

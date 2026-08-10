@@ -2356,6 +2356,7 @@ test('review retries reuse their idempotency key until success', async () => {
     [card, modal],
   )
   const reviewBodies = []
+  const firstReview = deferred()
   const bridge = await loadBridge(
     async (input, init = {}) => {
       const url = String(input)
@@ -2374,9 +2375,11 @@ test('review retries reuse their idempotency key until success', async () => {
       }
       if (url.includes('/brand/reviews/submit')) {
         reviewBodies.push(JSON.parse(init.body))
-        return reviewBodies.length === 1
-          ? response({ message: 'Temporary failure' }, false, 503)
-          : response({ review_id: 42 })
+        if (reviewBodies.length === 1) {
+          await firstReview.promise
+          return response({ message: 'Temporary failure' }, false, 503)
+        }
+        return response({ review_id: 42 })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -2400,7 +2403,16 @@ test('review retries reuse their idempotency key until success', async () => {
     stopPropagation() {},
   })
   bridge.dispatchDocument('submit', submitEvent())
-  assert.ok(await waitFor(() => reviewBodies.length === 1 && fail.style.display === 'block'))
+  assert.ok(await waitFor(() => reviewBodies.length === 1))
+  const retryKey = form.dataset.projectReviewKey
+
+  bridge.dispatchWindow('modal-close', { modal })
+  assert.equal(form.dataset.projectReviewKey, retryKey)
+  firstReview.resolve()
+  assert.ok(await waitFor(() => fail.style.display === 'block'))
+
+  bridge.dispatchDocument('click', clickEvent(review).event)
+  await new Promise(setImmediate)
   bridge.dispatchDocument('submit', submitEvent())
   assert.ok(await waitFor(() => reviewBodies.length === 2))
 
