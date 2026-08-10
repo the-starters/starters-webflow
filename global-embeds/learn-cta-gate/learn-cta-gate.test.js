@@ -635,7 +635,7 @@ test('a non-intersecting observer callback does not open the gate', async () => 
   assert.equal(h.api.status().revealed, false)
 })
 
-test('the timeline fades the backdrop then slides the sheet 0.15s later', async () => {
+test('the timeline fades the backdrop then slides the sheet 0.3s later', async () => {
   const h = await harness({ chars: 6000 })
   h.fireObserver()
 
@@ -647,15 +647,44 @@ test('the timeline fades the backdrop then slides the sheet 0.15s later', async 
   const [, , backdropFrom, backdropTo] = fromTos[0]
   assert.deepEqual({ ...backdropFrom }, { opacity: 0 })
   assert.equal(backdropTo.opacity, 1)
-  assert.equal(backdropTo.duration, 0.4)
+  assert.equal(backdropTo.duration, 0.2)
   assert.equal(backdropTo.ease, 'power2.out')
 
   const [, , sheetFrom, sheetTo, position] = fromTos[1]
   assert.deepEqual({ ...sheetFrom }, { yPercent: 100 })
   assert.equal(sheetTo.yPercent, 0)
-  assert.equal(sheetTo.duration, 0.6)
-  assert.equal(sheetTo.ease, 'power3.out')
-  assert.equal(position, '<0.15')
+  assert.equal(sheetTo.duration, 0.35)
+  assert.equal(sheetTo.ease, 'power2.out')
+  assert.equal(position, '<0.3')
+})
+
+/**
+ * PR #369 said "A test pins lag > fadeDuration so a later tidy-up cannot quietly
+ * clamp one to the other and change the feel." That test never landed: the PR
+ * committed 133 lines of source and no test file at all, which is also why the
+ * assertions above stayed stale on a green-looking main. This is that test.
+ *
+ * It reads the shipped values off the timeline rather than off the module's
+ * constants, so clamping the lag in either the defaults or the attribute parser
+ * fails here.
+ */
+test('the shipped lag exceeds the shipped fade, so the dimming completes before the sheet moves', async () => {
+  const h = await harness({ chars: 6000 })
+  h.fireObserver()
+
+  const fromTos = h.gsapCalls.filter((c) => c[0] === 'fromTo')
+  const fadeDuration = fromTos[0][3].duration
+  const position = fromTos[1][4]
+
+  const lag = Number(String(position).replace(/^</, ''))
+  assert.ok(
+    Number.isFinite(lag),
+    'the sheet must be positioned relative to the start of the fade, as "<lag"',
+  )
+  assert.ok(
+    lag > fadeDuration,
+    `lag (${lag}) must exceed the fade (${fadeDuration}); a lag at or below it overlaps the two`,
+  )
 })
 
 test('reduced motion cross-fades and never slides', async () => {
