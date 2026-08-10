@@ -2,7 +2,7 @@
  * Session video gate — three free minutes of a Learn session, then the signup
  * wall, with the lock held by the player rather than by the modal.
  *
- * @release v1.59.169
+ * @release v1.59.170
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * Sessions template's before-</body> code.
@@ -57,7 +57,7 @@
   if (window.__startersSessionVideoBooted) return
   window.__startersSessionVideoBooted = true
 
-  var RELEASE = 'v1.59.169'
+  var RELEASE = 'v1.59.170'
   var LIB_SRC = 'https://player.vimeo.com/api/player.js'
   var DEFAULT_CUT_SECONDS = 180
   var MEMBER_BUDGET_MS = 1200
