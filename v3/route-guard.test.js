@@ -14,6 +14,10 @@ const BRAND_PAID = { id: 'm-brand-paid', planConnections: [plan('pln_new-paid-pl
 const TEST_BRAND = { id: 'm-test-brand', planConnections: [plan('pln_dorxata-test-brand-plan-777r02pa')] }
 const BRAND_FREE = { id: 'm-brand-free', planConnections: [plan('pln_free-plan-f6kn0dxz')] }
 const UNMAPPED = { id: 'm-unknown', planConnections: [plan('pln_unknown')] }
+const QUIZ_EMAIL_TEST_CANARY = {
+  ...BRAND_PAID,
+  auth: { email: 'jp+brand10@thestarters.com' },
+}
 
 /**
  * sessionStorage double that records every write, so the tests can prove the
@@ -1121,6 +1125,45 @@ test('a paid Brand stays on /all-starters and is bounced off /quiz-results', asy
   const bounced = loadGuard({ pathname: '/quiz-results', member: BRAND_PAID })
   await flush()
   assert.equal(bounced.location.replaced, '/brand-dashboard')
+})
+
+test('the exact paid Brand email can use the production quiz email canary only', async () => {
+  for (const pathname of ['/quiz-results', '/quiz-results/']) {
+    for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+      const allowed = loadGuard({
+        hostname,
+        pathname,
+        search: '?quizEmailTest=1',
+        member: QUIZ_EMAIL_TEST_CANARY,
+      })
+      await flush()
+      assert.equal(allowed.location.replaced, undefined, `${hostname}${pathname}`)
+      assert.deepEqual(allowed.attributes, {})
+    }
+  }
+
+  for (const options of [
+    { hostname: 'thestarters.com', search: '' },
+    { hostname: 'thestarters.com', search: '?quizEmailTest=true' },
+    { hostname: 'the-starters-3-0.webflow.io', search: '?quizEmailTest=1' },
+  ]) {
+    const denied = loadGuard({
+      ...options,
+      pathname: '/quiz-results',
+      member: QUIZ_EMAIL_TEST_CANARY,
+    })
+    await flush()
+    assert.equal(denied.location.replaced, '/brand-dashboard')
+  }
+
+  const wrongMember = loadGuard({
+    hostname: 'thestarters.com',
+    pathname: '/quiz-results',
+    search: '?quizEmailTest=1',
+    member: { ...BRAND_PAID, auth: { email: 'not-the-canary@example.com' } },
+  })
+  await flush()
+  assert.equal(wrongMember.location.replaced, '/brand-dashboard')
 })
 
 // This is the contract that lets quiz-results.js keep serving pre-signup
