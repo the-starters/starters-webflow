@@ -1,7 +1,7 @@
 /**
  * V3 protected-route guard.
  *
- * @release v1.59.86
+ * @release v1.59.163
  *
  * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
  * /login and /auth-route, so a logged-in member can still reach another role's
@@ -23,7 +23,8 @@
  *     and a free Brand who has not taken the quiz stays put,
  *   - send a logged-in member whose role does not belong on one of the
  *     ROLE_BOUNCE_PAGES (/quiz-results, /all-starters) to that member's role
- *     home, again leaving logged-out visitors completely alone,
+ *     home, apart from the exact production paid-Brand email canary, again
+ *     leaving logged-out visitors completely alone,
  *   - leave an authenticated-but-unmapped or cross-role-conflicted member on
  *     the page with an explicit error state instead of silently redirecting,
  *   - do nothing on a page it does not recognise (public/unlisted route).
@@ -57,6 +58,11 @@
   // and same `ready` status quiz-main/quiz-redirect.js reads.
   var PENDING_QUIZ_STORAGE_KEY = 'starterQuizPending'
   var PENDING_QUIZ_READY_STATUS = 'ready'
+  var QUIZ_EMAIL_TEST_CANARY_EMAIL = 'jp+brand10@thestarters.com'
+  var QUIZ_EMAIL_TEST_PRODUCTION_HOSTS = new Set([
+    'thestarters.com',
+    'www.thestarters.com',
+  ])
 
   // Identical to v3/auth-route.js and opportunities-3.0.js (MS_PLAN_ROLES).
   var PLAN_ROLES = {
@@ -490,6 +496,35 @@
   }
 
   /**
+   * Narrow production exception for the paid-Brand quiz email canary.
+   *
+   * Paid Brands normally leave /quiz-results for /brand-dashboard. The email
+   * tester must exercise that exact page with the dedicated production test
+   * member, without changing its paid Stripe plan. The exception is therefore
+   * closed on every independent boundary: exact path, production host, explicit
+   * query flag, and exact Memberstack email. The Xano endpoint independently
+   * repeats the member and recipient allowlist before it can send.
+   */
+  function isQuizEmailTestCanary(member, pathname) {
+    if (trimTrailingSlash(pathname) !== '/quiz-results') return false
+    if (!QUIZ_EMAIL_TEST_PRODUCTION_HOSTS.has(window.location.hostname)) {
+      return false
+    }
+
+    var params = new URLSearchParams(window.location.search || '')
+    if (params.get('quizEmailTest') !== '1') return false
+
+    var email =
+      member && member.auth && member.auth.email
+        ? member.auth.email
+        : member &&
+          (member.email ||
+            (member.customFields && member.customFields.email))
+
+    return String(email || '').trim().toLowerCase() === QUIZ_EMAIL_TEST_CANARY_EMAIL
+  }
+
+  /**
    * Where a member on a ROLE_BOUNCE_PAGES page belongs.
    *
    * '' -> stay (also the answer for any page that is not a role-bounce page)
@@ -501,6 +536,7 @@
     if (!rule) return '' // page has no role-bounce rule
     var role = memberRole(member)
     if (!role) return null // authenticated but no mapped active plan
+    if (role === 'brand-paid' && isQuizEmailTestCanary(member, pathname)) return ''
     if (rule.roles.indexOf(role) === -1) return roleHome(member)
     if (rule.enforceBrandFreeQuizState && role === 'brand-free') {
       // A ready pre-signup payload IS a completed quiz for this decision. It is
@@ -871,7 +907,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/route-guard.test.js drift guard asserts they match.
-    release: 'v1.59.86',
+    release: 'v1.59.163',
     activePlanIds: activePlanIds,
     roleResolution: roleResolution,
     memberRole: memberRole,
@@ -893,6 +929,7 @@
     // Member-only role bounce (/quiz-results, /all-starters).
     isRoleBouncePage: isRoleBouncePage,
     roleBounceRolesFor: roleBounceRolesFor,
+    isQuizEmailTestCanary: isQuizEmailTestCanary,
     roleBounceTargetFor: roleBounceTargetFor,
   }
   window.StartersV3RouteGuard = api

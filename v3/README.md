@@ -244,8 +244,11 @@ because they are entered from marketing flows where a login form would ask a
 stranger to authenticate into a funnel step they have no account for yet.
 **Member-only role bounce:** `/quiz-results` and `/all-starters` (both slash
 forms) borrow the member-home bounce's silence and add the guarded pages' role
-test, so a logged-in member whose role does not belong there goes to their role
-home while every other visitor is untouched. Talent leaves both; a free Brand
+test, so a logged-in member whose role does not belong there normally goes to
+their role home while every other visitor is untouched. The sole exception is
+the exact production paid-Brand email canary documented in the root
+[Quiz-results email tester](../README.md#quiz-results-email-tester) section.
+Talent leaves both; a free Brand
 stays on both, though on `/quiz-results` only once the quiz is done, since before
 that its role home is `/quiz`. "Done" there means either the `starter-quiz`
 custom field or a `ready` `sessionStorage.starterQuizPending` payload — the

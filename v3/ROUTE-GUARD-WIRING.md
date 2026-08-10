@@ -1,15 +1,13 @@
 # V3 Route Guard Wiring
 
-Status: Installed sitewide on staging (2026-08-03). The staging site
-`the-starters-3-0.webflow.io` loads it from project Custom Code head at jsDelivr.
-The production custom-domain publish is still deferred.
+Status: Sitewide route guard for staging and production. The production quiz
+email-test canary requires `v1.59.163` or later on both custom domains; verify
+the served release before operator testing.
 
-> **Embed pin (checked 2026-08-04):** the staging head embed is pinned to a
-> specific tag (`@v1.59.84` at the time of writing), not `@latest`. A new git tag
-> therefore does **not** deploy a change on its own — the embed URL has to be
-> bumped to the new tag as well. Re-check the head code before assuming a tag
-> shipped; if the embed is ever moved back to `@latest`, tagging alone is enough
-> again.
+> **Embed pin:** a head embed pinned to a specific tag does **not** deploy a new
+> git tag on its own; the embed URL has to be bumped too. Re-check the head code
+> before assuming a tag shipped. If the embed uses `@latest`, tagging is enough,
+> subject to CDN cache verification.
 
 Tracking: Jira `INITIATIVE-132`. This router release remains independent from
 the `INITIATIVE-131` points reconciliation and dashboard tile rollout.
@@ -237,14 +235,14 @@ and only ever to their own role home.
 
 | Page | Roles that stay | Quiz-state rule |
 | --- | --- | --- |
-| `/quiz-results` and `/quiz-results/` | Brand free | Yes — see below, including the pending-payload exception |
+| `/quiz-results` and `/quiz-results/` | Brand free; exact production email-test canary | Yes — see below, including the pending-payload exception |
 | `/all-starters` and `/all-starters/` | Brand paid, Brand free | No |
 
 | Visitor state on a role-bounce page | Action |
 | --- | --- |
 | Logged out, or Memberstack unavailable | Nothing at all: no redirect, no attribute, no event |
 | Role on the page's allowlist | Stay, with no attribute either |
-| Role not on the allowlist | Replace with the role home (never the other role's page) |
+| Role not on the allowlist | Replace with the role home (never the other role's page), except for the separately gated production canary |
 | Authenticated but unmapped or cross-role conflicted | Stay, with a `console.error` only |
 
 Neither page may become a guarded page. `/quiz-results` legitimately serves
@@ -295,8 +293,11 @@ about to persist. Properties worth knowing:
   deliberately more tolerant of a status-less payload; this gate is not.)
 - **Scoped to this one branch.** It is consulted only inside
   `rule.enforceBrandFreeQuizState && role === 'brand-free'`. The wrong-role
-  bounces run first, so a paid Brand or a Talent member on `/quiz-results` is
-  still sent to their own home whatever sits in `sessionStorage`.
+  bounces run first, so a Talent member on `/quiz-results` is still sent to its
+  own home whatever sits in `sessionStorage`. A paid Brand is also sent home
+  unless it matches the separately gated production canary documented in the
+  root [Quiz-results email tester](../README.md#quiz-results-email-tester)
+  section.
   `brandFreeHome()`, `roleHome()`, `redirectTargetFor()`, the member-home bounce,
   and the homepage overrides all still read the durable field only.
 - **A genuine never-took-the-quiz free Brand is still bounced** to `/quiz`, which
@@ -483,7 +484,7 @@ curl -fsS "https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/r
 ```
 
 ```js
-window.StartersV3RouteGuard.release // -> 'v1.59.86'
+window.StartersV3RouteGuard.release // -> 'v1.59.163'
 window.StartersV3AuthRouter.release
 window.StartersBuildProfileRedirect.release
 window.StartersCompleteProfileRedirect.release
