@@ -2328,6 +2328,101 @@ test('review success survives a failed projection refresh', async () => {
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /review projection refresh failed/)
 })
 
+test('review submission enforces rating and feedback rules and locks duplicate submits', async () => {
+  const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
+  const reviewWrap = el('div', { class: 'button_main-wrap' }, [review])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [reviewWrap])
+  const rating = el('input', { name: 'Call-Rating' })
+  const feedback = el('textarea', { name: 'Public-Feedback' })
+  const submit = el('button', { type: 'submit' })
+  const form = el('form', {}, [rating, feedback, submit])
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = '[Starter Name]'
+  const done = el('div', { class: 'w-form-done' })
+  const fail = el('div', { class: 'w-form-fail' })
+  const modal = el(
+    'dialog',
+    { 'data-modal-target': 'rate-starter-call' },
+    [starterName, form, done, fail],
+  )
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
+  const pendingReview = deferred()
+  const reviewBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            lifecycle_version: 4,
+            review_eligible: true,
+            has_review: false,
+            starter_name: 'JP Test',
+          }],
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewBodies.push(JSON.parse(init.body))
+        await pendingReview.promise
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  assert.ok(await waitFor(() => review.getAttribute('data-project-action') === 'review'))
+  bridge.dispatchDocument('click', clickEvent(review).event)
+  await new Promise(setImmediate)
+
+  const submitEvent = () => ({
+    target: form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  rating.value = '0'
+  feedback.value = 'Valid review feedback.'
+  bridge.dispatchDocument('submit', submitEvent())
+  assert.match(fail.textContent, /rating from 1 to 5/i)
+  assert.equal(reviewBodies.length, 0)
+
+  rating.value = '5'
+  feedback.value = 'Too short'
+  bridge.dispatchDocument('submit', submitEvent())
+  assert.match(fail.textContent, /between 10 and 4,000 characters/i)
+  assert.equal(reviewBodies.length, 0)
+
+  feedback.value = 'x'.repeat(4001)
+  bridge.dispatchDocument('submit', submitEvent())
+  assert.match(fail.textContent, /between 10 and 4,000 characters/i)
+  assert.equal(reviewBodies.length, 0)
+
+  feedback.value = 'Excellent canonical project delivery.'
+  bridge.dispatchDocument('submit', submitEvent())
+  assert.ok(await waitFor(() => reviewBodies.length === 1))
+  assert.equal(submit.disabled, true)
+
+  bridge.dispatchDocument('submit', submitEvent())
+  await new Promise(setImmediate)
+  assert.equal(reviewBodies.length, 1)
+
+  pendingReview.resolve()
+  assert.ok(await waitFor(() => done.style.display === 'block'))
+  assert.equal(submit.disabled, false)
+})
+
 test('review retries reuse their idempotency key until success', async () => {
   const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
   const reviewLabel = el('div', { class: 'button_main-text' })
