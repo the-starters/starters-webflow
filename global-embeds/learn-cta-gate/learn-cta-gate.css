@@ -1,0 +1,70 @@
+/* learn-cta-gate.css — the CLOSED state of the Learn CTA gate.
+ *
+ * @release v1.59.165
+ *
+ * WHY THIS IS A STYLESHEET AND NOT DESIGNER WORK. The closed state needs
+ * `visibility` and `pointer-events`. Neither is exposed in the Webflow style
+ * panel, and the wrapper is `position: fixed; inset: 0` — an `opacity: 0`
+ * wrapper without `pointer-events: none` would swallow every click on the
+ * article underneath it while still being invisible. So the whole closed state
+ * lives here, next to the script that opens it, instead of being split across
+ * Designer and code.
+ *
+ * FAIL-OPEN. If this file loads and learn-cta-gate.js does not (CDN blip, JS
+ * error), the gate simply never opens and the article stays readable. That is
+ * the intended failure direction: a broken paywall that leaks is far better
+ * than a broken paywall that traps the reader behind a gate with no CTA.
+ *
+ * The `html` prefix costs one specificity point (0,1,1) so these rules beat a
+ * same-specificity Webflow class rule (0,1,0) regardless of stylesheet order.
+ * There is no conflicting Webflow rule today; this is insurance against a
+ * future Designer interaction touching opacity or transform on these classes.
+ *
+ * Load in the Learn article template's HEAD code, before the script tag.
+ */
+
+/* Wrapper: section_learn-cta-gate. Stays display:flex so Memberstack's
+ * `data-ms-content="!learn-access"` keeps sole ownership of `display` — the
+ * script reads computed display to decide whether it is allowed to run at all. */
+html [data-learn-gate-element="wrapper"] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Backdrop: learn-cta-gate_backdrop. Fades 0 -> 1 on reveal. */
+html [data-learn-gate-element="backdrop"] {
+  opacity: 0;
+}
+
+/* Sheet: learn-cta-gate_contents.
+ *
+ * DELIBERATELY NO `transform` HERE. The sheet's off-screen start is owned by
+ * GSAP alone, and the two cannot share the property:
+ *
+ *   GSAP reads the element's COMPUTED transform, which is a matrix in pixels —
+ *   a matrix cannot carry "100%". So a CSS `translateY(100%)` is parsed into
+ *   GSAP's `y` component as ~450px, and the tween's `yPercent: 100` is then
+ *   applied as a SEPARATE additional offset on top of it. The sheet starts at
+ *   200% down and the tween lands it at `y: 450px` — still a full sheet-height
+ *   below its resting place, so it animates and is never seen.
+ *
+ * Nothing is needed here anyway: the wrapper above is `visibility: hidden`, so
+ * the sheet's resting position is invisible until the timeline starts, and the
+ * timeline parks it at `yPercent: 100` in the same tick that it reveals the
+ * wrapper. The script also parks it at init as a belt.
+ *
+ * `will-change` is the one transform-adjacent hint that is safe to set here;
+ * the script clears it when the timeline finishes so the promoted layer does
+ * not outlive the single animation that needs it. */
+html [data-learn-gate-element="content"] {
+  will-change: transform;
+}
+
+/* Reduced motion: the script cross-fades instead of sliding, and clears the
+ * hint it will not use. */
+@media (prefers-reduced-motion: reduce) {
+  html [data-learn-gate-element="content"] {
+    will-change: auto;
+  }
+}
