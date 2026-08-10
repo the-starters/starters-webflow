@@ -1629,6 +1629,54 @@ test('a persistent 401 rejects without retrying forever', async () => {
   }
 })
 
+test('OAuth exchange 401 never replays a one-time code', async () => {
+  const previous = {
+    fetch: global.fetch,
+    memberstack: global.$memberstackDom,
+  }
+  global.$memberstackDom = { getMemberCookie: async () => 'ms-cookie' }
+
+  try {
+    for (const sandbox of [false, true]) {
+      const requests = []
+      let trades = 0
+      api.__resetXanoToken()
+      global.fetch = async (url, options) => {
+        if (String(url).includes('/auth/trade-token/v3')) {
+          trades += 1
+          return response({ authToken: 'xano-token-' + trades })
+        }
+        requests.push({ url, options })
+        return response({ error: 'expired token' }, { ok: false, status: 401 })
+      }
+
+      await assert.rejects(
+        () => api.exchangeCode('one-time-code', 'opaque-state-1234567890', sandbox),
+        /oauth_exchange\/v3 failed \(401\)/,
+      )
+
+      assert.equal(requests.length, 1, 'the authorization code is sent once')
+      assert.equal(trades, 1, 'the exchange does not refresh authentication')
+      assert.deepEqual(
+        JSON.parse(requests[0].options.body),
+        sandbox
+          ? { code: 'one-time-code' }
+          : { code: 'one-time-code', state: 'opaque-state-1234567890' },
+      )
+      assert.equal(
+        new URL(requests[0].url).pathname.endsWith(
+          sandbox ? api.SANDBOX_EXCHANGE_PATH : api.EXCHANGE_PATH,
+        ),
+        true,
+      )
+    }
+  } finally {
+    global.fetch = previous.fetch
+    global.$memberstackDom = previous.memberstack
+    api.__resetXanoToken()
+  }
+})
+
 test('callback forwards opaque OAuth state and exchanges for the live member session', async () => {
   const previous = {
     BroadcastChannel: global.BroadcastChannel,

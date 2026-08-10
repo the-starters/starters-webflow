@@ -304,7 +304,7 @@
 
   function exchangeCode(code, state, sandbox) {
     const payload = sandbox ? { code } : { code, state }
-    return post(sandbox ? SANDBOX_EXCHANGE_PATH : EXCHANGE_PATH, payload)
+    return post(sandbox ? SANDBOX_EXCHANGE_PATH : EXCHANGE_PATH, payload, false)
   }
 
   function resolveExchangeMode(result, sandbox) {
