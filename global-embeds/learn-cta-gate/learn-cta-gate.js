@@ -28,8 +28,26 @@
  * single style when it resolves to `none`. That guard matters because GSAP
  * writes inline styles, and an inline `opacity`/`visibility` on an element
  * Memberstack meant to hide is how a paywall leaks to a paying member. The
- * guard is deliberately computed-style rather than "is the element present":
- * Memberstack gating on this site paints visibility, it does not remove nodes.
+ * guard is computed-style rather than "is the element present" because this
+ * site does both: Memberstack removes some gate variants and merely hides
+ * others, so presence proves nothing while computed display covers both.
+ *
+ * THAT GUARD IS WORTHLESS IF IT RUNS TOO EARLY, which is the real trap.
+ * Memberstack resolves the member asynchronously and paints the gates AFTER
+ * defer-time scripts run — expert-card-browse-loader.js:124 documents the same
+ * window ("Memberstack REMOVES the non-matching variants, but only after it
+ * resolves — and this embed runs at defer time, before that"). A guard that
+ * reads the wrapper at DOMContentLoaded therefore sees `display: flex` for
+ * EVERY reader including one with learn-access, arms itself, and later locks
+ * the scroll of a member who can see no gate and has no way to unlock it: the
+ * gate is invisible, there is no close control, and the timeline never
+ * reverses. So this embed waits on `window.memberReady` — the site's own
+ * readiness promise, used the same way by route-guard.js,
+ * expert-card-browse-loader.js and posthog-identity.js — and re-checks
+ * computed display once more at reveal time, BEFORE the scroll lock, to cover
+ * a gate that is hidden later still. It boots anyway if that promise is absent
+ * or rejects: a gate that fails to appear is a much smaller problem than one
+ * that traps a paying member on a page they cannot scroll.
  *
  * THE TRIGGER, two mutually exclusive modes chosen once at init:
  *   - Article >= CHARS (default 2500) — walk the article's text nodes, insert a
@@ -73,6 +91,13 @@
  */
 ;(function () {
   'use strict'
+
+  // Window-level init guard, matching the other embeds (turnstile-contents-fix.js
+  // uses the same shape). An IIFE-local flag cannot stop a duplicate script tag:
+  // the second IIFE would still run to completion and overwrite the public API
+  // with its own dud instance before discovering the wrapper was already armed.
+  if (window.__startersLearnCtaGateBooted) return
+  window.__startersLearnCtaGateBooted = true
 
   var RELEASE = 'v1.59.165'
   var LOG_PREFIX = '[learn-cta-gate]'
@@ -125,7 +150,8 @@
   var state = {
     release: RELEASE,
     booted: false,
-    /** null until boot decides; 'scroll' | 'timer' | 'none' */
+    /** null until boot arms something; then 'scroll' | 'timer'. A skipped boot
+     *  leaves this null and records the reason in `skipped` instead. */
     mode: null,
     revealed: false,
     /** what actually opened it: 'scroll' | 'timer' | 'manual' | null */
@@ -272,14 +298,6 @@
       : (document.body.style.overflow = 'hidden')
   }
 
-  // Unreachable while the gate has no close control. Kept so that adding one is
-  // a UI change rather than a rewrite of the lock.
-  function unlockScroll() {
-    typeof lenis !== 'undefined' && lenis.start
-      ? lenis.start()
-      : (document.body.style.overflow = '')
-  }
-
   function teardownTriggers() {
     if (observer) {
       observer.disconnect()
@@ -311,11 +329,16 @@
     }
   }
 
+  // The wrapper's open state, written once so the GSAP path and the no-GSAP
+  // path cannot drift apart. GSAP takes it as tween vars; applyOpenStyles()
+  // writes the same values as inline styles.
+  var OPEN_WRAPPER = { visibility: 'visible', pointerEvents: 'auto', opacity: 1 }
+
   /** Final open state, applied directly when GSAP is unavailable. */
   function applyOpenStyles() {
-    wrapper.style.visibility = 'visible'
-    wrapper.style.pointerEvents = 'auto'
-    wrapper.style.opacity = '1'
+    wrapper.style.visibility = OPEN_WRAPPER.visibility
+    wrapper.style.pointerEvents = OPEN_WRAPPER.pointerEvents
+    wrapper.style.opacity = String(OPEN_WRAPPER.opacity)
     backdrop.style.opacity = '1'
     sheet.style.transform = 'translateY(0%)'
   }
@@ -332,11 +355,12 @@
       },
     })
 
-    tl.set(wrapper, { visibility: 'visible', pointerEvents: 'auto', opacity: 1 })
+    tl.set(wrapper, OPEN_WRAPPER)
 
     if (reduced) {
-      // No slide. The sheet starts in place (the stylesheet's reduced-motion
-      // block already cleared the transform) and both parts cross-fade.
+      // No slide. ensureClosed() skips parking the sheet under reduced motion,
+      // so this is belt only — it guarantees a resting position even if some
+      // other code parked it.
       tl.set(sheet, { yPercent: 0 })
       tl.fromTo(
         [backdrop, sheet],
@@ -366,6 +390,17 @@
   function reveal(trigger) {
     if (state.revealed) return
     if (!wrapper || !backdrop || !sheet) return
+
+    // Last look before we touch anything. Memberstack may have resolved after
+    // boot armed the trigger, and the scroll lock below is irreversible in a
+    // gate with no close control — locking a member who cannot see the gate
+    // strands them on the page. Checked here, before lockScroll(), on purpose.
+    if (window.getComputedStyle(wrapper).display === 'none') {
+      state.skipped = 'memberstack-hidden-late'
+      teardownTriggers()
+      info('wrapper went display:none after boot — standing down without locking')
+      return
+    }
 
     state.revealed = true
     state.trigger = trigger || 'manual'
@@ -531,12 +566,31 @@
     reveal: function () {
       reveal('manual')
     },
-    unlockScroll: unlockScroll,
+  }
+
+  /**
+   * Boot only once Memberstack has had its say. `window.memberReady` is the
+   * site's own readiness promise; boot on either settlement, because a rejected
+   * promise still means "as resolved as this is going to get" and a gate that
+   * never arms is worse than one that arms a beat late. Absent promise (an
+   * older page, or a load failure) falls straight through to boot.
+   */
+  function start() {
+    var ready = window.memberReady
+    if (ready && typeof ready.then === 'function') {
+      ready.then(boot, function () {
+        warn('memberReady rejected — booting anyway')
+        boot()
+      })
+      return
+    }
+    info('no memberReady on the page, booting immediately')
+    boot()
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot)
+    document.addEventListener('DOMContentLoaded', start)
   } else {
-    boot()
+    start()
   }
 })()

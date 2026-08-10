@@ -184,8 +184,14 @@ function createTreeWalker(root, whatToShow, filter) {
  * @param {boolean} [opts.gsap]           expose a gsap stub (default true)
  * @param {boolean} [opts.reducedMotion]
  * @param {string}  [opts.hostname]
+ * @param {'resolved'|'rejected'|'absent'} [opts.memberReady] how the site's
+ *        Memberstack readiness promise behaves. Defaults to 'resolved', which
+ *        is the real production shape — boot must wait for it.
+ *
+ * Async because boot is now gated on that promise: the harness flushes
+ * microtasks before returning so callers see a booted embed.
  */
-function harness(opts = {}) {
+async function harness(opts = {}) {
   const {
     chars = 6000,
     wrapper: withWrapper = true,
@@ -196,6 +202,7 @@ function harness(opts = {}) {
     gsap: withGsap = true,
     reducedMotion = false,
     hostname = 'www.thestarters.com',
+    memberReady = 'resolved',
   } = opts
 
   const body = new Element('body')
@@ -321,6 +328,18 @@ function harness(opts = {}) {
     dispatchEvent: (e) => events.push(e),
     posthog: { capture: (name, props) => captured.push({ name, props }) },
   }
+
+  // The site's readiness promise. Deliberately NOT already-resolved: a promise
+  // that has settled before the embed loads would hide a boot that ignored it.
+  let releaseMemberReady = null
+  if (memberReady !== 'absent') {
+    windowObj.memberReady = new Promise((resolve, reject) => {
+      releaseMemberReady = () => (memberReady === 'rejected' ? reject(new Error('ms failed')) : resolve({}))
+    })
+    // Swallow the rejection so an unhandled rejection cannot fail the run; the
+    // embed attaches its own handler when it calls .then(boot, boot).
+    windowObj.memberReady.catch(() => {})
+  }
   context.window = windowObj
   const gsapSets = []
   if (withGsap) {
@@ -336,7 +355,22 @@ function harness(opts = {}) {
   vm.createContext(context)
   vm.runInContext(source, context, { filename: 'learn-cta-gate.js' })
 
+  // Snapshot BEFORE releasing memberReady, so tests can assert the embed did
+  // not arm anything while Memberstack was still deciding.
+  const beforeMemberReady = windowObj.StartersLearnCtaGate.status()
+
+  if (releaseMemberReady) {
+    releaseMemberReady()
+    await new Promise((r) => setImmediate(r))
+  }
+
   return {
+    beforeMemberReady,
+    /** re-evaluate the embed in the SAME context, as a duplicate script tag would */
+    runSourceAgain() {
+      vm.runInContext(source, context, { filename: 'learn-cta-gate.js (again)' })
+      return windowObj.StartersLearnCtaGate
+    },
     api: windowObj.StartersLearnCtaGate,
     window: windowObj,
     document,
@@ -369,7 +403,7 @@ function harness(opts = {}) {
 // Release marker
 // ---------------------------------------------------------------------------
 
-test('header carries an @release marker matching the RELEASE constant', () => {
+test('header carries an @release marker matching the RELEASE constant', async () => {
   const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
   assert.ok(marker, 'no "@release vX.Y.Z" line in the learn-cta-gate.js header')
 
@@ -382,7 +416,7 @@ test('header carries an @release marker matching the RELEASE constant', () => {
   )
 })
 
-test('the stylesheet carries the same @release marker', () => {
+test('the stylesheet carries the same @release marker', async () => {
   const css = fs.readFileSync(CSS_PATH, 'utf8')
   const cssMarker = css.match(/@release (v\d+\.\d+\.\d+)/)
   const jsMarker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
@@ -390,14 +424,14 @@ test('the stylesheet carries the same @release marker', () => {
   assert.equal(cssMarker[1], jsMarker[1], 'the CSS and JS ship together, so they share a tag')
 })
 
-test('the stylesheet owns the closed state of the wrapper and backdrop', () => {
+test('the stylesheet owns the closed state of the wrapper and backdrop', async () => {
   const css = fs.readFileSync(CSS_PATH, 'utf8')
   assert.match(css, /\[data-learn-gate-element="wrapper"\][^}]*visibility:\s*hidden/s)
   assert.match(css, /\[data-learn-gate-element="wrapper"\][^}]*pointer-events:\s*none/s)
   assert.match(css, /\[data-learn-gate-element="backdrop"\][^}]*opacity:\s*0/s)
 })
 
-test('the stylesheet never sets a transform — GSAP owns that property alone', () => {
+test('the stylesheet never sets a transform — GSAP owns that property alone', async () => {
   const css = fs.readFileSync(CSS_PATH, 'utf8')
   // Regression guard, caught on staging: GSAP parses the computed transform as a
   // pixel matrix, so a CSS `translateY(100%)` lands in its `y` component and the
@@ -416,8 +450,8 @@ test('the stylesheet never sets a transform — GSAP owns that property alone', 
 // The Memberstack guard — the leak that matters
 // ---------------------------------------------------------------------------
 
-test('a display:none wrapper stands down and writes no style at all', () => {
-  const h = harness({ display: 'none' })
+test('a display:none wrapper stands down and writes no style at all', async () => {
+  const h = await harness({ display: 'none' })
 
   assert.equal(h.api.status().skipped, 'memberstack-hidden')
   assert.equal(h.api.status().mode, null)
@@ -431,15 +465,79 @@ test('a display:none wrapper stands down and writes no style at all', () => {
   )
 })
 
-test('a member with learn-access cannot be gated even by a manual reveal', () => {
-  const h = harness({ display: 'none' })
+test('a member with learn-access cannot be gated even by a manual reveal', async () => {
+  const h = await harness({ display: 'none' })
   h.api.reveal()
   assert.equal(h.api.status().revealed, false)
   assert.equal(h.captured.length, 0)
 })
 
-test('no wrapper on the page is a silent no-op', () => {
-  const h = harness({ wrapper: false })
+// ---------------------------------------------------------------------------
+// The Memberstack RACE — the finding that made a paying member unscrollable
+// ---------------------------------------------------------------------------
+
+test('boot waits for memberReady and arms nothing while Memberstack decides', async () => {
+  const h = await harness({ chars: 6000 })
+
+  assert.equal(h.beforeMemberReady.mode, null, 'nothing may be armed before memberReady settles')
+  assert.equal(h.beforeMemberReady.chars, null, 'the article must not even be measured yet')
+  assert.equal(h.api.status().mode, 'scroll', 'and it must arm once memberReady settles')
+})
+
+test('a rejected memberReady still boots — a silent gate beats a trapped reader', async () => {
+  const h = await harness({ chars: 6000, memberReady: 'rejected' })
+  assert.equal(h.beforeMemberReady.mode, null)
+  assert.equal(h.api.status().mode, 'scroll')
+})
+
+test('a page with no memberReady boots immediately', async () => {
+  const h = await harness({ chars: 6000, memberReady: 'absent' })
+  assert.equal(h.beforeMemberReady.mode, 'scroll', 'no promise means no reason to wait')
+})
+
+test('Memberstack hiding the gate AFTER boot cancels the reveal without locking scroll', async () => {
+  const h = await harness({ chars: 6000 })
+  assert.equal(h.api.status().mode, 'scroll', 'armed while the wrapper was still visible')
+
+  // Memberstack resolves late and hides the gate for a member with learn-access.
+  h.wrapperEl.computed.display = 'none'
+  h.fireObserver()
+
+  const status = h.api.status()
+  assert.equal(status.revealed, false, 'the gate must not open')
+  assert.equal(status.skipped, 'memberstack-hidden-late')
+  assert.notEqual(
+    h.document.body.style.overflow,
+    'hidden',
+    'THE BUG: locking here strands a paying member on a page with no gate and no unlock'
+  )
+  assert.equal(h.captured.length, 0, 'and nothing is reported as shown')
+  assert.ok(h.observers[0].disconnected, 'the trigger is still torn down')
+})
+
+test('the late guard runs before the lock on the timer path too', async () => {
+  const h = await harness({ chars: 900 })
+  h.wrapperEl.computed.display = 'none'
+  h.fireTimer()
+
+  assert.equal(h.api.status().revealed, false)
+  assert.notEqual(h.document.body.style.overflow, 'hidden')
+})
+
+// ---------------------------------------------------------------------------
+
+test('a duplicate script tag cannot overwrite the live API with a dud', async () => {
+  const h = await harness({ chars: 6000 })
+  const first = h.api
+  assert.equal(first.status().mode, 'scroll')
+
+  const second = h.runSourceAgain()
+  assert.equal(second, first, 'the window guard must stop the second IIFE entirely')
+  assert.equal(second.status().mode, 'scroll', 'the live instance survives')
+})
+
+test('no wrapper on the page is a silent no-op', async () => {
+  const h = await harness({ wrapper: false })
   assert.equal(h.api.status().skipped, 'no-wrapper')
   assert.equal(h.logs.warn.length, 0, 'a non-Learn page must not warn')
   assert.equal(h.timers.length, 0)
@@ -449,8 +547,8 @@ test('no wrapper on the page is a silent no-op', () => {
 // Trigger selection — the two mutually exclusive modes
 // ---------------------------------------------------------------------------
 
-test('a long article arms the scroll sentinel and no timer', () => {
-  const h = harness({ chars: 6000 })
+test('a long article arms the scroll sentinel and no timer', async () => {
+  const h = await harness({ chars: 6000 })
   const status = h.api.status()
 
   assert.equal(status.mode, 'scroll')
@@ -461,8 +559,8 @@ test('a long article arms the scroll sentinel and no timer', () => {
   assert.equal(h.observers[0].options.threshold, 0)
 })
 
-test('a short article arms the 10s timer and plants no sentinel', () => {
-  const h = harness({ chars: 900 })
+test('a short article arms the 10s timer and plants no sentinel', async () => {
+  const h = await harness({ chars: 900 })
   const status = h.api.status()
 
   assert.equal(status.mode, 'timer')
@@ -473,13 +571,13 @@ test('a short article arms the 10s timer and plants no sentinel', () => {
   assert.equal(h.timers[0].ms, 10000)
 })
 
-test('an article exactly at the threshold takes the scroll branch', () => {
-  const h = harness({ chars: 2500 })
+test('an article exactly at the threshold takes the scroll branch', async () => {
+  const h = await harness({ chars: 2500 })
   assert.equal(h.api.status().mode, 'scroll')
 })
 
-test('the sentinel lands after the text node that crosses the threshold', () => {
-  const h = harness({ chars: 6000 }) // 12 paragraphs of 500 chars
+test('the sentinel lands after the text node that crosses the threshold', async () => {
+  const h = await harness({ chars: 6000 }) // 12 paragraphs of 500 chars
   const sentinel = h.sentinel()
   assert.ok(sentinel, 'sentinel was not planted')
 
@@ -501,8 +599,8 @@ test('the sentinel lands after the text node that crosses the threshold', () => 
 // Reveal
 // ---------------------------------------------------------------------------
 
-test('the scroll sentinel opens the gate and locks scroll', () => {
-  const h = harness({ chars: 6000 })
+test('the scroll sentinel opens the gate and locks scroll', async () => {
+  const h = await harness({ chars: 6000 })
   h.fireObserver()
 
   const status = h.api.status()
@@ -512,16 +610,16 @@ test('the scroll sentinel opens the gate and locks scroll', () => {
   assert.ok(h.observers[0].disconnected, 'the observer must be torn down after firing')
 })
 
-test('the timer opens the gate on a short article', () => {
-  const h = harness({ chars: 900 })
+test('the timer opens the gate on a short article', async () => {
+  const h = await harness({ chars: 900 })
   h.fireTimer()
 
   assert.equal(h.api.status().trigger, 'timer')
   assert.equal(h.document.body.style.overflow, 'hidden')
 })
 
-test('the gate opens exactly once even if both triggers fire', () => {
-  const h = harness({ chars: 6000 })
+test('the gate opens exactly once even if both triggers fire', async () => {
+  const h = await harness({ chars: 6000 })
   h.fireObserver()
   h.observers[0].fire(true)
   h.api.reveal()
@@ -531,14 +629,14 @@ test('the gate opens exactly once even if both triggers fire', () => {
   assert.equal(h.events.length, 1)
 })
 
-test('a non-intersecting observer callback does not open the gate', () => {
-  const h = harness({ chars: 6000 })
+test('a non-intersecting observer callback does not open the gate', async () => {
+  const h = await harness({ chars: 6000 })
   h.observers[0].fire(false)
   assert.equal(h.api.status().revealed, false)
 })
 
-test('the timeline fades the backdrop then slides the sheet 0.15s later', () => {
-  const h = harness({ chars: 6000 })
+test('the timeline fades the backdrop then slides the sheet 0.15s later', async () => {
+  const h = await harness({ chars: 6000 })
   h.fireObserver()
 
   const fromTos = h.gsapCalls.filter((c) => c[0] === 'fromTo')
@@ -560,8 +658,8 @@ test('the timeline fades the backdrop then slides the sheet 0.15s later', () => 
   assert.equal(position, '<0.15')
 })
 
-test('reduced motion cross-fades and never slides', () => {
-  const h = harness({ chars: 6000, reducedMotion: true })
+test('reduced motion cross-fades and never slides', async () => {
+  const h = await harness({ chars: 6000, reducedMotion: true })
   h.fireObserver()
 
   const fromTos = h.gsapCalls.filter((c) => c[0] === 'fromTo')
@@ -575,8 +673,8 @@ test('reduced motion cross-fades and never slides', () => {
   )
 })
 
-test('without gsap the gate still opens, just instantly', () => {
-  const h = harness({ chars: 900, gsap: false })
+test('without gsap the gate still opens, just instantly', async () => {
+  const h = await harness({ chars: 900, gsap: false })
   h.fireTimer()
 
   assert.equal(h.api.status().revealed, true)
@@ -590,8 +688,8 @@ test('without gsap the gate still opens, just instantly', () => {
 // Analytics
 // ---------------------------------------------------------------------------
 
-test('learn_gate_shown carries slug, trigger, chars and threshold', () => {
-  const h = harness({ chars: 6000 })
+test('learn_gate_shown carries slug, trigger, chars and threshold', async () => {
+  const h = await harness({ chars: 6000 })
   h.fireObserver()
 
   assert.equal(h.captured.length, 1)
@@ -605,8 +703,8 @@ test('learn_gate_shown carries slug, trigger, chars and threshold', () => {
   })
 })
 
-test('a posthog that throws does not stop the gate opening', () => {
-  const h = harness({ chars: 900 })
+test('a posthog that throws does not stop the gate opening', async () => {
+  const h = await harness({ chars: 900 })
   h.window.posthog.capture = () => {
     throw new Error('boom')
   }
@@ -614,8 +712,8 @@ test('a posthog that throws does not stop the gate opening', () => {
   assert.equal(h.api.status().revealed, true)
 })
 
-test('a missing posthog does not stop the gate opening', () => {
-  const h = harness({ chars: 900 })
+test('a missing posthog does not stop the gate opening', async () => {
+  const h = await harness({ chars: 900 })
   delete h.window.posthog
   h.fireTimer()
   assert.equal(h.api.status().revealed, true)
@@ -625,8 +723,8 @@ test('a missing posthog does not stop the gate opening', () => {
 // Authoring mistakes
 // ---------------------------------------------------------------------------
 
-test('a custom threshold and delay are read off the wrapper', () => {
-  const h = harness({
+test('a custom threshold and delay are read off the wrapper', async () => {
+  const h = await harness({
     chars: 6000,
     attrs: { 'data-learn-gate-chars': '4000', 'data-learn-gate-delay': '3' },
   })
@@ -634,39 +732,39 @@ test('a custom threshold and delay are read off the wrapper', () => {
   assert.equal(h.api.status().delaySeconds, 3)
 })
 
-test('a garbage threshold falls back to the default instead of breaking', () => {
-  const h = harness({ chars: 6000, attrs: { 'data-learn-gate-chars': 'lots' } })
+test('a garbage threshold falls back to the default instead of breaking', async () => {
+  const h = await harness({ chars: 6000, attrs: { 'data-learn-gate-chars': 'lots' } })
   assert.equal(h.api.status().threshold, 2500)
   assert.equal(h.api.status().mode, 'scroll')
 })
 
-test('a negative delay falls back to the default', () => {
-  const h = harness({ chars: 900, attrs: { 'data-learn-gate-delay': '-5' } })
+test('a negative delay falls back to the default', async () => {
+  const h = await harness({ chars: 900, attrs: { 'data-learn-gate-delay': '-5' } })
   assert.equal(h.api.status().delaySeconds, 10)
 })
 
-test('a missing article falls back to the timer rather than never gating', () => {
-  const h = harness({ article: false })
+test('a missing article falls back to the timer rather than never gating', async () => {
+  const h = await harness({ article: false })
   assert.equal(h.api.status().skipped, 'no-article')
   assert.equal(h.api.status().mode, 'timer')
   assert.equal(h.timers.length, 1)
 })
 
-test('a missing backdrop stops the embed instead of opening a half-built gate', () => {
-  const h = harness({ chars: 6000, backdrop: false })
+test('a missing backdrop stops the embed instead of opening a half-built gate', async () => {
+  const h = await harness({ chars: 6000, backdrop: false })
   assert.equal(h.api.status().skipped, 'missing-parts')
   assert.equal(h.timers.length, 0)
   assert.equal(h.observers.length, 0)
 })
 
-test('a custom article selector is honoured', () => {
-  const h = harness({ chars: 6000, attrs: { 'data-learn-gate-article': '.nope' } })
+test('a custom article selector is honoured', async () => {
+  const h = await harness({ chars: 6000, attrs: { 'data-learn-gate-article': '.nope' } })
   assert.equal(h.api.status().skipped, 'no-article')
   assert.equal(h.api.status().mode, 'timer')
 })
 
-test('boot parks the sheet off-screen through GSAP, not through CSS', () => {
-  const h = harness({ chars: 6000 })
+test('boot parks the sheet off-screen through GSAP, not through CSS', async () => {
+  const h = await harness({ chars: 6000 })
   const parked = h.gsapSets.filter((s) => s.vars && s.vars.yPercent === 100)
   assert.equal(parked.length, 1, 'the sheet must be parked exactly once at init')
   assert.equal(
@@ -676,8 +774,8 @@ test('boot parks the sheet off-screen through GSAP, not through CSS', () => {
   )
 })
 
-test('reduced motion does not park the sheet off-screen', () => {
-  const h = harness({ chars: 6000, reducedMotion: true })
+test('reduced motion does not park the sheet off-screen', async () => {
+  const h = await harness({ chars: 6000, reducedMotion: true })
   assert.equal(
     h.gsapSets.filter((s) => s.vars && s.vars.yPercent === 100).length,
     0,
@@ -685,8 +783,8 @@ test('reduced motion does not park the sheet off-screen', () => {
   )
 })
 
-test('boot marks the wrapper so a second load cannot double-arm it', () => {
-  const h = harness({ chars: 6000 })
+test('boot marks the wrapper so a second load cannot double-arm it', async () => {
+  const h = await harness({ chars: 6000 })
   assert.equal(h.wrapperEl.getAttribute('data-script-initialized'), 'true')
 })
 
@@ -694,8 +792,8 @@ test('boot marks the wrapper so a second load cannot double-arm it', () => {
 // Diagnostics gating
 // ---------------------------------------------------------------------------
 
-test('staging hosts are matched anchored, so lookalikes stay silent', () => {
-  const h = harness({ chars: 900 })
+test('staging hosts are matched anchored, so lookalikes stay silent', async () => {
+  const h = await harness({ chars: 900 })
   const { stagingHost } = h.api
 
   assert.equal(stagingHost('the-starters-3-0.webflow.io'), true)
@@ -709,11 +807,11 @@ test('staging hosts are matched anchored, so lookalikes stay silent', () => {
   assert.equal(stagingHost(''), false)
 })
 
-test('production stays silent while staging talks', () => {
-  const prod = harness({ article: false, hostname: 'www.thestarters.com' })
+test('production stays silent while staging talks', async () => {
+  const prod = await harness({ article: false, hostname: 'www.thestarters.com' })
   assert.equal(prod.logs.warn.length, 0)
 
-  const staging = harness({ article: false, hostname: 'the-starters-3-0.webflow.io' })
+  const staging = await harness({ article: false, hostname: 'the-starters-3-0.webflow.io' })
   assert.ok(
     staging.logs.warn.some((m) => /no article matched/.test(m)),
     'staging must surface the authoring mistake'
