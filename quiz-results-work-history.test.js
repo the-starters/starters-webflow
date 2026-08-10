@@ -323,5 +323,5 @@ test('a candidate with neither field hides the binding', () => {
 })
 
 test('the release marker matches the shipping tag', () => {
-    assert.match(source, /^ \* @release v1\.59\.131$/m)
+    assert.match(source, /^ \* @release v1\.59\.161$/m)
 })

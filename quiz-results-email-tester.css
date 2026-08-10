@@ -1,0 +1,92 @@
+[data-quiz-email-test-panel] {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2147483000;
+  display: grid;
+  width: min(360px, calc(100vw - 32px));
+  padding: 20px;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  background: #17201b;
+  box-shadow: 0 20px 55px rgba(9, 17, 13, 0.3);
+  color: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+[data-quiz-email-test-panel]::before {
+  content: 'V3 quiz email tester';
+  display: block;
+  margin-bottom: 2px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+[data-quiz-email-test-recipient],
+[data-quiz-email-test-summary],
+[data-quiz-email-test-status] {
+  margin: 0;
+  color: #d8e2dc;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+[data-quiz-email-test-recipient]::before {
+  content: 'Recipient: ';
+  color: #9dad9f;
+  font-weight: 700;
+}
+
+[data-quiz-email-test-summary]::before {
+  content: 'Payload: ';
+  color: #9dad9f;
+  font-weight: 700;
+}
+
+[data-quiz-email-test-status] {
+  min-height: 38px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+[data-quiz-email-test-status][data-state='error'] {
+  background: #562d2d;
+  color: #ffe0e0;
+}
+
+[data-quiz-email-test-status][data-state='sent'] {
+  background: #234d36;
+  color: #e0ffeb;
+}
+
+[data-quiz-email-test-send] {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 10px;
+  background: #fff;
+  color: #17201b;
+  font-size: 14px;
+  font-weight: 800;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+[data-quiz-email-test-send][disabled] {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+@media (max-width: 479px) {
+  [data-quiz-email-test-panel] {
+    right: 16px;
+    bottom: 16px;
+  }
+}

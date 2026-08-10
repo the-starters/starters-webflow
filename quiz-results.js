@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.131
+ * @release v1.59.161
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -138,6 +138,22 @@
     }
 
     window[starterQuizResultsControllerFlag] = true
+
+    // The internal email tester is a separate, query-gated controller so the
+    // production results flow pays no runtime or network cost unless an
+    // operator opens /quiz-results?quizEmailTest=1. The controller binds only
+    // to native Webflow elements; it does not generate the panel markup.
+    if (
+        new URLSearchParams(window.location.search).get('quizEmailTest') === '1' &&
+        !document.querySelector('script[data-quiz-email-test-controller]')
+    ) {
+        const testerScript = document.createElement('script')
+        testerScript.defer = true
+        testerScript.dataset.quizEmailTestController = 'true'
+        testerScript.src =
+            'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-results-email-tester.js'
+        document.head.appendChild(testerScript)
+    }
 
     function normalizeLearnContentValue(value) {
         return String(value || '').trim()
