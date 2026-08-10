@@ -1934,6 +1934,7 @@
   const projectActionFeedbackTimers = new WeakMap()
   let activeReviewProject = null
   let activeReviewModal = null
+  let projectReviewOpenGeneration = 0
   let reviewSubmitting = false
 
   function normalizedDashboardPath() {
@@ -2860,7 +2861,9 @@
   }
 
   async function openProjectReview(action, card) {
+    const requestGeneration = ++projectReviewOpenGeneration
     const project = await currentProjectContext(card)
+    if (requestGeneration !== projectReviewOpenGeneration) return
     if (!project || !prepareProjectReview(project)) {
       showProjectActionFeedback(action, 'Review is not available yet', true)
     }
@@ -2924,6 +2927,7 @@
   }
 
   function unwireProjectDashboardWorkflow() {
+    projectReviewOpenGeneration += 1
     const binding = projectWorkflowBinding
     projectWorkflowBinding = null
     if (binding) {
