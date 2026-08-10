@@ -1422,9 +1422,10 @@ node --test v3/xano-grabber/xano-grabber.test.js
 
 ## Scheduling auth
 
-`scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and
-scheduling configuration calls. Webflow should load it with a small `defer`
-script tag instead of carrying a duplicate copy in page head/footer code.
+`scheduling-auth.js` owns the Bearer-token adapter for the V3 availability,
+scheduling configuration, and Brand paid-call payment-method calls. Webflow
+should load it with a small `defer` script tag instead of carrying a duplicate
+copy in page head/footer code.
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
@@ -1435,8 +1436,9 @@ Current safety boundary:
 - Runs across `the-starters-3-0.webflow.io`.
 - On the V3 custom domains, runs only on `/hire/jp-test`,
   `/starter-dashboard`, and `/brand-dashboard`; all other paths remain inert.
-- Authenticates only the explicit reviewed `/v3` scheduling routes on the
-  configured Xano origin. It does not use a group-wide prefix allowlist.
+- Authenticates only explicit reviewed `/v3` routes on the configured Xano
+  origin, including the two Brand paid-call payment-method paths documented
+  below. It does not use a group-wide prefix allowlist.
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
   This prevents a release-time regression on non-stage staging consumers; the
@@ -1458,15 +1460,16 @@ Current safety boundary:
 - Installs synchronously and takes ownership from the legacy bridge in
   `opportunities-3.0.js` regardless of script order.
 
-Maintenance rule: new `api:tCpV3oqd` scheduling calls should use
-`window.xanoAuthFetch`. Keep endpoint scope explicit; do not turn this into a
-blanket credential injector. Every route used by the stage adapter and
-availability modules must be listed as an exact `/v3` path.
+Maintenance rule: new reviewed `api:tCpV3oqd` scheduling or paid-call browser
+calls should use `window.xanoAuthFetch`. Keep endpoint scope explicit; do not
+turn this into a blanket credential injector. Every route used by the stage
+adapter, availability modules, and paid-call client must be listed as an exact
+`/v3` path.
 
 Public helpers:
 
 - `window.xanoAuthFetch(input, init)` accepts the same inputs as `fetch`, adds
-  Bearer authentication for scoped V3 scheduling paths and rejects if initial
+  Bearer authentication for scoped V3 paths and rejects if initial
   token acquisition fails. Calls outside that scope and calls with an existing
   `Authorization` header pass through unchanged.
 - `window.getXanoAuthToken({ forceRefresh: true })` returns the cached,
@@ -1477,7 +1480,7 @@ The transparent `window.fetch` wrapper exists only for legacy inline callers. If
 initial token acquisition fails, it logs a warning and makes one unauthenticated
 request; direct `xanoAuthFetch` callers receive the error. Both interfaces preserve
 network rejections and reject with code `MEMBER_SCOPE_CHANGED` if the Memberstack
-session changes while authentication or a scheduling request is in flight.
+session changes while authentication or a scoped request is in flight.
 
 Run the focused test with:
 
@@ -2384,8 +2387,10 @@ node --test v3/starter-dashboard-stripe-connect.test.js
 
 `paid-call-brand-payment.js` supplies the authenticated Xano calls needed by a
 native Brand booking UI. It does not create form markup or initialize Stripe
-Elements. Load it after `scheduling-auth.js` on the Brand dashboard and public
-Hire booking surfaces that already pass the route and membership gates:
+Elements. Load it after `scheduling-auth.js` only on the approved host and path
+surfaces in the [scheduling auth](#scheduling-auth) boundary. A production Hire
+surface must be added to that boundary before this client can authenticate
+there:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
