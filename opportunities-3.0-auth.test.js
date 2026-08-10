@@ -2428,8 +2428,10 @@ test('review binds the Lumos-owned modal to the opened project Starter without s
     return { review, wrap: el('div', { class: 'button_main-wrap' }, [review, label]) }
   }
   const first = reviewAction()
+  const second = reviewAction()
   const missing = reviewAction()
   const firstCard = el('div', { class: 'project_item', 'data-wf-xano-id': '667' }, [first.wrap])
+  const secondCard = el('div', { class: 'project_item', 'data-wf-xano-id': '669' }, [second.wrap])
   const missingCard = el('div', { class: 'project_item', 'data-wf-xano-id': '668' }, [missing.wrap])
 
   const staleName = el('span', { 'starter-name': '' })
@@ -2444,10 +2446,8 @@ test('review binds the Lumos-owned modal to the opened project Starter without s
 
   const headline = el('p')
   headline.textContent = '[Starter Name]'
-  const rateName = el('span')
-  rateName.textContent = '[Starter Name]'
-  const rateCopy = el('p', {}, [el('span'), rateName])
-  rateCopy.children[0].textContent = 'Rate your experience with '
+  const rateCopy = el('p')
+  rateCopy.textContent = 'Rate your experience with [Starter Name]'
   const rating = el('input', { name: 'Call-Rating' })
   rating.value = '5'
   const feedback = el('textarea', { name: 'Feedback' })
@@ -2465,7 +2465,7 @@ test('review binds the Lumos-owned modal to the opened project Starter without s
   const root = el(
     'div',
     { 'wf-xano-instance': 'dash-brand-projects' },
-    [firstCard, missingCard, staleModal, activeModal],
+    [firstCard, secondCard, missingCard, staleModal, activeModal],
   )
   const reviewBodies = []
   const bridge = await loadBridge(
@@ -2488,6 +2488,13 @@ test('review binds the Lumos-owned modal to the opened project Starter without s
               review_eligible: true,
               has_review: false,
               starter_name: '',
+            },
+            {
+              id: 669,
+              lifecycle_state: 'completed',
+              review_eligible: true,
+              has_review: false,
+              starter_name: 'Second Starter',
             },
           ],
         })
@@ -2528,7 +2535,7 @@ test('review binds the Lumos-owned modal to the opened project Starter without s
   assert.ok(await waitFor(() => openCount === 1))
   assert.equal(staleName.textContent, '[Starter Name]')
   assert.equal(headline.textContent, 'JP Test')
-  assert.equal(rateName.textContent, 'JP Test')
+  assert.equal(rateCopy.textContent, 'Rate your experience with JP Test')
 
   bridge.dispatchDocument('submit', {
     target: form,
@@ -2543,12 +2550,21 @@ test('review binds the Lumos-owned modal to the opened project Starter without s
 
   bridge.dispatchWindow('modal-close', { modal: activeModal })
   assert.equal(headline.textContent, '[Starter Name]')
-  assert.equal(rateName.textContent, '[Starter Name]')
+  assert.equal(rateCopy.textContent, 'Rate your experience with [Starter Name]')
+
+  bridge.dispatchDocument('click', clickEvent(second.review).event)
+  assert.ok(await waitFor(() => openCount === 2))
+  assert.equal(headline.textContent, 'Second Starter')
+  assert.equal(rateCopy.textContent, 'Rate your experience with Second Starter')
+
+  bridge.dispatchWindow('modal-close', { modal: activeModal })
+  assert.equal(headline.textContent, '[Starter Name]')
+  assert.equal(rateCopy.textContent, 'Rate your experience with [Starter Name]')
   bridge.dispatchDocument('click', clickEvent(missing.review).event)
   await new Promise(setImmediate)
-  assert.equal(openCount, 1)
+  assert.equal(openCount, 2)
   assert.equal(headline.textContent, '[Starter Name]')
-  assert.equal(rateName.textContent, '[Starter Name]')
+  assert.equal(rateCopy.textContent, 'Rate your experience with [Starter Name]')
 })
 
 test('the authored type=button invoice CTA requests the native form submit', async () => {

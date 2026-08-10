@@ -2799,8 +2799,10 @@
     activeReviewModal = null
     if (!modal) return
     $$('[data-project-review-starter-name]', modal).forEach((target) => {
-      target.textContent = '[Starter Name]'
+      const originalCopy = target.getAttribute('data-project-review-starter-copy')
+      if (originalCopy !== null) target.textContent = originalCopy
       target.removeAttribute('data-project-review-starter-name')
+      target.removeAttribute('data-project-review-starter-copy')
     })
     const form = $('form', modal)
     if (resetForm && form) form.reset()
@@ -2812,6 +2814,7 @@
     $$('p, span, h1, h2, h3, h4, h5, h6, label, [starter-name]', modal).forEach((target) => {
       if (target.children && target.children.length) return
       if (!target.textContent.includes('[Starter Name]')) return
+      target.setAttribute('data-project-review-starter-copy', target.textContent)
       target.textContent = target.textContent.replaceAll('[Starter Name]', starterName)
       target.setAttribute('data-project-review-starter-name', '')
       painted += 1
