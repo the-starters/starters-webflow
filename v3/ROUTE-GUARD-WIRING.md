@@ -13,8 +13,8 @@ Tracking: Jira `INITIATIVE-132`. This router release remains independent from
 the `INITIATIVE-131` points reconciliation and dashboard tile rollout.
 
 `v3/route-guard.js` is the sitewide companion to [auth-route.js](auth-route.js).
-`auth-route.js` only routes at `/login` and `/auth-route`, so a logged-in member
-can still open another role's page by navigating directly. This guard closes
+`auth-route.js` only runs at `/login`, `/starter-login`, and `/auth-route`, so a
+logged-in member can still open another role's page by navigating directly. This guard closes
 that direct-access gap using the same stable plan-ID role matrix documented in
 [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 
@@ -127,16 +127,17 @@ asserts `pageRolesFor('/complete-profile')` is `null` so the re-add cannot be
 accidental.
 
 What the page did gain on 2026-08-03 is a page-scoped module rather than a table
-entry: `v3/complete-profile-redirect.js` sends a paid Brand whose
-`completed-brand-profile` member field is set on to `/brand-dashboard`, and — from
-the evening amendment that day — routes the other two roles off a form that is not
-theirs, a free Brand to its quiz-funnel home and a Talent member to
-`/starter-dashboard`. It borrows this guard's `memberRole` **and** `roleHome`, which
-is why those destinations are the same ones the member-home bounce would have
-produced after a `/login` trip, minus the trip. It still adds no access rule, so the
-division above is unchanged; the one configuration consequence is that the
-`restrict-pages` group must allow **All Members** so a logged-in non-paid member can
-reach the page to be routed. See
+entry: `v3/complete-profile-redirect.js` sends a paid Brand to
+`/brand-dashboard` only when Xano reports both `has_record === true` and
+`brand_profile_done === true`. Separately, the durable-submit session marker is a
+fast path that skips Xano. This changed from Memberstack-field routing
+on 2026-08-06 so the inbound and outbound redirects use one completion signal.
+The module also routes the other two roles off a form that is not theirs: a free
+Brand to its quiz-funnel home and a Talent member to `/starter-dashboard`. It
+borrows this guard's `memberRole` **and** `roleHome`, which is why those destinations
+match the member-home bounce without the `/login` trip. It adds no access rule, so
+the division above is unchanged; the `restrict-pages` group must allow **All
+Members** so a logged-in non-paid member can reach the page to be routed. See
 [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
 ## Member-home bounce pages

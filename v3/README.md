@@ -63,9 +63,10 @@ node --test v3/password-recovery.test.js
 
 `auth-route.js` owns post-login and post-signup routing for V3 without changing
 the shared Memberstack plan redirects used by V2. Install it only on the V3
-`/login` and `/auth-route` pages, after the sitewide `route-guard.js` that owns
-the shared stable plan-role contract. It runs on the V3 Webflow staging hostname
-and both custom domains; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
+`/login`, `/starter-login`, and `/auth-route` pages, after the sitewide
+`route-guard.js` that owns the shared stable plan-role contract. It runs on the
+V3 Webflow staging hostname and both custom domains; see
+[AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
 installation, error contract, and release gate. The versioned
 [V3 Member Access Matrix](ACCESS-MATRIX.md) maps stable plan IDs to roles and
 documents route access plus the separate Webflow, content, and Xano enforcement
@@ -79,10 +80,20 @@ Talent logins additionally fork on funnel position, read from Xano
 `starters_onboarding/get_build_profile_status`: `build_profile_done` false goes to
 `/build-profile/select-profile`, true with `onboarding_done` not `true` goes to
 `/starter-onboarding` (winning over any stored `next`), and both true routes
-normally. Brand and unmapped members never trigger the call, and every
+normally. Brand and unmapped members never trigger that call, and every
 inconclusive answer fails open to the standard destination. The signal became
 stricter on 2026-08-04; see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the
 endpoint contract and the 282-row reason.
+
+Paid Brands take a parallel check through
+`starters_onboarding/get_brand_profile_status`: `has_record` true with
+`brand_profile_done` false goes to `/complete-profile`, winning over a stored
+`next`. A non-empty `thestarters:v3-brand-profile-completed` marker short-circuits
+as complete without a network call. `brand-free` and unmapped members stay
+zero-network. The same four-second budget and fail-open rule apply.
+`/complete-profile` is not an allowed client-supplied `next`; the router constructs
+that destination. See [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the endpoint
+contract.
 
 ## Talent applications admin
 
@@ -270,18 +281,23 @@ way to their role home. See [ACCESS-MATRIX.md](ACCESS-MATRIX.md).
 
 `complete-profile-redirect.js` puts every mapped member who lands on
 `/complete-profile` where they belong, with no hop through `/login`. The page is a
-paid-Brand form, so a paid Brand stays until the Memberstack member custom field
-`completed-brand-profile` carries a real value and then goes to `/brand-dashboard`;
-a free Brand goes to its quiz-funnel home (`/quiz-results` once `starter-quiz` is
-set, else `/quiz`) and a Talent member to `/starter-dashboard`. The field is written
-last by `brand-account-controller.js`, after the ordinary Memberstack fields and
-any changed login email succeed. The hidden `data-ms-member` input remains the
-native Designer field contract, while the controller's ordered write prevents a
-partially failed form from falsely marking onboarding complete. The two other
-destinations come from the guard's own `roleHome()`, so the redirect decision
-itself costs no network request. Field truthiness is the same rule the guard
-applies to the `starter-quiz` marker, and it is consulted for the paid-Brand
-branch only.
+paid-Brand form, so a paid Brand stays until the profile reads as complete and then
+goes to `/brand-dashboard`; a free Brand goes to its quiz-funnel home
+(`/quiz-results` once `starter-quiz` is set, else `/quiz`) and a Talent member to
+`/starter-dashboard`. Those two destinations come from the guard's own
+`roleHome()`, so both branches cost no network request.
+
+Paid-Brand completion comes from Xano
+`starters_onboarding/get_brand_profile_status` (`{has_record, brand_profile_done}`)
+through the trade-token flow. This replaced routing on the Memberstack custom field
+`completed-brand-profile` on 2026-08-06. The inbound and outbound profile redirects
+must use one signal, or a recent completer can bounce until the Memberstack webhook
+mirror catches up. `brand-account-controller.js` still writes the field last for
+endpoint #1513, but no browser route reads it. After a durable submit, the controller
+also writes `thestarters:v3-brand-profile-completed` to `sessionStorage`; a non-empty
+marker is a separate fast path that reads as complete without Xano. Otherwise,
+only `has_record === true` **and** `brand_profile_done === true` redirects to
+`/brand-dashboard`. Unfinished and inconclusive answers stay.
 
 The role branches replaced the paid-only design on the evening of 2026-08-03: the
 other two roles used to sit on a form they cannot submit until they manually went to
@@ -289,12 +305,10 @@ other two roles used to sit on a form they cannot submit until they manually wen
 group must be set to access **All Members** — access to the page stays
 Memberstack's, and the logged-out kick with it, but a logged-in member of any role
 has to be allowed to load the page for this module to route them. Unmapped and
-conflicted members, logged-out visitors, a missing or half-loaded role contract, and
-a lookup that throws are all left untouched. Two properties are deliberate: the
-paid-Brand branch is inert until the form controller starts writing the field, and
-members who completed the form before the field existed read as not-done until they
-resubmit once. Needs the native form contract plus the account controller and redirect
-embeds installed after the guard; see
+conflicted members, logged-out visitors, a missing or half-loaded role contract,
+and a lookup that throws are all left untouched. The page needs the native form
+contract plus the account controller and redirect embeds installed after the guard;
+see
 [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and
 [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
