@@ -34,6 +34,7 @@ function documentFixture() {
   const legacyAverage = new Element()
   const count = new Element()
   const list = new Element({ 'data-reviews-v3-list': 'true' })
+  root.children['[data-reviews-v3-list]'] = list
   const listeners = {}
   return {
     root,
@@ -87,8 +88,36 @@ test('configures the public wrapper with a slug before wf-xano boot', () => {
   const fixture = documentFixture()
   load({ document: fixture, pathname: '/hire/elvis-p' })
   assert.equal(fixture.root.getAttribute('wf-xano-param-starter_slug'), 'elvis-p')
+  assert.equal(fixture.root.getAttribute('wf-xano-element'), 'wrapper')
+  assert.equal(fixture.root.getAttribute('wf-xano-instance'), 'starter-reviews')
+  assert.equal(fixture.root.getAttribute('wf-xano-source'), 'opp30:starter/reviews/summary')
+  assert.equal(fixture.root.getAttribute('wf-xano-method'), 'GET')
+  assert.equal(fixture.root.getAttribute('wf-xano-auth'), 'none')
+  assert.equal(fixture.list.getAttribute('wf-xano-element'), 'list')
+  assert.equal(fixture.list.getAttribute('aria-live'), 'polite')
   assert.equal(fixture.root.childNodes[0].getAttribute('wf-xano-element'), 'template')
   assert.equal(fixture.root.childNodes[0].hidden, true)
+})
+
+test('adopts the current native profile Reviews section when migration attributes are absent', () => {
+  const fixture = documentFixture()
+  fixture.root.removeAttribute('data-reviews-v3')
+  fixture.querySelector = (selector) => {
+    if (selector === '[data-reviews-v3]') return null
+    if (selector.includes('.profile-content_reviews')) return fixture.root
+    if (selector === '[data-reviews-v3-list]') return null
+    return null
+  }
+  fixture.root.querySelector = (selector) => {
+    if (selector.includes('.profile-content_reviews_list')) return fixture.list
+    return null
+  }
+
+  const { api } = load({ document: fixture, pathname: '/hire/jp-dionisio' })
+  assert.equal(api.findProfileRoot(fixture), fixture.root)
+  assert.equal(fixture.root.getAttribute('data-reviews-v3'), '')
+  assert.equal(fixture.list.getAttribute('data-reviews-v3-list'), '')
+  assert.equal(fixture.list.getAttribute('wf-xano-element'), 'list')
 })
 
 test('initializes the profile wrapper when wf-xano already booted', () => {

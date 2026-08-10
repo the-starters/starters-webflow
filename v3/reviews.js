@@ -25,6 +25,18 @@
   var PROFILE_INSTANCE = 'starter-reviews'
   var PROFILE_ROOT = '[data-reviews-v3]'
   var PROFILE_LIST = '[data-reviews-v3-list]'
+  var PROFILE_ROOT_FALLBACK = [
+    '.profile-content_reviews',
+    '.profile-content_reviews_wr',
+    '.profile-content_reviews_wrap',
+    '[data-toc-element="section"][data-toc-id="reviews"]',
+  ].join(', ')
+  var PROFILE_LIST_FALLBACK = [
+    '.profile-content_reviews_list',
+    '.profile-content_reviews_list-wrap',
+    '.profile-content_reviews_collection-list',
+    '.w-dyn-items',
+  ].join(', ')
   var REVIEW_FORM = 'form[data-review-form-v3]'
   var REVIEW_KEY = '[wf-xano-field="idempotency_key"]'
 
@@ -78,13 +90,58 @@
     return 'review-ui:' + stableProject + ':' + randomPart(cryptoObject)
   }
 
+  function findProfileRoot(documentObject) {
+    var root = documentObject.querySelector(PROFILE_ROOT) ||
+      documentObject.querySelector(PROFILE_ROOT_FALLBACK)
+    if (root) return root
+
+    var headings = documentObject.querySelectorAll
+      ? documentObject.querySelectorAll('h1, h2, h3, h4, h5, h6')
+      : []
+    for (var headingIndex = 0; headingIndex < headings.length; headingIndex += 1) {
+      var heading = headings[headingIndex]
+      if (String(heading.textContent || '').trim().toLowerCase() !== 'reviews') continue
+      var candidate = heading.parentElement
+      for (var depth = 0; candidate && depth < 7; depth += 1) {
+        if (
+          candidate.querySelector &&
+          candidate.querySelector(PROFILE_LIST_FALLBACK + ', .profile-content_reviews_list_item, .w-dyn-list')
+        ) return candidate
+        candidate = candidate.parentElement
+      }
+    }
+    return null
+  }
+
+  function findProfileList(documentObject, root) {
+    if (!root) return null
+    return (root.querySelector && root.querySelector(PROFILE_LIST)) ||
+      (root.querySelector && root.querySelector(PROFILE_LIST_FALLBACK)) ||
+      null
+  }
+
   function configureProfileRoot(documentObject, pathname) {
     if (!documentObject || !documentObject.querySelector) return null
-    var root = documentObject.querySelector(PROFILE_ROOT)
-    if (!root) return null
     var slug = profileSlug(pathname)
     if (!slug) return null
+    var root = findProfileRoot(documentObject)
+    if (!root) return null
+    var list = findProfileList(documentObject, root)
+    if (!list) {
+      list = documentObject.createElement('div')
+      list.className = 'profile-content_reviews_list'
+      root.appendChild(list)
+    }
+    root.setAttribute('data-reviews-v3', '')
+    root.setAttribute('wf-xano-element', 'wrapper')
+    root.setAttribute('wf-xano-instance', PROFILE_INSTANCE)
+    root.setAttribute('wf-xano-source', 'opp30:starter/reviews/summary')
+    root.setAttribute('wf-xano-method', 'GET')
+    root.setAttribute('wf-xano-auth', 'none')
     root.setAttribute('wf-xano-param-starter_slug', slug)
+    list.setAttribute('data-reviews-v3-list', '')
+    list.setAttribute('wf-xano-element', 'list')
+    list.setAttribute('aria-live', 'polite')
     if (!root.querySelector('[wf-xano-element="template"]')) {
       var template = documentObject.createElement('div')
       template.setAttribute('wf-xano-element', 'template')
@@ -346,6 +403,8 @@
     profileSlug: profileSlug,
     createIdempotencyKey: createIdempotencyKey,
     projectIdFromResult: projectIdFromResult,
+    findProfileRoot: findProfileRoot,
+    findProfileList: findProfileList,
     configureProfileRoot: configureProfileRoot,
     installReviewFormKeys: installReviewFormKeys,
     bindReviewFormToSingleProject: bindReviewFormToSingleProject,

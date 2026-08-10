@@ -1936,6 +1936,22 @@
   let activeReviewModal = null
   let projectReviewOpenGeneration = 0
   let reviewSubmitting = false
+  const PUBLIC_REVIEWS_ADAPTER_ID = 'starters-v3-reviews-adapter'
+  const PUBLIC_REVIEWS_ADAPTER_SRC =
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/reviews.js'
+
+  function loadPublicReviewsAdapter() {
+    if (!/^\/hire\/[^/]+\/?$/i.test(normalizedDashboardPath())) return null
+    if (window.__startersV3ReviewsBooted) return document.getElementById(PUBLIC_REVIEWS_ADAPTER_ID)
+    const existing = document.getElementById(PUBLIC_REVIEWS_ADAPTER_ID)
+    if (existing) return existing
+    const script = document.createElement('script')
+    script.id = PUBLIC_REVIEWS_ADAPTER_ID
+    script.src = PUBLIC_REVIEWS_ADAPTER_SRC
+    script.defer = true
+    ;(document.head || document.documentElement).appendChild(script)
+    return script
+  }
 
   function normalizedDashboardPath() {
     return String(location.pathname || '/').replace(/\/+$/, '') || '/'
@@ -5063,6 +5079,7 @@
     wireModals()
     const p = location.pathname
     const normalizedPath = normalizedPagePath(p)
+    if (/^\/hire\/[^/]+\/?$/i.test(normalizedPath)) loadPublicReviewsAdapter()
     if (normalizedPath === '/starter-dashboard') {
       decorateProjectCards()
       observeProjectCards()
@@ -5155,6 +5172,7 @@
     projectMutationFeedback,
     projectActionErrorMessage,
     formatProjectTimeline,
+    loadPublicReviewsAdapter,
     prepareDashboardProjectLazyDetails,
     initProjectDashboardWorkflow,
     opportunityPath,
