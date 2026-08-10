@@ -1933,6 +1933,8 @@
   let projectWorkflowFeedbackTimer = null
   const projectActionFeedbackTimers = new WeakMap()
   let activeReviewProject = null
+  let activeReviewModal = null
+  let projectReviewOpenGeneration = 0
   let reviewSubmitting = false
 
   function normalizedDashboardPath() {
@@ -2779,22 +2781,73 @@
     delete form.dataset.projectReviewKey
   }
 
+  function projectReviewModal() {
+    const entry = window.lumos && window.lumos.modal && window.lumos.modal.list
+      ? window.lumos.modal.list[PROJECT_REVIEW_MODAL_ID]
+      : null
+    const registered = entry && entry.el
+    if (
+      registered &&
+      registered.matches &&
+      registered.matches('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
+    ) return registered
+    const modals = $$('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
+    return modals.length ? modals[modals.length - 1] : null
+  }
+
+  function clearProjectReviewContext(modal = activeReviewModal, resetForm = false) {
+    activeReviewProject = null
+    activeReviewModal = null
+    if (!modal) return
+    $$('[data-project-review-starter-name]', modal).forEach((target) => {
+      const originalCopy = target.getAttribute('data-project-review-starter-copy')
+      if (originalCopy !== null) target.textContent = originalCopy
+      target.removeAttribute('data-project-review-starter-name')
+      target.removeAttribute('data-project-review-starter-copy')
+    })
+    const form = $('form', modal)
+    if (resetForm && form) form.reset()
+  }
+
+  function paintProjectReviewStarterName(modal, starterName) {
+    if (!modal || !starterName) return 0
+    let painted = 0
+    $$('p, span, h1, h2, h3, h4, h5, h6, label, [starter-name]', modal).forEach((target) => {
+      if (target.children && target.children.length) return
+      if (!target.textContent.includes('[Starter Name]')) return
+      target.setAttribute('data-project-review-starter-copy', target.textContent)
+      target.textContent = target.textContent.replaceAll('[Starter Name]', starterName)
+      target.setAttribute('data-project-review-starter-name', '')
+      painted += 1
+    })
+    return painted
+  }
+
   function prepareProjectReview(project) {
-    const modal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
-    if (!modal || !project || !project.review_eligible || project.has_review) return false
+    if (reviewSubmitting) return false
+    clearProjectReviewContext(activeReviewModal, true)
+    const modal = projectReviewModal()
+    const projectId = Number(project && (project.id || project.project_id))
+    const starterName = String(project && project.starter_name || '').trim()
+    if (
+      !modal ||
+      !(projectId > 0) ||
+      !starterName ||
+      !project.review_eligible ||
+      project.has_review
+    ) return false
+    if (!paintProjectReviewStarterName(modal, starterName)) return false
     activeReviewProject = project
+    activeReviewModal = modal
     const form = $('form', modal)
     const done = $('.w-form-done', modal)
     const fail = $('.w-form-fail', modal)
     if (form) {
       form.reset()
       form.style.display = ''
-      clearReviewSubmissionKey(form)
     }
     if (done) done.style.display = ''
     if (fail) fail.style.display = ''
-    const heading = $('.modal_nav .text-size-large, .modal_nav p', modal)
-    if (heading) heading.textContent = 'Review Starter'
     const privateFeedback = $('[name="Private-Feedback"]', modal)
     if (privateFeedback) {
       const privateWrap = privateFeedback.closest(
@@ -2808,7 +2861,9 @@
   }
 
   async function openProjectReview(action, card) {
+    const requestGeneration = ++projectReviewOpenGeneration
     const project = await currentProjectContext(card)
+    if (requestGeneration !== projectReviewOpenGeneration) return
     if (!project || !prepareProjectReview(project)) {
       showProjectActionFeedback(action, 'Review is not available yet', true)
     }
@@ -2819,13 +2874,13 @@
     event.stopPropagation()
     if (reviewSubmitting) return
     const project = activeReviewProject
-    if (!project || projectWorkflowRole !== 'brand') {
+    if (!project || modal !== activeReviewModal || projectWorkflowRole !== 'brand') {
       reviewError(modal, 'Open Review Starter from the project you want to review.')
       return
     }
     const form = event.target
     const ratingInput = $('input[name="Call-Rating"]:checked', form)
-    const reviewInput = $('[name="Public-Feedback"]', form)
+    const reviewInput = $('[name="Public-Feedback"], [name="Feedback"]', form)
     const rating = Number(ratingInput && ratingInput.value)
     const reviewText = String(reviewInput && reviewInput.value || '').trim()
     if (!(rating >= 1 && rating <= 5)) {
@@ -2872,11 +2927,13 @@
   }
 
   function unwireProjectDashboardWorkflow() {
+    projectReviewOpenGeneration += 1
     const binding = projectWorkflowBinding
     projectWorkflowBinding = null
     if (binding) {
       document.removeEventListener('click', binding.click, true)
       if (binding.submit) document.removeEventListener('submit', binding.submit, true)
+      if (binding.close) window.removeEventListener('modal-close', binding.close)
     }
     projectWorkflowRole = ''
     projectWorkflowItems = new Map()
@@ -2893,9 +2950,10 @@
       projectWorkflowFeedbackElement.removeAttribute('data-project-action-result')
     }
     activeReviewProject = null
+    activeReviewModal = null
     reviewSubmitting = false
-    const reviewModal = $('[data-modal-target="' + PROJECT_REVIEW_MODAL_ID + '"]')
-    clearReviewSubmissionKey(reviewModal && $('form', reviewModal))
+    const reviewModal = projectReviewModal()
+    clearProjectReviewContext(reviewModal, true)
     if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
     projectWorkflowObserver = null
     if (projectRoleForPath()) {
@@ -2913,7 +2971,7 @@
     ) return
     unwireProjectDashboardWorkflow()
     projectWorkflowRole = role
-    const binding = { role, generation: _memberScopeGeneration, click: null, submit: null }
+    const binding = { role, generation: _memberScopeGeneration, click: null, submit: null, close: null }
     binding.click = async (event) => {
       if (!projectWorkflowBindingCurrent(binding)) {
         unwireProjectDashboardWorkflow()
@@ -2947,6 +3005,11 @@
         if (modal) submitProjectReview(event, modal)
       }
       document.addEventListener('submit', binding.submit, true)
+      binding.close = (event) => {
+        const modal = event && event.detail && event.detail.modal
+        if (modal && modal === activeReviewModal) clearProjectReviewContext(modal, true)
+      }
+      window.addEventListener('modal-close', binding.close)
     }
     projectWorkflowBinding = binding
   }

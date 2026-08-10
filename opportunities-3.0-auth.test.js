@@ -42,6 +42,7 @@ async function loadBridge(
   } = {},
 ) {
   const documentListeners = new Map()
+  const windowListeners = new Map()
   const mutationObservers = []
   const consoleErrors = []
   let authChange
@@ -90,10 +91,20 @@ async function loadBridge(
       },
     },
     StartersTrack: { track: (...args) => trackCalls.push(args) },
-    addEventListener() {},
+    addEventListener(type, listener) {
+      const listeners = windowListeners.get(type) || []
+      listeners.push(listener)
+      windowListeners.set(type, listeners)
+    },
     clearInterval,
     clearTimeout,
-    dispatchEvent() {},
+    dispatchEvent(event) {
+      for (const listener of windowListeners.get(event.type) || []) listener(event)
+    },
+    removeEventListener(type, listener) {
+      const listeners = windowListeners.get(type) || []
+      windowListeners.set(type, listeners.filter((candidate) => candidate !== listener))
+    },
     setInterval,
     setTimeout,
   }
@@ -167,6 +178,9 @@ async function loadBridge(
     },
     dispatchDocument(type, event) {
       for (const listener of documentListeners.get(type) || []) listener(event)
+    },
+    dispatchWindow(type, detail) {
+      window.dispatchEvent({ type, detail })
     },
     documentListenerCount(type) {
       return (documentListeners.get(type) || []).length
@@ -2254,9 +2268,11 @@ test('review success survives a failed projection refresh', async () => {
   const submit = el('button', { type: 'submit' })
   const form = el('form', {}, [rating, feedback, submit])
   form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = '[Starter Name]'
   const done = el('div', { class: 'w-form-done' })
   const fail = el('div', { class: 'w-form-fail' })
-  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [form, done, fail])
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form, done, fail])
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
   let listCount = 0
   let reviewCount = 0
@@ -2274,6 +2290,7 @@ test('review success survives a failed projection refresh', async () => {
             lifecycle_version: 4,
             review_eligible: true,
             has_review: false,
+            starter_name: 'JP Test',
           }],
         })
       }
@@ -2328,15 +2345,18 @@ test('review retries reuse their idempotency key until success', async () => {
   const submit = el('button', { type: 'submit' })
   const form = el('form', {}, [rating, feedback, submit])
   form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = '[Starter Name]'
   const done = el('div', { class: 'w-form-done' })
   const fail = el('div', { class: 'w-form-fail' })
-  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [form, done, fail])
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form, done, fail])
   const root = el(
     'div',
     { 'wf-xano-instance': 'dash-brand-projects' },
     [card, modal],
   )
   const reviewBodies = []
+  const firstReview = deferred()
   const bridge = await loadBridge(
     async (input, init = {}) => {
       const url = String(input)
@@ -2349,14 +2369,17 @@ test('review retries reuse their idempotency key until success', async () => {
             lifecycle_version: 4,
             review_eligible: true,
             has_review: false,
+            starter_name: 'JP Test',
           }],
         })
       }
       if (url.includes('/brand/reviews/submit')) {
         reviewBodies.push(JSON.parse(init.body))
-        return reviewBodies.length === 1
-          ? response({ message: 'Temporary failure' }, false, 503)
-          : response({ review_id: 42 })
+        if (reviewBodies.length === 1) {
+          await firstReview.promise
+          return response({ message: 'Temporary failure' }, false, 503)
+        }
+        return response({ review_id: 42 })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -2380,12 +2403,291 @@ test('review retries reuse their idempotency key until success', async () => {
     stopPropagation() {},
   })
   bridge.dispatchDocument('submit', submitEvent())
-  assert.ok(await waitFor(() => reviewBodies.length === 1 && fail.style.display === 'block'))
+  assert.ok(await waitFor(() => reviewBodies.length === 1))
+  const retryKey = form.dataset.projectReviewKey
+
+  bridge.dispatchWindow('modal-close', { modal })
+  assert.equal(form.dataset.projectReviewKey, retryKey)
+  firstReview.resolve()
+  assert.ok(await waitFor(() => fail.style.display === 'block'))
+
+  bridge.dispatchDocument('click', clickEvent(review).event)
+  await new Promise(setImmediate)
   bridge.dispatchDocument('submit', submitEvent())
   assert.ok(await waitFor(() => reviewBodies.length === 2))
 
   assert.equal(reviewBodies[0].idempotency_key, reviewBodies[1].idempotency_key)
   assert.equal(form.dataset.projectReviewKey, undefined)
+})
+
+test('review binds the Lumos-owned modal to the opened project Starter without stale-card leakage', async () => {
+  const reviewAction = () => {
+    const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'Review Starter'
+    return { review, wrap: el('div', { class: 'button_main-wrap' }, [review, label]) }
+  }
+  const first = reviewAction()
+  const second = reviewAction()
+  const missing = reviewAction()
+  const firstCard = el('div', { class: 'project_item', 'data-wf-xano-id': '667' }, [first.wrap])
+  const secondCard = el('div', { class: 'project_item', 'data-wf-xano-id': '669' }, [second.wrap])
+  const missingCard = el('div', { class: 'project_item', 'data-wf-xano-id': '668' }, [missing.wrap])
+
+  const staleName = el('span', { 'starter-name': '' })
+  staleName.textContent = '[Starter Name]'
+  const staleForm = el('form', {}, [])
+  staleForm.reset = () => {}
+  const staleModal = el(
+    'dialog',
+    { 'data-modal-target': 'rate-starter-call' },
+    [staleName, staleForm],
+  )
+
+  const headline = el('p')
+  headline.textContent = '[Starter Name]'
+  const rateCopy = el('p')
+  rateCopy.textContent = 'Rate your experience with [Starter Name]'
+  const rating = el('input', { name: 'Call-Rating' })
+  rating.value = '5'
+  const feedback = el('textarea', { name: 'Feedback' })
+  feedback.value = 'Excellent canonical project delivery.'
+  const submit = el('button', { type: 'submit' })
+  const form = el('form', {}, [headline, rateCopy, rating, feedback, submit])
+  form.reset = () => {}
+  const done = el('div', { class: 'w-form-done' })
+  const fail = el('div', { class: 'w-form-fail' })
+  const activeModal = el(
+    'dialog',
+    { 'data-modal-target': 'rate-starter-call' },
+    [form, done, fail],
+  )
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects' },
+    [firstCard, secondCard, missingCard, staleModal, activeModal],
+  )
+  const reviewBodies = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [
+            {
+              id: 667,
+              lifecycle_state: 'completed',
+              review_eligible: true,
+              has_review: false,
+              starter_name: 'JP Test',
+            },
+            {
+              id: 668,
+              lifecycle_state: 'completed',
+              review_eligible: true,
+              has_review: false,
+              starter_name: '',
+            },
+            {
+              id: 669,
+              lifecycle_state: 'completed',
+              review_eligible: true,
+              has_review: false,
+              starter_name: 'Second Starter',
+            },
+          ],
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewBodies.push(JSON.parse(init.body))
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  let openCount = 0
+  bridge.window.lumos = {
+    modal: {
+      list: {
+        'rate-starter-call': {
+          el: activeModal,
+          open() {
+            openCount += 1
+            activeModal.setAttribute('open', '')
+          },
+        },
+      },
+    },
+  }
+
+  assert.ok(await waitFor(() => first.review.getAttribute('data-project-action') === 'review'))
+  bridge.dispatchDocument('click', clickEvent(first.review).event)
+  assert.ok(await waitFor(() => openCount === 1))
+  assert.equal(staleName.textContent, '[Starter Name]')
+  assert.equal(headline.textContent, 'JP Test')
+  assert.equal(rateCopy.textContent, 'Rate your experience with JP Test')
+
+  bridge.dispatchDocument('submit', {
+    target: form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => reviewBodies.length === 1))
+  assert.deepEqual(
+    { project_id: reviewBodies[0].project_id, rating: reviewBodies[0].rating, review_text: reviewBodies[0].review_text },
+    { project_id: 667, rating: 5, review_text: 'Excellent canonical project delivery.' },
+  )
+
+  bridge.dispatchWindow('modal-close', { modal: activeModal })
+  assert.equal(headline.textContent, '[Starter Name]')
+  assert.equal(rateCopy.textContent, 'Rate your experience with [Starter Name]')
+
+  bridge.dispatchDocument('click', clickEvent(second.review).event)
+  assert.ok(await waitFor(() => openCount === 2))
+  assert.equal(headline.textContent, 'Second Starter')
+  assert.equal(rateCopy.textContent, 'Rate your experience with Second Starter')
+
+  bridge.dispatchWindow('modal-close', { modal: activeModal })
+  assert.equal(headline.textContent, '[Starter Name]')
+  assert.equal(rateCopy.textContent, 'Rate your experience with [Starter Name]')
+  bridge.dispatchDocument('click', clickEvent(missing.review).event)
+  await new Promise(setImmediate)
+  assert.equal(openCount, 2)
+  assert.equal(headline.textContent, '[Starter Name]')
+  assert.equal(rateCopy.textContent, 'Rate your experience with [Starter Name]')
+})
+
+test('latest review card wins when an older canonical lookup resolves last', async () => {
+  const reviewAction = () => {
+    const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'Review Starter'
+    return { review, wrap: el('div', { class: 'button_main-wrap' }, [review, label]) }
+  }
+  const slow = reviewAction()
+  const latest = reviewAction()
+  const slowCard = el('div', { class: 'project_item', 'data-wf-xano-id': '667' }, [slow.wrap])
+  const latestCard = el('div', { class: 'project_item', 'data-wf-xano-id': '669' }, [latest.wrap])
+  const headline = el('p')
+  headline.textContent = '[Starter Name]'
+  const rating = el('input', { name: 'Call-Rating' })
+  rating.value = '5'
+  const feedback = el('textarea', { name: 'Feedback' })
+  feedback.value = 'Excellent canonical project delivery.'
+  const submit = el('button', { type: 'submit' })
+  const form = el('form', {}, [rating, feedback, submit])
+  form.reset = () => {}
+  const done = el('div', { class: 'w-form-done' })
+  const fail = el('div', { class: 'w-form-fail' })
+  const modal = el(
+    'dialog',
+    { 'data-modal-target': 'rate-starter-call' },
+    [headline, form, done, fail],
+  )
+  const root = el(
+    'div',
+    { 'wf-xano-instance': 'dash-brand-projects' },
+    [slowCard, latestCard, modal],
+  )
+  const slowLookup = deferred()
+  const reviewBodies = []
+  let listCount = 0
+  let openCount = 0
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listCount += 1
+        if (listCount === 2) return slowLookup.promise
+        return response({
+          items: [{
+            id: 669,
+            lifecycle_state: 'completed',
+            review_eligible: true,
+            has_review: false,
+            starter_name: 'Latest Starter',
+          }],
+        })
+      }
+      if (url.includes('/brand/reviews/submit')) {
+        reviewBodies.push(JSON.parse(init.body))
+        return response({ review_id: 42 })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  bridge.window.lumos = {
+    modal: {
+      list: {
+        'rate-starter-call': {
+          el: modal,
+          open() {
+            openCount += 1
+          },
+        },
+      },
+    },
+  }
+
+  assert.ok(await waitFor(() => latest.review.getAttribute('data-project-action') === 'review'))
+  bridge.dispatchDocument('click', clickEvent(slow.review).event)
+  assert.ok(await waitFor(() => listCount === 2))
+  bridge.dispatchDocument('click', clickEvent(latest.review).event)
+  assert.ok(await waitFor(() => openCount === 1))
+  assert.equal(headline.textContent, 'Latest Starter')
+
+  slowLookup.resolve(response({
+    items: [
+      {
+        id: 667,
+        lifecycle_state: 'completed',
+        review_eligible: true,
+        has_review: false,
+        starter_name: 'Slow Starter',
+      },
+      {
+        id: 669,
+        lifecycle_state: 'completed',
+        review_eligible: true,
+        has_review: false,
+        starter_name: 'Latest Starter',
+      },
+    ],
+  }))
+  await new Promise(setImmediate)
+  await new Promise(setImmediate)
+
+  assert.equal(openCount, 1)
+  assert.equal(headline.textContent, 'Latest Starter')
+  assert.equal(slow.wrap.getAttribute('data-project-action-result'), null)
+
+  bridge.dispatchDocument('submit', {
+    target: form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  assert.ok(await waitFor(() => reviewBodies.length === 1))
+  assert.equal(reviewBodies[0].project_id, 669)
 })
 
 test('the authored type=button invoice CTA requests the native form submit', async () => {
