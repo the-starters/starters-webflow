@@ -2016,18 +2016,19 @@ value or the OAuth provider rejects the exchange.
 
 ## V3 reviews frontend
 
-`reviews.js` is the prepared browser adapter for completed-project reviews on
+`reviews.js` is the browser adapter for completed-project reviews on
 the Brand dashboard and approved reviews on public `/hire/{slug}` profiles.
-Production Webflow activation is approved for the Brand dashboard and public
-`/hire/{slug}` profiles. The sitewide `opportunities-3.0.js` controller loads
-the GitHub-owned adapter once, and only on a canonical `/hire/{slug}` route, so
-the public profile does not need a second Webflow page-code loader. Do not
-enable any points, ranking, rank-projector, or `rank_status` write as part of
-this integration.
+Production Webflow activation covers the Brand dashboard and public
+`/hire/{slug}` profiles. Each surface loads the GitHub-owned adapter once from
+its Webflow page code. Do not add a second loader through
+`opportunities-3.0.js` or another global controller:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/reviews.js"></script>
 ```
+
+Do not enable any points, ranking, rank-projector, or `rank_status` write as
+part of this integration.
 
 Webflow Designer owns the Brand review form and the public Reviews section. The
 adapter does not generate either surface. On the Brand side, author the review
@@ -2062,19 +2063,24 @@ approval workflow can be introduced without changing the browser contract. A
 successful wf-xano `project-review` submission emits the document
 event `starters:review-submitted`; it does not perform a second write.
 
-On the public profile, use one wf-xano wrapper with
-`wf-xano-instance="starter-reviews"` and `data-reviews-v3`. The adapter derives
-the decoded slug only from the canonical `/hire/{slug}` path and sets
-`wf-xano-param-starter_slug` before initializing the wrapper. When the wrapper
-has no authored `wf-xano-element="template"`, the adapter adds a hidden,
-aria-hidden placeholder so wf-xano can initialize. If site-level wf-xano has
-already booted and skipped that formerly incomplete wrapper, the adapter calls
-the runtime's idempotent `init()` for only this configured root. Review cards
-are rendered only into the separate `data-reviews-v3-list` target. Inside the
+On the public profile, author exactly one section with
+`data-reviews-v3="profile"` and exactly one descendant list target with
+`data-reviews-v3-list="reviews"`. The adapter derives the decoded slug only
+from the canonical `/hire/{slug}` path, configures that section as the
+`starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` before
+initializing it. It does not discover the surface through classes, heading
+text, or generated IDs. A missing section or list target fails closed before
+wf-xano initialization and makes no review request.
+
+When the wrapper has no authored `wf-xano-element="template"`, the adapter adds
+a hidden, aria-hidden placeholder so wf-xano can initialize. If site-level
+wf-xano has already booted and skipped that formerly incomplete wrapper, the
+adapter calls the runtime's idempotent `init()` for only this configured root.
+Review cards are rendered only into the attributed list target. Inside the
 authored section, use
 `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate values
-and `data-reviews-v3-list` for the card target. The Xano response is the
-authority and must expose only approved reviews. Its canonical envelope is:
+for the optional aggregate projections. The Xano response is the authority and
+must expose only approved reviews. Its canonical envelope is:
 
 ```json
 {
@@ -2086,13 +2092,10 @@ authority and must expose only approved reviews. Its canonical envelope is:
 }
 ```
 
-For the current native profile template, the adapter also adopts the existing
-`.profile-content_reviews` section and its
-`.profile-content_reviews_list` descendant when the migration attributes are
-absent. It adds only behavior attributes and the hidden template needed by
-wf-xano; Webflow continues to own the visible Reviews section. If no canonical
-profile slug or recognizable Reviews section is available, the adapter makes
-no request and renders nothing.
+Webflow continues to own the visible Reviews section, heading, navigation, and
+plain list Div. The legacy Reviews CMS Collection List is not a data source and
+must not be retained as a second review projection; Xano is the only review
+store and public read authority.
 
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never

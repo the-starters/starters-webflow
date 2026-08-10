@@ -29,12 +29,12 @@ class Element {
 }
 
 function documentFixture() {
-  const root = new Element({ 'data-reviews-v3': '' })
+  const root = new Element({ 'data-reviews-v3': 'profile' })
   const average = new Element()
   const legacyAverage = new Element()
   const count = new Element()
-  const list = new Element({ 'data-reviews-v3-list': 'true' })
-  root.children['[data-reviews-v3-list]'] = list
+  const list = new Element({ 'data-reviews-v3-list': 'reviews' })
+  root.children['[data-reviews-v3-list="reviews"]'] = list
   const listeners = {}
   return {
     root,
@@ -46,8 +46,8 @@ function documentFixture() {
     addEventListener(name, handler, capture) { listeners[name] = { handler, capture } },
     dispatchEvent() {},
     querySelector(selector) {
-      if (selector === '[data-reviews-v3]') return root
-      if (selector === '[data-reviews-v3-list]') return list
+      if (selector === '[data-reviews-v3="profile"]') return root
+      if (selector === '[data-reviews-v3-list="reviews"]') return list
       return null
     },
     createElement() { return new Element() },
@@ -99,25 +99,23 @@ test('configures the public wrapper with a slug before wf-xano boot', () => {
   assert.equal(fixture.root.childNodes[0].hidden, true)
 })
 
-test('adopts the current native profile Reviews section when migration attributes are absent', () => {
+test('fails closed when the authored profile review attributes are absent', () => {
   const fixture = documentFixture()
   fixture.root.removeAttribute('data-reviews-v3')
-  fixture.querySelector = (selector) => {
-    if (selector === '[data-reviews-v3]') return null
-    if (selector.includes('.profile-content_reviews')) return fixture.root
-    if (selector === '[data-reviews-v3-list]') return null
-    return null
-  }
-  fixture.root.querySelector = (selector) => {
-    if (selector.includes('.profile-content_reviews_list')) return fixture.list
-    return null
-  }
+  fixture.querySelector = () => null
 
   const { api } = load({ document: fixture, pathname: '/hire/jp-dionisio' })
-  assert.equal(api.findProfileRoot(fixture), fixture.root)
-  assert.equal(fixture.root.getAttribute('data-reviews-v3'), '')
-  assert.equal(fixture.list.getAttribute('data-reviews-v3-list'), '')
-  assert.equal(fixture.list.getAttribute('wf-xano-element'), 'list')
+  assert.equal(api.configureProfileRoot(fixture, '/hire/jp-dionisio'), null)
+  assert.equal(fixture.root.getAttribute('wf-xano-source'), null)
+})
+
+test('fails closed when the authored review list target is absent', () => {
+  const fixture = documentFixture()
+  delete fixture.root.children['[data-reviews-v3-list="reviews"]']
+
+  const { api } = load({ document: fixture, pathname: '/hire/jp-dionisio' })
+  assert.equal(api.configureProfileRoot(fixture, '/hire/jp-dionisio'), null)
+  assert.equal(fixture.root.getAttribute('wf-xano-source'), null)
 })
 
 test('initializes the profile wrapper when wf-xano already booted', () => {

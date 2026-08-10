@@ -49,6 +49,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-main/quiz-main.js` — `/quiz` controller; combines homepage bucket selections with saved Memberstack answers, translates pre-rollout taxonomy IDs before retake prefill, persists draft/ready answers for results, skips signup for logged-in retakers, and gives the signup form the bare `redirect="/quiz-results"` attribute that Memberstack's submit handler actually reads (`data-ms-redirect` alone only survives a click, so Enter-key signups were dropped back on `/quiz`) (see `quiz-main/README.md`)
 - `quiz-main/quiz-redirect.js` — `/quiz` member redirect; sends live or Test paid Brands to `/brand-dashboard` and completed free Brands to `/quiz-results` unless the URL opts into a retake, and Talent members to `/starter-dashboard` whether or not it does; also rescues any logged-in member who arrives with a `ready` `sessionStorage.starterQuizPending` payload — a just-signed-up member has no `starter-quiz` custom field yet, since `/quiz-results` is what writes it — reading that key without ever clearing it, and still standing down for `?retake=`
 - `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, sends authenticated members whose completion marker has outlived missing or malformed answer JSON to `/quiz?retake=true&quizDataMissing=1`, keeps diagnostics opt-in through `starterQuizDebug`, uses the `Freelancers3.0-dev` Algolia index for freelancer recommendations by default, and rides the ad-attribution cookies written by `v3/signup-attribution.js` into the same `updateMember` call as `starter-quiz` (verified Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone)
+- `quiz-results-email-tester.js` and `.css` — query-gated production tester for the V3 `/quiz-results` email; binds a native Webflow panel, hydrates the signed-in canary Brand's current saved quiz plus current Starter and Learn records, and sends only through the authenticated Xano endpoint described under [Quiz-results email tester](#quiz-results-email-tester)
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
 - `opportunities-3.0.js` — Opportunities 3.0 page and dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`, drives authenticated canonical project actions on both role dashboards, and keeps Generate Invoice Starter-only
@@ -180,6 +181,45 @@ draft-payload regressions with:
 
 ```sh
 node --test quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js
+```
+
+## Quiz-results email tester
+
+The production tester is inert during the normal V3 results journey. It is
+available only at `/quiz-results?quizEmailTest=1`, for a signed-in member whose
+email is `jp+brand10@thestarters.com`, and only when the page contains its native
+Webflow markup. `quiz-results.js` hides that markup by default and loads
+`quiz-results-email-tester.js` only when the query and markup gates pass; the
+tester verifies the signed-in email before enabling Send and loads its scoped
+stylesheet itself.
+
+Author the panel in Webflow rather than generating it in JavaScript. Add these
+custom attributes to the corresponding native elements:
+
+| Attribute | Purpose |
+| --- | --- |
+| `data-quiz-email-test-panel` | Tester panel root |
+| `data-quiz-email-test-recipient` | Fixed-recipient label |
+| `data-quiz-email-test-summary` | Hydrated payload summary |
+| `data-quiz-email-test-status` | Loading, error, and sent state |
+| `data-quiz-email-test-send` | Send button |
+
+Optional native controls may use `data-quiz-email-test-launcher` and
+`data-quiz-email-test-close`. The controller never creates panel markup.
+
+The browser waits for `quiz-results.js` to publish the compact quiz state that
+was read from or saved to the current Memberstack member. It then refreshes the
+three saved Starter IDs from `Freelancers3.0-dev`, selects current category
+matches from `LearnContent`, and posts the rendered email through the
+authenticated `quiz_email_test/send/v3` Xano endpoint. Xano is the security
+boundary: it must authorize the dedicated production canary, replace any client
+recipient with `jp+brand10@thestarters.com`, audit the attempt, enforce
+idempotency and rate limits, and keep the Mandrill credential server-side.
+
+Run the focused regression checks with:
+
+```sh
+node --test quiz-results-email-tester.test.js
 ```
 
 ## Opportunities 3.0 URL Identity

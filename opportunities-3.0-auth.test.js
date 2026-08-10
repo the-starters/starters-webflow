@@ -45,14 +45,13 @@ async function loadBridge(
   const windowListeners = new Map()
   const mutationObservers = []
   const consoleErrors = []
-  const appendedElements = []
   let authChange
   const attributes = new Map()
   if (routeGuard) {
     attributes.set('data-route-guard', routeGuard === true ? 'allowed' : String(routeGuard))
   }
   const documentElement = {
-    appendChild(element) { appendedElements.push(element) },
+    appendChild() {},
     getAttribute: (name) => attributes.get(name) || null,
     setAttribute: (name, value) => attributes.set(name, String(value)),
   }
@@ -73,7 +72,7 @@ async function loadBridge(
       return el(tag)
     },
     documentElement,
-    getElementById: (id) => appendedElements.find((element) => element.id === id) || null,
+    getElementById: () => null,
     head: documentElement,
     querySelector: (selector) => {
       if (selector === 'script[src*="/v3/route-guard.js"]' && routeGuardScript) return {}
@@ -164,7 +163,6 @@ async function loadBridge(
   assert.equal(typeof authChange, 'function')
   return {
     API: window.Opp30.API,
-    appendedElements,
     authChange,
     attributes,
     consoleErrors,
@@ -197,29 +195,6 @@ test('builds a login URL that preserves the current V3 path and query', async ()
     bridge.window.Opp30.loginPathWithNext(),
     '/login?next=%2Fall-modals',
   )
-})
-
-test('loads the public reviews adapter once on a canonical /hire profile', async () => {
-  const bridge = await loadBridge(async () => response({}), {
-    pathname: '/hire/jp-dionisio',
-  })
-
-  assert.equal(bridge.appendedElements.length, 1)
-  const script = bridge.appendedElements[0]
-  assert.equal(script.id, 'starters-v3-reviews-adapter')
-  assert.equal(
-    script.src,
-    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/reviews.js',
-  )
-  assert.equal(script.defer, true)
-
-  bridge.window.Opp30.loadPublicReviewsAdapter()
-  assert.equal(bridge.appendedElements.length, 1)
-})
-
-test('does not load the public reviews adapter outside a Starter profile', async () => {
-  const bridge = await loadBridge(async () => response({}), { pathname: '/all-starters' })
-  assert.deepEqual(bridge.appendedElements, [])
 })
 
 const talentMember = {
