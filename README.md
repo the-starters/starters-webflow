@@ -712,6 +712,17 @@ idempotency key across retries. Private Feedback stays hidden because this flow
 does not send private Starter feedback. Starter sessions never receive review
 submission wiring.
 
+The modal is resolved from `window.lumos.modal.list['rate-starter-call'].el`,
+not the first matching dialog in document order. This matters while the Brand
+dashboard contains both the legacy rate-call dialog and the live End Project &
+Review dialog with the same target. The live dialog's `[Starter Name]` text is
+filled only from that card's canonical `starter_name` in the `#1600` project
+projection. A missing project, missing Starter name, or modal without an
+authored name placeholder blocks the open. Closing the dialog clears the
+painted name and pending project context. The submit adapter accepts the live
+`Feedback` field and the legacy `Public-Feedback` field during the authored
+surface transition.
+
 All project-action listeners, cached rows, and pending review context are
 discarded when the signed-in Memberstack account changes. The new account must
 pass the exact route and stable plan-role gate before the workflow can bind
