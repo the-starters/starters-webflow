@@ -2660,7 +2660,7 @@
       if (contractWindow && !contractWindow.closed) contractWindow.close()
       showProjectContractFeedback(
         projectId,
-        projectActionErrorMessage(error, 'Contract is unavailable. Please try again.'),
+        'Contract is unavailable. Please try again.',
         true,
       )
     } finally {

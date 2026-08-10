@@ -678,7 +678,10 @@ authenticated protected-PDF delivery endpoint and remain hidden until that path 
 implemented and verified. On click, the controller
 first tries to refresh the canonical project list. A transient list failure may
 fall back to the already role-gated cached project only to request this link; the
-authenticated Xano endpoint remains the final authorization and state check.
+link endpoint remains the final authorization boundary. A missing or rejected
+session closes the pre-opened blank tab and shows only the generic
+`Contract is unavailable. Please try again.` message; provider and bridge details
+are not rendered into the dashboard.
 The Webflow-authored control fails closed from dashboard boot: it stays hidden
 while Memberstack resolves, while the project list is pending or unavailable,
 and when a project card renders before its canonical row. A card is revealed

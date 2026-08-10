@@ -1955,6 +1955,107 @@ test('View Contract uses cached authorization when the canonical refresh transie
   assert.equal(contractWindow.opener, null)
 })
 
+test('View Contract closes its blank popup and reports a safe error when Xano returns no URL', async () => {
+  const contract = el('a', { href: '#contract' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'View Contract'
+  const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  let linkRequests = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'contract_sent',
+            pandadoc_document_id: 'doc-675',
+            contract_status: 'sent',
+          }],
+        })
+      }
+      if (url.includes('/contracts/link/v3')) {
+        linkRequests += 1
+        return response({})
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  const originalHref = bridge.location.href
+  const contractWindow = {
+    closed: false,
+    close() { this.closed = true },
+    location: {},
+    opener: bridge.window,
+  }
+  bridge.window.open = () => contractWindow
+  assert.ok(await waitFor(() => wrap.style.display === ''))
+
+  bridge.dispatchDocument('click', clickEvent(contract).event)
+
+  assert.ok(await waitFor(() => linkRequests === 1 && contractWindow.closed))
+  assert.equal(bridge.location.href, originalHref)
+  assert.equal(wrap.getAttribute('data-project-action-result'), 'error')
+  assert.equal(label.textContent, 'Contract is unavailable. Please try again.')
+})
+
+test('View Contract uses the authorized session in the current tab when popups are blocked', async () => {
+  const contract = el('a', { href: '#contract' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'View Contract'
+  const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  const sessionUrl = 'https://app.pandadoc.com/s/popup-blocked-contract'
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'contract_sent',
+            pandadoc_document_id: 'doc-675',
+            contract_status: 'viewed',
+          }],
+        })
+      }
+      if (url.includes('/contracts/link/v3')) return response({ url: sessionUrl })
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  bridge.window.location = bridge.location
+  bridge.window.open = () => null
+  assert.ok(await waitFor(() => wrap.style.display === ''))
+
+  bridge.dispatchDocument('click', clickEvent(contract).event)
+
+  assert.ok(await waitFor(() => bridge.location.href === sessionUrl))
+  assert.notEqual(wrap.getAttribute('data-project-action-result'), 'error')
+})
+
 test('project action context includes every canonical project page', async () => {
   const secondPageEnd = el('button', { 'wf-xano-link': 'project-end' })
   const secondPageLabel = el('div', { class: 'button_main-text' })
