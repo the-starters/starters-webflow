@@ -1391,7 +1391,16 @@ for (const dashboard of [
 ]) {
   test(`${dashboard.label} dashboard prepares lazy project details with multiline scope`, async () => {
     const scope = el('div', { 'wf-xano-bind': 'project_scope' })
-    const details = el('div', { 'wf-xano-element': 'details-target' }, [scope])
+    const nestedScope = el('div', { 'wf-xano-bind': 'value' })
+    const scopeTarget = el(
+      'div',
+      {
+        'wf-xano-element': 'nest-target',
+        'wf-xano-field': 'project_scope_details',
+      },
+      [nestedScope],
+    )
+    const details = el('div', { 'wf-xano-element': 'details-target' }, [scope, scopeTarget])
     const template = el('div', { 'wf-xano-element': 'template' }, [details])
     const root = el(
       'div',
@@ -1416,6 +1425,8 @@ for (const dashboard of [
     assert.equal(details.hasAttribute('wf-xano-lazy-details'), true)
     assert.equal(scope.style.whiteSpace, 'pre-wrap')
     assert.equal(scope.style.overflowWrap, 'anywhere')
+    assert.equal(nestedScope.style.whiteSpace, 'pre-wrap')
+    assert.equal(nestedScope.style.overflowWrap, 'anywhere')
   })
 }
 
