@@ -1955,7 +1955,10 @@
     const targets = $$('[wf-xano-element="details-target"]', template)
     targets.forEach((target) => {
       target.setAttribute('wf-xano-lazy-details', '')
-      $$('[wf-xano-bind="project_scope"]', target).forEach((scope) => {
+      $$(
+        '[wf-xano-bind="project_scope"], [wf-xano-element="nest-target"][wf-xano-field="project_scope_details"] [wf-xano-bind="value"]',
+        target,
+      ).forEach((scope) => {
         scope.style.whiteSpace = 'pre-wrap'
         scope.style.overflowWrap = 'anywhere'
       })
@@ -2657,7 +2660,7 @@
       if (contractWindow && !contractWindow.closed) contractWindow.close()
       showProjectContractFeedback(
         projectId,
-        projectActionErrorMessage(error, 'Contract is unavailable. Please try again.'),
+        'Contract is unavailable. Please try again.',
         true,
       )
     } finally {

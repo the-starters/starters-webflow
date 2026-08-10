@@ -642,9 +642,11 @@ modal, form, or button markup. At dashboard bootstrap, the controller marks ever
 authored `[wf-xano-element="details-target"]` inside that instance's template
 with `wf-xano-lazy-details`, so wf-xano can defer the project disclosure's nested
 hydration until the member opens it instead of hydrating every disclosure on the
-12-item page during first render. Within that lazy details target, every
-`[wf-xano-bind="project_scope"]` preserves authored newline characters as visible
-line breaks and wraps unbroken long words instead of widening the project card.
+12-item page during first render. Within that lazy details target, the
+`project_scope_details` nest target's `[wf-xano-bind="value"]` preserves
+authored newline characters as visible line breaks and wraps unbroken long words
+instead of widening the project card. The legacy direct
+`[wf-xano-bind="project_scope"]` selector remains supported during rollout.
 
 The shared Project timeline value is repainted from each canonical project's
 `start_date` and `end_date` (falling back to `estimated_end_date`) as a readable
@@ -676,7 +678,10 @@ authenticated protected-PDF delivery endpoint and remain hidden until that path 
 implemented and verified. On click, the controller
 first tries to refresh the canonical project list. A transient list failure may
 fall back to the already role-gated cached project only to request this link; the
-authenticated Xano endpoint remains the final authorization and state check.
+link endpoint remains the final authorization boundary. A missing or rejected
+session closes the pre-opened blank tab and shows only the generic
+`Contract is unavailable. Please try again.` message; provider and bridge details
+are not rendered into the dashboard.
 The Webflow-authored control fails closed from dashboard boot: it stays hidden
 while Memberstack resolves, while the project list is pending or unavailable,
 and when a project card renders before its canonical row. A card is revealed
