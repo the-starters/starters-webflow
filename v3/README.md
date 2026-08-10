@@ -2019,60 +2019,52 @@ value or the OAuth provider rejects the exchange.
 
 ## V3 reviews frontend
 
-`reviews.js` is the prepared browser adapter for completed-project reviews on
-the Brand dashboard and approved reviews on public `/hire/{slug}` profiles.
-Production Webflow activation is approved for the Brand dashboard and public
-`/hire/{slug}` profiles. Load the GitHub-owned adapter from jsDelivr after the
-authored Webflow surfaces and wf-xano runtime, then publish those exact Webflow
-surfaces. Do not enable any points, ranking, rank-projector, or `rank_status`
-write as part of this integration.
+`reviews.js` is the browser adapter for approved reviews on public
+`/hire/{slug}` profiles. The public profile loads the GitHub-owned adapter once
+from its existing Webflow page code. Do not add a second loader through
+`opportunities-3.0.js` or another global controller:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/reviews.js"></script>
 ```
 
+Do not enable any points, ranking, rank-projector, or `rank_status` write as
+part of this integration.
+
 Webflow Designer owns the Brand review form and the public Reviews section. The
-adapter does not generate either surface. On the Brand side, author the review
-form as native Webflow HTML with `data-review-form-v3` on the `form`, retain the
-`dash-brand-projects` wf-xano instance, and configure its wf-xano form name as
-`project-review`. The form must include the endpoint's normal review fields plus
-these authored controls:
+adapter does not generate either surface, and `reviews.js` does not bind or
+submit the Brand form. `opportunities-3.0.js` owns that form's per-card context,
+validation, submit locking, and retry behavior; its authoritative dashboard
+contract is documented in the root
+[README](../README.md#opportunities-30-project-dashboard-actions).
 
-| Control | Contract |
-| --- | --- |
-| Project identifier | `wf-xano-field="project_id"` |
-| Hidden idempotency key | `wf-xano-field="idempotency_key"` |
-
-The adapter binds the authored `project_id` control only when the canonical
-`dash-brand-projects` result contains exactly one project, accepting that
-project's positive numeric `project_id` or `id`. It also supports the already
-rendered `.project_item[data-wf-xano-id]` as a startup and submit-time fallback,
-but only when exactly one such item exists in the Brand projects instance (or,
-when that wrapper is absent, in the document). Zero, multiple, missing, or
-invalid project identities clear the control and block submission before
-wf-xano can send a blank or stale ID. For a valid binding, the adapter
-normalizes the control value, replaces the authored `.review-v3_intro` text
-with `Share your experience after completing this project. Your review will
-appear on the Starter profile after submission.`, and writes a new
-`review-ui:{project_id}:{random}` key in capture phase for every submit. Xano
-remains authoritative for completed-project eligibility, one-review
+Xano remains authoritative for completed-project eligibility, one-review
 enforcement, idempotent replay, moderation, points, reversals, aggregates, and
-ranking. A successful wf-xano `project-review` submission emits the document
-event `starters:review-submitted`; it does not perform a second write.
+ranking. The current product rule is one review per canonical
+project/Brand/Starter tuple. New project reviews are immediately approved and
+published, while the canonical moderation state remains explicit so a future
+approval workflow can be introduced without changing the browser contract. A
+successful submission refreshes the canonical dashboard projection without a
+second review write.
 
-On the public profile, use one wf-xano wrapper with
-`wf-xano-instance="starter-reviews"` and `data-reviews-v3`. The adapter derives
-the decoded slug only from the canonical `/hire/{slug}` path and sets
-`wf-xano-param-starter_slug` before initializing the wrapper. When the wrapper
-has no authored `wf-xano-element="template"`, the adapter adds a hidden,
-aria-hidden placeholder so wf-xano can initialize. If site-level wf-xano has
-already booted and skipped that formerly incomplete wrapper, the adapter calls
-the runtime's idempotent `init()` for only this configured root. Review cards
-are rendered only into the separate `data-reviews-v3-list` target. Inside the
+On the public profile, author exactly one section with
+`data-reviews-v3="profile"` and exactly one descendant list target with
+`data-reviews-v3-list="reviews"`. The adapter derives the decoded slug only
+from the canonical `/hire/{slug}` path, configures that section as the
+`starter-reviews` wf-xano wrapper, and sets `wf-xano-param-starter_slug` before
+initializing it. It does not discover the surface through classes, heading
+text, or generated IDs. A missing section or list target fails closed before
+wf-xano initialization and makes no review request.
+
+When the wrapper has no authored `wf-xano-element="template"`, the adapter adds
+a hidden, aria-hidden placeholder so wf-xano can initialize. If site-level
+wf-xano has already booted and skipped that formerly incomplete wrapper, the
+adapter calls the runtime's idempotent `init()` for only this configured root.
+Review cards are rendered only into the attributed list target. Inside the
 authored section, use
 `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate values
-and `data-reviews-v3-list` for the card target. The Xano response is the
-authority and must expose only approved reviews. Its canonical envelope is:
+for the optional aggregate projections. The Xano response is the authority and
+must expose only approved reviews. Its canonical envelope is:
 
 ```json
 {
@@ -2083,6 +2075,11 @@ authority and must expose only approved reviews. Its canonical envelope is:
   }
 }
 ```
+
+Webflow continues to own the visible Reviews section, heading, navigation, and
+plain list Div. The legacy Reviews CMS Collection List is not a data source and
+must not be retained as a second review projection; Xano is the only review
+store and public read authority.
 
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
@@ -2102,7 +2099,13 @@ Run the focused checks with:
 node --check v3/reviews.js
 node --check v3/reviews.test.js
 node --test v3/reviews.test.js
+python3 -m http.server 8765 --bind 127.0.0.1
+# Open /v3/reviews-harness.html and click Reviews.
 ```
+
+The harness runs the real adapter against an isolated approved-review fixture;
+it changes the browser history to `/hire/review-harness` so the adapter uses its
+canonical route gate, and never reads or writes production business data.
 
 ## Brand and Starter Dashboard messages tile
 

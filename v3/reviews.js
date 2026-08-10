@@ -1,16 +1,12 @@
 /**
  * V3 reviews page integration.
  *
- * Designer owns every review form control and the public Reviews section. This module only:
- *   - binds the authored Brand review form to one canonical project result and
- *     blocks submission when no valid positive numeric project ID is available;
- *   - supplies a fresh idempotency key immediately before an authored review
- *     form is submitted;
- *   - derives the public-profile slug from /hire/{slug} and adds it to the
- *     authored wf-xano wrapper before that wrapper loads;
+ * Designer owns the public Reviews section. This module only:
+ *   - derives the public-profile slug from /hire/{slug} and configures the
+ *     authored Reviews section as a wf-xano wrapper before it loads;
  *   - projects Xano's approved aggregate into the authored profile summary;
- *   - replaces the legacy CMS projection inside the authored Reviews list
- *     target with sanitized cards from Xano's approved review response.
+ *   - replaces the legacy CMS projection inside the attributed Reviews list
+ *     target with sanitized cards from Xano's approved response.
  *
  * Xano remains authoritative for identity, project completion, one-review
  * enforcement, moderation, points, reversals, aggregates, and ranking.
@@ -21,32 +17,14 @@
   if (!global || global.__startersV3ReviewsBooted) return
   global.__startersV3ReviewsBooted = true
 
-  var BRAND_INSTANCE = 'dash-brand-projects'
   var PROFILE_INSTANCE = 'starter-reviews'
-  var PROFILE_ROOT = '[data-reviews-v3]'
-  var PROFILE_LIST = '[data-reviews-v3-list]'
-  var REVIEW_FORM = 'form[data-review-form-v3]'
-  var REVIEW_KEY = '[wf-xano-field="idempotency_key"]'
+  var PROFILE_ROOT = '[data-reviews-v3="profile"]'
+  var PROFILE_LIST = '[data-reviews-v3-list="reviews"]'
 
-  function canonicalProjectId(value) {
-    var projectId = String(value == null ? '' : value).trim()
-    return /^\d+$/.test(projectId) && Number(projectId) > 0 ? projectId : ''
-  }
-
-  function projectItemsFromResult(result) {
-    if (!result || typeof result !== 'object') return null
-    if (Array.isArray(result.items)) return result.items
-    if (result.raw && Array.isArray(result.raw.items)) return result.raw.items
-    if (Array.isArray(result.raw)) return result.raw
-    return null
-  }
-
-  function projectIdFromResult(result) {
-    var items = projectItemsFromResult(result)
-    if (!items || items.length !== 1) return ''
-    var project = items[0]
-    if (!project || typeof project !== 'object') return ''
-    return canonicalProjectId(project.project_id || project.id)
+  function configuredProfileList(documentObject, root) {
+    if (!documentObject || !documentObject.querySelector || !root || !root.querySelector) return null
+    if (documentObject.querySelector(PROFILE_ROOT) !== root) return null
+    return root.querySelector(PROFILE_LIST)
   }
 
   function profileSlug(pathname) {
@@ -59,32 +37,22 @@
     }
   }
 
-  function randomPart(cryptoObject) {
-    if (cryptoObject && typeof cryptoObject.randomUUID === 'function') {
-      return cryptoObject.randomUUID()
-    }
-    if (cryptoObject && typeof cryptoObject.getRandomValues === 'function') {
-      var bytes = new Uint32Array(4)
-      cryptoObject.getRandomValues(bytes)
-      return Array.prototype.map.call(bytes, function (value) {
-        return value.toString(16).padStart(8, '0')
-      }).join('')
-    }
-    return String(Math.random()).slice(2) + String(Date.now())
-  }
-
-  function createIdempotencyKey(projectId, cryptoObject) {
-    var stableProject = String(projectId || '').replace(/[^0-9]/g, '') || 'unknown'
-    return 'review-ui:' + stableProject + ':' + randomPart(cryptoObject)
-  }
-
   function configureProfileRoot(documentObject, pathname) {
     if (!documentObject || !documentObject.querySelector) return null
-    var root = documentObject.querySelector(PROFILE_ROOT)
-    if (!root) return null
     var slug = profileSlug(pathname)
     if (!slug) return null
+    var root = documentObject.querySelector(PROFILE_ROOT)
+    if (!root) return null
+    var list = root.querySelector && root.querySelector(PROFILE_LIST)
+    if (!list) return null
+    root.setAttribute('wf-xano-element', 'wrapper')
+    root.setAttribute('wf-xano-instance', PROFILE_INSTANCE)
+    root.setAttribute('wf-xano-source', 'opp30:starter/reviews/summary')
+    root.setAttribute('wf-xano-method', 'GET')
+    root.setAttribute('wf-xano-auth', 'none')
     root.setAttribute('wf-xano-param-starter_slug', slug)
+    list.setAttribute('wf-xano-element', 'list')
+    list.setAttribute('aria-live', 'polite')
     if (!root.querySelector('[wf-xano-element="template"]')) {
       var template = documentObject.createElement('div')
       template.setAttribute('wf-xano-element', 'template')
@@ -95,64 +63,8 @@
     return root
   }
 
-  function installReviewFormKeys(documentObject, cryptoObject) {
-    if (!documentObject || !documentObject.addEventListener) return
-    documentObject.addEventListener('submit', function (event) {
-      var form = event.target && event.target.closest
-        ? event.target.closest(REVIEW_FORM)
-        : null
-      if (!form) return
-      var keyInput = form.querySelector(REVIEW_KEY)
-      var projectInput = form.querySelector('[wf-xano-field="project_id"]')
-      if (!keyInput) return
-      if ((!projectInput || !canonicalProjectId(projectInput.value)) && bindReviewFormToSingleProject(documentObject)) {
-        projectInput = form.querySelector('[wf-xano-field="project_id"]')
-      }
-      var projectId = canonicalProjectId(projectInput && projectInput.value)
-      if (!projectId) {
-        keyInput.value = ''
-        keyInput.setAttribute('value', '')
-        if (event.preventDefault) event.preventDefault()
-        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
-        return
-      }
-      projectInput.value = projectId
-      projectInput.setAttribute('value', projectId)
-      keyInput.value = createIdempotencyKey(projectId, cryptoObject)
-      keyInput.setAttribute('value', keyInput.value)
-    }, true)
-  }
-
-  function bindReviewFormToSingleProject(documentObject, result) {
-    if (!documentObject || !documentObject.querySelector || !documentObject.querySelectorAll) return false
-    var form = documentObject.querySelector(REVIEW_FORM)
-    if (!form) return false
-    var projectInput = form.querySelector('[wf-xano-field="project_id"]')
-    if (!projectInput) return false
-    var projectId = projectIdFromResult(result)
-    if (!projectId && !result) {
-      var projectRoot = documentObject.querySelector('[wf-xano-instance="' + BRAND_INSTANCE + '"]')
-      var projectItems = (projectRoot || documentObject).querySelectorAll('.project_item[data-wf-xano-id]')
-      if (projectItems && projectItems.length === 1) {
-        projectId = canonicalProjectId(projectItems[0].getAttribute('data-wf-xano-id'))
-      }
-    }
-    if (!projectId) {
-      projectInput.value = ''
-      projectInput.setAttribute('value', '')
-      return false
-    }
-    projectInput.value = projectId
-    projectInput.setAttribute('value', projectId)
-
-    var component = form.closest && form.closest('.review-v3_component')
-    var intro = component && component.querySelector && component.querySelector('.review-v3_intro')
-    if (intro) intro.textContent = 'Share your experience after completing this project. Your review will appear on the Starter profile after submission.'
-    return true
-  }
-
-  function setTextAll(documentObject, selector, value) {
-    Array.prototype.forEach.call(documentObject.querySelectorAll(selector), function (element) {
+  function setTextAll(root, selector, value) {
+    Array.prototype.forEach.call(root.querySelectorAll(selector), function (element) {
       element.textContent = value
     })
   }
@@ -177,9 +89,9 @@
     return icon
   }
 
-  function renderProfileReviews(documentObject, items) {
-    if (!documentObject || !documentObject.querySelector || !documentObject.createElement) return false
-    var target = documentObject.querySelector(PROFILE_LIST)
+  function renderProfileReviews(documentObject, root, items) {
+    if (!documentObject || !documentObject.createElement) return false
+    var target = configuredProfileList(documentObject, root)
     if (!target) return false
     var approved = Array.isArray(items) ? items : []
     target.replaceChildren()
@@ -285,8 +197,8 @@
     }
   }
 
-  function paintProfile(documentObject, result) {
-    if (!documentObject || !result) return false
+  function paintProfile(documentObject, root, result) {
+    if (!configuredProfileList(documentObject, root) || !result) return false
     var response = profileResponse(result)
     var items = response.items
     var count = response.count
@@ -295,60 +207,36 @@
       ? average.toFixed(average % 1 === 0 ? 0 : 1)
       : '0'
 
-    setTextAll(documentObject, '[data-reviews-v3-average], #rating', averageText)
+    setTextAll(root, '[data-reviews-v3-average], #rating', averageText)
     setTextAll(
-      documentObject,
+      root,
       '[data-reviews-v3-count], .profile-hero_card-progress [fs-countitems-element="value"]',
       String(count),
     )
-    renderProfileReviews(documentObject, items)
+    renderProfileReviews(documentObject, root, items)
 
-    var section = documentObject.querySelector(PROFILE_ROOT)
-    if (section) {
-      section.hidden = items.length === 0
-      section.style.display = items.length > 0 ? '' : 'none'
-      if (items.length > 0) section.removeAttribute('data-starters-section-hidden')
-      else section.setAttribute('data-starters-section-hidden', '')
-    }
+    root.hidden = items.length === 0
+    root.style.display = items.length > 0 ? '' : 'none'
+    if (items.length > 0) root.removeAttribute('data-starters-section-hidden')
+    else root.setAttribute('data-starters-section-hidden', '')
     return true
   }
 
-  function wireInstances(wfx, documentObject) {
-    if (!wfx || typeof wfx.get !== 'function') return
+  function wireInstances(wfx, documentObject, root) {
+    if (!wfx || typeof wfx.get !== 'function' || !configuredProfileList(documentObject, root)) return
     var profile = wfx.get(PROFILE_INSTANCE)
     if (profile && typeof profile.on === 'function' && !profile.__reviewsV3Wired) {
       profile.__reviewsV3Wired = true
       profile.on('results', function (result) {
-        paintProfile(documentObject, result)
+        paintProfile(documentObject, root, result)
       })
-      if (profile._lastResult) paintProfile(documentObject, profile._lastResult)
-    }
-
-    var brandProjects = wfx.get(BRAND_INSTANCE)
-    if (brandProjects && typeof brandProjects.on === 'function' && !brandProjects.__reviewsV3Wired) {
-      brandProjects.__reviewsV3Wired = true
-      brandProjects.on('results', function (result) {
-        bindReviewFormToSingleProject(documentObject, result)
-      })
-      brandProjects.on('formSuccess', function (event) {
-        if (!event || String(event.form || '') !== 'project-review') return
-        if (typeof global.CustomEvent === 'function') {
-          documentObject.dispatchEvent(new global.CustomEvent('starters:review-submitted', {
-            detail: { form: event.form },
-          }))
-        }
-      })
-      if (brandProjects._lastResult) bindReviewFormToSingleProject(documentObject, brandProjects._lastResult)
+      if (profile._lastResult) paintProfile(documentObject, root, profile._lastResult)
     }
   }
 
   var api = {
     profileSlug: profileSlug,
-    createIdempotencyKey: createIdempotencyKey,
-    projectIdFromResult: projectIdFromResult,
     configureProfileRoot: configureProfileRoot,
-    installReviewFormKeys: installReviewFormKeys,
-    bindReviewFormToSingleProject: bindReviewFormToSingleProject,
     paintProfile: paintProfile,
     renderProfileReviews: renderProfileReviews,
     wireInstances: wireInstances,
@@ -358,8 +246,6 @@
   var documentObject = global.document
   if (!documentObject) return
   var configuredProfileRoot = configureProfileRoot(documentObject, global.location && global.location.pathname)
-  bindReviewFormToSingleProject(documentObject)
-  installReviewFormKeys(documentObject, global.crypto)
 
   var queued = global.WfXano || []
   global.WfXano = queued
@@ -371,9 +257,9 @@
   if (configuredProfileRoot && queued && typeof queued.init === 'function') {
     queued.init(configuredProfileRoot)
   }
-  if (queued && typeof queued.push === 'function') {
+  if (configuredProfileRoot && queued && typeof queued.push === 'function') {
     queued.push(function (wfx) {
-      wireInstances(wfx, documentObject)
+      wireInstances(wfx, documentObject, configuredProfileRoot)
     })
   }
 })(typeof window !== 'undefined' ? window : null)

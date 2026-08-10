@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>V3 Reviews Browser Harness</title>
+  <style>
+    body { margin: 0; background: #eee; color: #1f211d; font: 16px/1.5 Arial, sans-serif; }
+    main { width: min(880px, calc(100% - 40px)); margin: 40px auto; background: white; }
+    nav { display: flex; gap: 8px; padding: 20px 28px; border-bottom: 1px solid #d8d9d3; }
+    button { border: 1px solid #222; background: white; padding: 10px 16px; cursor: pointer; }
+    button[aria-selected="true"] { background: #d8d9d3; }
+    section { padding: 28px; }
+    h2 { margin-top: 0; font: 32px/1.2 Georgia, serif; }
+  </style>
+  <script>
+    window.history.replaceState(null, '', '/hire/review-harness');
+    window.WfXano = {
+      instances: {},
+      init: function (root) {
+        var instance = {
+          handlers: {},
+          on: function (name, handler) { this.handlers[name] = handler; },
+        };
+        this.instances[root.getAttribute('wf-xano-instance')] = instance;
+      },
+      get: function (name) { return this.instances[name] || null; },
+      push: function (callback) {
+        callback(this);
+        var instance = this.get('starter-reviews');
+        if (instance && instance.handlers.results) {
+          instance.handlers.results({
+            raw: {
+              reviews: [{
+                review_id: 42,
+                rating: 5,
+                review_text: 'Clear communication, thoughtful work, and a strong final delivery.',
+                published_at: '2026-08-10T00:00:00.000Z',
+                brand: { company_name: 'Verified Brand' },
+              }],
+              review_count: 1,
+              rating_average: 5,
+            },
+          });
+        }
+      },
+    };
+  </script>
+</head>
+<body>
+  <main>
+    <nav aria-label="Profile sections">
+      <button type="button" data-panel="overview" aria-selected="true">Overview</button>
+      <button type="button" data-panel="reviews" aria-selected="false">Reviews</button>
+    </nav>
+    <section id="overview"><h2>Overview</h2><p>Browser-only test profile.</p></section>
+    <section id="reviews" class="profile-content_reviews" data-reviews-v3="profile" hidden>
+      <h2>Reviews</h2>
+      <div class="profile-content_reviews_list" data-reviews-v3-list="reviews"></div>
+    </section>
+  </main>
+  <script>
+    document.querySelector('nav').addEventListener('click', function (event) {
+      var button = event.target.closest('[data-panel]');
+      if (!button) return;
+      document.querySelectorAll('[data-panel]').forEach(function (item) {
+        item.setAttribute('aria-selected', String(item === button));
+      });
+      document.querySelector('#overview').hidden = button.dataset.panel !== 'overview';
+      document.querySelector('#reviews').hidden = button.dataset.panel !== 'reviews';
+    });
+  </script>
+  <script src="/v3/reviews.js"></script>
+</body>
+</html>
