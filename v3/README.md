@@ -295,8 +295,9 @@ must use one signal, or a recent completer can bounce until the Memberstack webh
 mirror catches up. `brand-account-controller.js` still writes the field last for
 endpoint #1513, but no browser route reads it. After a durable submit, the controller
 also writes `thestarters:v3-brand-profile-completed` to `sessionStorage`; a non-empty
-marker reads as complete without Xano. Only `brand_profile_done === true` or that
-marker redirects to `/brand-dashboard`. Unfinished and inconclusive answers stay.
+marker is a separate fast path that reads as complete without Xano. Otherwise,
+only `has_record === true` **and** `brand_profile_done === true` redirects to
+`/brand-dashboard`. Unfinished and inconclusive answers stay.
 
 The role branches replaced the paid-only design on the evening of 2026-08-03: the
 other two roles used to sit on a form they cannot submit until they manually went to

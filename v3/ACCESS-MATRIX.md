@@ -76,7 +76,7 @@ one route-level rule that page needs.
 | `/starter-dashboard` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
 | `/starter-edit-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
 | `/generate-invoice` and `/generate-invoice/` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only; both slash forms are guarded and are allowed Talent `next` destinations |
-| `/complete-profile` and `/complete-profile/` | Default quiz home | Stay until Xano reports `brand_profile_done: true` or the durable-submit session marker is set, then `/brand-dashboard` | `/starter-dashboard` | Outside `route-guard.js` since 2026-08-03; Memberstack `restrict-pages` owns access (must be "All Members"), and `v3/complete-profile-redirect.js` owns all three role columns without a `/login` hop — see both notes below |
+| `/complete-profile` and `/complete-profile/` | Default quiz home | Stay until Xano reports `has_record === true` **and** `brand_profile_done === true`, then `/brand-dashboard`; the durable-submit session marker is a separate fast path | `/starter-dashboard` | Outside `route-guard.js` since 2026-08-03; Memberstack `restrict-pages` owns access (must be "All Members"), and `v3/complete-profile-redirect.js` owns all three role columns without a `/login` hop — see both notes below |
 | `/build-profile/select-profile` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
 | `/build-profile/full-profile` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
 | `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
@@ -215,8 +215,9 @@ one route-level rule that page needs.
 > Access to `/complete-profile` stays Memberstack's (note above); what
 > `v3/complete-profile-redirect.js` adds on that page is routing for every **mapped**
 > member. A paid Brand — the one role the form is for — stays until Xano reports
-> `brand_profile_done: true` or the durable-submit session marker is set, then goes
-> to `/brand-dashboard`. A free Brand goes to its quiz-funnel home (`/quiz-results`
+> both `has_record === true` and `brand_profile_done === true`, then goes to
+> `/brand-dashboard`. The durable-submit session marker is a separate fast path.
+> A free Brand goes to its quiz-funnel home (`/quiz-results`
 > once `starter-quiz` is set, else `/quiz`) and a Talent member to
 > `/starter-dashboard`, both taken from the guard's own `roleHome()` rather than a
 > second copy of `ROLE_DEFAULTS`.

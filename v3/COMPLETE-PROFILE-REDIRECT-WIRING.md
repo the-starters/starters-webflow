@@ -25,7 +25,7 @@ On `/complete-profile` and `/complete-profile/` only, on the approved hosts only
 | Member | Action |
 | --- | --- |
 | Paid Brand, `thestarters:v3-brand-profile-completed` marker set | Replace with `/brand-dashboard` (no Xano call) |
-| Paid Brand, Xano `brand_profile_done: true` | Replace with `/brand-dashboard` |
+| Paid Brand, Xano `has_record === true` and `brand_profile_done === true` | Replace with `/brand-dashboard` |
 | Paid Brand, Xano `has_record: true` and `brand_profile_done: false` | **Stay** — this page is exactly where the member belongs |
 | Paid Brand, any inconclusive Xano answer (no record, error, timeout, malformed) | **Stay** |
 | Free Brand, `starter-quiz` not set | Replace with `/quiz` |
@@ -208,7 +208,8 @@ is completely silent, on the role redirects and on every fail-open path alike.
   role branches; with the paid plan selected they are unreachable by construction.
 - On staging with the console open, verify all mapped outcomes: an unfinished paid
   Brand stays and the form works; a paid Brand with the durable-submit marker or
-  Xano `brand_profile_done: true` lands on `/brand-dashboard`; a Talent session
+  Xano `has_record === true` and `brand_profile_done === true` lands on
+  `/brand-dashboard`; a Talent session
   lands on `/starter-dashboard`; a free Brand lands on `/quiz` before taking the
   quiz and on `/quiz-results` after.
 - Verify the free-Brand and Talent trips are a **single** navigation — `/login`

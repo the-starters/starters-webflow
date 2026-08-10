@@ -3,9 +3,10 @@
  *
  * @release v1.59.167
  *
- * A thin, sitewide companion to v3/auth-route.js. auth-route.js only routes at
- * /login and /auth-route, so a logged-in member can still reach another role's
- * page by navigating directly (e.g. a Talent session opening /brand-dashboard).
+ * A thin, sitewide companion to v3/auth-route.js. auth-route.js only runs at
+ * /login, /starter-login, and /auth-route, so a logged-in member can still reach
+ * another role's page by navigating directly (e.g. a Talent session opening
+ * /brand-dashboard).
  * This guard closes that gap: install it once sitewide before page controllers
  * and it will
  *
