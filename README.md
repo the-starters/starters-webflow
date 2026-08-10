@@ -718,10 +718,11 @@ dashboard contains both the legacy rate-call dialog and the live End Project &
 Review dialog with the same target. The live dialog's `[Starter Name]` text is
 filled only from that card's canonical `starter_name` in the `#1600` project
 projection. A missing project, missing Starter name, or modal without an
-authored name placeholder blocks the open. Closing the dialog clears the
-painted name and pending project context. The submit adapter accepts the live
-`Feedback` field and the legacy `Public-Feedback` field during the authored
-surface transition.
+authored name placeholder blocks the open. If card clicks overlap, only the
+latest click may open the modal; an older canonical lookup that resolves later
+is discarded. Closing the dialog clears the painted name and pending project
+context. The submit adapter accepts the live `Feedback` field and the legacy
+`Public-Feedback` field during the authored surface transition.
 
 All project-action listeners, cached rows, and pending review context are
 discarded when the signed-in Memberstack account changes. The new account must
