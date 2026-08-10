@@ -2,7 +2,7 @@
  * Learn CTA gate — open the sign-up gate once the reader has read enough of a
  * Learn article, or after a short wait on articles too short to scroll.
  *
- * @release v1.59.165
+ * @release v1.59.166
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * article template's before-</body> code. Pair it with learn-cta-gate.css in
@@ -99,7 +99,7 @@
   if (window.__startersLearnCtaGateBooted) return
   window.__startersLearnCtaGateBooted = true
 
-  var RELEASE = 'v1.59.165'
+  var RELEASE = 'v1.59.166'
   var LOG_PREFIX = '[learn-cta-gate]'
 
   var WRAPPER_SELECTOR = '[data-learn-gate-element="wrapper"]'
