@@ -2016,11 +2016,9 @@ value or the OAuth provider rejects the exchange.
 
 ## V3 reviews frontend
 
-`reviews.js` is the browser adapter for completed-project reviews on
-the Brand dashboard and approved reviews on public `/hire/{slug}` profiles.
-Production Webflow activation covers the Brand dashboard and public
-`/hire/{slug}` profiles. Each surface loads the GitHub-owned adapter once from
-its Webflow page code. Do not add a second loader through
+`reviews.js` is the browser adapter for approved reviews on public
+`/hire/{slug}` profiles. The public profile loads the GitHub-owned adapter once
+from its existing Webflow page code. Do not add a second loader through
 `opportunities-3.0.js` or another global controller:
 
 ```html
@@ -2031,24 +2029,13 @@ Do not enable any points, ranking, rank-projector, or `rank_status` write as
 part of this integration.
 
 Webflow Designer owns the Brand review form and the public Reviews section. The
-adapter does not generate either surface. On the Brand side, author the review
-form as native Webflow HTML with `data-review-form-v3` on the `form`, retain the
-`dash-brand-projects` wf-xano instance, and configure its wf-xano form name as
-`project-review`. `opportunities-3.0.js` exclusively owns the modal's per-card
-project and Starter context, validation, submit locking, and retry-stable
-idempotency key. The form must include the endpoint's normal review fields plus
-these authored controls:
+adapter does not generate either surface, and `reviews.js` does not bind or
+submit the Brand form. `opportunities-3.0.js` owns that form's per-card context,
+validation, submit locking, and retry behavior; its authoritative dashboard
+contract is documented in the root
+[README](../README.md#opportunities-30-project-dashboard-actions).
 
-| Control | Contract |
-| --- | --- |
-| Project identifier | `wf-xano-field="project_id"` |
-| Hidden idempotency key | `wf-xano-field="idempotency_key"` |
-
-`reviews.js` does not bind or submit the Brand form. The dashboard controller
-fails closed unless the selected card resolves one canonical project and
-Starter identity, and preserves one idempotency key for the same project,
-rating, and feedback across retries. Xano remains authoritative for
-completed-project eligibility, one-review
+Xano remains authoritative for completed-project eligibility, one-review
 enforcement, idempotent replay, moderation, points, reversals, aggregates, and
 ranking. The current product rule is one review per canonical
 project/Brand/Starter tuple. New project reviews are immediately approved and

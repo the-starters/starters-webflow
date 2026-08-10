@@ -5,8 +5,8 @@
  *   - derives the public-profile slug from /hire/{slug} and configures the
  *     authored Reviews section as a wf-xano wrapper before it loads;
  *   - projects Xano's approved aggregate into the authored profile summary;
- *   - replaces the legacy CMS projection inside the existing or behavior-only
- *     Reviews list target with sanitized cards from Xano's approved response.
+ *   - replaces the legacy CMS projection inside the attributed Reviews list
+ *     target with sanitized cards from Xano's approved response.
  *
  * Xano remains authoritative for identity, project completion, one-review
  * enforcement, moderation, points, reversals, aggregates, and ranking.
