@@ -722,6 +722,8 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
   try {
     const result = await api.startConnect(
       'https://thestarters.com/starter-dashboard',
+      false,
+      'connect-attempt-123',
     )
     assert.equal(result.mode, 'oauth')
     const startRequest = stripeRequest(requests, '/stripe_connect/start/v3')
@@ -729,6 +731,7 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
     assert.deepEqual(JSON.parse(startRequest.options.body), {
       return_url: 'https://thestarters.com/starter-dashboard',
       callback_url: 'https://thestarters.com/stripe-connect-callback',
+      idempotency_key: 'connect-attempt-123',
     })
     assert.equal(api.isStripeUrl(result.url), true)
     assert.equal(api.isStripeUrl('https://evil.example/stripe'), false)
@@ -737,6 +740,184 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
     global.fetch = previous.fetch
     global.$memberstackDom = previous.memberstack
   }
+})
+
+test('Connect attempt keys are non-empty and bounded', () => {
+  const key = api.createAttemptKey('connect-start')
+  assert.match(key, /^connect-start-/)
+  assert.ok(key.length <= 128)
+})
+
+test('network-ambiguous Connect start retries reuse the same attempt key', async () => {
+  const previous = {
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+  }
+  const { root } = stripeRoot()
+  const button = new FakeElement('BUTTON')
+  const connectTile = new FakeElement()
+  const startBodies = []
+  let startCalls = 0
+  api.__resetXanoToken()
+  api.__resetConnectStartAttempt()
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+  global.fetch = async (url, options) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-token' })
+    }
+    startBodies.push(JSON.parse(options.body))
+    startCalls += 1
+    if (startCalls === 1) throw new Error('network failed after request')
+    return response({
+      mode: 'oauth',
+      url: 'https://connect.stripe.com/oauth/authorize?client_id=test',
+    })
+  }
+  const createStripeTab = () => ({
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+  })
+
+  try {
+    assert.equal(
+      await api.handleStart(
+        button,
+        connectTile,
+        [root],
+        'member-123',
+        createStripeTab(),
+      ),
+      false,
+    )
+    assert.equal(
+      await api.handleStart(
+        button,
+        connectTile,
+        [root],
+        'member-123',
+        createStripeTab(),
+      ),
+      true,
+    )
+    assert.equal(startBodies.length, 2)
+    assert.equal(startBodies[0].idempotency_key, startBodies[1].idempotency_key)
+  } finally {
+    api.__resetXanoToken()
+    api.__resetConnectStartAttempt()
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('Connect start accepts terminal replay modes without requiring a URL', async () => {
+  const previous = {
+    fetch: global.fetch,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+  }
+  const { root } = stripeRoot()
+  const button = new FakeElement('BUTTON')
+  const connectTile = new FakeElement()
+  api.__resetXanoToken()
+  global.location = {
+    hostname: 'thestarters.com',
+    origin: 'https://thestarters.com',
+    search: '',
+  }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+
+  try {
+    for (const mode of ['connected', 'reconciliation_required']) {
+      api.__resetConnectStartAttempt()
+      global.fetch = async (url) => {
+        if (String(url).includes('/auth/trade-token/v3')) {
+          return response({ authToken: 'xano-token' })
+        }
+        return response({ mode, replayed: true })
+      }
+      const stripeTab = {
+        closed: false,
+        close() {
+          this.closed = true
+        },
+        location: { replace() {} },
+      }
+
+      assert.equal(
+        await api.handleStart(
+          button,
+          connectTile,
+          [root],
+          'member-123',
+          stripeTab,
+        ),
+        mode,
+      )
+      assert.equal(stripeTab.closed, true)
+      assert.notEqual(root.getAttribute('data-stripe-connect-status'), 'error')
+    }
+  } finally {
+    api.__resetXanoToken()
+    api.__resetConnectStartAttempt()
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('Connect retry policy keeps only ambiguous start outcomes on the same key', () => {
+  assert.equal(api.shouldRetainConnectStartKey(new Error('network')), true)
+  assert.equal(api.shouldRetainConnectStartKey({ status: 408 }), true)
+  assert.equal(api.shouldRetainConnectStartKey({ status: 429 }), true)
+  assert.equal(api.shouldRetainConnectStartKey({ status: 500 }), true)
+  assert.equal(api.shouldRetainConnectStartKey({ status: 400 }), false)
+  assert.equal(api.shouldRetainConnectStartKey({ status: 422 }), false)
+})
+
+test('opaque production OAuth state accepts only the backend length contract', () => {
+  assert.equal(api.validOpaqueState('opaque-state-1234'), true)
+  assert.equal(api.validOpaqueState('short'), false)
+  assert.equal(api.validOpaqueState('x'.repeat(128)), true)
+  assert.equal(api.validOpaqueState('x'.repeat(129)), false)
+})
+
+test('Connect exchange modes are explicit and fail closed', () => {
+  assert.equal(
+    api.resolveExchangeMode({ connected: true, mode: 'completed' }, false),
+    'completed',
+  )
+  assert.equal(
+    api.resolveExchangeMode({ connected: false, mode: 'reconciliation_required' }, false),
+    'reconciliation_required',
+  )
+  assert.equal(
+    api.resolveExchangeMode({ connected: false, mode: 'restart_required' }, false),
+    'restart_required',
+  )
+  assert.throws(
+    () => api.resolveExchangeMode({ connected: false, mode: 'completed' }, false),
+    /did not connect/,
+  )
+  assert.throws(
+    () => api.resolveExchangeMode({ connected: false, mode: 'unknown' }, false),
+    /unknown mode/,
+  )
 })
 
 test('Connect Stripe reserves and navigates a new tab without leaving the dashboard', async () => {
@@ -1448,7 +1629,7 @@ test('a persistent 401 rejects without retrying forever', async () => {
   }
 })
 
-test('callback strips OAuth params and exchanges for the live member session', async () => {
+test('callback forwards opaque OAuth state and exchanges for the live member session', async () => {
   const previous = {
     BroadcastChannel: global.BroadcastChannel,
     document: global.document,
@@ -1479,7 +1660,9 @@ test('callback strips OAuth params and exchanges for the live member session', a
     replaceState: (...args) => historyCalls.push(args),
   }
   global.location = {
-    href: 'https://thestarters.com/stripe-connect-callback?code=code-123&state=mem-live',
+    href:
+      'https://thestarters.com/stripe-connect-callback?' +
+      'code=code-123&state=opaque-state-1234567890',
     origin: 'https://thestarters.com',
     assign: (url) => assigned.push(url),
   }
@@ -1492,7 +1675,11 @@ test('callback strips OAuth params and exchanges for the live member session', a
     if (String(url).includes('/auth/trade-token/v3')) {
       return response({ authToken: 'xano-token' })
     }
-    return response({ connected: true, charges_enabled: false })
+    return response({
+      connected: true,
+      mode: 'completed',
+      charges_enabled: false,
+    })
   }
 
   try {
@@ -1505,6 +1692,7 @@ test('callback strips OAuth params and exchanges for the live member session', a
     assert.match(exchangeRequest.options.headers.Authorization, /^Bearer .+/)
     assert.deepEqual(JSON.parse(exchangeRequest.options.body), {
       code: 'code-123',
+      state: 'opaque-state-1234567890',
     })
     assert.equal(historyCalls.length, 1)
     assert.equal(
@@ -1529,7 +1717,7 @@ test('callback strips OAuth params and exchanges for the live member session', a
   }
 })
 
-test('callback refuses a state for another member without exchanging', async () => {
+test('callback refuses an invalid opaque state without exchanging', async () => {
   const previous = {
     console: global.console,
     document: global.document,
@@ -1548,7 +1736,7 @@ test('callback refuses a state for another member without exchanging', async () 
   }
   global.history = { replaceState: () => {} }
   global.location = {
-    href: 'https://thestarters.com/stripe-connect-callback?code=code-123&state=mem-other',
+    href: 'https://thestarters.com/stripe-connect-callback?code=code-123&state=short',
     origin: 'https://thestarters.com',
     assign: () => {
       throw new Error('must not redirect')
@@ -1569,6 +1757,66 @@ test('callback refuses a state for another member without exchanging', async () 
     assert.equal(states.error.style.display, '')
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
   } finally {
+    global.console = previous.console
+    global.document = previous.document
+    global.fetch = previous.fetch
+    global.history = previous.history
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('callback handles reconciliation and restart modes without replaying the code', async () => {
+  const previous = {
+    console: global.console,
+    document: global.document,
+    fetch: global.fetch,
+    history: global.history,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+  }
+  global.console = { ...console, error: () => {} }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'mem-live' } }),
+    getMemberCookie: async () => 'ms-cookie',
+  }
+
+  try {
+    for (const mode of ['reconciliation_required', 'restart_required']) {
+      const { root, states } = stripeRoot()
+      const assigned = []
+      let exchangeCount = 0
+      api.__resetXanoToken()
+      global.document = {
+        title: 'Stripe callback',
+        querySelectorAll: () => [root],
+      }
+      global.history = { replaceState: () => {} }
+      global.location = {
+        href:
+          'https://thestarters.com/stripe-connect-callback?' +
+          'code=one-time-code&state=opaque-state-1234567890',
+        origin: 'https://thestarters.com',
+        assign: (url) => assigned.push(url),
+      }
+      global.fetch = async (url) => {
+        if (String(url).includes('/auth/trade-token/v3')) {
+          return response({ authToken: 'xano-token' })
+        }
+        exchangeCount += 1
+        return response({ connected: false, mode })
+      }
+
+      const result = await api.mountCallback()
+      assert.equal(result.mode, mode)
+      assert.equal(exchangeCount, 1)
+      assert.deepEqual(assigned, [
+        'https://thestarters.com/starter-dashboard?stripe_connect=' + mode,
+      ])
+      assert.equal(states.error.style.display, 'none')
+    }
+  } finally {
+    api.__resetXanoToken()
     global.console = previous.console
     global.document = previous.document
     global.fetch = previous.fetch

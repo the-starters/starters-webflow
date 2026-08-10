@@ -2309,8 +2309,14 @@ any control is ignored while a start or status request is resolving. Start
 posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
 URL built against the exact V3 callback instead of falling back to its legacy
-V2 default. It accepts only an HTTPS `connect.stripe.com` URL before
-navigating the reserved tab.
+V2 default. Production start also sends one bounded idempotency key. A retry
+after a network-ambiguous, timeout, conflict, rate-limit, or server outcome
+reuses that key; a confirmed redirect or later intentional attempt uses a new
+key. The controller accepts only an HTTPS `connect.stripe.com` URL before
+navigating the reserved tab. Exact backend replays with `mode="connected"` or
+`mode="reconciliation_required"` do not require a second redirect URL. They
+close the reserved tab and refresh canonical status instead of displaying a
+false invalid-URL error.
 
 The dashboard calls `status/v3` immediately. `connected:false` selects
 `disconnected`; `connected:true` with `charges_enabled:false` selects
@@ -2320,15 +2326,18 @@ status briefly to absorb webhook timing. If the flag is still false, it selects
 the authored `review` state instead of painting a false success or falling back
 to the old nightly batch state.
 
-The callback reads `code` and optional `state`, removes OAuth parameters from
-the visible URL before doing network work, resolves the current Memberstack
-member, rejects a mismatched state, and posts only `{code}` to
-`oauth_exchange/v3` with the Bearer token identifying the member. When
-`BroadcastChannel` is available, a successful exchange signals the original
-dashboard through a member-matched channel, then redirects the callback tab to
-`/starter-dashboard?stripe_connect=connected`, where the dashboard re-reads
-canonical status. Callback errors stay on the authored error state for safe
-recovery.
+The production callback reads `code` and the backend-issued opaque `state`,
+removes OAuth parameters from the visible URL before network work, resolves the
+current Memberstack member, validates the bounded state shape, and posts
+`{code, state}` to `oauth_exchange/v3`. Xano binds the state to the authenticated
+member and request receipt; the browser does not compare the opaque value to a
+Memberstack ID. The callback handles `completed`, `reconciliation_required`,
+and `restart_required` without automatically replaying the one-time code. When
+`BroadcastChannel` is available, only `completed` signals the original dashboard
+through a member-matched channel. The callback tab then redirects to the
+matching `/starter-dashboard?stripe_connect=<mode>` URL, where the dashboard
+re-reads canonical status. Callback errors stay on the authored error state for
+safe recovery.
 
 Each root reflects the selected state in `data-stripe-connect-status` and
 `data-stripe-connect-view`. The module also emits
@@ -2369,6 +2378,50 @@ Run its focused tests with:
 
 ```sh
 node --test v3/starter-dashboard-stripe-connect.test.js
+```
+
+## Brand paid-call payment method client
+
+`paid-call-brand-payment.js` supplies the authenticated Xano calls needed by a
+native Brand booking UI. It does not create form markup or initialize Stripe
+Elements. Load it after `scheduling-auth.js` on the Brand dashboard and public
+Hire booking surfaces that already pass the route and membership gates:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/paid-call-brand-payment.js"></script>
+```
+
+The scheduling auth bridge allowlists only these two new paid-call paths:
+
+- `POST /brand/payment-method/setup/v3`
+- `POST /brand/payment-method/set-default/v3`
+
+Xano derives the Brand identity and payment environment from the Bearer token.
+The browser sends neither field. A booking controller should use this sequence:
+
+1. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
+   card-setup attempt.
+2. Retry that attempt through its `.run()` method with the same idempotency key
+   until Xano returns the Stripe SetupIntent client secret or a terminal error.
+3. Give that client secret to Stripe.js and let Stripe Elements collect and
+   confirm the card. Never send raw card data through Webflow or Xano.
+4. After Stripe.js returns a `pm_...` PaymentMethod ID, call
+   `createDefaultSelectionAttempt(paymentMethodId)` once for that intentional
+   selection.
+5. Retry the returned selection attempt through `.run()` with its captured key.
+   Create a new attempt for every later intentional selection, including an
+   A-to-B-to-A sequence.
+
+The client validates bounded keys and PaymentMethod IDs before network work.
+It uses `xanoAuthFetch` when the shared bridge is present and otherwise uses the
+shared Xano token helper. The backend remains authoritative for customer,
+environment, default-card, and readiness state.
+
+Run the focused contract tests with:
+
+```sh
+node --test v3/scheduling-auth.test.js v3/paid-call-brand-payment.test.js
 ```
 
 ## Dashboard Action Items panel
