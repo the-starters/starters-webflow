@@ -2,7 +2,7 @@
  * Learn CTA gate — open the sign-up gate once the reader has read enough of a
  * Learn article, or after a short wait on articles too short to scroll.
  *
- * @release v1.59.166
+ * @release v1.59.168
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * article template's before-</body> code. Pair it with learn-cta-gate.css in
@@ -77,10 +77,26 @@
  * instance on the Learn template today, so it takes the body-overflow branch.
  *
  * Attributes on the wrapper, all optional:
- *   data-learn-gate-chars    integer, default 2500. Threshold in characters.
- *   data-learn-gate-delay    seconds, default 10. Short-article wait.
- *   data-learn-gate-article  CSS selector for the article body.
- *                            Default ".content_rte.w-richtext".
+ *   data-learn-gate-chars     integer, default 2500. Threshold in characters.
+ *   data-learn-gate-delay     seconds, default 10. Short-article wait.
+ *   data-learn-gate-article   CSS selector for the article body.
+ *                             Default ".content_rte.w-richtext".
+ *   data-learn-gate-ease      GSAP ease for the sheet, default "power2.out".
+ *                             Validated against this page's GSAP via parseEase;
+ *                             an ease this build does not know falls back with a
+ *                             staging warning rather than silently flattening.
+ *   data-learn-gate-duration  seconds, default 0.35. Sheet travel time.
+ *   data-learn-gate-fade      seconds, default 0.2. Backdrop fade time.
+ *   data-learn-gate-lag       seconds, default 0.3. When the sheet starts,
+ *                             measured from the START of the backdrop fade.
+ *                             Greater than the fade = a beat of stillness
+ *                             between dimming and arrival; less = they overlap.
+ *
+ * The four motion attributes exist so the feel can be retuned in Designer
+ * without a release. The defaults were chosen on staging with a visual tuner,
+ * not picked off a chart, so treat them as intentional. Under
+ * prefers-reduced-motion none of them apply: the sheet never slides and both
+ * parts cross-fade in 0.2s.
  *
  * Diagnostics are console-only and gated to staging hosts (`*.webflow.io`,
  * `localhost`, `127.0.0.1`, `*.trycloudflare.com`) or `window.STARTERS_DEBUG`.
@@ -99,7 +115,7 @@
   if (window.__startersLearnCtaGateBooted) return
   window.__startersLearnCtaGateBooted = true
 
-  var RELEASE = 'v1.59.166'
+  var RELEASE = 'v1.59.168'
   var LOG_PREFIX = '[learn-cta-gate]'
 
   var WRAPPER_SELECTOR = '[data-learn-gate-element="wrapper"]'
@@ -109,6 +125,19 @@
 
   var DEFAULT_CHARS = 2500
   var DEFAULT_DELAY_SECONDS = 10
+
+  // Motion defaults, chosen by Jerico on staging with the visual tuner rather
+  // than picked off a page of easing curves. Note LAG (0.3) is LONGER than the
+  // backdrop fade (0.2): the dimming completes, the page holds still for a beat,
+  // and only then does the sheet arrive. That sequential read is deliberate — do
+  // not "fix" it into an overlap.
+  var DEFAULT_EASE = 'power2.out'
+  var DEFAULT_DURATION = 0.35
+  var DEFAULT_FADE_DURATION = 0.2
+  var DEFAULT_LAG = 0.3
+
+  // Reduced motion never slides, so it needs only the one cross-fade duration.
+  var REDUCED_DURATION = 0.2
 
   var INIT_ATTR = 'data-script-initialized'
 
@@ -161,6 +190,13 @@
     delaySeconds: DEFAULT_DELAY_SECONDS,
     /** why boot stopped early, for QA */
     skipped: null,
+    /** the motion actually in force, after attributes and validation */
+    motion: {
+      ease: DEFAULT_EASE,
+      duration: DEFAULT_DURATION,
+      fadeDuration: DEFAULT_FADE_DURATION,
+      lag: DEFAULT_LAG,
+    },
   }
 
   var wrapper = null
@@ -191,6 +227,55 @@
       return fallback
     }
     return n
+  }
+
+  /**
+   * Non-negative float from an attribute, or the fallback. Seconds, everywhere
+   * it is used. `min` exists because a duration of 0 is a mistake worth warning
+   * about while a lag of 0 is a legitimate "start both together".
+   * @param {Element} el
+   * @param {string} name
+   * @param {number} fallback
+   * @param {number} min smallest accepted value (inclusive)
+   * @returns {number}
+   */
+  function floatAttr(el, name, fallback, min) {
+    var raw = el.getAttribute(name)
+    if (raw === null || raw === '') return fallback
+    var n = parseFloat(String(raw).trim())
+    if (!isFinite(n) || n < min) {
+      warn('ignoring ' + name + '="' + raw + '" (want a number >= ' + min + ')')
+      return fallback
+    }
+    return n
+  }
+
+  /**
+   * An easing name is only usable if this page's GSAP actually knows it — the
+   * site could be on a build without a given plugin, and an unknown ease silently
+   * degrades the animation rather than erroring. Ask GSAP instead of keeping a
+   * hardcoded list here that would drift out of date.
+   * @param {Element} el
+   * @param {string} name
+   * @param {string} fallback
+   * @returns {string}
+   */
+  function easeAttr(el, name, fallback) {
+    var raw = el.getAttribute(name)
+    if (raw === null || raw === '') return fallback
+    var value = String(raw).trim()
+    if (typeof gsap === 'undefined' || typeof gsap.parseEase !== 'function') return value
+    var parsed
+    try {
+      parsed = gsap.parseEase(value)
+    } catch (err) {
+      parsed = null
+    }
+    if (typeof parsed !== 'function') {
+      warn('ignoring ' + name + '="' + value + '" (this page\'s GSAP does not know that ease)')
+      return fallback
+    }
+    return value
   }
 
   function prefersReducedMotion() {
@@ -365,19 +450,27 @@
       tl.fromTo(
         [backdrop, sheet],
         { opacity: 0 },
-        { opacity: 1, duration: 0.2, ease: 'none' }
+        { opacity: 1, duration: REDUCED_DURATION, ease: 'none' }
       )
       return tl
     }
 
-    tl.fromTo(backdrop, { opacity: 0 }, { opacity: 1, duration: 0.4, ease: 'power2.out' })
-    // '<0.15' — start the slide 0.15s into the backdrop fade, so the dimming
-    // reads first and the sheet arrives into an already-darkened page.
+    var m = state.motion
+
+    tl.fromTo(
+      backdrop,
+      { opacity: 0 },
+      { opacity: 1, duration: m.fadeDuration, ease: 'power2.out' }
+    )
+    // Position is relative to the START of the backdrop fade, not its end. With
+    // the shipped defaults (fade 0.2, lag 0.3) that puts a deliberate 0.1s beat
+    // of stillness between the dimming finishing and the sheet arriving. A lag
+    // below the fade duration overlaps them instead; both are valid.
     tl.fromTo(
       sheet,
       { yPercent: 100 },
-      { yPercent: 0, duration: 0.6, ease: 'power3.out' },
-      '<0.15'
+      { yPercent: 0, duration: m.duration, ease: m.ease },
+      '<' + m.lag
     )
     return tl
   }
@@ -519,6 +612,15 @@
     state.threshold = intAttr(wrapper, 'data-learn-gate-chars', DEFAULT_CHARS)
     state.delaySeconds = intAttr(wrapper, 'data-learn-gate-delay', DEFAULT_DELAY_SECONDS)
 
+    // Motion is read once, here, so `status()` reports what will actually play
+    // rather than what the timeline would compute later.
+    state.motion = {
+      ease: easeAttr(wrapper, 'data-learn-gate-ease', DEFAULT_EASE),
+      duration: floatAttr(wrapper, 'data-learn-gate-duration', DEFAULT_DURATION, 0.05),
+      fadeDuration: floatAttr(wrapper, 'data-learn-gate-fade', DEFAULT_FADE_DURATION, 0.05),
+      lag: floatAttr(wrapper, 'data-learn-gate-lag', DEFAULT_LAG, 0),
+    }
+
     var articleSelector =
       wrapper.getAttribute('data-learn-gate-article') || DEFAULT_ARTICLE_SELECTOR
     var article = document.querySelector(articleSelector)
@@ -561,6 +663,13 @@
         delaySeconds: state.delaySeconds,
         skipped: state.skipped,
         hasSentinel: !!sentinel,
+        motion: {
+          ease: state.motion.ease,
+          duration: state.motion.duration,
+          fadeDuration: state.motion.fadeDuration,
+          lag: state.motion.lag,
+        },
+        reducedMotion: prefersReducedMotion(),
       }
     },
     reveal: function () {
