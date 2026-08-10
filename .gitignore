@@ -2,3 +2,14 @@
 
 # Local-only demo pages & test harnesses — never commit.
 local-demos/
+
+# Credentials and captured sessions. The staging-qa harness lives OUTSIDE this
+# repo (../staging-qa/), so these rules are a second line of defence only: they
+# exist so that a script dropped in here by mistake still cannot publish a
+# secret to a public, CDN-served repo.
+.env
+.env.*
+!.env.example
+storage-state*.json
+.auth/
+node_modules/
