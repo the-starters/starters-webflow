@@ -76,7 +76,7 @@ one route-level rule that page needs.
 | `/starter-dashboard` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
 | `/starter-edit-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
 | `/generate-invoice` and `/generate-invoice/` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only; both slash forms are guarded and are allowed Talent `next` destinations |
-| `/complete-profile` and `/complete-profile/` | Default quiz home | Stay until `completed-brand-profile` is set, then `/brand-dashboard` | `/starter-dashboard` | Outside `route-guard.js` since 2026-08-03; the Memberstack `restrict-pages` gated group owns access (must be "All Members"), and `v3/complete-profile-redirect.js` owns all three role columns without a `/login` hop — see both notes below |
+| `/complete-profile` and `/complete-profile/` | Default quiz home | Stay until Xano reports `brand_profile_done: true` or the durable-submit session marker is set, then `/brand-dashboard` | `/starter-dashboard` | Outside `route-guard.js` since 2026-08-03; Memberstack `restrict-pages` owns access (must be "All Members"), and `v3/complete-profile-redirect.js` owns all three role columns without a `/login` hop — see both notes below |
 | `/build-profile/select-profile` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
 | `/build-profile/full-profile` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
 | `/build-profile/consult` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the funnel check below | Talent onboarding; logged out → `/` |
@@ -214,8 +214,8 @@ one route-level rule that page needs.
 > **Complete-profile role routing (added 2026-08-03, extended the same evening):**
 > Access to `/complete-profile` stays Memberstack's (note above); what
 > `v3/complete-profile-redirect.js` adds on that page is routing for every **mapped**
-> member. A paid Brand — the one role the form is for — stays until the Memberstack
-> member custom field `completed-brand-profile` carries a real value and is then sent
+> member. A paid Brand — the one role the form is for — stays until Xano reports
+> `brand_profile_done: true` or the durable-submit session marker is set, then goes
 > to `/brand-dashboard`. A free Brand goes to its quiz-funnel home (`/quiz-results`
 > once `starter-quiz` is set, else `/quiz`) and a Talent member to
 > `/starter-dashboard`, both taken from the guard's own `roleHome()` rather than a
@@ -230,23 +230,17 @@ one route-level rule that page needs.
 > cost is the "All Members" requirement on the gated group above; narrow that group
 > to the paid plan again and these branches become dead code.
 >
-> `completed-brand-profile` is the last durable Memberstack write by
-> `brand-account-controller.js`, before its password-email attempt; the hidden
-> Designer input
-> (`data-ms-member="completed-brand-profile"`) remains the native field contract,
-> while the redirect reads the member object already in memory and makes no
-> network request. Truthiness is
-> the same rule as the `starter-quiz` marker: a string counts once trimmed
-> non-empty, a non-string truthy value counts as set, and an absent, empty, or
-> whitespace-only value means stay. It is consulted for the paid-Brand branch only;
-> a stray value on another role means nothing. Two consequences are deliberate: the
-> paid-Brand branch is inert until the controller writes the field, and members who
-> completed the form before the field existed read as not-done until they resubmit
-> once (there is no backfill). The free-Brand and Talent branches need no new field
-> and are live as soon as the embed is. Unmapped, cross-role conflicted, and
-> logged-out visitors are untouched, and every failure — no role contract, a guard
-> that cannot name role homes, Memberstack missing or slow, a lookup that throws —
-> fails open, so it never contradicts the gated group's decision. Wiring:
+> Paid-Brand completion comes from the authenticated Xano
+> `starters_onboarding/get_brand_profile_status` response. The
+> `thestarters:v3-brand-profile-completed` session marker, written only after a
+> durable submit, short-circuits that read. The controller still writes the
+> `completed-brand-profile` Memberstack field for endpoint #1513, but browser
+> routing does not read it. This single-signal rule prevents the inbound and
+> outbound redirects from disagreeing while the webhook mirror catches up.
+> Unfinished, missing, malformed, failed, and timed-out Xano results all stay.
+> Free-Brand and Talent branches remain zero-network. Unmapped, cross-role
+> conflicted, and logged-out visitors are untouched, so the module never
+> contradicts the gated group's decision. Wiring:
 > [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md).
 
 > **Talent funnel-position check (added 2026-08-03, endpoint migrated
@@ -336,9 +330,9 @@ separate owner:
 | `/quiz` logged-in role redirects | `quiz-main/quiz-redirect.js` (page-scoped) | Talent bounce added 2026-08-03, not `?retake=`-escapable; `/quiz` is outside all three guard tables |
 | Per-page logged-out destinations for the build-profile funnel | `v3/route-guard.js` `LOGGED_OUT_DESTINATIONS` | Implemented 2026-08-03; staging pass pending |
 | `/complete-profile` access (logged-out kick only) | Memberstack `restrict-pages` gated group (dashboard field values: URL rule STARTS `complete-profile`, access **All Members**, Access Denied URL `login` — no leading slash in either field; denied visitors land on the path `/login`) | Settled 2026-08-03: sole owner, permanently outside `route-guard.js` and `auth-route.js`. Amended the same evening: access must be "All Members" so the page-scoped module in the row below can route logged-in members of every role instead of a `/login` bounce doing it |
-| Logged-in role routing on `/complete-profile` | `v3/complete-profile-redirect.js` (page-scoped; Memberstack `completed-brand-profile` field plus the guard's `memberRole`/`roleHome`, no network call) | Implemented 2026-08-03, role branches added the same evening; the completion field is now the last durable member write by `brand-account-controller.js`, see [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md). Paid-Brand branch is inert until the controller writes the field; the free-Brand and Talent branches are live immediately. Access control stays with the gated group in the row above |
+| Logged-in role routing on `/complete-profile` | `v3/complete-profile-redirect.js` (page-scoped; Xano `get_brand_profile_status` plus the durable-submit session marker for paid Brands, and the guard's `memberRole`/`roleHome` for role destinations) | Implemented 2026-08-03, role branches added that evening, and paid-Brand completion moved to the same Xano signal as the inbound redirect on 2026-08-06; see [BRAND-ACCOUNT-WIRING.md](BRAND-ACCOUNT-WIRING.md) and [COMPLETE-PROFILE-REDIRECT-WIRING.md](COMPLETE-PROFILE-REDIRECT-WIRING.md). Paid-Brand results fail open by staying; free-Brand and Talent branches remain zero-network. Access control stays with the gated group in the row above |
 | Talent funnel position on `/build-profile/*` | `v3/build-profile-redirect.js` (page-scoped, Xano `get_build_profile_status`) | Implemented 2026-08-03, migrated off the row-exists signal 2026-08-04; needs three page-level Webflow embeds, see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md) |
-| Talent funnel position at login | `v3/auth-route.js` (Xano `get_build_profile_status`, Talent only) | Live since 2026-07-31, migrated off the row-exists signal 2026-08-04; the `/login` and `/auth-route` embeds are pinned page-level code and need bumping, see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) |
+| Talent funnel position at login | `v3/auth-route.js` (Xano `get_build_profile_status`, Talent only) | Live since 2026-07-31, migrated off the row-exists signal 2026-08-04; the `/login`, `/starter-login`, and `/auth-route` embeds are pinned page-level code and must move together, see [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) |
 | Page visibility and navigation variants | Webflow + Memberstack gated groups | Verify against the product sheet |
 | `/all-starters` content visibility and free-Brand result limits | Memberstack `data-ms-content` gated content on the page plus list/render-level limiting | Settled 2026-08-03: permanently outside `PAGE_ROLES`. The only route-level rule the page has is the Talent role bounce in the row above; logged-out and both Brand tiers stay |
 | Learn previews, trailers, and membership prompts | Learn page/content gating | Planned separately |

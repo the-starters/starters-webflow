@@ -123,38 +123,28 @@ nowhere to send them would be worse than doing nothing, so the module leaves the
 page alone and warns on staging. This is also why install order matters — if the
 guard is missing or loaded after this module, nothing happens.
 
-## The `completed-brand-profile` field contract
+## The paid-Brand completion signal
 
-Read straight off `member.customFields['completed-brand-profile']`, and consulted
-**for the paid-Brand branch only** — a stray value on a Talent or free-Brand member
-is meaningless, because it is a paid-Brand form marker, and must not divert them to
-the Brand dashboard. Its truthiness rule is a deliberate copy of the `starter-quiz`
-rule `route-guard.js` uses in `hasCompletedQuiz`: a string counts only once trimmed
-non-empty, and a non-string truthy value counts as set (Memberstack has been seen
-to return a boolean for checkbox-backed fields, and a form that wrote *something*
-should not be re-run because the something was not a string).
+The paid-Brand branch reads authenticated Xano
+`starters_onboarding/get_brand_profile_status` through the trade-token flow. The
+response is conclusive only when `has_record === true` and
+`brand_profile_done === true`; that answer goes to `/brand-dashboard`.
+`has_record === true` with `brand_profile_done === false`, no record, malformed
+data, a failed token trade, a failed read, and the four-second overall timeout all
+stay on `/complete-profile`.
 
-**Who writes it:** `brand-account-controller.js`, after ordinary Memberstack
-fields and any changed login email have succeeded. The hidden input inside the
-Complete-profile form remains authored in Webflow with
-`data-ms-member="completed-brand-profile"`, but the controller writes the field
-explicitly so completion cannot race ahead of the other account changes. There
-is no browser-to-Xano completion hop; endpoint #1513 consumes the resulting
-Memberstack webhook.
+Before that read, `completionMarkerSet()` checks
+`sessionStorage['thestarters:v3-brand-profile-completed']`. The marker is written by
+`brand-account-controller.js` only after a durable submit. A trimmed non-empty value
+means complete and reaches `/brand-dashboard` without a Xano call. A missing, empty,
+or unreadable marker falls through to Xano. The marker is consulted only for a paid
+Brand; a stray value cannot divert Talent or a free Brand.
 
-**Two properties worth stating plainly:**
-
-- **The paid-Brand branch is inert until the field is written.** The field existed
-  on the member object before 2026-08-03 but nothing ever wrote to it, so *every*
-  paid Brand reads as not-done until they submit the form once with the account
-  controller installed. That branch switches itself on member by member as the field starts
-  landing. The free-Brand and Talent branches depend on no new field and are live
-  as soon as the embed is.
-- **Members who completed before the field existed read as not-done.** There is no
-  backfill. A paid Brand who finished this form weeks ago still has an empty field,
-  so they will be shown the form again and will only stop seeing it after they
-  resubmit once. If that is unacceptable for a particular member, the fix is a
-  one-off value on their Memberstack member record, not a code change.
+The hidden Complete-profile input remains authored with
+`data-ms-member="completed-brand-profile"`, and the controller still writes that
+Memberstack field for endpoint #1513. Browser routing does not read it. This keeps
+the inbound redirect, outbound redirect, and login router on the same Xano signal
+while the Memberstack webhook mirror catches up.
 
 ## Webflow install
 
@@ -188,9 +178,9 @@ nothing to author.
 
 `window.StartersCompleteProfileRedirect` exposes `release`, `allowedHost`,
 `stagingHost`, `isCompleteProfilePath`, `diagnosticsEnabled`,
-`hasCompletedBrandProfile`, `memberRole`, `roleHome`,
-`completeProfileDestination`, `redirectPastCompleteProfile`,
-`completeProfilePaths`, `dashboardPath`, and `doneField`.
+`completionMarkerSet`, `brandProfileStateFrom`, `brandProfileState`, `memberRole`,
+`roleHome`, `completeProfileDestination`, `redirectPastCompleteProfile`,
+`completeProfilePaths`, `dashboardPath`, `markerKey`, and `statusBudgetMs`.
 
 - `completeProfileDestination()` is the read-and-decide half and is safe to call by
   hand on staging: it returns `/brand-dashboard`, `/quiz`, `/quiz-results`,
@@ -198,9 +188,12 @@ nothing to author.
 - `memberRole(member)` and `roleHome(member)` are the two guard-contract borrows,
   exported so a staging session can ask "what role does the guard think I am, and
   where does it think I live?" without reproducing the decision by hand.
-- `hasCompletedBrandProfile(member)` answers the field question for any member
-  object you already have, which is the fastest way to confirm the account
-  controller actually wrote something.
+- `completionMarkerSet()` reads the durable-submit marker without making a network
+  request.
+- `brandProfileStateFrom(payload)` validates an endpoint payload as `done`,
+  `not-done`, or `unknown`.
+- `brandProfileState(memberstack)` performs the marker-first authenticated status
+  read and returns the same three-state answer.
 
 Diagnostics narrate every decision on staging only — `*.webflow.io`, `localhost`,
 `127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`. Production
@@ -213,21 +206,21 @@ is completely silent, on the role redirects and on every fail-open path alike.
 - Confirm the sitewide route guard loads before this embed on the page.
 - Confirm the `restrict-pages` group access is **All Members** before testing the
   role branches; with the paid plan selected they are unreachable by construction.
-- On staging with the console open, verify all four mapped outcomes: a paid Brand
-  with an empty `completed-brand-profile` stays and the form works; a paid Brand
-  with the field set lands on `/brand-dashboard`; a Talent session lands on
-  `/starter-dashboard`; a free Brand lands on `/quiz` before taking the quiz and on
-  `/quiz-results` after.
+- On staging with the console open, verify all mapped outcomes: an unfinished paid
+  Brand stays and the form works; a paid Brand with the durable-submit marker or
+  Xano `brand_profile_done: true` lands on `/brand-dashboard`; a Talent session
+  lands on `/starter-dashboard`; a free Brand lands on `/quiz` before taking the
+  quiz and on `/quiz-results` after.
 - Verify the free-Brand and Talent trips are a **single** navigation — `/login`
   should never appear in the history for them.
-- Submit the form once as a paid Brand with an empty field, then read Memberstack
-  and both Xano rows by stable member ID before revisiting the page. The second
-  visit should redirect only after all three stores show the expected account
-  values.
+- Submit the form once as a paid Brand, confirm the marker only appears after the
+  durable submit, then read Xano by stable member ID before revisiting the page.
+  Verify the marker fast path reaches `/brand-dashboard`. Then clear only that
+  session marker and verify the Xano readback reaches the same destination.
 - Confirm a signed-out visit is still handled by Memberstack's gated group
   (`/login`, no `?next=`) rather than by this module.
-- Confirm the page issues no new network request because of this module — it makes
-  none.
+- Confirm free-Brand, Talent, and marker-fast-path decisions make no Xano request.
+  An unmarked paid Brand makes one token trade plus one status read.
 - Verify `window.StartersCompleteProfileRedirect.release` matches the tag the embed
   is pinned to.
 - Do not publish custom domains until the separate production go signal.
