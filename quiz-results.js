@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.131
+ * @release v1.59.162
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -138,6 +138,73 @@
     }
 
     window[starterQuizResultsControllerFlag] = true
+
+    const quizEmailTestEnabled =
+        new URLSearchParams(window.location.search).get('quizEmailTest') === '1'
+    const quizEmailTestRecipient = document.querySelector(
+        '[data-quiz-email-test-recipient]',
+    )
+    const quizEmailTestSend = document.querySelector(
+        '[data-quiz-email-test-send]',
+    )
+    let quizEmailTestPanel = document.querySelector(
+        '[data-quiz-email-test-panel]',
+    )
+
+    if (!quizEmailTestPanel && quizEmailTestRecipient && quizEmailTestSend) {
+        quizEmailTestPanel = quizEmailTestRecipient.parentElement
+
+        while (
+            quizEmailTestPanel &&
+            quizEmailTestPanel !== document.body &&
+            !quizEmailTestPanel.contains(quizEmailTestSend)
+        ) {
+            quizEmailTestPanel = quizEmailTestPanel.parentElement
+        }
+    }
+
+    if (quizEmailTestPanel && quizEmailTestPanel !== document.body) {
+        quizEmailTestPanel.hidden = true
+        quizEmailTestPanel.setAttribute('aria-hidden', 'true')
+    }
+
+    let resolveQuizEmailTestSavedState = null
+
+    if (quizEmailTestEnabled) {
+        window.__startersQuizEmailTestSavedState = {
+            ready: new Promise((resolve) => {
+                resolveQuizEmailTestSavedState = resolve
+            }),
+        }
+    }
+
+    function settleQuizEmailTestSavedState(quiz, error) {
+        if (!resolveQuizEmailTestSavedState) return
+
+        resolveQuizEmailTestSavedState({
+            quiz: quiz || null,
+            error: error || '',
+        })
+        resolveQuizEmailTestSavedState = null
+    }
+
+    // The internal email tester is a separate, query-gated controller so the
+    // production results flow pays no runtime or network cost unless an
+    // operator opens /quiz-results?quizEmailTest=1. The controller binds only
+    // to native Webflow elements; it does not generate the panel markup.
+    if (
+        quizEmailTestEnabled &&
+        quizEmailTestPanel &&
+        quizEmailTestPanel !== document.body &&
+        !document.querySelector('script[data-quiz-email-test-controller]')
+    ) {
+        const testerScript = document.createElement('script')
+        testerScript.defer = true
+        testerScript.dataset.quizEmailTestController = 'true'
+        testerScript.src =
+            'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/quiz-results-email-tester.js'
+        document.head.appendChild(testerScript)
+    }
 
     function normalizeLearnContentValue(value) {
         return String(value || '').trim()
@@ -5524,7 +5591,8 @@
     }
 
     function createMemberstackStarterQuizPayload(pendingQuiz) {
-        const savedAt = new Date().toISOString()
+        const savedAt =
+            pendingQuiz?.memberstackSavedAt || new Date().toISOString()
         const categories = compactSelectionItems(pendingQuiz?.categories)
         const subcategories = compactSelectionItems(pendingQuiz?.subcategories)
 
@@ -5706,31 +5774,45 @@
      * Persists quiz data to the logged-in Memberstack member.
      *
      * @param {object} pendingQuiz Pending quiz payload.
-     * @returns {Promise<boolean>} True when save completes.
+     * @returns {Promise<object | null>} Save outcome, or null on failure.
      */
     async function savePendingQuizToMemberstack(pendingQuiz) {
         if (pendingQuiz.memberstackSavedAt) {
             logQuizFlow('pending quiz already saved to Memberstack; save skipped', {
                 memberstackSavedAt: pendingQuiz.memberstackSavedAt,
             })
-            return true
+            return {
+                saved: true,
+                starterQuiz: createMemberstackStarterQuizPayload(pendingQuiz),
+            }
         }
 
         const memberstack = await waitForMemberstack()
 
         if (!memberstack) {
             logQuizFlow('Memberstack DOM package unavailable; save skipped')
-            return false
+            settleQuizEmailTestSavedState(
+                null,
+                'The current quiz result could not be saved',
+            )
+            return null
         }
 
         try {
             const starterQuiz = await saveQuizToMemberJson(memberstack, pendingQuiz)
             await saveQuizCustomField(memberstack, starterQuiz || pendingQuiz)
 
-            return true
+            return {
+                saved: true,
+                starterQuiz,
+            }
         } catch (error) {
             logQuizFlow('Memberstack save failed', { error })
-            return false
+            settleQuizEmailTestSavedState(
+                null,
+                'The current quiz result could not be saved',
+            )
+            return null
         }
     }
 
@@ -5758,6 +5840,10 @@
             (await getPendingQuizFromMemberstack())
 
         if (!rawPendingQuiz) {
+            settleQuizEmailTestSavedState(
+                null,
+                'No current saved quiz result is available',
+            )
             logQuizFlow('no pending quiz found; results page has nothing to save')
             await redirectVisitorWithoutResults()
             // If redirectVisitorWithoutResults() bounced a resolved visitor the
@@ -5790,6 +5876,10 @@
             taxonomyCompatibility.requiresReselection &&
             !testPendingQuiz
         ) {
+            settleQuizEmailTestSavedState(
+                null,
+                'The current quiz result requires a taxonomy retake',
+            )
             sessionStorage.removeItem(pendingQuizStorageKey)
             logQuizFlow(
                 'saved quiz has no current taxonomy selections; requiring retake',
@@ -5809,6 +5899,10 @@
             logQuizFlow('pending quiz is not ready; results save skipped', {
                 status: pendingQuiz.status,
             })
+            settleQuizEmailTestSavedState(
+                null,
+                'The current quiz result is not complete',
+            )
             // Nothing renders on this path, but the visitor stays on the page,
             // so release the loader rather than leave it waiting.
             signalQuizResultsReady('not-ready')
@@ -5901,6 +5995,10 @@
         signalQuizResultsReady('rendered')
 
         if (testPendingQuiz) {
+            settleQuizEmailTestSavedState(
+                null,
+                'URL test data cannot be used by the production email tester',
+            )
             logQuizFlow('test mode enabled; Memberstack/sessionStorage save skipped')
             return
         }
@@ -5921,6 +6019,12 @@
             pendingQuizStorageKey,
             pendingQuiz,
         })
+        settleQuizEmailTestSavedState(
+            didSave.starterQuiz,
+            didSave.starterQuiz
+                ? ''
+                : 'Memberstack member JSON could not save the current quiz result',
+        )
     }
 
     // initResultsPage() is fire-and-forget, so any rejection inside it would
@@ -5928,6 +6032,12 @@
     // overlay up for good. Releasing the loader on failure shows the page as it
     // stands, which beats an indefinite spinner.
     initResultsPage().catch((error) => {
+        if (typeof settleQuizEmailTestSavedState === 'function') {
+            settleQuizEmailTestSavedState(
+                null,
+                'The current quiz result could not be prepared',
+            )
+        }
         logQuizFlow('results boot failed; releasing the loader', { error })
         signalQuizResultsReady('boot-error')
     })
