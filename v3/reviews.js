@@ -6,11 +6,11 @@
  *     blocks submission when no valid positive numeric project ID is available;
  *   - supplies a fresh idempotency key immediately before an authored review
  *     form is submitted;
- *   - derives the public-profile slug from /hire/{slug} and adds it to the
- *     authored wf-xano wrapper before that wrapper loads;
+ *   - derives the public-profile slug from /hire/{slug} and configures the
+ *     authored or adopted Reviews section as a wf-xano wrapper before it loads;
  *   - projects Xano's approved aggregate into the authored profile summary;
- *   - replaces the legacy CMS projection inside the authored Reviews list
- *     target with sanitized cards from Xano's approved review response.
+ *   - replaces the legacy CMS projection inside the existing or behavior-only
+ *     Reviews list target with sanitized cards from Xano's approved response.
  *
  * Xano remains authoritative for identity, project completion, one-review
  * enforcement, moderation, points, reversals, aggregates, and ranking.

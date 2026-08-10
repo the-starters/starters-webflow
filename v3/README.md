@@ -2016,18 +2016,20 @@ value or the OAuth provider rejects the exchange.
 
 ## V3 reviews frontend
 
-`reviews.js` is the prepared browser adapter for completed-project reviews on
+`reviews.js` is the browser adapter for completed-project reviews on
 the Brand dashboard and approved reviews on public `/hire/{slug}` profiles.
-Production Webflow activation is approved for the Brand dashboard and public
+Production Webflow activation covers the Brand dashboard and public
 `/hire/{slug}` profiles. The sitewide `opportunities-3.0.js` controller loads
 the GitHub-owned adapter once, and only on a canonical `/hire/{slug}` route, so
-the public profile does not need a second Webflow page-code loader. Do not
-enable any points, ranking, rank-projector, or `rank_status` write as part of
-this integration.
+the public profile does not need a second Webflow page-code loader. The Brand
+dashboard still loads the adapter from its Webflow page code:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/reviews.js"></script>
 ```
+
+Do not enable any points, ranking, rank-projector, or `rank_status` write as
+part of this integration.
 
 Webflow Designer owns the Brand review form and the public Reviews section. The
 adapter does not generate either surface. On the Brand side, author the review
@@ -2087,12 +2089,13 @@ authority and must expose only approved reviews. Its canonical envelope is:
 ```
 
 For the current native profile template, the adapter also adopts the existing
-`.profile-content_reviews` section and its
-`.profile-content_reviews_list` descendant when the migration attributes are
-absent. It adds only behavior attributes and the hidden template needed by
-wf-xano; Webflow continues to own the visible Reviews section. If no canonical
-profile slug or recognizable Reviews section is available, the adapter makes
-no request and renders nothing.
+`.profile-content_reviews` section when the migration attributes are absent.
+It uses the existing `.profile-content_reviews_list` descendant when present,
+or adds that behavior-only list target when the section has none. The adapter
+then adds the behavior attributes and hidden template needed by wf-xano;
+Webflow continues to own the visible Reviews section. If no canonical profile
+slug or recognizable Reviews section is available, the adapter makes no
+request and renders nothing.
 
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
