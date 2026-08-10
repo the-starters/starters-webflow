@@ -2019,10 +2019,11 @@ value or the OAuth provider rejects the exchange.
 `reviews.js` is the prepared browser adapter for completed-project reviews on
 the Brand dashboard and approved reviews on public `/hire/{slug}` profiles.
 Production Webflow activation is approved for the Brand dashboard and public
-`/hire/{slug}` profiles. Load the GitHub-owned adapter from jsDelivr after the
-authored Webflow surfaces and wf-xano runtime, then publish those exact Webflow
-surfaces. Do not enable any points, ranking, rank-projector, or `rank_status`
-write as part of this integration.
+`/hire/{slug}` profiles. The sitewide `opportunities-3.0.js` controller loads
+the GitHub-owned adapter once, and only on a canonical `/hire/{slug}` route, so
+the public profile does not need a second Webflow page-code loader. Do not
+enable any points, ranking, rank-projector, or `rank_status` write as part of
+this integration.
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/reviews.js"></script>
@@ -2054,7 +2055,11 @@ appear on the Starter profile after submission.`, and writes a new
 `review-ui:{project_id}:{random}` key in capture phase for every submit. Xano
 remains authoritative for completed-project eligibility, one-review
 enforcement, idempotent replay, moderation, points, reversals, aggregates, and
-ranking. A successful wf-xano `project-review` submission emits the document
+ranking. The current product rule is one review per canonical
+project/Brand/Starter tuple. New project reviews are immediately approved and
+published, while the canonical moderation state remains explicit so a future
+approval workflow can be introduced without changing the browser contract. A
+successful wf-xano `project-review` submission emits the document
 event `starters:review-submitted`; it does not perform a second write.
 
 On the public profile, use one wf-xano wrapper with
@@ -2081,6 +2086,14 @@ authority and must expose only approved reviews. Its canonical envelope is:
 }
 ```
 
+For the current native profile template, the adapter also adopts the existing
+`.profile-content_reviews` section and its
+`.profile-content_reviews_list` descendant when the migration attributes are
+absent. It adds only behavior attributes and the hidden template needed by
+wf-xano; Webflow continues to own the visible Reviews section. If no canonical
+profile slug or recognizable Reviews section is available, the adapter makes
+no request and renders nothing.
+
 The adapter also accepts `items` for the review array, `aggregates` for the
 aggregate object, and the wf-xano raw-item fallback. Aggregate values are never
 recalculated from a paginated review list. The authored Reviews section is
@@ -2099,7 +2112,13 @@ Run the focused checks with:
 node --check v3/reviews.js
 node --check v3/reviews.test.js
 node --test v3/reviews.test.js
+python3 -m http.server 8765 --bind 127.0.0.1
+# Open /v3/reviews-harness.html and click Reviews.
 ```
+
+The harness runs the real adapter against an isolated approved-review fixture;
+it changes the browser history to `/hire/review-harness` so the adapter uses its
+canonical route gate, and never reads or writes production business data.
 
 ## Brand and Starter Dashboard messages tile
 
