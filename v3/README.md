@@ -1422,9 +1422,10 @@ node --test v3/xano-grabber/xano-grabber.test.js
 
 ## Scheduling auth
 
-`scheduling-auth.js` owns the Bearer-token adapter for the V3 availability and
-scheduling configuration calls. Webflow should load it with a small `defer`
-script tag instead of carrying a duplicate copy in page head/footer code.
+`scheduling-auth.js` owns the Bearer-token adapter for the V3 availability,
+scheduling configuration, and Brand paid-call payment-method calls. Webflow
+should load it with a small `defer` script tag instead of carrying a duplicate
+copy in page head/footer code.
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
@@ -1435,8 +1436,9 @@ Current safety boundary:
 - Runs across `the-starters-3-0.webflow.io`.
 - On the V3 custom domains, runs only on `/hire/jp-test`,
   `/starter-dashboard`, and `/brand-dashboard`; all other paths remain inert.
-- Authenticates only the explicit reviewed `/v3` scheduling routes on the
-  configured Xano origin. It does not use a group-wide prefix allowlist.
+- Authenticates only explicit reviewed `/v3` routes on the configured Xano
+  origin, including the two Brand paid-call payment-method paths documented
+  below. It does not use a group-wide prefix allowlist.
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
   This prevents a release-time regression on non-stage staging consumers; the
@@ -1458,15 +1460,16 @@ Current safety boundary:
 - Installs synchronously and takes ownership from the legacy bridge in
   `opportunities-3.0.js` regardless of script order.
 
-Maintenance rule: new `api:tCpV3oqd` scheduling calls should use
-`window.xanoAuthFetch`. Keep endpoint scope explicit; do not turn this into a
-blanket credential injector. Every route used by the stage adapter and
-availability modules must be listed as an exact `/v3` path.
+Maintenance rule: new reviewed `api:tCpV3oqd` scheduling or paid-call browser
+calls should use `window.xanoAuthFetch`. Keep endpoint scope explicit; do not
+turn this into a blanket credential injector. Every route used by the stage
+adapter, availability modules, and paid-call client must be listed as an exact
+`/v3` path.
 
 Public helpers:
 
 - `window.xanoAuthFetch(input, init)` accepts the same inputs as `fetch`, adds
-  Bearer authentication for scoped V3 scheduling paths and rejects if initial
+  Bearer authentication for scoped V3 paths and rejects if initial
   token acquisition fails. Calls outside that scope and calls with an existing
   `Authorization` header pass through unchanged.
 - `window.getXanoAuthToken({ forceRefresh: true })` returns the cached,
@@ -1477,7 +1480,7 @@ The transparent `window.fetch` wrapper exists only for legacy inline callers. If
 initial token acquisition fails, it logs a warning and makes one unauthenticated
 request; direct `xanoAuthFetch` callers receive the error. Both interfaces preserve
 network rejections and reject with code `MEMBER_SCOPE_CHANGED` if the Memberstack
-session changes while authentication or a scheduling request is in flight.
+session changes while authentication or a scoped request is in flight.
 
 Run the focused test with:
 
@@ -2309,8 +2312,14 @@ any control is ignored while a start or status request is resolving. Start
 posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
 URL built against the exact V3 callback instead of falling back to its legacy
-V2 default. It accepts only an HTTPS `connect.stripe.com` URL before
-navigating the reserved tab.
+V2 default. Production start also sends one bounded idempotency key. A retry
+after a network-ambiguous, timeout, conflict, rate-limit, or server outcome
+reuses that key; a confirmed redirect or later intentional attempt uses a new
+key. The controller accepts only an HTTPS `connect.stripe.com` URL before
+navigating the reserved tab. Exact backend replays with `mode="connected"` or
+`mode="reconciliation_required"` do not require a second redirect URL. They
+close the reserved tab and refresh canonical status instead of displaying a
+false invalid-URL error.
 
 The dashboard calls `status/v3` immediately. `connected:false` selects
 `disconnected`; `connected:true` with `charges_enabled:false` selects
@@ -2320,15 +2329,18 @@ status briefly to absorb webhook timing. If the flag is still false, it selects
 the authored `review` state instead of painting a false success or falling back
 to the old nightly batch state.
 
-The callback reads `code` and optional `state`, removes OAuth parameters from
-the visible URL before doing network work, resolves the current Memberstack
-member, rejects a mismatched state, and posts only `{code}` to
-`oauth_exchange/v3` with the Bearer token identifying the member. When
-`BroadcastChannel` is available, a successful exchange signals the original
-dashboard through a member-matched channel, then redirects the callback tab to
-`/starter-dashboard?stripe_connect=connected`, where the dashboard re-reads
-canonical status. Callback errors stay on the authored error state for safe
-recovery.
+The production callback reads `code` and the backend-issued opaque `state`,
+removes OAuth parameters from the visible URL before network work, resolves the
+current Memberstack member, validates the bounded state shape, and posts
+`{code, state}` to `oauth_exchange/v3`. Xano binds the state to the authenticated
+member and request receipt; the browser does not compare the opaque value to a
+Memberstack ID. The callback handles `completed`, `reconciliation_required`,
+and `restart_required` without automatically replaying the one-time code. When
+`BroadcastChannel` is available, only `completed` signals the original dashboard
+through a member-matched channel. The callback tab then redirects to the
+matching `/starter-dashboard?stripe_connect=<mode>` URL, where the dashboard
+re-reads canonical status. Callback errors stay on the authored error state for
+safe recovery.
 
 Each root reflects the selected state in `data-stripe-connect-status` and
 `data-stripe-connect-view`. The module also emits
@@ -2369,6 +2381,52 @@ Run its focused tests with:
 
 ```sh
 node --test v3/starter-dashboard-stripe-connect.test.js
+```
+
+## Brand paid-call payment method client
+
+`paid-call-brand-payment.js` supplies the authenticated Xano calls needed by a
+native Brand booking UI. It does not create form markup or initialize Stripe
+Elements. Load it after `scheduling-auth.js` only on the approved host and path
+surfaces in the [scheduling auth](#scheduling-auth) boundary. A production Hire
+surface must be added to that boundary before this client can authenticate
+there:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/paid-call-brand-payment.js"></script>
+```
+
+The scheduling auth bridge allowlists only these two new paid-call paths:
+
+- `POST /brand/payment-method/setup/v3`
+- `POST /brand/payment-method/set-default/v3`
+
+Xano derives the Brand identity and payment environment from the Bearer token.
+The browser sends neither field. A booking controller should use this sequence:
+
+1. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
+   card-setup attempt.
+2. Retry that attempt through its `.run()` method with the same idempotency key
+   until Xano returns the Stripe SetupIntent client secret or a terminal error.
+3. Give that client secret to Stripe.js and let Stripe Elements collect and
+   confirm the card. Never send raw card data through Webflow or Xano.
+4. After Stripe.js returns a `pm_...` PaymentMethod ID, call
+   `createDefaultSelectionAttempt(paymentMethodId)` once for that intentional
+   selection.
+5. Retry the returned selection attempt through `.run()` with its captured key.
+   Create a new attempt for every later intentional selection, including an
+   A-to-B-to-A sequence.
+
+The client validates bounded keys and PaymentMethod IDs before network work.
+It uses `xanoAuthFetch` when the shared bridge is present and otherwise uses the
+shared Xano token helper. The backend remains authoritative for customer,
+environment, default-card, and readiness state.
+
+Run the focused contract tests with:
+
+```sh
+node --test v3/scheduling-auth.test.js v3/paid-call-brand-payment.test.js
 ```
 
 ## Dashboard Action Items panel

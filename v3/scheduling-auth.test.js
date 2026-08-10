@@ -7,6 +7,10 @@ const source = fs.readFileSync(require.resolve('./scheduling-auth.js'), 'utf8')
 const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const SCHEDULING_URL = `${XANO_ORIGIN}/api:tCpV3oqd/scheduler/configurations/update/v3`
 const V3_STARTER_URL = `${XANO_ORIGIN}/api:tCpV3oqd/starter/get_by_memberstack/v3`
+const BRAND_PAYMENT_URLS = [
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/setup/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/set-default/v3`,
+]
 
 function response(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -202,6 +206,50 @@ test('authenticated V3 starter reads preserve POST body and retry once', async (
   ])
   assert.deepEqual(authHeaders, ['Bearer xano-1', 'Bearer xano-2'])
   assert.equal(tradeCount, 2)
+})
+
+test('paid-call Brand payment endpoints receive the shared Bearer token', async () => {
+  const requests = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-brand-payment' })
+    }
+    requests.push(request)
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  for (const url of BRAND_PAYMENT_URLS) {
+    await window.xanoAuthFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+  }
+
+  assert.equal(requests.length, BRAND_PAYMENT_URLS.length)
+  for (const request of requests) {
+    assert.equal(request.headers.get('Authorization'), 'Bearer xano-brand-payment')
+  }
+})
+
+test('paid-call Brand payment lookalike paths are not authenticated', async () => {
+  let tradeCount = 0
+  let receivedRequest
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) tradeCount += 1
+    receivedRequest = request
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(BRAND_PAYMENT_URLS[0] + '-debug', {
+    method: 'POST',
+    body: '{}',
+  })
+
+  assert.equal(tradeCount, 0)
+  assert.equal(receivedRequest.headers.has('Authorization'), false)
 })
 
 test('does not authenticate lookalike V3 starter paths', async () => {
