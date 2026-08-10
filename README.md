@@ -656,7 +656,9 @@ is `Project timeline`; a direct `wf-xano-bind="timeline_display"` remains a
 forward-compatible fallback. Same-month ranges collapse
 to `August 6–31, 2026`; cross-month ranges use
 `August 28 – September 12, 2026`; cross-year ranges keep both years; and a
-missing end date reads `Starting August 6, 2026 · Ongoing`. Date-only values
+missing end date reads `Starting August 6, 2026 · Ongoing`. A valid end date
+without a start date reads `Ends August 4, 2026` instead of exposing an
+ambiguous ISO fragment. Date-only values
 are parsed as calendar parts so the label cannot shift a day across timezones.
 Malformed values leave the Xano-authored timeline value unchanged, whether it
 comes from the nested contract-detail row or the direct `timeline_display`
