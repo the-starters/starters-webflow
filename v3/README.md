@@ -527,6 +527,8 @@ TTL on `path=/`:
 | `fbc` | Meta's own `_fbc` cookie, copied when ours is unset |
 | `fbp` | Meta's own `_fbp` cookie, copied when ours is unset |
 | `event_id` | `evt_<uuid>`, generated once and then reused |
+| `signup_source` | Path of the page the signup happened on, normalized (lowercased, one trailing slash removed, no query string), written at the Memberstack auth transition |
+| `signup_referrer` | Path of the same-origin page the signup was reached from, normalized the same way, written at the same transition. Nothing is written for an absent or cross-origin referrer |
 
 A parameter only overwrites its cookie when the URL actually carries a non-empty
 value. The freshest click therefore wins, and browsing the rest of the site never
@@ -534,6 +536,42 @@ clears an earlier click. The `_fbc` and `_fbp` copy is re-checked on every page
 load, since the pixel writes those cookies itself and can finish loading after
 this script runs. The event id is reused for the life of the cookie so the
 browser event and any server-side copy of the same registration share one id.
+
+`signup_source` and `signup_referrer` are the two cookies no URL can supply, and
+they answer different questions. The source is which page the form was on. The
+referrer is where the visitor was when they decided. Both matter because they are
+usually not the same page: someone who clicks Get started on `/` signs up on
+`/quiz`, so the source is `/quiz` and only the referrer names the homepage. `/`
+carries no signup form at all, so the source can never name it.
+
+Both are written at the auth transition and not during the sitewide capture that
+runs on every page load. Capturing on load would make each mean "last page
+loaded", and each signup page would be overwritten by its own redirect:
+`/sign-up` would end up saying `/brand-dashboard` and `/quiz` would say
+`/quiz-results`. The referrer is the sharper case, because `quiz-results.js` reads
+these cookies a page later: a load-time capture would have replaced the referrer
+with `/quiz-results`'s own referrer, which is `/quiz`, so every quiz signup would
+claim it came from `/quiz` and the real answer would be gone. The `/all-starters`
+modal works for the same reason: the transition fires on the first page load,
+before the modal's `?modal-id=signup-modal` reload, so the referrer is still the
+page that linked there rather than `/all-starters` itself.
+
+Leaving both out of the URL parameters is what stops a `?signup_source=` or
+`?signup_referrer=` in the address bar dictating a field that is meant to report
+what really happened. Homepage values store `/`, and `/Starters/John-Doe/` stores
+`/starters/john-doe`.
+
+`signup_source` always overwrites its cookie, because reaching the transition on
+an armed page is a signup and so always carries a real path. `signup_referrer`
+stays silent in three cases instead of storing something wrong:
+
+1. No referrer at all, from direct navigation, a typed URL, or a referrer policy
+   that strips it. There was no previous page, so blank is the honest answer.
+2. A cross-origin referrer, such as Google, Meta or LinkedIn. The field means the
+   page on our own site where they clicked, and the external origin is already
+   carried by `utm_source` and `fbclid`, so storing a hostname would poison a
+   field of paths for no new information.
+3. A path that reads back empty.
 
 ### Attribution Memberstack field IDs
 
@@ -548,10 +586,60 @@ the cookie name with underscores replaced by hyphens:
 `fbc` -> `fbc`
 `fbp` -> `fbp`
 `event_id` -> `event-id`
+`signup_source` -> `signup-source`
+`signup_referrer` -> `signup-referrer`
 
-These eight field IDs are verified to exist in the Memberstack app config. Do not
-rename them without changing the app config first, because Memberstack silently
-drops a write to a field it does not know.
+All ten field IDs are verified to exist in the Memberstack app config. Do not
+rename any of them, or add an eleventh, without changing the app config first:
+Memberstack silently drops a write to a field it does not know, so a wrong ID
+costs that one value while the rest of the write still lands, with no error
+anywhere. Check any ID against the live config with:
+
+```sh
+curl -s https://client.memberstack.com/app -H 'X-APP-ID: app_clc2a0dyo00kf0uldcm11fl0q'
+```
+
+The ten do not all behave the same way on the member. Eight of them are
+last-touch: a fresh ad click is supposed to update them, and every signup rewrites
+them from the current cookies. `signup-source` and `signup-referrer` are
+write-once. Once a member holds a non-empty value in either, no write from either
+script may replace it, because "where did this member come from" stops being true
+the moment something overwrites it. The two are guarded as a set because they are
+facts about one signup, fixed at one moment: guarding one and not the other would
+read as a deliberate distinction that does not exist. Each is still judged on its
+own, so a member who has a source but no referrer keeps the source and gets the
+referrer filled in.
+
+The guard exists because neither script can actually see a signup. What they see
+is a logged-out to logged-in transition on a page that has a signup form, and a
+returning member LOGGING IN on such a page is the same event from the outside. The
+login-form veto below only runs at `DOMContentLoaded`, so a login form that
+appears later, say a modal swapping in "already have an account?", is never seen
+at all. The quiz funnel gets there by an easier-to-miss route: a returning member
+logs in on `/quiz`, the sitewide script writes the `signup_source=/quiz` cookie and
+a fresh `signup_referrer`, they land on `/quiz-results`, and `quiz-results.js`
+writes both over their real values. Both writers hold the guard, not just the
+direct-save path.
+
+The guard strips only those two keys from the outgoing payload and leaves the rest
+of the write intact, so a login on such a page still refreshes the eight click
+fields exactly as it does today. Empty, whitespace-only and absent existing values
+all count as unfilled and are written over.
+
+When the member's existing value cannot be read at all, the write goes ahead. That
+is the opposite direction from how the `CompleteRegistration` decisions below
+resolve their doubt, and deliberately so: there, guessing wrong invents a
+conversion that never happened, while here the common case by a wide margin is a
+genuine first signup whose field is empty. Skipping on an unreadable read would
+throw away real attribution on every signup whenever the read hiccups, to protect
+against a rarer overwrite. Which failure is cheaper is not the same question in
+the two places.
+
+Reading the existing value costs no extra round trip where the member data is
+already in hand: the transition handler uses the auth payload it already
+unwrapped, and the pending-save retry uses the member it already read. Only a
+transition payload that carries no custom fields at all falls back to an explicit
+`getCurrentMember()` call.
 
 Which script writes them depends on the signup route. A `/quiz` signup is followed
 by `/quiz-results`, so the repo-root `quiz-results.js` writes the fields there as
@@ -581,6 +669,13 @@ Path matching ignores case and a single trailing slash. Because the map is check
 first, those two keep behaving exactly as they do today whatever happens to their
 markup, and `/quiz` in particular keeps deferring its field write to
 `quiz-results.js` rather than racing it.
+
+The `signup_source` and `signup_referrer` cookies are the exception to that split.
+Both are written on the transition by every armed page, `/quiz` included, before
+the question of who saves the fields is even asked. That is what gives the quiz
+funnel a signup source and referrer at all: the cookies are written on `/quiz` and
+read by `quiz-results.js` on the next page. A page that direct-saves picks the same
+cookies up in its own snapshot a moment later.
 
 Rule 2 is what covers every other signup surface, starting with the signup modal on
 `/all-starters`. It reuses the `data-ms-form="signup"` attribute Memberstack already
@@ -646,12 +741,20 @@ request is still in flight. The `/sign-up` form carries
 modal and cuts the request off just as effectively. The save is therefore written to
 survive being cut off:
 
-1. On the transition, the non-empty attribution cookies are snapshotted into
+1. On the transition, the `signup_source` and `signup_referrer` cookies are written
+   for this page and then the non-empty attribution cookies are snapshotted into
    `sessionStorage.startersAttributionPendingFields` (field ID keys), and
    `sessionStorage.startersAttributionPendingSave` is set, both synchronously.
    Absent and empty cookies — including whitespace-only values — are omitted, so
    a later untagged visit never blanks a value an earlier tagged visit captured.
-2. Then `updateMember` is called with that snapshot.
+   The snapshot is not run through the write-once guard, because nothing may be
+   awaited before it reaches storage. The guard runs at each write attempt
+   instead, which also means a save the redirect cut off is re-checked against the
+   member on the page it completes on.
+2. Then `updateMember` is called with that snapshot, minus any write-once field the
+   member already has. A write left with nothing to say counts as settled, so a
+   member who only owed `signup-source` and `signup-referrer` does not leave a
+   marker retrying on every page load forever.
 3. The marker and snapshot are cleared only once the write is confirmed.
 
 Every page load checks that marker, and a page that finds it waits for

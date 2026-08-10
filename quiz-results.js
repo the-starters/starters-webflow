@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.162
+ * @release v1.59.169
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -5660,6 +5660,24 @@
     // attribution script writes these first-party cookies with a 72h TTL; the
     // field IDs are verified against the live Memberstack app config, and the
     // mapping is simply underscores swapped for hyphens (event_id -> event-id).
+    //
+    // signup_source and signup_referrer are the odd ones out in where they come
+    // from: the attribution script derives them at the Memberstack auth
+    // transition, from the path of the page the signup happened on and from the
+    // same-origin referrer of that page. For this funnel that page is /quiz, so
+    // both cookies are already sitting there by the time this controller runs on
+    // /quiz-results. Reading them here is the only way a quiz signup gets the
+    // fields, because /quiz is the one armed page the attribution script
+    // deliberately does not write fields for.
+    //
+    // signup_referrer is why the attribution script must capture at the
+    // transition and not on every page load: this page's own referrer is /quiz,
+    // so a load-time capture would have overwritten the real answer with /quiz
+    // before this read ever happens.
+    //
+    // All ten IDs below exist in the live app config. Verify any of them with:
+    //   curl -s https://client.memberstack.com/app \
+    //     -H 'X-APP-ID: app_clc2a0dyo00kf0uldcm11fl0q'
     const attributionCookieFieldIds = {
         utm_source: 'utm-source',
         utm_campaign: 'utm-campaign',
@@ -5669,6 +5687,8 @@
         fbc: 'fbc',
         fbp: 'fbp',
         event_id: 'event-id',
+        signup_source: 'signup-source',
+        signup_referrer: 'signup-referrer',
     }
 
     /**
@@ -5723,6 +5743,80 @@
         return customFields
     }
 
+    // The attribution fields that are write-once on the member: each records a
+    // fact about one signup, so a later write must never replace it. The other
+    // eight are last-touch on purpose, because a fresh ad click is supposed to
+    // update them.
+    const writeOnceFieldIds = [
+        attributionCookieFieldIds.signup_source,
+        attributionCookieFieldIds.signup_referrer,
+    ]
+
+    /**
+     * Tells whether an outgoing write carries anything the guard could hold back.
+     *
+     * The gate on the member read below. A quiz signup reached by direct
+     * navigation has no signup_referrer cookie, and a cookie read that threw
+     * leaves the payload empty, so in both cases reading the member could not
+     * change the write and is not worth a round trip.
+     *
+     * @param {object} customFields Outgoing attribution fields, by field ID.
+     * @returns {boolean} True when at least one write-once field is present.
+     */
+    function carriesWriteOnceField(customFields) {
+        if (!customFields) return false
+
+        return writeOnceFieldIds.some(
+            (fieldId) => customFields[fieldId] !== undefined,
+        )
+    }
+
+    /**
+     * Drops the write-once fields from an outgoing write when the member already
+     * has them.
+     *
+     * The quiz funnel needs this guard as much as the direct-signup path does,
+     * and the way it gets hit here is easy to miss. The sitewide attribution
+     * script arms /quiz and writes signup_source=/quiz plus signup_referrer on any
+     * logged-out to logged-in transition there, which includes a RETURNING member
+     * simply logging in on /quiz. They land here, and without this guard their real
+     * signup page and referrer are overwritten with today's.
+     *
+     * Only those two keys are stripped, and each is judged on its own, so a member
+     * holding one of the pair still gets the other written.
+     *
+     * An unreadable existing value writes rather than skips. The common case by a
+     * wide margin is a genuine first signup whose fields are empty, so skipping on
+     * a failed read would throw away real attribution on most signups to protect
+     * against the rarer overwrite. Empty, whitespace-only and absent values are
+     * all unfilled, using the same normalize() check hasStarterQuizCompletionMarker
+     * applies to starter-quiz.
+     *
+     * @param {object} customFields Outgoing attribution fields, by field ID.
+     * @param {object} existingCustomFields The member's current custom fields.
+     * @returns {object} The same object, or a copy without the filled write-once
+     *     fields.
+     */
+    function withoutFilledWriteOnceFields(customFields, existingCustomFields) {
+        if (!customFields) return customFields
+
+        const filled = writeOnceFieldIds.filter((fieldId) => {
+            if (customFields[fieldId] === undefined) return false
+
+            const existing = existingCustomFields?.[fieldId]
+
+            return normalize(existing == null ? '' : String(existing)) !== ''
+        })
+
+        if (!filled.length) return customFields
+
+        const kept = { ...customFields }
+
+        for (const fieldId of filled) delete kept[fieldId]
+
+        return kept
+    }
+
     /**
      * Saves a short starter quiz summary to one Memberstack custom field.
      *
@@ -5732,6 +5826,17 @@
      * Attribution cookies ride along in the same updateMember call so the quiz
      * save stays a single write. Gathering them can never fail the save: any
      * error degrades to writing starter-quiz alone.
+     *
+     * The write-once fields (signup-source, signup-referrer) are then held back
+     * when the member already has them, so a returning member who logged in on
+     * /quiz keeps their original signup page and referrer.
+     * That check is the only member read this path can do, and it is skipped
+     * entirely unless the write carries one of those fields: nothing upstream of here
+     * loads custom fields for the save (getExistingMemberJson reads member JSON,
+     * a different API), and resolveMemberstackAuthState only runs on the
+     * no-results branch, which is mutually exclusive with saving. It reuses the
+     * file's own getCurrentMemberData/getMemberCustomFields pair rather than
+     * introducing a second way to read a member.
      *
      * @param {object} memberstack Memberstack DOM instance.
      * @param {object} starterQuiz Compact starter quiz payload.
@@ -5753,6 +5858,53 @@
                 error,
             })
             attributionCustomFields = {}
+        }
+
+        // Gated, so an ordinary quiz save pays no member read at all: see
+        // carriesWriteOnceField. Mirrors the same gate in v3/signup-attribution.js.
+        if (carriesWriteOnceField(attributionCustomFields)) {
+            // Two scopes on purpose. A failed member read and a failed guard are
+            // different faults, and one catch around both would report either as
+            // "unreadable", pointing a future debugger at the wrong half. Both
+            // still end in a write: an unreadable existing value must not cost a
+            // genuine first signup its attribution.
+            let existingCustomFields = null
+
+            try {
+                existingCustomFields = getMemberCustomFields(
+                    await getCurrentMemberData(memberstack),
+                )
+            } catch (error) {
+                // Left null, which withoutFilledWriteOnceFields treats as unfilled
+                // and therefore writable.
+                logQuizFlow('existing write-once attribution unreadable; writing ours', {
+                    error,
+                })
+            }
+
+            let guarded = attributionCustomFields
+
+            try {
+                guarded = withoutFilledWriteOnceFields(
+                    attributionCustomFields,
+                    existingCustomFields,
+                )
+            } catch (error) {
+                logQuizFlow('write-once guard failed; writing ours', { error })
+                guarded = attributionCustomFields
+            }
+
+            if (guarded !== attributionCustomFields) {
+                logQuizFlow('member already has write-once attribution; kept theirs', {
+                    // The fields held BACK from this write, not the ones kept in
+                    // it: `kept` means the opposite inside the guard itself.
+                    heldBackFieldIds: writeOnceFieldIds.filter(
+                        (fieldId) => guarded[fieldId] === undefined,
+                    ),
+                })
+            }
+
+            attributionCustomFields = guarded
         }
 
         await memberstack.updateMember({

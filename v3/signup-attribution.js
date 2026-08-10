@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.135
+ * @release v1.59.169
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
  * one funnel, which is why it lives here in `v3/` alongside the other standalone
@@ -14,23 +14,71 @@
  * Cookie contract. All first-party, written with a 72 hour TTL on `path=/`, and
  * named exactly like the value they carry:
  *
- *   utm_source   from `?utm_source`
- *   utm_campaign from `?utm_campaign`
- *   utm_adset    from `?utm_adset`
- *   utm_content  from `?utm_content`
- *   fbclid       from `?fbclid`
- *   fbc          copied from Meta's own `_fbc` cookie when ours is unset
- *   fbp          copied from Meta's own `_fbp` cookie when ours is unset
- *   event_id     `evt_<uuid>`, generated once and then reused
+ *   utm_source    from `?utm_source`
+ *   utm_campaign  from `?utm_campaign`
+ *   utm_adset     from `?utm_adset`
+ *   utm_content   from `?utm_content`
+ *   fbclid        from `?fbclid`
+ *   fbc           copied from Meta's own `_fbc` cookie when ours is unset
+ *   fbp           copied from Meta's own `_fbp` cookie when ours is unset
+ *   event_id      `evt_<uuid>`, generated once and then reused
+ *   signup_source   normalized path of the page the signup happened on
+ *   signup_referrer normalized path of the same-origin page they came FROM
  *
  * A URL parameter only overwrites its cookie when the URL actually carries a
  * value, so the freshest click wins and a plain internal navigation never clears
  * an earlier one. The `_fbc`/`_fbp` copy is re-checked on every page load
  * because the pixel writes those cookies itself and can load after this script.
  *
+ * The two signup cookies are the ones no URL can supply. Both are derived at the
+ * Memberstack auth transition, not during capture, and neither is in URL_PARAMS
+ * so that `?signup_source=` and `?signup_referrer=` cannot dictate a field whose
+ * whole job is to report what really happened.
+ *
+ * `signup_source` answers "which page was the form on" from `location.pathname`.
+ * `signup_referrer` answers "where were they when they decided" from
+ * `document.referrer`, same-origin only, path only. The pair is needed because a
+ * visitor who clicks Get started on `/` signs up on `/quiz`: the source says
+ * `/quiz`, and only the referrer says `/`. `/` carries no signup form at all, so
+ * source alone can never name it.
+ *
+ * Capture at the transition rather than on load, for both, for the same reason.
+ * On every page load the cookie would mean "last page loaded" and its referrer,
+ * and each armed page would be clobbered by its own redirect: `/sign-up` would
+ * report `/brand-dashboard`, and `/quiz` is worse because `quiz-results.js` reads
+ * these cookies a page later, so `signup_referrer` would have been overwritten by
+ * `/quiz-results`'s own referrer, which is `/quiz` itself. Every quiz signup
+ * would say it came from `/quiz` and the real answer would be gone. Firing on the
+ * transition instead pins both values to the page load the signup happened on.
+ * That is also why the `/all-starters` modal works: the transition fires on the
+ * original page load, before the modal's `?modal-id=signup-modal` reload, so the
+ * referrer is still the page that linked to `/all-starters` and not
+ * `/all-starters` itself.
+ *
+ * `signup_source` always overwrites its cookie, because reaching the transition
+ * on an armed page IS a signup and so always carries a real path.
+ * `signup_referrer` writes nothing in three cases, all of them honest silence
+ * rather than a value: no referrer at all (direct navigation, typed URL, stripped
+ * referrer policy), a cross-origin referrer, and an empty path.
+ *
+ * The cookies overwrite freely; two FIELDS do not. `signup-source` and
+ * `signup-referrer` are write-once on the member: once either holds a non-empty
+ * value, no write here may replace it, because "where did this member come from"
+ * stops being true the moment it is overwritten. Both are facts about one signup
+ * that never change afterwards, so they are guarded together; guarding one and
+ * not the other would read as a deliberate distinction that does not exist. The
+ * other eight fields stay last-touch, so the guard strips at most those two keys
+ * from the outgoing payload and leaves the rest of the write alone. It is needed
+ * because this script cannot see a signup, only a logged-out to logged-in
+ * transition on a page that has a signup form, and a returning member logging in
+ * there looks identical. When the member's existing values cannot be read at all
+ * the write goes ahead: see withoutFilledWriteOnceFields for why doubt resolves
+ * the other way here than it does for CompleteRegistration.
+ *
  * Memberstack custom-field mapping, cookie name to field ID: underscores become
- * hyphens. These 8 field IDs are verified to exist in the Memberstack app
- * config, so do not rename them here.
+ * hyphens. All 10 field IDs are verified to exist in the Memberstack app config,
+ * so do not rename any of them here: Memberstack silently drops a write to a
+ * field it does not know.
  *
  *   `utm_source` -> `utm-source`
  *   `utm_campaign` -> `utm-campaign`
@@ -40,6 +88,8 @@
  *   `fbc` -> `fbc`
  *   `fbp` -> `fbp`
  *   `event_id` -> `event-id`
+ *   `signup_source` -> `signup-source`
+ *   `signup_referrer` -> `signup-referrer`
  *
  * The same map is duplicated in the repo-root `quiz-results.js`, which owns the
  * write for the quiz funnel. Keep the two in step: a field ID that exists in
@@ -146,7 +196,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.135'
+    var RELEASE = 'v1.59.169'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -170,6 +220,13 @@
     var EVENT_ID_COOKIE = 'event_id'
     var EVENT_ID_PREFIX = 'evt_'
 
+    // Both deliberately absent from URL_PARAMS: they are derived from the page the
+    // signup happened on and the page it was reached from, so a `?signup_source=`
+    // or `?signup_referrer=` in the URL must never be able to dictate them. See
+    // captureSignupSource and captureSignupReferrer.
+    var SIGNUP_SOURCE_COOKIE = 'signup_source'
+    var SIGNUP_REFERRER_COOKIE = 'signup_referrer'
+
     // Cookie name to Memberstack custom-field ID: underscores swapped for
     // hyphens. Duplicated in quiz-results.js on purpose (the house pattern for
     // two scripts that write the same fields); the IDs are verified against the
@@ -184,7 +241,19 @@
         fbc: 'fbc',
         fbp: 'fbp',
         event_id: 'event-id',
+        signup_source: 'signup-source',
+        signup_referrer: 'signup-referrer',
     }
+
+    // The fields that record a fact about one signup rather than a last-touch
+    // value. Both are set once, at the transition, and are wrong the moment
+    // anything replaces them, so saveAttribution holds them back for a member who
+    // already has one. The eight click fields are deliberately not in here: a
+    // fresh ad click is supposed to update those.
+    var WRITE_ONCE_FIELD_IDS = [
+        FIELD_IDS.signup_source,
+        FIELD_IDS.signup_referrer,
+    ]
 
     // Every cookie this script owns, in FIELD_IDS contract order.
     var COOKIE_NAMES = Object.keys(FIELD_IDS)
@@ -450,6 +519,99 @@
             path = path.slice(0, -1)
         }
         return path
+    }
+
+    /**
+     * Stores the page this signup happened on, in the normalized form the rest of
+     * the file already compares paths in.
+     *
+     * Called from the auth transition and nowhere else. It cannot live in
+     * capture(), which runs on every page load: the cookie would then mean "last
+     * page loaded" rather than "page the signup happened on", and each armed page
+     * would be clobbered by its own redirect (`/sign-up` reporting
+     * `/brand-dashboard`, `/quiz` reporting `/quiz-results`). The transition is
+     * the only moment where the value is both known and final.
+     *
+     * Unlike the URL-parameter cookies this always overwrites. There, absence is
+     * ambiguous (a plain internal navigation is not a new click), so a write is
+     * conditional on the URL carrying something. Here a write only happens
+     * because a signup just completed on this page, so there is always a real
+     * value and nothing earlier worth keeping. An unreadable or empty path is the
+     * one exception: writing junk is worse than writing nothing, and "absence
+     * never clears" still holds.
+     *
+     * @returns {void}
+     */
+    var captureSignupSource = function () {
+        try {
+            var path = normalizePath(
+                (window.location && window.location.pathname) || '',
+            )
+            if (!path) return
+            writeCookie(SIGNUP_SOURCE_COOKIE, path)
+        } catch (error) {
+            /* an unrecorded signup source must never break the signup */
+        }
+    }
+
+    /**
+     * Stores the same-origin page the signup was reached from.
+     *
+     * The companion to captureSignupSource, and the reason both exist: source is
+     * the page the form sits on, which for the funnel is always `/quiz`. This is
+     * the page they were on when they decided, which is the question "someone
+     * clicked Get started on the homepage and signed up on /quiz" actually asks.
+     * `/` carries no signup form, so source can never name it.
+     *
+     * Called from the transition only, exactly like captureSignupSource, and for a
+     * sharper version of the same reason. On every page load this cookie would
+     * hold the CURRENT page's referrer, and `quiz-results.js` reads these cookies
+     * one page later: by then `/quiz-results` would have overwritten it with its
+     * own referrer, which is `/quiz`. Every quiz signup would claim it came from
+     * `/quiz` and the real answer would be gone.
+     *
+     * Three cases write nothing, because blank is the honest answer and a wrong
+     * value here is worse than no value:
+     *
+     *   - No referrer. Direct navigation, a typed URL, or a referrer policy that
+     *     strips it. There was no previous page.
+     *   - Cross-origin. Google, Meta, LinkedIn. The field's whole meaning is "the
+     *     page on OUR site where they clicked", so a hostname does not belong in
+     *     it, and external origin is already carried by `utm_source` and `fbclid`.
+     *     Storing it here would poison a field of paths for no new information.
+     *   - An empty path, same as captureSignupSource.
+     *
+     * @returns {void}
+     */
+    var captureSignupReferrer = function () {
+        try {
+            var referrer = (document && document.referrer) || ''
+            if (!referrer) return
+
+            var here = window.location || {}
+            // Rebuilt from protocol and host when location.origin is missing. Not
+            // a browser-support measure: `new URL` below is newer than
+            // location.origin, so an engine without one has no chance with the
+            // other and lands in the catch either way. It is a same-origin check
+            // that refuses to guess. A location object we cannot derive an origin
+            // from means we cannot prove the referrer is ours, and an unprovable
+            // referrer is not written.
+            var origin =
+                here.origin ||
+                (here.protocol && here.host ? here.protocol + '//' + here.host : '')
+            if (!origin) return
+
+            var parsed = new URL(referrer)
+            if (parsed.origin !== origin) return
+
+            // pathname carries neither the query string nor the hash, so
+            // normalizePath gets the bare path and this matches signup_source.
+            var path = normalizePath(parsed.pathname)
+            if (!path) return
+            writeCookie(SIGNUP_REFERRER_COOKIE, path)
+        } catch (error) {
+            /* an unrecorded referrer must never break the signup */
+        }
     }
 
     /**
@@ -726,15 +888,163 @@
     }
 
     /**
+     * Reads a member's custom fields off whatever member-ish object we hold.
+     *
+     * Unwraps with getMemberData first, so an `onAuthChange` payload, a
+     * `getCurrentMember()` result and a bare member object are all accepted, and
+     * accepts the three key spellings `quiz-results.js` already tolerates
+     * (`getMemberCustomFields`, quiz-results.js:5206). Verified precedent note:
+     * every existing onAuthChange consumer in this repo reads only `id`,
+     * `planConnections` or `auth.email` off the payload, so nothing here proves
+     * the payload carries `customFields` at all. Hence null rather than {} when
+     * it does not: the caller has to be able to tell "this member has no
+     * signup-source" apart from "this object never carried custom fields", and
+     * only the second is worth a lookup.
+     *
+     * @param {object | null | undefined} payload
+     * @returns {object | null} Custom fields, or null when this object has none.
+     */
+    var memberCustomFields = function (payload) {
+        try {
+            var member = getMemberData(payload)
+            if (!member) return null
+            var fields =
+                member.customFields ||
+                member.custom_fields ||
+                member['custom-fields']
+            if (!fields || typeof fields !== 'object' || Array.isArray(fields)) {
+                return null
+            }
+            return fields
+        } catch (error) {
+            return null
+        }
+    }
+
+    /**
+     * Asks Memberstack for the member's custom fields.
+     *
+     * The fallback for a transition payload that carries none. Never called
+     * before the pending-save snapshot is in storage: an await there would hand
+     * the signup form's own redirect a window to cut the snapshot off, which is
+     * the one failure this whole section exists to prevent.
+     *
+     * @param {object} memberstack Memberstack DOM instance.
+     * @returns {Promise<object | null>} Custom fields, or null when unreadable.
+     */
+    var lookUpExistingCustomFields = async function (memberstack) {
+        try {
+            if (
+                !memberstack ||
+                typeof memberstack.getCurrentMember !== 'function'
+            ) {
+                return null
+            }
+            return memberCustomFields(await memberstack.getCurrentMember())
+        } catch (error) {
+            return null
+        }
+    }
+
+    /**
+     * @param {object} fields Outgoing custom fields, by field ID.
+     * @returns {boolean} True when this write carries at least one write-once
+     *     field, which is the only case worth paying a member read for.
+     */
+    var carriesWriteOnceField = function (fields) {
+        if (!fields) return false
+        return WRITE_ONCE_FIELD_IDS.some(function (fieldId) {
+            return fields[fieldId] !== undefined
+        })
+    }
+
+    /**
+     * Drops the write-once fields from an outgoing write when the member already
+     * has them, and leaves every other field alone.
+     *
+     * `signup-source` and `signup-referrer` both answer "where did this member
+     * come from", and that answer stops being true the moment anything overwrites
+     * it. They are one signup's facts, fixed at one moment, so they are guarded
+     * as a set. The eight click fields are last-touch by design: a fresh ad click
+     * is supposed to update them. So the guard is deliberately two keys wide
+     * rather than a rule about the payload.
+     *
+     * It is needed because this script cannot actually see a signup. It sees a
+     * logged-out to logged-in transition on a page that has a signup form, and a
+     * returning member LOGGING IN there is the same event from here. The
+     * login-form veto only runs at DOMContentLoaded, so a login form that
+     * appears later (a modal swapping in "already have an account?") is never
+     * seen at all. Without this guard that member's real signup page is replaced
+     * with today's page.
+     *
+     * An unreadable existing value WRITES rather than skips, which is the
+     * opposite of how armSignupWatch and detectedSignupPolicy resolve their
+     * doubt. That is not an inconsistency: the two are asking different
+     * questions and the cheaper failure is not the same one. Up there, guessing
+     * wrong invents a CompleteRegistration for a conversion that never happened
+     * and stamps a stranger's UTM values onto an existing member. Down here, the
+     * common case by a wide margin is a genuine first signup whose field is
+     * empty, so skipping on an unreadable read would throw away real attribution
+     * on every signup whenever the read hiccups, in order to protect against the
+     * much rarer overwrite. Write on doubt.
+     *
+     * Absent, null, empty and whitespace-only all count as unfilled, using the
+     * same trim-and-check convention attributionCustomFieldsFromCookies applies
+     * to cookie values.
+     *
+     * @param {object} fields Outgoing custom fields, by field ID.
+     * @param {object | null} existingCustomFields The member's current fields,
+     *     or null when they could not be read at all.
+     * @returns {object} `fields`, or a copy without the already-filled
+     *     write-once fields. Each is decided on its own, so a member holding one
+     *     of the two still gets the other written.
+     */
+    var withoutFilledWriteOnceFields = function (fields, existingCustomFields) {
+        try {
+            if (!fields || !existingCustomFields) return fields
+
+            var filled = WRITE_ONCE_FIELD_IDS.filter(function (fieldId) {
+                if (fields[fieldId] === undefined) return false
+                var existing = existingCustomFields[fieldId]
+                if (existing == null) return false
+                return String(existing).trim() !== ''
+            })
+            if (!filled.length) return fields
+
+            var kept = {}
+            Object.keys(fields).forEach(function (key) {
+                if (filled.indexOf(key) === -1) kept[key] = fields[key]
+            })
+            return kept
+        } catch (error) {
+            // Same direction as an unreadable value: a guard that cannot run
+            // must not cost the write.
+            return fields
+        }
+    }
+
+    /**
      * Writes attribution fields onto the current member.
+     *
+     * The single choke point every write passes through, direct save and retry
+     * alike, which is why the write-once guard sits here rather than at the two
+     * call sites: a third caller added later cannot forget it.
      *
      * @param {object} memberstack Memberstack DOM instance.
      * @param {object} [customFields] Snapshot to write; live cookies when omitted.
+     * @param {object | null} [existingCustomFields] The member's current fields
+     *     when the caller already holds them. Null or omitted means "look them
+     *     up", so a caller that has already read the member and found none
+     *     should pass `{}` instead of null and save the round trip.
      * @returns {Promise<boolean>} True when settled (write confirmed, or nothing
      *     owed because every cookie was absent/empty). False when Memberstack
      *     cannot accept the write yet.
      */
-    var saveAttribution = async function (memberstack, customFields) {
+    var saveAttribution = async function (
+        memberstack,
+        customFields,
+        existingCustomFields,
+    ) {
         if (!memberstack || typeof memberstack.updateMember !== 'function') {
             warn('Memberstack updateMember unavailable, attribution not saved')
             return false
@@ -746,6 +1056,20 @@
                 : attributionCustomFieldsFromCookies()
         // Nothing to write is settled, not a failure: with cookies blocked there
         // is no attribution to persist, and retrying forever would be pointless.
+        if (!Object.keys(fields).length) return true
+
+        // Only worth a lookup when this write actually carries a guarded field and
+        // the caller could not supply the member's current fields.
+        var existing = existingCustomFields
+        if (!existing && carriesWriteOnceField(fields)) {
+            existing = await lookUpExistingCustomFields(memberstack)
+        }
+        fields = withoutFilledWriteOnceFields(fields, existing)
+
+        // The guard can empty the payload: a save that owed only the write-once
+        // fields to a member who already has them. Settled, not failed, or the
+        // marker would be retried on every page load for a write that must never
+        // happen.
         if (!Object.keys(fields).length) return true
 
         // Memberstack rejects on failure, so a resolved call is the confirmation.
@@ -762,14 +1086,20 @@
      * sessions, or blocked storage on the signup page).
      *
      * @param {object} memberstack Memberstack DOM instance.
+     * @param {object | null} [existingCustomFields] Forwarded to saveAttribution:
+     *     the member's current fields when the caller already holds them.
      * @returns {Promise<void>}
      */
-    var savePendingAttribution = async function (memberstack) {
+    var savePendingAttribution = async function (
+        memberstack,
+        existingCustomFields,
+    ) {
         try {
             var snapshot = readPendingFields()
             var saved = await saveAttribution(
                 memberstack,
                 snapshot || undefined,
+                existingCustomFields,
             )
             if (saved) clearPendingSave()
         } catch (error) {
@@ -792,15 +1122,25 @@
      * /sign-up form carries redirect="/brand-dashboard" and that navigation can
      * cut the updateMember request off before it lands.
      *
+     * The snapshot is deliberately NOT run through withoutFilledWriteOnceFields.
+     * Nothing may be awaited before it reaches storage, and a synchronous guard
+     * would have to skip on a payload that carries no custom fields, which is the
+     * wrong direction (see withoutFilledWriteOnceFields). Guarding inside
+     * saveAttribution instead means the value is checked against whatever member
+     * data is available at each write attempt, including on the next page if the
+     * redirect cuts this one off.
+     *
      * @param {object} memberstack Memberstack DOM instance.
+     * @param {object | null} [existingCustomFields] The transition payload's
+     *     custom fields, when it carried any.
      * @returns {void}
      */
-    var persistAfterDirectSignup = function (memberstack) {
+    var persistAfterDirectSignup = function (memberstack, existingCustomFields) {
         savePendingFromThisPage = true
         var fields = attributionCustomFieldsFromCookies()
         writePendingFields(fields)
         setFlag(PENDING_SAVE_FLAG)
-        savePendingAttribution(memberstack)
+        savePendingAttribution(memberstack, existingCustomFields)
     }
 
     /**
@@ -845,7 +1185,11 @@
             return
         }
 
-        await savePendingAttribution(memberstack)
+        // This member read IS the lookup saveAttribution would otherwise make, so
+        // hand its fields over. `{}` and not null when the member carries none:
+        // null would send saveAttribution off to read the very same member again,
+        // and an answer of "no custom fields" is already the answer that writes.
+        await savePendingAttribution(memberstack, memberCustomFields(member) || {})
     }
 
     // True from the moment a watch is claimed for this page until the page is
@@ -907,10 +1251,27 @@
                 var loggedIn = isLoggedInMember(getMemberData(payload))
                 if (loggedIn && seenLoggedOut === true) {
                     fireCompleteRegistration()
+                    // Outside the directSave branch on purpose, and before it.
+                    // Every armed page owes these two cookies, including the ones
+                    // this script does not save fields for: /quiz is directSave
+                    // false, yet its watch arms and this handler runs, and
+                    // quiz-results.js reads the cookies on /quiz-results. Fold
+                    // these into the branch below and every quiz-funnel member ends
+                    // up with neither signup-source nor signup-referrer. Before,
+                    // because persistAfterDirectSignup snapshots the cookies as
+                    // they stand when it is called.
+                    captureSignupSource()
+                    captureSignupReferrer()
                     // /quiz is excluded: quiz-results.js writes these fields as
                     // part of its own single quiz save.
                     if (policy.directSave) {
-                        persistAfterDirectSignup(memberstack)
+                        // The payload we already unwrapped above, reused for the
+                        // write-once check rather than paying a member read for
+                        // something we may already be holding.
+                        persistAfterDirectSignup(
+                            memberstack,
+                            memberCustomFields(payload),
+                        )
                     }
                 }
                 // First definitive reading after an unreadable start only arms

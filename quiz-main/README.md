@@ -231,7 +231,7 @@ attributes must match after trimming. Saved subcategory IDs match the checkbox
 ## Ad attribution
 
 Paid-click attribution moved out of this folder. The script is now
-`v3/signup-attribution.js` and its documentation — the cookie contract, the eight
+`v3/signup-attribution.js` and its documentation — the cookie contract, the ten
 verified Memberstack field IDs, the signup-page arming rule, the login veto,
 `rearm()`, the Meta Pixel prerequisite, and the direct-save retry — lives in
 [`v3/README.md`](../v3/README.md#signup-attribution). There is deliberately no

@@ -8,14 +8,14 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.135'
+const RELEASE = 'v1.59.169'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
 
-// Cookie name to Memberstack custom-field ID. Verified to exist in the
-// Memberstack app config, so these are the literals both this file and
-// quiz-results.js are pinned to.
+// Cookie name to Memberstack custom-field ID: the literals both this file and
+// quiz-results.js are pinned to. All ten are verified to exist in the Memberstack
+// app config, which is what makes them a contract rather than a convention.
 const FIELD_IDS = {
     utm_source: 'utm-source',
     utm_campaign: 'utm-campaign',
@@ -25,6 +25,8 @@ const FIELD_IDS = {
     fbc: 'fbc',
     fbp: 'fbp',
     event_id: 'event-id',
+    signup_source: 'signup-source',
+    signup_referrer: 'signup-referrer',
 }
 
 const COOKIE_NAMES = Object.keys(FIELD_IDS)
@@ -82,6 +84,68 @@ function extractLiteral(name) {
 }
 
 /**
+ * Lifts one function out of a source string by its declaration line, cutting at
+ * the first closing brace back at four-space indentation. Both files declare
+ * their IIFE-scoped functions at exactly that indent, which is what makes the
+ * cut unambiguous.
+ *
+ * @param {string} src File contents.
+ * @param {string} declaration The function's declaration line, verbatim.
+ */
+function sliceFunction(src, declaration) {
+    const start = src.indexOf(declaration)
+    assert.notEqual(start, -1, `no declaration: ${declaration}`)
+
+    const end = src.indexOf('\n    }\n', start)
+    assert.notEqual(end, -1, `unterminated function: ${declaration}`)
+
+    return src.slice(start, end + '\n    }\n'.length)
+}
+
+/**
+ * The two real `withoutFilledWriteOnceFields` implementations, each lifted from
+ * its own file and given only the bindings it closes over.
+ *
+ * They are deliberately written in different idioms (ES5-style `var` and a
+ * hand-rolled trim in `v3/`, modern syntax and the file's own `normalize()` in
+ * `quiz-results.js`), so identical source is not the goal and cannot be asserted.
+ * What must not diverge is what they both call "filled": one of them deciding a
+ * whitespace-only value counts would silently protect a field on one signup route
+ * and overwrite it on the other.
+ *
+ * @param {string} resultsSource Contents of quiz-results.js.
+ */
+function bothWriteOnceGuards(resultsSource) {
+    const ids = '["signup-source","signup-referrer"]'
+
+    return {
+        v3: vm.runInNewContext(
+            [
+                `var WRITE_ONCE_FIELD_IDS = ${ids}`,
+                sliceFunction(
+                    source,
+                    '    var withoutFilledWriteOnceFields = function (fields, existingCustomFields) {',
+                ),
+                'withoutFilledWriteOnceFields',
+            ].join('\n'),
+            {},
+        ),
+        quizResults: vm.runInNewContext(
+            [
+                "function normalize(value) { return (value || '').trim() }",
+                `const writeOnceFieldIds = ${ids}`,
+                sliceFunction(
+                    resultsSource,
+                    '    function withoutFilledWriteOnceFields(customFields, existingCustomFields) {',
+                ),
+                'withoutFilledWriteOnceFields',
+            ].join('\n'),
+            {},
+        ),
+    }
+}
+
+/**
  * A `data-ms-form` marker sitting on something that is not a `<form>` — the
  * wrapper-div case the prefix-less login selector exists to catch. Drop it into
  * a `forms` list anywhere a plain string would have put the marker on a real
@@ -108,19 +172,24 @@ const markerElement = (entry) =>
  *
  * @param {object} [initial] Pre-existing cookies, name to raw value.
  * @param {boolean} [readOnly] Swallow writes, like a browser with cookies off.
+ * @param {string} [referrer] `document.referrer` as the browser reports it: an
+ *     absolute URL, or '' when there is no previous page.
  * @param {Array<string|object>} [forms] The `data-ms-form` markers present on
  *     the page, one entry per element carrying one (e.g.
  *     `['signup', 'profile']`). A string puts the marker on a `<form>`;
  *     `markerOnDiv('login')` puts it on a non-form element. Order is
  *     irrelevant; only the counts per selector are read.
  */
-function documentDouble(initial, readOnly, forms) {
+function documentDouble(initial, readOnly, forms, referrer) {
     const jar = new Map(Object.entries(initial || {}))
     const writes = []
     const markers = forms || []
 
     return {
         readyState: 'complete',
+        // '' is what a browser reports for direct navigation, a typed URL, or a
+        // referrer policy that strips it, so it is the default here too.
+        referrer: referrer || '',
         listeners: [],
         jar,
         writes,
@@ -171,6 +240,7 @@ function boot(options = {}) {
         options.cookies,
         options.readOnlyCookies,
         options.forms,
+        options.referrer,
     )
     // A DOM the script cannot query at all: an old engine with no
     // querySelectorAll, or one that raises on the call.
@@ -216,6 +286,12 @@ function boot(options = {}) {
             if (options.firstMemberThrows && memberReads.length === 1) {
                 throw new Error('no session')
             }
+            // Every read AFTER that probe fails. The shape of a write-once guard
+            // lookup that cannot resolve on a page whose auth state read fine,
+            // which is the case that still has to write.
+            if (options.laterMemberReadsThrow && memberReads.length > 1) {
+                throw new Error('member read failed')
+            }
             // The registration watch reads first, the pending-save retry
             // second. Holding only the second read lets a test interleave a
             // signup transition with a still-pending retry.
@@ -225,7 +301,25 @@ function boot(options = {}) {
                         resolve({ data: options.heldMember || null })
                 })
             }
-            return { data: options.member || null }
+            // After a signup Memberstack reports the brand-new member, so a read
+            // taken after the watch's starting probe can legitimately differ from
+            // it. `memberAfterSignup` is what lets a test drive the write-once
+            // guard's lookup on a page that genuinely arrived logged out.
+            const base =
+                memberReads.length > 1 && options.memberAfterSignup !== undefined
+                    ? options.memberAfterSignup
+                    : options.member
+            // `memberFields` models custom fields on the member Memberstack
+            // returns from getCurrentMember, which is where the write-once guard
+            // looks when the auth payload carries none.
+            if (base && options.memberFields) {
+                return {
+                    data: Object.assign({}, base, {
+                        customFields: options.memberFields,
+                    }),
+                }
+            }
+            return { data: base || null }
         },
         onAuthChange: registerAuthHandler,
     }
@@ -240,10 +334,18 @@ function boot(options = {}) {
         }
     }
 
+    const hostname = options.hostname || 'the-starters-3-0.webflow.io'
     const window = {
         $memberstackDom: options.noMemberstack ? undefined : memberstack,
         location: {
-            hostname: options.hostname || 'the-starters-3-0.webflow.io',
+            hostname,
+            // The referrer check compares origins, so the double carries the same
+            // three pieces a browser does. `noLocationOrigin` drops `origin` to
+            // exercise the protocol+host rebuild, which is a refusal to guess at
+            // same-origin rather than a browser-support shim.
+            origin: options.noLocationOrigin ? undefined : `https://${hostname}`,
+            protocol: 'https:',
+            host: hostname,
             pathname: options.pathname === undefined ? '/quiz' : options.pathname,
             search: options.search || '',
         },
@@ -265,6 +367,7 @@ function boot(options = {}) {
     // poll instead of paying the full wall-clock wait.
     const parkedTimers = []
     const context = {
+        URL,
         URLSearchParams,
         console: { warn: (message) => warnings.push(message) },
         document,
@@ -299,6 +402,7 @@ function boot(options = {}) {
         context,
         document,
         fbqCalls,
+        memberReads,
         session,
         updateCalls,
         warnings,
@@ -327,6 +431,27 @@ function boot(options = {}) {
 }
 
 const loggedInMember = { id: 'mem_123', email: 'brand@example.com' }
+
+/**
+ * An auth payload carrying custom fields, the way the write-once guard hopes to
+ * find them. Kept separate from `loggedInMember` because nothing in the repo
+ * proves Memberstack puts customFields on an onAuthChange payload: every other
+ * consumer reads only `id`, `planConnections` or `auth.email` off it, so the
+ * plain member double stays the default and this is the opt-in shape.
+ *
+ * @param {object} customFields Custom fields as Memberstack would return them.
+ */
+const memberWithFields = (customFields) =>
+    Object.assign({}, loggedInMember, { customFields })
+
+// The four non-signup-source fields clickCookies produces. Every guard test
+// asserts these still arrive: the guard is one key wide, not a payload rule.
+const CLICK_FIELDS = {
+    'utm-source': 'facebook',
+    'utm-campaign': 'summer',
+    fbclid: 'IwAR123',
+    'event-id': 'evt_fixed',
+}
 
 const clickCookies = {
     utm_source: 'facebook',
@@ -379,6 +504,10 @@ test('a URL with no parameters writes nothing but the event id', () => {
         fbc: 'fb.1.1700000000.IwAR123',
         fbp: 'fb.1.1700000000.987654321',
         event_id: 'evt_kept',
+        // Written by an earlier signup transition, never by capture: a plain page
+        // load must leave them exactly as it found them.
+        signup_source: '/all-starters',
+        signup_referrer: '/starters/john-doe',
     }
     const harness = boot({ cookies: existing })
 
@@ -467,12 +596,12 @@ test('ensureEventId falls back when crypto.randomUUID is missing', () => {
 
 /* ---------------------------- field-ID contract --------------------------- */
 
-test('getParams exposes exactly the eight contract cookies', () => {
+test('getParams exposes exactly the ten contract cookies', () => {
     const harness = boot()
     assert.deepEqual(Object.keys(harness.api.getParams()), COOKIE_NAMES)
 })
 
-test('the field mapping is underscore to hyphen for all eight cookies', () => {
+test('the field mapping is underscore to hyphen for all ten cookies', () => {
     for (const [cookie, field] of Object.entries(FIELD_IDS)) {
         assert.equal(cookie.replace(/_/g, '-'), field, cookie)
     }
@@ -480,7 +609,7 @@ test('the field mapping is underscore to hyphen for all eight cookies', () => {
     assert.equal(FIELD_IDS.event_id, 'event-id')
 })
 
-test('the map in the script is exactly the eight verified pairs', () => {
+test('the map in the script is exactly the ten contract pairs', () => {
     // The map stopped being documentation when /sign-up started writing the
     // fields from here, so it is now pinned as code.
     assert.deepEqual(extractLiteral('FIELD_IDS'), FIELD_IDS)
@@ -498,6 +627,113 @@ test('COOKIE_NAMES is derived from FIELD_IDS so the two cannot drift', () => {
     const urlParams = extractLiteral('URL_PARAMS')
     for (const name of urlParams) {
         assert.equal(FIELD_IDS[name] !== undefined, true, name)
+    }
+    // The subset is strict in one direction only. The two signup fields have no
+    // URL parameter behind them on purpose: they report where the signup really
+    // happened and where it came from, so accepting `?signup_source=` or
+    // `?signup_referrer=` would let the address bar dictate them.
+    assert.equal(urlParams.includes('signup_source'), false)
+    assert.equal(urlParams.includes('signup_referrer'), false)
+})
+
+test('the drift guard sees ten pairs, and both maps carry all ten', () => {
+    // The count is asserted explicitly so adding a field to one map and not the
+    // other cannot pass by making both sides equally wrong.
+    const resultsSource = fs.readFileSync(
+        path.join(__dirname, '..', 'quiz-results.js'),
+        'utf8',
+    )
+    const inQuizResults = extractLiteralFrom(
+        resultsSource,
+        'attributionCookieFieldIds',
+        'const',
+    )
+
+    assert.equal(Object.keys(FIELD_IDS).length, 10)
+    assert.equal(Object.keys(extractLiteral('FIELD_IDS')).length, 10)
+    assert.equal(Object.keys(inQuizResults).length, 10)
+    assert.deepEqual(inQuizResults, FIELD_IDS)
+})
+
+test('both scripts guard the same two write-once fields', () => {
+    // A split set would silently protect a field on one signup route and not the
+    // other, which is the same class of bug the FIELD_IDS drift guard exists for.
+    const resultsSource = fs.readFileSync(
+        path.join(__dirname, '..', 'quiz-results.js'),
+        'utf8',
+    )
+
+    // Pinned as source text rather than lifted out: both sets are built from
+    // their file's own field map, so they cannot be evaluated on their own.
+    assert.match(
+        source,
+        /var WRITE_ONCE_FIELD_IDS = \[\s*FIELD_IDS\.signup_source,\s*FIELD_IDS\.signup_referrer,\s*\]/,
+        'signup-attribution.js must guard exactly signup_source and signup_referrer',
+    )
+    assert.match(
+        resultsSource,
+        /const writeOnceFieldIds = \[\s*attributionCookieFieldIds\.signup_source,\s*attributionCookieFieldIds\.signup_referrer,\s*\]/,
+        'quiz-results.js must guard exactly the same two',
+    )
+})
+
+test('both guards classify "filled" identically', () => {
+    // The set of guarded IDs is pinned above, but that says nothing about the
+    // comparators, and the two are written in different idioms: String().trim()
+    // here, the file's own normalize() there. If one of them started counting a
+    // whitespace-only value as filled, a member would keep their signup fields on
+    // one signup route and lose them on the other, with no other test failing.
+    const resultsSource = fs.readFileSync(
+        path.join(__dirname, '..', 'quiz-results.js'),
+        'utf8',
+    )
+    const guards = bothWriteOnceGuards(resultsSource)
+
+    const cases = [
+        ['a normal path', '/starters/jane-doe', 'filled'],
+        ['a value with padding', '  /quiz  ', 'filled'],
+        // Numbers reach String() rather than a bare .trim(), which is the one
+        // place the two idioms could have parted company outright.
+        ['a numeric value', 0, 'filled'],
+        ['an empty string', '', 'unfilled'],
+        ['spaces only', '   ', 'unfilled'],
+        ['a tab and a newline', '\t\n ', 'unfilled'],
+        ['null', null, 'unfilled'],
+        ['undefined', undefined, 'unfilled'],
+    ]
+
+    for (const [label, existing, expected] of cases) {
+        const fields = { 'utm-source': 'facebook', 'signup-source': '/quiz' }
+        const existingFields =
+            existing === undefined ? {} : { 'signup-source': existing }
+
+        const fromV3 = plain(guards.v3(fields, existingFields))
+        const fromQuizResults = plain(
+            guards.quizResults(fields, existingFields),
+        )
+
+        assert.deepEqual(fromV3, fromQuizResults, `${label}: the two disagree`)
+
+        const survived = fromV3['signup-source'] === '/quiz'
+        assert.equal(
+            survived,
+            expected === 'unfilled',
+            `${label}: expected ${expected}`,
+        )
+        // Never at the expense of a click field, in either implementation.
+        assert.equal(fromV3['utm-source'], 'facebook', label)
+        assert.equal(fromQuizResults['utm-source'], 'facebook', label)
+    }
+
+    // And the unreadable case: both write, and neither throws on it.
+    for (const unreadable of [null, undefined]) {
+        const fields = { 'signup-source': '/quiz', 'signup-referrer': '/' }
+        assert.deepEqual(
+            plain(guards.v3(fields, unreadable)),
+            plain(guards.quizResults(fields, unreadable)),
+            String(unreadable),
+        )
+        assert.equal(plain(guards.v3(fields, unreadable))['signup-source'], '/quiz')
     }
 })
 
@@ -536,15 +772,40 @@ test('the two form selectors keep their deliberate asymmetry', () => {
     )
 })
 
-test('the header and README document all eight verified field IDs', () => {
+test('the header and README document all ten contract field IDs', () => {
     for (const [cookie, field] of Object.entries(FIELD_IDS)) {
         const row = new RegExp('`' + cookie + '` -> `' + field + '`')
         assert.match(header, row, `${cookie} missing from the script header`)
         assert.match(readme, row, `${cookie} missing from v3/README.md`)
     }
-    // Exactly eight mapping rows in the header: an extra one would be a field
-    // that does not exist in the Memberstack app config.
+    // Exactly ten mapping rows in the header: an extra one would be a field
+    // neither script ever writes, or one nobody created in Memberstack.
     const rows = header.match(/`[a-z_]+` -> `[a-z-]+`/g) || []
+    assert.equal(rows.length, COOKIE_NAMES.length)
+})
+
+test('the README cookie-contract table has a row for every cookie', () => {
+    // The mapping-row check above only covers the field-ID list further down the
+    // page, so every `| cookie | source |` row in the contract table could be
+    // deleted with the suite still green. The table is where a reader learns
+    // where each value comes from, which is exactly what is easy to get wrong
+    // about the two derived cookies, so it is pinned too.
+    const table = readme.slice(
+        readme.indexOf('### Cookie contract'),
+        readme.indexOf('### Attribution Memberstack field IDs'),
+    )
+    assert.ok(table, 'no Cookie contract section in v3/README.md')
+
+    for (const name of COOKIE_NAMES) {
+        assert.match(
+            table,
+            new RegExp('^\\|\\s*`' + name + '`\\s*\\|', 'm'),
+            `${name} has no row in the README cookie-contract table`,
+        )
+    }
+    // And no stray rows: a row for a cookie the script does not own would send a
+    // reader looking for code that is not there.
+    const rows = table.match(/^\|\s*`[a-z_]+`\s*\|/gm) || []
     assert.equal(rows.length, COOKIE_NAMES.length)
 })
 
@@ -807,6 +1068,7 @@ test('a mapped path keeps its own directSave despite a login marker', async () =
                 'utm-campaign': 'summer',
                 fbclid: 'IwAR123',
                 'event-id': 'evt_fixed',
+                'signup-source': '/sign-up',
             },
         ], label)
     }
@@ -840,6 +1102,9 @@ test('an unmapped page with a signup form arms and direct-saves', async () => {
             'utm-campaign': 'summer',
             fbclid: 'IwAR123',
             'event-id': 'evt_fixed',
+            // The page the modal signed the visitor up on, not the page its own
+            // reload lands them back on.
+            'signup-source': '/all-starters',
         },
     ])
     assert.equal(harness.pendingSave(), undefined)
@@ -1168,6 +1433,7 @@ test('the /sign-up transition marks the save before starting it', async () => {
         'utm-campaign': 'summer',
         fbclid: 'IwAR123',
         'event-id': 'evt_fixed',
+        'signup-source': '/sign-up',
     })
 
     await harness.settle()
@@ -1179,12 +1445,14 @@ test('the /sign-up transition marks the save before starting it', async () => {
             'utm-campaign': 'summer',
             fbclid: 'IwAR123',
             'event-id': 'evt_fixed',
+            'signup-source': '/sign-up',
         },
     ])
     // Absent cookies are omitted rather than written blank.
     assert.deepEqual(Object.keys(harness.savedFields()[0]).sort(), [
         'event-id',
         'fbclid',
+        'signup-source',
         'utm-campaign',
         'utm-source',
     ])
@@ -1213,6 +1481,7 @@ test('whitespace-only cookies are omitted from the Memberstack write', async () 
         {
             'utm-campaign': 'summer',
             'event-id': 'evt_fixed',
+            'signup-source': '/sign-up',
         },
     ])
 })
@@ -1451,6 +1720,589 @@ test('the save never throws into the page', async () => {
     assert.doesNotThrow(() => harness.authHandlers[0](loggedInMember))
     await harness.settle()
     await harness.settle()
+})
+
+/* ------------------------------ signup source ----------------------------- */
+
+test('the signup page path is stored on the transition and saved as signup-source', async () => {
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    // Nothing yet: the page load itself is not a signup.
+    assert.deepEqual(harness.writesFor('signup_source'), [])
+
+    harness.authHandlers[0](loggedInMember)
+
+    assert.equal(harness.writesFor('signup_source').length, 1)
+    assert.equal(harness.api.getParams().signup_source, '/sign-up')
+    // Snapshotted synchronously with the rest, so the form's own redirect to
+    // /brand-dashboard cannot lose it.
+    assert.equal(harness.pendingFields()['signup-source'], '/sign-up')
+
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.savedFields()[0]['signup-source'], '/sign-up')
+})
+
+test('the /quiz transition stores the cookie even though it never saves fields', async () => {
+    // The reason the write sits before the directSave branch. /quiz is mapped
+    // directSave false because quiz-results.js owns that write, so
+    // persistAfterDirectSignup never runs here; the cookie is how /quiz-results
+    // learns where the signup happened. Inside the branch, every quiz-funnel
+    // member would get no signup-source at all.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/quiz',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.api.getParams().signup_source, '/quiz')
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('a page load with no signup transition never touches the cookie', async () => {
+    // The reason this cannot live in capture(), which runs on every load. A
+    // cookie written there would mean "last page loaded", so /brand-dashboard
+    // would overwrite the /sign-up that redirected to it.
+    for (const pathname of ['/sign-up', '/quiz', '/brand-dashboard', '/']) {
+        const harness = boot({
+            cookies: { signup_source: '/all-starters' },
+            member: null,
+            pathname,
+        })
+        await harness.settle()
+
+        assert.deepEqual(harness.writesFor('signup_source'), [], pathname)
+        assert.equal(
+            harness.api.getParams().signup_source,
+            '/all-starters',
+            pathname,
+        )
+    }
+})
+
+test('a signup_source URL parameter cannot spoof the cookie', async () => {
+    const harness = boot({
+        member: null,
+        pathname: '/brand-dashboard',
+        search: '?signup_source=/spoofed',
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.writesFor('signup_source'), [])
+    assert.equal(harness.api.getParams().signup_source, null)
+
+    // Not even on a page that does transition: the value comes from the path.
+    const armed = boot({
+        member: null,
+        pathname: '/sign-up',
+        search: '?signup_source=/spoofed',
+    })
+    await armed.settle()
+    armed.authHandlers[0](loggedInMember)
+
+    assert.equal(armed.api.getParams().signup_source, '/sign-up')
+})
+
+test('the stored path is normalized the same way the path map is matched', async () => {
+    // Reuses normalizePath, so a CMS page reached with mixed case and a trailing
+    // slash stores one canonical value rather than three spellings of it.
+    const profile = boot({
+        member: null,
+        pathname: '/Starters/John-Doe/',
+        forms: ['signup'],
+    })
+    await profile.settle()
+    profile.authHandlers[0](loggedInMember)
+
+    assert.equal(profile.api.getParams().signup_source, '/starters/john-doe')
+
+    // The homepage keeps its slash: normalizePath only strips one from a longer
+    // path, so a home signup is "/" and never an empty string.
+    const home = boot({ member: null, pathname: '/', forms: ['signup'] })
+    await home.settle()
+    home.authHandlers[0](loggedInMember)
+
+    assert.equal(home.api.getParams().signup_source, '/')
+})
+
+/* ----------------------------- signup referrer ---------------------------- */
+
+// The host the harness serves from, so a referrer can be built same-origin.
+const SITE = 'https://the-starters-3-0.webflow.io'
+
+test('a homepage click through to /quiz records the homepage', async () => {
+    // The case signup_source cannot answer: / has no signup form at all, so the
+    // source is /quiz and only the referrer can say they started on the homepage.
+    const harness = boot({
+        member: null,
+        pathname: '/quiz',
+        referrer: `${SITE}/`,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+
+    assert.equal(harness.api.getParams().signup_referrer, '/')
+    assert.equal(harness.api.getParams().signup_source, '/quiz')
+})
+
+test('a cross-origin referrer is never stored', async () => {
+    // The field means "the page on OUR site where they clicked". An external
+    // origin is already carried by utm_source and fbclid, so storing a hostname
+    // here would poison a field of paths for no new information.
+    for (const referrer of [
+        'https://www.google.com/search?q=starters',
+        'https://l.facebook.com/',
+        'https://www.linkedin.com/feed/',
+        // A lookalike host: same suffix, different origin.
+        'https://notwebflow.io/quiz',
+        // Same host, different scheme, so still a different origin.
+        'http://the-starters-3-0.webflow.io/',
+    ]) {
+        const harness = boot({ member: null, pathname: '/quiz', referrer })
+        await harness.settle()
+
+        harness.authHandlers[0](loggedInMember)
+
+        assert.deepEqual(harness.writesFor('signup_referrer'), [], referrer)
+        assert.equal(harness.api.getParams().signup_referrer, null, referrer)
+    }
+})
+
+test('no referrer stores nothing', async () => {
+    // Direct navigation, a typed URL, or a referrer policy that strips it. Blank
+    // is the honest answer: there was no previous page.
+    for (const referrer of ['', undefined]) {
+        const harness = boot({ member: null, pathname: '/quiz', referrer })
+        await harness.settle()
+
+        harness.authHandlers[0](loggedInMember)
+
+        assert.deepEqual(harness.writesFor('signup_referrer'), [])
+        assert.equal(harness.api.getParams().signup_referrer, null)
+    }
+})
+
+test('a referrer query string and hash are dropped, and the path normalized', async () => {
+    const harness = boot({
+        member: null,
+        pathname: '/quiz',
+        referrer: `${SITE}/Starters/John-Doe/?utm_source=facebook&x=1#experience`,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+
+    assert.equal(harness.api.getParams().signup_referrer, '/starters/john-doe')
+})
+
+test('the homepage referrer stays "/" and never becomes an empty string', async () => {
+    const harness = boot({
+        member: null,
+        pathname: '/sign-up',
+        referrer: `${SITE}/?utm_source=facebook`,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+
+    assert.equal(harness.api.getParams().signup_referrer, '/')
+})
+
+test('a location object without origin still resolves same-origin', async () => {
+    const harness = boot({
+        member: null,
+        noLocationOrigin: true,
+        pathname: '/quiz',
+        referrer: `${SITE}/all-starters`,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+
+    assert.equal(harness.api.getParams().signup_referrer, '/all-starters')
+})
+
+test('/quiz records the referrer despite directSave being false', async () => {
+    // The timing case. /quiz never writes fields from here, so the cookie is the
+    // only carrier: quiz-results.js reads it on the next page. A capture on page
+    // load would have been overwritten by /quiz-results' own referrer, which is
+    // /quiz itself, and every quiz signup would claim it came from /quiz.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/quiz',
+        referrer: `${SITE}/`,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.api.getParams().signup_referrer, '/')
+    // Nothing written from here, exactly as before: quiz-results.js owns it.
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+    // And the cookie jar is what quiz-results.js will read a page later.
+    assert.match(harness.document.cookie, /signup_referrer=%2F(?:;|$)/)
+})
+
+test('the /quiz-results load cannot overwrite the referrer the quiz signup stored', async () => {
+    // The whole reason capture happens at the transition. Sequence as the browser
+    // runs it: sign up on /quiz having arrived from /, then land on /quiz-results
+    // whose own referrer IS /quiz. Captured on page load, this second step would
+    // rewrite the cookie to /quiz and quiz-results.js would read /quiz for every
+    // single quiz signup, permanently losing the real answer.
+    const quiz = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/quiz',
+        referrer: `${SITE}/`,
+    })
+    await quiz.settle()
+    quiz.authHandlers[0](loggedInMember)
+    await quiz.settle()
+
+    assert.equal(quiz.api.getParams().signup_referrer, '/')
+
+    // The next page, same cookie jar, referred by /quiz.
+    const results = boot({
+        cookies: Object.fromEntries(quiz.document.jar),
+        member: loggedInMember,
+        pathname: '/quiz-results',
+        referrer: `${SITE}/quiz`,
+    })
+    await results.settle()
+    await results.settle()
+
+    assert.deepEqual(results.writesFor('signup_referrer'), [])
+    // What quiz-results.js reads when it builds its single save.
+    assert.equal(results.api.getParams().signup_referrer, '/')
+    assert.equal(results.api.getParams().signup_source, '/quiz')
+})
+
+test('a page load with no transition never touches the referrer cookie', async () => {
+    for (const pathname of ['/sign-up', '/quiz', '/brand-dashboard', '/']) {
+        const harness = boot({
+            cookies: { signup_referrer: '/starters/john-doe' },
+            member: null,
+            pathname,
+            referrer: `${SITE}/all-starters`,
+        })
+        await harness.settle()
+
+        assert.deepEqual(harness.writesFor('signup_referrer'), [], pathname)
+        assert.equal(
+            harness.api.getParams().signup_referrer,
+            '/starters/john-doe',
+            pathname,
+        )
+    }
+})
+
+test('a signup_referrer URL parameter cannot spoof the cookie', async () => {
+    const harness = boot({
+        member: null,
+        pathname: '/brand-dashboard',
+        search: '?signup_referrer=/spoofed',
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.writesFor('signup_referrer'), [])
+    assert.equal(harness.api.getParams().signup_referrer, null)
+
+    // Not on a page that does transition either: the value comes from the
+    // referrer, and a URL parameter is not one.
+    const armed = boot({
+        member: null,
+        pathname: '/sign-up',
+        referrer: `${SITE}/all-starters`,
+        search: '?signup_referrer=/spoofed',
+    })
+    await armed.settle()
+    armed.authHandlers[0](loggedInMember)
+
+    assert.equal(armed.api.getParams().signup_referrer, '/all-starters')
+})
+
+test('the modal reload cannot overwrite the referrer it signed up under', async () => {
+    // /all-starters redirects to itself with ?modal-id=signup-modal. The
+    // transition fires on the FIRST load, so the referrer stored is the page that
+    // linked to /all-starters. The reload is just another page load, and a page
+    // load never touches the cookie.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/all-starters',
+        forms: ['signup'],
+        referrer: `${SITE}/`,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.savedFields()[0]['signup-referrer'], '/')
+    assert.equal(harness.savedFields()[0]['signup-source'], '/all-starters')
+
+    // The reload: same jar, and this time /all-starters is its own referrer.
+    const reload = boot({
+        cookies: Object.fromEntries(harness.document.jar),
+        member: loggedInMember,
+        pathname: '/all-starters',
+        forms: ['signup'],
+        referrer: `${SITE}/all-starters`,
+        search: '?modal-id=signup-modal',
+    })
+    await reload.settle()
+    await reload.settle()
+
+    assert.deepEqual(reload.writesFor('signup_referrer'), [])
+    assert.equal(reload.api.getParams().signup_referrer, '/')
+})
+
+/* ------------------ signup source and referrer are write-once ------------- */
+
+test('a member who already has these fields keeps them', async () => {
+    // The failure this closes: the script cannot see a signup, only a logged-out
+    // to logged-in transition on a page with a signup form, so a RETURNING member
+    // logging in on /sign-up arrives here indistinguishable from a new one.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](
+        memberWithFields({
+            'signup-source': '/starters/jane-doe',
+            'signup-referrer': '/all-starters',
+        }),
+    )
+    await harness.settle()
+    await harness.settle()
+
+    // Both keys are gone from the write, and the other eight are untouched.
+    assert.deepEqual(harness.savedFields(), [CLICK_FIELDS])
+    assert.equal(harness.pendingSave(), undefined)
+    assert.equal(harness.pendingFields(), undefined)
+    // Read off the payload we already had: one member read on this page, the
+    // watch's own starting probe, and no round trip added for the guard.
+    assert.equal(harness.memberReads.length, 1)
+})
+
+test('each write-once field is judged on its own', async () => {
+    // A member who signed up before signup-referrer existed holds a source and no
+    // referrer. Their source must survive, and the referrer must still be filled
+    // in, or the field could never be backfilled for anyone.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        referrer: `${SITE}/all-starters`,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithFields({ 'signup-source': '/quiz' }))
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        Object.assign({}, CLICK_FIELDS, { 'signup-referrer': '/all-starters' }),
+    ])
+})
+
+test('a member with a filled signup-referrer keeps it', async () => {
+    // The mirror image: referrer held, source still absent, and the eight click
+    // fields ride along in the same payload either way.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+        referrer: `${SITE}/all-starters`,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](memberWithFields({ 'signup-referrer': '/' }))
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        Object.assign({}, CLICK_FIELDS, { 'signup-source': '/sign-up' }),
+    ])
+})
+
+test('an unfilled existing write-once value is written', async () => {
+    // Absent, null, empty and whitespace-only are all "not filled". Anything else
+    // would leave a member stuck with a blank field nothing can ever fill.
+    for (const existing of [undefined, null, '', '   ', '\n\t ']) {
+        const label = JSON.stringify(existing)
+        const harness = boot({
+            cookies: clickCookies,
+            member: null,
+            pathname: '/sign-up',
+        })
+        await harness.settle()
+
+        harness.authHandlers[0](
+            memberWithFields(
+                existing === undefined ? {} : { 'signup-source': existing },
+            ),
+        )
+        await harness.settle()
+        await harness.settle()
+
+        assert.deepEqual(
+            harness.savedFields(),
+            [Object.assign({}, CLICK_FIELDS, { 'signup-source': '/sign-up' })],
+            label,
+        )
+    }
+})
+
+test('an unreadable existing value writes rather than skips', async () => {
+    // The deliberate opposite of how CompleteRegistration resolves its doubt. A
+    // genuine first signup with an empty field is the common case by a wide
+    // margin, so skipping here would cost real attribution on every signup
+    // whenever the read hiccups, to prevent a much rarer overwrite.
+    const harness = boot({
+        cookies: clickCookies,
+        laterMemberReadsThrow: true,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    // A payload with no customFields on it, so the guard has to go looking, and
+    // the lookup is what fails.
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [
+        Object.assign({}, CLICK_FIELDS, { 'signup-source': '/sign-up' }),
+    ])
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('the guard looks the member up when the payload carries no custom fields', async () => {
+    // Nothing in the repo proves onAuthChange payloads carry customFields, so this
+    // fallback is the path that actually runs in production until proven
+    // otherwise. Arrived logged out, transition payload with no fields on it, and
+    // the member Memberstack reports afterwards is the one holding the filled
+    // field.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        memberAfterSignup: loggedInMember,
+        memberFields: { 'signup-source': '/starters/jane-doe' },
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [CLICK_FIELDS])
+    // The probe, plus the guard's own lookup: proof it went and asked.
+    assert.equal(harness.memberReads.length, 2)
+})
+
+test('the retry path guards from the member it already read', async () => {
+    // retryPendingSave holds a getCurrentMember result already, so it hands the
+    // fields over instead of making the guard read the same member again.
+    const harness = boot({
+        cookies: clickCookies,
+        member: loggedInMember,
+        memberFields: { 'signup-source': '/starters/jane-doe' },
+        pathname: '/brand-dashboard',
+        session: {
+            [PENDING_SAVE_FLAG]: 'true',
+            [PENDING_FIELDS_KEY]: JSON.stringify(
+                Object.assign({}, CLICK_FIELDS, { 'signup-source': '/quiz' }),
+            ),
+        },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [CLICK_FIELDS])
+    assert.equal(harness.pendingSave(), undefined)
+    // Exactly one member read on this page: the retry's own.
+    assert.equal(harness.memberReads.length, 1)
+})
+
+test('a write that owed only the write-once fields settles instead of retrying forever', async () => {
+    // The guard can empty the payload. That is settled, not failed, or the marker
+    // would be retried on every page load for a write that must never happen.
+    const harness = boot({
+        member: loggedInMember,
+        memberFields: {
+            'signup-source': '/starters/jane-doe',
+            'signup-referrer': '/all-starters',
+        },
+        pathname: '/brand-dashboard',
+        session: {
+            [PENDING_SAVE_FLAG]: 'true',
+            [PENDING_FIELDS_KEY]: JSON.stringify({
+                'signup-source': '/quiz',
+                'signup-referrer': '/',
+            }),
+        },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.updateCalls, [])
+    assert.equal(harness.pendingSave(), undefined)
+    assert.equal(harness.pendingFields(), undefined)
+})
+
+test('the guard never touches the other eight fields', async () => {
+    // One key wide, deliberately: the click parameters are last-touch and a fresh
+    // ad click is supposed to update them. Proven against a member who already
+    // has every field filled, both write-once fields included.
+    const harness = boot({
+        cookies: clickCookies,
+        member: null,
+        pathname: '/sign-up',
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](
+        memberWithFields({
+            'utm-source': 'google',
+            'utm-campaign': 'winter',
+            'utm-adset': 'old-adset',
+            'utm-content': 'old-creative',
+            fbclid: 'IwAR000',
+            fbc: 'fb.1.1600000000.old',
+            fbp: 'fb.1.1600000000.old',
+            'event-id': 'evt_old',
+            'signup-source': '/starters/jane-doe',
+            'signup-referrer': '/all-starters',
+        }),
+    )
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.savedFields(), [CLICK_FIELDS])
 })
 
 /* ----------------------------- file contract ------------------------------ */
