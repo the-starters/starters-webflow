@@ -265,8 +265,8 @@
    * failure reads as "no marker" — that costs one network call, which fails open
    * on its own, rather than costing the member their dashboard.
    *
-   * Semantics deliberately match v3/complete-profile-redirect.js's read of the
-   * `completed-brand-profile` field: a string counts once trimmed non-empty, and a
+   * Semantics deliberately match v3/complete-profile-redirect.js's read of this
+   * shared session marker: a string counts once trimmed non-empty, and a
    * non-string truthy value counts as set.
    */
   function completionMarkerSet() {
