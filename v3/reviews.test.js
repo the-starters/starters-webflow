@@ -16,6 +16,7 @@ class Element {
     this.hidden = false
     this.style = { display: '' }
     this.children = Object.create(null)
+    this.matches = Object.create(null)
     this.childNodes = []
     this.className = ''
   }
@@ -23,6 +24,7 @@ class Element {
   removeAttribute(name) { delete this.attrs[name] }
   getAttribute(name) { return this.attrs[name] ?? null }
   querySelector(selector) { return this.children[selector] || null }
+  querySelectorAll(selector) { return this.matches[selector] || [] }
   closest(selector) { return selector === 'form[data-review-form-v3]' ? this : null }
   appendChild(element) { this.childNodes.push(element); return element }
   replaceChildren(...elements) { this.childNodes = elements }
@@ -34,7 +36,10 @@ function documentFixture() {
   const legacyAverage = new Element()
   const count = new Element()
   const list = new Element({ 'data-reviews-v3-list': 'reviews' })
+  const outsideList = new Element({ 'data-reviews-v3-list': 'reviews' })
   root.children['[data-reviews-v3-list="reviews"]'] = list
+  root.matches['[data-reviews-v3-average], #rating'] = [average, legacyAverage]
+  root.matches['[data-reviews-v3-count], .profile-hero_card-progress [fs-countitems-element="value"]'] = [count]
   const listeners = {}
   return {
     root,
@@ -42,12 +47,13 @@ function documentFixture() {
     legacyAverage,
     count,
     list,
+    outsideList,
     listeners,
     addEventListener(name, handler, capture) { listeners[name] = { handler, capture } },
     dispatchEvent() {},
     querySelector(selector) {
       if (selector === '[data-reviews-v3="profile"]') return root
-      if (selector === '[data-reviews-v3-list="reviews"]') return list
+      if (selector === '[data-reviews-v3-list="reviews"]') return outsideList
       return null
     },
     createElement() { return new Element() },
@@ -131,75 +137,11 @@ test('initializes the profile wrapper when wf-xano already booted', () => {
   assert.equal(callbacks.length, 1)
 })
 
-test('sets a fresh stable-project idempotency key in capture phase', () => {
+test('does not compete with the dashboard controller for review submission', () => {
   const fixture = documentFixture()
-  load({ document: fixture })
-  assert.equal(fixture.listeners.submit.capture, true)
-
-  const form = new Element()
-  const project = new Element({ value: '665' })
-  const key = new Element()
-  form.children['[wf-xano-field="project_id"]'] = project
-  form.children['[wf-xano-field="idempotency_key"]'] = key
-  fixture.listeners.submit.handler({ target: form })
-  assert.equal(key.value, 'review-ui:665:uuid-123')
-  assert.equal(key.getAttribute('value'), key.value)
-})
-
-test('binds the stationary authored embed from the single canonical Xano result', () => {
-  const fixture = documentFixture()
-  const { api } = load({ document: fixture })
-  const form = new Element()
-  const component = new Element()
-  const projectInput = new Element()
-  const intro = new Element()
-  form.children['[wf-xano-field="project_id"]'] = projectInput
-  component.children['.review-v3_intro'] = intro
-  form.closest = (selector) => selector === '.review-v3_component' ? component : null
-  fixture.querySelector = (selector) => selector === 'form[data-review-form-v3]' ? form : null
-  fixture.querySelectorAll = (selector) => selector === '.project_item[data-wf-xano-id]'
-    ? [new Element({ 'data-wf-xano-id': '668' }), new Element({ 'data-wf-xano-id': '669' })]
-    : []
-
-  assert.equal(api.bindReviewFormToSingleProject(fixture, { items: [{ id: 667 }] }), true)
-  assert.equal(projectInput.value, '667')
-  assert.equal(projectInput.getAttribute('value'), '667')
-  assert.equal(component.childNodes.length, 0)
-  assert.match(intro.textContent, /appear on the Starter profile/)
-})
-
-test('clears a stale project binding when Xano does not return one project', () => {
-  const fixture = documentFixture()
-  const { api } = load({ document: fixture })
-  const form = new Element()
-  const projectInput = new Element({ value: '667' })
-  form.children['[wf-xano-field="project_id"]'] = projectInput
-  fixture.querySelector = (selector) => selector === 'form[data-review-form-v3]' ? form : null
-
-  assert.equal(api.bindReviewFormToSingleProject(fixture, { items: [{ id: 667 }, { id: 668 }] }), false)
-  assert.equal(projectInput.value, '')
-  assert.equal(projectInput.getAttribute('value'), '')
-})
-
-test('prevents review submission when no canonical project is bound', () => {
-  const fixture = documentFixture()
-  load({ document: fixture })
-  const form = new Element()
-  const project = new Element()
-  const key = new Element({ value: 'review-ui:unknown:stale' })
-  let prevented = false
-  let stopped = false
-  form.children['[wf-xano-field="project_id"]'] = project
-  form.children['[wf-xano-field="idempotency_key"]'] = key
-  fixture.listeners.submit.handler({
-    target: form,
-    preventDefault() { prevented = true },
-    stopImmediatePropagation() { stopped = true },
-  })
-
-  assert.equal(prevented, true)
-  assert.equal(stopped, true)
-  assert.equal(key.value, '')
+  const { callbacks } = load({ document: fixture, pathname: '/brand-dashboard' })
+  assert.equal(fixture.listeners.submit, undefined)
+  assert.equal(callbacks.length, 0)
 })
 
 test('paints approved aggregate and reveals the authored section', () => {
@@ -209,11 +151,12 @@ test('paints approved aggregate and reveals the authored section', () => {
     reviews: [{ review_id: 41, rating: 4 }, { review_id: 42, rating: 5 }],
     aggregate: { review_count: 12, average_rating: 4.8 },
   }
-  assert.equal(api.paintProfile(fixture, { raw, items: [raw] }), true)
+  assert.equal(api.paintProfile(fixture, fixture.root, { raw, items: [raw] }), true)
   assert.equal(fixture.average.textContent, '4.8')
   assert.equal(fixture.legacyAverage.textContent, '4.8')
   assert.equal(fixture.count.textContent, '12')
   assert.equal(fixture.list.childNodes.length, 2)
+  assert.equal(fixture.outsideList.childNodes.length, 0)
   assert.equal(fixture.root.hidden, false)
   assert.equal(fixture.root.style.display, '')
 })
@@ -221,7 +164,7 @@ test('paints approved aggregate and reveals the authored section', () => {
 test('keeps an empty authored reviews section hidden', () => {
   const fixture = documentFixture()
   const { api } = load({ document: fixture })
-  api.paintProfile(fixture, {
+  api.paintProfile(fixture, fixture.root, {
     raw: { reviews: [], aggregate: { review_count: 0, average_rating: 0 } },
   })
   assert.equal(fixture.average.textContent, '0')
@@ -234,7 +177,7 @@ test('replaces the legacy projection with sanitized Xano review cards', () => {
   const fixture = documentFixture()
   const { api } = load({ document: fixture })
   fixture.list.appendChild(new Element())
-  assert.equal(api.renderProfileReviews(fixture, [{
+  assert.equal(api.renderProfileReviews(fixture, fixture.root, [{
     review_id: 42,
     rating: 5,
     review_text: '<img src=x onerror=alert(1)> Great work',
@@ -260,8 +203,8 @@ test('wires the profile results event once', () => {
   const handlers = {}
   const instance = { on(name, handler) { handlers[name] = handler } }
   const wfx = { get(key) { return key === 'starter-reviews' ? instance : null } }
-  api.wireInstances(wfx, fixture)
-  api.wireInstances(wfx, fixture)
+  api.wireInstances(wfx, fixture, fixture.root)
+  api.wireInstances(wfx, fixture, fixture.root)
   assert.equal(typeof handlers.results, 'function')
   const raw = {
     reviews: [{ rating: 5 }],
@@ -271,4 +214,20 @@ test('wires the profile results event once', () => {
   assert.equal(fixture.list.childNodes.length, 1)
   assert.equal(fixture.count.textContent, '3')
   assert.equal(fixture.average.textContent, '4.7')
+  assert.equal(fixture.outsideList.childNodes.length, 0)
+})
+
+test('refuses profile wiring without the validated root and descendant list', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture })
+  let reads = 0
+  const wfx = { get() { reads += 1 } }
+
+  api.wireInstances(wfx, fixture, null)
+  delete fixture.root.children['[data-reviews-v3-list="reviews"]']
+  api.wireInstances(wfx, fixture, fixture.root)
+
+  assert.equal(reads, 0)
+  assert.equal(api.paintProfile(fixture, fixture.root, { raw: { reviews: [{ rating: 5 }] } }), false)
+  assert.equal(fixture.outsideList.childNodes.length, 0)
 })

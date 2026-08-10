@@ -2034,7 +2034,9 @@ Webflow Designer owns the Brand review form and the public Reviews section. The
 adapter does not generate either surface. On the Brand side, author the review
 form as native Webflow HTML with `data-review-form-v3` on the `form`, retain the
 `dash-brand-projects` wf-xano instance, and configure its wf-xano form name as
-`project-review`. The form must include the endpoint's normal review fields plus
+`project-review`. `opportunities-3.0.js` exclusively owns the modal's per-card
+project and Starter context, validation, submit locking, and retry-stable
+idempotency key. The form must include the endpoint's normal review fields plus
 these authored controls:
 
 | Control | Contract |
@@ -2042,26 +2044,18 @@ these authored controls:
 | Project identifier | `wf-xano-field="project_id"` |
 | Hidden idempotency key | `wf-xano-field="idempotency_key"` |
 
-The adapter binds the authored `project_id` control only when the canonical
-`dash-brand-projects` result contains exactly one project, accepting that
-project's positive numeric `project_id` or `id`. It also supports the already
-rendered `.project_item[data-wf-xano-id]` as a startup and submit-time fallback,
-but only when exactly one such item exists in the Brand projects instance (or,
-when that wrapper is absent, in the document). Zero, multiple, missing, or
-invalid project identities clear the control and block submission before
-wf-xano can send a blank or stale ID. For a valid binding, the adapter
-normalizes the control value, replaces the authored `.review-v3_intro` text
-with `Share your experience after completing this project. Your review will
-appear on the Starter profile after submission.`, and writes a new
-`review-ui:{project_id}:{random}` key in capture phase for every submit. Xano
-remains authoritative for completed-project eligibility, one-review
+`reviews.js` does not bind or submit the Brand form. The dashboard controller
+fails closed unless the selected card resolves one canonical project and
+Starter identity, and preserves one idempotency key for the same project,
+rating, and feedback across retries. Xano remains authoritative for
+completed-project eligibility, one-review
 enforcement, idempotent replay, moderation, points, reversals, aggregates, and
 ranking. The current product rule is one review per canonical
 project/Brand/Starter tuple. New project reviews are immediately approved and
 published, while the canonical moderation state remains explicit so a future
 approval workflow can be introduced without changing the browser contract. A
-successful wf-xano `project-review` submission emits the document
-event `starters:review-submitted`; it does not perform a second write.
+successful submission refreshes the canonical dashboard projection without a
+second review write.
 
 On the public profile, author exactly one section with
 `data-reviews-v3="profile"` and exactly one descendant list target with
