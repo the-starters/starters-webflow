@@ -23,7 +23,8 @@
  *     and a free Brand who has not taken the quiz stays put,
  *   - send a logged-in member whose role does not belong on one of the
  *     ROLE_BOUNCE_PAGES (/quiz-results, /all-starters) to that member's role
- *     home, again leaving logged-out visitors completely alone,
+ *     home, apart from the exact production paid-Brand email canary, again
+ *     leaving logged-out visitors completely alone,
  *   - leave an authenticated-but-unmapped or cross-role-conflicted member on
  *     the page with an explicit error state instead of silently redirecting,
  *   - do nothing on a page it does not recognise (public/unlisted route).
@@ -516,7 +517,9 @@
     var email =
       member && member.auth && member.auth.email
         ? member.auth.email
-        : member && (member.email || (member.customFields && member.customFields.email))
+        : member &&
+          (member.email ||
+            (member.customFields && member.customFields.email))
 
     return String(email || '').trim().toLowerCase() === QUIZ_EMAIL_TEST_CANARY_EMAIL
   }

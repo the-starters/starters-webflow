@@ -63,7 +63,7 @@ one route-level rule that page needs.
 | `/sign-up` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Member-home bounce; logged-out visitors untouched |
 | `/dashboard` | Default quiz home | `/brand-dashboard` | `/starter-dashboard` | Canonical authenticated entry only; no dashboard page body lives here |
 | `/quiz` | Allow | Default `/brand-dashboard` | Default `/starter-dashboard`, enforced | Free Brand default until quiz completion; page controller enforces all three columns, and the Talent bounce ignores `?retake=` |
-| `/quiz-results` and `/quiz-results/` | Allow once the quiz is done — either the `starter-quiz` field **or** a `ready` `sessionStorage.starterQuizPending` payload — else `/quiz` | Default `/brand-dashboard` | Default `/starter-dashboard` | Free Brand default after quiz completion; `ROLE_BOUNCE_PAGES` enforces the logged-in columns, `quiz-results.js` still owns every logged-out case. The pending-payload half is the post-signup exception (see [the note below](#post-signup-pending-quiz)): the field is written by this page *after* it renders, so the field alone cannot be the gate |
+| `/quiz-results` and `/quiz-results/` | Allow once the quiz is done — either the `starter-quiz` field **or** a `ready` `sessionStorage.starterQuizPending` payload — else `/quiz` | Default `/brand-dashboard`; the exact production email-test canary may stay | Default `/starter-dashboard` | Free Brand default after quiz completion; `ROLE_BOUNCE_PAGES` enforces the logged-in columns, `quiz-results.js` still owns every logged-out case. The paid-Brand exception is limited to the host, path, query, and member combination owned by the root [Quiz-results email tester](../README.md#quiz-results-email-tester) documentation. The pending-payload half is the post-signup exception (see [the note below](#post-signup-pending-quiz)): the field is written by this page *after* it renders, so the field alone cannot be the gate |
 | `/all-starters` and `/all-starters/` | Allow, limited/blurred content | Allow, full content | Default `/starter-dashboard` | Both Brand tiers may return regardless of quiz state; `ROLE_BOUNCE_PAGES` enforces only the Talent bounce |
 | `/favorites` and `/favorites/` | Default quiz home | Allow | Default `/starter-dashboard` | Saved Starters list; paid Brand only, matching Xano #1506's plan 4/5 precondition; both slash forms are allowed paid-Brand `next` destinations so a deep link survives login |
 | `/brand-dashboard` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
@@ -145,9 +145,12 @@ one route-level rule that page needs.
 > or slow Memberstack, an unmapped plan, and a cross-role conflict all leave the
 > page untouched, with no redirect, no error attribute, and no `checking` stamp —
 > and apply the guarded pages' role test to whoever is left: a role-mapped member
-> not on the page's allowlist goes to their own role home. Allowed roles are
-> `brand-free` on `/quiz-results` and both Brand tiers on `/all-starters`, so
-> Talent is the role bounced off both, and a free Brand is the role kept on both.
+> not on the page's allowlist goes to their own role home, apart from the exact
+> production canary owned by the root
+> [Quiz-results email tester](../README.md#quiz-results-email-tester) contract.
+> Allowed roles are `brand-free` on `/quiz-results` and both Brand tiers on
+> `/all-starters`, so Talent is the role bounced off both, and a free Brand is
+> the role kept on both.
 > `/quiz-results` carries one extra rule the other page does not: an allowed free
 > Brand belongs there only once the quiz is done, because before that their role
 > home is `/quiz` and there are no results to show. `/all-starters` has no
