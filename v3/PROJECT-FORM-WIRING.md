@@ -129,9 +129,13 @@ alongside it at each of those points, plus once when the adapter installs, so
 the Monthly end date is already hidden and cleared before the first
 interaction. The adapter owns the `confirm-contract` checkbox policy separately
 from that generic required-state sync. My Own Contract shows, enables, and
-requires the checkbox. Standard Contract hides, disables, unrequires, and
-clears it, including Webflow's redirected checked state, so a stale affirmation
-cannot appear in the review or cross contract branches. This works on a
+requires the checkbox. Its exact authored row is the owning
+`<label data-input-filter-item="My own contract">`, containing the native
+`confirm-contract` input and its visible affirmation span. Standard Contract
+hides that complete label row, disables, unrequires, and clears the input,
+including Webflow's redirected checked state. Returning to My Own Contract
+restores the row and control. The separate resolver for this legal affirmation
+does not hide any other `data-input-filter-item` panel. This works on a
 Webflow-default form as well as one marked `novalidate`.
 
 The adapter reads the existing Standard Contract and My Own Contract radio
@@ -343,8 +347,11 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    independently of the hourly Hours Cap Period, that My Own Contract hides
    the select and omits `invoice_frequency` from the payload, and that
    switching back to Standard Contract restores the previous selection. Confirm
-   My Own Contract shows and requires `confirm-contract`, while Standard
-   Contract hides, disables, unrequires, and clears it.
+   My Own Contract shows its owning
+   `label[data-input-filter-item="My own contract"]` row and requires
+   `confirm-contract`, while Standard Contract hides the complete label row and
+   disables, unrequires, and clears the input without changing any conditional
+   fee panel.
 5. With the approved production canary and PandaDoc create worker #33 held
    inactive, verify exactly one authenticated `projects/create-direct/v3`
    request and no Airtable/Make/PandaDoc browser request or browser secret.

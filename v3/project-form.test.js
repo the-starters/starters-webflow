@@ -1116,6 +1116,48 @@ test('shows the own-contract affirmation only for Own Contract and clears stale 
   assert.equal(confirmation.getAttribute('required'), null)
 })
 
+test('hides the rendered Own Contract label on Standard without changing fee panels', () => {
+  const form = projectForm()
+  const confirmation = requiredConfirmation(form, { visible: true, name: 'confirm-contract' })
+  const affirmationText = new Element({
+    class: 'modal-form_checkbox-text w-form-label',
+    for: 'confirm-contract',
+    tagName: 'SPAN',
+  })
+  affirmationText.textContent = 'I confirm we will have an executed contract prior to the start date'
+  const owner = new Element({
+    'data-input-filter-item': 'My own contract',
+    class: 'w-checkbox modal-form_checkbox-field',
+    tagName: 'LABEL',
+  })
+  owner.controls = [confirmation]
+  owner.children = [confirmation, affirmationText]
+  owner.parentElement = form
+  confirmation.parentElement = owner
+  affirmationText.parentElement = owner
+
+  const unrelatedFeePanel = new Element({ 'data-input-filter-item': 'Flat Fee', tagName: 'DIV' })
+  unrelatedFeePanel.parentElement = form
+  form.feePanels = { 'Flat Fee': unrelatedFeePanel }
+
+  const { api } = load({ form })
+  assert.equal(confirmation.hidden, true)
+  assert.equal(owner.hidden, true)
+  assert.equal(owner.style.display, 'none')
+  assert.equal(owner.getAttribute('aria-hidden'), 'true')
+  assert.equal(unrelatedFeePanel.hidden, false)
+  assert.equal(unrelatedFeePanel.style.display, '')
+
+  form.contractChoice.value = 'My own contract'
+  api.syncDurationFields(form)
+  assert.equal(confirmation.hidden, false)
+  assert.equal(owner.hidden, false)
+  assert.equal(owner.style.display, '')
+  assert.equal(owner.getAttribute('aria-hidden'), null)
+  assert.equal(unrelatedFeePanel.hidden, false)
+  assert.equal(unrelatedFeePanel.style.display, '')
+})
+
 test('drops required from hidden conditional controls so native validation cannot block submit', async () => {
   const form = projectForm()
   const hiddenConfirmation = requiredConfirmation(form, { visible: false })
