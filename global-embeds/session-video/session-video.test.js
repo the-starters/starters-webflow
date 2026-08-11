@@ -332,10 +332,55 @@ test('the poster stays until the video is genuinely playing', async () => {
   assert.equal(s.root.getAttribute('data-sv-video'), 'ready')
 })
 
-test('the poster stays up when the video never loads', async () => {
+test('the poster stays up when a mounted video never progresses', async () => {
+  // The previous version used withLib:false, so mount() never ran and the
+  // attribute was simply absent — assert.notEqual(null, 'ready') passes for free.
+  // Mutation-proved: deleting both data-sv-video writes left it green. This mounts
+  // a real player that just never reports progress, which is the actual case.
+  const s = await setup()
+  assert.equal(s.root.getAttribute('data-sv-video'), 'loading')
+  s.players[0].fire('play')            // it claims to play...
+  s.players[0].seconds(0)              // ...but never advances
+  assert.equal(s.root.getAttribute('data-sv-video'), 'loading', 'no pixels, no retirement')
+})
+
+test('a member with no player library still gets the full state contract', async () => {
+  // The no-library branch appended a frame without calling mount(), so
+  // data-sv-player and data-sv-video were never written: a working native player
+  // under a poster that never retires, with the click overlay still eating clicks.
   const s = await setup({ withLib: false, member: 'in' })
-  // No player API, so no progress ever arrives and nothing flips it.
-  assert.notEqual(s.root.getAttribute('data-sv-video'), 'ready')
+  const f = s.frame()
+  assert.ok(f, 'a member should still get the video')
+  assert.equal(f.hasAttribute('allowfullscreen'), true)
+  assert.equal(s.root.getAttribute('data-sv-player'), 'native')
+  assert.equal(s.root.getAttribute('data-sv-video'), 'ready', 'no API means no progress to wait for')
+  assert.equal(s.api.status().roots, 1, 'and status() must see it')
+})
+
+test('any resume clears the cover, not just the watch control', async () => {
+  // A member pausing on Vimeo's own bar and pressing native play was left watching
+  // from behind the returned overlay, with no route back but the watch button.
+  const s = await setup({ member: 'in' })
+  const p = s.live()
+  s.watch().click()
+  p.fire('play')
+  p.fire('pause')
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'visible')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'hidden')
+  p.fire('play')                       // native play, not the watch control
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'visible')
+})
+
+test('a late upgrade does not re-cover an already-playing video', async () => {
+  const s = await setup({ member: 'late', watch: (p) => p.seconds(3) })
+  assert.equal(s.root.getAttribute('data-sv-video'), 'ready', 'no poster flash on remount')
+})
+
+test('membership resolution is not chained behind the library load', () => {
+  // Chaining it put the member clock behind LIB_BUDGET_MS, so a member could click
+  // watch before the answer landed and have the frame rebuilt under them mid-play.
+  assert.match(source, /var memberPromise = resolveMember\(\)[\s\S]{0,200}ensureLib\(\)/)
 })
 
 test('the ambient player starts muted and looping, with no native controls', async () => {
