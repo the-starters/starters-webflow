@@ -1,7 +1,7 @@
 /**
  * V3 login router.
  *
- * @release v1.59.167
+ * @release v1.59.176
  *
  * Install on the V3 login pages (/login and /starter-login) and /auth-route
  * only. Every V3 login form must redirect to /auth-route so shared Memberstack
@@ -40,7 +40,7 @@
  *   GET api:KZf7nFnk/starters_onboarding/get_brand_profile_status
  *   → {has_record, brand_profile_done}
  *
- * Same no-input, bearer-token shape, same single 4s budget, same fail-open rule:
+ * Same no-input, bearer-token shape, same single 8s budget, same fail-open rule:
  *
  *   - has_record true AND brand_profile_done false → /complete-profile, and it
  *     WINS over any stored or query `next`, exactly as the Talent onboarding
@@ -60,7 +60,7 @@
  * back onto the form.
  *
  * The check FAILS OPEN in every other case — logged out of Xano, token trade
- * rejected, HTTP error, malformed body, or the whole check exceeding its 4s
+ * rejected, HTTP error, malformed body, or the whole check exceeding its 8s
  * budget — and the member is routed exactly as before. This is funnel UX,
  * never a security boundary: Memberstack gated content, v3/route-guard.js, and
  * Xano endpoint authorization remain the enforced layers. Unmapped members never
@@ -129,7 +129,11 @@
   // per-request timeout. /auth-route is a blank hop page, so the member is
   // staring at nothing while this runs; past the budget the funnel check is
   // abandoned and the standard destination wins.
-  var ONBOARDING_CHECK_BUDGET_MS = 4000
+  // Production traces can spend more than four seconds across the CORS
+  // preflights, token trade, and the status read even when every request
+  // succeeds. Eight seconds keeps the blank hop bounded while covering the
+  // observed cold path instead of failing open to the role home.
+  var ONBOARDING_CHECK_BUDGET_MS = 8000
 
   // Funnel POSITION, not a record shape: where the member actually is in Apply →
   // Build profile → Onboarding → Dashboard. Same four values as
@@ -419,7 +423,7 @@
   /* --------------------------- onboarding funnel --------------------------- */
 
   /**
-   * The single 4s budget for the whole check. One AbortController is shared by
+   * The single 8s budget for the whole check. One AbortController is shared by
    * both requests so an expiry releases the sockets too, and `expiry` resolves
    * (never rejects) with FUNNEL_UNKNOWN so the caller's race reads like any
    * other inconclusive answer. `label` only names the check in the staging
@@ -745,7 +749,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/auth-route.test.js drift guard asserts they match.
-    release: 'v1.59.167',
+    release: 'v1.59.176',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,

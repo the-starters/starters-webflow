@@ -90,7 +90,7 @@ Paid Brands take a parallel check through
 `brand_profile_done` false goes to `/complete-profile`, winning over a stored
 `next`. A non-empty `thestarters:v3-brand-profile-completed` marker short-circuits
 as complete without a network call. `brand-free` and unmapped members stay
-zero-network. The same four-second budget and fail-open rule apply.
+zero-network. The same eight-second budget and fail-open rule apply.
 `/complete-profile` is not an allowed client-supplied `next`; the router constructs
 that destination. See [AUTH-ROUTE-WIRING.md](AUTH-ROUTE-WIRING.md) for the endpoint
 contract.

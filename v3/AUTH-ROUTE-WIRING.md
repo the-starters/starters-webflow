@@ -117,7 +117,7 @@ is precisely the signal that caused the bug.
 | `build_profile_done` false (whether or not `has_record`) | `/build-profile/select-profile` |
 | `build_profile_done` true, `onboarding_done` not `true` | `/starter-onboarding`, which wins over any `?next=` or stored destination |
 | `build_profile_done` true, `onboarding_done === true` | Normal routing: the validated `next`, else the role home |
-| Any Xano failure, an unreadable body, or the check exceeding its 4 second budget | Normal routing (fail open) |
+| Any Xano failure, an unreadable body, or the check exceeding its 8 second budget | Normal routing (fail open) |
 
 The requested destination is consumed before the check runs, so a `next` that
 loses to the funnel is dropped rather than replayed on the next login.
@@ -135,7 +135,7 @@ Reads use the same trade-token flow as the sibling V3 modules: the Memberstack
 JWT from `getMemberCookie()` is traded at `api:g1vmSLWh/auth/trade-token/v3` for
 a Xano token, which authorizes the status endpoint as a bearer.
 
-The 4 second budget is one overall deadline for the trade plus the read, not a
+The 8 second budget is one overall deadline for the trade plus the read, not a
 per-request timeout, because the member is looking at a blank hop page while it
 runs. On expiry the shared `AbortController` cancels the in-flight request and
 routing continues as if the check had never happened. Fail-open is unchanged by
@@ -157,7 +157,7 @@ GET api:KZf7nFnk/starters_onboarding/get_brand_profile_status
 → {"has_record": bool, "brand_profile_done": bool}
 ```
 
-Same no-input bearer shape, same single 4s budget, same fail-open rule.
+Same no-input bearer shape, same single 8s budget, same fail-open rule.
 
 | Brand profile status | Destination |
 | --- | --- |
@@ -276,7 +276,7 @@ stays silent apart from the configuration errors in the table above.
   column on a test row.
 - Confirm the network panel shows `get_build_profile_status` and no
   `get_freelancers` request from `/auth-route`.
-- Confirm a Brand login logs no funnel lines and issues no request to
-  `api:KZf7nFnk` in the network panel.
+- Confirm a paid Brand login reads `get_brand_profile_status`, while a Brand
+  Free login logs no funnel lines and issues no request to `api:KZf7nFnk`.
 - Run the full staging matrix behind the Webflow password.
 - Do not publish custom domains until the separate production go signal.

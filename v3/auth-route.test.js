@@ -78,7 +78,7 @@ function flush() {
 }
 
 /**
- * Opt-in deterministic clock (`clock: true`), so the 4s onboarding-check budget
+ * Opt-in deterministic clock (`clock: true`), so the 8s onboarding-check budget
  * is testable without waiting for it. Tests that do not ask for it keep the
  * real timers the existing Memberstack-delay cases rely on.
  */
@@ -222,6 +222,9 @@ function loadRouter(options = {}) {
 
     if (String(url) === STATUS_URL) {
       if (xano.getNeverSettles) return new Promise(() => {})
+      if (xano.getDelayMs) {
+        await new Promise((resolve) => window.setTimeout(resolve, xano.getDelayMs))
+      }
       if (xano.getRejects) throw new Error('get network failure')
       if (xano.getStatus) {
         return jsonResponse(null, { ok: false, status: xano.getStatus })
@@ -236,6 +239,11 @@ function loadRouter(options = {}) {
 
     if (String(url) === BRAND_STATUS_URL) {
       if (xano.brandNeverSettles) return new Promise(() => {})
+      if (xano.brandDelayMs) {
+        await new Promise((resolve) =>
+          window.setTimeout(resolve, xano.brandDelayMs),
+        )
+      }
       if (xano.brandRejects) throw new Error('brand get network failure')
       if (xano.brandStatus) {
         return jsonResponse(null, { ok: false, status: xano.brandStatus })
@@ -1286,7 +1294,7 @@ test('a member with no Memberstack cookie never reaches Xano and routes normally
   assert.equal(fetchCalls.length, 0)
 })
 
-test('a hung onboarding check is abandoned at the 4s budget and fails open', async () => {
+test('a hung onboarding check is abandoned at the 8s budget and fails open', async () => {
   const { location, clock, aborted, logs } = loadRouter({
     pathname: '/auth-route',
     storedDestination: '/messages',
@@ -1299,6 +1307,10 @@ test('a hung onboarding check is abandoned at the 4s budget and fails open', asy
   assert.equal(location.replaced, undefined, 'still waiting inside the budget')
 
   await clock.advance(4000)
+  assert.equal(location.replaced, undefined, 'still waiting after the old budget')
+  await clock.advance(3999)
+  assert.equal(location.replaced, undefined, 'still waiting just inside the budget')
+  await clock.advance(1)
   assert.equal(location.replaced, '/messages')
   assert.equal(aborted.length, 1, 'the in-flight request is aborted')
   assert.ok(logs.warn.some((line) => line.includes('budget')))
@@ -1309,10 +1321,13 @@ test('a slow but in-budget check still drives the funnel', async () => {
     pathname: '/auth-route',
     member: talentMember(),
     clock: true,
-    xano: { statusBody: NEEDS_ONBOARDING },
+    xano: { getDelayMs: 5000, statusBody: NEEDS_ONBOARDING },
   })
 
   await flush()
+  await clock.advance(4000)
+  assert.equal(location.replaced, undefined, 'still waiting after the old budget')
+  await clock.advance(1000)
   assert.equal(location.replaced, '/starter-onboarding')
   // The budget timer is cleared once the answer lands, so nothing fires later.
   await clock.advance(10000)
@@ -1666,7 +1681,7 @@ test('every brand-check failure fails open to the standard route', async () => {
   assert.equal(noFetch.location.replaced, '/favorites')
 })
 
-test('a hung brand check is abandoned at the 4s budget and fails open', async () => {
+test('a hung brand check is abandoned at the 8s budget and fails open', async () => {
   const { location, clock, aborted, logs } = loadRouter({
     pathname: '/auth-route',
     storedDestination: '/favorites',
@@ -1679,6 +1694,10 @@ test('a hung brand check is abandoned at the 4s budget and fails open', async ()
   assert.equal(location.replaced, undefined, 'still waiting inside the budget')
 
   await clock.advance(4000)
+  assert.equal(location.replaced, undefined, 'still waiting after the old budget')
+  await clock.advance(3999)
+  assert.equal(location.replaced, undefined, 'still waiting just inside the budget')
+  await clock.advance(1)
   assert.equal(location.replaced, '/favorites')
   assert.equal(aborted.length, 1, 'the in-flight request is aborted')
   assert.ok(logs.warn.some((line) => line.includes('brand profile check')))
@@ -1690,10 +1709,13 @@ test('a slow but in-budget brand check still drives the funnel', async () => {
     pathname: '/auth-route',
     member: paidBrandMember(),
     clock: true,
-    xano: { brandStatusBody: BRAND_NOT_DONE },
+    xano: { brandDelayMs: 5000, brandStatusBody: BRAND_NOT_DONE },
   })
 
   await flush()
+  await clock.advance(4000)
+  assert.equal(location.replaced, undefined, 'still waiting after the old budget')
+  await clock.advance(1000)
   assert.equal(location.replaced, '/complete-profile')
   // The budget timer is cleared once the answer lands, so nothing fires later.
   await clock.advance(10000)
