@@ -2,7 +2,7 @@
  * Session video gate — the Learn Sessions hero player, with a free preview for
  * logged-out visitors and the signup wall after it.
  *
- * @release v1.59.186
+ * @release v1.59.189
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * Sessions template's before-</body> code. It REPLACES the template's inline
@@ -103,17 +103,25 @@
   if (window.__startersSessionVideoBooted) return
   window.__startersSessionVideoBooted = true
 
-  var RELEASE = 'v1.59.186'
+  var RELEASE = 'v1.59.189'
   var LIB_SRC = 'https://player.vimeo.com/api/player.js'
   var DEFAULT_CUT_SECONDS = 180
   var DEFAULT_BG_SECONDS = 20
   var MEMBER_BUDGET_MS = 1200
   var LIB_BUDGET_MS = 6000
 
+  // Vimeo drops its full-screen button and lets its control bar overflow below
+  // roughly this width — measured on a bare player at 375px: no play button, no
+  // full screen, no quality, and `scrollWidth > clientWidth` on the bar itself.
+  // Its native UI is cross-origin, so no CSS of ours can repair it. Below this
+  // width EVERYONE gets the template's own controls, member or not.
+  var NATIVE_MIN_WIDTH = 768
+
   var ROOT_SELECTOR = '[data-session-video="root"]'
   var ATTR_ID = 'data-session-video-id'
   var ATTR_CUT = 'data-session-video-cut'
   var ATTR_BG = 'data-session-video-bg'
+  var ATTR_NATIVE_MIN = 'data-session-video-native-min'
 
   var STAGING_HOST = /(^|\.)webflow\.io$|^localhost$|^127\.0\.0\.1$|(^|\.)trycloudflare\.com$/
 
@@ -159,6 +167,18 @@
       return fallback
     }
     return n
+  }
+
+  /**
+   * Is the viewport wide enough for Vimeo's own controls to be usable? Read ONCE
+   * at mount, because the iframe's `controls` parameter is fixed at load — a
+   * rotation cannot change it without rebuilding the frame, and rebuilding would
+   * interrupt playback. So a viewer keeps what they got until they reload.
+   */
+  function wideEnough(root) {
+    var min = seconds(root, ATTR_NATIVE_MIN, NATIVE_MIN_WIDTH)
+    var w = window.innerWidth || 0
+    return w >= min
   }
 
   function emit(name, detail) {
@@ -253,21 +273,22 @@
    * picture-in-picture attributes are correct AT LOAD for this particular viewer:
    * a gated viewer and a member get different native UI, per the split below.
    */
-  function buildFrame(videoId, gated) {
-    // A gated viewer gets NO native UI: no control bar, so no scrubber to drag
-    // past the cut point, no keyboard seeking, no picture-in-picture (which ships
-    // its own scrubber). Their playback is driven entirely by the template's own
-    // buttons, and the CSS keeps `pointer-events: none` on the iframe.
-    // A member has no wall to bypass, so they get Vimeo's real player — scrubber,
-    // volume, quality, captions, fullscreen — which is more than the template's
-    // three buttons offer, and the CSS lifts pointer-events for them.
+  function buildFrame(videoId, gated, native) {
+    // `native` decides the control UI; `gated` decides the full-screen permission.
+    // They are separate because a member on a narrow screen gets the template's own
+    // controls (Vimeo's are unusable there) but keeps the permission.
+    //
+    // No native UI means no scrubber to drag past the cut point, no keyboard
+    // seeking and no picture-in-picture window carrying its own scrubber. The
+    // clamp catches seeks anyway, so a scrubber was never a bypass — it only makes
+    // the wall look abrupt and advertises the full runtime.
     var params = [
       'autoplay=1',
       'muted=1',
       'loop=1',
-      'controls=' + (gated ? '0' : '1'),
-      'keyboard=' + (gated ? '0' : '1'),
-      'pip=' + (gated ? '0' : '1'),
+      'controls=' + (native ? '1' : '0'),
+      'keyboard=' + (native ? '1' : '0'),
+      'pip=' + (native ? '1' : '0'),
       'title=0',
       'byline=0',
       'portrait=0',
@@ -398,8 +419,9 @@
     var stage = part(this.root, 'stage')
     if (!stage) return false
     this.gated = false
-    stage.append(buildFrame(this.videoId, false))
-    setState(this.root, 'data-sv-player', 'native')
+    this.native = wideEnough(this.root)
+    stage.append(buildFrame(this.videoId, false, this.native))
+    setState(this.root, 'data-sv-player', this.native ? 'native' : 'custom')
     setState(this.root, 'data-sv-video', 'ready')
     this.ready = true
     controllers.push(this)
@@ -408,6 +430,7 @@
   }
 
   Controller.prototype.mount = function (gated) {
+    this.native = !gated && wideEnough(this.root)
     var self = this
     if (!window.Vimeo || typeof window.Vimeo.Player !== 'function') {
       warn('mount called without the Vimeo Player API; refusing to build a frame')
@@ -419,7 +442,7 @@
       warn('root has no stage element; nothing mounted')
       return false
     }
-    this.frame = buildFrame(this.videoId, gated)
+    this.frame = buildFrame(this.videoId, gated, this.native)
     stage.append(this.frame)
     this.player = new window.Vimeo.Player(this.frame)
 
@@ -442,7 +465,7 @@
     // Which UI is in charge, for the template's CSS: `native` lifts
     // pointer-events onto the iframe, hides #videoClickOverlay (it would swallow
     // every click meant for Vimeo's bar) and hides the template's own controls.
-    setState(this.root, 'data-sv-player', gated ? 'custom' : 'native')
+    setState(this.root, 'data-sv-player', this.native ? 'native' : 'custom')
     // The poster stays up until the video is genuinely playing, which also covers
     // it never loading at all: nothing flips this to `ready` in that case.
     // Preserve `ready` across a remount: an upgrade replaces the frame under a
@@ -457,14 +480,12 @@
 
     // A gated viewer can never reach fullscreen, because the frame was built
     // without permission. Hide the control rather than leave a dead button.
-    // Inline display keeps this working with no CSS from the Designer; the
-    // attribute is written too so the template can style it if it prefers.
-    var fs = this.el('fullscreen')
-    if (fs) {
-      setState(fs, 'data-sv-fullscreen', gated ? 'hidden' : 'visible')
-      if (gated) fs.style.display = 'none'
-      else fs.style.removeProperty('display')
-    }
+    // The attribute ONLY. This button carries Memberstack's own
+    // `data-ms-content="members"`, so Memberstack owns its visibility — and an
+    // inline style written by us onto an element Memberstack meant to hide is
+    // exactly how a members-only control leaks to a non-member if our answer and
+    // theirs ever disagree. Diagnostics, never display.
+    setState(this.el('fullscreen'), 'data-sv-fullscreen', gated ? 'hidden' : 'visible')
 
     this.bind()
     return true
@@ -493,6 +514,8 @@
     })
 
     armControl(this.el('fullscreen'), 'Full screen', function () {
+      // Memberstack hides this button for non-members, but guard anyway: a gated
+      // frame carries no full-screen permission, so the request would only fail.
       if (self.gated || !self.player) return
       if (typeof self.player.requestFullscreen === 'function') safe(self.player.requestFullscreen())
     })
@@ -765,7 +788,7 @@
             playing: c.playing,
             muted: c.muted,
             position: c.position,
-            player: c.gated ? 'custom' : 'native',
+            player: c.native ? 'native' : 'custom',
             videoReady: c.ready,
             wallOpens: c.wallOpens,
           }
