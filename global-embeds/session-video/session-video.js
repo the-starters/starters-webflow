@@ -75,6 +75,7 @@
  *   #video-controls                data-sv-controls visible | hidden
  *   #playPauseBtn                  data-sv-play     playing | paused
  *   #muteBtn                       data-sv-mute     on | off
+ *   #fullscreenBtn                 data-sv-fullscreen visible | hidden (hidden when gated)
  *
  * NO MODAL ID LIVES IN THIS FILE. The trigger carries modal.js's own
  * `data-modal-trigger`, authored in the Designer, and this file only clicks it —
