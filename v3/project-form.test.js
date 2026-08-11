@@ -46,6 +46,7 @@ class Element {
   closest(selector) {
     if (selector.includes('[data-project-form-v3="brand"] form')) return this.form || (this.matches(selector) ? this : null)
     if (selector === '[data-project-form-container]') return this.wrapper || null
+    if (selector === '[data-project-diagnostic-copy]') return this.getAttribute('data-project-diagnostic-copy') !== null ? this : null
     return null
   }
   querySelector(selector) {
@@ -167,6 +168,10 @@ function load(options = {}) {
   const form = options.form || projectForm()
   const document = options.document || documentFixture(form)
   const calls = []
+  const trackCalls = []
+  const consoleLogs = []
+  const clipboardWrites = []
+  const storage = new Map()
   const window = {
     document,
     crypto: { randomUUID: () => 'uuid-123' },
@@ -175,7 +180,27 @@ function load(options = {}) {
       if (options.reject) throw Object.assign(new Error('raw server detail'), { status: options.reject })
       return { project: { id: 669 }, replayed: false }
     }) } },
-    StartersTrack: { track(name, payload) { calls.push({ name, payload }) } },
+    StartersTrack: { track(name, payload) { trackCalls.push({ name, payload }) } },
+    location: { hostname: 'thestarters.com' },
+    sessionStorage: {
+      setItem(key, value) {
+        if (options.storageThrows) throw new Error('storage unavailable')
+        storage.set(key, String(value))
+      },
+      getItem(key) {
+        if (options.storageThrows) throw new Error('storage unavailable')
+        return storage.has(key) ? storage.get(key) : null
+      },
+    },
+    navigator: options.noClipboard ? {} : {
+      clipboard: {
+        async writeText(value) {
+          if (options.clipboardRejects) throw new Error('clipboard denied')
+          clipboardWrites.push(String(value))
+        },
+      },
+    },
+    console: { info(...args) { consoleLogs.push(args) } },
     CustomEvent: class CustomEvent { constructor(name, init) { this.type = name; this.detail = init.detail } },
     Event: class Event { constructor(name) { this.type = name } },
     $memberstackDom: options.memberstack,
@@ -186,7 +211,7 @@ function load(options = {}) {
     Math,
   }
   vm.runInNewContext(SOURCE, { window, WeakMap, Uint32Array, Date, Math }, { filename: 'project-form.js' })
-  return { api: window.StartersProjectFormV3, calls, document, form, window }
+  return { api: window.StartersProjectFormV3, calls, trackCalls, consoleLogs, clipboardWrites, storage, document, form, window }
 }
 
 test('normalizes ids, money, dates, and supported engagement values', () => {
@@ -1212,10 +1237,11 @@ test('keeps visible required controls in native validation', async () => {
 
 test('binds the existing Hire trigger when the selected Starter identity is present', () => {
   const form = projectForm()
-  const { api, document } = load({ form })
+  const { api, document, trackCalls, window } = load({ form })
   const trigger = new Element({ 'data-modal-trigger': 'generate-contract' })
-  assert.equal(api.bindTrigger(trigger, document), true)
+  assert.equal(api.bindTrigger(trigger, document, window), true)
   assert.equal(form.getAttribute('data-project-form-status'), 'ready')
+  assert.equal(trackCalls.some((entry) => entry.name === 'project_form_opened'), true)
 })
 
 test('fails closed when the Hire form has no selected Starter identity', async () => {
@@ -1244,7 +1270,8 @@ test('submits once through Opp30 auth, keeps the retry key, and emits safe succe
   assert.equal(form.style.display, 'none')
   assert.equal(form.wrapper.success.style.display, 'block')
   assert.equal(form.wrapper.success.legacySuccessTitle.textContent, 'Project successfully created')
-  assert.equal(form.wrapper.success.legacySuccessMessage.textContent, 'Your contract is queued for generation. You will receive a signing email after processing succeeds.')
+  assert.match(form.wrapper.success.legacySuccessMessage.textContent, /^Your contract is queued for generation\. You will receive a signing email after processing succeeds\. Diagnostic ID: SPF-/)
+  assert.equal(form.wrapper.success.legacySuccessMessage.getAttribute('data-project-diagnostic-copy'), '')
   assert.equal(document.event.type, 'starters:project-created')
   assert.equal(document.event.detail.project_id, 669)
   assert.equal(document.event.detail.replayed, false)
@@ -1261,7 +1288,7 @@ test('does not promise PandaDoc generation or email for an own-contract project'
 
   assert.equal(await api.submit(form, window, document), true)
   assert.equal(form.wrapper.success.successTitle.textContent, 'Project successfully created')
-  assert.equal(form.wrapper.success.successMessage.textContent, 'You can manage this project from your dashboard.')
+  assert.match(form.wrapper.success.successMessage.textContent, /^You can manage this project from your dashboard\. Diagnostic ID: SPF-/)
 })
 
 test('uses the authored external Starter identity and internal retry state without new inputs', async () => {
@@ -1516,6 +1543,111 @@ test('projects safe authorization errors without exposing raw server messages', 
   assert.equal(form.getAttribute('data-project-form-status'), 'error')
   assert.match(form.error.textContent, /Brand account/)
   assert.doesNotMatch(form.error.textContent, /raw server detail/)
+})
+
+test('publishes a copyable privacy-safe diagnostic receipt after success', async () => {
+  const form = projectForm()
+  form.wrapper = new Element()
+  form.wrapper.success = new Element()
+  form.wrapper.success.successTitle = new Element()
+  form.wrapper.success.successMessage = new Element()
+  const loaded = load({ form })
+
+  assert.equal(await loaded.api.submit(form, loaded.window, loaded.document), true)
+
+  const receipt = loaded.window.StartersProjectDiagnostics.getLast()
+  assert.equal(receipt.schema, 'project_form_diagnostic_v1')
+  assert.match(receipt.diagnostic_id, /^SPF-\d{8}-UUID123$/)
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.stage, 'complete')
+  assert.equal(receipt.controller_version, '1.59.190')
+  assert.equal(receipt.environment, 'thestarters.com')
+  assert.equal(receipt.request_started, true)
+  assert.equal(receipt.contract_type, 'standard')
+  assert.equal(receipt.engagement_type, 'weekly')
+  assert.equal(receipt.invoice_frequency, 'weekly')
+  assert.equal(receipt.project_id, 669)
+  assert.equal(receipt.replayed, false)
+  assert.equal(loaded.trackCalls.some((entry) => entry.name === 'project_form_submit_started'), true)
+  assert.equal(loaded.trackCalls.some((entry) => entry.name === 'project_form_submit_succeeded'), true)
+  assert.equal(loaded.consoleLogs.length, 2)
+  assert.equal(loaded.storage.size, 1)
+
+  const formatted = loaded.window.StartersProjectDiagnostics.formatLast()
+  assert.match(formatted, /Result: success/)
+  assert.match(formatted, /Project ID: 669/)
+  assert.doesNotMatch(formatted, /Build and optimize/)
+  assert.doesNotMatch(formatted, /mem_starter_123/)
+  assert.doesNotMatch(formatted, /direct-hire-ui/)
+
+  assert.equal(await loaded.window.StartersProjectDiagnostics.copyLast(), true)
+  assert.deepEqual(loaded.clipboardWrites, [formatted])
+})
+
+test('records a safe request failure without raw server data or form content', async () => {
+  const loaded = load({ reject: 403 })
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+
+  const receipt = loaded.window.StartersProjectDiagnostics.getLast()
+  assert.equal(receipt.result, 'error')
+  assert.equal(receipt.stage, 'request')
+  assert.equal(receipt.error_code, 'HTTP_403')
+  assert.equal(receipt.http_status, 403)
+  assert.equal(receipt.request_started, true)
+  assert.equal(receipt.project_id, null)
+  const formatted = loaded.window.StartersProjectDiagnostics.formatLast()
+  assert.doesNotMatch(formatted, /raw server detail/)
+  assert.doesNotMatch(formatted, /Build and optimize/)
+  assert.doesNotMatch(formatted, /mem_starter_123/)
+  assert.match(loaded.form.error.textContent, /Diagnostic ID: SPF-/)
+  assert.equal(loaded.form.error.getAttribute('data-project-diagnostic-copy'), '')
+  assert.equal(loaded.trackCalls.some((entry) => entry.name === 'project_form_submit_failed'), true)
+})
+
+test('records browser validation without issuing a project request', async () => {
+  const form = projectForm()
+  form.valid = false
+  const loaded = load({ form })
+
+  assert.equal(await loaded.api.submit(form, loaded.window, loaded.document), false)
+  assert.equal(loaded.calls.length, 0)
+  const receipt = loaded.window.StartersProjectDiagnostics.getLast()
+  assert.equal(receipt.result, 'error')
+  assert.equal(receipt.stage, 'validation')
+  assert.equal(receipt.error_code, 'BROWSER_VALIDATION_FAILED')
+  assert.equal(receipt.request_started, false)
+  assert.match(form.error.textContent, /Diagnostic ID: SPF-/)
+  assert.equal(form.error.getAttribute('data-project-diagnostic-copy'), '')
+  assert.equal(loaded.trackCalls.some((entry) => entry.name === 'project_form_validation_failed'), true)
+})
+
+test('copies the current diagnostic from the authored message click and keyboard action', async () => {
+  const loaded = load({ reject: 422 })
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  const formatted = loaded.window.StartersProjectDiagnostics.formatLast()
+
+  loaded.form.error.form = loaded.form
+  loaded.document.listeners.click.handler({ target: loaded.form.error })
+  await Promise.resolve()
+  assert.deepEqual(loaded.clipboardWrites, [formatted])
+
+  let prevented = false
+  loaded.document.listeners.keydown.handler({
+    target: loaded.form.error,
+    key: 'Enter',
+    preventDefault() { prevented = true },
+  })
+  await Promise.resolve()
+  assert.equal(prevented, true)
+  assert.deepEqual(loaded.clipboardWrites, [formatted, formatted])
+})
+
+test('diagnostics degrade safely when storage or clipboard is unavailable', async () => {
+  const loaded = load({ reject: 500, storageThrows: true, noClipboard: true })
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(loaded.window.StartersProjectDiagnostics.getLast().error_code, 'HTTP_500')
+  assert.equal(await loaded.window.StartersProjectDiagnostics.copyLast(), false)
 })
 
 test('locks fields in flight and retains the retry key after a lost response', async () => {

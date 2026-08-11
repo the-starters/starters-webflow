@@ -317,6 +317,32 @@ Brand's chosen date.
 - Success dispatches `starters:project-created` with only `project_id` and
   `replayed`.
 
+### Support diagnostic receipts
+
+Every form open, validation failure, submit start, request failure, and accepted
+project writes an allowlisted `project_form_diagnostic_v1` receipt. Error and
+success messages show its `SPF-...` diagnostic ID; clicking that existing
+authored message copies the full receipt. The console fallback is
+`copyProjectDiagnostic()`. The latest receipt is also retained in
+`sessionStorage` for the current tab.
+
+Receipts contain only the diagnostic ID, UTC time, controller version, host,
+workflow stage, safe error code or HTTP status, duration, request-attempted
+flag, contract/fee/invoice identifiers, and the accepted project ID/replay flag.
+They never contain names, emails, Memberstack IDs, project scope, prices, dates,
+tokens, authorization headers, idempotency keys, or raw request/response bodies.
+
+The same allowlisted properties are emitted through `StartersTrack` as:
+
+- `project_form_opened`
+- `project_form_validation_failed`
+- `project_form_submit_started`
+- `project_form_submit_succeeded`
+- `project_form_submit_failed`
+
+These browser events help support correlate Kaeser's receipt with the form
+stage. Xano remains canonical for successful projects and lifecycle state.
+
 ## Loader
 
 Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
