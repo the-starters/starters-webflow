@@ -79,7 +79,12 @@ async function waitFor(predicate) {
     assert.fail('controller did not reach the expected observable state')
 }
 
-async function runController({ storage, enrollmentResponses, waitUntil }) {
+async function runController({
+    storage,
+    enrollmentResponses,
+    waitUntil,
+    tradeTokenResponse = { authToken: 'xano-token' },
+}) {
     const documentListeners = new Map()
     const fetchCalls = []
     const memberJsonWrites = []
@@ -129,7 +134,7 @@ async function runController({ storage, enrollmentResponses, waitUntil }) {
     const fetch = async (url, options = {}) => {
         fetchCalls.push({ url: String(url), options })
         if (String(url).includes('/auth/trade-token/v3')) {
-            return response({ data: { authToken: 'xano-token' } })
+            return response({ data: tradeTokenResponse })
         }
         return enrollmentResponses.shift() || response({
             data: { ok: true, status: 'accepted', replayed: false },
@@ -216,6 +221,28 @@ test('completed quiz posts current matches with safe email properties', async ()
         'https://thestarters.com/learn?source=quiz-results-email',
     )
 })
+
+for (const [label, tradeTokenResponse] of [
+    ['raw string', 'xano-token'],
+    ['token property', { token: 'xano-token' }],
+]) {
+    test(`completed quiz accepts a ${label} trade-token response`, async () => {
+        const storage = createStorage(
+            completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' }),
+        )
+        const harness = await runController({
+            storage,
+            enrollmentResponses: [],
+            tradeTokenResponse,
+            waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+        })
+
+        assert.equal(
+            enrollmentCalls(harness.fetchCalls)[0].options.headers.Authorization,
+            'Bearer xano-token',
+        )
+    })
+}
 
 test('failed enrollment is replayed from the saved quiz on refresh', async () => {
     const storage = createStorage(completedQuiz())
