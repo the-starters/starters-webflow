@@ -298,6 +298,13 @@ async function harness(opts = {}) {
         msWrapper.append(closeEl)
         sheetEl.append(msWrapper)
       } else {
+        if (closeMode === 'visible-plus-backdrop') {
+          // Jerico's actual staging markup, 2026-08-11: the hook on the backdrop
+          // AND on a real button. The backdrop is authored FIRST, so anything
+          // taking the first match finds the element it must not use.
+          backdropEl.setAttribute('data-learn-gate-close-button', '')
+          backdropEl.computed = { display: 'block', visibility: 'visible', opacity: '1' }
+        }
         sheetEl.append(closeEl)
       }
     }
@@ -1208,4 +1215,44 @@ test('the close hook is a standalone attribute, not a role value', async () => {
   // could never be added to a node that already has a role.
   assert.match(source, /var CLOSE_SELECTOR = '\[data-learn-gate-close-button\]'/)
   assert.doesNotMatch(source, /CLOSE_SELECTOR = '\[data-learn-gate-element="close"\]'/)
+})
+
+test('the hook on the backdrop does not hide a real close button behind it', async () => {
+  // Regression, staging 2026-08-11. The hook was authored on the backdrop AND on
+  // a real button. The backdrop comes first in DOM order, so first-match found
+  // the one element that can never gate anything, discarded it, and the gate
+  // refused to close for a member looking straight at a close button.
+  const h = await harness({
+    chars: 6000,
+    close: 'visible-plus-backdrop',
+    hostname: 'the-starters-3-0.webflow.io',
+  })
+  h.fireObserver()
+
+  assert.equal(
+    h.backdropEl.getAttribute('data-learn-gate-close-button'),
+    '',
+    'the backdrop really does carry the hook too'
+  )
+  assert.equal(h.api.status().dismissible, true, 'the real button must still win')
+  assert.deepEqual(h.closeEl.listenerTypes, ['click'])
+  assert.deepEqual(h.backdropEl.listenerTypes, ['click'], 'backdrop-click still works')
+  assert.ok(
+    h.logs.info.some((m) => /backdrop is redundant/.test(m)),
+    'and it should say the backdrop hook is redundant, not warn as if broken'
+  )
+
+  h.clickClose()
+  assert.equal(h.api.status().dismissed, true)
+  assert.equal(h.api.status().dismissedVia, 'close')
+  assert.equal(h.body.style.overflow, '')
+})
+
+test('backdrop-click closes when the backdrop also carries the hook', async () => {
+  const h = await harness({ chars: 6000, close: 'visible-plus-backdrop' })
+  h.fireObserver()
+  h.clickBackdrop()
+
+  assert.equal(h.api.status().dismissed, true)
+  assert.equal(h.api.status().dismissedVia, 'backdrop')
 })
