@@ -22,7 +22,7 @@ class Target {
   }
 }
 
-function createEnvironment(fetchImpl) {
+function createEnvironment(fetchImpl, { browserGlobal = false } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
   const memberAuthUpdates = []
@@ -111,7 +111,7 @@ function createEnvironment(fetchImpl) {
     FinsweetAttributes: [],
   }
 
-  const context = vm.createContext({
+  const sandbox = {
     window,
     document,
     fetch: fetchImpl,
@@ -122,7 +122,12 @@ function createEnvironment(fetchImpl) {
     Date,
     setInterval: () => 1,
     clearInterval() {},
-  })
+  }
+  if (browserGlobal) {
+    Object.assign(window, sandbox)
+    window.window = window
+  }
+  const context = vm.createContext(browserGlobal ? window : sandbox)
   new vm.Script(source, { filename: 'starter-edit-profile.js' }).runInContext(context)
   domReady[0]()
 
@@ -189,7 +194,19 @@ async function testRejectedFetch() {
   assert.equal(environment.button.style.opacity, '')
 }
 
-Promise.all([testSuccess(), testNon2xx(), testRejectedFetch()])
+async function testBrowserGlobalDoesNotRecurse() {
+  const environment = createEnvironment(async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ message: 'failed' }),
+  }), { browserGlobal: true })
+
+  await submit(environment)
+
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+}
+
+Promise.all([testSuccess(), testNon2xx(), testRejectedFetch(), testBrowserGlobalDoesNotRecurse()])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {
     console.error(error)

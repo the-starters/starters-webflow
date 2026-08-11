@@ -5,6 +5,7 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  */
 
+(() => {
 const qs = (selector, scope = document) => (scope || document).querySelector(selector);
 const qsa = (selector, scope = document) => Array.from((scope || document).querySelectorAll(selector));
 
@@ -1139,3 +1140,4 @@ document.addEventListener('DOMContentLoaded', () => {
 			});
 		}
 	});
+})();
