@@ -2356,8 +2356,9 @@ Airtable/Webflow-CMS display chain with an immediate read of the
 Stripe-authoritative V3 Xano mirror. The same module handles the
 `/stripe-connect-callback` OAuth return. Every Xano call is Bearer-authenticated:
 the module trades the active Memberstack session for a Xano token through
-`api:g1vmSLWh/auth/trade-token/v3` and the `status/v3`, `start/v3`, and
-`oauth_exchange/v3` endpoints derive the member identity from that token
+`api:g1vmSLWh/auth/trade-token/v3` and the `status/v3`, `start/v3`,
+`dashboard/v3`, `disconnect/v3`, and `oauth_exchange/v3` endpoints derive the
+member identity from that token
 (`auth = user_v3`). It never sends a client-supplied `member_id`, so a forged
 request cannot read or link another member's Stripe account.
 
@@ -2381,7 +2382,10 @@ root, use these values:
 
 Give every Connect or Complete setup control
 `data-stripe-connect-action="start"`. An optional retry control can use
-`data-stripe-connect-action="refresh"`. The hero has two authored Earnings
+`data-stripe-connect-action="refresh"`. The connected-state disconnect control
+uses `data-stripe-connect-action="disconnect"`; the controller asks for an
+explicit browser confirmation before it sends the authenticated disconnect.
+The hero has two authored Earnings
 tiles, both with `data-stripe-connect-action="earnings"`: mark the Connect
 Stripe tile with `data-stripe-connect-earnings-state="disconnected"` and the
 Payment history and payouts tile with
@@ -2389,8 +2393,11 @@ Payment history and payouts tile with
 tile after the authenticated status read. A disconnected or incomplete account
 gets the enabled Connect Stripe tile, which starts the same guarded
 OAuth/onboarding flow as the action-list CTA. A status with
-`charges_enabled:true` gets the enabled Payment history and payouts tile,
-pointed to `https://dashboard.stripe.com/`. During loading, review, error, or
+`charges_enabled:true` gets the enabled Payment history and payouts tile. That
+tile requests a provider-verified account destination from `dashboard/v3`:
+Express accounts receive a single-use login link, while Standard/full accounts
+receive an account-scoped `/b/<account>` Dashboard URL. The generic Stripe
+Dashboard URL is never used. During loading, review, error, or
 session-failure states both tiles stay hidden so stale state is never shown. For
 the original live markup, where both tiles predate the explicit state attribute,
 the controller preserves the authored two-tile order (Connect first, Payment
@@ -2400,10 +2407,9 @@ Standard account. Both actions work on either a native anchor or an authored
 non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
 `role="button"` with `tabindex="0"` and activates from both click and Enter/Space
 so keyboard users can reach its action. Connect Stripe, Complete setup, and
-Payment history and payouts all open in a new tab. Native earnings anchors keep
-`target="_blank"` with `rel="noopener noreferrer"` as authored-link safeguards,
-but the controller prevents their native navigation because Webflow handlers can
-otherwise replace the dashboard tab. Both anchors and non-anchor actions reserve
+Payment history and payouts all open in a new tab. The controller prevents
+native earnings navigation because Webflow handlers can otherwise replace the
+dashboard tab. Both anchors and non-anchor actions reserve
 and navigate a detached-opener tab directly from the activating click or key
 event; a blocked popup or a tab whose opener cannot be detached stays
 fail-closed and never navigates the dashboard.
@@ -2429,8 +2435,9 @@ browser exposes none of the return-watcher APIs, the controller releases the
 pending state and guard after the successful tab navigation.
 
 A single in-flight guard is shared
-across every start and refresh control in the dashboard, so a second click on
-any control is ignored while a start or status request is resolving. Start
+across every start, refresh, Earnings, and disconnect control in the dashboard,
+so a second click on any control is ignored while an authenticated action is
+resolving. Start
 posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
 URL built against the exact V3 callback instead of falling back to its legacy
@@ -2443,13 +2450,18 @@ navigating the reserved tab. Exact backend replays with `mode="connected"` or
 close the reserved tab and refresh canonical status instead of displaying a
 false invalid-URL error.
 
-The dashboard calls `status/v3` immediately. `connected:false` selects
+The dashboard calls provider-aware `status/v3` immediately. It repairs a
+readiness mismatch and clears a stale projection only when Stripe returns a
+definitive disconnect; ambiguous provider errors show the authored unavailable
+state without changing Xano. `connected:false` selects
 `disconnected`; `connected:true` with `charges_enabled:false` selects
 `incomplete`; and `charges_enabled:true` selects `ready`. After either the
 OAuth callback or Stripe-hosted onboarding returns, the controller polls the
-status briefly to absorb webhook timing. If the flag is still false, it selects
-the authored `review` state instead of painting a false success or falling back
-to the old nightly batch state.
+status briefly to absorb webhook timing. If the provider account remains
+connected but the readiness flag is still false, it selects the authored
+`review` state instead of painting a false success. A provider-disconnected
+account always returns to `disconnected`, even when a stale return marker is
+present.
 
 The production callback reads `code` and the backend-issued opaque `state`,
 removes OAuth parameters from the visible URL before network work, resolves the
@@ -2466,7 +2478,8 @@ safe recovery.
 
 Each root reflects the selected state in `data-stripe-connect-status` and
 `data-stripe-connect-view`. The module also emits
-`starterStripeConnectReady`, `starterStripeConnectRedirect`, and
+`starterStripeConnectReady`, `starterStripeConnectRedirect`,
+`starterStripeConnectDashboard`, `starterStripeConnectDisconnected`, and
 `starterStripeConnectError` events. `starterStripeConnectRedirect` is
 diagnostics only, but `starterStripeConnectReady` and
 `starterStripeConnectError` are load-bearing: the

@@ -11,7 +11,7 @@
  * Designer wiring:
  *   data-stripe-connect-element="root|loading|disconnected|incomplete|
  *   ready|review|error"
- *   data-stripe-connect-action="start|refresh|earnings"
+ *   data-stripe-connect-action="start|refresh|earnings|disconnect"
  *   data-stripe-connect-earnings-state="disconnected|ready"
  */
 ;(function (global) {
@@ -29,12 +29,13 @@
   const TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   const STATUS_PATH = '/stripe_connect/status/v3'
   const START_PATH = '/stripe_connect/start/v3'
+  const DASHBOARD_ACCESS_PATH = '/stripe_connect/dashboard/v3'
+  const DISCONNECT_PATH = '/stripe_connect/disconnect/v3'
   const EXCHANGE_PATH = '/stripe_connect/oauth_exchange/v3'
   const SANDBOX_START_PATH = '/stripe_connect/sandbox/start/v3'
   const SANDBOX_EXCHANGE_PATH = '/stripe_connect/sandbox/oauth_exchange/v3'
   const SANDBOX_STATE_PREFIX = 'sandbox:'
   const SANDBOX_HOST = 'the-starters-3-0.webflow.io'
-  const STRIPE_DASHBOARD_URL = 'https://dashboard.stripe.com/'
   const RETURN_CHANNEL_NAME = 'starters-stripe-connect-return'
   const DASHBOARD_PATH = '/starter-dashboard'
   const CALLBACK_PATH = '/stripe-connect-callback'
@@ -81,10 +82,10 @@
 
   function resolveDashboardView(status, returnedFromStripe) {
     if (!status || typeof status !== 'object') return 'error'
+    if (status.connected !== true) return 'disconnected'
     if (status.charges_enabled === true) return 'ready'
     if (returnedFromStripe) return 'review'
-    if (status.connected === true) return 'incomplete'
-    return 'disconnected'
+    return 'incomplete'
   }
 
   function wait(ms) {
@@ -302,6 +303,20 @@
     return post(sandbox ? SANDBOX_START_PATH : START_PATH, payload)
   }
 
+  function dashboardAccess(idempotencyKey) {
+    if (!idempotencyKey || idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+      throw new Error('Stripe Dashboard idempotency key is invalid')
+    }
+    return post(DASHBOARD_ACCESS_PATH, { idempotency_key: idempotencyKey })
+  }
+
+  function disconnectConnect(idempotencyKey) {
+    if (!idempotencyKey || idempotencyKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+      throw new Error('Stripe disconnect idempotency key is invalid')
+    }
+    return post(DISCONNECT_PATH, { idempotency_key: idempotencyKey })
+  }
+
   function exchangeCode(code, state, sandbox) {
     const payload = sandbox ? { code } : { code, state }
     return post(sandbox ? SANDBOX_EXCHANGE_PATH : EXCHANGE_PATH, payload, false)
@@ -335,6 +350,22 @@
     try {
       const url = new URL(value)
       return url.protocol === 'https:' && url.hostname === 'connect.stripe.com'
+    } catch (error) {
+      return false
+    }
+  }
+
+  function isStripeDashboardUrl(value) {
+    try {
+      const url = new URL(value)
+      if (url.protocol !== 'https:') return false
+      if (url.hostname === 'connect.stripe.com') {
+        return /^\/express\/acct_[A-Za-z0-9]+\//.test(url.pathname)
+      }
+      if (url.hostname === 'dashboard.stripe.com') {
+        return /^\/b\/acct_[A-Za-z0-9]+\/?$/.test(url.pathname)
+      }
+      return false
     } catch (error) {
       return false
     }
@@ -409,9 +440,9 @@
 
       if (enabled) {
         if (element.tagName === 'A') {
-          element.setAttribute('href', STRIPE_DASHBOARD_URL)
-          element.setAttribute('target', '_blank')
-          element.setAttribute('rel', 'noopener noreferrer')
+          element.setAttribute('href', '#')
+          element.removeAttribute('target')
+          element.removeAttribute('rel')
           element.removeAttribute('tabindex')
         } else {
           element.setAttribute('role', 'button')
@@ -645,7 +676,7 @@
     }
   }
 
-  function handleEarningsClick(element, event) {
+  function handleEarningsClick(element, event, activate) {
     if (element.getAttribute('aria-disabled') === 'true') {
       event.preventDefault()
       return false
@@ -655,20 +686,123 @@
     // anchor behavior can replace the dashboard. Reserving the tab directly
     // keeps anchor and div tiles on the same proven path.
     event.preventDefault()
-    const stripeTab = reserveStripeTab()
-    if (!navigateStripeTab(stripeTab, STRIPE_DASHBOARD_URL)) {
-      closeStripeTab(stripeTab)
-      return false
-    }
+    activate()
     return true
   }
 
-  function handleEarningsKeydown(element, event) {
+  function handleEarningsKeydown(element, event, activate) {
     if (element.tagName === 'A') return false
     if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'Spacebar') {
       return false
     }
-    return handleEarningsClick(element, event)
+    return handleEarningsClick(element, event, activate)
+  }
+
+  function openDashboardInNewTab(
+    runExclusive,
+    button,
+    roots,
+    memberId,
+    earningsTiles = resolveEarningsTiles([]),
+  ) {
+    return runExclusive(async function () {
+      const stripeTab = reserveStripeTab()
+      if (!stripeTab) {
+        renderRoots(roots, 'error')
+        emit('starterStripeConnectError', {
+          action: 'dashboard',
+          message: 'Browser blocked the Stripe Dashboard tab',
+        })
+        return false
+      }
+
+      setActionPending(button, true)
+      try {
+        const activeMemberId = await currentMemberId()
+        if (activeMemberId !== memberId) {
+          throw new Error('Member session changed before Stripe Dashboard access')
+        }
+        const result = await dashboardAccess(
+          createAttemptKey('connect-dashboard'),
+        )
+        if (result.mode === 'disconnected' && result.connected === false) {
+          closeStripeTab(stripeTab)
+          await loadDashboardStatus(roots, false, earningsTiles)
+          return false
+        }
+        if (!isStripeDashboardUrl(result.url)) {
+          throw new Error('Stripe Dashboard access returned an invalid URL')
+        }
+        if (!navigateStripeTab(stripeTab, result.url)) {
+          throw new Error('Unable to open the connected Stripe account')
+        }
+        emit('starterStripeConnectDashboard', { mode: result.mode || '' })
+        return true
+      } catch (error) {
+        closeStripeTab(stripeTab)
+        renderRoots(roots, 'error')
+        emit('starterStripeConnectError', {
+          action: 'dashboard',
+          message: error.message || 'Stripe Dashboard access failed',
+        })
+        global.console.error(
+          '[starter-dashboard] Unable to open the connected Stripe account',
+          error,
+        )
+        return false
+      } finally {
+        setActionPending(button, false)
+      }
+    })
+  }
+
+  function confirmDisconnect() {
+    return (
+      typeof global.confirm === 'function' &&
+      global.confirm(
+        'Disconnect Stripe from The Starters? Paid consulting calls will be disabled until you reconnect.',
+      )
+    )
+  }
+
+  function handleDisconnect(
+    runExclusive,
+    button,
+    roots,
+    earningsTiles,
+  ) {
+    if (!confirmDisconnect()) return Promise.resolve(false)
+    return runExclusive(async function () {
+      setActionPending(button, true)
+      try {
+        const result = await disconnectConnect(
+          createAttemptKey('connect-disconnect'),
+        )
+        if (result.connected !== false) {
+          throw new Error('Stripe disconnect returned an invalid result')
+        }
+        await loadDashboardStatus(roots, false, earningsTiles)
+        emit('starterStripeConnectDisconnected', {
+          providerAction: result.provider_action || '',
+          replayed: result.replayed === true,
+        })
+        return true
+      } catch (error) {
+        renderRoots(roots, 'error')
+        renderEarningsTiles(earningsTiles, 'error')
+        emit('starterStripeConnectError', {
+          action: 'disconnect',
+          message: error.message || 'Stripe disconnect failed',
+        })
+        global.console.error(
+          '[starter-dashboard] Unable to disconnect Stripe',
+          error,
+        )
+        return false
+      } finally {
+        setActionPending(button, false)
+      }
+    })
   }
 
   function returnMarker() {
@@ -922,10 +1056,26 @@
       if (earningsTiles.ready) {
         const link = earningsTiles.ready
         link.addEventListener('click', function (event) {
-          handleEarningsClick(link, event)
+          handleEarningsClick(link, event, function () {
+            openDashboardInNewTab(
+              runExclusive,
+              link,
+              roots,
+              memberId,
+              earningsTiles,
+            )
+          })
         })
         link.addEventListener('keydown', function (event) {
-          handleEarningsKeydown(link, event)
+          handleEarningsKeydown(link, event, function () {
+            openDashboardInNewTab(
+              runExclusive,
+              link,
+              roots,
+              memberId,
+              earningsTiles,
+            )
+          })
         })
       }
       if (earningsTiles.disconnected) {
@@ -976,6 +1126,17 @@
             runExclusive(function () {
               return loadDashboardStatus(roots, false, earningsTiles)
             })
+          })
+        })
+        root.querySelectorAll(actionSelector('disconnect')).forEach(function (button) {
+          button.addEventListener('click', function (event) {
+            event.preventDefault()
+            handleDisconnect(
+              runExclusive,
+              button,
+              roots,
+              earningsTiles,
+            )
           })
         })
       })
@@ -1067,32 +1228,39 @@
 
   const testApi = {
     CALLBACK_PATH,
+    DASHBOARD_ACCESS_PATH,
     DASHBOARD_PATH,
+    DISCONNECT_PATH,
     EXCHANGE_PATH,
     SANDBOX_EXCHANGE_PATH,
     SANDBOX_START_PATH,
     START_PATH,
     STATUS_PATH,
-    STRIPE_DASHBOARD_URL,
     __resetXanoToken: function () {
       xanoTokenPromise = null
     },
     __resetConnectStartAttempt: clearConnectStartAttemptKey,
     callbackParams,
+    confirmDisconnect,
     createExclusiveRunner,
     createAttemptKey,
     currentConnectStartAttemptKey,
     currentMemberId,
+    dashboardAccess,
+    disconnectConnect,
     exchangeCode,
     fetchStatus,
     handleConnectClick,
     handleConnectKeydown,
+    handleDisconnect,
     handleEarningsClick,
     handleEarningsKeydown,
     handleStart,
     navigateStripeTab,
+    openDashboardInNewTab,
     reserveStripeTab,
     initialMemberId,
+    isStripeDashboardUrl,
     isStripeUrl,
     loadDashboardStatus,
     mountCallback,
