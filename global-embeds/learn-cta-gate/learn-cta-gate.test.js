@@ -221,6 +221,8 @@ function createTreeWalker(root, whatToShow, filter) {
  *        'wrapped-hidden' puts the control inside a display:none DIV and leaves
  *        the control itself displayed — what you get when the Designer hangs
  *        data-ms-content on a wrapper rather than on the button.
+ *        'on-backdrop' drops the hook onto the backdrop itself, which the script
+ *        must refuse: the backdrop is displayed for every reader.
  * @param {string}  [opts.display]        computed display of the wrapper
  * @param {Record<string,string>} [opts.attrs] extra attributes on the wrapper
  * @param {boolean} [opts.gsap]           expose a gsap stub (default true)
@@ -275,13 +277,19 @@ async function harness(opts = {}) {
       class: 'learn-cta-gate_contents',
     })
     if (closeMode) {
-      closeEl = new Element('button', { 'data-learn-gate-element': 'close' })
+      closeEl = new Element('button', { 'data-learn-gate-close-button': '' })
       closeEl.computed = {
         display: closeMode === 'hidden' ? 'none' : 'block',
         visibility: 'visible',
         opacity: '1',
       }
-      if (closeMode === 'wrapped-hidden') {
+      if (closeMode === 'on-backdrop') {
+        // The authoring mistake the script refuses: the hook dropped straight
+        // onto the backdrop, which is displayed for every reader.
+        closeEl = backdropEl
+        closeEl.setAttribute('data-learn-gate-close-button', '')
+        closeEl.computed = { display: 'block', visibility: 'visible', opacity: '1' }
+      } else if (closeMode === 'wrapped-hidden') {
         // The control reports its own display, exactly as a real browser does
         // for a descendant of a display:none subtree — only the WRAPPER says
         // 'none'. Anything checking the button alone is fooled here.
@@ -1165,4 +1173,39 @@ test('the dismissed window event mirrors the shown event fields', async () => {
   assert.equal(dismissed.detail.chars, shown.detail.chars)
   assert.equal(dismissed.detail.threshold, shown.detail.threshold)
   assert.equal(dismissed.detail.via, 'close')
+})
+
+test('the backdrop is refused as a close control', async () => {
+  // Dropping the hook on the backdrop is an easy authoring mistake and a total
+  // paywall bypass: the backdrop shows for every reader, so accepting it would
+  // resolve dismissible true for a logged-out one. Refused, not just documented.
+  const h = await harness({
+    chars: 6000,
+    close: 'on-backdrop',
+    hostname: 'the-starters-3-0.webflow.io',
+  })
+  h.fireObserver()
+
+  assert.equal(
+    h.backdropEl.getAttribute('data-learn-gate-close-button'),
+    '',
+    'the hook really is on the backdrop'
+  )
+  assert.equal(h.api.status().dismissible, false, 'and it must still be refused')
+  assert.deepEqual(h.backdropEl.listenerTypes, [], 'nothing bound to it either')
+  assert.ok(
+    h.logs.warn.some((m) => /backdrop cannot be the close control/.test(m)),
+    'and it must say so loudly, not fail silently'
+  )
+
+  h.clickBackdrop()
+  assert.equal(h.api.status().dismissed, false)
+  assert.equal(h.body.style.overflow, 'hidden', 'the paywall holds')
+})
+
+test('the close hook is a standalone attribute, not a role value', async () => {
+  // An element carries only one data-learn-gate-element, so a fourth role value
+  // could never be added to a node that already has a role.
+  assert.match(source, /var CLOSE_SELECTOR = '\[data-learn-gate-close-button\]'/)
+  assert.doesNotMatch(source, /CLOSE_SELECTOR = '\[data-learn-gate-element="close"\]'/)
 })
