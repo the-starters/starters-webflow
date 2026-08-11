@@ -2,7 +2,7 @@
  * Learn CTA gate — open the sign-up gate once the reader has read enough of a
  * Learn article, or after a short wait on articles too short to scroll.
  *
- * @release v1.59.181
+ * @release v1.59.182
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * article template's before-</body> code. Pair it with learn-cta-gate.css in
@@ -21,7 +21,12 @@
  *                                         display:flex, column, justify-end
  *   [data-learn-gate-element="backdrop"]  learn-cta-gate_backdrop, absolute inset 0
  *   [data-learn-gate-element="content"]   learn-cta-gate_contents, the sheet
- *   [data-learn-gate-element="close"]     OPTIONAL. See DISMISSAL below.
+ *
+ * Plus one OPTIONAL hook that is deliberately NOT a `data-learn-gate-element`
+ * value: `[data-learn-gate-close-button]`, its own standalone attribute. An
+ * element can only carry one `data-learn-gate-element`, so a role value could
+ * never be added to a node that already has a role — and in Designer the close
+ * control is quite likely to be exactly such a node. See DISMISSAL below.
  *
  * WHO SEES IT — NOT THIS SCRIPT'S DECISION. The wrapper carries Memberstack's
  * `data-ms-content="!learn-access"`. Memberstack alone decides who is gated.
@@ -78,10 +83,19 @@
  * DISMISSAL — WHO MAY CLOSE IT IS ALSO NOT THIS SCRIPT'S DECISION. The gate is
  * a hard paywall unless Designer supplies a close control:
  *
- *   [data-learn-gate-element="close"], inside the wrapper, carrying its own
+ *   [data-learn-gate-close-button], inside the wrapper, carrying its own
  *   Memberstack `data-ms-content`. Memberstack decides who gets one. A logged-in
  *   non-paying member sees it and may dismiss; a logged-out reader gets no such
  *   element and the gate stays exactly as hard as it was before this existed.
+ *
+ * PUT IT ON SOMETHING MEMBERSTACK CAN HIDE, AND NEVER ON THE BACKDROP. The whole
+ * gate rests on `dismissible`, which asks whether the close control is displayed.
+ * The backdrop is part of the gate and shows for every reader, so marking the
+ * backdrop as the close control resolves `dismissible` true for logged-out
+ * readers and hands them the article. Hiding the backdrop from non-members to
+ * work around that would take the dimming with it. Backdrop-CLICK already
+ * dismisses (below) once a real close control exists somewhere else, which is
+ * what that itch usually is.
  *
  * The script reduces that to ONE boolean, `state.dismissible`, and every
  * dismissal path is gated on it. One value to reason about, one value to test.
@@ -156,13 +170,13 @@
   if (window.__startersLearnCtaGateBooted) return
   window.__startersLearnCtaGateBooted = true
 
-  var RELEASE = 'v1.59.181'
+  var RELEASE = 'v1.59.182'
   var LOG_PREFIX = '[learn-cta-gate]'
 
   var WRAPPER_SELECTOR = '[data-learn-gate-element="wrapper"]'
   var BACKDROP_SELECTOR = '[data-learn-gate-element="backdrop"]'
   var CONTENT_SELECTOR = '[data-learn-gate-element="content"]'
-  var CLOSE_SELECTOR = '[data-learn-gate-element="close"]'
+  var CLOSE_SELECTOR = '[data-learn-gate-close-button]'
   var DEFAULT_ARTICLE_SELECTOR = '.content_rte.w-richtext'
 
   var DEFAULT_CHARS = 2500
@@ -612,6 +626,18 @@
 
   function resolveDismissible() {
     closeEl = wrapper.querySelector(CLOSE_SELECTOR)
+
+    // The backdrop shows for EVERY reader, so accepting it as the close control
+    // would resolve `dismissible` true for a logged-out one and hand them the
+    // article. Refused rather than merely documented, because it is a silent,
+    // total paywall bypass and the attribute is easy to drop here by mistake.
+    // Backdrop-CLICK is already a dismissal path once a real close control
+    // exists elsewhere, which is what this authoring usually means to express.
+    if (closeEl && closeEl === backdrop) {
+      warn('the backdrop cannot be the close control — ignoring, gate stays hard')
+      closeEl = null
+    }
+
     state.dismissible = !!closeEl && isDisplayed(closeEl)
 
     if (closeEl && !state.dismissible) {
