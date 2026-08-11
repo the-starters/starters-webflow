@@ -2,7 +2,7 @@
  * Session video gate — the Learn Sessions hero player, with a free preview for
  * logged-out visitors and the signup wall after it.
  *
- * @release v1.59.179
+ * @release v1.59.180
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * Sessions template's before-</body> code. It REPLACES the template's inline
@@ -89,7 +89,7 @@
   if (window.__startersSessionVideoBooted) return
   window.__startersSessionVideoBooted = true
 
-  var RELEASE = 'v1.59.179'
+  var RELEASE = 'v1.59.180'
   var LIB_SRC = 'https://player.vimeo.com/api/player.js'
   var DEFAULT_CUT_SECONDS = 180
   var DEFAULT_BG_SECONDS = 20
