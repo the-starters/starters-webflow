@@ -296,6 +296,8 @@ posts the current result revision, up to three Starter records with first names
 only, and one current category-matched Learn record to the authenticated
 `quiz_email/enroll/v3` Xano endpoint. When no Learn record is available, it
 sends the safe `/learn` fallback instead of leaving the email empty.
+The Memberstack session exchange accepts every response shape used by the
+shared V3 trade-token endpoint: a raw string, `{authToken}`, or `{token}`.
 
 The browser retries a failed registration twice, then leaves the saved result
 available for a later page refresh. Xano owns recipient identity, suppression,
