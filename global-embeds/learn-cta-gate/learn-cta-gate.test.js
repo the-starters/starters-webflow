@@ -76,6 +76,7 @@ class Element extends Node {
     super(1)
     this.nodeName = nodeName.toUpperCase()
     this._attrs = new Map(Object.entries(attrs).map(([k, v]) => [k, String(v)]))
+    this._listeners = []
     this.style = makeStyle()
     /** what getComputedStyle reports; the embed reads display/visibility/opacity */
     this.computed = { display: 'flex', visibility: 'hidden', opacity: '0' }
@@ -126,6 +127,39 @@ class Element extends Node {
 
   querySelectorAll(sel) {
     return this.descendants().filter((n) => n.nodeType === 1 && matches(n, sel))
+  }
+
+  addEventListener(type, handler) {
+    this._listeners.push({ type, handler })
+  }
+
+  removeEventListener(type, handler) {
+    this._listeners = this._listeners.filter(
+      (l) => !(l.type === type && l.handler === handler)
+    )
+  }
+
+  /**
+   * Test helper. Bubbling is NOT simulated — pass `target` explicitly to model a
+   * click that originated on a descendant and reached this node's handler. That
+   * is exactly the case the backdrop's target check exists to reject, so making
+   * it an argument keeps the test honest about what it is proving.
+   */
+  fire(type, target) {
+    const event = { type, target: target || this, defaultPrevented: false }
+    event.preventDefault = () => {
+      event.defaultPrevented = true
+    }
+    this._listeners
+      .filter((l) => l.type === type)
+      .slice()
+      .forEach((l) => l.handler(event))
+    return event
+  }
+
+  /** which event types are currently bound here */
+  get listenerTypes() {
+    return this._listeners.map((l) => l.type)
   }
 }
 
@@ -179,6 +213,14 @@ function createTreeWalker(root, whatToShow, filter) {
  * @param {boolean} [opts.wrapper]        include the gate wrapper (default true)
  * @param {boolean} [opts.article]        include the article body (default true)
  * @param {boolean} [opts.backdrop]       include the backdrop (default true)
+ * @param {false|'visible'|'hidden'|'wrapped-hidden'} [opts.close] the optional
+ *        close control, built inside the sheet the way Designer would author it.
+ *        Default false = no close control at all = the hard gate this shipped
+ *        as. 'hidden' models the Memberstack variant that hides rather than
+ *        removes: the element IS in the DOM and querySelector WILL find it.
+ *        'wrapped-hidden' puts the control inside a display:none DIV and leaves
+ *        the control itself displayed — what you get when the Designer hangs
+ *        data-ms-content on a wrapper rather than on the button.
  * @param {string}  [opts.display]        computed display of the wrapper
  * @param {Record<string,string>} [opts.attrs] extra attributes on the wrapper
  * @param {boolean} [opts.gsap]           expose a gsap stub (default true)
@@ -197,6 +239,7 @@ async function harness(opts = {}) {
     wrapper: withWrapper = true,
     article: withArticle = true,
     backdrop: withBackdrop = true,
+    close: closeMode = false,
     display = 'flex',
     attrs = {},
     gsap: withGsap = true,
@@ -209,6 +252,9 @@ async function harness(opts = {}) {
   const root = new Element('html').append(body)
 
   let wrapperEl = null
+  let backdropEl = null
+  let sheetEl = null
+  let closeEl = null
   if (withWrapper) {
     wrapperEl = new Element('section', {
       'data-learn-gate-element': 'wrapper',
@@ -217,19 +263,37 @@ async function harness(opts = {}) {
     })
     wrapperEl.computed = { display, visibility: 'hidden', opacity: '0' }
     if (withBackdrop) {
-      wrapperEl.append(
-        new Element('div', {
-          'data-learn-gate-element': 'backdrop',
-          class: 'learn-cta-gate_backdrop',
-        })
-      )
-    }
-    wrapperEl.append(
-      new Element('div', {
-        'data-learn-gate-element': 'content',
-        class: 'learn-cta-gate_contents',
+      backdropEl = new Element('div', {
+        'data-learn-gate-element': 'backdrop',
+        class: 'learn-cta-gate_backdrop',
       })
-    )
+      wrapperEl.append(backdropEl)
+    }
+    // Sibling of the backdrop, not a child — the shipped Designer structure.
+    sheetEl = new Element('div', {
+      'data-learn-gate-element': 'content',
+      class: 'learn-cta-gate_contents',
+    })
+    if (closeMode) {
+      closeEl = new Element('button', { 'data-learn-gate-element': 'close' })
+      closeEl.computed = {
+        display: closeMode === 'hidden' ? 'none' : 'block',
+        visibility: 'visible',
+        opacity: '1',
+      }
+      if (closeMode === 'wrapped-hidden') {
+        // The control reports its own display, exactly as a real browser does
+        // for a descendant of a display:none subtree — only the WRAPPER says
+        // 'none'. Anything checking the button alone is fooled here.
+        const msWrapper = new Element('div', { 'data-ms-content': 'members' })
+        msWrapper.computed = { display: 'none', visibility: 'visible', opacity: '1' }
+        msWrapper.append(closeEl)
+        sheetEl.append(msWrapper)
+      } else {
+        sheetEl.append(closeEl)
+      }
+    }
+    wrapperEl.append(sheetEl)
     body.append(wrapperEl)
   }
 
@@ -251,6 +315,8 @@ async function harness(opts = {}) {
   const observers = []
   const captured = []
   const events = []
+  const timelines = []
+  const docListeners = []
   const logs = { warn: [], info: [] }
   const gsapCalls = []
 
@@ -262,13 +328,14 @@ async function harness(opts = {}) {
     createTreeWalker,
     querySelector: (s) => root.querySelector(s),
     querySelectorAll: (s) => root.querySelectorAll(s),
-    addEventListener: () => {},
+    addEventListener: (type, handler) => docListeners.push({ type, handler }),
   }
 
   function makeTimeline(config) {
     const tl = {
       config,
       played: false,
+      reversed: false,
       set: (...a) => (gsapCalls.push(['set', ...a]), tl),
       fromTo: (...a) => (gsapCalls.push(['fromTo', ...a]), tl),
       play: () => {
@@ -276,7 +343,12 @@ async function harness(opts = {}) {
         if (config && typeof config.onComplete === 'function') config.onComplete()
         return tl
       },
+      reverse: () => {
+        tl.reversed = true
+        return tl
+      },
     }
+    timelines.push(tl)
     return tl
   }
 
@@ -383,6 +455,28 @@ async function harness(opts = {}) {
     logs,
     gsapCalls,
     gsapSets,
+    backdropEl,
+    sheetEl,
+    closeEl,
+    timelines,
+    docListeners,
+    /** the timeline the embed actually built, or undefined without gsap */
+    timeline() {
+      return timelines[0]
+    },
+    clickClose() {
+      assert.ok(closeEl, 'harness built no close control')
+      return closeEl.fire('click')
+    },
+    clickBackdrop() {
+      assert.ok(backdropEl, 'harness built no backdrop')
+      return backdropEl.fire('click')
+    },
+    /** a click that started on the sheet and reached the backdrop's handler */
+    clickBackdropFromSheet() {
+      assert.ok(backdropEl && sheetEl, 'harness built no backdrop or sheet')
+      return backdropEl.fire('click', sheetEl)
+    },
     /** run the single armed timer */
     fireTimer() {
       const pending = timers.find((t) => !t.cleared)
@@ -845,4 +939,230 @@ test('production stays silent while staging talks', async () => {
     staging.logs.warn.some((m) => /no article matched/.test(m)),
     'staging must surface the authoring mistake'
   )
+})
+
+// ---------------------------------------------------------------------------
+// Dismissal
+//
+// `dismissible` is the security surface of this feature: it is the only thing
+// standing between a logged-out reader and a paywall they can click away. These
+// tests lean on it accordingly.
+// ---------------------------------------------------------------------------
+
+test('with no close control the gate is exactly as hard as it was', async () => {
+  const h = await harness({ chars: 6000 })
+  h.fireObserver()
+
+  assert.equal(h.api.status().dismissible, false)
+  assert.deepEqual(h.backdropEl.listenerTypes, [], 'the backdrop must not be clickable')
+  assert.equal(h.body.style.overflow, 'hidden', 'scroll stays locked')
+
+  h.clickBackdrop()
+  assert.equal(h.api.status().dismissed, false)
+  assert.equal(h.body.style.overflow, 'hidden')
+  assert.equal(h.timeline().reversed, false)
+})
+
+test('a close control Memberstack only HID does not make the gate dismissible', async () => {
+  // The trap this whole feature is shaped around: Memberstack removes some
+  // gated elements on this site and merely hides others. A hidden one is still
+  // in the DOM and querySelector still finds it.
+  const h = await harness({ chars: 6000, close: 'hidden' })
+  h.fireObserver()
+
+  assert.ok(h.closeEl, 'the element IS present — that is the point of this test')
+  assert.equal(h.api.status().dismissible, false, 'present, but hidden, must not count')
+  assert.deepEqual(h.closeEl.listenerTypes, [], 'no live handler on a hidden control')
+  assert.deepEqual(h.backdropEl.listenerTypes, [])
+
+  h.clickClose()
+  h.clickBackdrop()
+  assert.equal(h.api.status().dismissed, false, 'a hidden control cannot open the paywall')
+  assert.equal(h.body.style.overflow, 'hidden')
+})
+
+test('a visible close control arms both dismissal paths', async () => {
+  const h = await harness({ chars: 6000, close: 'visible' })
+  h.fireObserver()
+
+  assert.equal(h.api.status().dismissible, true)
+  assert.deepEqual(h.closeEl.listenerTypes, ['click'])
+  assert.deepEqual(h.backdropEl.listenerTypes, ['click'])
+})
+
+test('dismissible is false until the gate actually opens', async () => {
+  // Memberstack has not necessarily decided at boot, so nothing may claim to
+  // know the answer before reveal re-reads the DOM.
+  const h = await harness({ chars: 6000, close: 'visible' })
+  assert.equal(h.beforeMemberReady.dismissible, false)
+  assert.equal(h.api.status().dismissible, false, 'armed, but not yet revealed')
+
+  h.fireObserver()
+  assert.equal(h.api.status().dismissible, true)
+})
+
+test('clicking close unlocks the scroll immediately and reverses the timeline', async () => {
+  const h = await harness({ chars: 6000, close: 'visible' })
+  h.fireObserver()
+  assert.equal(h.body.style.overflow, 'hidden')
+
+  const event = h.clickClose()
+
+  assert.equal(h.body.style.overflow, '', 'restored to empty, not forced to visible')
+  assert.equal(h.timeline().reversed, true)
+  assert.equal(event.defaultPrevented, true, 'a close control may be an <a href="#">')
+  assert.equal(h.wrapperEl.style.pointerEvents, 'none', 'stops swallowing clicks mid-exit')
+  assert.equal(h.api.status().dismissed, true)
+  assert.equal(h.api.status().dismissedVia, 'close')
+})
+
+test('clicking the backdrop dismisses it', async () => {
+  const h = await harness({ chars: 6000, close: 'visible' })
+  h.fireObserver()
+  h.clickBackdrop()
+
+  assert.equal(h.api.status().dismissed, true)
+  assert.equal(h.api.status().dismissedVia, 'backdrop')
+  assert.equal(h.body.style.overflow, '')
+})
+
+test('a click that started on the sheet never dismisses the gate', async () => {
+  // Every click on the sign-up form inside the sheet would otherwise close the
+  // paywall on its way up the tree.
+  const h = await harness({ chars: 6000, close: 'visible' })
+  h.fireObserver()
+  h.clickBackdropFromSheet()
+
+  assert.equal(h.api.status().dismissed, false)
+  assert.equal(h.body.style.overflow, 'hidden')
+  assert.equal(h.timeline().reversed, false)
+})
+
+test('Escape is not wired at all, on any gate', async () => {
+  // Product decision, not an oversight. Asserted as an absence so that adding a
+  // keydown listener has to come with a deliberate change to this test.
+  const hard = await harness({ chars: 6000 })
+  const soft = await harness({ chars: 6000, close: 'visible' })
+  soft.fireObserver()
+
+  assert.equal(hard.docListeners.filter((l) => l.type === 'keydown').length, 0)
+  assert.equal(soft.docListeners.filter((l) => l.type === 'keydown').length, 0)
+})
+
+test('a dismissed gate cannot be reopened on the same page', async () => {
+  const h = await harness({ chars: 6000, close: 'visible' })
+  h.fireObserver()
+  h.clickClose()
+
+  h.api.reveal()
+  assert.equal(h.api.status().dismissed, true, 'still closed')
+  assert.equal(h.body.style.overflow, '', 'and the scroll stayed unlocked')
+})
+
+test('dismissing twice fires one event and one capture', async () => {
+  const h = await harness({ chars: 6000, close: 'visible' })
+  h.fireObserver()
+  h.clickClose()
+  h.clickClose()
+  h.clickBackdrop()
+
+  assert.equal(h.captured.filter((c) => c.name === 'learn_gate_dismissed').length, 1)
+  assert.equal(h.events.filter((e) => e.type === 'learn-gate-dismissed').length, 1)
+})
+
+test('learn_gate_dismissed carries via alongside the shown fields', async () => {
+  const h = await harness({ chars: 6000, close: 'visible' })
+  h.fireObserver()
+  h.clickBackdrop()
+
+  const shown = h.captured.find((c) => c.name === 'learn_gate_shown')
+  const dismissed = h.captured.find((c) => c.name === 'learn_gate_dismissed')
+  assert.ok(dismissed, 'the dismissal must be measurable')
+  assert.equal(dismissed.props.via, 'backdrop')
+  assert.equal(dismissed.props.trigger, 'scroll')
+  assert.equal(dismissed.props.slug, shown.props.slug, 'joinable with the shown event')
+  assert.equal(dismissed.props.release, shown.props.release)
+
+  const event = h.events.find((e) => e.type === 'learn-gate-dismissed')
+  assert.equal(event.detail.via, 'backdrop')
+})
+
+test('without gsap the gate still closes, just instantly', async () => {
+  const h = await harness({ chars: 6000, close: 'visible', gsap: false })
+  h.fireObserver()
+  h.clickClose()
+
+  assert.equal(h.wrapperEl.style.visibility, 'hidden')
+  assert.equal(h.wrapperEl.style.opacity, '0')
+  assert.equal(h.wrapperEl.style.pointerEvents, 'none')
+  assert.equal(h.backdropEl.style.opacity, '0')
+  assert.equal(h.sheetEl.style.transform, 'translateY(100%)')
+  assert.equal(h.body.style.overflow, '')
+})
+
+test('the public dismiss() is gated like every other path', async () => {
+  const hard = await harness({ chars: 6000 })
+  hard.fireObserver()
+  hard.api.dismiss()
+  assert.equal(hard.api.status().dismissed, false, 'no console bypass of a hard gate')
+  assert.equal(hard.body.style.overflow, 'hidden')
+
+  const soft = await harness({ chars: 6000, close: 'visible' })
+  soft.fireObserver()
+  soft.api.dismiss()
+  assert.equal(soft.api.status().dismissedVia, 'manual')
+})
+
+test('a hidden close control says so on staging and stays silent in production', async () => {
+  const staging = await harness({
+    chars: 6000,
+    close: 'hidden',
+    hostname: 'the-starters-3-0.webflow.io',
+  })
+  staging.fireObserver()
+  assert.ok(
+    staging.logs.info.some((m) => /close control present but hidden/.test(m)),
+    'QA needs to be able to tell this apart from a missing element'
+  )
+
+  const prod = await harness({ chars: 6000, close: 'hidden' })
+  prod.fireObserver()
+  assert.equal(prod.logs.info.length, 0)
+})
+
+test('a close control hidden by an ANCESTOR does not make the gate dismissible', async () => {
+  // The failure this walk exists to stop. getComputedStyle on a descendant of a
+  // display:none subtree reports the descendant's OWN display, so a check on the
+  // button alone reads 'block' and calls a logged-out reader dismissible. In
+  // Designer, hanging data-ms-content on a wrapper div rather than on the button
+  // is an entirely ordinary thing to do.
+  const h = await harness({ chars: 6000, close: 'wrapped-hidden' })
+  h.fireObserver()
+
+  assert.ok(h.closeEl, 'the control is present and reports its own display as block')
+  assert.equal(
+    h.closeEl.computed.display,
+    'block',
+    'the button itself is NOT display:none — only its wrapper is'
+  )
+  assert.equal(h.api.status().dismissible, false, 'the ancestor must still gate it')
+  assert.deepEqual(h.closeEl.listenerTypes, [])
+  assert.deepEqual(h.backdropEl.listenerTypes, [])
+
+  h.clickBackdrop()
+  assert.equal(h.api.status().dismissed, false, 'the paywall holds')
+  assert.equal(h.body.style.overflow, 'hidden')
+})
+
+test('the dismissed window event mirrors the shown event fields', async () => {
+  const h = await harness({ chars: 6000, close: 'visible' })
+  h.fireObserver()
+  h.clickClose()
+
+  const shown = h.events.find((e) => e.type === 'learn-gate-shown')
+  const dismissed = h.events.find((e) => e.type === 'learn-gate-dismissed')
+  assert.equal(dismissed.detail.trigger, shown.detail.trigger)
+  assert.equal(dismissed.detail.chars, shown.detail.chars)
+  assert.equal(dismissed.detail.threshold, shown.detail.threshold)
+  assert.equal(dismissed.detail.via, 'close')
 })
