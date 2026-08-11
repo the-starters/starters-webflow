@@ -235,15 +235,36 @@
                 getQuizLeadDripValue(record, ['location', 'Location']),
                 120,
             ),
-            reviews: normalizeQuizLeadDripText(
-                getQuizLeadDripValue(record, [
-                    'reviews',
-                    'review_count',
-                    'reviewCount',
-                ]),
-                80,
-            ),
+            reviews: formatQuizLeadDripReviews(record),
         }
+    }
+
+    function formatQuizLeadDripReviews(record) {
+        const count = Number(
+            getQuizLeadDripValue(record, ['review_count', 'reviewCount']),
+        )
+        const average = Number(
+            getQuizLeadDripValue(record, [
+                'review_average',
+                'reviewAverage',
+                'rating_average',
+                'average_rating',
+            ]),
+        )
+
+        if (
+            !Number.isInteger(count) ||
+            count <= 0 ||
+            !Number.isFinite(average) ||
+            average <= 0 ||
+            average > 5
+        ) {
+            return ''
+        }
+
+        return `${average.toFixed(1)} (${count} ${
+            count === 1 ? 'Review' : 'Reviews'
+        })`
     }
 
     function normalizeQuizLeadDripLearnItem(selection) {
