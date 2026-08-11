@@ -61,6 +61,10 @@ function makeFixture(options = {}) {
   consentIndicator.textContent = '☐'
   const consentContinue = new Element()
   const startOver = new Element()
+  const helpful = [
+    new Element({ 'data-ai-recruiter-helpful': 'true' }),
+    new Element({ 'data-ai-recruiter-helpful': 'false' }),
+  ]
   const states = ['consent', 'ready', 'thinking', 'retry', 'error', 'rate-limited', 'expired', 'offline', 'upgrade', 'unavailable']
     .map((name) => new Element({ 'data-ai-recruiter-state': name }))
   const clones = { messages: 0, candidates: 0 }
@@ -98,10 +102,14 @@ function makeFixture(options = {}) {
     ['[data-ai-recruiter="consent-indicator"]', consentIndicator],
     ['[data-ai-recruiter="consent-continue"]', consentContinue],
     ['[data-ai-recruiter="start-over"]', startOver],
+    ['[data-ai-recruiter="helpful"]', helpful],
     ['[data-ai-recruiter-state]', states],
   ])
   root.queries = values
-  return { root, form, input, messages, candidates, status, consent, consentIndicator, consentContinue, startOver, clones }
+  return {
+    root, form, input, messages, candidates, status, consent, consentIndicator,
+    consentContinue, startOver, helpful, clones,
+  }
 }
 
 function response(body, status = 200) {
@@ -148,7 +156,10 @@ function load(options = {}) {
     requestAnimationFrame(callback) { callback() },
     CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init.detail } },
     dispatchEvent(event) { events.push(event) },
-    location: { reload() { window.reloaded = true } },
+    location: {
+      hostname: options.hostname || 'thestarters.com',
+      reload() { window.reloaded = true },
+    },
   }
   const document = {
     readyState: 'complete',
@@ -166,11 +177,89 @@ function load(options = {}) {
 
 test('only explicitly active paid Brand plans grant access', () => {
   const { api } = load()
-  const role = (connection) => api.roleForMember({ planConnections: [connection] })
+  const role = (connection, hostname = 'thestarters.com') => api.roleForMember(
+    { planConnections: [connection] }, hostname,
+  )
   assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', active: true }), 'brand-paid')
   assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }), 'brand-paid')
   assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', active: false }), 'ineligible')
   assert.equal(role({ planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' }), 'ineligible')
+  assert.equal(role({ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }), 'brand-free')
+  assert.equal(
+    role({ planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' }),
+    'ineligible',
+  )
+  assert.equal(
+    role(
+      { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      'the-starters-3-0.webflow.io',
+    ),
+    'brand-paid',
+  )
+  assert.equal(
+    role({ planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' }, 'localhost'),
+    'ineligible',
+  )
+  assert.equal(
+    role({ planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' }, '127.0.0.1'),
+    'ineligible',
+  )
+})
+
+test('Brand Free sees the upgrade state with no interactive request path', async () => {
+  const loaded = load({
+    member: {
+      id: 'free-brand',
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+  })
+  await flush()
+
+  assert.equal(loaded.fixture.root.hidden, false)
+  assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'upgrade')
+  assert.equal(loaded.fixture.form.hidden, true)
+  assert.equal(loaded.fixture.input.disabled, true)
+  assert.equal(loaded.fixture.startOver.hidden, true)
+  assert.equal(loaded.fixture.startOver.disabled, true)
+  assert.equal(loaded.fixture.helpful.every((control) => control.hidden), true)
+  assert.equal(loaded.fixture.helpful.every((control) => control.disabled), true)
+  loaded.fixture.input.value = 'This must not send'
+  await loaded.fixture.form.dispatch('submit')
+  await loaded.fixture.startOver.dispatch('click')
+  await flush()
+  assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'upgrade')
+  assert.equal(loaded.requests.length, 0)
+})
+
+test('a Test Brand plan fails closed on production', async () => {
+  const loaded = load({
+    hostname: 'www.thestarters.com',
+    member: {
+      id: 'test-brand-production',
+      planConnections: [{ planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' }],
+    },
+  })
+  await flush()
+
+  assert.equal(loaded.fixture.root.hidden, true)
+  assert.equal(loaded.requests.length, 0)
+})
+
+test('a Test Brand plan boots the consent flow on the V3 Webflow staging host', async () => {
+  const loaded = load({
+    hostname: 'the-starters-3-0.webflow.io',
+    member: {
+      id: 'test-brand-staging',
+      planConnections: [{ planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' }],
+    },
+  })
+  await flush()
+
+  assert.equal(loaded.fixture.root.hidden, false)
+  assert.equal(loaded.fixture.root.dataset.aiRecruiterRole, 'brand-paid')
+  assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'consent')
+  assert.equal(loaded.fixture.form.hidden, false)
+  assert.equal(loaded.requests.length, 0)
 })
 
 test('normalization filters canonical IDs before taking three candidates', () => {

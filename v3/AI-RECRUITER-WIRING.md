@@ -2,9 +2,11 @@
 
 `ai-recruiter.js` binds the native Webflow `data-ai-recruiter` markup and is
 available only to an authenticated Memberstack member with an active paid Brand
-or test Brand plan. The browser sends requests only to the authenticated Xano
-V3 boundary. Xano owns authorization, session ownership, rate limits, and all
-calls to n8n, Supabase, and OpenAI.
+plan. The Test Brand plan is accepted only on `the-starters-3-0.webflow.io` and
+fails closed on the production hosts. Brand Free sees the upgrade state with
+the interactive request controls disabled and hidden. The browser sends
+requests only to the authenticated Xano V3 boundary. Xano owns authorization,
+session ownership, rate limits, and all calls to n8n, Supabase, and OpenAI.
 
 ## Native Webflow markup
 
@@ -44,8 +46,9 @@ the conversation.
 ## Release and rollback
 
 Release the controller behind the native Webflow root. Before broad release,
-verify one paid Brand canary, one free Brand, one inactive paid Brand, and one
-logged-out session on desktop and mobile. Confirm the served script version,
+verify one paid Brand canary, one free Brand, one inactive paid Brand, one Test
+Brand on staging, one Test Brand denied on production, and one logged-out
+session on desktop and mobile. Confirm the served script version,
 the Xano trace, and the monitoring events.
 
 The release is not production-ready until the published page contains the

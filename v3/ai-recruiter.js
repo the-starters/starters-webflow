@@ -15,6 +15,7 @@
   })
   const ELIGIBLE_PLANS = new Set([PLAN.BRAND_PAID, PLAN.TEST_BRAND])
   const BRAND_PLANS = new Set([PLAN.BRAND_FREE, ...ELIGIBLE_PLANS])
+  const TEST_HOSTS = new Set(['the-starters-3-0.webflow.io'])
   const AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
   const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30'
   const STORAGE_KEY = 'ts:ai-recruiter:v3:session'
@@ -65,10 +66,16 @@
       .filter(Boolean)
   }
 
-  function roleForMember(member) {
+  function roleForMember(member, hostname) {
     const plans = activePlanIds(member)
-    if (plans.some((id) => ELIGIBLE_PLANS.has(id))) return 'brand-paid'
-    if (plans.some((id) => BRAND_PLANS.has(id))) return 'brand-free'
+    const currentHost = String(
+      hostname || (window.location && window.location.hostname) || '',
+    ).toLowerCase()
+    if (plans.includes(PLAN.BRAND_PAID)) return 'brand-paid'
+    if (plans.includes(PLAN.TEST_BRAND)) {
+      return TEST_HOSTS.has(currentHost) ? 'brand-paid' : 'ineligible'
+    }
+    if (plans.includes(PLAN.BRAND_FREE)) return 'brand-free'
     return 'ineligible'
   }
 
@@ -285,14 +292,29 @@
     let activeController = null
     let lastTraceId = ''
     const memberId = member && member.id
-    let session = readSession(memberId) || {
-      session_id: uuid(), consented: false, member_id: memberId, consent_version: CONSENT_VERSION,
-    }
-    writeSession(session)
+    const canInteract = role === 'brand-paid'
+    let session = canInteract
+      ? readSession(memberId) || {
+        session_id: uuid(), consented: false, member_id: memberId, consent_version: CONSENT_VERSION,
+      }
+      : null
+    if (session) writeSession(session)
 
     root.hidden = false
     root.dataset.aiRecruiterRole = role
-    stateBlock(root, role === 'brand-paid' ? (session.consented ? 'ready' : 'consent') : 'upgrade')
+    stateBlock(root, canInteract ? (session.consented ? 'ready' : 'consent') : 'upgrade')
+    form.hidden = !canInteract
+    input.disabled = !canInteract
+    if (submit) submit.disabled = !canInteract
+    const startOver = root.querySelector(selectors.startOver)
+    if (startOver) {
+      startOver.hidden = !canInteract
+      startOver.disabled = !canInteract
+    }
+    for (const control of root.querySelectorAll(selectors.helpful)) {
+      control.hidden = !canInteract
+      control.disabled = !canInteract
+    }
 
     const open = () => {
       panel.hidden = false
@@ -311,6 +333,14 @@
     panel.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') close()
     })
+
+    const memberstack = window.$memberstackDom
+    if (memberstack && typeof memberstack.onAuthChange === 'function') {
+      memberstack.onAuthChange((nextMember) => {
+        if (!nextMember || nextMember.id !== memberId) window.location.reload()
+      })
+    }
+    if (!canInteract) return
 
     const consent = root.querySelector(selectors.consent)
     if (consent && consent.getAttribute('role') === 'checkbox') {
@@ -425,7 +455,6 @@
         prompt.getAttribute('data-ai-recruiter-prompt') || prompt.textContent,
       ))
     }
-    const startOver = root.querySelector(selectors.startOver)
     if (startOver) startOver.addEventListener('click', async () => {
       requestGeneration += 1
       if (activeController) activeController.abort()
@@ -456,12 +485,6 @@
       }
     })
 
-    const memberstack = window.$memberstackDom
-    if (memberstack && typeof memberstack.onAuthChange === 'function') {
-      memberstack.onAuthChange((nextMember) => {
-        if (!nextMember || nextMember.id !== memberId) window.location.reload()
-      })
-    }
   }
 
   async function boot() {
