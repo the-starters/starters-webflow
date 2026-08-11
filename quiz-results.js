@@ -421,7 +421,8 @@
         }
 
         const section = document.querySelector(learnContentSectionSelector)
-        const groups = getLearnContentCategoryFilters(pendingQuiz)
+        const { selectedCategoryFilterGroups: groups } =
+            getLearnContentCategoryFilters(pendingQuiz)
         if (!section || !groups.length) return null
 
         try {
