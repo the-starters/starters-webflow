@@ -140,7 +140,7 @@ test('pointer-style inventory entries retain an owner-document link', () => {
   }
 })
 
-// Coverage guard. The inventory went 67 entries short once because nothing
+// Coverage guard. The inventory went 68 entries short once because nothing
 // failed when a shipped script was simply never listed — the link checks above
 // only validate links that already exist, so an absent entry is invisible to
 // them. Every committed browser script must therefore appear in the inventory,

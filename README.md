@@ -220,12 +220,15 @@ redirect contracts; these own tab UI only.
 
 ### Analytics helpers (`utils/`)
 
+These two scripts have no Docs URL and no owner doc. The event plan named below
+owns the shared event vocabulary, not the browser-script wiring.
+
 - `utils/posthog-identity.js` — Memberstack to PostHog identity bridge: `posthog.identify(<memberstack id>)` with persona labels derived from the same customFields `opportunities-3.0.js` gates on, and `posthog.reset()` on logout when the previous identity was a member id so a shared browser cannot chain new anonymous events to the old member. Account ids and capability labels only, never email or name. Load sitewide with `defer`; the head snippet's stub queues calls, so it may run before array.js arrives
 - `utils/posthog-track.js` — the shared `StartersTrack.track(name, props)` funnel-event helper: stamps a consistent `platform` (`v2` / `v3`) property and makes a missing or blocked PostHog unable to break page logic. Event names and properties are defined in `platform-ops/architecture/posthog-funnel-events-plan.md`; renames need a migration note there
 
 ### Other page scripts
 
-- `complete-profile-photo.js` — `/complete-profile` Brand profile-image upload, host-scoped: binds Memberstack's supported `data-ms-action="profile-image"` uploader early (before `DOMContentLoaded`) on the native Webflow element rather than generating markup. Replaced a controller that posted to the Starter-only Xano endpoint #1390, which failed every Brand with "Starter not found"; published endpoint #1513 consumes the resulting `member.updated` webhook and mirrors `member.profileImage` into `brands_v3.image_link`
+- `complete-profile-photo.js` — `/complete-profile` Brand profile-image upload, host-scoped: binds Memberstack's supported `data-ms-action="profile-image"` uploader early (before `DOMContentLoaded`) on the native Webflow element rather than generating markup. The authoritative native markup and install contract lives in [`v3/BRAND-ACCOUNT-WIRING.md`](v3/BRAND-ACCOUNT-WIRING.md#native-markup-contract)
 - `build-profile-draft-identity-guard.js` — synchronous build-profile draft guard that blocks the legacy localStorage key until Memberstack identity resolves, then routes it to member-scoped storage; see the [draft identity guard contract](#draft-identity-guard-waitformember-contract)
 - `utils/multi-step-failover.js` — legacy build-profile availability probe that loads the mirrored Videsigns engine only when the upstream engine is missing or unavailable; see the [Build-profile Videsigns wiring audit](#build-profile-videsigns-wiring-audit)
 - `swiper-scroll/swiper-scroll.js` — Swiper-backed horizontal scroll sections ([docs](https://wf-starter-embeds-docs.vercel.app/docs/swiper-scroll))
@@ -235,14 +238,15 @@ redirect contracts; these own tab UI only.
 
 Containment-era V2 code. Kept for the live V2 pages; not a pattern to copy.
 
-- `v2/contract.js` — minified legacy `/freelancer-start-project` contract-form logic (fee-structure field reveal, progress-step `is-done` marks, review/edit lock). Source of truth for that page's browser code, per the workspace `CLAUDE.md`; the readable twins are the `slater/` exports noted below
-- `v2/footers/freelancer-start-project.js`, `v2/footers/freelancer-start-project-contract.js`, `v2/footers/freelancer-edit-form.js`, `v2/footers/quiz-results.js`, `v2/footers/opportunities-apply.js`, `v2/footers/opportunities-applicants.js`, `v2/footers/opportunities-freelancer-view.js` — the secure V2 page footer logic, CDN-loadable so each page can drop its inline block. Each `.js` is extracted verbatim from the sibling `-footer.html`; edit the HTML and re-extract, or adopt the `.js` as sole source once a page is fully migrated. Per-page CDN tags and the full contract live in [`v2/footers/README.md`](v2/footers/README.md)
+- `v2/contract.js` — stale, partial earlier migration of legacy contract-form logic; it is not the live authority. The current mirrors and ownership boundary live in [`slater/README.md`](slater/README.md)
+- `v2/footers/freelancer-start-project.js`, `v2/footers/freelancer-edit-form.js`, `v2/footers/quiz-results.js`, `v2/footers/opportunities-apply.js`, `v2/footers/opportunities-applicants.js`, `v2/footers/opportunities-freelancer-view.js` — secure V2 page footer logic, extracted from the sibling `-footer.html` files and CDN-loadable so each page can replace its inline block. Per-page CDN tags and the full contract live in [`v2/footers/README.md`](v2/footers/README.md)
+- `v2/footers/freelancer-start-project-contract.js` — readable GitHub mirror of the Slater contract logic, kept for review but not loaded live; see the migration boundary in [`v2/footers/README.md`](v2/footers/README.md#freelancer-start-project--extra-slater-tag)
 
 ## Not browser code (deliberately outside this inventory)
 
 - `build-profile-wiring-audit.js` — a Node audit tool (`require('node:fs')`) that checks the build-profile pages' saved Webflow code for the pinned vendored engine and the draft-identity guard. Never served to a browser
 - `step-flow-test-dom.js` — the `global-embeds/step-flow/step-flow.js` test harness and its minimal DOM shim (`require('node:test')`). Named without the `.test.js` suffix, so run it explicitly
-- `slater/4885.readable.js`, `slater/4885.prod.min.js`, `slater/4960.readable.js`, `slater/4960.prod.min.js` — read-only Slater.app exports of the legacy V2 contract logic, kept as the readable reference for `v2/contract.js`. Generated artifacts: never edit them and never load them in Webflow
+- `slater/4885.readable.js`, `slater/4885.prod.min.js`, `slater/4960.readable.js`, `slater/4960.prod.min.js` — read-only captures of the Slater.app builds that remain live on the legacy contract pages. Generated mirror artifacts: never edit or load them from this repo; the inventory and refresh contract lives in [`slater/README.md`](slater/README.md)
 
 ## Quiz-results freelancer recommendations
 
