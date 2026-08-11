@@ -184,7 +184,7 @@ document.addEventListener('DOMContentLoaded', function () {
 				group.style.display = hideForType === type ? 'none' : 'block';
 			});
 			console.log("qsa('[data-group-hide]')", qsa('[data-group-hide]'));
-			
+
 			qsa('[data-call-rate-radio]').forEach((group) => {
 				const checkForType = group.dataset.callRateRadio;
 				if (checkForType === type) {
@@ -1092,7 +1092,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 		function retainerToggle() {
 			console.log("retainerToggle");
-			
+
 			const checkedMonthlyRadio = qs('input[name="offer-monthly-retainers"]:checked');
 			const isMonthlyYes = checkedMonthlyRadio?.value === 'yes';
 			retainerDesc.style.display = isMonthlyYes ? '' : 'none';
