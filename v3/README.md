@@ -2382,8 +2382,15 @@ root, use these values:
 
 Give every Connect or Complete setup control
 `data-stripe-connect-action="start"`. An optional retry control can use
-`data-stripe-connect-action="refresh"`. The connected-state disconnect control
-uses `data-stripe-connect-action="disconnect"`; the controller asks for an
+`data-stripe-connect-action="refresh"`. Keep an empty
+`.action-item_button-wrapper` in the `ready` state and an existing Webflow
+button component as the first child of the disconnected state's
+`.action-item_button-wrapper`. At startup, the controller clones that component
+into the ready wrapper as accessible `Open Stripe` and `Disconnect Stripe`
+controls. It assigns `data-stripe-connect-action="dashboard"` and
+`data-stripe-connect-action="disconnect"`, respectively, and does not add a
+second copy if either action already exists. Open Stripe requests the exact
+provider-verified connected account destination. Disconnect Stripe asks for an
 explicit browser confirmation before it sends the authenticated disconnect.
 The hero has two authored Earnings
 tiles, both with `data-stripe-connect-action="earnings"`: mark the Connect
@@ -2406,10 +2413,10 @@ Make redirect while preserving Stripe as the earnings UI for the connected
 Standard account. Both actions work on either a native anchor or an authored
 non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
 `role="button"` with `tabindex="0"` and activates from both click and Enter/Space
-so keyboard users can reach its action. Connect Stripe, Complete setup, and
-Payment history and payouts all open in a new tab. The controller prevents
-native earnings navigation because Webflow handlers can otherwise replace the
-dashboard tab. Both anchors and non-anchor actions reserve
+so keyboard users can reach its action. Connect Stripe, Complete setup, Open
+Stripe, and Payment history and payouts all open in a new tab. The controller
+prevents native earnings navigation because Webflow handlers can otherwise
+replace the dashboard tab. Both anchors and non-anchor actions reserve
 and navigate a detached-opener tab directly from the activating click or key
 event; a blocked popup or a tab whose opener cannot be detached stays
 fail-closed and never navigates the dashboard.
@@ -2434,10 +2441,9 @@ confirmation returns to the canonical disconnected or incomplete state. If the
 browser exposes none of the return-watcher APIs, the controller releases the
 pending state and guard after the successful tab navigation.
 
-A single in-flight guard is shared
-across every start, refresh, Earnings, and disconnect control in the dashboard,
-so a second click on any control is ignored while an authenticated action is
-resolving. Start
+A single in-flight guard is shared across every start, refresh, Earnings, Open
+Stripe, and disconnect control in the dashboard, so a second click on any
+control is ignored while an authenticated action is resolving. Start
 posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
 URL built against the exact V3 callback instead of falling back to its legacy

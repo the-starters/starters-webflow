@@ -2,9 +2,10 @@
  * Starter Dashboard 3.0 — Stripe Connect status and callback controller.
  *
  * Xano reconciles Stripe-authoritative state into freelancers_v3. Webflow owns
- * all markup, copy, links, and styling; this module selects authored states,
- * handles Connect and callback redirects, requests provider-verified Dashboard
- * access, and submits confirmed disconnects for the active Memberstack member.
+ * the state markup, source button component, and styling; this module clones
+ * the connected-state controls, selects authored states, handles Connect and
+ * callback redirects, requests provider-verified Dashboard access, and submits
+ * confirmed disconnects for the active Memberstack member.
  * Every Xano call is Bearer-authenticated: the active
  * Memberstack session is traded for a Xano token and the server derives the
  * member identity from that token, so no client-supplied member id is trusted.
@@ -12,7 +13,7 @@
  * Designer wiring:
  *   data-stripe-connect-element="root|loading|disconnected|incomplete|
  *   ready|review|error"
- *   data-stripe-connect-action="start|refresh|earnings|disconnect"
+ *   data-stripe-connect-action="start|refresh|earnings|dashboard|disconnect"
  *   data-stripe-connect-earnings-state="disconnected|ready"
  */
 ;(function (global) {
@@ -79,6 +80,59 @@
     roots.forEach(function (root) {
       setView(root, view)
     })
+  }
+
+  function configureConnectedControl(control, action, label) {
+    control.setAttribute(ACTION_ATTR, action)
+    control.removeAttribute('target')
+
+    const text = control.querySelector('.button_main-text')
+    if (text) text.textContent = label
+
+    Array.prototype.slice
+      .call(control.querySelectorAll('a, button, [role="button"]'))
+      .forEach(function (interactive) {
+        interactive.setAttribute('aria-label', label)
+        if (interactive.tagName === 'A') interactive.setAttribute('href', '#')
+        interactive.removeAttribute('target')
+        interactive.removeAttribute('rel')
+      })
+
+    return control
+  }
+
+  function ensureConnectedControls(root) {
+    const ready = root.querySelector(elementSelector('ready'))
+    const disconnected = root.querySelector(elementSelector('disconnected'))
+    const wrapper = ready && ready.querySelector('.action-item_button-wrapper')
+    const source =
+      disconnected &&
+      disconnected.querySelector('.action-item_button-wrapper > *')
+
+    if (!wrapper || !source || typeof source.cloneNode !== 'function') return []
+
+    const created = []
+    if (!ready.querySelector(actionSelector('dashboard'))) {
+      const dashboard = configureConnectedControl(
+        source.cloneNode(true),
+        'dashboard',
+        'Open Stripe',
+      )
+      wrapper.appendChild(dashboard)
+      created.push(dashboard)
+    }
+
+    if (!ready.querySelector(actionSelector('disconnect'))) {
+      const disconnect = configureConnectedControl(
+        source.cloneNode(true),
+        'disconnect',
+        'Disconnect Stripe',
+      )
+      wrapper.appendChild(disconnect)
+      created.push(disconnect)
+    }
+
+    return created
   }
 
   function resolveDashboardView(status, returnedFromStripe) {
@@ -1135,6 +1189,8 @@
     )
     if (!roots.length) return null
 
+    roots.forEach(ensureConnectedControls)
+
     const earningsElements = Array.prototype.slice.call(
       global.document.querySelectorAll(actionSelector('earnings')),
     )
@@ -1200,6 +1256,20 @@
         })
       }
       roots.forEach(function (root) {
+        root
+          .querySelectorAll(actionSelector('dashboard'))
+          .forEach(function (button) {
+            button.addEventListener('click', function (event) {
+              event.preventDefault()
+              openDashboardInNewTab(
+                runExclusive,
+                button,
+                roots,
+                memberId,
+                earningsTiles,
+              )
+            })
+          })
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
@@ -1347,6 +1417,7 @@
     dashboardAccess,
     disconnectConnect,
     exchangeCode,
+    ensureConnectedControls,
     fetchStatus,
     handleConnectClick,
     handleConnectKeydown,

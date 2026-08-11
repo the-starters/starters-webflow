@@ -135,6 +135,78 @@ test('rendering selects authored state without changing its copy', () => {
   assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
 })
 
+test('connected state gets idempotent Open Stripe and disconnect controls', () => {
+  class FakeControl extends FakeElement {
+    constructor(label = 'Connect Stripe') {
+      super()
+      this.label = new FakeElement()
+      this.label.textContent = label
+      this.link = new FakeElement('A')
+      this.link.setAttribute('href', '#Stripe')
+      this.link.setAttribute('target', '_blank')
+    }
+
+    cloneNode() {
+      return new FakeControl(this.label.textContent)
+    }
+
+    querySelector(value) {
+      if (value === '.button_main-text') return this.label
+      return null
+    }
+
+    querySelectorAll(value) {
+      return value === 'a, button, [role="button"]' ? [this.link] : []
+    }
+  }
+
+  const { root, states } = stripeRoot()
+  const controls = []
+  const wrapper = {
+    appendChild(control) {
+      controls.push(control)
+    },
+  }
+  const source = new FakeControl()
+  states.disconnected.querySelector = (value) =>
+    value === '.action-item_button-wrapper > *' ? source : null
+  states.ready.querySelector = (value) => {
+    if (value === '.action-item_button-wrapper') return wrapper
+    const action = value.match(/data-stripe-connect-action="([^"]+)"/)
+    return action
+      ? controls.find(
+          (control) =>
+            control.getAttribute('data-stripe-connect-action') === action[1],
+        ) || null
+      : null
+  }
+
+  const created = api.ensureConnectedControls(root)
+
+  assert.equal(created.length, 2)
+  assert.equal(controls.length, 2)
+  assert.equal(
+    controls[0].getAttribute('data-stripe-connect-action'),
+    'dashboard',
+  )
+  assert.equal(controls[0].label.textContent, 'Open Stripe')
+  assert.equal(controls[0].link.getAttribute('aria-label'), 'Open Stripe')
+  assert.equal(controls[0].link.getAttribute('href'), '#')
+  assert.equal(controls[0].link.getAttribute('target'), null)
+  assert.equal(
+    controls[1].getAttribute('data-stripe-connect-action'),
+    'disconnect',
+  )
+  assert.equal(controls[1].label.textContent, 'Disconnect Stripe')
+  assert.equal(
+    controls[1].link.getAttribute('aria-label'),
+    'Disconnect Stripe',
+  )
+
+  assert.deepEqual(api.ensureConnectedControls(root), [])
+  assert.equal(controls.length, 2)
+})
+
 test('the two authored earnings tiles resolve to disconnected and ready states', () => {
   const connect = new FakeElement()
   const history = new FakeElement()
