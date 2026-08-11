@@ -6,6 +6,21 @@ or test Brand plan. The browser sends requests only to the authenticated Xano
 V3 boundary. Xano owns authorization, session ownership, rate limits, and all
 calls to n8n, Supabase, and OpenAI.
 
+## Native Webflow markup
+
+Build the root from [`ai-recruiter-webflow.html`](ai-recruiter-webflow.html) as
+native Designer elements. The file is the complete attribute, copy, state, and
+responsive-style contract. Do not install it as an HTML embed and do not make
+the controller generate its markup. Keep one root per page and load the
+controller after Memberstack and the authenticated Xano token bridge:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@<release-tag>/v3/ai-recruiter.js"></script>
+```
+
+Replace `<release-tag>` with the release that passed the production canaries.
+Do not use `latest` in production.
+
 ## Monitoring
 
 The controller emits `ai_recruiter_request` and `ai_recruiter_failure` PostHog
@@ -27,6 +42,10 @@ Release the controller behind the native Webflow root. Before broad release,
 verify one paid Brand canary, one free Brand, one inactive paid Brand, and one
 logged-out session on desktop and mobile. Confirm the served script version,
 the Xano trace, and the monitoring events.
+
+The release is not production-ready until the published page contains the
+native root and pinned script and all canaries above have recorded readback.
+Local controller tests and a Designer preview do not satisfy this gate.
 
 To roll back the browser experience, remove the AI Recruiter script include or
 hide the native root in Webflow and publish. This leaves V2 and the Xano, n8n,
