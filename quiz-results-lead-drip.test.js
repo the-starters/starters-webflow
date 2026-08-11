@@ -55,12 +55,16 @@ function completedQuiz(overrides = {}) {
                 name: 'Alex Morgan',
                 slug: 'alex-morgan',
                 roles: ['Creative Director'],
+                review_count: 12,
+                review_average: 4.83,
             },
             {
                 objectID: 'starter-2',
                 first_name: 'Sam',
                 name: 'Sam Rivera',
                 slug: 'sam-rivera',
+                review_count: 0,
+                review_average: 0,
             },
         ],
         recommendedFreelancerGroups: [],
@@ -213,6 +217,8 @@ test('completed quiz posts current matches with safe email properties', async ()
     assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
     assert.equal(payload.properties.starter_1_first_name, 'Alex')
     assert.equal(payload.properties.starter_2_first_name, 'Sam')
+    assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
+    assert.equal(payload.properties.starter_2_reviews, '')
     assert.equal(payload.properties.starter_count, '2')
     assert.equal(payload.properties.learn_count, '0')
     assert.equal(payload.properties.learn_title, 'Explore more expert guidance')
@@ -220,6 +226,40 @@ test('completed quiz posts current matches with safe email properties', async ()
         payload.properties.learn_url,
         'https://thestarters.com/learn?source=quiz-results-email',
     )
+})
+
+test('one approved review uses singular copy', async () => {
+    const quiz = completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' })
+    quiz.featuredFreelancers[0].review_count = 1
+    quiz.featuredFreelancers[0].review_average = 5
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_reviews, '5.0 (1 Review)')
+})
+
+test('review text is hidden when the canonical average is missing or invalid', async () => {
+    const quiz = completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' })
+    quiz.featuredFreelancers[0].review_average = null
+    quiz.featuredFreelancers[0].reviews = '5.0 (12 Reviews)'
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_reviews, '')
 })
 
 for (const [label, tradeTokenResponse] of [
