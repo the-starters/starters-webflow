@@ -296,6 +296,29 @@ test('review text is hidden when the count is not a canonical number', async () 
     assert.equal(payload.properties.starter_1_reviews, '')
 })
 
+test('review text is hidden when canonical review fields are missing', async () => {
+    const quiz = completedQuiz({
+        memberstackSavedAt: '2026-08-11T04:01:00.000Z',
+    })
+    delete quiz.featuredFreelancers[0].review_count
+    delete quiz.featuredFreelancers[0].review_average
+    quiz.featuredFreelancers[0].reviewCount = 1
+    quiz.featuredFreelancers[0].reviewAverage = 5
+    quiz.featuredFreelancers[0].rating_average = 5
+    quiz.featuredFreelancers[0].average_rating = 5
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_reviews, '')
+})
+
 test('fresh Algolia recommendations carry canonical reviews into the email', async () => {
     const quiz = completedQuiz({
         featuredFreelancers: [],

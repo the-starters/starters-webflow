@@ -240,16 +240,8 @@
     }
 
     function formatQuizLeadDripReviews(record) {
-        const rawCount = getQuizLeadDripValue(record, [
-            'review_count',
-            'reviewCount',
-        ])
-        const rawAverage = getQuizLeadDripValue(record, [
-            'review_average',
-            'reviewAverage',
-            'rating_average',
-            'average_rating',
-        ])
+        const rawCount = record?.review_count
+        const rawAverage = record?.review_average
         const count =
             typeof rawCount === 'number' ||
             (typeof rawCount === 'string' && /^\d+$/.test(rawCount.trim()))
