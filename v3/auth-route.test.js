@@ -1286,7 +1286,7 @@ test('a member with no Memberstack cookie never reaches Xano and routes normally
   assert.equal(fetchCalls.length, 0)
 })
 
-test('a hung onboarding check is abandoned at the 4s budget and fails open', async () => {
+test('a hung onboarding check is abandoned at the 8s budget and fails open', async () => {
   const { location, clock, aborted, logs } = loadRouter({
     pathname: '/auth-route',
     storedDestination: '/messages',
@@ -1298,7 +1298,7 @@ test('a hung onboarding check is abandoned at the 4s budget and fails open', asy
   await flush()
   assert.equal(location.replaced, undefined, 'still waiting inside the budget')
 
-  await clock.advance(4000)
+  await clock.advance(8000)
   assert.equal(location.replaced, '/messages')
   assert.equal(aborted.length, 1, 'the in-flight request is aborted')
   assert.ok(logs.warn.some((line) => line.includes('budget')))
@@ -1666,7 +1666,7 @@ test('every brand-check failure fails open to the standard route', async () => {
   assert.equal(noFetch.location.replaced, '/favorites')
 })
 
-test('a hung brand check is abandoned at the 4s budget and fails open', async () => {
+test('a hung brand check is abandoned at the 8s budget and fails open', async () => {
   const { location, clock, aborted, logs } = loadRouter({
     pathname: '/auth-route',
     storedDestination: '/favorites',
@@ -1678,7 +1678,7 @@ test('a hung brand check is abandoned at the 4s budget and fails open', async ()
   await flush()
   assert.equal(location.replaced, undefined, 'still waiting inside the budget')
 
-  await clock.advance(4000)
+  await clock.advance(8000)
   assert.equal(location.replaced, '/favorites')
   assert.equal(aborted.length, 1, 'the in-flight request is aborted')
   assert.ok(logs.warn.some((line) => line.includes('brand profile check')))
