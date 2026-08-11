@@ -156,7 +156,7 @@ test('connected state gets idempotent Open Stripe and disconnect controls', () =
     }
 
     querySelectorAll(value) {
-      return value === 'a' ? [this.link] : []
+      return value === 'a, button, [role="button"]' ? [this.link] : []
     }
   }
 
@@ -190,6 +190,7 @@ test('connected state gets idempotent Open Stripe and disconnect controls', () =
     'dashboard',
   )
   assert.equal(controls[0].label.textContent, 'Open Stripe')
+  assert.equal(controls[0].link.getAttribute('aria-label'), 'Open Stripe')
   assert.equal(controls[0].link.getAttribute('href'), '#')
   assert.equal(controls[0].link.getAttribute('target'), null)
   assert.equal(
@@ -197,6 +198,10 @@ test('connected state gets idempotent Open Stripe and disconnect controls', () =
     'disconnect',
   )
   assert.equal(controls[1].label.textContent, 'Disconnect Stripe')
+  assert.equal(
+    controls[1].link.getAttribute('aria-label'),
+    'Disconnect Stripe',
+  )
 
   assert.deepEqual(api.ensureConnectedControls(root), [])
   assert.equal(controls.length, 2)

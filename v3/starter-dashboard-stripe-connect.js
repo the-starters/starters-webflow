@@ -89,11 +89,12 @@
     if (text) text.textContent = label
 
     Array.prototype.slice
-      .call(control.querySelectorAll('a'))
-      .forEach(function (link) {
-        link.setAttribute('href', '#')
-        link.removeAttribute('target')
-        link.removeAttribute('rel')
+      .call(control.querySelectorAll('a, button, [role="button"]'))
+      .forEach(function (interactive) {
+        interactive.setAttribute('aria-label', label)
+        if (interactive.tagName === 'A') interactive.setAttribute('href', '#')
+        interactive.removeAttribute('target')
+        interactive.removeAttribute('rel')
       })
 
     return control
