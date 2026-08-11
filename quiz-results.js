@@ -386,10 +386,14 @@
             { method: 'GET', credentials: 'omit' },
         )
         const payload = await response.json().catch(() => ({}))
-        if (!response.ok || !payload.authToken) {
+        const token =
+            typeof payload === 'string'
+                ? payload
+                : payload && (payload.authToken || payload.token)
+        if (!response.ok || !token) {
             throw new Error('V3 session exchange failed')
         }
-        return payload.authToken
+        return token
     }
 
     async function postQuizLeadDripEvent(properties) {
