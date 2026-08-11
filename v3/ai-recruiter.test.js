@@ -57,6 +57,8 @@ function makeFixture(options = {}) {
   const consent = new Element(options.consentRole === 'checkbox'
     ? { role: 'checkbox', 'aria-checked': 'false' }
     : {})
+  const consentIndicator = new Element()
+  consentIndicator.textContent = '☐'
   const consentContinue = new Element()
   const startOver = new Element()
   const states = ['consent', 'ready', 'thinking', 'retry', 'error', 'rate-limited', 'expired', 'offline', 'upgrade', 'unavailable']
@@ -93,12 +95,13 @@ function makeFixture(options = {}) {
     ['[data-ai-recruiter="candidate-list"]', candidates],
     ['[data-ai-recruiter="status"]', status],
     ['[data-ai-recruiter="consent"]', consent],
+    ['[data-ai-recruiter="consent-indicator"]', consentIndicator],
     ['[data-ai-recruiter="consent-continue"]', consentContinue],
     ['[data-ai-recruiter="start-over"]', startOver],
     ['[data-ai-recruiter-state]', states],
   ])
   root.queries = values
-  return { root, form, input, messages, candidates, status, consent, consentContinue, startOver, clones }
+  return { root, form, input, messages, candidates, status, consent, consentIndicator, consentContinue, startOver, clones }
 }
 
 function response(body, status = 200) {
@@ -278,8 +281,14 @@ test('native role checkbox toggles consent before continuing', async () => {
 
   assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'consent')
   assert.equal(loaded.fixture.consent.getAttribute('aria-checked'), 'false')
+  assert.equal(loaded.fixture.consentIndicator.textContent, '☐')
   await loaded.fixture.consent.dispatch('click')
   assert.equal(loaded.fixture.consent.getAttribute('aria-checked'), 'true')
+  assert.equal(loaded.fixture.consentIndicator.textContent, '☑')
+  await loaded.fixture.consent.dispatch('click')
+  assert.equal(loaded.fixture.consent.getAttribute('aria-checked'), 'false')
+  assert.equal(loaded.fixture.consentIndicator.textContent, '☐')
+  await loaded.fixture.consent.dispatch('click')
   await loaded.fixture.consentContinue.dispatch('click')
   assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'ready')
 })

@@ -40,6 +40,7 @@
     candidateList: '[data-ai-recruiter="candidate-list"]',
     status: '[data-ai-recruiter="status"]',
     consent: '[data-ai-recruiter="consent"]',
+    consentIndicator: '[data-ai-recruiter="consent-indicator"]',
     consentContinue: '[data-ai-recruiter="consent-continue"]',
     prompt: '[data-ai-recruiter="prompt"]',
     helpful: '[data-ai-recruiter="helpful"]',
@@ -313,9 +314,15 @@
 
     const consent = root.querySelector(selectors.consent)
     if (consent && consent.getAttribute('role') === 'checkbox') {
+      const consentIndicator = root.querySelector(selectors.consentIndicator)
+      const setConsentChecked = (checked) => {
+        consent.setAttribute('aria-checked', checked ? 'true' : 'false')
+        if (consentIndicator) consentIndicator.textContent = checked ? '☑' : '☐'
+      }
+      setConsentChecked(consent.getAttribute('aria-checked') === 'true')
       consent.addEventListener('click', () => {
         const checked = consent.getAttribute('aria-checked') === 'true'
-        consent.setAttribute('aria-checked', checked ? 'false' : 'true')
+        setConsentChecked(!checked)
       })
     }
     const consentContinue = root.querySelector(selectors.consentContinue)
