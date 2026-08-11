@@ -353,6 +353,26 @@
         return properties
     }
 
+    function logQuizLeadDripFlow(message, data) {
+        if (!isDebugLoggingEnabled()) return
+
+        if (typeof data === 'undefined') {
+            console.log('[Starter Quiz Funnel]', '[results]', message)
+            return
+        }
+
+        console.log('[Starter Quiz Funnel]', '[results]', message, data)
+    }
+
+    async function waitForQuizLeadDripMemberstack() {
+        for (let attempt = 1; attempt <= 40; attempt += 1) {
+            if (window.$memberstackDom) return window.$memberstackDom
+            await new Promise((resolve) => window.setTimeout(resolve, 250))
+        }
+
+        return null
+    }
+
     async function getQuizLeadDripToken(memberstack) {
         if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
             throw new Error('Memberstack session is unavailable')
@@ -372,7 +392,7 @@
     }
 
     async function postQuizLeadDripEvent(properties) {
-        const memberstack = await waitForMemberstack()
+        const memberstack = await waitForQuizLeadDripMemberstack()
         const token = await getQuizLeadDripToken(memberstack)
         const response = await fetch(
             quizLeadDripV3Base + quizLeadDripEndpoint,
@@ -425,7 +445,7 @@
             window.__starterQuizLeadDripLearnSelection = selection
             return selection
         } catch (error) {
-            logQuizFlow('quiz lead Learn match unavailable; using fallback', {
+            logQuizLeadDripFlow('quiz lead Learn match unavailable; using fallback', {
                 error: error?.message || String(error),
             })
             return null
@@ -442,7 +462,9 @@
         )
 
         if (!properties.quiz_revision || Number(properties.starter_count) < 1) {
-            logQuizFlow('quiz lead event skipped; required result data is missing')
+            logQuizLeadDripFlow(
+                'quiz lead event skipped; required result data is missing',
+            )
             return null
         }
 
@@ -451,7 +473,7 @@
             if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
             try {
                 const result = await postQuizLeadDripEvent(properties)
-                logQuizFlow('registered V3 quiz lead event', {
+                logQuizLeadDripFlow('registered V3 quiz lead event', {
                     replayed: Boolean(result.replayed),
                     status: result.status,
                 })
@@ -461,7 +483,7 @@
             }
         }
 
-        logQuizFlow('V3 quiz lead event registration failed', {
+        logQuizLeadDripFlow('V3 quiz lead event registration failed', {
             status: lastError?.status || 0,
             error: lastError?.message || String(lastError),
         })
@@ -6584,9 +6606,7 @@
                 : 'Memberstack member JSON could not save the current quiz result',
         )
 
-        if (didSave.newlySaved) {
-            await enrollQuizLeadDrip(pendingQuiz, recommendationSections)
-        }
+        await enrollQuizLeadDrip(pendingQuiz, recommendationSections)
     }
 
     // initResultsPage() is fire-and-forget, so any rejection inside it would
