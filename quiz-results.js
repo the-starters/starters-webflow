@@ -368,6 +368,9 @@
             properties[prefix + 'classification'] = starter.classification
             properties[prefix + 'location'] = starter.location
             properties[prefix + 'reviews'] = starter.reviews
+            properties[prefix + 'reviews_display'] = starter.reviews
+                ? 'table-cell'
+                : 'none'
             for (let serviceIndex = 0; serviceIndex < 3; serviceIndex += 1) {
                 properties[`${prefix}service_${serviceIndex + 1}`] =
                     starter.services[serviceIndex] || ''

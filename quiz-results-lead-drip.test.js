@@ -241,7 +241,9 @@ test('completed quiz posts current matches with safe email properties', async ()
     assert.equal(payload.properties.starter_1_first_name, 'Alex')
     assert.equal(payload.properties.starter_2_first_name, 'Sam')
     assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
+    assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
     assert.equal(payload.properties.starter_2_reviews, '')
+    assert.equal(payload.properties.starter_2_reviews_display, 'none')
     assert.equal(payload.properties.starter_count, '2')
     assert.equal(payload.properties.learn_count, '0')
     assert.equal(payload.properties.learn_title, 'Explore more expert guidance')
@@ -267,6 +269,7 @@ test('one approved review uses singular copy', async () => {
     )
 
     assert.equal(payload.properties.starter_1_reviews, '5.0 (1 Review)')
+    assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
     evidence.singular_review_copy = payload.properties.starter_1_reviews
 })
 
@@ -285,6 +288,7 @@ test('review text is hidden when the canonical average is missing or invalid', a
     )
 
     assert.equal(payload.properties.starter_1_reviews, '')
+    assert.equal(payload.properties.starter_1_reviews_display, 'none')
 })
 
 test('review text is hidden when the count is not a canonical number', async () => {
@@ -304,6 +308,7 @@ test('review text is hidden when the count is not a canonical number', async () 
     )
 
     assert.equal(payload.properties.starter_1_reviews, '')
+    assert.equal(payload.properties.starter_1_reviews_display, 'none')
 })
 
 for (const [label, reviewCount, reviewAverage] of [
