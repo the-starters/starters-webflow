@@ -36,6 +36,8 @@ function documentFixture() {
   const count = new Element()
   const summaryAverage = new Element()
   const summaryCount = new Element()
+  const legacySummaryAverage = new Element()
+  const legacySummaryCount = new Element()
   const list = new Element({ 'data-reviews-v3-list': 'reviews' })
   const outsideList = new Element({ 'data-reviews-v3-list': 'reviews' })
   root.children['[data-reviews-v3-list="reviews"]'] = list
@@ -48,6 +50,8 @@ function documentFixture() {
     count,
     summaryAverage,
     summaryCount,
+    legacySummaryAverage,
+    legacySummaryCount,
     list,
     outsideList,
     listeners,
@@ -60,8 +64,12 @@ function documentFixture() {
     },
     createElement() { return new Element() },
     querySelectorAll(selector) {
-      if (selector === '[data-reviews-v3-summary-average], #rating') return [summaryAverage]
-      if (selector === '[data-reviews-v3-summary-count], #rating + span') return [summaryCount]
+      if (selector === '[data-reviews-v3-summary-average], #rating') {
+        return [summaryAverage, legacySummaryAverage]
+      }
+      if (selector === '[data-reviews-v3-summary-count], #rating + span') {
+        return [summaryCount, legacySummaryCount]
+      }
       return []
     },
   }
@@ -158,6 +166,8 @@ test('paints approved aggregate and reveals the authored section', () => {
   assert.equal(fixture.count.textContent, '12')
   assert.equal(fixture.summaryAverage.textContent, '4.8')
   assert.equal(fixture.summaryCount.textContent, '12')
+  assert.equal(fixture.legacySummaryAverage.textContent, '4.8')
+  assert.equal(fixture.legacySummaryCount.textContent, '12')
   assert.equal(fixture.list.childNodes.length, 2)
   assert.equal(fixture.outsideList.childNodes.length, 0)
   assert.equal(fixture.root.hidden, false)
@@ -174,6 +184,8 @@ test('keeps an empty authored reviews section hidden', () => {
   assert.equal(fixture.count.textContent, '0')
   assert.equal(fixture.summaryAverage.textContent, '0')
   assert.equal(fixture.summaryCount.textContent, '0')
+  assert.equal(fixture.legacySummaryAverage.textContent, '0')
+  assert.equal(fixture.legacySummaryCount.textContent, '0')
   assert.equal(fixture.root.hidden, true)
   assert.equal(fixture.root.style.display, 'none')
 })
