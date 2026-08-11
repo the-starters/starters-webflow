@@ -299,12 +299,14 @@ has saved successfully. A draft, URL test payload, failed save, or result with
 no valid Starter never registers an event. The browser sends no recipient. It
 posts the current result revision, up to three Starter records with first names
 only, and one current category-matched Learn record to the authenticated
-`quiz_email/enroll/v3` Xano endpoint. Each Starter's canonical Algolia review
-aggregates become one-decimal email copy such as `4.8 (12 Reviews)` or
-`5.0 (1 Review)`; a zero, missing, or invalid count or average produces no
-review text, with no fallback to legacy review strings. When no Learn record is
-available, it sends the safe `/learn` fallback instead of leaving the email
-empty.
+`quiz_email/enroll/v3` Xano endpoint. Each Starter's canonical Xano
+`review_count` and `review_average` values, projected through Algolia, become
+one-decimal email copy such as `4.8 (12 Reviews)` or `5.0 (1 Review)`; a zero,
+missing, or invalid count or average produces no review text, with no fallback
+to legacy review strings. Recommendations cached before these review fields
+were added refresh before enrollment without changing the quiz revision. When
+no Learn record is available, it sends the safe `/learn` fallback instead of
+leaving the email empty.
 The Memberstack session exchange accepts every response shape used by the
 shared V3 trade-token endpoint: a raw string, `{authToken}`, or `{token}`.
 
