@@ -127,8 +127,11 @@ submit), and again in the adapter's own pre-submit validity check before it
 delegates to native `reportValidity()`. The duration sync described above runs
 alongside it at each of those points, plus once when the adapter installs, so
 the Monthly end date is already hidden and cleared before the first
-interaction. This keeps the authored own-contract confirmation required when
-visible without blocking the Standard contract branch, and works on a
+interaction. The adapter owns the `confirm-contract` checkbox policy separately
+from that generic required-state sync. My Own Contract shows, enables, and
+requires the checkbox. Standard Contract hides, disables, unrequires, and
+clears it, including Webflow's redirected checked state, so a stale affirmation
+cannot appear in the review or cross contract branches. This works on a
 Webflow-default form as well as one marked `novalidate`.
 
 The adapter reads the existing Standard Contract and My Own Contract radio
@@ -296,6 +299,15 @@ Brand's chosen date.
   `role="alert"`.
 - The existing `.generate-contract_success.w-form-done` sibling is reused for
   success.
+- After Xano accepts the project, the success title becomes "Project
+  successfully created". Standard Contract says contract generation is queued
+  and promises a signing email only after processing succeeds. My Own Contract
+  directs the Brand to manage the project from the dashboard. Neither path
+  claims that a PandaDoc document or email already exists.
+- New Designer markup can identify those existing authored text nodes with
+  `data-project-success-title` and `data-project-success-message`. Until that
+  cutover, the adapter also resolves the current Contract Generation success
+  title and paragraph selectors. It does not generate either element.
 - The form receives `data-project-form-status` and `aria-busy`.
 - Payload controls and submit buttons are locked while a request is pending.
 - Success dispatches `starters:project-created` with only `project_id` and
@@ -330,7 +342,9 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
 4. Confirm Standard Contract requires an invoice frequency and serializes it
    independently of the hourly Hours Cap Period, that My Own Contract hides
    the select and omits `invoice_frequency` from the payload, and that
-   switching back to Standard Contract restores the previous selection.
+   switching back to Standard Contract restores the previous selection. Confirm
+   My Own Contract shows and requires `confirm-contract`, while Standard
+   Contract hides, disables, unrequires, and clears it.
 5. With the approved production canary and PandaDoc create worker #33 held
    inactive, verify exactly one authenticated `projects/create-direct/v3`
    request and no Airtable/Make/PandaDoc browser request or browser secret.
@@ -340,3 +354,8 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
 7. Verify no PandaDoc document ID or document exists during the no-send canary.
 8. Replay the exact request and prove `replayed=true` with no duplicate project,
    event, document, or outbox row.
+9. After an accepted Standard Contract response, confirm the authored success
+   state reports project creation, queued contract generation, and conditional
+   email delivery. After an accepted My Own Contract response, confirm it
+   reports project creation and directs the Brand to the dashboard without any
+   PandaDoc generation or email claim.
