@@ -1,0 +1,68 @@
+name: tests
+
+# The repo's browser scripts are plain files served from jsDelivr — there is no
+# build step and no root package.json, so this runs Node's built-in test runner
+# directly against the committed test files.
+#
+# It exists mainly so the README coverage guard in readme-doc-links.test.js
+# actually guards: that test fails when a shipped script is missing from the
+# inventory, which is worthless if nothing runs it on a pull request.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The file list comes from git rather than a shell glob so an uncommitted
+      # or ignored file can never join the run, and so a new test file is picked
+      # up with no workflow edit.
+      #
+      # code-components/ is excluded on purpose: it is the parked Webflow React
+      # package, it has its own package.json and vitest suite, and it is not
+      # deployed through jsDelivr. Wire it up separately if it is ever revived.
+      #
+      # step-flow-test-dom.js is included explicitly — it is a real test file
+      # that predates the *.test.js convention, so the pattern below misses it.
+      # The list is read into an array over NUL-delimited paths rather than left
+      # to word splitting: an unquoted "$files" behaves differently across shells
+      # (zsh does not split parameter expansions, so the same line that runs 1962
+      # tests under bash silently ran 1 locally), and a path with a space would
+      # break the naive form outright. The read loop is used instead of mapfile
+      # so this exact command is verifiable on bash 3.2 as well as CI's bash 5.
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=()
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              code-components/*) continue ;;
+            esac
+            files+=("$file")
+          done < <(git ls-files -z '*.test.js')
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::no test files matched — check the pattern in this workflow"
+            exit 1
+          fi
+          echo "test files: ${#files[@]}"
+          node --test "${files[@]}" step-flow-test-dom.js
