@@ -157,7 +157,7 @@ GET api:KZf7nFnk/starters_onboarding/get_brand_profile_status
 → {"has_record": bool, "brand_profile_done": bool}
 ```
 
-Same no-input bearer shape, same single 4s budget, same fail-open rule.
+Same no-input bearer shape, same single 8s budget, same fail-open rule.
 
 | Brand profile status | Destination |
 | --- | --- |

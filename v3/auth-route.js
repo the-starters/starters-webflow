@@ -60,7 +60,7 @@
  * back onto the form.
  *
  * The check FAILS OPEN in every other case — logged out of Xano, token trade
- * rejected, HTTP error, malformed body, or the whole check exceeding its 4s
+ * rejected, HTTP error, malformed body, or the whole check exceeding its 8s
  * budget — and the member is routed exactly as before. This is funnel UX,
  * never a security boundary: Memberstack gated content, v3/route-guard.js, and
  * Xano endpoint authorization remain the enforced layers. Unmapped members never
