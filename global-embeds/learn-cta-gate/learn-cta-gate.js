@@ -2,7 +2,7 @@
  * Learn CTA gate — open the sign-up gate once the reader has read enough of a
  * Learn article, or after a short wait on articles too short to scroll.
  *
- * @release v1.59.182
+ * @release v1.59.183
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * article template's before-</body> code. Pair it with learn-cta-gate.css in
@@ -170,7 +170,7 @@
   if (window.__startersLearnCtaGateBooted) return
   window.__startersLearnCtaGateBooted = true
 
-  var RELEASE = 'v1.59.182'
+  var RELEASE = 'v1.59.183'
   var LOG_PREFIX = '[learn-cta-gate]'
 
   var WRAPPER_SELECTOR = '[data-learn-gate-element="wrapper"]'
@@ -624,19 +624,43 @@
     return true
   }
 
-  function resolveDismissible() {
-    closeEl = wrapper.querySelector(CLOSE_SELECTOR)
+  /**
+   * The first close control that is not the backdrop.
+   *
+   * `querySelectorAll`, never `querySelector`. Putting the hook on the backdrop
+   * AS WELL AS on a real button is the obvious way to express "clicking outside
+   * should close it too", and the backdrop is authored BEFORE the sheet, so it
+   * wins first-match. A `querySelector` here therefore returns the one element
+   * that can never gate anything, gets discarded below, and the real control is
+   * never even looked at — the gate silently refuses to close for a member who
+   * can see a perfectly good close button.
+   *
+   * The backdrop is skipped rather than accepted because it shows for EVERY
+   * reader: accepting it would resolve `dismissible` true for a logged-out one
+   * and hand them the article. Skipping costs that authoring nothing, because
+   * backdrop-CLICK becomes a dismissal path anyway once a real control exists.
+   */
+  function findCloseControl() {
+    var candidates = wrapper.querySelectorAll(CLOSE_SELECTOR)
+    var found = null
+    var onBackdrop = false
 
-    // The backdrop shows for EVERY reader, so accepting it as the close control
-    // would resolve `dismissible` true for a logged-out one and hand them the
-    // article. Refused rather than merely documented, because it is a silent,
-    // total paywall bypass and the attribute is easy to drop here by mistake.
-    // Backdrop-CLICK is already a dismissal path once a real close control
-    // exists elsewhere, which is what this authoring usually means to express.
-    if (closeEl && closeEl === backdrop) {
-      warn('the backdrop cannot be the close control — ignoring, gate stays hard')
-      closeEl = null
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i] === backdrop) onBackdrop = true
+      else if (!found) found = candidates[i]
     }
+
+    if (onBackdrop && found) {
+      info('close hook on the backdrop is redundant — backdrop-click already dismisses')
+    } else if (onBackdrop) {
+      warn('the backdrop cannot be the close control — ignoring, gate stays hard')
+    }
+
+    return found
+  }
+
+  function resolveDismissible() {
+    closeEl = findCloseControl()
 
     state.dismissible = !!closeEl && isDisplayed(closeEl)
 

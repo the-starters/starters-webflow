@@ -3739,6 +3739,8 @@
                         'profile-type',
                         'availability',
                         'ranking-points',
+                        'review_count',
+                        'average_rating',
                         'categories',
                         'archived',
                         'draft',

@@ -88,6 +88,7 @@ async function runController({
     enrollmentResponses,
     waitUntil,
     tradeTokenResponse = { authToken: 'xano-token' },
+    algoliaHits = null,
 }) {
     const documentListeners = new Map()
     const fetchCalls = []
@@ -137,6 +138,15 @@ async function runController({
     }
     const fetch = async (url, options = {}) => {
         fetchCalls.push({ url: String(url), options })
+        if (String(url).includes('-dsn.algolia.net/1/indexes/')) {
+            const request = JSON.parse(options.body)
+            return response({
+                data:
+                    request.attributesToRetrieve?.length === 0
+                        ? { nbHits: algoliaHits?.length || 0 }
+                        : { hits: algoliaHits || [] },
+            })
+        }
         if (String(url).includes('/auth/trade-token/v3')) {
             return response({ data: tradeTokenResponse })
         }
@@ -158,6 +168,11 @@ async function runController({
         sessionStorage: storage,
         setInterval: runSoon,
         setTimeout: runSoon,
+        starterQuizAlgoliaConfig: {
+            appId: 'test-app',
+            searchKey: 'test-search-key',
+            indexName: 'test-index',
+        },
     }
     window.window = window
 
@@ -260,6 +275,47 @@ test('review text is hidden when the canonical average is missing or invalid', a
     )
 
     assert.equal(payload.properties.starter_1_reviews, '')
+})
+
+test('fresh Algolia recommendations carry canonical reviews into the email', async () => {
+    const quiz = completedQuiz({
+        featuredFreelancers: [],
+        recommendedFreelancerGroups: [],
+        recommendationVersion: null,
+        starterCount: undefined,
+    })
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        algoliaHits: [
+            {
+                objectID: 'starter-from-algolia',
+                name: 'Taylor Jordan',
+                slug: 'taylor-jordan',
+                roles: ['creative-director'],
+                'ranking-points': 100,
+                review_count: 12,
+                average_rating: 4.83,
+            },
+        ],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const recommendationCalls = harness.fetchCalls.filter((call) => {
+        if (!call.url.includes('-dsn.algolia.net/1/indexes/')) return false
+        return JSON.parse(call.options.body).attributesToRetrieve?.length > 0
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.ok(recommendationCalls.length > 0)
+    recommendationCalls.forEach((call) => {
+        const attributes = JSON.parse(call.options.body).attributesToRetrieve
+        assert.ok(attributes.includes('review_count'))
+        assert.ok(attributes.includes('average_rating'))
+    })
+    assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
 })
 
 for (const [label, tradeTokenResponse] of [
