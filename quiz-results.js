@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.169
+ * @release v1.59.170
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -19,6 +19,7 @@
  * - Fetches top matching freelancer recommendations from Algolia.
  * - Saves compact quiz state to the logged-in Memberstack member JSON.
  * - Saves a short status/result summary to the starter-quiz Memberstack custom field.
+ * - Registers the completed V3 quiz lead event through authenticated Xano.
  *
  * Debug logging is OFF by default; opt in per session with ?starterQuizDebug=true
  * (or starterQuizDebug in session/localStorage). Set
@@ -29,6 +30,12 @@
     const starterQuizResultsDebugEnabled = true
     const debugStorageKey = 'starterQuizDebug'
     const pendingQuizStorageKey = 'starterQuizPending'
+    const quizLeadDripAuthBase =
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
+    const quizLeadDripV3Base =
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
+    const quizLeadDripEndpoint = '/quiz_email/enroll/v3'
+    const quizLeadDripRetryDelays = [0, 750, 2000]
     const learnContentSectionSelector = '.section_results-learn'
     const learnContentResultsSelector =
         learnContentSectionSelector + ' [wf-algolia-element="results"]'
@@ -65,6 +72,425 @@
             ['marketing-strategy-brand'],
         ],
     ])
+
+    function normalizeQuizLeadDripText(value, maxLength = 500) {
+        return String(value || '')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/[<>]/g, ' ')
+            .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, maxLength)
+    }
+
+    function getQuizLeadDripValue(record, fields) {
+        for (const field of fields) {
+            const value = record?.[field]
+            if (value !== undefined && value !== null && value !== '') return value
+        }
+        return ''
+    }
+
+    function getQuizLeadDripFirstName(record) {
+        const explicit = getQuizLeadDripValue(record, [
+            'first-name',
+            'first_name',
+            'firstName',
+            'firstname',
+        ])
+        const source = explicit || getQuizLeadDripValue(record, [
+            'name',
+            'Name',
+            'full_name',
+            'display_name',
+        ])
+        return normalizeQuizLeadDripText(source, 80).split(/\s+/)[0] || ''
+    }
+
+    function getQuizLeadDripList(value) {
+        if (Array.isArray(value)) return value
+        if (value && typeof value === 'object') return Object.values(value)
+        return String(value || '')
+            .split(/\r?\n|\s*[,|]\s*/)
+            .filter(Boolean)
+    }
+
+    function getQuizLeadDripUrl(value, pathPrefix) {
+        const text = normalizeQuizLeadDripText(value, 500)
+        if (!text) return ''
+
+        try {
+            const url = new URL(text, 'https://thestarters.com')
+            const host = url.hostname.toLowerCase()
+            if (!['thestarters.com', 'www.thestarters.com'].includes(host)) {
+                return ''
+            }
+            if (pathPrefix && !url.pathname.startsWith(pathPrefix)) return ''
+            url.protocol = 'https:'
+            url.hostname = 'thestarters.com'
+            return url.toString()
+        } catch {
+            return ''
+        }
+    }
+
+    function getQuizLeadDripImageUrl(value) {
+        const text = normalizeQuizLeadDripText(value, 800)
+        if (!text) return ''
+
+        try {
+            const url = new URL(text)
+            return url.protocol === 'https:' ? url.toString() : ''
+        } catch {
+            return ''
+        }
+    }
+
+    function normalizeQuizLeadDripStarter(record) {
+        const slug = normalizeQuizLeadDripText(
+            getQuizLeadDripValue(record, [
+                'slug',
+                'Slug',
+                'webflow_slug_30',
+            ]),
+            140,
+        )
+        const rawUrl = getQuizLeadDripValue(record, [
+            'url',
+            'profile_url',
+            'profileUrl',
+        ])
+        const roles = getQuizLeadDripList(
+            getQuizLeadDripValue(record, [
+                'roles',
+                'Roles',
+                'primary_role',
+                'primary-role',
+            ]),
+        )
+        const services = getQuizLeadDripList(
+            getQuizLeadDripValue(record, ['services', 'Services']),
+        )
+            .map((service) =>
+                normalizeQuizLeadDripText(
+                    typeof service === 'object'
+                        ? service.name || service.title
+                        : service,
+                    100,
+                ),
+            )
+            .filter(Boolean)
+            .slice(0, 3)
+
+        return {
+            first_name: getQuizLeadDripFirstName(record),
+            role: normalizeQuizLeadDripText(roles[0], 100),
+            summary: normalizeQuizLeadDripText(
+                getQuizLeadDripValue(record, [
+                    'tagline',
+                    'Tagline',
+                    'short_bio',
+                    'bio',
+                ]),
+                260,
+            ),
+            url: getQuizLeadDripUrl(
+                rawUrl || (slug ? `/hire/${encodeURIComponent(slug)}` : ''),
+                '/hire/',
+            ),
+            image_url: getQuizLeadDripImageUrl(
+                getQuizLeadDripValue(record, [
+                    'profile-photo-xano',
+                    'profile_photo',
+                    'profile-image',
+                    'image',
+                ]),
+            ),
+            availability: normalizeQuizLeadDripText(
+                getQuizLeadDripValue(record, [
+                    'availability',
+                    'Availability',
+                ]),
+                100,
+            ),
+            services,
+            bio: normalizeQuizLeadDripText(
+                getQuizLeadDripValue(record, [
+                    'bio',
+                    'Bio',
+                    'description',
+                    'About',
+                ]),
+                800,
+            ),
+            classification: normalizeQuizLeadDripText(
+                getQuizLeadDripValue(record, [
+                    'classification',
+                    'Classification',
+                    'profile_type_30',
+                ]),
+                100,
+            ),
+            location: normalizeQuizLeadDripText(
+                getQuizLeadDripValue(record, ['location', 'Location']),
+                120,
+            ),
+            reviews: normalizeQuizLeadDripText(
+                getQuizLeadDripValue(record, [
+                    'reviews',
+                    'review_count',
+                    'reviewCount',
+                ]),
+                80,
+            ),
+        }
+    }
+
+    function normalizeQuizLeadDripLearnItem(selection) {
+        const hit = selection?.hit || selection
+        if (!hit || typeof hit !== 'object') return null
+
+        const slug = normalizeQuizLeadDripText(
+            getQuizLeadDripValue(hit, ['slug', 'objectID']),
+            160,
+        )
+        const url = getQuizLeadDripUrl(
+            getQuizLeadDripValue(hit, ['url', 'link']) ||
+                (slug ? `/learn/${encodeURIComponent(slug)}` : ''),
+            '/learn/',
+        )
+        const title = normalizeQuizLeadDripText(
+            getQuizLeadDripValue(hit, ['name', 'title']),
+            180,
+        )
+
+        if (!title || !url) return null
+
+        return {
+            title,
+            summary: normalizeQuizLeadDripText(
+                getQuizLeadDripValue(hit, [
+                    'description',
+                    'summary',
+                    'excerpt',
+                ]),
+                360,
+            ),
+            url,
+        }
+    }
+
+    function createQuizLeadDripProperties(pendingQuiz, recommendations, learn) {
+        const featured = Array.isArray(recommendations?.featuredFreelancers)
+            ? recommendations.featuredFreelancers
+            : []
+        const grouped = Array.isArray(recommendations?.recommendationGroups)
+            ? recommendations.recommendationGroups.flatMap(
+                  (group) => group?.recommendations || [],
+              )
+            : []
+        const seen = new Set()
+        const starters = [...featured, ...grouped]
+            .filter((starter) => {
+                const key = normalizeQuizLeadDripText(
+                    starter?.objectID || starter?.id || starter?.slug,
+                    180,
+                )
+                if (!key || seen.has(key)) return false
+                seen.add(key)
+                return true
+            })
+            .map(normalizeQuizLeadDripStarter)
+            .filter((starter) => starter.first_name && starter.url)
+            .slice(0, 3)
+        const learnItem = normalizeQuizLeadDripLearnItem(learn)
+        const properties = {
+            quiz_revision: normalizeQuizLeadDripText(
+                pendingQuiz?.updatedAt || pendingQuiz?.completedAt,
+                160,
+            ),
+            category_count: String(
+                Array.isArray(pendingQuiz?.categories)
+                    ? pendingQuiz.categories.length
+                    : 0,
+            ),
+            subcategory_count: String(
+                Array.isArray(pendingQuiz?.subcategories)
+                    ? pendingQuiz.subcategories.length
+                    : 0,
+            ),
+            starter_count: String(starters.length),
+            learn_count: learnItem ? '1' : '0',
+            results_url: 'https://thestarters.com/quiz-results',
+            upgrade_url: 'https://thestarters.com/quiz-results#upgrade',
+            learn_title:
+                learnItem?.title || 'Explore more expert guidance',
+            learn_summary:
+                learnItem?.summary ||
+                'Browse practical sessions and playbooks from experienced operators.',
+            learn_url:
+                learnItem?.url ||
+                'https://thestarters.com/learn?source=quiz-results-email',
+        }
+
+        starters.forEach((starter, index) => {
+            const prefix = `starter_${index + 1}_`
+            properties[prefix + 'first_name'] = starter.first_name
+            properties[prefix + 'role'] = starter.role
+            properties[prefix + 'summary'] = starter.summary
+            properties[prefix + 'url'] = starter.url
+            properties[prefix + 'image_url'] = starter.image_url
+            properties[prefix + 'availability'] = starter.availability
+            properties[prefix + 'bio'] = starter.bio
+            properties[prefix + 'classification'] = starter.classification
+            properties[prefix + 'location'] = starter.location
+            properties[prefix + 'reviews'] = starter.reviews
+            for (let serviceIndex = 0; serviceIndex < 3; serviceIndex += 1) {
+                properties[`${prefix}service_${serviceIndex + 1}`] =
+                    starter.services[serviceIndex] || ''
+            }
+        })
+
+        return properties
+    }
+
+    function logQuizLeadDripFlow(message, data) {
+        if (!isDebugLoggingEnabled()) return
+
+        if (typeof data === 'undefined') {
+            console.log('[Starter Quiz Funnel]', '[results]', message)
+            return
+        }
+
+        console.log('[Starter Quiz Funnel]', '[results]', message, data)
+    }
+
+    async function waitForQuizLeadDripMemberstack() {
+        for (let attempt = 1; attempt <= 40; attempt += 1) {
+            if (window.$memberstackDom) return window.$memberstackDom
+            await new Promise((resolve) => window.setTimeout(resolve, 250))
+        }
+
+        return null
+    }
+
+    async function getQuizLeadDripToken(memberstack) {
+        if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
+            throw new Error('Memberstack session is unavailable')
+        }
+        const memberstackToken = await memberstack.getMemberCookie()
+        if (!memberstackToken) throw new Error('Memberstack session is unavailable')
+
+        const response = await fetch(
+            `${quizLeadDripAuthBase}/auth/trade-token/v3?token=${encodeURIComponent(memberstackToken)}`,
+            { method: 'GET', credentials: 'omit' },
+        )
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || !payload.authToken) {
+            throw new Error('V3 session exchange failed')
+        }
+        return payload.authToken
+    }
+
+    async function postQuizLeadDripEvent(properties) {
+        const memberstack = await waitForQuizLeadDripMemberstack()
+        const token = await getQuizLeadDripToken(memberstack)
+        const response = await fetch(
+            quizLeadDripV3Base + quizLeadDripEndpoint,
+            {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ properties }),
+            },
+        )
+        const payload = await response.json().catch(() => ({}))
+        if (!response.ok || payload.ok !== true) {
+            const error = new Error('V3 quiz lead event was not accepted')
+            error.status = response.status
+            throw error
+        }
+        return payload
+    }
+
+    async function getQuizLeadDripLearnSelection(pendingQuiz) {
+        if (window.__starterQuizLeadDripLearnSelection) {
+            return window.__starterQuizLeadDripLearnSelection
+        }
+
+        const section = document.querySelector(learnContentSectionSelector)
+        const { selectedCategoryFilterGroups: groups } =
+            getLearnContentCategoryFilters(pendingQuiz)
+        if (!section || !groups.length) return null
+
+        try {
+            const { appId, searchKey, indexName } =
+                getLearnContentSearchConfig(section)
+            const filterField = getLearnContentFilterField(section)
+            const groupResults = await Promise.all(
+                groups.map(async (group) => ({
+                    group,
+                    hits: await searchLearnContentGroup({
+                        appId,
+                        searchKey,
+                        indexName,
+                        filterField,
+                        filterValues: group.filterValues,
+                        hitsPerPage: 2,
+                    }),
+                })),
+            )
+            const selection =
+                pickRoundRobinLearnContentHits(groupResults, 1)[0] || null
+            window.__starterQuizLeadDripLearnSelection = selection
+            return selection
+        } catch (error) {
+            logQuizLeadDripFlow('quiz lead Learn match unavailable; using fallback', {
+                error: error?.message || String(error),
+            })
+            return null
+        }
+    }
+
+    async function enrollQuizLeadDrip(pendingQuiz, recommendations) {
+        const learnSelection =
+            await getQuizLeadDripLearnSelection(pendingQuiz)
+        const properties = createQuizLeadDripProperties(
+            pendingQuiz,
+            recommendations,
+            learnSelection,
+        )
+
+        if (!properties.quiz_revision || Number(properties.starter_count) < 1) {
+            logQuizLeadDripFlow(
+                'quiz lead event skipped; required result data is missing',
+            )
+            return null
+        }
+
+        let lastError = null
+        for (const delay of quizLeadDripRetryDelays) {
+            if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+            try {
+                const result = await postQuizLeadDripEvent(properties)
+                logQuizLeadDripFlow('registered V3 quiz lead event', {
+                    replayed: Boolean(result.replayed),
+                    status: result.status,
+                })
+                return result
+            } catch (error) {
+                lastError = error
+            }
+        }
+
+        logQuizLeadDripFlow('V3 quiz lead event registration failed', {
+            status: lastError?.status || 0,
+            error: lastError?.message || String(lastError),
+        })
+        return null
+    }
 
     /**
      * Decides whether a saved quiz payload is finished enough for this page to
@@ -866,6 +1292,8 @@
                 groupResults,
                 hitsPerPage,
             )
+            window.__starterQuizLeadDripLearnSelection =
+                selectedHits[0] || null
             if (!selectedHits.length) return false
 
             removeLearnContentInjectedSlides(resultsElement)
@@ -5935,6 +6363,7 @@
             })
             return {
                 saved: true,
+                newlySaved: false,
                 starterQuiz: createMemberstackStarterQuizPayload(pendingQuiz),
             }
         }
@@ -5956,6 +6385,7 @@
 
             return {
                 saved: true,
+                newlySaved: true,
                 starterQuiz,
             }
         } catch (error) {
@@ -6177,6 +6607,8 @@
                 ? ''
                 : 'Memberstack member JSON could not save the current quiz result',
         )
+
+        await enrollQuizLeadDrip(pendingQuiz, recommendationSections)
     }
 
     // initResultsPage() is fire-and-forget, so any rejection inside it would

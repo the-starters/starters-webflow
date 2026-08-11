@@ -48,7 +48,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-main/quiz-home.js` — homepage hero controller; saves selected category bucket IDs to `sessionStorage.quizSelectedCategories` and redirects to `/quiz` (see `quiz-main/README.md`)
 - `quiz-main/quiz-main.js` — `/quiz` controller: combines homepage bucket selections with saved Memberstack answers, persists draft/ready payloads for results, and owns the signup redirect contract; authoritative restore-order, markup, and redirect contracts live in [`quiz-main/README.md`](quiz-main/README.md#main-controller)
 - `quiz-main/quiz-redirect.js` — `/quiz` member entry redirect by role and quiz state, including the ready-payload safety net for new members; authoritative rules live in [`quiz-main/README.md`](quiz-main/README.md#entry-redirect)
-- `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, sends authenticated members whose completion marker has outlived missing or malformed answer JSON to `/quiz?retake=true&quizDataMissing=1`, keeps diagnostics opt-in through `starterQuizDebug`, uses the `Freelancers3.0-dev` Algolia index for freelancer recommendations by default, and rides the ad-attribution cookies written by `v3/signup-attribution.js` into the same `updateMember` call as `starter-quiz` (Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`, `signup-source`, `signup-referrer`, all verified in the app config; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone, and `signup-source`/`signup-referrer` are write-once so a returning member who merely logged in on `/quiz` keeps the page and referrer their original signup recorded)
+- `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, sends authenticated members whose completion marker has outlived missing or malformed answer JSON to `/quiz?retake=true&quizDataMissing=1`, registers the authenticated [V3 quiz-completion lead email](#v3-quiz-completion-lead-email) only after a finished result is saved, keeps diagnostics opt-in through `starterQuizDebug`, uses the `Freelancers3.0-dev` Algolia index for freelancer recommendations by default, and rides the ad-attribution cookies written by `v3/signup-attribution.js` into the same `updateMember` call as `starter-quiz` (Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`, `signup-source`, `signup-referrer`, all verified in the app config; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone, and `signup-source`/`signup-referrer` are write-once so a returning member who merely logged in on `/quiz` keeps the page and referrer their original signup recorded)
 - `quiz-results-email-tester.js` and `.css` — query-gated production tester for the V3 `/quiz-results` email; binds a native Webflow panel, hydrates the signed-in canary Brand's current saved quiz plus current Starter and Learn records, and sends only through the authenticated Xano endpoint described under [Quiz-results email tester](#quiz-results-email-tester)
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
@@ -172,12 +172,31 @@ under that same key, stamped with `memberstackSavedAt`; because `sessionStorage`
 outlives logout, such a cached payload is deleted as soon as Memberstack
 positively reports the visitor as logged out, so nobody inherits the previous
 member's results, while an unmarked pre-signup payload is always kept and still
-previews. Run the focused Algolia-config, taxonomy, saved-answer fallback, and
-draft-payload regressions with:
+previews. Run the focused Algolia-config, taxonomy, saved-answer fallback,
+draft-payload, and V3 lead-enrollment regressions with:
 
 ```sh
-node --test quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js
+node --test quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js quiz-results-lead-drip.test.js
 ```
+
+## V3 quiz-completion lead email
+
+The normal V3 results flow registers a lead email event only after a finished
+quiz has current Starter recommendations and the authenticated member's result
+has saved successfully. A draft, URL test payload, failed save, or result with
+no valid Starter never registers an event. The browser sends no recipient. It
+posts the current result revision, up to three Starter records with first names
+only, and one current category-matched Learn record to the authenticated
+`quiz_email/enroll/v3` Xano endpoint. When no Learn record is available, it
+sends the safe `/learn` fallback instead of leaving the email empty.
+
+The browser retries a failed registration twice, then leaves the saved result
+available for a later page refresh. Xano owns recipient identity, suppression,
+and event idempotency. A retake may refresh only a pending or failed event; it
+must not restart a Mailchimp journey that Xano has already accepted. Mailchimp
+owns the Kaeser HTML sends at H+1, D+2, and D+4, checks that the member still has
+Brand Free before each send, and makes the active core drip skip only Email 2
+for the `V3 Quiz Completed` tag. This V3 path does not change V2.
 
 ## Quiz-results email tester
 
