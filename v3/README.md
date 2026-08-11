@@ -2183,8 +2183,13 @@ adapter calls the runtime's idempotent `init()` for only this configured root.
 Review cards are rendered only into the attributed list target. Inside the
 authored section, use
 `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate values
-for the optional aggregate projections. The Xano response is the authority and
-must expose only approved reviews. Its canonical envelope is:
+for the optional aggregate projections. For the profile summary outside the
+Reviews section, use `data-reviews-v3-summary-average` and
+`data-reviews-v3-summary-count`. The adapter paints both surfaces from the same
+Xano result, including zero values. The existing `#rating` plus adjacent count
+span remains a temporary compatibility target for the current Hire template;
+new markup must use the explicit data attributes. The Xano response is the
+authority and must expose only approved reviews. Its canonical envelope is:
 
 ```json
 {

@@ -207,12 +207,17 @@
       ? average.toFixed(average % 1 === 0 ? 0 : 1)
       : '0'
 
-    setTextAll(root, '[data-reviews-v3-average], #rating', averageText)
+    setTextAll(root, '[data-reviews-v3-average]', averageText)
     setTextAll(
       root,
-      '[data-reviews-v3-count], .profile-hero_card-progress [fs-countitems-element="value"]',
+      '[data-reviews-v3-count]',
       String(count),
     )
+    // The profile summary is outside the authored Reviews section. Explicit
+    // data attributes are canonical; the existing #rating pair is retained as
+    // a compatibility target until Designer wiring is published.
+    setTextAll(documentObject, '[data-reviews-v3-summary-average], #rating', averageText)
+    setTextAll(documentObject, '[data-reviews-v3-summary-count], #rating + span', String(count))
     renderProfileReviews(documentObject, root, items)
 
     root.hidden = items.length === 0

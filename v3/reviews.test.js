@@ -33,19 +33,25 @@ class Element {
 function documentFixture() {
   const root = new Element({ 'data-reviews-v3': 'profile' })
   const average = new Element()
-  const legacyAverage = new Element()
   const count = new Element()
+  const summaryAverage = new Element()
+  const summaryCount = new Element()
+  const legacySummaryAverage = new Element()
+  const legacySummaryCount = new Element()
   const list = new Element({ 'data-reviews-v3-list': 'reviews' })
   const outsideList = new Element({ 'data-reviews-v3-list': 'reviews' })
   root.children['[data-reviews-v3-list="reviews"]'] = list
-  root.matches['[data-reviews-v3-average], #rating'] = [average, legacyAverage]
-  root.matches['[data-reviews-v3-count], .profile-hero_card-progress [fs-countitems-element="value"]'] = [count]
+  root.matches['[data-reviews-v3-average]'] = [average]
+  root.matches['[data-reviews-v3-count]'] = [count]
   const listeners = {}
   return {
     root,
     average,
-    legacyAverage,
     count,
+    summaryAverage,
+    summaryCount,
+    legacySummaryAverage,
+    legacySummaryCount,
     list,
     outsideList,
     listeners,
@@ -58,8 +64,12 @@ function documentFixture() {
     },
     createElement() { return new Element() },
     querySelectorAll(selector) {
-      if (selector === '[data-reviews-v3-average], #rating') return [average, legacyAverage]
-      if (selector === '[data-reviews-v3-count], .profile-hero_card-progress [fs-countitems-element="value"]') return [count]
+      if (selector === '[data-reviews-v3-summary-average], #rating') {
+        return [summaryAverage, legacySummaryAverage]
+      }
+      if (selector === '[data-reviews-v3-summary-count], #rating + span') {
+        return [summaryCount, legacySummaryCount]
+      }
       return []
     },
   }
@@ -153,8 +163,11 @@ test('paints approved aggregate and reveals the authored section', () => {
   }
   assert.equal(api.paintProfile(fixture, fixture.root, { raw, items: [raw] }), true)
   assert.equal(fixture.average.textContent, '4.8')
-  assert.equal(fixture.legacyAverage.textContent, '4.8')
   assert.equal(fixture.count.textContent, '12')
+  assert.equal(fixture.summaryAverage.textContent, '4.8')
+  assert.equal(fixture.summaryCount.textContent, '12')
+  assert.equal(fixture.legacySummaryAverage.textContent, '4.8')
+  assert.equal(fixture.legacySummaryCount.textContent, '12')
   assert.equal(fixture.list.childNodes.length, 2)
   assert.equal(fixture.outsideList.childNodes.length, 0)
   assert.equal(fixture.root.hidden, false)
@@ -169,6 +182,10 @@ test('keeps an empty authored reviews section hidden', () => {
   })
   assert.equal(fixture.average.textContent, '0')
   assert.equal(fixture.count.textContent, '0')
+  assert.equal(fixture.summaryAverage.textContent, '0')
+  assert.equal(fixture.summaryCount.textContent, '0')
+  assert.equal(fixture.legacySummaryAverage.textContent, '0')
+  assert.equal(fixture.legacySummaryCount.textContent, '0')
   assert.equal(fixture.root.hidden, true)
   assert.equal(fixture.root.style.display, 'none')
 })
