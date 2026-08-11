@@ -93,8 +93,13 @@ Do not discard local changes unless the user explicitly asks.
 - `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior
   migrated from the legacy Webflow footer. It keeps the existing Designer form
   contract, shows success only after a confirmed 2xx Xano response, and shows the
-  error state for rejected or failed profile updates. Webflow retains only the
-  `intl-tel-input` and Quill dependencies plus this deferred `@latest` loader.
+  error state for rejected or failed profile updates. The script owns its DOM,
+  readiness, validation, rate-input, and loader fallbacks. The site-wide Webflow
+  Head Code still initializes `MEMBER`, `memberReady`, and the matching helper
+  aliases before deferred page scripts. Load `intl-tel-input`, Quill, then this
+  deferred `@latest` asset. `v3/brand-account-controller.js` must load first with
+  `guardSecurityForm: 'identity'`; it alone writes a changed Memberstack login
+  email, then replays this controller's Xano profile save.
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero

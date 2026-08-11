@@ -5,6 +5,104 @@
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  */
 
+const qs = (selector, scope = document) => (scope || document).querySelector(selector);
+const qsa = (selector, scope = document) => Array.from((scope || document).querySelectorAll(selector));
+
+function waitProfileData(callback) {
+	if (typeof window.waitProfileData === 'function') {
+		return window.waitProfileData(callback);
+	}
+
+	const startedAt = Date.now();
+	const poll = () => {
+		if (window.activeProfile) {
+			callback(window.activeProfile);
+			return;
+		}
+		if (Date.now() - startedAt < 10000) window.setTimeout(poll, 100);
+	};
+	poll();
+}
+
+function waitForMember(callback) {
+	if (typeof window.waitForMember === 'function') {
+		return window.waitForMember(callback);
+	}
+
+	return Promise.resolve(window.memberReady || window.MEMBER || {})
+		.then((member) => {
+			window.MEMBER = member || {};
+			callback(window.MEMBER);
+			return window.MEMBER;
+		});
+}
+
+function setLoader(state, wrapper) {
+	if (typeof window.setLoader === 'function') {
+		window.setLoader(state, wrapper);
+		return;
+	}
+
+	const loader = qs('[data-loader], [data-custom-loader]', wrapper);
+	if (!loader) return;
+	loader.style.display = state ? '' : 'none';
+	loader.style.visibility = state ? 'visible' : 'hidden';
+	loader.style.opacity = state ? '1' : '0';
+}
+
+function formatRateInputs() {
+	if (typeof window.formatRateInputs === 'function') {
+		window.formatRateInputs();
+		return;
+	}
+
+	qsa('[data-element="rate"]').forEach((input) => {
+		input.addEventListener('input', () => {
+			input.value = input.value.replace(/[^\d.]/g, '').replace(/(\..*)\./g, '$1');
+		});
+	});
+}
+
+function stepElement(stepIndex) {
+	return qs(`[data-form="step"][data-index="${stepIndex}"]`);
+}
+
+function isStepValid(stepIndex) {
+	const step = stepElement(stepIndex);
+	if (!step) return false;
+
+	return qsa('input, select, textarea', step).every((field) => {
+		if (field.disabled || !field.required) return true;
+		return typeof field.checkValidity !== 'function' || field.checkValidity();
+	});
+}
+
+function validateStepSubmit(stepIndex, quiet = true) {
+	const step = stepElement(stepIndex);
+	if (!step) return false;
+	const valid = isStepValid(stepIndex);
+	if (!valid && !quiet) {
+		const invalid = qsa('input, select, textarea', step).find((field) =>
+			typeof field.checkValidity === 'function' && !field.checkValidity()
+		);
+		invalid?.reportValidity?.();
+	}
+	return valid;
+}
+
+function checkAllStepsValidity(stepIndex) {
+	const indexes = stepIndex
+		? [stepIndex]
+		: qsa('[data-form="step"][data-index]').map((step) => Number(step.dataset.index));
+	indexes.forEach((index) => validateStepSubmit(index));
+}
+
+function handleCustomSelects() {
+	if (typeof window.handleCustomSelects === 'function') {
+		window.handleCustomSelects();
+	}
+}
+
 // Inline block 1
 document.addEventListener('DOMContentLoaded', function () {
 		const form = qs('[build-profile-form]');
@@ -14,15 +112,15 @@ document.addEventListener('DOMContentLoaded', function () {
 		const openErrorModal = qs("[data-modal-trigger='edit-form-error']");
 
 		waitProfileData(() => {
-			if (activeProfile?.type === "full") {
+			if (window.activeProfile?.type === "full") {
 				qs('[fs-list-instance="subcategories"]')?.remove();
 			}
 
-			if (activeProfile?.type === "consult") {
+			if (window.activeProfile?.type === "consult") {
 				qs('[fs-list-instance="roles"]')?.remove();
 			}
 
-			applyProfileTypeVisibility(activeProfile?.type);
+			applyProfileTypeVisibility(window.activeProfile?.type);
 		});
 
 		/* inputs */
@@ -31,7 +129,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		/* Phone Mask */
 		waitForMember(() => {
-			if (!MEMBER.id) {
+			if (!window.MEMBER?.id) {
 				window.location.replace('/login');
 				return;
 			}
@@ -251,8 +349,8 @@ document.addEventListener('DOMContentLoaded', function () {
 			}
 
 			// payload.member_id = MEMBER.id;
-			payload['Profile_Type'] = activeProfile?.type || null;
-			payload['Profile_Type_ID'] = activeProfile?.type_id || null;
+			payload['Profile_Type'] = window.activeProfile?.type || null;
+			payload['Profile_Type_ID'] = window.activeProfile?.type_id || null;
 			payload["Updated_On"] = Date.now();
 
 			if (!Object.keys(payload).length) {
@@ -272,7 +370,7 @@ document.addEventListener('DOMContentLoaded', function () {
 			// }
 
 			try {
-				const response = await fetch(`${PATCH_ENDPOINT}${MEMBER.id}`, {
+				const response = await fetch(`${PATCH_ENDPOINT}${window.MEMBER.id}`, {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(payload),
@@ -287,9 +385,9 @@ document.addEventListener('DOMContentLoaded', function () {
 				// update Member customFields, if even one of them was changed
 				if (stepIndex === 1) {
 					if (
-						MEMBER.customFields?.['free-user']?.toLowerCase().trim() !== (payload['First_Name'] || '').toLowerCase().trim() ||
-						MEMBER.customFields?.['last-name']?.toLowerCase().trim() !== (payload['Last_Name'] || '').toLowerCase().trim() ||
-						MEMBER.customFields?.['phone']?.toLowerCase().trim() !== (payload['Phone'] || '').toLowerCase().trim()
+						window.MEMBER.customFields?.['free-user']?.toLowerCase().trim() !== (payload['First_Name'] || '').toLowerCase().trim() ||
+						window.MEMBER.customFields?.['last-name']?.toLowerCase().trim() !== (payload['Last_Name'] || '').toLowerCase().trim() ||
+						window.MEMBER.customFields?.['phone']?.toLowerCase().trim() !== (payload['Phone'] || '').toLowerCase().trim()
 					) {
 						try {
 							await window.$memberstackDom.updateMember({
@@ -301,17 +399,6 @@ document.addEventListener('DOMContentLoaded', function () {
 							});
 						} catch (error) {
 							console.error("Failed to update Member customFields:", error);
-						}
-					}
-
-					// update email, if it was changed
-					if (MEMBER.auth.email?.trim() !== payload.Email?.trim()) {
-						try {
-							await window.$memberstackDom.updateMemberAuth({
-								email: payload.Email,
-							});
-						} catch (error) {
-							console.error("Failed to update Member email:", error);
 						}
 					}
 				}
@@ -597,7 +684,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 		// initial value handler
 		waitProfileData(() => {
-			const stepData = activeProfile?.data?.["step_2"];
+			const stepData = window.activeProfile?.data?.["step_2"];
 			if (!stepData) return;
 
 			if (("bio-html" in stepData)) {
@@ -1052,4 +1139,3 @@ document.addEventListener('DOMContentLoaded', () => {
 			});
 		}
 	});
-
