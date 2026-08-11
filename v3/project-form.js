@@ -62,6 +62,10 @@
   var DEFAULT_DATE_FORMAT = 'mm/dd/yy'
   var MEMBERSTACK_POLL_MS = 100
   var MEMBERSTACK_MAX_TRIES = 50
+  var CONTROLLER_VERSION = '1.59.190'
+  var DIAGNOSTIC_SCHEMA = 'project_form_diagnostic_v1'
+  var DIAGNOSTIC_STORAGE_KEY = 'starters.projectForm.lastDiagnostic.v1'
+  var DIAGNOSTIC_COPY_ATTR = 'data-project-diagnostic-copy'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   var ENGAGEMENT_TYPES = {
@@ -126,6 +130,194 @@
 
   function clean(value) {
     return String(value == null ? '' : value).trim()
+  }
+
+  function diagnosticTimestamp(globalObject) {
+    var DateObject = globalObject && globalObject.Date ? globalObject.Date : Date
+    try { return new DateObject().toISOString() } catch (_) { return '' }
+  }
+
+  function diagnosticId(globalObject) {
+    var raw = ''
+    try {
+      if (globalObject && globalObject.crypto && typeof globalObject.crypto.randomUUID === 'function') {
+        raw = globalObject.crypto.randomUUID()
+      }
+    } catch (_) {}
+    if (!raw) raw = String(Date.now()) + '-' + String(Math.random()).slice(2)
+    var suffix = raw.replace(/[^a-z0-9]/gi, '').slice(-8).toUpperCase() || 'UNKNOWN'
+    return 'SPF-' + diagnosticTimestamp(globalObject).slice(0, 10).replace(/-/g, '') + '-' + suffix
+  }
+
+  function diagnosticCode(message) {
+    var normalized = clean(message)
+      .replace(/[^a-z0-9]+/gi, '_')
+      .replace(/^_+|_+$/g, '')
+      .toUpperCase()
+      .slice(0, 64)
+    return normalized ? 'VALIDATION_' + normalized : 'BROWSER_VALIDATION_FAILED'
+  }
+
+  function diagnosticContext(serialized) {
+    var payload = serialized && serialized.payload ? serialized.payload : {}
+    return {
+      contract_type: clean(payload.contract_type) || null,
+      engagement_type: clean(payload.engagement_type) || null,
+      invoice_frequency: clean(payload.invoice_frequency) || null,
+    }
+  }
+
+  function createDiagnostic(globalObject, serialized, fields) {
+    var context = diagnosticContext(serialized)
+    var locationObject = globalObject && globalObject.location
+    return {
+      schema: DIAGNOSTIC_SCHEMA,
+      diagnostic_id: diagnosticId(globalObject),
+      time_utc: diagnosticTimestamp(globalObject),
+      controller_version: CONTROLLER_VERSION,
+      environment: clean(locationObject && locationObject.hostname) || 'unknown',
+      result: clean(fields && fields.result) || 'unknown',
+      stage: clean(fields && fields.stage) || 'unknown',
+      error_code: clean(fields && fields.error_code) || null,
+      http_status: fields && Number(fields.http_status) > 0 ? Number(fields.http_status) : null,
+      duration_ms: fields && Number(fields.duration_ms) >= 0 ? Math.round(Number(fields.duration_ms)) : null,
+      request_started: Boolean(fields && fields.request_started),
+      contract_type: context.contract_type,
+      engagement_type: context.engagement_type,
+      invoice_frequency: context.invoice_frequency,
+      project_id: positiveId(fields && fields.project_id),
+      replayed: Boolean(fields && fields.replayed),
+    }
+  }
+
+  function completeDiagnostic(receipt, fields) {
+    return {
+      schema: receipt.schema,
+      diagnostic_id: receipt.diagnostic_id,
+      time_utc: receipt.time_utc,
+      controller_version: receipt.controller_version,
+      environment: receipt.environment,
+      result: clean(fields && fields.result) || receipt.result,
+      stage: clean(fields && fields.stage) || receipt.stage,
+      error_code: clean(fields && fields.error_code) || null,
+      http_status: fields && Number(fields.http_status) > 0 ? Number(fields.http_status) : null,
+      duration_ms: fields && Number(fields.duration_ms) >= 0 ? Math.round(Number(fields.duration_ms)) : null,
+      request_started: fields && fields.request_started !== undefined ? Boolean(fields.request_started) : receipt.request_started,
+      contract_type: receipt.contract_type,
+      engagement_type: receipt.engagement_type,
+      invoice_frequency: receipt.invoice_frequency,
+      project_id: positiveId(fields && fields.project_id),
+      replayed: Boolean(fields && fields.replayed),
+    }
+  }
+
+  function formatDiagnostic(receipt) {
+    if (!receipt) return ''
+    return [
+      'Start Project diagnostic',
+      'ID: ' + (receipt.diagnostic_id || 'unknown'),
+      'Result: ' + (receipt.result || 'unknown'),
+      'Time: ' + (receipt.time_utc || 'unknown'),
+      'Controller: ' + (receipt.controller_version || 'unknown'),
+      'Environment: ' + (receipt.environment || 'unknown'),
+      'Stage: ' + (receipt.stage || 'unknown'),
+      'Error code: ' + (receipt.error_code || 'none'),
+      'HTTP status: ' + (receipt.http_status || 'none'),
+      'Duration: ' + (receipt.duration_ms == null ? 'none' : receipt.duration_ms + 'ms'),
+      'Request attempted: ' + (receipt.request_started ? 'yes' : 'no'),
+      'Contract: ' + (receipt.contract_type || 'none'),
+      'Fee type: ' + (receipt.engagement_type || 'none'),
+      'Invoice frequency: ' + (receipt.invoice_frequency || 'none'),
+      'Project ID: ' + (receipt.project_id || 'none'),
+      'Replayed: ' + (receipt.replayed ? 'yes' : 'no'),
+    ].join('\n')
+  }
+
+  function diagnosticEventName(receipt) {
+    if (receipt.result === 'opened') return 'project_form_opened'
+    if (receipt.result === 'started') return 'project_form_submit_started'
+    if (receipt.result === 'success') return 'project_form_submit_succeeded'
+    if (receipt.stage === 'validation') return 'project_form_validation_failed'
+    return 'project_form_submit_failed'
+  }
+
+  function diagnosticEventProperties(receipt) {
+    return {
+      diagnostic_id: receipt.diagnostic_id,
+      controller_version: receipt.controller_version,
+      environment: receipt.environment,
+      result: receipt.result,
+      stage: receipt.stage,
+      error_code: receipt.error_code || undefined,
+      http_status: receipt.http_status || undefined,
+      duration_ms: receipt.duration_ms == null ? undefined : receipt.duration_ms,
+      request_started: receipt.request_started,
+      contract_type: receipt.contract_type || undefined,
+      engagement_type: receipt.engagement_type || undefined,
+      invoice_frequency: receipt.invoice_frequency || undefined,
+      project_id: receipt.project_id || undefined,
+      replayed: receipt.replayed,
+    }
+  }
+
+  function persistDiagnostic(globalObject, receipt) {
+    if (!globalObject || !receipt) return receipt
+    globalObject.__startersProjectDiagnosticLast = receipt
+    try {
+      if (globalObject.sessionStorage && typeof globalObject.sessionStorage.setItem === 'function') {
+        globalObject.sessionStorage.setItem(DIAGNOSTIC_STORAGE_KEY, JSON.stringify(receipt))
+      }
+    } catch (_) {}
+    try {
+      if (globalObject.console && typeof globalObject.console.info === 'function') {
+        globalObject.console.info('[Start Project diagnostic]', receipt)
+      }
+    } catch (_) {}
+    try {
+      if (globalObject.StartersTrack && typeof globalObject.StartersTrack.track === 'function') {
+        globalObject.StartersTrack.track(diagnosticEventName(receipt), diagnosticEventProperties(receipt))
+      }
+    } catch (_) {}
+    return receipt
+  }
+
+  function lastDiagnostic(globalObject) {
+    if (!globalObject) return null
+    if (globalObject.__startersProjectDiagnosticLast) return globalObject.__startersProjectDiagnosticLast
+    try {
+      if (globalObject.sessionStorage && typeof globalObject.sessionStorage.getItem === 'function') {
+        var serialized = globalObject.sessionStorage.getItem(DIAGNOSTIC_STORAGE_KEY)
+        if (serialized) return JSON.parse(serialized)
+      }
+    } catch (_) {}
+    return null
+  }
+
+  function copyLastDiagnostic(globalObject) {
+    var text = formatDiagnostic(lastDiagnostic(globalObject))
+    var clipboard = globalObject && globalObject.navigator && globalObject.navigator.clipboard
+    if (!text || !clipboard || typeof clipboard.writeText !== 'function') return Promise.resolve(false)
+    return Promise.resolve(clipboard.writeText(text)).then(function () { return true }).catch(function () { return false })
+  }
+
+  function decorateDiagnosticMessage(element, receipt) {
+    if (!element || !element.setAttribute) return
+    if (!receipt) {
+      element.removeAttribute(DIAGNOSTIC_COPY_ATTR)
+      element.removeAttribute('data-project-diagnostic-id')
+      element.removeAttribute('tabindex')
+      element.removeAttribute('title')
+      return
+    }
+    element.setAttribute(DIAGNOSTIC_COPY_ATTR, '')
+    element.setAttribute('data-project-diagnostic-id', receipt.diagnostic_id)
+    element.setAttribute('tabindex', '0')
+    element.setAttribute('title', 'Copy diagnostic log')
+  }
+
+  function diagnosticMessage(message, receipt) {
+    if (!receipt) return message
+    return message + ' Diagnostic ID: ' + receipt.diagnostic_id + '. Click this message to copy the diagnostic log.'
   }
 
   function positiveId(value) {
@@ -1019,12 +1211,12 @@
 
   function state(form) {
     if (!stateByForm) {
-      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', keyPayload: '', lockedFields: null }
+      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', keyPayload: '', lockedFields: null, diagnostic: null, nativeValidationReceipt: null }
       return form.__projectFormV3State
     }
     var current = stateByForm.get(form)
     if (!current) {
-      current = { active: null, key: '', keyPayload: '', lockedFields: null }
+      current = { active: null, key: '', keyPayload: '', lockedFields: null, diagnostic: null, nativeValidationReceipt: null }
       stateByForm.set(form, current)
     }
     return current
@@ -1049,7 +1241,7 @@
     formState.lockedFields = null
   }
 
-  function setStatus(form, status, message) {
+  function setStatus(form, status, message, receipt) {
     form.setAttribute('data-project-form-status', status)
     form.setAttribute('aria-busy', status === 'submitting' ? 'true' : 'false')
     setFormLocked(form, status === 'submitting')
@@ -1057,10 +1249,11 @@
     var error = form.querySelector('[data-project-form-state="error"]') ||
       (wrapper && (wrapper.querySelector('[data-project-form-state="error"]') || wrapper.querySelector('.w-form-fail')))
     if (error) {
-      error.textContent = status === 'error' ? message : ''
+      error.textContent = status === 'error' ? diagnosticMessage(message, receipt) : ''
       error.hidden = status !== 'error'
       error.style.display = status === 'error' ? 'block' : 'none'
       if (error.setAttribute) error.setAttribute('role', 'alert')
+      decorateDiagnosticMessage(error, status === 'error' ? receipt : null)
     }
     var submitters = form.querySelectorAll('[type="submit"], [data-project-submit]')
     Array.prototype.forEach.call(submitters, function (button) {
@@ -1086,7 +1279,7 @@
     return form && form.closest ? form.closest(CONTAINER_SELECTOR) : null
   }
 
-  function bindTrigger(trigger, documentObject) {
+  function bindTrigger(trigger, documentObject, globalObject) {
     var form = formForTrigger(trigger, documentObject)
     if (!form) return false
     var formState = state(form)
@@ -1108,10 +1301,23 @@
     fillCurrentDates(form, global)
     fillMemberName(documentObject, global, 0)
     if (!fieldValue(documentObject.querySelector(SELECTED_STARTER_SELECTOR))) {
-      setStatus(form, 'error', 'The selected Starter could not be identified. Reload and try again.')
+      var identityDiagnostic = createDiagnostic(globalObject, null, {
+        result: 'error',
+        stage: 'identity',
+        error_code: 'SELECTED_STARTER_MISSING',
+        request_started: false,
+      })
+      formState.diagnostic = persistDiagnostic(globalObject, identityDiagnostic)
+      setStatus(form, 'error', 'The selected Starter could not be identified. Reload and try again.', identityDiagnostic)
       return false
     }
     setStatus(form, 'ready', '')
+    var openedDiagnostic = createDiagnostic(globalObject, serialize(form, documentObject), {
+      result: 'opened',
+      stage: 'form',
+      request_started: false,
+    })
+    formState.diagnostic = persistDiagnostic(globalObject, openedDiagnostic)
     return true
   }
 
@@ -1120,7 +1326,7 @@
     return api && typeof api.projectDirectCreate === 'function' ? api.projectDirectCreate : null
   }
 
-  function showSuccess(form, result, documentObject) {
+  function showSuccess(form, result, documentObject, receipt) {
     setStatus(form, 'success', '')
     var formState = state(form)
     formState.key = ''
@@ -1139,9 +1345,11 @@
       )
       if (successTitle) successTitle.textContent = 'Project successfully created'
       if (successMessage) {
-        successMessage.textContent = readContractType(form) === 'standard'
+        var message = readContractType(form) === 'standard'
           ? 'Your contract is queued for generation. You will receive a signing email after processing succeeds.'
           : 'You can manage this project from your dashboard.'
+        successMessage.textContent = diagnosticMessage(message, receipt)
+        decorateDiagnosticMessage(successMessage, receipt)
       }
       success.hidden = false
       success.style.display = 'block'
@@ -1159,18 +1367,46 @@
     }
   }
 
+  function recordNativeValidation(form, globalObject, documentObject) {
+    var formState = state(form)
+    if (formState.nativeValidationReceipt) return formState.nativeValidationReceipt
+    var receipt = createDiagnostic(globalObject, serialize(form, documentObject), {
+      result: 'error',
+      stage: 'validation',
+      error_code: 'BROWSER_VALIDATION_FAILED',
+      request_started: false,
+    })
+    formState.nativeValidationReceipt = receipt
+    formState.diagnostic = persistDiagnostic(globalObject, receipt)
+    setStatus(form, 'error', 'Review the highlighted fields and try again.', receipt)
+    Promise.resolve().then(function () {
+      if (formState.nativeValidationReceipt === receipt) formState.nativeValidationReceipt = null
+    })
+    return receipt
+  }
+
   function submit(form, globalObject, documentObject) {
     var formState = state(form)
     if (formState.active) return formState.active
     // Hidden required controls must not block a different authored branch (for
     // example, the own-contract confirmation checkbox while Standard contract
     // is selected), while visible required controls still gate submission.
-    if (!reportActiveValidity(form)) return Promise.resolve(false)
+    if (!reportActiveValidity(form)) {
+      recordNativeValidation(form, globalObject, documentObject)
+      return Promise.resolve(false)
+    }
 
     var serialized = serialize(form, documentObject)
     var error = validationError(serialized)
     if (error) {
-      setStatus(form, 'error', error)
+      var validationReceipt = createDiagnostic(globalObject, serialized, {
+        result: 'error',
+        stage: 'validation',
+        error_code: diagnosticCode(error),
+        request_started: false,
+      })
+      formState.diagnostic = persistDiagnostic(globalObject, validationReceipt)
+      setStatus(form, 'error', error, validationReceipt)
       return Promise.resolve(false)
     }
 
@@ -1185,19 +1421,53 @@
 
     var createProject = projectApi(globalObject)
     if (!createProject) {
-      setStatus(form, 'error', 'The project service is not available. Reload and retry.')
+      var serviceReceipt = createDiagnostic(globalObject, serialized, {
+        result: 'error',
+        stage: 'bridge',
+        error_code: 'PROJECT_SERVICE_UNAVAILABLE',
+        request_started: false,
+      })
+      formState.diagnostic = persistDiagnostic(globalObject, serviceReceipt)
+      setStatus(form, 'error', 'The project service is not available. Reload and retry.', serviceReceipt)
       return Promise.resolve(false)
     }
 
-    setStatus(form, 'submitting', '')
+    var startedAt = Date.now()
+    var startedReceipt = createDiagnostic(globalObject, serialized, {
+      result: 'started',
+      stage: 'submit',
+      request_started: true,
+    })
+    formState.diagnostic = persistDiagnostic(globalObject, startedReceipt)
+    setStatus(form, 'submitting', '', startedReceipt)
     formState.active = Promise.resolve()
       .then(function () { return createProject(serialized.payload) })
       .then(function (result) {
-        showSuccess(form, result, documentObject)
+        var project = result && result.project
+        var successReceipt = completeDiagnostic(startedReceipt, {
+          result: 'success',
+          stage: 'complete',
+          duration_ms: Date.now() - startedAt,
+          request_started: true,
+          project_id: project && project.id,
+          replayed: Boolean(result && result.replayed),
+        })
+        formState.diagnostic = persistDiagnostic(globalObject, successReceipt)
+        showSuccess(form, result, documentObject, successReceipt)
         return true
       })
       .catch(function (requestError) {
-        setStatus(form, 'error', safeError(requestError))
+        var status = requestError && Number(requestError.status)
+        var failureReceipt = completeDiagnostic(startedReceipt, {
+          result: 'error',
+          stage: 'request',
+          error_code: status > 0 ? 'HTTP_' + status : 'NETWORK_ERROR',
+          http_status: status,
+          duration_ms: Date.now() - startedAt,
+          request_started: true,
+        })
+        formState.diagnostic = persistDiagnostic(globalObject, failureReceipt)
+        setStatus(form, 'error', safeError(requestError), failureReceipt)
         return false
       })
       .finally(function () { formState.active = null })
@@ -1207,11 +1477,18 @@
   function install(documentObject, globalObject) {
     if (!documentObject || !documentObject.addEventListener) return
     documentObject.addEventListener('click', function (event) {
+      var diagnosticTarget = event.target && event.target.closest
+        ? event.target.closest('[' + DIAGNOSTIC_COPY_ATTR + ']')
+        : null
+      if (diagnosticTarget) {
+        copyLastDiagnostic(globalObject)
+        return
+      }
       handleSmartFill(event, documentObject)
       var target = event.target
       var trigger = target && target.closest ? target.closest(OPEN_SELECTOR) : null
       if (trigger) {
-        bindTrigger(trigger, documentObject)
+        bindTrigger(trigger, documentObject, globalObject)
         return
       }
       // Event dispatch completes before the click's default action, so this is
@@ -1222,6 +1499,15 @@
         syncDurationFields(clickedForm)
         syncActiveRequired(clickedForm)
       }
+    })
+    documentObject.addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      var diagnosticTarget = event.target && event.target.closest
+        ? event.target.closest('[' + DIAGNOSTIC_COPY_ATTR + ']')
+        : null
+      if (!diagnosticTarget) return
+      if (event.preventDefault) event.preventDefault()
+      copyLastDiagnostic(globalObject)
     })
     documentObject.addEventListener('change', function (event) {
       // Switching fee structure or contract type swaps which conditional panel
@@ -1245,6 +1531,11 @@
       formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
     })
+    documentObject.addEventListener('invalid', function (event) {
+      var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
+      if (!form) return
+      recordNativeValidation(form, globalObject, documentObject)
+    }, true)
     documentObject.addEventListener('submit', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
       if (!form) return
@@ -1283,6 +1574,11 @@
     syncActiveRequired: syncActiveRequired,
     reportActiveValidity: reportActiveValidity,
     createIdempotencyKey: createIdempotencyKey,
+    createDiagnostic: createDiagnostic,
+    completeDiagnostic: completeDiagnostic,
+    formatDiagnostic: formatDiagnostic,
+    lastDiagnostic: function () { return lastDiagnostic(global) },
+    copyLastDiagnostic: function () { return copyLastDiagnostic(global) },
     serialize: serialize,
     validationError: validationError,
     bindTrigger: bindTrigger,
@@ -1290,5 +1586,11 @@
     install: install,
   }
   global.StartersProjectFormV3 = api
+  global.StartersProjectDiagnostics = {
+    getLast: function () { return lastDiagnostic(global) },
+    formatLast: function () { return formatDiagnostic(lastDiagnostic(global)) },
+    copyLast: function () { return copyLastDiagnostic(global) },
+  }
+  global.copyProjectDiagnostic = function () { return copyLastDiagnostic(global) }
   if (global.document) install(global.document, global)
 })(typeof window !== 'undefined' ? window : null)

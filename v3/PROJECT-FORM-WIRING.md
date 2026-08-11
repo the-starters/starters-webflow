@@ -317,6 +317,36 @@ Brand's chosen date.
 - Success dispatches `starters:project-created` with only `project_id` and
   `replayed`.
 
+### Support diagnostic receipts
+
+Every form open with a usable Starter identity, validation failure, submit
+start, request failure, and accepted project writes an allowlisted
+`project_form_diagnostic_v1` receipt.
+Missing Starter identity and unavailable bridge failures also write a receipt
+before any request starts. Error and success messages show the receipt's
+`SPF-...` diagnostic ID; clicking the existing authored message copies the full
+receipt. The console fallback is `copyProjectDiagnostic()`. The latest receipt
+is also retained in `sessionStorage` for the current tab.
+
+Receipts contain only the diagnostic ID, UTC time, controller version, host,
+workflow stage, safe error code or HTTP status, duration, request-attempted
+flag, contract/fee/invoice identifiers, and the accepted project ID/replay flag.
+They never contain names, emails, Memberstack IDs, project scope, prices,
+project dates, tokens, authorization headers, idempotency keys, or raw request
+or response bodies.
+
+A privacy-safe subset of the receipt is emitted to PostHog through
+`StartersTrack` as:
+
+- `project_form_opened`
+- `project_form_validation_failed`
+- `project_form_submit_started`
+- `project_form_submit_succeeded`
+- `project_form_submit_failed`
+
+These browser events help support staff correlate a receipt with the form
+stage. Xano remains canonical for successful projects and lifecycle state.
+
 ## Loader
 
 Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
@@ -366,3 +396,8 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    email delivery. After an accepted My Own Contract response, confirm it
    reports project creation and directs the Brand to the dashboard without any
    PandaDoc generation or email claim.
+10. Without issuing a project request, open the form and trigger authored and
+    browser validation failures. Confirm each action emits the matching PostHog
+    event, the authored message shows an `SPF-...` ID, and click or keyboard copy
+    returns only the allowlisted receipt fields above. Confirm the receipt has no
+    form values, identity values, credentials, request body, or response body.
