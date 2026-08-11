@@ -249,11 +249,9 @@
   }
 
   /**
-   * Built here rather than authored, so the fullscreen and picture-in-picture
-   * attributes are correct AT LOAD for this particular viewer. `controls=0`
-   * always: the template drives playback from its own buttons and puts
-   * `pointer-events: none` on the iframe, so Vimeo's own UI is unreachable and
-   * showing it would only advertise a scrubber nobody can use.
+   * Built here rather than authored, so the controls, fullscreen and
+   * picture-in-picture attributes are correct AT LOAD for this particular viewer:
+   * a gated viewer and a member get different native UI, per the split below.
    */
   function buildFrame(videoId, gated) {
     // A gated viewer gets NO native UI: no control bar, so no scrubber to drag
