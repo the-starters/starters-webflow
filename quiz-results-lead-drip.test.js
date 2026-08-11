@@ -241,7 +241,9 @@ test('completed quiz posts current matches with safe email properties', async ()
     assert.equal(payload.properties.starter_1_first_name, 'Alex')
     assert.equal(payload.properties.starter_2_first_name, 'Sam')
     assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
+    assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
     assert.equal(payload.properties.starter_2_reviews, '')
+    assert.equal(payload.properties.starter_2_reviews_display, 'none')
     assert.equal(payload.properties.starter_count, '2')
     assert.equal(payload.properties.learn_count, '0')
     assert.equal(payload.properties.learn_title, 'Explore more expert guidance')
@@ -267,6 +269,7 @@ test('one approved review uses singular copy', async () => {
     )
 
     assert.equal(payload.properties.starter_1_reviews, '5.0 (1 Review)')
+    assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
     evidence.singular_review_copy = payload.properties.starter_1_reviews
 })
 
@@ -285,6 +288,11 @@ test('review text is hidden when the canonical average is missing or invalid', a
     )
 
     assert.equal(payload.properties.starter_1_reviews, '')
+    assert.equal(payload.properties.starter_1_reviews_display, 'none')
+    evidence.rejected_missing_average = {
+        reviews: payload.properties.starter_1_reviews,
+        reviews_display: payload.properties.starter_1_reviews_display,
+    }
 })
 
 test('review text is hidden when the count is not a canonical number', async () => {
@@ -304,9 +312,12 @@ test('review text is hidden when the count is not a canonical number', async () 
     )
 
     assert.equal(payload.properties.starter_1_reviews, '')
+    assert.equal(payload.properties.starter_1_reviews_display, 'none')
 })
 
 for (const [label, reviewCount, reviewAverage] of [
+    ['zero count', 0, 4.8],
+    ['negative count', -1, 4.8],
     ['boolean average', 12, true],
     ['boolean count', false, 4.8],
     ['fractional count', 1.5, 4.8],
@@ -332,8 +343,13 @@ for (const [label, reviewCount, reviewAverage] of [
         )
 
         assert.equal(payload.properties.starter_1_reviews, '')
+        assert.equal(payload.properties.starter_1_reviews_display, 'none')
         evidence[`rejected_${label.replaceAll(' ', '_')}`] =
-            payload.properties.starter_1_reviews
+            {
+                reviews: payload.properties.starter_1_reviews,
+                reviews_display:
+                    payload.properties.starter_1_reviews_display,
+            }
     })
 }
 
@@ -358,6 +374,11 @@ test('review text is hidden when canonical review fields are missing', async () 
     )
 
     assert.equal(payload.properties.starter_1_reviews, '')
+    assert.equal(payload.properties.starter_1_reviews_display, 'none')
+    evidence.rejected_missing_canonical_fields = {
+        reviews: payload.properties.starter_1_reviews,
+        reviews_display: payload.properties.starter_1_reviews_display,
+    }
 })
 
 test('fresh Algolia recommendations carry canonical reviews into the email', async () => {
@@ -399,6 +420,7 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
         assert.ok(attributes.includes('review_average'))
     })
     assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
+    assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
     evidence.algolia_attributes_to_retrieve = JSON.parse(
         recommendationCalls[0].options.body,
     ).attributesToRetrieve
@@ -445,6 +467,7 @@ test('pre-review recommendation caches refresh before email enrollment', async (
     )
     assert.equal(payload.properties.starter_1_first_name, 'Refreshed')
     assert.equal(payload.properties.starter_1_reviews, '4.5 (2 Reviews)')
+    assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
     assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
 
     const refreshedQuiz = JSON.parse(storage.getItem('starterQuizPending'))
