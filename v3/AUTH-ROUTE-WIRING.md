@@ -117,7 +117,7 @@ is precisely the signal that caused the bug.
 | `build_profile_done` false (whether or not `has_record`) | `/build-profile/select-profile` |
 | `build_profile_done` true, `onboarding_done` not `true` | `/starter-onboarding`, which wins over any `?next=` or stored destination |
 | `build_profile_done` true, `onboarding_done === true` | Normal routing: the validated `next`, else the role home |
-| Any Xano failure, an unreadable body, or the check exceeding its 4 second budget | Normal routing (fail open) |
+| Any Xano failure, an unreadable body, or the check exceeding its 8 second budget | Normal routing (fail open) |
 
 The requested destination is consumed before the check runs, so a `next` that
 loses to the funnel is dropped rather than replayed on the next login.
@@ -135,7 +135,7 @@ Reads use the same trade-token flow as the sibling V3 modules: the Memberstack
 JWT from `getMemberCookie()` is traded at `api:g1vmSLWh/auth/trade-token/v3` for
 a Xano token, which authorizes the status endpoint as a bearer.
 
-The 4 second budget is one overall deadline for the trade plus the read, not a
+The 8 second budget is one overall deadline for the trade plus the read, not a
 per-request timeout, because the member is looking at a blank hop page while it
 runs. On expiry the shared `AbortController` cancels the in-flight request and
 routing continues as if the check had never happened. Fail-open is unchanged by
