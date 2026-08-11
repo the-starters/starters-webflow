@@ -602,10 +602,3 @@ test('retake prefill restores subcategories and re-checks their parent category'
     assert.deepEqual([...result.restoredParentCategoryIds], ['paid-media'])
     assert.equal(result.restoredInputCount, 2)
 })
-
-test('taxonomy compatibility release invalidates v17 recommendations', () => {
-    assert.match(
-        resultsSource,
-        /recommendationAlgorithmVersion = 'category-subcategory-pairs-v18'/,
-    )
-})

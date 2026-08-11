@@ -4,7 +4,15 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./quiz-results.js'), 'utf8')
-const recommendationVersion = 'category-subcategory-pairs-v18'
+const recommendationVersion = 'category-subcategory-pairs-v19'
+const evidence = {}
+
+test.after(() => {
+    const evidenceFile = process.env.NO_MISTAKES_EVIDENCE_FILE
+    if (!evidenceFile) return
+
+    fs.writeFileSync(evidenceFile, JSON.stringify(evidence, null, 2) + '\n')
+})
 
 function response({ ok = true, status = 200, data = {} } = {}) {
     return {
@@ -55,12 +63,16 @@ function completedQuiz(overrides = {}) {
                 name: 'Alex Morgan',
                 slug: 'alex-morgan',
                 roles: ['Creative Director'],
+                review_count: 12,
+                review_average: 4.83,
             },
             {
                 objectID: 'starter-2',
                 first_name: 'Sam',
                 name: 'Sam Rivera',
                 slug: 'sam-rivera',
+                review_count: 0,
+                review_average: 0,
             },
         ],
         recommendedFreelancerGroups: [],
@@ -84,6 +96,7 @@ async function runController({
     enrollmentResponses,
     waitUntil,
     tradeTokenResponse = { authToken: 'xano-token' },
+    algoliaHits = null,
 }) {
     const documentListeners = new Map()
     const fetchCalls = []
@@ -133,6 +146,15 @@ async function runController({
     }
     const fetch = async (url, options = {}) => {
         fetchCalls.push({ url: String(url), options })
+        if (String(url).includes('-dsn.algolia.net/1/indexes/')) {
+            const request = JSON.parse(options.body)
+            return response({
+                data:
+                    request.attributesToRetrieve?.length === 0
+                        ? { nbHits: algoliaHits?.length || 0 }
+                        : { hits: algoliaHits || [] },
+            })
+        }
         if (String(url).includes('/auth/trade-token/v3')) {
             return response({ data: tradeTokenResponse })
         }
@@ -154,6 +176,11 @@ async function runController({
         sessionStorage: storage,
         setInterval: runSoon,
         setTimeout: runSoon,
+        starterQuizAlgoliaConfig: {
+            appId: 'test-app',
+            searchKey: 'test-search-key',
+            indexName: 'test-index',
+        },
     }
     window.window = window
 
@@ -213,6 +240,8 @@ test('completed quiz posts current matches with safe email properties', async ()
     assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
     assert.equal(payload.properties.starter_1_first_name, 'Alex')
     assert.equal(payload.properties.starter_2_first_name, 'Sam')
+    assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
+    assert.equal(payload.properties.starter_2_reviews, '')
     assert.equal(payload.properties.starter_count, '2')
     assert.equal(payload.properties.learn_count, '0')
     assert.equal(payload.properties.learn_title, 'Explore more expert guidance')
@@ -220,6 +249,212 @@ test('completed quiz posts current matches with safe email properties', async ()
         payload.properties.learn_url,
         'https://thestarters.com/learn?source=quiz-results-email',
     )
+    evidence.completed_quiz_enrollment = payload
+})
+
+test('one approved review uses singular copy', async () => {
+    const quiz = completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' })
+    quiz.featuredFreelancers[0].review_count = 1
+    quiz.featuredFreelancers[0].review_average = 5
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_reviews, '5.0 (1 Review)')
+    evidence.singular_review_copy = payload.properties.starter_1_reviews
+})
+
+test('review text is hidden when the canonical average is missing or invalid', async () => {
+    const quiz = completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' })
+    quiz.featuredFreelancers[0].review_average = null
+    quiz.featuredFreelancers[0].reviews = '5.0 (12 Reviews)'
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_reviews, '')
+})
+
+test('review text is hidden when the count is not a canonical number', async () => {
+    const quiz = completedQuiz({
+        memberstackSavedAt: '2026-08-11T04:01:00.000Z',
+    })
+    quiz.featuredFreelancers[0].review_count = true
+    quiz.featuredFreelancers[0].review_average = 5
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_reviews, '')
+})
+
+for (const [label, reviewCount, reviewAverage] of [
+    ['boolean average', 12, true],
+    ['boolean count', false, 4.8],
+    ['fractional count', 1.5, 4.8],
+    ['malformed count string', '12 reviews', 4.8],
+    ['malformed average string', 12, '4.8 stars'],
+    ['out-of-range average', 12, 5.1],
+]) {
+    test(`review text is hidden for a ${label}`, async () => {
+        const quiz = completedQuiz({
+            memberstackSavedAt: '2026-08-11T04:01:00.000Z',
+        })
+        quiz.featuredFreelancers[0].review_count = reviewCount
+        quiz.featuredFreelancers[0].review_average = reviewAverage
+        const storage = createStorage(quiz)
+        const harness = await runController({
+            storage,
+            enrollmentResponses: [],
+            waitUntil: ({ fetchCalls }) =>
+                enrollmentCalls(fetchCalls).length === 1,
+        })
+        const payload = JSON.parse(
+            enrollmentCalls(harness.fetchCalls)[0].options.body,
+        )
+
+        assert.equal(payload.properties.starter_1_reviews, '')
+        evidence[`rejected_${label.replaceAll(' ', '_')}`] =
+            payload.properties.starter_1_reviews
+    })
+}
+
+test('review text is hidden when canonical review fields are missing', async () => {
+    const quiz = completedQuiz({
+        memberstackSavedAt: '2026-08-11T04:01:00.000Z',
+    })
+    delete quiz.featuredFreelancers[0].review_count
+    delete quiz.featuredFreelancers[0].review_average
+    quiz.featuredFreelancers[0].reviewCount = 1
+    quiz.featuredFreelancers[0].reviewAverage = 5
+    quiz.featuredFreelancers[0].rating_average = 5
+    quiz.featuredFreelancers[0].average_rating = 5
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_reviews, '')
+})
+
+test('fresh Algolia recommendations carry canonical reviews into the email', async () => {
+    const quiz = completedQuiz({
+        featuredFreelancers: [],
+        recommendedFreelancerGroups: [],
+        recommendationVersion: null,
+        starterCount: undefined,
+    })
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        algoliaHits: [
+            {
+                objectID: 'starter-from-algolia',
+                name: 'Taylor Jordan',
+                slug: 'taylor-jordan',
+                roles: ['creative-director'],
+                'ranking-points': 100,
+                review_count: 12,
+                review_average: 4.83,
+            },
+        ],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const recommendationCalls = harness.fetchCalls.filter((call) => {
+        if (!call.url.includes('-dsn.algolia.net/1/indexes/')) return false
+        return JSON.parse(call.options.body).attributesToRetrieve?.length > 0
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.ok(recommendationCalls.length > 0)
+    recommendationCalls.forEach((call) => {
+        const attributes = JSON.parse(call.options.body).attributesToRetrieve
+        assert.ok(attributes.includes('review_count'))
+        assert.ok(attributes.includes('review_average'))
+    })
+    assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
+    evidence.algolia_attributes_to_retrieve = JSON.parse(
+        recommendationCalls[0].options.body,
+    ).attributesToRetrieve
+    evidence.fresh_algolia_enrollment = payload
+})
+
+test('pre-review recommendation caches refresh before email enrollment', async () => {
+    const staleStarter = {
+        objectID: 'stale-starter',
+        name: 'Stale Starter',
+        slug: 'stale-starter',
+        roles: ['creative-director'],
+    }
+    const quiz = completedQuiz({
+        featuredFreelancers: [staleStarter],
+        recommendedFreelancers: [staleStarter],
+        recommendationVersion: 'category-subcategory-pairs-v18',
+    })
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        algoliaHits: [
+            {
+                objectID: 'refreshed-starter',
+                name: 'Refreshed Starter',
+                slug: 'refreshed-starter',
+                roles: ['creative-director'],
+                'ranking-points': 100,
+                review_count: 2,
+                review_average: 4.5,
+            },
+        ],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.ok(
+        harness.fetchCalls.some((call) =>
+            call.url.includes('-dsn.algolia.net/1/indexes/'),
+        ),
+    )
+    assert.equal(payload.properties.starter_1_first_name, 'Refreshed')
+    assert.equal(payload.properties.starter_1_reviews, '4.5 (2 Reviews)')
+    assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
+
+    const refreshedQuiz = JSON.parse(storage.getItem('starterQuizPending'))
+    assert.equal(refreshedQuiz.updatedAt, '2026-08-11T04:00:00.000Z')
+    assert.equal(refreshedQuiz.completedAt, '2026-08-11T04:00:00.000Z')
+    assert.equal(refreshedQuiz.recommendationVersion, recommendationVersion)
+    evidence.v18_cache_refresh = {
+        enrollment: payload,
+        persisted_quiz: refreshedQuiz,
+    }
 })
 
 for (const [label, tradeTokenResponse] of [
@@ -284,6 +519,10 @@ test('failed enrollment is replayed from the saved quiz on refresh', async () =>
         replayPayload.properties.quiz_revision,
         firstPayload.properties.quiz_revision,
     )
+    evidence.failed_enrollment_replay = {
+        first_quiz_revision: firstPayload.properties.quiz_revision,
+        replay_quiz_revision: replayPayload.properties.quiz_revision,
+    }
 })
 
 test('unfinished quiz never registers a V3 email event', async () => {

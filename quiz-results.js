@@ -235,15 +235,38 @@
                 getQuizLeadDripValue(record, ['location', 'Location']),
                 120,
             ),
-            reviews: normalizeQuizLeadDripText(
-                getQuizLeadDripValue(record, [
-                    'reviews',
-                    'review_count',
-                    'reviewCount',
-                ]),
-                80,
-            ),
+            reviews: formatQuizLeadDripReviews(record),
         }
+    }
+
+    function formatQuizLeadDripReviews(record) {
+        const rawCount = record?.review_count
+        const rawAverage = record?.review_average
+        const count =
+            typeof rawCount === 'number' ||
+            (typeof rawCount === 'string' && /^\d+$/.test(rawCount.trim()))
+                ? Number(rawCount)
+                : NaN
+        const average =
+            typeof rawAverage === 'number' ||
+            (typeof rawAverage === 'string' &&
+                /^\d+(?:\.\d+)?$/.test(rawAverage.trim()))
+                ? Number(rawAverage)
+                : NaN
+
+        if (
+            !Number.isInteger(count) ||
+            count <= 0 ||
+            !Number.isFinite(average) ||
+            average <= 0 ||
+            average > 5
+        ) {
+            return ''
+        }
+
+        return `${average.toFixed(1)} (${count} ${
+            count === 1 ? 'Review' : 'Reviews'
+        })`
     }
 
     function normalizeQuizLeadDripLearnItem(selection) {
@@ -1778,7 +1801,7 @@
     const debugLogPrefix = '[Starter Quiz Funnel]'
     const algoliaDefaultAppId = 'PKVW6M9OPZ'
     const algoliaDefaultIndexName = 'Freelancers3.0-dev'
-    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v18'
+    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v19'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
     // Pool gathered per category before featured picks are drawn off the top,
@@ -3718,6 +3741,8 @@
                         'profile-type',
                         'availability',
                         'ranking-points',
+                        'review_count',
+                        'review_average',
                         'categories',
                         'archived',
                         'draft',
