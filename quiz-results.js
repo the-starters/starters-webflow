@@ -19,6 +19,7 @@
  * - Fetches top matching freelancer recommendations from Algolia.
  * - Saves compact quiz state to the logged-in Memberstack member JSON.
  * - Saves a short status/result summary to the starter-quiz Memberstack custom field.
+ * - Registers the completed V3 quiz lead event through authenticated Xano.
  *
  * Debug logging is OFF by default; opt in per session with ?starterQuizDebug=true
  * (or starterQuizDebug in session/localStorage). Set
