@@ -62,7 +62,11 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/starters-ms-redirect.js` — per-page Memberstack signup redirect: copies a hidden CMS-bindable destination marker onto each signup form before Memberstack reads it; the authoritative markup contract and path-safety rules live in [`v3/README.md`](v3/README.md#signup-redirect-marker)
 - `v3/signup-attribution.js` — sitewide UTM/Meta attribution capture and signup persistence, including CAPI event deduplication and the `/quiz` single-writer boundary; the authoritative cookie, field, arming, and retry contracts live in [`v3/README.md`](v3/README.md#signup-attribution)
 - `v3/all-starters-favorites.js` — paid-Brand favourites controls and Designer-built All/Favourites filtering for `/all-starters`, backed by sitewide `wf-xano` and `wf-algolia`
-- `v3/ai-recruiter.js` — lower-right V3 AI Recruiter controller for eligible paid Brand members; binds native Webflow markup and sends authenticated requests only through Xano. The authoritative markup, monitoring, release, and rollback contract lives in [`v3/AI-RECRUITER-WIRING.md`](v3/AI-RECRUITER-WIRING.md)
+- `v3/ai-recruiter.js` — lower-right, role-gated V3 AI Recruiter controller;
+  binds native Webflow markup and sends authenticated requests only through
+  Xano. The authoritative access, markup, monitoring, release, and rollback
+  contract lives in
+  [`v3/AI-RECRUITER-WIRING.md`](v3/AI-RECRUITER-WIRING.md)
 - `v3/saved-starters-roles.js` — `/favorites` saved-list roles chips: one cloned paragraph per delimited role, so the wf-xano list matches the Algolia browse cards; authoritative behavior and constraints live in [`v3/README.md`](v3/README.md#saved-starters-roles-chips)
 - `v3/reviews.js` — V3 public-profile reviews adapter; see [`v3/README.md`](v3/README.md#v3-reviews-frontend) for the authoritative ownership, wiring, and release contract
 - `v3/starter-dashboard-messages.js` — shared Brand/Starter dashboard Messages tile; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for the authoritative data, rendering, and deep-link contract

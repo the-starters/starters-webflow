@@ -311,6 +311,10 @@
       startOver.hidden = !canInteract
       startOver.disabled = !canInteract
     }
+    for (const control of root.querySelectorAll(selectors.helpful)) {
+      control.hidden = !canInteract
+      control.disabled = !canInteract
+    }
 
     const open = () => {
       panel.hidden = false

@@ -4,9 +4,9 @@
 available only to an authenticated Memberstack member with an active paid Brand
 plan. The Test Brand plan is accepted only on `the-starters-3-0.webflow.io` and
 fails closed on the production hosts. Brand Free sees the upgrade state with
-the request form disabled and hidden. The browser sends requests only to the authenticated Xano
-V3 boundary. Xano owns authorization, session ownership, rate limits, and all
-calls to n8n, Supabase, and OpenAI.
+the interactive request controls disabled and hidden. The browser sends
+requests only to the authenticated Xano V3 boundary. Xano owns authorization,
+session ownership, rate limits, and all calls to n8n, Supabase, and OpenAI.
 
 ## Native Webflow markup
 
