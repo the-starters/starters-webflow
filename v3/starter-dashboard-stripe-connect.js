@@ -265,6 +265,7 @@
   }
 
   let connectStartAttemptKey = null
+  let disconnectAttemptKey = null
 
   function currentConnectStartAttemptKey() {
     if (!connectStartAttemptKey) {
@@ -277,6 +278,17 @@
     connectStartAttemptKey = null
   }
 
+  function currentDisconnectAttemptKey() {
+    if (!disconnectAttemptKey) {
+      disconnectAttemptKey = createAttemptKey('connect-disconnect')
+    }
+    return disconnectAttemptKey
+  }
+
+  function clearDisconnectAttemptKey() {
+    disconnectAttemptKey = null
+  }
+
   function shouldRetainConnectStartKey(error) {
     if (!error || typeof error.status !== 'number') return true
     return (
@@ -285,6 +297,10 @@
       error.status === 429 ||
       error.status >= 500
     )
+  }
+
+  function shouldRetainDisconnectKey(error) {
+    return shouldRetainConnectStartKey(error)
   }
 
   function startConnect(returnUrl, sandbox, idempotencyKey) {
@@ -355,18 +371,62 @@
     }
   }
 
-  function isStripeDashboardUrl(value) {
+  function resolveDashboardDestination(result) {
+    if (!result || typeof result !== 'object' || result.connected !== true) {
+      throw new Error('Stripe Dashboard access did not confirm a connection')
+    }
+    if (result.mode !== 'full' && result.mode !== 'express') {
+      throw new Error('Stripe Dashboard access returned an unknown mode')
+    }
+    if (
+      typeof result.account_id !== 'string' ||
+      !/^acct_[A-Za-z0-9]+$/.test(result.account_id)
+    ) {
+      throw new Error('Stripe Dashboard access returned an invalid account')
+    }
     try {
-      const url = new URL(value)
-      if (url.protocol !== 'https:') return false
-      if (url.hostname === 'connect.stripe.com') {
-        return /^\/express\/acct_[A-Za-z0-9]+\//.test(url.pathname)
+      const url = new URL(result.url)
+      if (
+        url.protocol !== 'https:' ||
+        url.username ||
+        url.password ||
+        url.port ||
+        url.hash
+      ) {
+        throw new Error('Stripe Dashboard access returned an invalid URL')
       }
-      if (url.hostname === 'dashboard.stripe.com') {
-        return /^\/b\/acct_[A-Za-z0-9]+\/?$/.test(url.pathname)
+      if (result.mode === 'full') {
+        if (
+          url.hostname !== 'dashboard.stripe.com' ||
+          url.pathname !== '/b/' + result.account_id ||
+          url.search
+        ) {
+          throw new Error('Stripe Dashboard account URL did not match')
+        }
+      } else if (
+        url.hostname !== 'connect.stripe.com' ||
+        !url.pathname.startsWith('/express/' + result.account_id + '/') ||
+        url.pathname === '/express/' + result.account_id + '/'
+      ) {
+        throw new Error('Stripe Express account URL did not match')
       }
-      return false
+      return url.toString()
     } catch (error) {
+      if (error && /^Stripe /.test(error.message || '')) throw error
+      throw new Error('Stripe Dashboard access returned an invalid URL')
+    }
+  }
+
+  function isStripeDashboardUrl(value, mode, accountId) {
+    try {
+      resolveDashboardDestination({
+        account_id: accountId,
+        connected: true,
+        mode,
+        url: value,
+      })
+      return true
+    } catch (_error) {
       return false
     }
   }
@@ -709,6 +769,7 @@
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
         renderRoots(roots, 'error')
+        renderEarningsTiles(earningsTiles, 'error')
         emit('starterStripeConnectError', {
           action: 'dashboard',
           message: 'Browser blocked the Stripe Dashboard tab',
@@ -730,10 +791,8 @@
           await loadDashboardStatus(roots, false, earningsTiles)
           return false
         }
-        if (!isStripeDashboardUrl(result.url)) {
-          throw new Error('Stripe Dashboard access returned an invalid URL')
-        }
-        if (!navigateStripeTab(stripeTab, result.url)) {
+        const destination = resolveDashboardDestination(result)
+        if (!navigateStripeTab(stripeTab, destination)) {
           throw new Error('Unable to open the connected Stripe account')
         }
         emit('starterStripeConnectDashboard', { mode: result.mode || '' })
@@ -741,6 +800,7 @@
       } catch (error) {
         closeStripeTab(stripeTab)
         renderRoots(roots, 'error')
+        renderEarningsTiles(earningsTiles, 'error')
         emit('starterStripeConnectError', {
           action: 'dashboard',
           message: error.message || 'Stripe Dashboard access failed',
@@ -770,17 +830,22 @@
     button,
     roots,
     earningsTiles,
+    bootMemberId,
   ) {
+    if (sandboxMode()) return Promise.resolve(false)
     if (!confirmDisconnect()) return Promise.resolve(false)
     return runExclusive(async function () {
       setActionPending(button, true)
       try {
-        const result = await disconnectConnect(
-          createAttemptKey('connect-disconnect'),
-        )
+        const activeMemberId = await currentMemberId()
+        if (activeMemberId !== bootMemberId) {
+          throw new Error('Member session changed before Stripe disconnect')
+        }
+        const result = await disconnectConnect(currentDisconnectAttemptKey())
         if (result.connected !== false) {
           throw new Error('Stripe disconnect returned an invalid result')
         }
+        clearDisconnectAttemptKey()
         await loadDashboardStatus(roots, false, earningsTiles)
         emit('starterStripeConnectDisconnected', {
           providerAction: result.provider_action || '',
@@ -788,6 +853,7 @@
         })
         return true
       } catch (error) {
+        if (!shouldRetainDisconnectKey(error)) clearDisconnectAttemptKey()
         renderRoots(roots, 'error')
         renderEarningsTiles(earningsTiles, 'error')
         emit('starterStripeConnectError', {
@@ -1136,6 +1202,7 @@
               button,
               roots,
               earningsTiles,
+              memberId,
             )
           })
         })
@@ -1240,11 +1307,13 @@
       xanoTokenPromise = null
     },
     __resetConnectStartAttempt: clearConnectStartAttemptKey,
+    __resetDisconnectAttempt: clearDisconnectAttemptKey,
     callbackParams,
     confirmDisconnect,
     createExclusiveRunner,
     createAttemptKey,
     currentConnectStartAttemptKey,
+    currentDisconnectAttemptKey,
     currentMemberId,
     dashboardAccess,
     disconnectConnect,
@@ -1268,6 +1337,7 @@
     renderRoots,
     renderEarningsTiles,
     resolveExchangeMode,
+    resolveDashboardDestination,
     resolveEarningsTiles,
     resolveDashboardView,
     sandboxMode,
@@ -1276,6 +1346,7 @@
     setStartPending,
     setView,
     shouldRetainConnectStartKey,
+    shouldRetainDisconnectKey,
     signalStripeReturn,
     startInNewTab,
     startConnect,

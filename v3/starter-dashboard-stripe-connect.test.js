@@ -466,21 +466,37 @@ test('keyboard activation is a no-op for the anchor earnings tile', () => {
 
 test('Stripe Dashboard destinations are account-scoped and fail closed', () => {
   assert.equal(
-    api.isStripeDashboardUrl('https://dashboard.stripe.com/b/acct_123ABC'),
+    api.isStripeDashboardUrl(
+      'https://dashboard.stripe.com/b/acct_123ABC',
+      'full',
+      'acct_123ABC',
+    ),
     true,
   )
   assert.equal(
     api.isStripeDashboardUrl(
       'https://connect.stripe.com/express/acct_123ABC/single-use-token',
+      'express',
+      'acct_123ABC',
     ),
     true,
   )
-  assert.equal(api.isStripeDashboardUrl('https://dashboard.stripe.com/'), false)
   assert.equal(
-    api.isStripeDashboardUrl('https://evil.example/b/acct_123ABC'),
+    api.isStripeDashboardUrl(
+      'https://dashboard.stripe.com/b/acct_123ABC',
+      'full',
+      'acct_DIFFERENT',
+    ),
     false,
   )
-  assert.equal(api.isStripeDashboardUrl('javascript:alert(1)'), false)
+  assert.equal(
+    api.isStripeDashboardUrl(
+      'https://evil.example/b/acct_123ABC',
+      'full',
+      'acct_123ABC',
+    ),
+    false,
+  )
 })
 
 function stripeRequest(requests, path) {
@@ -559,6 +575,8 @@ test('Dashboard access and disconnect use authenticated V3 endpoints', async () 
     requests.push({ url, options })
     if (String(url).includes('/dashboard/v3')) {
       return response({
+        account_id: 'acct_123ABC',
+        connected: true,
         mode: 'full',
         url: 'https://dashboard.stripe.com/b/acct_123ABC',
       })
@@ -628,6 +646,8 @@ test('Earnings opens the provider-verified connected Stripe account', async () =
   global.open = () => stripeTab
   global.fetch = async () =>
     response({
+      account_id: 'acct_123ABC',
+      connected: true,
       mode: 'full',
       url: 'https://dashboard.stripe.com/b/acct_123ABC',
     })
@@ -682,7 +702,12 @@ test('Earnings rejects a generic or untrusted Stripe destination', async () => {
   }
   global.open = () => stripeTab
   global.fetch = async () =>
-    response({ mode: 'full', url: 'https://dashboard.stripe.com/' })
+    response({
+      account_id: 'acct_123ABC',
+      connected: true,
+      mode: 'full',
+      url: 'https://dashboard.stripe.com/',
+    })
   api.__resetXanoToken()
 
   try {
@@ -703,6 +728,127 @@ test('Earnings rejects a generic or untrusted Stripe destination', async () => {
     global.fetch = previous.fetch
     global.getXanoAuthToken = previous.getXanoAuthToken
     global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('Earnings rejects ambiguous modes and mismatched provider accounts', async () => {
+  const previous = {
+    console: global.console,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const invalidResults = [
+    {
+      account_id: 'acct_123ABC',
+      connected: true,
+      url: 'https://dashboard.stripe.com/b/acct_123ABC',
+    },
+    {
+      account_id: 'acct_123ABC',
+      connected: true,
+      mode: 'unknown',
+      url: 'https://dashboard.stripe.com/b/acct_123ABC',
+    },
+    {
+      connected: true,
+      mode: 'full',
+      url: 'https://dashboard.stripe.com/b/acct_123ABC',
+    },
+    {
+      account_id: 'acct_123ABC',
+      connected: true,
+      mode: 'full',
+      url: 'https://dashboard.stripe.com/b/acct_DIFFERENT',
+    },
+  ]
+  const tabs = []
+  const destinations = []
+  global.console = { ...console, error: () => {} }
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.open = () => {
+    const tab = {
+      closed: false,
+      close() {
+        this.closed = true
+      },
+      location: { replace: (value) => destinations.push(value) },
+      opener: global,
+    }
+    tabs.push(tab)
+    return tab
+  }
+  api.__resetXanoToken()
+
+  try {
+    for (const result of invalidResults) {
+      const { root } = stripeRoot()
+      const connect = new FakeElement()
+      const history = new FakeElement('A')
+      const earningsTiles = api.resolveEarningsTiles([connect, history])
+      api.renderEarningsTiles(earningsTiles, 'ready')
+      global.fetch = async () => response(result)
+
+      assert.equal(
+        await api.openDashboardInNewTab(
+          api.createExclusiveRunner(),
+          history,
+          [root],
+          'member-123',
+          earningsTiles,
+        ),
+        false,
+      )
+      assert.equal(connect.hidden, true)
+      assert.equal(history.hidden, true)
+    }
+    assert.equal(tabs.every((tab) => tab.closed), true)
+    assert.deepEqual(destinations, [])
+  } finally {
+    api.__resetXanoToken()
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('a blocked Earnings popup hides both stale tiles without a request', async () => {
+  const previous = { fetch: global.fetch, open: global.open }
+  const { root } = stripeRoot()
+  const connect = new FakeElement()
+  const history = new FakeElement('A')
+  const earningsTiles = api.resolveEarningsTiles([connect, history])
+  let fetchCount = 0
+  api.renderEarningsTiles(earningsTiles, 'ready')
+  global.fetch = async () => {
+    fetchCount += 1
+    return response({})
+  }
+  global.open = () => null
+
+  try {
+    assert.equal(
+      await api.openDashboardInNewTab(
+        api.createExclusiveRunner(),
+        history,
+        [root],
+        'member-123',
+        earningsTiles,
+      ),
+      false,
+    )
+    assert.equal(fetchCount, 0)
+    assert.equal(connect.hidden, true)
+    assert.equal(history.hidden, true)
+  } finally {
+    global.fetch = previous.fetch
     global.open = previous.open
   }
 })
@@ -771,6 +917,7 @@ test('disconnect requires confirmation and refreshes to disconnected state', asy
     confirm: global.confirm,
     fetch: global.fetch,
     getXanoAuthToken: global.getXanoAuthToken,
+    memberstack: global.$memberstackDom,
   }
   const { root } = stripeRoot()
   const connect = new FakeElement()
@@ -779,6 +926,9 @@ test('disconnect requires confirmation and refreshes to disconnected state', asy
   let calls = 0
   global.confirm = () => true
   global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
   global.fetch = async (url) => {
     calls += 1
     if (String(url).includes('/disconnect/v3')) {
@@ -799,6 +949,7 @@ test('disconnect requires confirmation and refreshes to disconnected state', asy
         new FakeElement('BUTTON'),
         [root],
         earningsTiles,
+        'member-123',
       ),
       true,
     )
@@ -814,6 +965,7 @@ test('disconnect requires confirmation and refreshes to disconnected state', asy
         new FakeElement('BUTTON'),
         [root],
         earningsTiles,
+        'member-123',
       ),
       false,
     )
@@ -823,6 +975,206 @@ test('disconnect requires confirmation and refreshes to disconnected state', asy
     global.confirm = previous.confirm
     global.fetch = previous.fetch
     global.getXanoAuthToken = previous.getXanoAuthToken
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('disconnect rejects a changed member before calling the provider endpoint', async () => {
+  const previous = {
+    confirm: global.confirm,
+    console: global.console,
+    fetch: global.fetch,
+    memberstack: global.$memberstackDom,
+  }
+  let fetchCount = 0
+  global.confirm = () => true
+  global.console = { ...console, error: () => {} }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-after-switch' } }),
+  }
+  global.fetch = async () => {
+    fetchCount += 1
+    return response({ connected: false })
+  }
+  api.__resetDisconnectAttempt()
+
+  try {
+    assert.equal(
+      await api.handleDisconnect(
+        api.createExclusiveRunner(),
+        new FakeElement('BUTTON'),
+        [stripeRoot().root],
+        api.resolveEarningsTiles([]),
+        'member-at-boot',
+      ),
+      false,
+    )
+    assert.equal(fetchCount, 0)
+  } finally {
+    api.__resetDisconnectAttempt()
+    global.confirm = previous.confirm
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('sandbox mode disables disconnect before confirmation or network access', async () => {
+  const previous = {
+    confirm: global.confirm,
+    fetch: global.fetch,
+    location: global.location,
+  }
+  let confirmCount = 0
+  let fetchCount = 0
+  global.location = {
+    hostname: 'the-starters-3-0.webflow.io',
+    search: '?stripe_connect_sandbox=1',
+  }
+  global.confirm = () => {
+    confirmCount += 1
+    return true
+  }
+  global.fetch = async () => {
+    fetchCount += 1
+    return response({ connected: false })
+  }
+
+  try {
+    assert.equal(
+      await api.handleDisconnect(
+        api.createExclusiveRunner(),
+        new FakeElement('BUTTON'),
+        [stripeRoot().root],
+        api.resolveEarningsTiles([]),
+        'member-123',
+      ),
+      false,
+    )
+    assert.equal(confirmCount, 0)
+    assert.equal(fetchCount, 0)
+  } finally {
+    global.confirm = previous.confirm
+    global.fetch = previous.fetch
+    global.location = previous.location
+  }
+})
+
+test('ambiguous disconnect retries preserve one idempotency key', async () => {
+  const previous = {
+    confirm: global.confirm,
+    console: global.console,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+  }
+  global.confirm = () => true
+  global.console = { ...console, error: () => {} }
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.location = { hostname: 'thestarters.com', search: '' }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  const failures = [new Error('network timeout'), 408, 409, 429, 500]
+
+  try {
+    for (const failure of failures) {
+      const bodies = []
+      let attempt = 0
+      api.__resetXanoToken()
+      api.__resetDisconnectAttempt()
+      global.fetch = async (url, options) => {
+        if (String(url).includes('/disconnect/v3')) {
+          bodies.push(JSON.parse(options.body))
+          attempt += 1
+          if (attempt === 1) {
+            if (failure instanceof Error) throw failure
+            return response({ error: 'retry' }, { ok: false, status: failure })
+          }
+          return response({ connected: false, provider_action: 'deauthorized' })
+        }
+        return response({ connected: false, charges_enabled: false })
+      }
+      const invoke = () =>
+        api.handleDisconnect(
+          api.createExclusiveRunner(),
+          new FakeElement('BUTTON'),
+          [stripeRoot().root],
+          api.resolveEarningsTiles([]),
+          'member-123',
+        )
+
+      assert.equal(await invoke(), false)
+      assert.equal(await invoke(), true)
+      assert.equal(bodies.length, 2)
+      assert.equal(bodies[0].idempotency_key, bodies[1].idempotency_key)
+    }
+  } finally {
+    api.__resetXanoToken()
+    api.__resetDisconnectAttempt()
+    global.confirm = previous.confirm
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+  }
+})
+
+test('a non-retryable disconnect response clears its idempotency key', async () => {
+  const previous = {
+    confirm: global.confirm,
+    console: global.console,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+  }
+  const bodies = []
+  let attempt = 0
+  global.confirm = () => true
+  global.console = { ...console, error: () => {} }
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.location = { hostname: 'thestarters.com', search: '' }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.fetch = async (url, options) => {
+    if (String(url).includes('/disconnect/v3')) {
+      bodies.push(JSON.parse(options.body))
+      attempt += 1
+      if (attempt === 1) {
+        return response({ error: 'invalid request' }, { ok: false, status: 422 })
+      }
+      return response({ connected: false, provider_action: 'deauthorized' })
+    }
+    return response({ connected: false, charges_enabled: false })
+  }
+  api.__resetXanoToken()
+  api.__resetDisconnectAttempt()
+
+  try {
+    const invoke = () =>
+      api.handleDisconnect(
+        api.createExclusiveRunner(),
+        new FakeElement('BUTTON'),
+        [stripeRoot().root],
+        api.resolveEarningsTiles([]),
+        'member-123',
+      )
+    assert.equal(await invoke(), false)
+    assert.equal(await invoke(), true)
+    assert.notEqual(bodies[0].idempotency_key, bodies[1].idempotency_key)
+  } finally {
+    api.__resetXanoToken()
+    api.__resetDisconnectAttempt()
+    global.confirm = previous.confirm
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
   }
 })
 
