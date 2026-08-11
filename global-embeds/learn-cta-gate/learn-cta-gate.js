@@ -2,7 +2,7 @@
  * Learn CTA gate — open the sign-up gate once the reader has read enough of a
  * Learn article, or after a short wait on articles too short to scroll.
  *
- * @release v1.59.168
+ * @release v1.59.181
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * article template's before-</body> code. Pair it with learn-cta-gate.css in
@@ -15,12 +15,13 @@
  * `section_learn-cta-gate`, so that embed returned on its null check and never
  * ran. This file supersedes it; the inline embed is being removed.
  *
- * THE MARKUP (Designer-authored, all three already exist):
+ * THE MARKUP (Designer-authored):
  *   [data-learn-gate-element="wrapper"]   section_learn-cta-gate
  *                                         position:fixed, inset 0, z-index 10,
  *                                         display:flex, column, justify-end
  *   [data-learn-gate-element="backdrop"]  learn-cta-gate_backdrop, absolute inset 0
  *   [data-learn-gate-element="content"]   learn-cta-gate_contents, the sheet
+ *   [data-learn-gate-element="close"]     OPTIONAL. See DISMISSAL below.
  *
  * WHO SEES IT — NOT THIS SCRIPT'S DECISION. The wrapper carries Memberstack's
  * `data-ms-content="!learn-access"`. Memberstack alone decides who is gated.
@@ -39,9 +40,10 @@
  * resolves — and this embed runs at defer time, before that"). A guard that
  * reads the wrapper at DOMContentLoaded therefore sees `display: flex` for
  * EVERY reader including one with learn-access, arms itself, and later locks
- * the scroll of a member who can see no gate and has no way to unlock it: the
- * gate is invisible, there is no close control, and the timeline never
- * reverses. So this embed waits on `window.memberReady` — the site's own
+ * the scroll of a member who can see no gate and has no way to unlock it. The
+ * close control added since does not rescue them: their whole wrapper is
+ * hidden, so the close inside it is hidden too and `dismissible` resolves
+ * false. So this embed waits on `window.memberReady` — the site's own
  * readiness promise, used the same way by route-guard.js,
  * expert-card-browse-loader.js and posthog-identity.js — and re-checks
  * computed display once more at reveal time, BEFORE the scroll lock, to cover
@@ -67,14 +69,49 @@
  * one. Paragraph granularity is plenty for a paywall, and not splitting text
  * nodes keeps links, spans and Webflow's rich-text markup untouched.
  *
- * ONCE ONLY. The gate has no close control by design (hard gate). The timeline
- * plays forward exactly once and is never reversed, so the unlock half of the
- * scroll lock is unreachable today. It is written anyway so that adding a close
- * button later is a UI change, not a rewrite.
+ * ONCE ONLY. The gate opens once per page load. `state.revealed` latches on the
+ * first reveal and every trigger is torn down in the same tick, so a dismissed
+ * gate cannot come back on that page — and a fresh load starts clean. That is
+ * the whole of the "stays closed" behaviour; there is deliberately no cookie
+ * and no localStorage.
+ *
+ * DISMISSAL — WHO MAY CLOSE IT IS ALSO NOT THIS SCRIPT'S DECISION. The gate is
+ * a hard paywall unless Designer supplies a close control:
+ *
+ *   [data-learn-gate-element="close"], inside the wrapper, carrying its own
+ *   Memberstack `data-ms-content`. Memberstack decides who gets one. A logged-in
+ *   non-paying member sees it and may dismiss; a logged-out reader gets no such
+ *   element and the gate stays exactly as hard as it was before this existed.
+ *
+ * The script reduces that to ONE boolean, `state.dismissible`, and every
+ * dismissal path is gated on it. One value to reason about, one value to test.
+ *
+ * `dismissible` IS COMPUTED AT REVEAL, NEVER AT BOOT, for the same reason the
+ * wrapper's display guard is re-checked there: Memberstack resolves after
+ * defer-time scripts, so a boot-time read predates the decision and would hand
+ * every logged-out reader a dismissible paywall.
+ *
+ * And it is computed from COMPUTED DISPLAY, not from presence — same reasoning
+ * as the wrapper guard above. This site both removes and merely hides gated
+ * elements. A close control that Memberstack only hid is still in the DOM and
+ * `querySelector` still finds it; binding a live click handler to it would be
+ * an invisible escape hatch inside a gate meant to be hard.
+ *
+ * Backdrop-click dismisses; Escape does not, by product decision. No keydown
+ * listener is registered at all — the absence is the feature, so if you are
+ * adding one, that is a spec change and not an oversight. The backdrop handler
+ * checks `event.target` so a click that lands on the sheet (or on the sign-up
+ * form inside it) can never close the gate by bubbling.
  *
  * Scroll lock is byte-for-byte the modal.js line (global-embeds/modal/modal.js):
  * prefer `lenis.stop()`, else `document.body.style.overflow`. There is no Lenis
  * instance on the Learn template today, so it takes the body-overflow branch.
+ * The unlock mirrors it exactly, and restores overflow to '' rather than forcing
+ * 'visible' so whatever Webflow had there survives.
+ *
+ * Unlock happens on click, not when the exit finishes: the click already
+ * committed to closing, and a page that stays frozen for a third of a second
+ * after a button press reads as broken.
  *
  * Attributes on the wrapper, all optional:
  *   data-learn-gate-chars     integer, default 2500. Threshold in characters.
@@ -103,7 +140,11 @@
  * Production stays silent.
  *
  * Debug from the console: `StartersLearnCtaGate.status()`, or force it open
- * with `StartersLearnCtaGate.reveal()`.
+ * with `StartersLearnCtaGate.reveal()`. `status().dismissible` reports whether
+ * this reader may close it. `StartersLearnCtaGate.dismiss()` closes it, and is
+ * gated on `dismissible` like every other path — on a hard gate it is a no-op
+ * by design, so QA an exit animation by authoring a close control, never by
+ * reaching past the guard.
  */
 ;(function () {
   'use strict'
@@ -115,12 +156,13 @@
   if (window.__startersLearnCtaGateBooted) return
   window.__startersLearnCtaGateBooted = true
 
-  var RELEASE = 'v1.59.168'
+  var RELEASE = 'v1.59.181'
   var LOG_PREFIX = '[learn-cta-gate]'
 
   var WRAPPER_SELECTOR = '[data-learn-gate-element="wrapper"]'
   var BACKDROP_SELECTOR = '[data-learn-gate-element="backdrop"]'
   var CONTENT_SELECTOR = '[data-learn-gate-element="content"]'
+  var CLOSE_SELECTOR = '[data-learn-gate-element="close"]'
   var DEFAULT_ARTICLE_SELECTOR = '.content_rte.w-richtext'
 
   var DEFAULT_CHARS = 2500
@@ -190,6 +232,12 @@
     delaySeconds: DEFAULT_DELAY_SECONDS,
     /** why boot stopped early, for QA */
     skipped: null,
+    /** may THIS reader close it? Resolved once, at reveal. False until then, so
+     *  a gate that never opened can never report itself as dismissible. */
+    dismissible: false,
+    dismissed: false,
+    /** what closed it: 'close' | 'backdrop' | 'manual' | null */
+    dismissedVia: null,
     /** the motion actually in force, after attributes and validation */
     motion: {
       ease: DEFAULT_EASE,
@@ -202,6 +250,7 @@
   var wrapper = null
   var backdrop = null
   var sheet = null
+  var closeEl = null
   var sentinel = null
   var observer = null
   var timerId = null
@@ -383,6 +432,18 @@
       : (document.body.style.overflow = 'hidden')
   }
 
+  /**
+   * The exact inverse of lockScroll, branch for branch. Restores overflow to ''
+   * rather than 'visible': the lock is the only thing that put a value there, so
+   * clearing it hands the property back to whatever Webflow's stylesheet says
+   * instead of overriding it forever with an inline one.
+   */
+  function unlockScroll() {
+    typeof lenis !== 'undefined' && lenis.start
+      ? lenis.start()
+      : (document.body.style.overflow = '')
+  }
+
   function teardownTriggers() {
     if (observer) {
       observer.disconnect()
@@ -394,38 +455,74 @@
     }
   }
 
-  function track() {
+  /**
+   * Shared PostHog send. Both gate events carry the same identifying fields so
+   * shown and dismissed can be joined on slug + trigger without a lookup.
+   * @param {string} name
+   * @param {Record<string, unknown>} [extra]
+   */
+  function capture(name, extra) {
     var posthog = window.posthog
     if (!posthog || typeof posthog.capture !== 'function') {
-      info('posthog absent, skipping learn_gate_shown')
+      info('posthog absent, skipping ' + name)
       return
     }
-    try {
-      posthog.capture('learn_gate_shown', {
-        slug: articleSlug(),
-        trigger: state.trigger,
-        chars: state.chars,
-        threshold: state.threshold,
-        release: RELEASE,
+    var props = {
+      slug: articleSlug(),
+      trigger: state.trigger,
+      chars: state.chars,
+      threshold: state.threshold,
+      release: RELEASE,
+    }
+    if (extra) {
+      Object.keys(extra).forEach(function (key) {
+        props[key] = extra[key]
       })
+    }
+    try {
+      posthog.capture(name, props)
     } catch (err) {
       // Analytics must never break the gate.
       warn('posthog.capture threw', err)
     }
   }
 
+  // Jerico is making the paywall escapable for a whole segment. Shown-count
+  // alone cannot say what that cost, so the dismissal is measured too, and
+  // `via` separates a deliberate button press from a backdrop click.
+  function trackDismiss() {
+    capture('learn_gate_dismissed', { via: state.dismissedVia })
+  }
+
   // The wrapper's open state, written once so the GSAP path and the no-GSAP
-  // path cannot drift apart. GSAP takes it as tween vars; applyOpenStyles()
+  // path cannot drift apart. GSAP takes it as tween vars; applyStyles()
   // writes the same values as inline styles.
   var OPEN_WRAPPER = { visibility: 'visible', pointerEvents: 'auto', opacity: 1 }
 
-  /** Final open state, applied directly when GSAP is unavailable. */
-  function applyOpenStyles() {
-    wrapper.style.visibility = OPEN_WRAPPER.visibility
-    wrapper.style.pointerEvents = OPEN_WRAPPER.pointerEvents
-    wrapper.style.opacity = String(OPEN_WRAPPER.opacity)
-    backdrop.style.opacity = '1'
-    sheet.style.transform = 'translateY(0%)'
+  var OPEN_STATE = { wrapper: OPEN_WRAPPER, backdrop: '1', sheet: 'translateY(0%)' }
+  var CLOSED_STATE = {
+    wrapper: { visibility: 'hidden', pointerEvents: 'none', opacity: 0 },
+    backdrop: '0',
+    sheet: 'translateY(100%)',
+  }
+
+  /**
+   * Writes a whole gate state as inline styles. Both directions go through this
+   * one function on purpose: two hand-written mirrors is how a property gets
+   * added to the open state and quietly forgotten in the closed one.
+   *
+   * Only reached when GSAP is absent, so writing `transform` here cannot collide
+   * with a tween — the stylesheet's no-transform rule is about sharing the
+   * property with GSAP, and on this path GSAP does not exist.
+   *
+   * @param {{wrapper: object, backdrop: string, sheet: string}} target
+   */
+  function applyStyles(target) {
+    wrapper.style.visibility = target.wrapper.visibility
+    wrapper.style.pointerEvents = target.wrapper.pointerEvents
+    wrapper.style.opacity = String(target.wrapper.opacity)
+    backdrop.style.opacity = target.backdrop
+    sheet.style.transform = target.sheet
   }
 
   function buildTimeline() {
@@ -475,6 +572,122 @@
     return tl
   }
 
+  /* ------------------------------ dismissal ------------------------------- */
+
+  /**
+   * The one decision every dismissal path is gated on. Called once, from
+   * reveal(), because Memberstack has not necessarily decided anything at boot.
+   *
+   * Presence is not enough. Memberstack removes some gated elements on this site
+   * and merely hides others, so a close control that is still in the DOM may be
+   * one Memberstack meant to take away — binding it would be an invisible escape
+   * hatch out of a hard paywall.
+   */
+  /**
+   * True when `el` AND every ancestor between it and the wrapper is displayed.
+   *
+   * The walk is the whole point, and checking the close control on its own is
+   * the bug it exists to prevent: `getComputedStyle` on a DESCENDANT of a
+   * display:none subtree reports that descendant's OWN display — 'block', not
+   * 'none' — because ancestor display does not propagate into the computed value.
+   * So a close control would read as visible whenever Memberstack's attribute
+   * sits on a div WRAPPING it instead of on the control itself, which is an
+   * entirely normal way to author it in Designer. The cost of getting that wrong
+   * is a logged-out reader who can click the paywall away.
+   *
+   * The wrapper is the stopping point, not part of the walk: reveal() has
+   * already guarded it, and there is nothing above it worth consulting.
+   *
+   * `display` only, never `visibility`. Visibility INHERITS, and the gate is
+   * still `visibility: hidden` when this runs — every descendant would report
+   * 'hidden' and no gate could ever be dismissible.
+   */
+  function isDisplayed(el) {
+    for (var node = el; node && node !== wrapper; node = node.parentNode) {
+      if (node.nodeType !== 1) break
+      if (window.getComputedStyle(node).display === 'none') return false
+    }
+    return true
+  }
+
+  function resolveDismissible() {
+    closeEl = wrapper.querySelector(CLOSE_SELECTOR)
+    state.dismissible = !!closeEl && isDisplayed(closeEl)
+
+    if (closeEl && !state.dismissible) {
+      info('close control present but hidden — gate stays hard for this reader')
+    }
+  }
+
+  function handleCloseClick(event) {
+    if (event && typeof event.preventDefault === 'function') event.preventDefault()
+    dismiss('close')
+  }
+
+  /**
+   * The sheet is a sibling of the backdrop, not a child, so a click inside the
+   * sign-up form should never reach here. The target check makes that a fact
+   * rather than a dependency on markup nobody in this file controls.
+   */
+  function handleBackdropClick(event) {
+    if (!event || event.target !== backdrop) return
+    dismiss('backdrop')
+  }
+
+  function armDismissal() {
+    if (!state.dismissible) return
+    closeEl.addEventListener('click', handleCloseClick)
+    backdrop.addEventListener('click', handleBackdropClick)
+  }
+
+  function disarmDismissal() {
+    if (closeEl) closeEl.removeEventListener('click', handleCloseClick)
+    if (backdrop) backdrop.removeEventListener('click', handleBackdropClick)
+  }
+
+  /**
+   * Close the gate. Gated on `dismissible` a second time on purpose: armDismissal
+   * already refuses to bind when the gate is hard, so this guard only matters if
+   * some future caller reaches dismiss() another way. It costs one comparison and
+   * it means no path can open a hard paywall by accident.
+   *
+   * @param {'close'|'backdrop'|'manual'} via
+   */
+  function dismiss(via) {
+    if (!state.revealed || state.dismissed) return
+    if (!state.dismissible) {
+      info('dismiss(' + via + ') ignored — this gate is not dismissible')
+      return
+    }
+
+    state.dismissed = true
+    state.dismissedVia = via
+    disarmDismissal()
+
+    // Before the exit plays, not after: the click already committed to closing.
+    unlockScroll()
+
+    // The reverse reverts this at the end anyway; setting it now stops the
+    // full-screen wrapper from swallowing clicks while the sheet slides away.
+    wrapper.style.pointerEvents = 'none'
+
+    if (timeline) timeline.reverse()
+    else applyStyles(CLOSED_STATE)
+
+    trackDismiss()
+    info('dismissed via ' + via)
+    window.dispatchEvent(
+      new CustomEvent('learn-gate-dismissed', {
+        detail: {
+          via: via,
+          trigger: state.trigger,
+          chars: state.chars,
+          threshold: state.threshold,
+        },
+      })
+    )
+  }
+
   /**
    * Open the gate. Idempotent: the first call wins and every trigger is torn
    * down, so a timer and an observer can never both fire it.
@@ -485,9 +698,9 @@
     if (!wrapper || !backdrop || !sheet) return
 
     // Last look before we touch anything. Memberstack may have resolved after
-    // boot armed the trigger, and the scroll lock below is irreversible in a
-    // gate with no close control — locking a member who cannot see the gate
-    // strands them on the page. Checked here, before lockScroll(), on purpose.
+    // boot armed the trigger, and a member who can see no gate has no close
+    // control inside it either — locking their scroll strands them on the page.
+    // Checked here, before lockScroll(), on purpose.
     if (window.getComputedStyle(wrapper).display === 'none') {
       state.skipped = 'memberstack-hidden-late'
       teardownTriggers()
@@ -499,6 +712,10 @@
     state.trigger = trigger || 'manual'
     teardownTriggers()
 
+    // Same Memberstack-has-now-decided moment as the guard above, so it reads
+    // the close control here rather than at boot.
+    resolveDismissible()
+
     lockScroll()
 
     if (typeof gsap !== 'undefined') {
@@ -506,10 +723,11 @@
       timeline.play()
     } else {
       warn('gsap absent, opening without animation')
-      applyOpenStyles()
+      applyStyles(OPEN_STATE)
     }
 
-    track()
+    armDismissal()
+    capture('learn_gate_shown')
     info('revealed via ' + state.trigger, { chars: state.chars, threshold: state.threshold })
     window.dispatchEvent(
       new CustomEvent('learn-gate-shown', {
@@ -657,6 +875,9 @@
         release: state.release,
         mode: state.mode,
         revealed: state.revealed,
+        dismissible: state.dismissible,
+        dismissed: state.dismissed,
+        dismissedVia: state.dismissedVia,
         trigger: state.trigger,
         chars: state.chars,
         threshold: state.threshold,
@@ -674,6 +895,9 @@
     },
     reveal: function () {
       reveal('manual')
+    },
+    dismiss: function () {
+      dismiss('manual')
     },
   }
 
