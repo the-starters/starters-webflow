@@ -185,7 +185,9 @@ function inventoryScripts(readme) {
     if (inInventory && /^##\s+/.test(line)) break
     if (!inInventory || !/^-\s+/.test(line)) continue
 
-    for (const match of line.matchAll(/`([^`]+\.js)`/g)) {
+    const separator = line.indexOf(' — ')
+    const label = separator === -1 ? line : line.slice(0, separator)
+    for (const match of label.matchAll(/`([^`]+\.js)`/g)) {
       listed.add(match[1])
     }
   }
@@ -215,8 +217,8 @@ test('every committed browser script appears in the README inventory', () => {
   assertInventoryComplete(fs.readFileSync('README.md', 'utf8'))
 })
 
-test('coverage ignores script mentions outside inventory bullets', () => {
-  const script = 'build-profile-draft-identity-guard.js'
+test('coverage ignores script mentions outside inventory labels', () => {
+  const script = 'v3/signup-attribution.js'
   const readme = fs.readFileSync('README.md', 'utf8')
   const withoutInventoryEntry = readme
     .split('\n')
