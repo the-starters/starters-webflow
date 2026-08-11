@@ -626,6 +626,25 @@
     return fallback
   }
 
+  // Webflow authors the Own Contract affirmation as the checkbox's owning
+  // `<label data-input-filter-item="My own contract">`. The generic group
+  // resolver must keep stopping at filter items because those nodes usually
+  // own whole fee panels. Resolve this one legal affirmation separately so
+  // Standard Contract hides its complete rendered row, not only the input.
+  function ownContractConfirmationGroup(field, form) {
+    var node = field && field.parentElement
+    while (node && node !== form) {
+      var item = node.getAttribute && node.getAttribute('data-input-filter-item')
+      if (item !== null && item !== undefined) {
+        return canonicalContractType(item) === 'own_contract' && wrapsOnly(node, field)
+          ? node
+          : inputGroup(field, form)
+      }
+      node = node.parentElement
+    }
+    return inputGroup(field, form)
+  }
+
   function hideElement(node) {
     if (!node) return
     node.hidden = true
@@ -724,7 +743,7 @@
     }
     setFieldVisibility(
       field,
-      inputGroup(field, form),
+      ownContractConfirmationGroup(field, form),
       labelsFor(form, field),
       OWN_CONTRACT_CONFIRMATION_HIDDEN_ATTR,
       visible
