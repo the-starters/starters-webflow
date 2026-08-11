@@ -90,7 +90,6 @@
  * OPTIONAL, authored by the Designer: an `[data-sv-poster]` cover image INSIDE
  * the stage. `data-sv-video` retires it once the video is genuinely playing, and
  * deliberately never does so if the video never loads.
- *   #fullscreenBtn                 data-sv-fullscreen visible | hidden (hidden when gated)
  *
  * NO MODAL ID LIVES IN THIS FILE. The trigger carries modal.js's own
  * `data-modal-trigger`, authored in the Designer, and this file only clicks it —
@@ -412,6 +411,10 @@
 
   Controller.prototype.mount = function (gated) {
     var self = this
+    if (!window.Vimeo || typeof window.Vimeo.Player !== 'function') {
+      warn('mount called without the Vimeo Player API; refusing to build a frame')
+      return false
+    }
     this.gated = gated
     var stage = part(this.root, 'stage')
     if (!stage) {
@@ -711,13 +714,16 @@
         info('viewer is ' + (state.member ? 'a member' : 'logged out') + (state.certain ? '' : ' (unconfirmed)'))
         pending.forEach(function (c) {
           if (state.member) c.upgrade()
-          else if (!state.certain) watchForLateMember(c)
+          else if (!state.certain) watchForLateMember(c, function () { c.upgrade() })
         })
         noLib.forEach(function (c) {
           if (!state.member) {
             // Not confirmed logged out? Keep asking, or a member with both a slow
-            // SDK and a failed library gets nothing for the page's whole life.
-            if (!state.certain) watchForLateMember(c)
+            // SDK and a failed library gets nothing for the page's whole life. A
+            // noLib controller was never mounted with the API, so a late answer must
+            // go through mountWithoutApi() — routing it through upgrade()/mount()
+            // would touch window.Vimeo.Player, which is exactly what is missing here.
+            if (!state.certain) watchForLateMember(c, function () { c.mountWithoutApi() })
             return
           }
           c.mountWithoutApi()
@@ -728,13 +734,17 @@
     })
   }
 
-  function watchForLateMember(c) {
+  function watchForLateMember(c, onLate) {
     var ms = window.$memberstackDom
     if (!ms || typeof ms.getCurrentMember !== 'function') return
+    var handler = onLate || function () { c.upgrade() }
     try {
-      ms.getCurrentMember().then(function (res) {
-        if (res && res.data) c.upgrade()
+      var p = ms.getCurrentMember().then(function (res) {
+        if (res && res.data) handler()
       }, function () {})
+      // Terminate the chain: handler() may build a frame, and nothing may reject
+      // into the page.
+      if (p && typeof p.catch === 'function') p.catch(function () {})
     } catch (e) {
       /* never throws into the page */
     }

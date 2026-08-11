@@ -217,7 +217,10 @@ async function setup({ member = 'out', withLib = true, hostname = 'the-starters-
   const api0 = windowObj.StartersSessionVideo
   let gatedBeforeLate = null
   if (member === 'late') {
-    gatedBeforeLate = api0.status().sessions[0].gated
+    // A no-library viewer has nothing mounted until the late answer lands, so the
+    // session list is empty at this point; only a mounted controller has `gated`.
+    const before = api0.status().sessions[0]
+    gatedBeforeLate = before ? before.gated : null
     if (watchClick) root.querySelector('[data-element-trigger="show-video"]').click()
     if (watch && players[0]) watch(players[0])
     releaseLate()
@@ -352,6 +355,20 @@ test('a member with no player library still gets the full state contract', async
   const f = s.frame()
   assert.ok(f, 'a member should still get the video')
   assert.equal(f.hasAttribute('allowfullscreen'), true)
+  assert.equal(s.root.getAttribute('data-sv-player'), 'native')
+  assert.equal(s.root.getAttribute('data-sv-video'), 'ready', 'no API means no progress to wait for')
+  assert.equal(s.api.status().roots, 1, 'and status() must see it')
+})
+
+test('a no-library viewer whose membership resolves late still gets the full contract', async () => {
+  // The late path must NEVER route a no-library controller through upgrade(): that
+  // calls mount(), which does `new window.Vimeo.Player`, and window.Vimeo is exactly
+  // what is missing here — it threw into the page and left a poster that never
+  // retired. It must go through mountWithoutApi() instead. This test fails if the
+  // late handler goes back through upgrade(), which now bails and builds no frame.
+  const s = await setup({ withLib: false, member: 'late' })
+  const f = s.frame()
+  assert.ok(f, 'a late-confirmed member should still get the native player')
   assert.equal(s.root.getAttribute('data-sv-player'), 'native')
   assert.equal(s.root.getAttribute('data-sv-video'), 'ready', 'no API means no progress to wait for')
   assert.equal(s.api.status().roots, 1, 'and status() must see it')
