@@ -1,10 +1,11 @@
 /**
  * Starter Dashboard 3.0 — Stripe Connect status and callback controller.
  *
- * Xano reads Stripe-authoritative state from freelancers_v3. Webflow owns all
- * markup, copy, links, and styling; this module only selects authored states,
- * handles the Connect redirect, and exchanges an OAuth code for the active
- * Memberstack member. Every Xano call is Bearer-authenticated: the active
+ * Xano reconciles Stripe-authoritative state into freelancers_v3. Webflow owns
+ * all markup, copy, links, and styling; this module selects authored states,
+ * handles Connect and callback redirects, requests provider-verified Dashboard
+ * access, and submits confirmed disconnects for the active Memberstack member.
+ * Every Xano call is Bearer-authenticated: the active
  * Memberstack session is traded for a Xano token and the server derives the
  * member identity from that token, so no client-supplied member id is trusted.
  *

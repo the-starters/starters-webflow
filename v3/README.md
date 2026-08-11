@@ -2352,8 +2352,8 @@ node --test v3/starter-dashboard-points.test.js
 ## Starter Dashboard Stripe Connect
 
 `starter-dashboard-stripe-connect.js` replaces the V2 nightly
-Airtable/Webflow-CMS display chain with an immediate read of the
-Stripe-authoritative V3 Xano mirror. The same module handles the
+Airtable/Webflow-CMS display chain with authenticated, provider-aware reads
+through the Stripe-authoritative V3 Xano mirror. The same module handles the
 `/stripe-connect-callback` OAuth return. Every Xano call is Bearer-authenticated:
 the module trades the active Memberstack session for a Xano token through
 `api:g1vmSLWh/auth/trade-token/v3` and the `status/v3`, `start/v3`,
@@ -2450,6 +2450,11 @@ navigating the reserved tab. Exact backend replays with `mode="connected"` or
 close the reserved tab and refresh canonical status instead of displaying a
 false invalid-URL error.
 
+Dashboard access and disconnect each send their own bounded idempotency key.
+A retry after a network-ambiguous, timeout, conflict, rate-limit, or server
+outcome reuses the action's key. A definitive provider result or non-retryable
+response clears it, so a later intentional action starts a new attempt.
+
 The dashboard calls provider-aware `status/v3` immediately. It repairs a
 readiness mismatch and clears a stale projection only when Stripe returns a
 definitive disconnect; ambiguous provider errors show the authored unavailable
@@ -2501,7 +2506,10 @@ In sandbox mode `start` posts the same `return_url` and `callback_url` to
 `/stripe_connect/sandbox/start/v3`, and the exchange posts to
 `/stripe_connect/sandbox/oauth_exchange/v3`. Both sandbox endpoints stay
 Bearer-authenticated the same way as the production ones; the Xano exchange
-uses the test secret key and performs no database write.
+uses the test secret key and performs no database write. Sandbox mode disables
+connected-account Dashboard access and disconnect before any popup,
+confirmation, or endpoint request, so those production actions cannot cross the
+TEST/LIVE boundary.
 
 The sandbox callback is staging-only and self-identifying: its OAuth `state` is
 the member id prefixed with `sandbox:`. The callback rejects a `sandbox:` state
