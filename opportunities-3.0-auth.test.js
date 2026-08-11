@@ -213,6 +213,36 @@ const freeBrandMember = {
   planConnections: [{ active: true, planId: 'pln_free-plan-f6kn0dxz' }],
 }
 
+test('projectDirectCreate sends its payload through the authenticated V3 route', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/create-direct/v3')) {
+        return response({ project: { id: 669 }, replayed: false })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+  const payload = {
+    starter_memberstack_id: 'mem_starter_123',
+    title: 'Launch project',
+    contract_type: 'standard',
+    idempotency_key: 'project-direct-test',
+  }
+
+  const result = await bridge.API.projectDirectCreate(payload)
+
+  assert.equal(result.project.id, 669)
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/create-direct/v3')
+  assert.equal(requests[1].init.method, 'POST')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), payload)
+})
+
 test('invoiceCreate sends the V3 invoice payload through the authenticated Xano bridge', async () => {
   const requests = []
   const bridge = await loadBridge(

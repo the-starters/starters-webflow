@@ -7,7 +7,6 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const SOURCE = fs.readFileSync(path.join(__dirname, 'project-form.js'), 'utf8')
-const OPPORTUNITIES_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'opportunities-3.0.js'), 'utf8')
 
 class Element {
   constructor(attrs = {}) {
@@ -1081,10 +1080,18 @@ function requiredConfirmation(form, { visible, name = 'conditional-confirmation'
 test('shows the own-contract affirmation only for Own Contract and clears stale Standard state', () => {
   const form = projectForm()
   const confirmation = requiredConfirmation(form, { visible: true, name: 'confirm-contract' })
+  const checkedClasses = new Set(['w--redirected-checked'])
+  const checkbox = { classList: { remove: (name) => checkedClasses.delete(name) } }
+  const wrapper = new Element({ class: 'w-checkbox' })
+  wrapper.controls = [confirmation]
+  wrapper.querySelector = (selector) => selector === '.w-checkbox-input' ? checkbox : null
+  confirmation.parentElement = wrapper
   confirmation.checked = true
   const { api } = load({ form })
 
   assert.equal(confirmation.checked, false)
+  assert.deepEqual(confirmation.events, ['click'])
+  assert.equal(checkedClasses.has('w--redirected-checked'), false)
   assert.equal(confirmation.hidden, true)
   assert.equal(confirmation.disabled, true)
   assert.equal(confirmation.required, false)
@@ -1534,11 +1541,4 @@ test('installs the submit handler in capture phase ahead of native Webflow submi
   assert.equal(document.listeners.submit.capture, true)
   assert.equal(typeof document.listeners.click.handler, 'function')
   assert.equal(typeof document.listeners.input.handler, 'function')
-})
-
-test('routes direct-hire project creation through the authenticated Opp30 bridge', () => {
-  assert.match(
-    OPPORTUNITIES_SOURCE,
-    /projectDirectCreate:\s*\(payload\)\s*=>\s*call\('projects\/create-direct\/v3',\s*\{ body: payload \}\)/,
-  )
 })

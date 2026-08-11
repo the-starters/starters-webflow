@@ -714,7 +714,14 @@
     // value on Standard Contract is both misleading in the authored review and
     // unsafe evidence of a legal confirmation the Brand did not make for that
     // path, so clear it whenever the field becomes inactive.
-    if (!visible) field.checked = false
+    if (!visible) {
+      if (field.checked && typeof field.click === 'function') field.click()
+      field.checked = false
+      var checkbox = field.parentElement && field.parentElement.querySelector
+        ? field.parentElement.querySelector('.w-checkbox-input')
+        : null
+      if (checkbox && checkbox.classList) checkbox.classList.remove('w--redirected-checked')
+    }
     setFieldVisibility(
       field,
       inputGroup(field, form),
