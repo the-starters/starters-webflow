@@ -43,8 +43,14 @@
   // conditional branch is hidden, so it can be put back unchanged.
   var REQUIRED_STASH_ATTR = 'data-project-required-hidden'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"]'
+  var SUCCESS_TITLE_SELECTOR = '[data-project-success-title]'
+  var SUCCESS_MESSAGE_SELECTOR = '[data-project-success-message]'
+  var LEGACY_SUCCESS_TITLE_SELECTOR = '[data-preview-contract-element-toggle="Standard contract"]'
+  var LEGACY_SUCCESS_MESSAGE_SELECTOR = '[data-preview-contract-reference="contract"] > p:not([data-preview-contract-element-toggle])'
   var INVOICE_FREQUENCY_NAME = 'invoice-frequency'
   var INVOICE_FREQUENCY_HIDDEN_ATTR = 'data-project-invoice-frequency-hidden'
+  var OWN_CONTRACT_CONFIRMATION_NAME = 'confirm-contract'
+  var OWN_CONTRACT_CONFIRMATION_HIDDEN_ATTR = 'data-project-own-contract-confirmation-hidden'
   var HOURS_CAP_HIDDEN_ATTR = 'data-project-hours-cap-hidden'
   var MONTHLY_END_DATE_HIDDEN_ATTR = 'data-project-monthly-end-date-hidden'
   var MEMBER_NAME_SELECTOR = FORM_SELECTOR + ' [data-mscustom-fullname]'
@@ -699,6 +705,35 @@
     }
   }
 
+  function syncOwnContractConfirmationField(form) {
+    var field = namedField(form, OWN_CONTRACT_CONFIRMATION_NAME)
+    if (!field) return
+    var visible = readContractType(form) === 'own_contract'
+
+    // This affirmation belongs only to the Own Contract path. A stale checked
+    // value on Standard Contract is both misleading in the authored review and
+    // unsafe evidence of a legal confirmation the Brand did not make for that
+    // path, so clear it whenever the field becomes inactive.
+    if (!visible) field.checked = false
+    setFieldVisibility(
+      field,
+      inputGroup(field, form),
+      labelsFor(form, field),
+      OWN_CONTRACT_CONFIRMATION_HIDDEN_ATTR,
+      visible
+    )
+
+    // This field owns its required policy; do not leave a generic conditional
+    // stash for syncActiveRequired to restore while Standard Contract is active.
+    if (field.removeAttribute) field.removeAttribute(REQUIRED_STASH_ATTR)
+    field.required = visible
+    if (visible) {
+      if (field.setAttribute) field.setAttribute('required', '')
+    } else if (field.removeAttribute) {
+      field.removeAttribute('required')
+    }
+  }
+
   function syncMonthlyDurationField(form) {
     // Monthly never submits an end date, so clear the control in every monthly
     // panel a mid-cutover page carries rather than only the resolved one.
@@ -777,6 +812,7 @@
     syncHourlyDurationChoice(form)
     syncHoursCapFields(form)
     syncInvoiceFrequencyField(form)
+    syncOwnContractConfirmationField(form)
   }
 
   // The only place a payload field is normalized. Both entry points - the
@@ -1067,6 +1103,20 @@
     var wrapper = formContainer(form)
     var success = wrapper && (wrapper.querySelector(SUCCESS_SELECTOR) || wrapper.querySelector('.w-form-done'))
     if (success) {
+      var successTitle = success.querySelector && (
+        success.querySelector(SUCCESS_TITLE_SELECTOR) ||
+        success.querySelector(LEGACY_SUCCESS_TITLE_SELECTOR)
+      )
+      var successMessage = success.querySelector && (
+        success.querySelector(SUCCESS_MESSAGE_SELECTOR) ||
+        success.querySelector(LEGACY_SUCCESS_MESSAGE_SELECTOR)
+      )
+      if (successTitle) successTitle.textContent = 'Project successfully created'
+      if (successMessage) {
+        successMessage.textContent = readContractType(form) === 'standard'
+          ? 'Your contract is queued for generation. You will receive a signing email after processing succeeds.'
+          : 'You can manage this project from your dashboard.'
+      }
       success.hidden = false
       success.style.display = 'block'
       form.style.display = 'none'
@@ -1201,6 +1251,7 @@
     formatCurrentDate: formatCurrentDate,
     fillCurrentDates: fillCurrentDates,
     syncInvoiceFrequencyField: syncInvoiceFrequencyField,
+    syncOwnContractConfirmationField: syncOwnContractConfirmationField,
     syncHoursCapFields: syncHoursCapFields,
     syncDurationFields: syncDurationFields,
     syncActiveRequired: syncActiveRequired,

@@ -56,6 +56,10 @@ class Element {
     if (selector === '[data-project-contract-choice]:checked') return this.contractChoice || null
     if (selector === 'input[type="radio"]:checked') return this.contractChoice || null
     if (selector === '[data-project-form-state="success"]') return this.success || null
+    if (selector === '[data-project-success-title]') return this.successTitle || null
+    if (selector === '[data-project-success-message]') return this.successMessage || null
+    if (selector === '[data-preview-contract-element-toggle="Standard contract"]') return this.legacySuccessTitle || null
+    if (selector === '[data-preview-contract-reference="contract"] > p:not([data-preview-contract-element-toggle])') return this.legacySuccessMessage || null
     if (selector === '.w-form-fail') return this.nativeError || null
     if (selector === '.w-form-done') return this.nativeSuccess || null
     const feePanel = /^\[data-input-filter-item="([^"]+)"\]$/.exec(selector)
@@ -1066,13 +1070,44 @@ test('fails closed when a standard contract has no invoice frequency', () => {
   assert.equal(api.validationError(serialized), 'Choose an invoice frequency.')
 })
 
-function requiredConfirmation(form, { visible }) {
-  const confirmation = nativeField('confirm-contract', '', { type: 'checkbox', checked: false, required: '' })
+function requiredConfirmation(form, { visible, name = 'conditional-confirmation' }) {
+  const confirmation = nativeField(name, '', { type: 'checkbox', checked: false, required: '' })
   confirmation.form = form
   confirmation.offsetParent = visible ? {} : null
   form.children.push(confirmation)
   return confirmation
 }
+
+test('shows the own-contract affirmation only for Own Contract and clears stale Standard state', () => {
+  const form = projectForm()
+  const confirmation = requiredConfirmation(form, { visible: true, name: 'confirm-contract' })
+  confirmation.checked = true
+  const { api } = load({ form })
+
+  assert.equal(confirmation.checked, false)
+  assert.equal(confirmation.hidden, true)
+  assert.equal(confirmation.disabled, true)
+  assert.equal(confirmation.required, false)
+  assert.equal(confirmation.getAttribute('required'), null)
+  assert.equal(confirmation.getAttribute('data-project-own-contract-confirmation-hidden'), 'true')
+
+  form.contractChoice.value = 'My own contract'
+  api.syncDurationFields(form)
+  assert.equal(confirmation.checked, false)
+  assert.equal(confirmation.hidden, false)
+  assert.equal(confirmation.disabled, false)
+  assert.equal(confirmation.required, true)
+  assert.equal(confirmation.getAttribute('required'), '')
+  assert.equal(confirmation.getAttribute('data-project-own-contract-confirmation-hidden'), null)
+
+  confirmation.checked = true
+  form.contractChoice.value = 'Standard contract'
+  api.syncDurationFields(form)
+  assert.equal(confirmation.checked, false)
+  assert.equal(confirmation.hidden, true)
+  assert.equal(confirmation.disabled, true)
+  assert.equal(confirmation.getAttribute('required'), null)
+})
 
 test('drops required from hidden conditional controls so native validation cannot block submit', async () => {
   const form = projectForm()
@@ -1147,6 +1182,8 @@ test('submits once through Opp30 auth, keeps the retry key, and emits safe succe
   const { api, calls, document, form, window } = load()
   form.wrapper = new Element()
   form.wrapper.success = new Element()
+  form.wrapper.success.legacySuccessTitle = new Element()
+  form.wrapper.success.legacySuccessMessage = new Element()
   const first = api.submit(form, window, document)
   const duplicate = api.submit(form, window, document)
   assert.equal(first, duplicate)
@@ -1157,9 +1194,25 @@ test('submits once through Opp30 auth, keeps the retry key, and emits safe succe
   assert.equal(form.getAttribute('data-project-form-status'), 'success')
   assert.equal(form.style.display, 'none')
   assert.equal(form.wrapper.success.style.display, 'block')
+  assert.equal(form.wrapper.success.legacySuccessTitle.textContent, 'Project successfully created')
+  assert.equal(form.wrapper.success.legacySuccessMessage.textContent, 'Your contract is queued for generation. You will receive a signing email after processing succeeds.')
   assert.equal(document.event.type, 'starters:project-created')
   assert.equal(document.event.detail.project_id, 669)
   assert.equal(document.event.detail.replayed, false)
+})
+
+test('does not promise PandaDoc generation or email for an own-contract project', async () => {
+  const form = projectForm()
+  form.contractChoice.value = 'My own contract'
+  form.wrapper = new Element()
+  form.wrapper.success = new Element()
+  form.wrapper.success.successTitle = new Element()
+  form.wrapper.success.successMessage = new Element()
+  const { api, document, window } = load({ form })
+
+  assert.equal(await api.submit(form, window, document), true)
+  assert.equal(form.wrapper.success.successTitle.textContent, 'Project successfully created')
+  assert.equal(form.wrapper.success.successMessage.textContent, 'You can manage this project from your dashboard.')
 })
 
 test('uses the authored external Starter identity and internal retry state without new inputs', async () => {
