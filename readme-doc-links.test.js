@@ -193,11 +193,14 @@ function inventoryScripts(readme) {
   return listed
 }
 
-function assertInventoryComplete(readme) {
+function assertInventoryComplete(
+  readme,
+  nonBrowserScripts = NON_BROWSER_SCRIPTS,
+) {
   const listed = inventoryScripts(readme)
 
   const missing = committedScripts().filter(
-    (file) => !listed.has(file) && !NON_BROWSER_SCRIPTS.has(file),
+    (file) => !listed.has(file) && !nonBrowserScripts.has(file),
   )
 
   assert.deepEqual(
@@ -224,6 +227,27 @@ test('coverage ignores script mentions outside inventory bullets', () => {
     () => assertInventoryComplete(withoutInventoryEntry),
     (error) => error.message.includes(script),
   )
+})
+
+test('non-browser exemptions rely on the allowlist', () => {
+  const readme = fs.readFileSync('README.md', 'utf8')
+
+  assert.throws(
+    () => assertInventoryComplete(readme, new Set()),
+    (error) =>
+      Array.from(NON_BROWSER_SCRIPTS).every((script) =>
+        error.message.includes(script),
+      ),
+  )
+
+  for (const script of NON_BROWSER_SCRIPTS) {
+    const withoutScript = new Set(NON_BROWSER_SCRIPTS)
+    withoutScript.delete(script)
+    assert.throws(
+      () => assertInventoryComplete(readme, withoutScript),
+      (error) => error.message.includes(script),
+    )
+  }
 })
 
 test('the non-browser allowlist has no stale entries', () => {

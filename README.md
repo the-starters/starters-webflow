@@ -229,7 +229,7 @@ redirect contracts; these own tab UI only.
 - `build-profile-draft-identity-guard.js` — synchronous build-profile draft guard that blocks the legacy localStorage key until Memberstack identity resolves, then routes it to member-scoped storage; see the [draft identity guard contract](#draft-identity-guard-waitformember-contract)
 - `utils/multi-step-failover.js` — legacy build-profile availability probe that loads the mirrored Videsigns engine only when the upstream engine is missing or unavailable; see the [Build-profile Videsigns wiring audit](#build-profile-videsigns-wiring-audit)
 - `swiper-scroll/swiper-scroll.js` — Swiper-backed horizontal scroll sections ([docs](https://wf-starter-embeds-docs.vercel.app/docs/swiper-scroll))
-- `vendor/videsigns-multi-step.js` — vendored third-party multi-step form engine (upstream `videsigns/webflow-tools`), pinned and served from this repo so a release is reproducible rather than tracking the vendor's `@latest`. Do not edit; the build-profile funnel's pinning is asserted by `build-profile-wiring-audit.js`
+- `vendor/videsigns-multi-step.js` — vendored third-party multi-step form engine (upstream `videsigns/webflow-tools`), pinned and served from this repo so a release is reproducible rather than tracking the vendor's `@latest`. Do not edit; the build-profile funnel's pinning is asserted by build-profile-wiring-audit.js
 
 ### Legacy V2 (`v2/`)
 
@@ -238,7 +238,7 @@ Containment-era V2 code. Kept for the live V2 pages; not a pattern to copy.
 - `v2/contract.js` — minified legacy `/freelancer-start-project` contract-form logic (fee-structure field reveal, progress-step `is-done` marks, review/edit lock). Source of truth for that page's browser code, per the workspace `CLAUDE.md`; the readable twins are the `slater/` exports noted below
 - `v2/footers/freelancer-start-project.js`, `v2/footers/freelancer-start-project-contract.js`, `v2/footers/freelancer-edit-form.js`, `v2/footers/quiz-results.js`, `v2/footers/opportunities-apply.js`, `v2/footers/opportunities-applicants.js`, `v2/footers/opportunities-freelancer-view.js` — the secure V2 page footer logic, CDN-loadable so each page can drop its inline block. Each `.js` is extracted verbatim from the sibling `-footer.html`; edit the HTML and re-extract, or adopt the `.js` as sole source once a page is fully migrated. Per-page CDN tags and the full contract live in [`v2/footers/README.md`](v2/footers/README.md)
 
-### Not browser code (deliberately outside this inventory)
+## Not browser code (deliberately outside this inventory)
 
 - `build-profile-wiring-audit.js` — a Node audit tool (`require('node:fs')`) that checks the build-profile pages' saved Webflow code for the pinned vendored engine and the draft-identity guard. Never served to a browser
 - `step-flow-test-dom.js` — the `global-embeds/step-flow/step-flow.js` test harness and its minimal DOM shim (`require('node:test')`). Named without the `.test.js` suffix, so run it explicitly
