@@ -1211,12 +1211,12 @@
 
   function state(form) {
     if (!stateByForm) {
-      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', keyPayload: '', lockedFields: null, diagnostic: null }
+      form.__projectFormV3State = form.__projectFormV3State || { active: null, key: '', keyPayload: '', lockedFields: null, diagnostic: null, nativeValidationReceipt: null }
       return form.__projectFormV3State
     }
     var current = stateByForm.get(form)
     if (!current) {
-      current = { active: null, key: '', keyPayload: '', lockedFields: null, diagnostic: null }
+      current = { active: null, key: '', keyPayload: '', lockedFields: null, diagnostic: null, nativeValidationReceipt: null }
       stateByForm.set(form, current)
     }
     return current
@@ -1367,6 +1367,24 @@
     }
   }
 
+  function recordNativeValidation(form, globalObject, documentObject) {
+    var formState = state(form)
+    if (formState.nativeValidationReceipt) return formState.nativeValidationReceipt
+    var receipt = createDiagnostic(globalObject, serialize(form, documentObject), {
+      result: 'error',
+      stage: 'validation',
+      error_code: 'BROWSER_VALIDATION_FAILED',
+      request_started: false,
+    })
+    formState.nativeValidationReceipt = receipt
+    formState.diagnostic = persistDiagnostic(globalObject, receipt)
+    setStatus(form, 'error', 'Review the highlighted fields and try again.', receipt)
+    Promise.resolve().then(function () {
+      if (formState.nativeValidationReceipt === receipt) formState.nativeValidationReceipt = null
+    })
+    return receipt
+  }
+
   function submit(form, globalObject, documentObject) {
     var formState = state(form)
     if (formState.active) return formState.active
@@ -1374,14 +1392,7 @@
     // example, the own-contract confirmation checkbox while Standard contract
     // is selected), while visible required controls still gate submission.
     if (!reportActiveValidity(form)) {
-      var browserValidationReceipt = createDiagnostic(globalObject, serialize(form, documentObject), {
-        result: 'error',
-        stage: 'validation',
-        error_code: 'BROWSER_VALIDATION_FAILED',
-        request_started: false,
-      })
-      formState.diagnostic = persistDiagnostic(globalObject, browserValidationReceipt)
-      setStatus(form, 'error', 'Review the highlighted fields and try again.', browserValidationReceipt)
+      recordNativeValidation(form, globalObject, documentObject)
       return Promise.resolve(false)
     }
 
@@ -1520,6 +1531,11 @@
       formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
     })
+    documentObject.addEventListener('invalid', function (event) {
+      var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
+      if (!form) return
+      recordNativeValidation(form, globalObject, documentObject)
+    }, true)
     documentObject.addEventListener('submit', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
       if (!form) return

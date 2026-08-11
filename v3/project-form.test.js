@@ -1622,6 +1622,27 @@ test('records browser validation without issuing a project request', async () =>
   assert.equal(loaded.trackCalls.some((entry) => entry.name === 'project_form_validation_failed'), true)
 })
 
+test('records one receipt when native validation blocks the submit event', async () => {
+  const loaded = load()
+  const firstInvalidField = loaded.form.children[2]
+  const secondInvalidField = loaded.form.children[3]
+  firstInvalidField.form = loaded.form
+  secondInvalidField.form = loaded.form
+
+  assert.equal(loaded.document.listeners.invalid.capture, true)
+  loaded.document.listeners.invalid.handler({ target: firstInvalidField })
+  loaded.document.listeners.invalid.handler({ target: secondInvalidField })
+
+  assert.equal(loaded.calls.length, 0)
+  assert.equal(loaded.window.StartersProjectDiagnostics.getLast().error_code, 'BROWSER_VALIDATION_FAILED')
+  assert.equal(loaded.form.getAttribute('data-project-form-status'), 'error')
+  assert.equal(loaded.trackCalls.filter((entry) => entry.name === 'project_form_validation_failed').length, 1)
+
+  await Promise.resolve()
+  loaded.document.listeners.invalid.handler({ target: firstInvalidField })
+  assert.equal(loaded.trackCalls.filter((entry) => entry.name === 'project_form_validation_failed').length, 2)
+})
+
 test('copies the current diagnostic from the authored message click and keyboard action', async () => {
   const loaded = load({ reject: 422 })
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
