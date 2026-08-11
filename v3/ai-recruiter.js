@@ -311,10 +311,19 @@
       if (event.key === 'Escape') close()
     })
 
+    const consent = root.querySelector(selectors.consent)
+    if (consent && consent.getAttribute('role') === 'checkbox') {
+      consent.addEventListener('click', () => {
+        const checked = consent.getAttribute('aria-checked') === 'true'
+        consent.setAttribute('aria-checked', checked ? 'false' : 'true')
+      })
+    }
     const consentContinue = root.querySelector(selectors.consentContinue)
     if (consentContinue) consentContinue.addEventListener('click', () => {
-      const consent = root.querySelector(selectors.consent)
-      if (!consent || !consent.checked) {
+      const consentAccepted = consent && (
+        consent.checked === true || consent.getAttribute('aria-checked') === 'true'
+      )
+      if (!consentAccepted) {
         setStatus(root, 'Please accept the AI recruiter privacy notice to continue.')
         return
       }

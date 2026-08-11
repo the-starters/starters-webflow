@@ -14,6 +14,10 @@ responsive-style contract. Do not install it as an HTML embed and do not make
 the controller generate its markup. Keep one root per page and load the
 controller after Memberstack and the authenticated Xano token bridge:
 
+The consent control is a native button with `role="checkbox"`. The controller
+owns its `aria-checked` state so the structure can be created through the
+Designer DOM element API without relying on a generated form control.
+
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@<release-tag>/v3/ai-recruiter.js"></script>
 ```

@@ -44,7 +44,7 @@ class Element {
   focus() { this.focused = true }
 }
 
-function makeFixture() {
+function makeFixture(options = {}) {
   const root = new Element()
   const launcher = new Element()
   const panel = new Element()
@@ -54,7 +54,9 @@ function makeFixture() {
   const messages = new Element()
   const candidates = new Element()
   const status = new Element()
-  const consent = new Element()
+  const consent = new Element(options.consentRole === 'checkbox'
+    ? { role: 'checkbox', 'aria-checked': 'false' }
+    : {})
   const consentContinue = new Element()
   const startOver = new Element()
   const states = ['consent', 'ready', 'thinking', 'retry', 'error', 'rate-limited', 'expired', 'offline', 'upgrade', 'unavailable']
@@ -109,7 +111,7 @@ async function flush() {
 }
 
 function load(options = {}) {
-  const fixture = makeFixture()
+  const fixture = makeFixture(options)
   const stored = new Map(Object.entries(options.storage || {}))
   let uuid = 0
   const requests = []
@@ -268,6 +270,18 @@ test('stored consent is member and version scoped with blocked-storage fallback'
   await flush()
   assert.equal(blocked.fixture.root.hidden, false)
   assert.equal(blocked.fixture.root.dataset.aiRecruiterState, 'consent')
+})
+
+test('native role checkbox toggles consent before continuing', async () => {
+  const loaded = load({ consentRole: 'checkbox' })
+  await flush()
+
+  assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'consent')
+  assert.equal(loaded.fixture.consent.getAttribute('aria-checked'), 'false')
+  await loaded.fixture.consent.dispatch('click')
+  assert.equal(loaded.fixture.consent.getAttribute('aria-checked'), 'true')
+  await loaded.fixture.consentContinue.dispatch('click')
+  assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'ready')
 })
 
 test('start over invalidates an in-flight response', async () => {
