@@ -15,6 +15,7 @@
   })
   const ELIGIBLE_PLANS = new Set([PLAN.BRAND_PAID, PLAN.TEST_BRAND])
   const BRAND_PLANS = new Set([PLAN.BRAND_FREE, ...ELIGIBLE_PLANS])
+  const TEST_HOSTS = new Set(['the-starters-3-0.webflow.io', 'localhost', '127.0.0.1'])
   const AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
   const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30'
   const STORAGE_KEY = 'ts:ai-recruiter:v3:session'
@@ -65,10 +66,16 @@
       .filter(Boolean)
   }
 
-  function roleForMember(member) {
+  function roleForMember(member, hostname) {
     const plans = activePlanIds(member)
-    if (plans.some((id) => ELIGIBLE_PLANS.has(id))) return 'brand-paid'
-    if (plans.some((id) => BRAND_PLANS.has(id))) return 'brand-free'
+    const currentHost = String(
+      hostname || (window.location && window.location.hostname) || '',
+    ).toLowerCase()
+    if (plans.includes(PLAN.BRAND_PAID)) return 'brand-paid'
+    if (plans.includes(PLAN.TEST_BRAND)) {
+      return TEST_HOSTS.has(currentHost) ? 'brand-paid' : 'ineligible'
+    }
+    if (plans.includes(PLAN.BRAND_FREE)) return 'brand-free'
     return 'ineligible'
   }
 
@@ -293,6 +300,10 @@
     root.hidden = false
     root.dataset.aiRecruiterRole = role
     stateBlock(root, role === 'brand-paid' ? (session.consented ? 'ready' : 'consent') : 'upgrade')
+    const canSubmit = role === 'brand-paid'
+    form.hidden = !canSubmit
+    input.disabled = !canSubmit
+    if (submit) submit.disabled = !canSubmit
 
     const open = () => {
       panel.hidden = false
