@@ -173,11 +173,28 @@ function committedScripts() {
     .filter((file) => !EXCLUDED_PREFIXES.some((prefix) => file.startsWith(prefix)))
 }
 
-test('every committed browser script appears in the README inventory', () => {
-  const readme = fs.readFileSync('README.md', 'utf8')
-  const listed = new Set(
-    Array.from(readme.matchAll(/`([^`]+\.js)`/g), (match) => match[1]),
-  )
+function inventoryScripts(readme) {
+  const listed = new Set()
+
+  let inInventory = false
+  for (const line of readme.split('\n')) {
+    if (line === '## Current Scripts') {
+      inInventory = true
+      continue
+    }
+    if (inInventory && /^##\s+/.test(line)) break
+    if (!inInventory || !/^-\s+/.test(line)) continue
+
+    for (const match of line.matchAll(/`([^`]+\.js)`/g)) {
+      listed.add(match[1])
+    }
+  }
+
+  return listed
+}
+
+function assertInventoryComplete(readme) {
+  const listed = inventoryScripts(readme)
 
   const missing = committedScripts().filter(
     (file) => !listed.has(file) && !NON_BROWSER_SCRIPTS.has(file),
@@ -188,6 +205,24 @@ test('every committed browser script appears in the README inventory', () => {
     [],
     `these scripts are not in the README inventory (add an entry, or add to ` +
       `NON_BROWSER_SCRIPTS with a reason):\n  ${missing.join('\n  ')}`,
+  )
+}
+
+test('every committed browser script appears in the README inventory', () => {
+  assertInventoryComplete(fs.readFileSync('README.md', 'utf8'))
+})
+
+test('coverage ignores script mentions outside inventory bullets', () => {
+  const script = 'build-profile-draft-identity-guard.js'
+  const readme = fs.readFileSync('README.md', 'utf8')
+  const withoutInventoryEntry = readme
+    .split('\n')
+    .filter((line) => !line.startsWith(`- \`${script}\``))
+    .join('\n')
+
+  assert.throws(
+    () => assertInventoryComplete(withoutInventoryEntry),
+    (error) => error.message.includes(script),
   )
 })
 

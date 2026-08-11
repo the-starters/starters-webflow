@@ -96,6 +96,7 @@ Do not discard local changes unless the user explicitly asks.
   Calendar CTA follows `loading`/`disconnected`/`connected`/`reconnect`/`error`;
   see `v3/README.md` for its host, markup, and safety boundary
 - `v3/scheduling-availability-writer.js` — availability form, manager, Nylas scheduler, timezone, and calendar OAuth writer through `window.xanoAuthFetch`; the authoritative host, path, identity, and safety boundary lives in [`v3/README.md`](v3/README.md#booking-stage-availability-writer)
+- `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed legacy calls to V3, blocks unclassified routes, and retains only approved legacy Stripe calls; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
@@ -143,8 +144,8 @@ Do not discard local changes unless the user explicitly asks.
 
 ### Shared Webflow component embeds (`global-embeds/`)
 
-Attribute-driven components published for reuse across pages. Each carries a
-`// Docs:` URL on its first line pointing at its authoritative page on the
+Attribute-driven components published for reuse across pages. Most carry a
+`// Docs:` URL on the first line pointing at an authoritative page on the
 [embeds documentation site](https://wf-starter-embeds-docs.vercel.app/docs); the entries below summarize the behavior only.
 
 - `global-embeds/step-flow/step-flow.js` — multi-step form-flow engine for `[data-form-flow]` roots: linear sequences, radio-gated sub-branching, footer button groups, action inference, opt-in per-step required-field validation that soft-disables Continue, and opt-in scroll-to-top that clears sticky `[data-toc-navbar]` chrome; needs its CSS embed for the invalid-field outline ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/step-flow))
@@ -225,6 +226,8 @@ redirect contracts; these own tab UI only.
 ### Other page scripts
 
 - `complete-profile-photo.js` — `/complete-profile` Brand profile-image upload, host-scoped: binds Memberstack's supported `data-ms-action="profile-image"` uploader early (before `DOMContentLoaded`) on the native Webflow element rather than generating markup. Replaced a controller that posted to the Starter-only Xano endpoint #1390, which failed every Brand with "Starter not found"; published endpoint #1513 consumes the resulting `member.updated` webhook and mirrors `member.profileImage` into `brands_v3.image_link`
+- `build-profile-draft-identity-guard.js` — synchronous build-profile draft guard that blocks the legacy localStorage key until Memberstack identity resolves, then routes it to member-scoped storage; see the [draft identity guard contract](#draft-identity-guard-waitformember-contract)
+- `utils/multi-step-failover.js` — legacy build-profile availability probe that loads the mirrored Videsigns engine only when the upstream engine is missing or unavailable; see the [Build-profile Videsigns wiring audit](#build-profile-videsigns-wiring-audit)
 - `swiper-scroll/swiper-scroll.js` — Swiper-backed horizontal scroll sections ([docs](https://wf-starter-embeds-docs.vercel.app/docs/swiper-scroll))
 - `vendor/videsigns-multi-step.js` — vendored third-party multi-step form engine (upstream `videsigns/webflow-tools`), pinned and served from this repo so a release is reproducible rather than tracking the vendor's `@latest`. Do not edit; the build-profile funnel's pinning is asserted by `build-profile-wiring-audit.js`
 
