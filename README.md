@@ -90,6 +90,11 @@ Do not discard local changes unless the user explicitly asks.
   Memberstack-derived `user_v3` Bearer auth to profile, Companies, and Portfolio
   mutations, enables `/starter-edit-profile` writes only on the exact Live hosts,
   and blocks known edit mutations on non-Live hosts
+- `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior
+  migrated from the legacy Webflow footer. It keeps the existing Designer form
+  contract, shows success only after a confirmed 2xx Xano response, and shows the
+  error state for rejected or failed profile updates. Webflow retains only the
+  `intl-tel-input` and Quill dependencies plus this deferred `@latest` loader.
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero
