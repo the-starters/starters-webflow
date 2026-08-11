@@ -96,6 +96,7 @@ Do not discard local changes unless the user explicitly asks.
   Calendar CTA follows `loading`/`disconnected`/`connected`/`reconnect`/`error`;
   see `v3/README.md` for its host, markup, and safety boundary
 - `v3/scheduling-availability-writer.js` — availability form, manager, Nylas scheduler, timezone, and calendar OAuth writer through `window.xanoAuthFetch`; the authoritative host, path, identity, and safety boundary lives in [`v3/README.md`](v3/README.md#booking-stage-availability-writer)
+- `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed legacy calls to V3, blocks unclassified routes, and retains only approved legacy Stripe calls; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
@@ -140,6 +141,112 @@ Do not discard local changes unless the user explicitly asks.
 - `navbar-embeds/navbar-explore/view-all.js` — "view all" button routes to `/subcategories/<slug>` derived from the item's `wf-algolia-value`
 - `account-settings/ms-form-cancel-state.js` — reason-keyed success-state selector for the `/account-settings` cancel flow, scoped to the nearest form root; authoritative attributes and ownership rules live in [`account-settings/README.md`](account-settings/README.md#cancel-flow-success-state)
 - `global-embeds/form-embeds/turnstile-contents-fix.js` — arms Cloudflare Turnstile on the forms Webflow's own bot protection can never reach: a form carrying the `display-contents` class generates no box, so its rect is `0 × 0`, the `IntersectionObserver` Webflow observes the **form element** with never reports it intersecting, and the widget it would have rendered inside the form never appears. Those forms' submit buttons stay disabled forever, and because `wf-validate` re-enables the final step anyway, a member can click submit and get a tokenless POST back as "Oops! Something went wrong while submitting the form." This script does Webflow's missing step for exactly those forms — appends a `display: none` div **inside** the form (the token only reaches `https://webflow.com/api/v1/form/<siteId>` as the `cf-turnstile-response` input the widget injects there; Webflow never copies `turnstileToken` into the payload) and renders an invisible widget with the form's own sitekey and Webflow's own render options, then writes the token to `jQuery.data(form, '.w-form').turnstileToken` — the single jQuery call in the file, because that cache is where Webflow's own closures read it — and clears `w-form-loading` off the buttons and the `.w-form` wrapper. **Targeting is opt-in only**: a form is a candidate solely because someone marked it `data-starters-turnstile-fix` on the `<form>` in the Designer (presence is the whole contract, any value), so an unmarked form is invisible to this script even when it is a textbook case of the bug — the script reaches into Webflow's private `.w-form` state and appends a node inside a form it does not own, so every armed form should be a decision someone made on purpose, and installing the script can never change a form that was already working. The marker says "you may", not "you must": a marked form is still skipped unless it also carries `data-turnstile-sitekey` and its computed display really is `contents`, and each of those rail failures warns by form name on staging because someone asked for arming and did not get it. That display check is the no-double-arm invariant — a form with a real layout box is armed by Webflow itself once it comes within 200px of the viewport, including inside a closed modal, so arming it too would put two widgets and two token fields in one payload; a marked form with a real display is skipped with a warning telling the author to remove the marker. Each form is re-checked immediately before rendering (existing widget, or a wrapper that has left the loading state) and `[data-wf-no-turnstile]` is honoured, and the wait for `window.turnstile` is what makes that re-check trustworthy — Webflow's forms module is what injects `api.js`, so by then it has finished initialising every form. Two things Webflow does not do: a capture-phase submit guard that **holds** a tokenless submit (button disabled, `data-wait` label where the value is the label, `data-opp-loading="true"` on the site's `[data-opp-element="loading-button"]` wrap, since these `<button type="submit">` are empty overlays whose label is a sibling div), waits up to 10s and re-submits via `requestSubmit()` rather than letting the POST fail; and a `turnstile.reset()` after every submit — Webflow's completion handler leaves the spent token in place and re-enables the button, so a retry would send a single-use token twice and read as "Oops" all over again. Tokens are cleared on reset so the guard holds anything clicked before the replacement lands, the callback always overwrites (it also fires on Turnstile's own refresh), and the `.w-form-done`/`.w-form-fail` inline-display flip is watched as a belt for an outcome no submit event was seen for. Install site-wide (the account-settings modal ships on ~374 of the published pages): with no marked form on the page the script does nothing at all, it is silent in production, and it reports on staging hosts or under `window.STARTERS_DEBUG`. Runtime-written attributes, never authored: `data-starters-turnstile-armed="true"` on an armed form, `"skipped"` on a marked one left to Webflow, and `data-starters-turnstile-host` on the hidden widget div. `window.StartersTurnstileContentsFix` exposes `status()`, `refresh()`, and `reset()`
+
+### Shared Webflow component embeds (`global-embeds/`)
+
+Attribute-driven components published for reuse across pages. Most carry a
+`// Docs:` URL on the first line pointing at an authoritative page on the
+[embeds documentation site](https://wf-starter-embeds-docs.vercel.app/docs); the entries below summarize the behavior only.
+
+- `global-embeds/step-flow/step-flow.js` — multi-step form-flow engine for `[data-form-flow]` roots: linear sequences, radio-gated sub-branching, footer button groups, action inference, opt-in per-step required-field validation that soft-disables Continue, and opt-in scroll-to-top that clears sticky `[data-toc-navbar]` chrome; needs its CSS embed for the invalid-field outline ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/step-flow))
+- `global-embeds/step-flow/panel-nav-flow.js` — panel navigation beside the step engine: swaps sibling panels inside `[data-panel-parent]` with a per-parent history stack for `[data-panel-nav-back-button]`, toggling `display` instantly ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/step-flow/panel-nav-flow))
+- `global-embeds/tabs/tabs.js` — attribute-driven tabs for multi-step forms and layouts (`[data-tab-component="wrapper"]`): global or per-panel prev/next, optional link locking until reached via Next, and optional per-panel validation ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/tabs))
+- `global-embeds/modal/modal.js` — the `lumos.modal` dialog system: inits every `.modal_dialog`, adds GSAP open/close timelines per `data-wf--modal--variant` (side-panel, full-screen), and manages focus restore ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal))
+- `global-embeds/modal/reset-on-close.js` — opt-in `data-modal-reload-on-submit` reload once a modal's form really succeeded, detected from Webflow hiding the `<form>` **and** showing `.w-form-done` so a Designer-visible done block cannot false-positive ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal/reset-on-close))
+- `global-embeds/accordions/accordions.js` — `[data-accordion="wrapper"]` accordions with open-by-default (index or `all`), close-previous, close-on-second-click, and open-on-hover options ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/accordions))
+- `global-embeds/custom-scrollbar/custom-scrollbar.js` — custom scrollbar chrome for overflow regions ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/custom-scrollbar))
+- `global-embeds/expert-card/expert-card.js` — the shared Starter card: hover height measurement and layout, driven by the `expert-cards:relayout` event its companion scripts dispatch ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/expert-card))
+- `global-embeds/featured-expert-card/featured-expert-card.js` — featured-variant Starter card behavior ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/featured-expert-card))
+- `global-embeds/featured-expert-card/featured-expert-card-price.js` — price rendering for the featured Starter card ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/featured-expert-card/featured-expert-card-price))
+- `global-embeds/application-card/application-card.js` — the shared application card used by opportunity and applicant lists ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/application-card))
+- `global-embeds/list-sort-dropdown/list-sort-dropdown.js` — sort-dropdown binding for lists ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/list-sort-dropdown))
+- `global-embeds/start-proj-gen-contract/contract-preview.js` — live contract preview for the Start-project / Generate-contract forms ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/start-proj-gen-contract))
+- `global-embeds/remove-cms-wrapper.js` — unwraps Webflow CMS wrapper elements that break intended layout ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/remove-cms-wrapper))
+- `global-embeds/loader/loader.js` — the shared `setLoader(state, wrapper)` helper: shows or hides a scoped `[data-loader]` via inline visibility/opacity, then collapses `display` after the 300ms fade. No Docs URL and no owner doc; consumers call it directly
+- `global-embeds/text-methods/text-methods.js` — the shared `truncateText(text, limit)` helper: word-boundary truncation with an ellipsis, non-string input returning empty. No Docs URL and no owner doc
+- `global-embeds/millify.js` — formats long numbers as `1.2K` / `3.4M` through `data-millify` attributes; formatting adapted from millify v6.1.0 (MIT), diagnostics staging-gated. No Docs URL and no owner doc
+
+### Form embeds (`global-embeds/form-embeds/`)
+
+- `global-embeds/form-embeds/form-validation/form-validation.js` — the form-embeds validation component ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-validation)). Distinct from `utils/wf-validate.js`, which owns the `wf-validate-*` dialect used by the Opportunities forms
+- `global-embeds/form-embeds/form-validation/email-validation.js` — email-specific validation rules ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-validation/email-validation))
+- `global-embeds/form-embeds/disabler.js` — soft-disables submit controls until a form is complete ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/disabler))
+- `global-embeds/form-embeds/datepicker/datepicker.js` — date-input picker ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/datepicker))
+- `global-embeds/form-embeds/timepicker/timepicker.js` — time-input picker ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/timepicker))
+- `global-embeds/form-embeds/checkbox-toggle/checkbox-toggle.js` — checkbox-driven visibility toggling ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/checkbox-toggle))
+- `global-embeds/form-embeds/password-toggle/password-toggle.js` — show/hide password control ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/password-toggle))
+- `global-embeds/form-embeds/form-input-filter/form-input-filter.js` — input filtering and normalization ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/form-input-filter))
+- `global-embeds/form-embeds/input-preview.js` — echoes an input's value into a preview element ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/input-preview))
+
+### Starters-list filters (`starters-list-filter/`)
+
+Algolia filter chrome for the Starters browse list; each carries its `// Docs:` URL.
+
+- `starters-list-filter/filters-mobile.js` — mobile filter panel behavior ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/filters-mobile))
+- `starters-list-filter/modal-mobile.js` — mobile filter modal wiring ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/modal-mobile))
+- `starters-list-filter/total-filters.js` — active-filter count badge ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/total-filters))
+- `starters-list-filter/custom-algolia-scripts/disable-apply.js` — keeps Apply disabled until the selection changes ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/disable-apply))
+- `starters-list-filter/custom-algolia-scripts/filters-text.js` — renders the selected-filter summary text ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/filters-text))
+- `starters-list-filter/custom-algolia-scripts/clear-filter-visibility/clear-filter-visibility.js` — shows Clear only when something is selected ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/clear-filter-visibility))
+- `starters-list-filter/custom-algolia-scripts/filter-visibility-empty.js` — hides filter groups with no facet values ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/filter-visibility-empty))
+- `starters-list-filter/custom-algolia-scripts/range-backfill-rate.js` — backfills the rate range control's bounds ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/range-backfill-rate))
+- `starters-list-filter/custom-algolia-scripts/scroll-filter.js` — scroll handling for the filter column ([docs](https://wf-starter-embeds-docs.vercel.app/docs/starters-list-filter/custom-algolia-scripts/scroll-filter))
+
+### Algolia result modifiers (`algolia-result-modifiers/`)
+
+Post-render transforms applied to Algolia hit markup; each carries its `// Docs:` URL.
+
+- `algolia-result-modifiers/roles.js` — splits and labels a hit's roles values ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/roles))
+- `algolia-result-modifiers/companies.js` — renders a hit's work-history companies ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/companies))
+- `algolia-result-modifiers/learn-categories.js` — maps Learn category values to display labels ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/learn-categories))
+- `algolia-result-modifiers/price-label.js` — formats the price label on a hit ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/price-label))
+
+### Quiz page chrome (`quiz-main/`)
+
+The quiz funnel's presentation layer, beside the controllers listed above. Not
+covered by [`quiz-main/README.md`](quiz-main/README.md), which owns the data and
+redirect contracts; these own tab UI only.
+
+- `quiz-main/quiz-tabs.js` — the multi-step quiz tab controller: buttons, panels, Previous/Next, keyboard support, optional GSAP slide/fade, and navigation gating when no category or subcategory is selected. Exposes `tabWrap._quizTabController`
+- `quiz-main/quiz-tabs-toggler.js` — shows or hides category sub-tab buttons and panels from the Categories form checkboxes, keeping Previous/Next disabled until at least one category is selected
+- `quiz-main/quiz-page-theme.js` — repaints page background, section classes, and nav button themes when the active quiz tab or subcategory visibility changes
+- `quiz-main/quiz-tooltip/quiz-tooltip.js` — Tippy tooltip on the Continue button while `data-nav-disabled` or `data-subcategory-nav-disabled` is set, on hover and keyboard focus; loads Tippy and Popper from CDN
+
+### Freelancer CMS prefill (`freelancer-cms/`)
+
+- `freelancer-cms/pre-fill-attr-val.js` — prefills form inputs from CMS-bound attribute values ([docs](https://wf-starter-embeds-docs.vercel.app/docs/freelancer-cms/pre-fill-attr-val))
+- `freelancer-cms/prefill-ms-name.js` — prefills the member's name from Memberstack ([docs](https://wf-starter-embeds-docs.vercel.app/docs/freelancer-cms/prefill-ms-name))
+- `freelancer-cms/datepicker-current.js` — seeds a datepicker with the current date ([docs](https://wf-starter-embeds-docs.vercel.app/docs/freelancer-cms/datepicker-current))
+
+### Analytics helpers (`utils/`)
+
+These two scripts have no Docs URL and no owner doc. The event plan named below
+owns the shared event vocabulary, not the browser-script wiring.
+
+- `utils/posthog-identity.js` — Memberstack to PostHog identity bridge: `posthog.identify(<memberstack id>)` with persona labels derived from the same customFields `opportunities-3.0.js` gates on, and `posthog.reset()` on logout when the previous identity was a member id so a shared browser cannot chain new anonymous events to the old member. Account ids and capability labels only, never email or name. Load sitewide with `defer`; the head snippet's stub queues calls, so it may run before array.js arrives
+- `utils/posthog-track.js` — the shared `StartersTrack.track(name, props)` funnel-event helper: stamps a consistent `platform` (`v2` / `v3`) property and makes a missing or blocked PostHog unable to break page logic. Event names and properties are defined in `platform-ops/architecture/posthog-funnel-events-plan.md`; renames need a migration note there
+
+### Other page scripts
+
+- `complete-profile-photo.js` — `/complete-profile` Brand profile-image upload, host-scoped: binds Memberstack's supported `data-ms-action="profile-image"` uploader early (before `DOMContentLoaded`) on the native Webflow element rather than generating markup. The authoritative native markup and install contract lives in [`v3/BRAND-ACCOUNT-WIRING.md`](v3/BRAND-ACCOUNT-WIRING.md#native-markup-contract)
+- `build-profile-draft-identity-guard.js` — synchronous build-profile draft guard that blocks the legacy localStorage key until Memberstack identity resolves, then routes it to member-scoped storage; see the [draft identity guard contract](#draft-identity-guard-waitformember-contract)
+- `utils/multi-step-failover.js` — legacy build-profile availability probe that loads the mirrored Videsigns engine only when the upstream engine is missing or unavailable; see the [Build-profile Videsigns wiring audit](#build-profile-videsigns-wiring-audit)
+- `swiper-scroll/swiper-scroll.js` — Swiper-backed horizontal scroll sections ([docs](https://wf-starter-embeds-docs.vercel.app/docs/swiper-scroll))
+- `vendor/videsigns-multi-step.js` — vendored third-party multi-step form engine (upstream `videsigns/webflow-tools`), pinned and served from this repo so a release is reproducible rather than tracking the vendor's `@latest`. Do not edit; the build-profile funnel's pinning is asserted by build-profile-wiring-audit.js
+
+### Legacy V2 (`v2/`)
+
+Containment-era V2 code. Kept for the live V2 pages; not a pattern to copy.
+
+- `v2/contract.js` — stale, partial earlier migration of legacy contract-form logic; it is not the live authority. The current mirrors and ownership boundary live in [`slater/README.md`](slater/README.md)
+- `v2/footers/freelancer-start-project.js`, `v2/footers/freelancer-edit-form.js`, `v2/footers/quiz-results.js`, `v2/footers/opportunities-apply.js`, `v2/footers/opportunities-applicants.js`, `v2/footers/opportunities-freelancer-view.js` — secure V2 page footer logic, extracted from the sibling `-footer.html` files and CDN-loadable so each page can replace its inline block. Per-page CDN tags and the full contract live in [`v2/footers/README.md`](v2/footers/README.md)
+- `v2/footers/freelancer-start-project-contract.js` — readable GitHub mirror of the Slater contract logic, kept for review but not loaded live; see the migration boundary in [`v2/footers/README.md`](v2/footers/README.md#freelancer-start-project--extra-slater-tag)
+
+## Not browser code (deliberately outside this inventory)
+
+- `build-profile-wiring-audit.js` — a Node audit tool (`require('node:fs')`) that checks the build-profile pages' saved Webflow code for the pinned vendored engine and the draft-identity guard. Never served to a browser
+- `step-flow-test-dom.js` — the `global-embeds/step-flow/step-flow.js` test harness and its minimal DOM shim (`require('node:test')`). Named without the `.test.js` suffix, so run it explicitly
+- `slater/4885.readable.js`, `slater/4885.prod.min.js`, `slater/4960.readable.js`, `slater/4960.prod.min.js` — read-only captures of the Slater.app builds that remain live on the legacy contract pages. Generated mirror artifacts: never edit or load them from this repo; the inventory and refresh contract lives in [`slater/README.md`](slater/README.md)
 
 ## Quiz-results freelancer recommendations
 
