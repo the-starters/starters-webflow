@@ -276,7 +276,7 @@ stays silent apart from the configuration errors in the table above.
   column on a test row.
 - Confirm the network panel shows `get_build_profile_status` and no
   `get_freelancers` request from `/auth-route`.
-- Confirm a Brand login logs no funnel lines and issues no request to
-  `api:KZf7nFnk` in the network panel.
+- Confirm a paid Brand login reads `get_brand_profile_status`, while a Brand
+  Free login logs no funnel lines and issues no request to `api:KZf7nFnk`.
 - Run the full staging matrix behind the Webflow password.
 - Do not publish custom domains until the separate production go signal.
