@@ -227,7 +227,10 @@ async function setup({ member = 'out', withLib = true, hostname = 'the-starters-
     gatedBeforeLate,
     api: windowObj.StartersSessionVideo,
     root, players, events, logs, timers,
-    frame: () => [...root.querySelector('[data-session-video="stage"]').childNodes].find((c) => c.nodeName === 'IFRAME') || null,
+    frame: () => [...root.querySelector('[data-session-video="stage"]').childNodes].filter((c) => c.nodeName === 'IFRAME').pop() || null,
+    // A member is mounted gated first and then upgraded, so the live player is the
+    // LAST one constructed, not players[0].
+    live: () => players[players.length - 1],
     trigger: () => root.querySelector('[data-session-video="signup-trigger"]'),
     watch: () => root.querySelector('[data-element-trigger="show-video"]'),
     overlay: () => root.querySelector('[data-element="hero-element"]'),
@@ -299,8 +302,44 @@ test('the background loop is capped inside the teaser window', async () => {
   assert.deepEqual(p.did('setCurrentTime'), [['setCurrentTime', 0]])
 })
 
-test('the ambient player starts muted and looping, with no native controls', async () => {
+test('a member gets Vimeo\'s native player, a gated viewer gets none of it', async () => {
+  const out = await setup({ member: 'out' })
+  assert.match(src(out.frame()), /controls=0/)
+  assert.match(src(out.frame()), /keyboard=0/)
+  assert.match(src(out.frame()), /pip=0/)
+  assert.equal(out.root.getAttribute('data-sv-player'), 'custom')
+
+  const inn = await setup({ member: 'in' })
+  assert.match(src(inn.frame()), /controls=1/)
+  assert.match(src(inn.frame()), /keyboard=1/)
+  assert.match(src(inn.frame()), /pip=1/)
+  assert.equal(inn.root.getAttribute('data-sv-player'), 'native')
+})
+
+test('a gated viewer never gets a scrubber, which is what makes the clamp hold', async () => {
+  // The native control bar is the only thing that could let someone drag past the
+  // cut point. Enabling it for a gated viewer would be a bypass.
+  const s = await setup({ member: 'out' })
+  assert.doesNotMatch(src(s.frame()), /controls=1/)
+})
+
+test('the poster stays until the video is genuinely playing', async () => {
   const s = await setup()
+  assert.equal(s.root.getAttribute('data-sv-video'), 'loading')
+  s.players[0].seconds(0)
+  assert.equal(s.root.getAttribute('data-sv-video'), 'loading', 'zero progress is not playing')
+  s.players[0].seconds(0.4)
+  assert.equal(s.root.getAttribute('data-sv-video'), 'ready')
+})
+
+test('the poster stays up when the video never loads', async () => {
+  const s = await setup({ withLib: false, member: 'in' })
+  // No player API, so no progress ever arrives and nothing flips it.
+  assert.notEqual(s.root.getAttribute('data-sv-video'), 'ready')
+})
+
+test('the ambient player starts muted and looping, with no native controls', async () => {
+  const s = await setup({ member: 'out' })
   const f = s.frame()
   assert.match(src(f), /autoplay=1/)
   assert.match(src(f), /muted=1/)
@@ -319,7 +358,7 @@ test('the bypass routes are closed at construction', async () => {
 test('the complete event fires when the video ends', async () => {
   const s = await setup({ member: 'in' })
   s.watch().click()
-  s.players[0].fire('ended')
+  s.live().fire('ended')
   const done = s.events.filter((e) => e.type === 'session-video-complete')
   assert.equal(done.length, 1)
   assert.equal(done[0].detail.gated, false)
@@ -332,7 +371,7 @@ test('the absorbed div controls get button semantics and keyboard operation', as
   assert.equal(play.getAttribute('tabindex'), '0')
   assert.ok(play.getAttribute('aria-label'))
   s.watch().key('Enter')
-  const p = s.players[0]
+  const p = s.live()
   p.fire('play')
   p.calls.length = 0
   play.key(' ')
@@ -343,7 +382,7 @@ test('the absorbed div controls get button semantics and keyboard operation', as
 
 test('the play control announces the action it will perform', async () => {
   const s = await setup({ member: 'in' })
-  const p = s.players[0]
+  const p = s.live()
   p.fire('play')
   assert.match(s.el('playPauseBtn').getAttribute('aria-label'), /Pause/)
   p.fire('pause')
@@ -360,11 +399,16 @@ test('two roots on one page do not share control listeners', async () => {
   const own = b.querySelector('[id="playPauseBtn"]')
   assert.ok(own, 'each root carries its own controls')
   b.querySelector('[data-element-trigger="show-video"]').click()   // arm root b
-  s.players[1].fire('play')
-  s.players[1].calls.length = 0
+  // Each root mounts gated then upgrades, so find each root's LIVE player by frame.
+  const frameOf = (r) => [...r.querySelector('[data-session-video="stage"]').childNodes].filter((c) => c.nodeName === 'IFRAME').pop()
+  const playerOf = (r) => s.players.filter((p) => p.frame === frameOf(r)).pop()
+  const pa = playerOf(a), pb = playerOf(b)
+  pb.fire('play')
+  pb.calls.length = 0
+  pa.calls.length = 0
   own.click()
-  assert.deepEqual(s.players[1].did('pause'), [['pause']])
-  assert.deepEqual(s.players[0].calls, [], 'the other root must be untouched')
+  assert.deepEqual(pb.did('pause'), [['pause']])
+  assert.deepEqual(pa.calls, [], 'the other root must be untouched')
 })
 
 test('every player promise is terminated so nothing throws into the page', () => {
@@ -478,7 +522,7 @@ test('the clamp does not re-enter on the seek it provokes', async () => {
 
 test('a member is never frozen', async () => {
   const s = await setup({ member: 'in', roots: [template({ cut: '10', bg: '4' })] })
-  const p = s.players[0]
+  const p = s.live()
   s.watch().click()
   p.seconds(600)
   assert.equal(s.state().atWall, false)
@@ -511,7 +555,7 @@ test('play state is written as an attribute, driven by the player events', async
 
 test('the play control toggles, and stays in step with native pauses', async () => {
   const s = await setup({ member: 'in' })
-  const p = s.players[0]
+  const p = s.live()
   s.watch().click(); p.fire('play')
   p.calls.length = 0
   s.el('playPauseBtn').click()
@@ -558,7 +602,7 @@ test('a member frame allows fullscreen and the button works', async () => {
   assert.match(f.getAttribute('allow'), /fullscreen/)
   assert.notEqual(s.el('fullscreenBtn').style.display, 'none')
   s.el('fullscreenBtn').click()
-  assert.deepEqual(s.players[0].did('requestFullscreen'), [['requestFullscreen']])
+  assert.deepEqual(s.live().did('requestFullscreen'), [['requestFullscreen']])
 })
 
 test('the fullscreen button does nothing for a gated viewer', async () => {
@@ -667,7 +711,7 @@ test('a missing Memberstack SDK still watches for a late answer', async () => {
 
 test('the play control is not double-bound by a remount', async () => {
   const s = await setup({ member: 'in' })
-  const p = s.players[0]
+  const p = s.live()
   s.watch().click(); p.fire('play')
   p.calls.length = 0
   s.el('playPauseBtn').click()
