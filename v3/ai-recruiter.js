@@ -20,7 +20,9 @@
   const STORAGE_KEY = 'ts:ai-recruiter:v3:session'
   const CONSENT_VERSION = '2026-08-11'
   const REQUEST_TIMEOUT_MS = 35000
+  const MEMBER_TIMEOUT_MS = 10000
   const MAX_MESSAGE_LENGTH = 2000
+  let memorySession = null
   const selectors = Object.freeze({
     root: '[data-ai-recruiter="root"]',
     launcher: '[data-ai-recruiter="launcher"]',
@@ -57,7 +59,7 @@
   function activePlanIds(member) {
     const plans = (member && member.planConnections) || []
     return plans
-      .filter((connection) => !connection.status || connection.status === 'ACTIVE')
+      .filter((connection) => connection.active === true || connection.status === 'ACTIVE')
       .map((connection) => connection.planId || connection.id)
       .filter(Boolean)
   }
@@ -71,7 +73,7 @@
 
   function normalizeResponse(value) {
     const body = value && typeof value === 'object' ? value : {}
-    const candidates = Array.isArray(body.top_candidates) ? body.top_candidates.slice(0, 3) : []
+    const candidates = Array.isArray(body.top_candidates) ? body.top_candidates : []
     return {
       status: typeof body.status === 'string' ? body.status : 'error',
       message: typeof body.message === 'string' && body.message.trim()
@@ -83,9 +85,11 @@
       retry_after_seconds: Number.isInteger(body.retry_after_seconds)
         ? body.retry_after_seconds
         : null,
-      top_candidates: candidates.filter((candidate) =>
-        candidate && Number.isInteger(candidate.freelancer_v3_id) && candidate.freelancer_v3_id > 0,
-      ),
+      top_candidates: candidates
+        .filter((candidate) =>
+          candidate && Number.isInteger(candidate.freelancer_v3_id) && candidate.freelancer_v3_id > 0,
+        )
+        .slice(0, 3),
     }
   }
 
@@ -100,21 +104,43 @@
     }
   }
 
-  function readSession() {
+  function readSession(memberId) {
     try {
       const value = JSON.parse(window.sessionStorage.getItem(STORAGE_KEY) || 'null')
-      return value && typeof value.session_id === 'string' ? value : null
-    } catch (_) {
-      return null
-    }
+      memorySession = value && typeof value.session_id === 'string' ? value : memorySession
+    } catch (_) {}
+    return memorySession && memorySession.member_id === memberId &&
+      memorySession.consent_version === CONSENT_VERSION
+      ? memorySession
+      : null
   }
 
   function writeSession(session) {
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session))
+    memorySession = session
+    try {
+      window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session))
+    } catch (_) {}
   }
 
   async function currentMember() {
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (window.memberReady && typeof window.memberReady.then === 'function') {
+      let timeout
+      try {
+        return await Promise.race([
+          window.memberReady,
+          new Promise((_, reject) => {
+            timeout = window.setTimeout(
+              () => reject(Object.assign(new Error('Memberstack unavailable'), { code: 'member-timeout' })),
+              MEMBER_TIMEOUT_MS,
+            )
+          }),
+        ])
+      } finally {
+        window.clearTimeout(timeout)
+      }
+    }
+    const attempts = MEMBER_TIMEOUT_MS / 50
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       const memberstack = window.$memberstackDom
       if (memberstack && typeof memberstack.getCurrentMember === 'function') {
         const result = await memberstack.getCurrentMember()
@@ -122,18 +148,34 @@
       }
       await new Promise((resolve) => window.setTimeout(resolve, 50))
     }
-    return null
+    throw Object.assign(new Error('Memberstack unavailable'), { code: 'member-timeout' })
   }
 
-  async function xanoToken() {
-    if (typeof window.getXanoAuthToken === 'function') return window.getXanoAuthToken()
+  function abortable(value, signal) {
+    if (!signal) return Promise.resolve(value)
+    if (signal.aborted) return Promise.reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+    return new Promise((resolve, reject) => {
+      const onAbort = () => reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+      const settle = (handler) => (result) => {
+        signal.removeEventListener('abort', onAbort)
+        handler(result)
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+      Promise.resolve(value).then(settle(resolve), settle(reject))
+    })
+  }
+
+  async function xanoToken(signal) {
+    if (typeof window.getXanoAuthToken === 'function') {
+      return abortable(window.getXanoAuthToken({ signal }), signal)
+    }
     const memberstack = window.$memberstackDom
     if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
       throw Object.assign(new Error('Memberstack session unavailable'), { status: 401 })
     }
-    const memberToken = await memberstack.getMemberCookie()
+    const memberToken = await abortable(memberstack.getMemberCookie(), signal)
     if (!memberToken) throw Object.assign(new Error('Memberstack session unavailable'), { status: 401 })
-    const response = await fetch(`${AUTH_BASE}/auth/trade-token/v3?token=${encodeURIComponent(memberToken)}`)
+    const response = await fetch(`${AUTH_BASE}/auth/trade-token/v3?token=${encodeURIComponent(memberToken)}`, { signal })
     const body = await response.json().catch(() => null)
     if (!response.ok) throw Object.assign(new Error('Authentication failed'), { status: response.status })
     const token = typeof body === 'string' ? body : body && (body.authToken || body.token)
@@ -142,7 +184,7 @@
   }
 
   async function api(path, body, signal) {
-    const token = await xanoToken()
+    const token = await xanoToken(signal)
     const response = await fetch(`${API_BASE}/${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -157,6 +199,23 @@
       throw error
     }
     return data
+  }
+
+  function report(name, detail = {}) {
+    const safeDetail = {
+      operation: safeText(detail.operation, 80),
+      outcome: safeText(detail.outcome, 40),
+      status: Number.isInteger(detail.status) ? detail.status : null,
+      trace_id: safeText(detail.trace_id, 120),
+    }
+    if (window.posthog && typeof window.posthog.capture === 'function') {
+      try { window.posthog.capture(`ai_recruiter_${name}`, safeDetail) } catch (_) {}
+    }
+    if (typeof window.dispatchEvent === 'function' && typeof window.CustomEvent === 'function') {
+      try {
+        window.dispatchEvent(new window.CustomEvent(`starters:ai-recruiter-${name}`, { detail: safeDetail }))
+      } catch (_) {}
+    }
   }
 
   function setStatus(root, message) {
@@ -221,8 +280,13 @@
     if (!launcher || !panel || !form || !input) return
 
     let pending = false
+    let requestGeneration = 0
+    let activeController = null
     let lastTraceId = ''
-    let session = readSession() || { session_id: uuid(), consented: false }
+    const memberId = member && member.id
+    let session = readSession(memberId) || {
+      session_id: uuid(), consented: false, member_id: memberId, consent_version: CONSENT_VERSION,
+    }
     writeSession(session)
 
     root.hidden = false
@@ -268,8 +332,8 @@
           freelancer_v3_id: values.freelancer_v3_id,
           helpful: values.helpful,
         })
-      } catch (_) {
-        // Feedback never interrupts the recruiter conversation.
+      } catch (error) {
+        report('failure', { operation: path, outcome: 'error', status: error.status })
       }
     }
 
@@ -284,11 +348,13 @@
       const trimmed = safeText(message, MAX_MESSAGE_LENGTH)
       if (!trimmed || pending || role !== 'brand-paid' || !session.consented) return
       pending = true
+      const generation = ++requestGeneration
       if (submit) submit.disabled = true
       input.disabled = true
       stateBlock(root, 'thinking')
       addMessage(root, 'user', trimmed)
       const controller = new AbortController()
+      activeController = controller
       const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
       try {
         const response = normalizeResponse(await api('ai-recruiter/message', {
@@ -296,6 +362,7 @@
           turn_id: uuid(),
           session_id: session.session_id,
         }, controller.signal))
+        if (generation !== requestGeneration) return
         if (response.session_id) {
           session.session_id = response.session_id
           writeSession(session)
@@ -308,14 +375,23 @@
         else if (response.status === 'error') stateBlock(root, response.retryable ? 'retry' : 'error')
         else stateBlock(root, 'ready')
         setStatus(root, response.message)
+        report('request', {
+          operation: 'message', outcome: response.status, trace_id: response.trace_id,
+        })
       } catch (error) {
+        if (generation !== requestGeneration) return
         const offline = typeof navigator !== 'undefined' && navigator.onLine === false
         stateBlock(root, offline ? 'offline' : 'retry')
         setStatus(root, error.name === 'AbortError'
           ? 'The search timed out. Please try again.'
           : 'The recruiter is temporarily unavailable. Please try again.')
+        report('failure', {
+          operation: 'message', outcome: error.name === 'AbortError' ? 'timeout' : 'error', status: error.status,
+        })
       } finally {
         window.clearTimeout(timeout)
+        if (generation !== requestGeneration) return
+        activeController = null
         pending = false
         if (submit) submit.disabled = false
         input.disabled = false
@@ -335,8 +411,20 @@
     }
     const startOver = root.querySelector(selectors.startOver)
     if (startOver) startOver.addEventListener('click', async () => {
+      requestGeneration += 1
+      if (activeController) activeController.abort()
+      activeController = null
+      pending = false
+      if (submit) submit.disabled = false
+      input.disabled = false
       const previous = session.session_id
-      session = { session_id: uuid(), consented: session.consented, consented_at: session.consented_at }
+      session = {
+        session_id: uuid(),
+        consented: session.consented,
+        consented_at: session.consented_at,
+        member_id: memberId,
+        consent_version: CONSENT_VERSION,
+      }
       writeSession(session)
       const messages = root.querySelector(selectors.messages)
       const candidates = root.querySelector(selectors.candidateList)
@@ -344,21 +432,45 @@
       if (candidates) candidates.replaceChildren()
       lastTraceId = ''
       stateBlock(root, 'ready')
-      try { await api('ai-recruiter/session-reset', { session_id: previous }) } catch (_) {}
+      try {
+        await api('ai-recruiter/session-reset', { session_id: previous })
+        report('request', { operation: 'session-reset', outcome: 'success' })
+      } catch (error) {
+        report('failure', { operation: 'session-reset', outcome: 'error', status: error.status })
+      }
     })
+
+    const memberstack = window.$memberstackDom
+    if (memberstack && typeof memberstack.onAuthChange === 'function') {
+      memberstack.onAuthChange((nextMember) => {
+        if (!nextMember || nextMember.id !== memberId) window.location.reload()
+      })
+    }
   }
 
   async function boot() {
     const roots = [...document.querySelectorAll(selectors.root)]
     if (!roots.length) return
     roots.forEach((root) => { root.hidden = true })
-    const member = await currentMember().catch(() => null)
+    let member
+    try {
+      member = await currentMember()
+    } catch (error) {
+      roots.forEach((root) => {
+        root.hidden = false
+        root.dataset.aiRecruiterRole = 'unavailable'
+        stateBlock(root, 'unavailable')
+        setStatus(root, 'The recruiter is temporarily unavailable. Please refresh the page.')
+      })
+      report('failure', { operation: 'member-init', outcome: error.code || 'error' })
+      return
+    }
     const role = roleForMember(member)
     if (role === 'ineligible') return
     roots.forEach((root) => initRoot(root, member, role))
   }
 
-  const testApi = { activePlanIds, roleForMember, normalizeResponse, safeText }
+  const testApi = { activePlanIds, roleForMember, normalizeResponse, safeText, boot }
   if (typeof window !== 'undefined') window.StartersAIRecruiter = testApi
   if (typeof document !== 'undefined') {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true })
