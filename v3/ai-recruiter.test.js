@@ -188,6 +188,14 @@ test('only explicitly active paid Brand plans grant access', () => {
     ),
     'brand-paid',
   )
+  assert.equal(
+    role({ planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' }, 'localhost'),
+    'ineligible',
+  )
+  assert.equal(
+    role({ planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' }, '127.0.0.1'),
+    'ineligible',
+  )
 })
 
 test('Brand Free sees the upgrade state with no interactive request path', async () => {
@@ -203,9 +211,13 @@ test('Brand Free sees the upgrade state with no interactive request path', async
   assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'upgrade')
   assert.equal(loaded.fixture.form.hidden, true)
   assert.equal(loaded.fixture.input.disabled, true)
+  assert.equal(loaded.fixture.startOver.hidden, true)
+  assert.equal(loaded.fixture.startOver.disabled, true)
   loaded.fixture.input.value = 'This must not send'
   await loaded.fixture.form.dispatch('submit')
+  await loaded.fixture.startOver.dispatch('click')
   await flush()
+  assert.equal(loaded.fixture.root.dataset.aiRecruiterState, 'upgrade')
   assert.equal(loaded.requests.length, 0)
 })
 
