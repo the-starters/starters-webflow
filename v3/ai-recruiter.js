@@ -40,6 +40,7 @@
     candidateList: '[data-ai-recruiter="candidate-list"]',
     status: '[data-ai-recruiter="status"]',
     consent: '[data-ai-recruiter="consent"]',
+    consentIndicator: '[data-ai-recruiter="consent-indicator"]',
     consentContinue: '[data-ai-recruiter="consent-continue"]',
     prompt: '[data-ai-recruiter="prompt"]',
     helpful: '[data-ai-recruiter="helpful"]',
@@ -311,10 +312,25 @@
       if (event.key === 'Escape') close()
     })
 
+    const consent = root.querySelector(selectors.consent)
+    if (consent && consent.getAttribute('role') === 'checkbox') {
+      const consentIndicator = root.querySelector(selectors.consentIndicator)
+      const setConsentChecked = (checked) => {
+        consent.setAttribute('aria-checked', checked ? 'true' : 'false')
+        if (consentIndicator) consentIndicator.textContent = checked ? '☑' : '☐'
+      }
+      setConsentChecked(consent.getAttribute('aria-checked') === 'true')
+      consent.addEventListener('click', () => {
+        const checked = consent.getAttribute('aria-checked') === 'true'
+        setConsentChecked(!checked)
+      })
+    }
     const consentContinue = root.querySelector(selectors.consentContinue)
     if (consentContinue) consentContinue.addEventListener('click', () => {
-      const consent = root.querySelector(selectors.consent)
-      if (!consent || !consent.checked) {
+      const consentAccepted = consent && (
+        consent.checked === true || consent.getAttribute('aria-checked') === 'true'
+      )
+      if (!consentAccepted) {
         setStatus(root, 'Please accept the AI recruiter privacy notice to continue.')
         return
       }
