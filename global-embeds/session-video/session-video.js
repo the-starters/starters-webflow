@@ -2,7 +2,7 @@
  * Session video gate — the Learn Sessions hero player, with a free preview for
  * logged-out visitors and the signup wall after it.
  *
- * @release v1.59.180
+ * @release v1.59.183
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * Sessions template's before-</body> code. It REPLACES the template's inline
@@ -43,12 +43,16 @@
  * cookies. So: await memberReady for readiness, then ask getCurrentMember and
  * test `data`. Do not "simplify" this back.
  *
- * MEMBER STATE IS RESOLVED BEFORE MOUNT. `fullscreen` is not a Vimeo embed
- * option; it is governed by the iframe's `allowfullscreen` / `allow` attributes,
- * and permissions policy is evaluated at iframe load and never re-evaluated. So
- * a frame built before we know the viewer is either fullscreen-capable for a
- * non-member (a bypass) or fullscreen-less for a member (a downgrade). Hence the
- * budget below, and a remount if membership resolves late.
+ * IT MOUNTS GATED FIRST, THEN UPGRADES. `fullscreen` is not a Vimeo embed option;
+ * it is governed by the iframe's `allowfullscreen` / `allow` attributes, and
+ * permissions policy is evaluated at iframe load and NEVER re-evaluated. So the
+ * frame cannot be amended once built — it has to be rebuilt. Rather than delay
+ * every visitor's hero by up to MEMBER_BUDGET_MS waiting to find out who they
+ * are, the ambient phase (muted, looping, no controls, no fullscreen) mounts
+ * immediately in the GATED shape, which is both the safe default and correct for
+ * a logged-out viewer, and `upgrade()` rebuilds the frame if membership comes
+ * back a member. Membership resolution runs in PARALLEL with the library load,
+ * never chained behind it.
  *
  * FAIL CLOSED, unlike learn-cta-gate.js which fails open. That embed risks
  * trapping a member on a scroll-locked page; a gate that never appears is safer
@@ -71,11 +75,21 @@
  *   #video-controls  #playPauseBtn  #muteBtn  #fullscreenBtn  #videoClickOverlay
  *
  * STATE IS WRITTEN AS ATTRIBUTES, for the template's CSS to react to:
+ *   [data-session-video="root"]    data-sv-player   native | custom
+ *   [data-session-video="root"]    data-sv-video    loading | ready
  *   [data-element="hero-element"]  data-sv-overlay  hidden | visible
  *   #video-controls                data-sv-controls visible | hidden
  *   #playPauseBtn                  data-sv-play     playing | paused
  *   #muteBtn                       data-sv-mute     on | off
- *   #fullscreenBtn                 data-sv-fullscreen visible | hidden (hidden when gated)
+ *   #fullscreenBtn                 data-sv-fullscreen hidden | visible
+ *
+ * `data-sv-player="native"` is the CSS's cue to lift `pointer-events` onto the
+ * iframe, hide `#videoClickOverlay` (it would swallow every click meant for
+ * Vimeo's bar) and hide the template's own control bar.
+ *
+ * OPTIONAL, authored by the Designer: an `[data-sv-poster]` cover image INSIDE
+ * the stage. `data-sv-video` retires it once the video is genuinely playing, and
+ * deliberately never does so if the video never loads.
  *
  * NO MODAL ID LIVES IN THIS FILE. The trigger carries modal.js's own
  * `data-modal-trigger`, authored in the Designer, and this file only clicks it —
@@ -89,7 +103,7 @@
   if (window.__startersSessionVideoBooted) return
   window.__startersSessionVideoBooted = true
 
-  var RELEASE = 'v1.59.180'
+  var RELEASE = 'v1.59.183'
   var LIB_SRC = 'https://player.vimeo.com/api/player.js'
   var DEFAULT_CUT_SECONDS = 180
   var DEFAULT_BG_SECONDS = 20
@@ -155,8 +169,9 @@
   /**
    * Is a member watching? See the header: memberReady is a readiness signal that
    * resolves `{}` for everybody, so the answer comes from getCurrentMember().
-   * Returns {member, settled}; settled false means the budget expired and the
-   * caller must fail closed.
+   * Returns {member, certain}. `certain` is true only when getCurrentMember
+   * actually answered; anything else means "assume logged out FOR NOW" and the
+   * caller must keep watching for a late answer.
    */
   function resolveMember() {
     return new Promise(function (resolve) {
@@ -165,22 +180,22 @@
       // SDK, a rejection or an expired budget all mean "assume logged out for now",
       // and the caller must keep watching for a late answer — otherwise a member
       // whose SDK loaded after us stays gated for the whole page life.
-      function done(member, settled, certain) {
+      function done(member, certain) {
         if (decided) return
         decided = true
-        resolve({ member: member, settled: settled, certain: !!certain })
+        resolve({ member: member, certain: !!certain })
       }
 
       window.setTimeout(function () {
         warn('membership unresolved after ' + MEMBER_BUDGET_MS + 'ms; gating')
-        done(false, false, false)
+        done(false, false)
       }, MEMBER_BUDGET_MS)
 
       function ask() {
         var ms = window.$memberstackDom
         if (!ms || typeof ms.getCurrentMember !== 'function') {
           warn('$memberstackDom.getCurrentMember unavailable; treating as logged out')
-          done(false, true, false)
+          done(false, false)
           return
         }
         try {
@@ -188,16 +203,16 @@
             function (res) {
               // `{ data: null }` is a logged-out visitor. Anything with a data
               // object is a member. Never test the envelope itself.
-              done(!!(res && res.data), true, true)
+              done(!!(res && res.data), true)
             },
             function () {
               warn('getCurrentMember rejected; treating as logged out')
-              done(false, true, false)
+              done(false, false)
             },
           )
         } catch (e) {
           warn('getCurrentMember threw; treating as logged out')
-          done(false, true, false)
+          done(false, false)
         }
       }
 
@@ -234,20 +249,25 @@
   }
 
   /**
-   * Built here rather than authored, so the fullscreen and picture-in-picture
-   * attributes are correct AT LOAD for this particular viewer. `controls=0`
-   * always: the template drives playback from its own buttons and puts
-   * `pointer-events: none` on the iframe, so Vimeo's own UI is unreachable and
-   * showing it would only advertise a scrubber nobody can use.
+   * Built here rather than authored, so the controls, fullscreen and
+   * picture-in-picture attributes are correct AT LOAD for this particular viewer:
+   * a gated viewer and a member get different native UI, per the split below.
    */
   function buildFrame(videoId, gated) {
+    // A gated viewer gets NO native UI: no control bar, so no scrubber to drag
+    // past the cut point, no keyboard seeking, no picture-in-picture (which ships
+    // its own scrubber). Their playback is driven entirely by the template's own
+    // buttons, and the CSS keeps `pointer-events: none` on the iframe.
+    // A member has no wall to bypass, so they get Vimeo's real player — scrubber,
+    // volume, quality, captions, fullscreen — which is more than the template's
+    // three buttons offer, and the CSS lifts pointer-events for them.
     var params = [
       'autoplay=1',
       'muted=1',
       'loop=1',
-      'controls=0',
-      'keyboard=0',
-      'pip=0',
+      'controls=' + (gated ? '0' : '1'),
+      'keyboard=' + (gated ? '0' : '1'),
+      'pip=' + (gated ? '0' : '1'),
       'title=0',
       'byline=0',
       'portrait=0',
@@ -307,6 +327,7 @@
     this.startEmitted = false
     this.wallOpens = 0
     this.bound = false
+    this.ready = false
   }
 
   /**
@@ -366,8 +387,32 @@
     setState(this.el('controls'), 'data-sv-controls', show ? 'visible' : 'hidden')
   }
 
+  /**
+   * Member fallback when player.js never arrived. Still writes the full state
+   * contract: without it `data-sv-player` and `data-sv-video` are absent, so the
+   * authored poster never retires and #videoClickOverlay keeps swallowing the
+   * clicks meant for Vimeo's own bar — a working player nobody can see or reach.
+   * Marked `ready` because with no API there is no progress event to wait for.
+   */
+  Controller.prototype.mountWithoutApi = function () {
+    var stage = part(this.root, 'stage')
+    if (!stage) return false
+    this.gated = false
+    stage.append(buildFrame(this.videoId, false))
+    setState(this.root, 'data-sv-player', 'native')
+    setState(this.root, 'data-sv-video', 'ready')
+    this.ready = true
+    controllers.push(this)
+    info('member fallback: native player, no script control')
+    return true
+  }
+
   Controller.prototype.mount = function (gated) {
     var self = this
+    if (!window.Vimeo || typeof window.Vimeo.Player !== 'function') {
+      warn('mount called without the Vimeo Player API; refusing to build a frame')
+      return false
+    }
     this.gated = gated
     var stage = part(this.root, 'stage')
     if (!stage) {
@@ -393,6 +438,17 @@
     this.player.on('ended', function () {
       emit('session-video-complete', self.detail())
     })
+
+    // Which UI is in charge, for the template's CSS: `native` lifts
+    // pointer-events onto the iframe, hides #videoClickOverlay (it would swallow
+    // every click meant for Vimeo's bar) and hides the template's own controls.
+    setState(this.root, 'data-sv-player', gated ? 'custom' : 'native')
+    // The poster stays up until the video is genuinely playing, which also covers
+    // it never loading at all: nothing flips this to `ready` in that case.
+    // Preserve `ready` across a remount: an upgrade replaces the frame under a
+    // video that is already showing pixels, and resetting to `loading` re-covered
+    // it with the poster for a beat.
+    setState(this.root, 'data-sv-video', this.ready ? 'ready' : 'loading')
 
     this.showOverlay(true)
     this.showControls(false)
@@ -451,6 +507,7 @@
         return
       }
       this.showOverlay(false)
+      this.showControls(true)
       safe(this.player.play())
       return
     }
@@ -487,6 +544,11 @@
 
   Controller.prototype.onTime = function (d) {
     var s = d && typeof d.seconds === 'number' ? d.seconds : 0
+    // First real progress means pixels are on screen: retire the poster.
+    if (!this.ready && s > 0) {
+      this.ready = true
+      setState(this.root, 'data-sv-video', 'ready')
+    }
     if (!this.armed) {
       // Ambient phase: keep the loop inside the teaser window so it can never
       // roll past the cut point while muted.
@@ -514,13 +576,29 @@
 
   Controller.prototype.onPlay = function () {
     this.paintPlay(true)
-    if (this.armed && this.gated && this.atWall) this.freeze()
+    if (this.armed && this.gated && this.atWall) {
+      this.freeze()
+      return
+    }
+    // Any resume clears the cover, not just the watch control. A member pausing on
+    // Vimeo's own bar and pressing native play was left watching the video from
+    // behind the returned overlay, with no way back except the watch button.
+    if (this.armed) {
+      this.showOverlay(false)
+      this.showControls(true)
+    }
   }
 
-  /** The template's choice: a pause brings the overlay back. */
+  /**
+   * The template's choice: a pause brings the overlay back. The control bar has to
+   * go with it — leaving both on screen put the controls underneath the returning
+   * overlay, which is what Jerico saw.
+   */
   Controller.prototype.onPause = function () {
     this.paintPlay(false)
-    if (this.armed) this.showOverlay(true)
+    if (!this.armed) return
+    this.showOverlay(true)
+    this.showControls(false)
   }
 
   Controller.prototype.onSeeked = function (d) {
@@ -588,13 +666,29 @@
 
   var controllers = []
 
+  /**
+   * WHY MOUNT BEFORE KNOWING THE VIEWER, when the header says the opposite.
+   *
+   * The ambient phase is identical for everybody: muted, looping, no controls, no
+   * fullscreen. Only the WATCH transition differs. Waiting on membership before
+   * mounting cost every visitor up to MEMBER_BUDGET_MS of empty hero, which is the
+   * slow start Jerico reported.
+   *
+   * So mount gated immediately — that is the safe shape, and the correct one for a
+   * logged-out visitor — and upgrade in the background if membership comes back a
+   * member. Fullscreen permission is still fixed at frame load, which is exactly
+   * why the upgrade path REBUILDS the frame rather than amending it.
+   */
   function boot() {
     var roots = document.querySelectorAll(ROOT_SELECTOR)
     if (!roots || !roots.length) return
-    Promise.all([resolveMember(), ensureLib()]).then(function (r) {
-      var state = r[0]
-      var lib = r[1]
-      info('viewer is ' + (state.member ? 'a member' : 'logged out') + (state.settled ? '' : ' (unresolved, failing closed)'))
+    // Started NOW, not after the library. Chaining it behind ensureLib() put the
+    // membership clock behind up to LIB_BUDGET_MS, so a member could click watch
+    // before the answer landed and have the frame rebuilt under them mid-play.
+    var memberPromise = resolveMember()
+    ensureLib().then(function (lib) {
+      var pending = []
+      var noLib = []
       for (var i = 0; i < roots.length; i += 1) {
         var c = new Controller(roots[i])
         if (!c.videoId) {
@@ -602,31 +696,53 @@
           continue
         }
         if (!lib) {
-          // Without the player API there is no way to clamp, so a gated viewer
-          // gets nothing rather than the whole video.
+          // No player API means no way to clamp, so a gated viewer gets nothing
+          // rather than the whole video. A member still deserves the video, but we
+          // do not know yet whether this is one — so defer that to the answer.
           warn('player library unavailable')
-          if (state.member) {
-            var stage = part(roots[i], 'stage')
-            if (stage) stage.append(buildFrame(c.videoId, false))
-          }
+          noLib.push(c)
           continue
         }
-        if (!c.mount(!state.member)) continue
+        if (!c.mount(true)) continue
         controllers.push(c)
-        if (!state.certain) watchForLateMember(c)
+        pending.push(c)
       }
+      if (!pending.length && !noLib.length) return
+      return memberPromise.then(function (state) {
+        info('viewer is ' + (state.member ? 'a member' : 'logged out') + (state.certain ? '' : ' (unconfirmed)'))
+        pending.forEach(function (c) {
+          if (state.member) c.upgrade()
+          else if (!state.certain) watchForLateMember(c, function () { c.upgrade() })
+        })
+        noLib.forEach(function (c) {
+          if (!state.member) {
+            // Not confirmed logged out? Keep asking, or a member with both a slow
+            // SDK and a failed library gets nothing for the page's whole life. A
+            // noLib controller was never mounted with the API, so a late answer must
+            // go through mountWithoutApi() — routing it through upgrade()/mount()
+            // would touch window.Vimeo.Player, which is exactly what is missing here.
+            if (!state.certain) watchForLateMember(c, function () { c.mountWithoutApi() })
+            return
+          }
+          c.mountWithoutApi()
+        })
+      })
     }).catch(function (e) {
       warn('boot failed: ' + (e && e.message ? e.message : e))
     })
   }
 
-  function watchForLateMember(c) {
+  function watchForLateMember(c, onLate) {
     var ms = window.$memberstackDom
     if (!ms || typeof ms.getCurrentMember !== 'function') return
+    var handler = onLate || function () { c.upgrade() }
     try {
-      ms.getCurrentMember().then(function (res) {
-        if (res && res.data) c.upgrade()
+      var p = ms.getCurrentMember().then(function (res) {
+        if (res && res.data) handler()
       }, function () {})
+      // Terminate the chain: handler() may build a frame, and nothing may reject
+      // into the page.
+      if (p && typeof p.catch === 'function') p.catch(function () {})
     } catch (e) {
       /* never throws into the page */
     }
@@ -649,6 +765,8 @@
             playing: c.playing,
             muted: c.muted,
             position: c.position,
+            player: c.gated ? 'custom' : 'native',
+            videoReady: c.ready,
             wallOpens: c.wallOpens,
           }
         }),
