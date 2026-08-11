@@ -1,55 +1,87 @@
 /**
- * Session video gate — three free minutes of a Learn session, then the signup
- * wall, with the lock held by the player rather than by the modal.
+ * Session video gate — the Learn Sessions hero player, with a free preview for
+ * logged-out visitors and the signup wall after it.
  *
- * @release v1.59.170
+ * @release v1.59.179
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
- * Sessions template's before-</body> code.
+ * Sessions template's before-</body> code. It REPLACES the template's inline
+ * hero-video script; do not run both.
  *
- * WHY THE PLAYER OWNS THE LOCK. There is no separate trailer asset: one video is
- * served to everyone and playback is clamped for non-members. So the gate cannot
- * be `data-ms-content` (which only hides markup that still ships in the source)
- * and it cannot be a blocking modal (the video underneath would keep playing).
- * Dismissing the wall returns the viewer to a frozen frame, and any attempt to
- * play reopens it. That is what makes "dismissible" cost nothing.
+ * ---------------------------------------------------------------------------
+ * WHAT IT DOES
  *
- * MEMBER STATE IS RESOLVED *BEFORE* MOUNT, WHICH IS NOT WHAT THE PLAN SAID.
- * The plan had the player mount immediately for everyone and the clamp decided
- * later, on the grounds that the cut point is three minutes away. That is wrong
- * for one reason: `fullscreen` is NOT a Vimeo embed option. It is governed by the
- * iframe's `allowfullscreen` / `allow` attributes, and permissions policy is
- * evaluated at iframe load and never re-evaluated. Removing the attribute after
- * load does nothing. So a player mounted before we know who is watching is either
- * fullscreen-capable for a non-member (a bypass: fullscreen with `controls: false`
- * also strands them with no UI) or fullscreen-less for a member (a downgrade).
- * Hence: wait on `window.memberReady` with a short budget, then mount once with
- * the correct attributes. If the budget expires we mount GATED (fail closed) and
- * remount if membership resolves late — rare, and better than leaking the video.
+ *   1. BACKGROUND phase. The video autoplays muted and loops inside the first
+ *      `data-session-video-bg` seconds (default 20) as an ambient hero. The gate
+ *      is NOT armed here.
+ *   2. The visitor clicks [data-element-trigger="show-video"]. The overlay hides,
+ *      the controls appear, sound comes on, looping stops, and the gate arms.
+ *      Playback CONTINUES from where the ambient loop was — it does not restart.
+ *   3. For a logged-out visitor, playback freezes at `data-session-video-cut`
+ *      seconds (default 180) and the signup trigger is clicked. Dismissing the
+ *      modal leaves the frame frozen; any play attempt reopens it.
+ *   4. A member gets the whole video, fullscreen included, and never sees a wall.
  *
- * WHY FAIL CLOSED, WHEN learn-cta-gate.js FAILS OPEN. That embed's risk is
- * trapping a paying member on a scroll-locked page with no close control, so a
- * gate that never appears is the safer failure. Here the failure is symmetric in
- * cost but not in recoverability: a member who gets a clamped video reloads and
- * it resolves, whereas a non-member who gets the full video is gone. The clamp
- * also cannot trap anyone, because the page is never scroll-locked by this file.
+ * WHY THE BACKGROUND PHASE MUST NOT ARM THE GATE. An ambient loop left running
+ * would eventually cross the cut point on its own and throw the signup wall at
+ * somebody who never asked to watch anything, possibly while they were reading
+ * further down the page. Arming on the watch click is what prevents that. The
+ * loop is also capped inside the teaser window, because otherwise a page left
+ * open would roll past the cut point while muted and the watch click would then
+ * freeze instantly and look broken.
  *
- * THE MARKUP (Designer-authored):
- *   [data-session-video="root"]              wrapper; carries the two data below
- *     data-session-video-id                  Vimeo ID, bound to the CMS field
- *     data-session-video-cut                 optional seconds; empty -> 180
- *   [data-session-video="stage"]             the iframe is built in here
- *   [data-session-video="play"]              custom play/pause control
- *   [data-session-video="progress"]          fill element; width is set as a %
- *   [data-session-video="signup-trigger"]    hidden; carries data-modal-trigger
+ * ---------------------------------------------------------------------------
+ * MEMBERSHIP COMES FROM getCurrentMember(), NOT FROM memberReady's VALUE.
  *
- * NO MODAL ID LIVES IN THIS FILE. The triggers carry the site modal module's own
- * `data-modal-trigger` attribute and this file only clicks them, so which modal
- * opens stays an authoring decision and `modal.js` (roughly 374 published pages)
- * needs no new public API. A test asserts this file contains no modal id.
+ * This is the bug that made v1.59.170 inert: `window.memberReady` on this site
+ * resolves with an EMPTY OBJECT `{}` for every visitor, logged in or not. It
+ * signals *when* Memberstack has settled, not *who* is watching. Treating its
+ * resolved value as the answer made `!!{}` true for everyone, so every visitor
+ * was classified as a member and the gate never engaged at all. Verified live on
+ * staging while logged out: memberReady resolved `{}` while
+ * `getCurrentMember()` returned `{ data: null }` and there were no Memberstack
+ * cookies. So: await memberReady for readiness, then ask getCurrentMember and
+ * test `data`. Do not "simplify" this back.
  *
- * Debug from the console: `StartersSessionVideo.status()`, or force the wall with
- * `StartersSessionVideo.reveal()`.
+ * MEMBER STATE IS RESOLVED BEFORE MOUNT. `fullscreen` is not a Vimeo embed
+ * option; it is governed by the iframe's `allowfullscreen` / `allow` attributes,
+ * and permissions policy is evaluated at iframe load and never re-evaluated. So
+ * a frame built before we know the viewer is either fullscreen-capable for a
+ * non-member (a bypass) or fullscreen-less for a member (a downgrade). Hence the
+ * budget below, and a remount if membership resolves late.
+ *
+ * FAIL CLOSED, unlike learn-cta-gate.js which fails open. That embed risks
+ * trapping a member on a scroll-locked page; a gate that never appears is safer
+ * there. Here a clamped member reloads and recovers, whereas a leaked video is
+ * gone, and this file never locks scroll.
+ *
+ * ---------------------------------------------------------------------------
+ * MARKUP. Found by ATTRIBUTE or ID only — never by class.
+ *
+ *   [data-session-video="root"]            wrapper containing everything below
+ *     data-session-video-id                Vimeo ID, CMS-bound
+ *     data-session-video-cut               optional seconds, default 180
+ *     data-session-video-bg                optional seconds, default 20
+ *   [data-session-video="stage"]           the iframe is built in here
+ *   [data-session-video="signup-trigger"]  hidden; carries data-modal-trigger
+ *
+ * Absorbed from the template (pre-existing, do not rename):
+ *   [data-element="hero-element"]           the overlay
+ *   [data-element-trigger="show-video"]     the watch control
+ *   #video-controls  #playPauseBtn  #muteBtn  #fullscreenBtn  #videoClickOverlay
+ *
+ * STATE IS WRITTEN AS ATTRIBUTES, for the template's CSS to react to:
+ *   [data-element="hero-element"]  data-sv-overlay  hidden | visible
+ *   #video-controls                data-sv-controls visible | hidden
+ *   #playPauseBtn                  data-sv-play     playing | paused
+ *   #muteBtn                       data-sv-mute     on | off
+ *   #fullscreenBtn                 data-sv-fullscreen visible | hidden (hidden when gated)
+ *
+ * NO MODAL ID LIVES IN THIS FILE. The trigger carries modal.js's own
+ * `data-modal-trigger`, authored in the Designer, and this file only clicks it —
+ * so modal.js needs no public API. A test pins that.
+ *
+ * Debug: `StartersSessionVideo.status()`, or force the wall with `.reveal()`.
  */
 ;(function () {
   'use strict'
@@ -57,40 +89,60 @@
   if (window.__startersSessionVideoBooted) return
   window.__startersSessionVideoBooted = true
 
-  var RELEASE = 'v1.59.170'
+  var RELEASE = 'v1.59.179'
   var LIB_SRC = 'https://player.vimeo.com/api/player.js'
   var DEFAULT_CUT_SECONDS = 180
+  var DEFAULT_BG_SECONDS = 20
   var MEMBER_BUDGET_MS = 1200
   var LIB_BUDGET_MS = 6000
 
   var ROOT_SELECTOR = '[data-session-video="root"]'
   var ATTR_ID = 'data-session-video-id'
   var ATTR_CUT = 'data-session-video-cut'
+  var ATTR_BG = 'data-session-video-bg'
 
   var STAGING_HOST = /(^|\.)webflow\.io$|^localhost$|^127\.0\.0\.1$|(^|\.)trycloudflare\.com$/
 
   function diagnostic() {
     return STAGING_HOST.test(window.location.hostname || '') || window.STARTERS_DEBUG === true
   }
-  function warn(message) {
-    if (diagnostic()) console.warn('[session-video] ' + message)
+  function warn(m) {
+    if (diagnostic()) console.warn('[session-video] ' + m)
   }
-  function info(message) {
-    if (diagnostic()) console.info('[session-video] ' + message)
+  function info(m) {
+    if (diagnostic()) console.info('[session-video] ' + m)
+  }
+
+  /**
+   * Nothing in this repo may throw into the page, and every Vimeo call returns a
+   * promise that really does reject: play() gives NotAllowedError when autoplay
+   * is refused and PlayInterrupted whenever a pause or seek lands on top of it —
+   * which freeze() does deliberately. Terminate every chain here rather than
+   * remembering at each call site.
+   */
+  function safe(p) {
+    if (p && typeof p.catch === 'function') p.catch(function () {})
+    return p
   }
 
   function part(root, name) {
     return root.querySelector('[data-session-video="' + name + '"]')
   }
+  function byId(id) {
+    return document.getElementById(id)
+  }
+  function setState(el, attr, value) {
+    if (el) el.setAttribute(attr, value)
+  }
 
-  /** Seconds from the CMS override, or the default for empty/unusable values. */
-  function cutFor(root) {
-    var raw = root.getAttribute(ATTR_CUT)
-    if (raw === null || String(raw).trim() === '') return DEFAULT_CUT_SECONDS
+  /** Positive seconds from an attribute, or the default for empty/unusable. */
+  function seconds(root, attr, fallback) {
+    var raw = root.getAttribute(attr)
+    if (raw === null || String(raw).trim() === '') return fallback
     var n = Number(raw)
     if (!isFinite(n) || n <= 0) {
-      warn('unusable ' + ATTR_CUT + ' "' + raw + '", falling back to ' + DEFAULT_CUT_SECONDS)
-      return DEFAULT_CUT_SECONDS
+      warn('unusable ' + attr + ' "' + raw + '", using ' + fallback)
+      return fallback
     }
     return n
   }
@@ -101,40 +153,61 @@
   }
 
   /**
-   * Resolve membership within a budget. Returns {member, settled}: `settled`
-   * false means the budget expired and the caller must fail closed.
+   * Is a member watching? See the header: memberReady is a readiness signal that
+   * resolves `{}` for everybody, so the answer comes from getCurrentMember().
+   * Returns {member, settled}; settled false means the budget expired and the
+   * caller must fail closed.
    */
   function resolveMember() {
-    var ready = window.memberReady
-    if (!ready || typeof ready.then !== 'function') {
-      warn('window.memberReady absent; treating viewer as logged out')
-      return Promise.resolve({ member: false, settled: false })
-    }
-    var decided = false
     return new Promise(function (resolve) {
-      window.setTimeout(function () {
+      var decided = false
+      // `certain` is true ONLY when getCurrentMember actually answered. A missing
+      // SDK, a rejection or an expired budget all mean "assume logged out for now",
+      // and the caller must keep watching for a late answer — otherwise a member
+      // whose SDK loaded after us stays gated for the whole page life.
+      function done(member, settled, certain) {
         if (decided) return
         decided = true
-        warn('memberReady did not settle within ' + MEMBER_BUDGET_MS + 'ms; gating')
-        resolve({ member: false, settled: false })
+        resolve({ member: member, settled: settled, certain: !!certain })
+      }
+
+      window.setTimeout(function () {
+        warn('membership unresolved after ' + MEMBER_BUDGET_MS + 'ms; gating')
+        done(false, false, false)
       }, MEMBER_BUDGET_MS)
-      ready.then(
-        function (member) {
-          if (decided) return
-          decided = true
-          resolve({ member: !!member, settled: true })
-        },
-        function () {
-          if (decided) return
-          decided = true
-          warn('memberReady rejected; treating viewer as logged out')
-          resolve({ member: false, settled: true })
-        },
-      )
+
+      function ask() {
+        var ms = window.$memberstackDom
+        if (!ms || typeof ms.getCurrentMember !== 'function') {
+          warn('$memberstackDom.getCurrentMember unavailable; treating as logged out')
+          done(false, true, false)
+          return
+        }
+        try {
+          ms.getCurrentMember().then(
+            function (res) {
+              // `{ data: null }` is a logged-out visitor. Anything with a data
+              // object is a member. Never test the envelope itself.
+              done(!!(res && res.data), true, true)
+            },
+            function () {
+              warn('getCurrentMember rejected; treating as logged out')
+              done(false, true, false)
+            },
+          )
+        } catch (e) {
+          warn('getCurrentMember threw; treating as logged out')
+          done(false, true, false)
+        }
+      }
+
+      var ready = window.memberReady
+      if (ready && typeof ready.then === 'function') ready.then(ask, ask)
+      else ask()
     })
   }
 
-  /** Load player.js once. Resolves false when it does not arrive in budget. */
+  /** Load player.js once. Resolves false if it does not arrive in budget. */
   function ensureLib() {
     if (window.Vimeo && window.Vimeo.Player) return Promise.resolve(true)
     return new Promise(function (resolve) {
@@ -161,52 +234,59 @@
   }
 
   /**
-   * The iframe is built here rather than left to player.js so the fullscreen and
-   * picture-in-picture attributes are correct at load. See the header note.
+   * Built here rather than authored, so the fullscreen and picture-in-picture
+   * attributes are correct AT LOAD for this particular viewer. `controls=0`
+   * always: the template drives playback from its own buttons and puts
+   * `pointer-events: none` on the iframe, so Vimeo's own UI is unreachable and
+   * showing it would only advertise a scrubber nobody can use.
    */
   function buildFrame(videoId, gated) {
     var params = [
-      'dnt=1',
-      'playsinline=1',
+      'autoplay=1',
+      'muted=1',
+      'loop=1',
+      'controls=0',
+      'keyboard=0',
+      'pip=0',
       'title=0',
       'byline=0',
       'portrait=0',
-      'controls=' + (gated ? '0' : '1'),
-      'keyboard=' + (gated ? '0' : '1'),
-      'pip=' + (gated ? '0' : '1'),
+      'dnt=1',
+      'playsinline=1',
     ]
     var frame = document.createElement('iframe')
     frame.setAttribute('src', 'https://player.vimeo.com/video/' + videoId + '?' + params.join('&'))
     frame.setAttribute('frameborder', '0')
     frame.setAttribute('title', 'Session video')
-    frame.setAttribute('width', '100%')
-    frame.setAttribute('height', '100%')
-    if (!gated) {
-      frame.setAttribute('allowfullscreen', '')
-      frame.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture')
-    } else {
+    if (gated) {
       frame.setAttribute('allow', 'autoplay')
+    } else {
+      frame.setAttribute('allow', 'autoplay; fullscreen')
+      frame.setAttribute('allowfullscreen', '')
     }
     return frame
   }
 
-  /** Make an authored div behave as a button without requiring one. */
+  /**
+   * The template's controls are <div>s. Ticket 01 requires them operable by
+   * mouse, touch AND keyboard, and announced correctly, so give them button
+   * semantics without needing the Designer to change the elements.
+   */
   function armControl(el, label, onActivate) {
     if (!el) return
     if (el.nodeName !== 'BUTTON') {
       el.setAttribute('role', 'button')
       if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0')
     }
-    el.setAttribute('aria-label', label)
-    el.setAttribute('aria-pressed', 'false')
-    el.addEventListener('click', function (event) {
-      if (event && typeof event.preventDefault === 'function') event.preventDefault()
+    if (label && !el.hasAttribute('aria-label')) el.setAttribute('aria-label', label)
+    el.addEventListener('click', function (e) {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault()
       onActivate()
     })
-    el.addEventListener('keydown', function (event) {
-      var key = event && event.key
-      if (key !== 'Enter' && key !== ' ' && key !== 'Spacebar') return
-      if (typeof event.preventDefault === 'function') event.preventDefault()
+    el.addEventListener('keydown', function (e) {
+      var k = e && e.key
+      if (k !== 'Enter' && k !== ' ' && k !== 'Spacebar') return
+      if (typeof e.preventDefault === 'function') e.preventDefault()
       onActivate()
     })
   }
@@ -214,17 +294,76 @@
   function Controller(root) {
     this.root = root
     this.videoId = String(root.getAttribute(ATTR_ID) || '').trim()
-    this.cut = cutFor(root)
+    this.cut = seconds(root, ATTR_CUT, DEFAULT_CUT_SECONDS)
+    this.bg = seconds(root, ATTR_BG, DEFAULT_BG_SECONDS)
     this.gated = true
-    this.player = null
-    this.frame = null
+    this.armed = false
     this.atWall = false
     this.clamping = false
+    this.playing = false
+    this.muted = true
     this.position = 0
-    this.duration = 0
-    this.startEmitted = false
     this.wallEmitted = false
+    this.startEmitted = false
     this.wallOpens = 0
+    this.bound = false
+  }
+
+  /**
+   * Scoped to the root FIRST, falling back to the document. Resolving the
+   * controls document-wide meant two roots on one page bound their listeners to
+   * the same #playPauseBtn, so one press played and then immediately paused —
+   * the very thing bind()'s once-only guard exists to prevent, except that guard
+   * is per-controller and these ids are global.
+   */
+  Controller.prototype.el = function (name) {
+    var byRole = {
+      overlay: '[data-element="hero-element"]',
+      watch: '[data-element-trigger="show-video"]',
+    }
+    if (byRole[name]) return this.root.querySelector(byRole[name])
+    var ids = {
+      controls: 'video-controls',
+      play: 'playPauseBtn',
+      mute: 'muteBtn',
+      fullscreen: 'fullscreenBtn',
+      click: 'videoClickOverlay',
+    }
+    var id = ids[name]
+    if (!id) return part(this.root, name)
+    return this.root.querySelector('[id="' + id + '"]') || byId(id)
+  }
+
+  Controller.prototype.detail = function () {
+    return {
+      videoId: this.videoId,
+      cut: this.cut,
+      bg: this.bg,
+      gated: this.gated,
+      armed: this.armed,
+      position: this.position,
+    }
+  }
+
+  Controller.prototype.paintPlay = function (on) {
+    this.playing = on
+    var el = this.el('play')
+    setState(el, 'data-sv-play', on ? 'playing' : 'paused')
+    // Announced as well as styled: aria-label carries the action the press will
+    // perform, so it never reads as a stuck toggle.
+    if (el) el.setAttribute('aria-label', on ? 'Pause the session video' : 'Play the session video')
+  }
+  Controller.prototype.paintMute = function (m) {
+    this.muted = m
+    var el = this.el('mute')
+    setState(el, 'data-sv-mute', m ? 'on' : 'off')
+    if (el) el.setAttribute('aria-label', m ? 'Unmute the session video' : 'Mute the session video')
+  }
+  Controller.prototype.showOverlay = function (show) {
+    setState(this.el('overlay'), 'data-sv-overlay', show ? 'visible' : 'hidden')
+  }
+  Controller.prototype.showControls = function (show) {
+    setState(this.el('controls'), 'data-sv-controls', show ? 'visible' : 'hidden')
   }
 
   Controller.prototype.mount = function (gated) {
@@ -233,139 +372,195 @@
     var stage = part(this.root, 'stage')
     if (!stage) {
       warn('root has no stage element; nothing mounted')
-      return
+      return false
     }
     this.frame = buildFrame(this.videoId, gated)
     stage.append(this.frame)
-
     this.player = new window.Vimeo.Player(this.frame)
-    this.player.on('timeupdate', function (data) {
-      self.onTime(data)
+
+    this.player.on('timeupdate', function (d) {
+      self.onTime(d)
     })
     this.player.on('play', function () {
       self.onPlay()
     })
-    // An ungated member has BOTH native controls and the custom one, so playback
-    // state has to be driven by the player's events, not only by our own
-    // activations. Without this handler a native pause left `playing` true and
-    // the next custom click called pause() on an already-paused video.
     this.player.on('pause', function () {
       self.onPause()
     })
-    this.player.on('seeked', function (data) {
-      self.onSeeked(data)
+    this.player.on('seeked', function (d) {
+      self.onSeeked(d)
     })
     this.player.on('ended', function () {
       emit('session-video-complete', self.detail())
     })
 
-    // Armed once per root, never per mount: an upgrade re-mounts the player on
-    // the SAME authored control, and arming twice would make one activation
-    // play and then immediately pause.
-    var play = part(this.root, 'play')
-    if (!this.controlArmed) {
-      this.controlArmed = true
-      armControl(play, 'Play session video', function () {
-        self.toggle()
-      })
+    this.showOverlay(true)
+    this.showControls(false)
+    this.paintPlay(false)
+    this.paintMute(true)
+
+    // A gated viewer can never reach fullscreen, because the frame was built
+    // without permission. Hide the control rather than leave a dead button.
+    // Inline display keeps this working with no CSS from the Designer; the
+    // attribute is written too so the template can style it if it prefers.
+    var fs = this.el('fullscreen')
+    if (fs) {
+      setState(fs, 'data-sv-fullscreen', gated ? 'hidden' : 'visible')
+      if (gated) fs.style.display = 'none'
+      else fs.style.removeProperty('display')
     }
-    this.playControl = play
-    this.paint()
+
+    this.bind()
+    return true
   }
 
-  Controller.prototype.detail = function () {
-    return {
-      videoId: this.videoId,
-      cut: this.cut,
-      gated: this.gated,
-      position: this.position,
+  Controller.prototype.bind = function () {
+    // Once per root, never per mount: a remount reuses the SAME authored
+    // controls, and binding twice makes one activation play and then pause.
+    if (this.bound) return
+    this.bound = true
+    var self = this
+
+    var watch = this.el('watch')
+    if (watch) armControl(watch, 'Watch the session', function () { self.watch() })
+    else warn('no [data-element-trigger="show-video"] inside the root')
+
+    armControl(this.el('play'), 'Play or pause the session video', function () { self.toggle() })
+    armControl(this.el('click'), null, function () { self.toggle() })
+
+    armControl(this.el('mute'), 'Mute or unmute the session video', function () {
+      if (!self.player) return
+      var next = !self.muted
+      safe(self.player.setMuted(next))
+      safe(self.player.setVolume(next ? 0 : 1))
+      self.paintMute(next)
+    })
+
+    armControl(this.el('fullscreen'), 'Full screen', function () {
+      if (self.gated || !self.player) return
+      if (typeof self.player.requestFullscreen === 'function') safe(self.player.requestFullscreen())
+    })
+  }
+
+  /** The watch control: first press starts for real, later presses resume. */
+  Controller.prototype.watch = function () {
+    if (!this.player) return
+    if (this.armed) {
+      if (this.gated && this.atWall) {
+        this.openWall()
+        return
+      }
+      this.showOverlay(false)
+      safe(this.player.play())
+      return
     }
-  }
-
-  Controller.prototype.limit = function () {
-    return this.gated ? this.cut : this.duration || this.cut
-  }
-
-  Controller.prototype.paint = function () {
-    var fill = part(this.root, 'progress')
-    if (!fill) return
-    var limit = this.limit()
-    var pct = limit > 0 ? Math.min(1, this.position / limit) : 0
-    fill.style.width = pct * 100 + '%'
-  }
-
-  Controller.prototype.onTime = function (data) {
-    var seconds = data && typeof data.seconds === 'number' ? data.seconds : 0
-    if (data && typeof data.duration === 'number') this.duration = data.duration
-    this.position = seconds
-    this.paint()
-    if (this.gated && seconds > 0 && !this.startEmitted) {
+    this.armed = true
+    this.showOverlay(false)
+    this.showControls(true)
+    safe(this.player.setMuted(false))
+    safe(this.player.setVolume(1))
+    this.paintMute(false)
+    if (typeof this.player.setLoop === 'function') safe(this.player.setLoop(false))
+    safe(this.player.play())
+    info('watching from ' + this.position.toFixed(1) + 's; gate ' + (this.gated ? 'armed at ' + this.cut + 's' : 'not armed (member)'))
+    // Once only: upgrade() re-runs watch() to restore the watching state, and a
+    // second preview-start would double-count the funnel.
+    if (!this.startEmitted) {
       this.startEmitted = true
       emit('session-video-preview-start', this.detail())
     }
-    if (this.gated && seconds >= this.cut) this.enforce()
   }
 
-  /**
-   * `aria-pressed` alone announced "Play session video, pressed" while playing,
-   * which reads as a stuck toggle. The label is relabelled too, so the control
-   * always announces the action it will perform.
-   */
-  Controller.prototype.setPlaying = function (playing) {
-    this.playing = playing
-    if (!this.playControl) return
-    this.playControl.setAttribute('aria-pressed', playing ? 'true' : 'false')
-    this.playControl.setAttribute('aria-label', playing ? 'Pause session video' : 'Play session video')
+  Controller.prototype.toggle = function () {
+    if (!this.player) return
+    if (this.gated && this.atWall) {
+      this.openWall()
+      return
+    }
+    if (!this.armed) {
+      this.watch()
+      return
+    }
+    if (this.playing) safe(this.player.pause())
+    else safe(this.player.play())
+  }
+
+  Controller.prototype.onTime = function (d) {
+    var s = d && typeof d.seconds === 'number' ? d.seconds : 0
+    if (!this.armed) {
+      // Ambient phase: keep the loop inside the teaser window so it can never
+      // roll past the cut point while muted.
+      this.position = s
+      if (s >= this.bg && this.player) {
+        this.clamping = true
+        safe(this.player.setCurrentTime(0))
+      } else {
+        // Do not let the latch stick: if the seek above never produced a `seeked`,
+        // a later genuine one would be swallowed.
+        this.clamping = false
+      }
+      return
+    }
+    // Already frozen: stay PINNED at the cut point. The player keeps reporting
+    // for a few events after pause() is called, and letting those through made
+    // the reported position drift past the wall it is supposed to be held at.
+    if (this.gated && this.atWall) {
+      this.freeze()
+      return
+    }
+    this.position = s
+    if (this.gated && s >= this.cut) this.freeze()
   }
 
   Controller.prototype.onPlay = function () {
-    this.setPlaying(true)
-    if (this.gated && this.atWall) this.enforce()
+    this.paintPlay(true)
+    if (this.armed && this.gated && this.atWall) this.freeze()
   }
 
+  /** The template's choice: a pause brings the overlay back. */
   Controller.prototype.onPause = function () {
-    this.setPlaying(false)
+    this.paintPlay(false)
+    if (this.armed) this.showOverlay(true)
   }
 
-  Controller.prototype.onSeeked = function (data) {
-    var seconds = data && typeof data.seconds === 'number' ? data.seconds : 0
+  Controller.prototype.onSeeked = function (d) {
     if (this.clamping) {
       this.clamping = false
       return
     }
-    this.position = seconds
-    this.paint()
-    if (this.gated && seconds >= this.cut) this.enforce()
+    var s = d && typeof d.seconds === 'number' ? d.seconds : 0
+    this.position = s
+    if (this.armed && this.gated && s >= this.cut) this.freeze()
   }
 
   /**
-   * Freeze at the cut point and open the wall. `clamping` swallows the `seeked`
-   * this provokes, or the seek would re-enter here forever.
+   * Freeze at the cut point. Idempotent: the player emits several timeupdates
+   * before a pause takes effect, and re-opening the wall is the job of a PLAY
+   * attempt, not of arriving at the cut point again.
    */
-  Controller.prototype.enforce = function () {
+  Controller.prototype.freeze = function () {
+    if (this.atWall) {
+      if (this.player) safe(this.player.pause())
+      return
+    }
     this.atWall = true
     this.position = this.cut
     if (this.player) {
-      this.player.pause()
+      safe(this.player.pause())
       this.clamping = true
-      this.player.setCurrentTime(this.cut)
+      safe(this.player.setCurrentTime(this.cut))
     }
-    this.setPlaying(false)
-    this.paint()
+    this.paintPlay(false)
     this.openWall()
   }
 
-  /**
-   * Clicking the authored trigger every time is deliberate: dismissing and then
-   * pressing play must bring the wall back. The event fires once.
-   */
   Controller.prototype.openWall = function () {
-    var trigger = part(this.root, 'signup-trigger')
     this.wallOpens += 1
     if (!this.wallEmitted) {
       this.wallEmitted = true
       emit('session-video-wall', this.detail())
     }
+    var trigger = part(this.root, 'signup-trigger')
     if (!trigger) {
       warn('no signup-trigger authored; the wall cannot open')
       return
@@ -373,43 +568,22 @@
     trigger.click()
   }
 
-  Controller.prototype.toggle = function () {
-    if (this.gated && this.atWall) {
-      this.openWall()
-      return
-    }
-    if (!this.player) return
-    // Set optimistically AND corrected by the player's own play/pause events, so
-    // the control stays right whether the user drove us or the native controls.
-    if (this.playing) {
-      this.setPlaying(false)
-      this.player.pause()
-    } else {
-      this.setPlaying(true)
-      this.player.play()
-    }
-  }
-
-  /** Late membership: swap the gated frame for a full one at the same position. */
+  /** Late membership: swap the gated frame for a full one, same position. */
   Controller.prototype.upgrade = function () {
     if (!this.gated) return
     var at = this.position
-    var stage = part(this.root, 'stage')
-    if (this.player && typeof this.player.destroy === 'function') this.player.destroy()
-    // childNodes is a NodeList, not an Array: no indexOf, no splice. An earlier
-    // version used both and threw TypeError here in every browser, AFTER the
-    // destroy above, leaving a late-resolving member with a dead iframe and no
-    // controller. The test harness's Array-shaped childNodes hid it.
-    if (this.frame) {
-      if (typeof this.frame.remove === 'function') this.frame.remove()
-      else if (stage && typeof stage.removeChild === 'function') stage.removeChild(this.frame)
-    }
+    var wasArmed = this.armed
+    if (this.player && typeof this.player.destroy === 'function') safe(this.player.destroy())
+    // childNodes is a NodeList: no indexOf, no splice. Use remove().
+    if (this.frame && typeof this.frame.remove === 'function') this.frame.remove()
     this.atWall = false
     this.clamping = false
+    this.armed = false
     this.wallEmitted = true
-    this.mount(false)
-    if (this.player && at > 0) this.player.setCurrentTime(at)
-    info('upgraded to the full video after late member resolution')
+    if (!this.mount(false)) return
+    if (at > 0 && this.player) safe(this.player.setCurrentTime(at))
+    if (wasArmed) this.watch()
+    info('upgraded to the full video after late membership')
   }
 
   var controllers = []
@@ -417,36 +591,45 @@
   function boot() {
     var roots = document.querySelectorAll(ROOT_SELECTOR)
     if (!roots || !roots.length) return
-    Promise.all([resolveMember(), ensureLib()]).then(function (results) {
-      var state = results[0]
-      var lib = results[1]
+    Promise.all([resolveMember(), ensureLib()]).then(function (r) {
+      var state = r[0]
+      var lib = r[1]
+      info('viewer is ' + (state.member ? 'a member' : 'logged out') + (state.settled ? '' : ' (unresolved, failing closed)'))
       for (var i = 0; i < roots.length; i += 1) {
-        var controller = new Controller(roots[i])
-        if (!controller.videoId) {
+        var c = new Controller(roots[i])
+        if (!c.videoId) {
           info('root has no ' + ATTR_ID + '; leaving the page as authored')
           continue
         }
         if (!lib) {
           // Without the player API there is no way to clamp, so a gated viewer
           // gets nothing rather than the whole video.
-          warn('player library unavailable; not mounting for a gated viewer')
+          warn('player library unavailable')
           if (state.member) {
             var stage = part(roots[i], 'stage')
-            if (stage) stage.append(buildFrame(controller.videoId, false))
+            if (stage) stage.append(buildFrame(c.videoId, false))
           }
           continue
         }
-        controller.mount(!state.member)
-        controllers.push(controller)
-        if (!state.settled && window.memberReady && typeof window.memberReady.then === 'function') {
-          ;(function (c) {
-            window.memberReady.then(function (member) {
-              if (member) c.upgrade()
-            }, function () {})
-          })(controller)
-        }
+        if (!c.mount(!state.member)) continue
+        controllers.push(c)
+        if (!state.certain) watchForLateMember(c)
       }
+    }).catch(function (e) {
+      warn('boot failed: ' + (e && e.message ? e.message : e))
     })
+  }
+
+  function watchForLateMember(c) {
+    var ms = window.$memberstackDom
+    if (!ms || typeof ms.getCurrentMember !== 'function') return
+    try {
+      ms.getCurrentMember().then(function (res) {
+        if (res && res.data) c.upgrade()
+      }, function () {})
+    } catch (e) {
+      /* never throws into the page */
+    }
   }
 
   window.StartersSessionVideo = {
@@ -459,8 +642,12 @@
           return {
             videoId: c.videoId,
             cut: c.cut,
+            bg: c.bg,
             gated: c.gated,
+            armed: c.armed,
             atWall: c.atWall,
+            playing: c.playing,
+            muted: c.muted,
             position: c.position,
             wallOpens: c.wallOpens,
           }
@@ -469,14 +656,12 @@
     },
     reveal: function () {
       controllers.forEach(function (c) {
-        c.enforce()
+        c.armed = true
+        c.freeze()
       })
     },
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', boot)
-  } else {
-    boot()
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot)
+  else boot()
 })()
