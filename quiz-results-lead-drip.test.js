@@ -4,7 +4,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./quiz-results.js'), 'utf8')
-const recommendationVersion = 'category-subcategory-pairs-v18'
+const recommendationVersion = 'category-subcategory-pairs-v19'
 
 function response({ ok = true, status = 200, data = {} } = {}) {
     return {
@@ -277,6 +277,25 @@ test('review text is hidden when the canonical average is missing or invalid', a
     assert.equal(payload.properties.starter_1_reviews, '')
 })
 
+test('review text is hidden when the count is not a canonical number', async () => {
+    const quiz = completedQuiz({
+        memberstackSavedAt: '2026-08-11T04:01:00.000Z',
+    })
+    quiz.featuredFreelancers[0].review_count = true
+    quiz.featuredFreelancers[0].review_average = 5
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_reviews, '')
+})
+
 test('fresh Algolia recommendations carry canonical reviews into the email', async () => {
     const quiz = completedQuiz({
         featuredFreelancers: [],
@@ -296,7 +315,7 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
                 roles: ['creative-director'],
                 'ranking-points': 100,
                 review_count: 12,
-                average_rating: 4.83,
+                review_average: 4.83,
             },
         ],
         waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
@@ -313,9 +332,51 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
     recommendationCalls.forEach((call) => {
         const attributes = JSON.parse(call.options.body).attributesToRetrieve
         assert.ok(attributes.includes('review_count'))
-        assert.ok(attributes.includes('average_rating'))
+        assert.ok(attributes.includes('review_average'))
     })
     assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
+})
+
+test('pre-review recommendation caches refresh before email enrollment', async () => {
+    const staleStarter = {
+        objectID: 'stale-starter',
+        name: 'Stale Starter',
+        slug: 'stale-starter',
+        roles: ['creative-director'],
+    }
+    const quiz = completedQuiz({
+        featuredFreelancers: [staleStarter],
+        recommendedFreelancers: [staleStarter],
+        recommendationVersion: 'category-subcategory-pairs-v18',
+    })
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        algoliaHits: [
+            {
+                objectID: 'refreshed-starter',
+                name: 'Refreshed Starter',
+                slug: 'refreshed-starter',
+                roles: ['creative-director'],
+                'ranking-points': 100,
+                review_count: 2,
+                review_average: 4.5,
+            },
+        ],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.ok(
+        harness.fetchCalls.some((call) =>
+            call.url.includes('-dsn.algolia.net/1/indexes/'),
+        ),
+    )
+    assert.equal(payload.properties.starter_1_first_name, 'Refreshed')
+    assert.equal(payload.properties.starter_1_reviews, '4.5 (2 Reviews)')
 })
 
 for (const [label, tradeTokenResponse] of [

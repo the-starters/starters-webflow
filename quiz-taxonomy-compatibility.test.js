@@ -603,9 +603,9 @@ test('retake prefill restores subcategories and re-checks their parent category'
     assert.equal(result.restoredInputCount, 2)
 })
 
-test('taxonomy compatibility release invalidates v17 recommendations', () => {
+test('review compatibility release invalidates v18 recommendations', () => {
     assert.match(
         resultsSource,
-        /recommendationAlgorithmVersion = 'category-subcategory-pairs-v18'/,
+        /recommendationAlgorithmVersion = 'category-subcategory-pairs-v19'/,
     )
 })

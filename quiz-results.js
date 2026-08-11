@@ -240,17 +240,27 @@
     }
 
     function formatQuizLeadDripReviews(record) {
-        const count = Number(
-            getQuizLeadDripValue(record, ['review_count', 'reviewCount']),
-        )
-        const average = Number(
-            getQuizLeadDripValue(record, [
-                'review_average',
-                'reviewAverage',
-                'rating_average',
-                'average_rating',
-            ]),
-        )
+        const rawCount = getQuizLeadDripValue(record, [
+            'review_count',
+            'reviewCount',
+        ])
+        const rawAverage = getQuizLeadDripValue(record, [
+            'review_average',
+            'reviewAverage',
+            'rating_average',
+            'average_rating',
+        ])
+        const count =
+            typeof rawCount === 'number' ||
+            (typeof rawCount === 'string' && /^\d+$/.test(rawCount.trim()))
+                ? Number(rawCount)
+                : NaN
+        const average =
+            typeof rawAverage === 'number' ||
+            (typeof rawAverage === 'string' &&
+                /^\d+(?:\.\d+)?$/.test(rawAverage.trim()))
+                ? Number(rawAverage)
+                : NaN
 
         if (
             !Number.isInteger(count) ||
@@ -1799,7 +1809,7 @@
     const debugLogPrefix = '[Starter Quiz Funnel]'
     const algoliaDefaultAppId = 'PKVW6M9OPZ'
     const algoliaDefaultIndexName = 'Freelancers3.0-dev'
-    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v18'
+    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v19'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
     // Pool gathered per category before featured picks are drawn off the top,
@@ -3740,7 +3750,7 @@
                         'availability',
                         'ranking-points',
                         'review_count',
-                        'average_rating',
+                        'review_average',
                         'categories',
                         'archived',
                         'draft',
