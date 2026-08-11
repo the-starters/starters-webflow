@@ -12,7 +12,7 @@
  * Designer wiring:
  *   data-stripe-connect-element="root|loading|disconnected|incomplete|
  *   ready|review|error"
- *   data-stripe-connect-action="start|refresh|earnings|disconnect"
+ *   data-stripe-connect-action="start|refresh|earnings|dashboard|disconnect"
  *   data-stripe-connect-earnings-state="disconnected|ready"
  */
 ;(function (global) {
@@ -79,6 +79,58 @@
     roots.forEach(function (root) {
       setView(root, view)
     })
+  }
+
+  function configureConnectedControl(control, action, label) {
+    control.setAttribute(ACTION_ATTR, action)
+    control.removeAttribute('target')
+
+    const text = control.querySelector('.button_main-text')
+    if (text) text.textContent = label
+
+    Array.prototype.slice
+      .call(control.querySelectorAll('a'))
+      .forEach(function (link) {
+        link.setAttribute('href', '#')
+        link.removeAttribute('target')
+        link.removeAttribute('rel')
+      })
+
+    return control
+  }
+
+  function ensureConnectedControls(root) {
+    const ready = root.querySelector(elementSelector('ready'))
+    const disconnected = root.querySelector(elementSelector('disconnected'))
+    const wrapper = ready && ready.querySelector('.action-item_button-wrapper')
+    const source =
+      disconnected &&
+      disconnected.querySelector('.action-item_button-wrapper > *')
+
+    if (!wrapper || !source || typeof source.cloneNode !== 'function') return []
+
+    const created = []
+    if (!ready.querySelector(actionSelector('dashboard'))) {
+      const dashboard = configureConnectedControl(
+        source.cloneNode(true),
+        'dashboard',
+        'Open Stripe',
+      )
+      wrapper.appendChild(dashboard)
+      created.push(dashboard)
+    }
+
+    if (!ready.querySelector(actionSelector('disconnect'))) {
+      const disconnect = configureConnectedControl(
+        source.cloneNode(true),
+        'disconnect',
+        'Disconnect Stripe',
+      )
+      wrapper.appendChild(disconnect)
+      created.push(disconnect)
+    }
+
+    return created
   }
 
   function resolveDashboardView(status, returnedFromStripe) {
@@ -1135,6 +1187,8 @@
     )
     if (!roots.length) return null
 
+    roots.forEach(ensureConnectedControls)
+
     const earningsElements = Array.prototype.slice.call(
       global.document.querySelectorAll(actionSelector('earnings')),
     )
@@ -1200,6 +1254,20 @@
         })
       }
       roots.forEach(function (root) {
+        root
+          .querySelectorAll(actionSelector('dashboard'))
+          .forEach(function (button) {
+            button.addEventListener('click', function (event) {
+              event.preventDefault()
+              openDashboardInNewTab(
+                runExclusive,
+                button,
+                roots,
+                memberId,
+                earningsTiles,
+              )
+            })
+          })
         root.querySelectorAll(actionSelector('start')).forEach(function (button) {
           button.addEventListener('click', function (event) {
             event.preventDefault()
@@ -1347,6 +1415,7 @@
     dashboardAccess,
     disconnectConnect,
     exchangeCode,
+    ensureConnectedControls,
     fetchStatus,
     handleConnectClick,
     handleConnectKeydown,
