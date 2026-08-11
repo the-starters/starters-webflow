@@ -1,0 +1,158 @@
+<!-- Native Webflow AI Recruiter root. Keep this markup in Designer. -->
+<style>
+  [data-ai-recruiter="root"][hidden],
+  [data-ai-recruiter="root"] [hidden] { display: none !important; }
+
+  [data-ai-recruiter="root"] {
+    position: fixed;
+    right: 1.5rem;
+    bottom: 1.5rem;
+    z-index: 1000;
+    font-family: inherit;
+  }
+
+  [data-ai-recruiter="launcher"] {
+    min-width: 3rem;
+    min-height: 3rem;
+    border: 0;
+    border-radius: 999px;
+    padding: 0.75rem 1rem;
+    color: #fff;
+    background: #151515;
+    box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 18%);
+    cursor: pointer;
+  }
+
+  [data-ai-recruiter="panel"] {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.75rem);
+    display: flex;
+    width: min(25rem, calc(100vw - 3rem));
+    max-height: min(42rem, calc(100dvh - 7rem));
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid rgb(21 21 21 / 12%);
+    border-radius: 1rem;
+    background: #fff;
+    box-shadow: 0 1.25rem 3rem rgb(0 0 0 / 20%);
+  }
+
+  .ai-recruiter_header,
+  .ai-recruiter_footer,
+  .ai-recruiter_actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .ai-recruiter_header {
+    justify-content: space-between;
+    border-bottom: 1px solid rgb(21 21 21 / 10%);
+    padding: 1rem;
+  }
+
+  .ai-recruiter_body { overflow-y: auto; padding: 1rem; }
+  .ai-recruiter_messages,
+  .ai-recruiter_candidates { display: grid; gap: 0.75rem; }
+
+  [data-ai-recruiter-message],
+  .ai-recruiter_candidate {
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+    background: #f5f3ef;
+  }
+
+  [data-ai-recruiter-message="user"] {
+    margin-left: 2rem;
+    background: #151515;
+    color: #fff;
+  }
+
+  .ai-recruiter_footer {
+    border-top: 1px solid rgb(21 21 21 / 10%);
+    padding: 0.75rem;
+  }
+
+  [data-ai-recruiter="input"] { min-width: 0; flex: 1; }
+  [data-ai-recruiter="status"] { margin: 0; }
+
+  @media (max-width: 479px) {
+    [data-ai-recruiter="root"] { right: 1rem; bottom: 1rem; }
+    [data-ai-recruiter="panel"] {
+      position: fixed;
+      inset: 1rem 1rem 5rem;
+      width: auto;
+      max-height: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-ai-recruiter="root"] * { scroll-behavior: auto !important; }
+  }
+</style>
+
+<aside data-ai-recruiter="root" hidden aria-label="AI Recruiter">
+  <button data-ai-recruiter="launcher" type="button" aria-expanded="false">Find talent</button>
+
+  <section data-ai-recruiter="panel" role="dialog" aria-label="AI Recruiter" hidden>
+    <header class="ai-recruiter_header">
+      <strong>AI Recruiter</strong>
+      <div class="ai-recruiter_actions">
+        <button data-ai-recruiter="start-over" type="button">Start over</button>
+        <button data-ai-recruiter="minimize" type="button" aria-label="Minimize AI Recruiter">−</button>
+        <button data-ai-recruiter="close" type="button" aria-label="Close AI Recruiter">×</button>
+      </div>
+    </header>
+
+    <div class="ai-recruiter_body">
+      <div data-ai-recruiter-state="consent">
+        <p>AI Recruiter uses your request to find matching Starters.</p>
+        <label>
+          <input data-ai-recruiter="consent" type="checkbox">
+          I agree to the AI Recruiter privacy notice.
+        </label>
+        <button data-ai-recruiter="consent-continue" type="button">Continue</button>
+      </div>
+
+      <p data-ai-recruiter-state="ready">Describe the person you need.</p>
+      <p data-ai-recruiter-state="thinking">Finding matches…</p>
+      <p data-ai-recruiter-state="retry">The search did not finish. Please try again.</p>
+      <p data-ai-recruiter-state="error">The recruiter is temporarily unavailable.</p>
+      <p data-ai-recruiter-state="rate-limited">Too many requests. Please wait and try again.</p>
+      <p data-ai-recruiter-state="expired">Your session expired. Start over to continue.</p>
+      <p data-ai-recruiter-state="offline">You appear to be offline. Reconnect and try again.</p>
+      <p data-ai-recruiter-state="upgrade">AI Recruiter is available with a paid Brand plan.</p>
+      <p data-ai-recruiter-state="unavailable">The recruiter is temporarily unavailable. Please refresh the page.</p>
+
+      <div class="ai-recruiter_messages" data-ai-recruiter="messages" aria-live="polite"></div>
+      <div class="ai-recruiter_candidates" data-ai-recruiter="candidate-list"></div>
+
+      <div data-ai-recruiter="message-template" hidden>
+        <p data-ai-recruiter-field="message"></p>
+      </div>
+
+      <article class="ai-recruiter_candidate" data-ai-recruiter="candidate-template" hidden>
+        <h3 data-ai-recruiter-field="display-name"></h3>
+        <p data-ai-recruiter-field="headline"></p>
+        <p data-ai-recruiter-field="match-reason"></p>
+        <p><span data-ai-recruiter-field="location"></span> <span data-ai-recruiter-field="availability"></span></p>
+        <p data-ai-recruiter-field="rate"></p>
+        <a data-ai-recruiter-field="profile-link" href="/hire">View profile</a>
+      </article>
+
+      <div class="ai-recruiter_actions" aria-label="Recommendation feedback">
+        <button data-ai-recruiter="helpful" data-ai-recruiter-helpful="true" type="button">Helpful</button>
+        <button data-ai-recruiter="helpful" data-ai-recruiter-helpful="false" type="button">Not helpful</button>
+      </div>
+
+      <p data-ai-recruiter="status" role="status" aria-live="polite"></p>
+    </div>
+
+    <form class="ai-recruiter_footer" data-ai-recruiter="form">
+      <label class="w-visually-hidden" for="ai-recruiter-request">Describe the talent you need</label>
+      <input id="ai-recruiter-request" data-ai-recruiter="input" type="text" maxlength="2000" autocomplete="off" required>
+      <button data-ai-recruiter="submit" type="submit">Send</button>
+    </form>
+  </section>
+</aside>
