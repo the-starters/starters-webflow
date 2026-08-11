@@ -112,6 +112,18 @@
     if (diagnostic()) console.info('[session-video] ' + m)
   }
 
+  /**
+   * Nothing in this repo may throw into the page, and every Vimeo call returns a
+   * promise that really does reject: play() gives NotAllowedError when autoplay
+   * is refused and PlayInterrupted whenever a pause or seek lands on top of it —
+   * which freeze() does deliberately. Terminate every chain here rather than
+   * remembering at each call site.
+   */
+  function safe(p) {
+    if (p && typeof p.catch === 'function') p.catch(function () {})
+    return p
+  }
+
   function part(root, name) {
     return root.querySelector('[data-session-video="' + name + '"]')
   }
@@ -148,22 +160,26 @@
   function resolveMember() {
     return new Promise(function (resolve) {
       var decided = false
-      function done(member, settled) {
+      // `certain` is true ONLY when getCurrentMember actually answered. A missing
+      // SDK, a rejection or an expired budget all mean "assume logged out for now",
+      // and the caller must keep watching for a late answer — otherwise a member
+      // whose SDK loaded after us stays gated for the whole page life.
+      function done(member, settled, certain) {
         if (decided) return
         decided = true
-        resolve({ member: member, settled: settled })
+        resolve({ member: member, settled: settled, certain: !!certain })
       }
 
       window.setTimeout(function () {
         warn('membership unresolved after ' + MEMBER_BUDGET_MS + 'ms; gating')
-        done(false, false)
+        done(false, false, false)
       }, MEMBER_BUDGET_MS)
 
       function ask() {
         var ms = window.$memberstackDom
         if (!ms || typeof ms.getCurrentMember !== 'function') {
           warn('$memberstackDom.getCurrentMember unavailable; treating as logged out')
-          done(false, true)
+          done(false, true, false)
           return
         }
         try {
@@ -171,16 +187,16 @@
             function (res) {
               // `{ data: null }` is a logged-out visitor. Anything with a data
               // object is a member. Never test the envelope itself.
-              done(!!(res && res.data), true)
+              done(!!(res && res.data), true, true)
             },
             function () {
               warn('getCurrentMember rejected; treating as logged out')
-              done(false, true)
+              done(false, true, false)
             },
           )
         } catch (e) {
           warn('getCurrentMember threw; treating as logged out')
-          done(false, true)
+          done(false, true, false)
         }
       }
 
@@ -250,6 +266,30 @@
     return frame
   }
 
+  /**
+   * The template's controls are <div>s. Ticket 01 requires them operable by
+   * mouse, touch AND keyboard, and announced correctly, so give them button
+   * semantics without needing the Designer to change the elements.
+   */
+  function armControl(el, label, onActivate) {
+    if (!el) return
+    if (el.nodeName !== 'BUTTON') {
+      el.setAttribute('role', 'button')
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0')
+    }
+    if (label && !el.hasAttribute('aria-label')) el.setAttribute('aria-label', label)
+    el.addEventListener('click', function (e) {
+      if (e && typeof e.preventDefault === 'function') e.preventDefault()
+      onActivate()
+    })
+    el.addEventListener('keydown', function (e) {
+      var k = e && e.key
+      if (k !== 'Enter' && k !== ' ' && k !== 'Spacebar') return
+      if (typeof e.preventDefault === 'function') e.preventDefault()
+      onActivate()
+    })
+  }
+
   function Controller(root) {
     this.root = root
     this.videoId = String(root.getAttribute(ATTR_ID) || '').trim()
@@ -262,32 +302,35 @@
     this.playing = false
     this.muted = true
     this.position = 0
-    this.duration = 0
     this.wallEmitted = false
     this.startEmitted = false
     this.wallOpens = 0
     this.bound = false
   }
 
+  /**
+   * Scoped to the root FIRST, falling back to the document. Resolving the
+   * controls document-wide meant two roots on one page bound their listeners to
+   * the same #playPauseBtn, so one press played and then immediately paused —
+   * the very thing bind()'s once-only guard exists to prevent, except that guard
+   * is per-controller and these ids are global.
+   */
   Controller.prototype.el = function (name) {
-    switch (name) {
-      case 'overlay':
-        return this.root.querySelector('[data-element="hero-element"]')
-      case 'watch':
-        return this.root.querySelector('[data-element-trigger="show-video"]')
-      case 'controls':
-        return byId('video-controls')
-      case 'play':
-        return byId('playPauseBtn')
-      case 'mute':
-        return byId('muteBtn')
-      case 'fullscreen':
-        return byId('fullscreenBtn')
-      case 'click':
-        return byId('videoClickOverlay')
-      default:
-        return part(this.root, name)
+    var byRole = {
+      overlay: '[data-element="hero-element"]',
+      watch: '[data-element-trigger="show-video"]',
     }
+    if (byRole[name]) return this.root.querySelector(byRole[name])
+    var ids = {
+      controls: 'video-controls',
+      play: 'playPauseBtn',
+      mute: 'muteBtn',
+      fullscreen: 'fullscreenBtn',
+      click: 'videoClickOverlay',
+    }
+    var id = ids[name]
+    if (!id) return part(this.root, name)
+    return this.root.querySelector('[id="' + id + '"]') || byId(id)
   }
 
   Controller.prototype.detail = function () {
@@ -303,11 +346,17 @@
 
   Controller.prototype.paintPlay = function (on) {
     this.playing = on
-    setState(this.el('play'), 'data-sv-play', on ? 'playing' : 'paused')
+    var el = this.el('play')
+    setState(el, 'data-sv-play', on ? 'playing' : 'paused')
+    // Announced as well as styled: aria-label carries the action the press will
+    // perform, so it never reads as a stuck toggle.
+    if (el) el.setAttribute('aria-label', on ? 'Pause the session video' : 'Play the session video')
   }
   Controller.prototype.paintMute = function (m) {
     this.muted = m
-    setState(this.el('mute'), 'data-sv-mute', m ? 'on' : 'off')
+    var el = this.el('mute')
+    setState(el, 'data-sv-mute', m ? 'on' : 'off')
+    if (el) el.setAttribute('aria-label', m ? 'Unmute the session video' : 'Mute the session video')
   }
   Controller.prototype.showOverlay = function (show) {
     setState(this.el('overlay'), 'data-sv-overlay', show ? 'visible' : 'hidden')
@@ -351,8 +400,11 @@
 
     // A gated viewer can never reach fullscreen, because the frame was built
     // without permission. Hide the control rather than leave a dead button.
+    // Inline display keeps this working with no CSS from the Designer; the
+    // attribute is written too so the template can style it if it prefers.
     var fs = this.el('fullscreen')
     if (fs) {
+      setState(fs, 'data-sv-fullscreen', gated ? 'hidden' : 'visible')
       if (gated) fs.style.display = 'none'
       else fs.style.removeProperty('display')
     }
@@ -369,33 +421,24 @@
     var self = this
 
     var watch = this.el('watch')
-    if (watch) watch.addEventListener('click', function () { self.watch() })
+    if (watch) armControl(watch, 'Watch the session', function () { self.watch() })
     else warn('no [data-element-trigger="show-video"] inside the root')
 
-    var play = this.el('play')
-    if (play) play.addEventListener('click', function () { self.toggle() })
+    armControl(this.el('play'), 'Play or pause the session video', function () { self.toggle() })
+    armControl(this.el('click'), null, function () { self.toggle() })
 
-    var click = this.el('click')
-    if (click) click.addEventListener('click', function () { self.toggle() })
+    armControl(this.el('mute'), 'Mute or unmute the session video', function () {
+      if (!self.player) return
+      var next = !self.muted
+      safe(self.player.setMuted(next))
+      safe(self.player.setVolume(next ? 0 : 1))
+      self.paintMute(next)
+    })
 
-    var mute = this.el('mute')
-    if (mute) {
-      mute.addEventListener('click', function () {
-        if (!self.player) return
-        var next = !self.muted
-        self.player.setMuted(next)
-        self.player.setVolume(next ? 0 : 1)
-        self.paintMute(next)
-      })
-    }
-
-    var fs = this.el('fullscreen')
-    if (fs) {
-      fs.addEventListener('click', function () {
-        if (self.gated || !self.player) return
-        if (typeof self.player.requestFullscreen === 'function') self.player.requestFullscreen()
-      })
-    }
+    armControl(this.el('fullscreen'), 'Full screen', function () {
+      if (self.gated || !self.player) return
+      if (typeof self.player.requestFullscreen === 'function') safe(self.player.requestFullscreen())
+    })
   }
 
   /** The watch control: first press starts for real, later presses resume. */
@@ -407,19 +450,24 @@
         return
       }
       this.showOverlay(false)
-      this.player.play()
+      safe(this.player.play())
       return
     }
     this.armed = true
     this.showOverlay(false)
     this.showControls(true)
-    this.player.setMuted(false)
-    this.player.setVolume(1)
+    safe(this.player.setMuted(false))
+    safe(this.player.setVolume(1))
     this.paintMute(false)
-    if (typeof this.player.setLoop === 'function') this.player.setLoop(false)
-    this.player.play()
+    if (typeof this.player.setLoop === 'function') safe(this.player.setLoop(false))
+    safe(this.player.play())
     info('watching from ' + this.position.toFixed(1) + 's; gate ' + (this.gated ? 'armed at ' + this.cut + 's' : 'not armed (member)'))
-    emit('session-video-preview-start', this.detail())
+    // Once only: upgrade() re-runs watch() to restore the watching state, and a
+    // second preview-start would double-count the funnel.
+    if (!this.startEmitted) {
+      this.startEmitted = true
+      emit('session-video-preview-start', this.detail())
+    }
   }
 
   Controller.prototype.toggle = function () {
@@ -432,20 +480,23 @@
       this.watch()
       return
     }
-    if (this.playing) this.player.pause()
-    else this.player.play()
+    if (this.playing) safe(this.player.pause())
+    else safe(this.player.play())
   }
 
   Controller.prototype.onTime = function (d) {
     var s = d && typeof d.seconds === 'number' ? d.seconds : 0
-    if (d && typeof d.duration === 'number') this.duration = d.duration
     if (!this.armed) {
       // Ambient phase: keep the loop inside the teaser window so it can never
       // roll past the cut point while muted.
       this.position = s
       if (s >= this.bg && this.player) {
         this.clamping = true
-        this.player.setCurrentTime(0)
+        safe(this.player.setCurrentTime(0))
+      } else {
+        // Do not let the latch stick: if the seek above never produced a `seeked`,
+        // a later genuine one would be swallowed.
+        this.clamping = false
       }
       return
     }
@@ -488,15 +539,15 @@
    */
   Controller.prototype.freeze = function () {
     if (this.atWall) {
-      if (this.player) this.player.pause()
+      if (this.player) safe(this.player.pause())
       return
     }
     this.atWall = true
     this.position = this.cut
     if (this.player) {
-      this.player.pause()
+      safe(this.player.pause())
       this.clamping = true
-      this.player.setCurrentTime(this.cut)
+      safe(this.player.setCurrentTime(this.cut))
     }
     this.paintPlay(false)
     this.openWall()
@@ -521,7 +572,7 @@
     if (!this.gated) return
     var at = this.position
     var wasArmed = this.armed
-    if (this.player && typeof this.player.destroy === 'function') this.player.destroy()
+    if (this.player && typeof this.player.destroy === 'function') safe(this.player.destroy())
     // childNodes is a NodeList: no indexOf, no splice. Use remove().
     if (this.frame && typeof this.frame.remove === 'function') this.frame.remove()
     this.atWall = false
@@ -529,7 +580,7 @@
     this.armed = false
     this.wallEmitted = true
     if (!this.mount(false)) return
-    if (at > 0 && this.player) this.player.setCurrentTime(at)
+    if (at > 0 && this.player) safe(this.player.setCurrentTime(at))
     if (wasArmed) this.watch()
     info('upgraded to the full video after late membership')
   }
@@ -561,17 +612,23 @@
         }
         if (!c.mount(!state.member)) continue
         controllers.push(c)
-        if (!state.settled) watchForLateMember(c)
+        if (!state.certain) watchForLateMember(c)
       }
+    }).catch(function (e) {
+      warn('boot failed: ' + (e && e.message ? e.message : e))
     })
   }
 
   function watchForLateMember(c) {
     var ms = window.$memberstackDom
     if (!ms || typeof ms.getCurrentMember !== 'function') return
-    ms.getCurrentMember().then(function (res) {
-      if (res && res.data) c.upgrade()
-    }, function () {})
+    try {
+      ms.getCurrentMember().then(function (res) {
+        if (res && res.data) c.upgrade()
+      }, function () {})
+    } catch (e) {
+      /* never throws into the page */
+    }
   }
 
   window.StartersSessionVideo = {

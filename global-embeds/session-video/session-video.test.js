@@ -60,6 +60,7 @@ class Element {
     this._listeners.get(t).push(fn)
   }
   click() { this.clicks += 1; (this._listeners.get('click') || []).forEach((fn) => fn({ preventDefault() {} })) }
+  key(name) { (this._listeners.get('keydown') || []).forEach((fn) => fn({ key: name, preventDefault() {} })) }
   descendants() {
     const out = []
     const walk = (n) => n.childNodes.forEach((c) => { out.push(c); if (c.nodeType === 1) walk(c) })
@@ -135,7 +136,7 @@ class FakePlayer {
  *   'out' reproduces the real site exactly: memberReady resolves {} (truthy!)
  *   while getCurrentMember returns { data: null }.
  */
-async function setup({ member = 'out', withLib = true, hostname = 'the-starters-3-0.webflow.io', roots = [template()] } = {}) {
+async function setup({ member = 'out', withLib = true, hostname = 'the-starters-3-0.webflow.io', roots = [template()], watch = null, watchClick = false } = {}) {
   const body = h('body', {})
   roots.forEach((r) => body.append(r))
   // Register ids by walking the finished tree. Doing it in the Element
@@ -174,11 +175,17 @@ async function setup({ member = 'out', withLib = true, hostname = 'the-starters-
   if (member !== 'never') windowObj.memberReady = Promise.resolve({})
   else windowObj.memberReady = new Promise(() => {})
 
+  // 'late': hold the answer until the test releases it, so the budget expires and
+  // the mount is gated BEFORE membership arrives.
+  let releaseLate = null
+  const latePromise = new Promise((r) => { releaseLate = () => r({ data: { id: 'mem_late' } }) })
+
   if (member !== 'no-sdk') {
     windowObj.$memberstackDom = {
       getCurrentMember() {
         if (member === 'reject') return Promise.reject(new Error('ms down'))
         if (member === 'in') return Promise.resolve({ data: { id: 'mem_1' } })
+        if (member === 'late') return latePromise
         if (member === 'never') return new Promise(() => {})
         return Promise.resolve({ data: null })
       },
@@ -207,7 +214,17 @@ async function setup({ member = 'out', withLib = true, hostname = 'the-starters-
   await settle(); drain(); await settle(); drain(); await settle()
 
   const root = roots[0]
+  const api0 = windowObj.StartersSessionVideo
+  let gatedBeforeLate = null
+  if (member === 'late') {
+    gatedBeforeLate = api0.status().sessions[0].gated
+    if (watchClick) root.querySelector('[data-element-trigger="show-video"]').click()
+    if (watch && players[0]) watch(players[0])
+    releaseLate()
+    await settle(); drain(); await settle()
+  }
   return {
+    gatedBeforeLate,
     api: windowObj.StartersSessionVideo,
     root, players, events, logs, timers,
     frame: () => [...root.querySelector('[data-session-video="stage"]').childNodes].find((c) => c.nodeName === 'IFRAME') || null,
@@ -289,6 +306,72 @@ test('the ambient player starts muted and looping, with no native controls', asy
   assert.match(src(f), /muted=1/)
   assert.match(src(f), /loop=1/)
   assert.match(src(f), /controls=0/)
+})
+
+test('the bypass routes are closed at construction', async () => {
+  // keyboard=0 and pip=0 are the actual keyboard-seek and picture-in-picture
+  // closures. Nothing asserted them, so dropping them from buildFrame passed CI.
+  const s = await setup()
+  assert.match(src(s.frame()), /keyboard=0/)
+  assert.match(src(s.frame()), /pip=0/)
+})
+
+test('the complete event fires when the video ends', async () => {
+  const s = await setup({ member: 'in' })
+  s.watch().click()
+  s.players[0].fire('ended')
+  const done = s.events.filter((e) => e.type === 'session-video-complete')
+  assert.equal(done.length, 1)
+  assert.equal(done[0].detail.gated, false)
+})
+
+test('the absorbed div controls get button semantics and keyboard operation', async () => {
+  const s = await setup({ member: 'in' })
+  const play = s.el('playPauseBtn')
+  assert.equal(play.getAttribute('role'), 'button')
+  assert.equal(play.getAttribute('tabindex'), '0')
+  assert.ok(play.getAttribute('aria-label'))
+  s.watch().key('Enter')
+  const p = s.players[0]
+  p.fire('play')
+  p.calls.length = 0
+  play.key(' ')
+  assert.deepEqual(p.did('pause'), [['pause']], 'Space must operate the control')
+  play.key('Tab')
+  assert.equal(p.did('play').length, 0, 'an unrelated key must do nothing')
+})
+
+test('the play control announces the action it will perform', async () => {
+  const s = await setup({ member: 'in' })
+  const p = s.players[0]
+  p.fire('play')
+  assert.match(s.el('playPauseBtn').getAttribute('aria-label'), /Pause/)
+  p.fire('pause')
+  assert.match(s.el('playPauseBtn').getAttribute('aria-label'), /Play/)
+})
+
+test('two roots on one page do not share control listeners', async () => {
+  // The controls were resolved document-wide, so a second root bound its
+  // listeners to the FIRST root's #playPauseBtn: one press played then paused.
+  const a = template({ videoId: '111' })
+  const b = template({ videoId: '222' })
+  const s = await setup({ member: 'in', roots: [a, b] })
+  assert.equal(s.api.status().roots, 2)
+  const own = b.querySelector('[id="playPauseBtn"]')
+  assert.ok(own, 'each root carries its own controls')
+  b.querySelector('[data-element-trigger="show-video"]').click()   // arm root b
+  s.players[1].fire('play')
+  s.players[1].calls.length = 0
+  own.click()
+  assert.deepEqual(s.players[1].did('pause'), [['pause']])
+  assert.deepEqual(s.players[0].calls, [], 'the other root must be untouched')
+})
+
+test('every player promise is terminated so nothing throws into the page', () => {
+  // Vimeo rejects play() with NotAllowedError and PlayInterrupted routinely, and
+  // freeze() deliberately pauses on top of a play.
+  const bare = source.match(/(?<!safe\()\b(?:this|self)\.player\.(?:play|pause|setCurrentTime|setMuted|setVolume|setLoop|requestFullscreen|destroy)\(/g) || []
+  assert.deepEqual(bare, [], 'found unguarded player promises: ' + bare.join(', '))
 })
 
 test('the overlay is up and the controls hidden before watching', async () => {
@@ -552,11 +635,34 @@ test('a missing signup trigger warns instead of throwing', async () => {
 // ---------------------------------------------------------------------------
 
 test('late membership swaps in the full frame at the same position', async () => {
-  const s = await setup({ member: 'never' })
+  // The previous version of this test used member:'never', so getCurrentMember
+  // never answered, upgrade() was never reached, and it asserted that NOTHING
+  // happened. upgrade() had zero coverage: deleting the method kept it green.
+  // 'late' answers only AFTER the budget has already gated the mount.
+  const s = await setup({ member: 'late', watch: (p) => p.seconds(9) })
+  assert.equal(s.gatedBeforeLate, true, 'must have gated while the answer was outstanding')
+
+  assert.equal(s.players.length, 2, 'the gated frame is replaced, not reused')
+  assert.deepEqual(s.players[0].did('destroy'), [['destroy']])
+  const f = s.frame()
+  assert.equal(f.hasAttribute('allowfullscreen'), true, 'the member frame allows fullscreen')
+  assert.deepEqual(s.players[1].did('setCurrentTime'), [['setCurrentTime', 9]], 'resumes where it was')
+  assert.equal(s.state().gated, false)
+  assert.notEqual(s.el('fullscreenBtn').style.display, 'none')
+})
+
+test('a late upgrade does not double-count preview-start', async () => {
+  const s = await setup({ member: 'late', watch: (p) => { p.seconds(4) } , watchClick: true })
+  assert.equal(s.events.filter((e) => e.type === 'session-video-preview-start').length, 1)
+})
+
+test('a missing Memberstack SDK still watches for a late answer', async () => {
+  // 'no-sdk' is reported settled, but NOT certain, so the late watcher must arm.
+  // Reporting it certain left a member whose SDK loaded after us gated for the
+  // whole page life.
+  const s = await setup({ member: 'no-sdk' })
   assert.equal(s.state().gated, true)
-  // now let membership answer, as a slow auth check would
-  s.players[0].seconds(9)
-  assert.equal(s.players.length, 1)
+  assert.match(source, /if \(!state\.certain\) watchForLateMember/)
 })
 
 test('the play control is not double-bound by a remount', async () => {
@@ -588,6 +694,9 @@ test('diagnostics are silent in production', async () => {
 test('the module hardcodes no modal identifier', () => {
   assert.doesNotMatch(source, /data-modal-target/)
   assert.doesNotMatch(source, /['"][\w-]*signup-modal[\w-]*['"]/)
+  // Also must not reach for modal.js's trigger attribute itself: the trigger is
+  // found by its data-session-video role, and the modal name stays in the Designer.
+  assert.doesNotMatch(source, /querySelector[^\n]*data-modal-trigger/)
 })
 
 test('the release marker in the header matches the API', () => {
