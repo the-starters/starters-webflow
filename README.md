@@ -303,10 +303,13 @@ only, and one current category-matched Learn record to the authenticated
 `review_count` and `review_average` values, projected through Algolia, become
 one-decimal email copy such as `4.8 (12 Reviews)` or `5.0 (1 Review)`; a zero,
 missing, or invalid count or average produces no review text, with no fallback
-to legacy review strings. Recommendations cached before these review fields
-were added refresh before enrollment without changing the quiz revision. When
-no Learn record is available, it sends the safe `/learn` fallback instead of
-leaving the email empty.
+to legacy review strings. For each Starter, the browser also sends
+`reviews_display` as the allowlisted value `table-cell` when that review text
+exists, or `none` otherwise, so Mailchimp removes the entire empty review cell.
+Recommendations cached before these review fields were added refresh before
+enrollment without changing the quiz revision. When no Learn record is
+available, it sends the safe `/learn` fallback instead of leaving the email
+empty.
 The Memberstack session exchange accepts every response shape used by the
 shared V3 trade-token endpoint: a raw string, `{authToken}`, or `{token}`.
 
