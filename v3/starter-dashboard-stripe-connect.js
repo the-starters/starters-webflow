@@ -81,8 +81,16 @@
   }
 
   function resolveDashboardView(status, returnedFromStripe) {
-    if (!status || typeof status !== 'object') return 'error'
-    if (status.connected !== true) return 'disconnected'
+    if (
+      !status ||
+      typeof status !== 'object' ||
+      typeof status.connected !== 'boolean' ||
+      typeof status.charges_enabled !== 'boolean' ||
+      (status.connected === false && status.charges_enabled === true)
+    ) {
+      return 'error'
+    }
+    if (status.connected === false) return 'disconnected'
     if (status.charges_enabled === true) return 'ready'
     if (returnedFromStripe) return 'review'
     return 'incomplete'
@@ -265,6 +273,7 @@
   }
 
   let connectStartAttemptKey = null
+  let dashboardAttemptKey = null
   let disconnectAttemptKey = null
 
   function currentConnectStartAttemptKey() {
@@ -276,6 +285,17 @@
 
   function clearConnectStartAttemptKey() {
     connectStartAttemptKey = null
+  }
+
+  function currentDashboardAttemptKey() {
+    if (!dashboardAttemptKey) {
+      dashboardAttemptKey = createAttemptKey('connect-dashboard')
+    }
+    return dashboardAttemptKey
+  }
+
+  function clearDashboardAttemptKey() {
+    dashboardAttemptKey = null
   }
 
   function currentDisconnectAttemptKey() {
@@ -300,6 +320,10 @@
   }
 
   function shouldRetainDisconnectKey(error) {
+    return shouldRetainConnectStartKey(error)
+  }
+
+  function shouldRetainDashboardKey(error) {
     return shouldRetainConnectStartKey(error)
   }
 
@@ -765,6 +789,7 @@
     memberId,
     earningsTiles = resolveEarningsTiles([]),
   ) {
+    if (sandboxMode()) return Promise.resolve(false)
     return runExclusive(async function () {
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
@@ -783,21 +808,22 @@
         if (activeMemberId !== memberId) {
           throw new Error('Member session changed before Stripe Dashboard access')
         }
-        const result = await dashboardAccess(
-          createAttemptKey('connect-dashboard'),
-        )
+        const result = await dashboardAccess(currentDashboardAttemptKey())
         if (result.mode === 'disconnected' && result.connected === false) {
+          clearDashboardAttemptKey()
           closeStripeTab(stripeTab)
           await loadDashboardStatus(roots, false, earningsTiles)
           return false
         }
         const destination = resolveDashboardDestination(result)
+        clearDashboardAttemptKey()
         if (!navigateStripeTab(stripeTab, destination)) {
           throw new Error('Unable to open the connected Stripe account')
         }
         emit('starterStripeConnectDashboard', { mode: result.mode || '' })
         return true
       } catch (error) {
+        if (!shouldRetainDashboardKey(error)) clearDashboardAttemptKey()
         closeStripeTab(stripeTab)
         renderRoots(roots, 'error')
         renderEarningsTiles(earningsTiles, 'error')
@@ -1307,12 +1333,14 @@
       xanoTokenPromise = null
     },
     __resetConnectStartAttempt: clearConnectStartAttemptKey,
+    __resetDashboardAttempt: clearDashboardAttemptKey,
     __resetDisconnectAttempt: clearDisconnectAttemptKey,
     callbackParams,
     confirmDisconnect,
     createExclusiveRunner,
     createAttemptKey,
     currentConnectStartAttemptKey,
+    currentDashboardAttemptKey,
     currentDisconnectAttemptKey,
     currentMemberId,
     dashboardAccess,
@@ -1346,6 +1374,7 @@
     setStartPending,
     setView,
     shouldRetainConnectStartKey,
+    shouldRetainDashboardKey,
     shouldRetainDisconnectKey,
     signalStripeReturn,
     startInNewTab,

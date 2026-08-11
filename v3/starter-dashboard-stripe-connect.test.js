@@ -84,6 +84,24 @@ test('dashboard view uses canonical connected and charges-enabled state', () => 
     ),
     'ready',
   )
+  assert.equal(
+    api.resolveDashboardView({ mode: 'provider_unavailable' }, false),
+    'error',
+  )
+  assert.equal(
+    api.resolveDashboardView(
+      { connected: 'false', charges_enabled: false },
+      false,
+    ),
+    'error',
+  )
+  assert.equal(
+    api.resolveDashboardView(
+      { connected: false, charges_enabled: true },
+      false,
+    ),
+    'error',
+  )
 })
 
 test('a Stripe return renders review only while the provider account is connected', () => {
@@ -564,6 +582,42 @@ test('status reuses the shared dashboard Xano token without a local trade', asyn
   }
 })
 
+test('ambiguous status responses render the authored fail-closed state', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+  }
+  const statuses = [
+    { mode: 'provider_unavailable' },
+    { connected: 'false', charges_enabled: false },
+    { connected: false, charges_enabled: true },
+  ]
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  api.__resetXanoToken()
+
+  try {
+    for (const status of statuses) {
+      const { root, states } = stripeRoot()
+      const connect = new FakeElement()
+      const history = new FakeElement('A')
+      const earningsTiles = api.resolveEarningsTiles([connect, history])
+      api.renderEarningsTiles(earningsTiles, 'ready')
+      global.fetch = async () => response(status)
+
+      await api.loadDashboardStatus([root], false, earningsTiles)
+
+      assert.equal(states.error.style.display, '')
+      assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+      assert.equal(connect.hidden, true)
+      assert.equal(history.hidden, true)
+    }
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+  }
+})
+
 test('Dashboard access and disconnect use authenticated V3 endpoints', async () => {
   const previous = {
     fetch: global.fetch,
@@ -849,6 +903,175 @@ test('a blocked Earnings popup hides both stale tiles without a request', async 
     assert.equal(history.hidden, true)
   } finally {
     global.fetch = previous.fetch
+    global.open = previous.open
+  }
+})
+
+test('sandbox mode disables Dashboard access before popup or network access', async () => {
+  const previous = {
+    fetch: global.fetch,
+    location: global.location,
+    open: global.open,
+  }
+  let fetchCount = 0
+  let openCount = 0
+  global.location = {
+    hostname: 'the-starters-3-0.webflow.io',
+    search: '?stripe_connect_sandbox=1',
+  }
+  global.fetch = async () => {
+    fetchCount += 1
+    return response({})
+  }
+  global.open = () => {
+    openCount += 1
+    return {}
+  }
+
+  try {
+    assert.equal(
+      await api.openDashboardInNewTab(
+        api.createExclusiveRunner(),
+        new FakeElement('A'),
+        [stripeRoot().root],
+        'member-123',
+        api.resolveEarningsTiles([]),
+      ),
+      false,
+    )
+    assert.equal(openCount, 0)
+    assert.equal(fetchCount, 0)
+  } finally {
+    global.fetch = previous.fetch
+    global.location = previous.location
+    global.open = previous.open
+  }
+})
+
+test('ambiguous Dashboard retries preserve one idempotency key', async () => {
+  const previous = {
+    console: global.console,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  global.console = { ...console, error: () => {} }
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.location = { hostname: 'thestarters.com', search: '' }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.open = () => ({
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+    opener: global,
+  })
+  const failures = [new Error('network timeout'), 408, 409, 429, 500]
+
+  try {
+    for (const failure of failures) {
+      const bodies = []
+      let attempt = 0
+      api.__resetXanoToken()
+      api.__resetDashboardAttempt()
+      global.fetch = async (_url, options) => {
+        bodies.push(JSON.parse(options.body))
+        attempt += 1
+        if (attempt === 1) {
+          if (failure instanceof Error) throw failure
+          return response({ error: 'retry' }, { ok: false, status: failure })
+        }
+        return response({
+          account_id: 'acct_123ABC',
+          connected: true,
+          mode: 'full',
+          url: 'https://dashboard.stripe.com/b/acct_123ABC',
+        })
+      }
+      const invoke = () =>
+        api.openDashboardInNewTab(
+          api.createExclusiveRunner(),
+          new FakeElement('A'),
+          [stripeRoot().root],
+          'member-123',
+          api.resolveEarningsTiles([]),
+        )
+
+      assert.equal(await invoke(), false)
+      assert.equal(await invoke(), true)
+      assert.equal(bodies.length, 2)
+      assert.equal(bodies[0].idempotency_key, bodies[1].idempotency_key)
+    }
+  } finally {
+    api.__resetXanoToken()
+    api.__resetDashboardAttempt()
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('a definitive Dashboard result clears its idempotency key', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const bodies = []
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.location = { hostname: 'thestarters.com', search: '' }
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.open = () => ({
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+    opener: global,
+  })
+  global.fetch = async (_url, options) => {
+    bodies.push(JSON.parse(options.body))
+    return response({
+      account_id: 'acct_123ABC',
+      connected: true,
+      mode: 'full',
+      url: 'https://dashboard.stripe.com/b/acct_123ABC',
+    })
+  }
+  api.__resetXanoToken()
+  api.__resetDashboardAttempt()
+
+  try {
+    const invoke = () =>
+      api.openDashboardInNewTab(
+        api.createExclusiveRunner(),
+        new FakeElement('A'),
+        [stripeRoot().root],
+        'member-123',
+        api.resolveEarningsTiles([]),
+      )
+    assert.equal(await invoke(), true)
+    assert.equal(await invoke(), true)
+    assert.notEqual(bodies[0].idempotency_key, bodies[1].idempotency_key)
+  } finally {
+    api.__resetXanoToken()
+    api.__resetDashboardAttempt()
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
     global.open = previous.open
   }
 })
