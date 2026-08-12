@@ -944,12 +944,16 @@ separate Starter invoice control is unchanged.
 The existing `[wf-xano-link="project-end"]` or
 `[wf-xano-link="project-decline"]` control is upgraded to
 `data-project-action="end"`. The latter supports the request-era Decline Request
-control that remains in the Webflow-authored Brand project card. Its label and
-mutation follow canonical lifecycle state, except that canonical `status=pending`
-takes precedence over a more specific `lifecycle_state` and always exposes the
-authorized cancel action. Active projects can request completion or an early
-termination with a required reason, and a counterparty can confirm a pending
-completion or termination request. Terminal projects expose no lifecycle action.
+control that remains in Webflow-authored project cards. If both controls coexist,
+the canonical `project-end` control is primary and the request-era duplicate stays
+hidden. Every matching control stays hidden for a terminal project. This prevents
+one stale control from surviving when the selector finds another control first.
+The primary control's label and mutation follow canonical lifecycle state, except
+that canonical `status=pending` takes precedence over a more specific
+`lifecycle_state` and always exposes one authorized cancel action. Active projects
+can request completion or an early termination with a required reason, and a
+counterparty can confirm a pending completion or termination request. Terminal
+projects expose no lifecycle action.
 Immediately before every mutation, the controller refreshes the canonical project
 and requires a nonnegative `lifecycle_version`. It then posts `project_id`,
 `expected_version`, `action`, `reason`, and a retry-stable idempotency key to
