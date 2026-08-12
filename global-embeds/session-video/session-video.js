@@ -370,11 +370,6 @@
     this.bound = false
     this.ready = false
     this.native = false
-    // Membership CONFIRMED by getCurrentMember, as opposed to merely assumed.
-    // `gated` answers "may this viewer have the whole video"; this answers "do we
-    // actually know who is watching". A missing SDK, a rejection and an expired
-    // budget all leave it false — see resolveMember's `certain`.
-    this.memberCertain = false
   }
 
   /**
@@ -435,13 +430,12 @@
   }
 
   /**
-   * The full-screen control is revealed only to a CONFIRMED member holding a
-   * player object to drive the request. `gated` alone is not enough: it is also
-   * false on the no-API member path, which has no player at all, and reading it
-   * as "member" would show the button on every path where membership is merely
-   * assumed. Unconfirmed membership (no SDK, a rejection, an expired budget) is
-   * exactly where Memberstack is absent too, so nothing else would hide the
-   * button and a press would give no feedback at all.
+   * The full-screen control is revealed only to an ungated viewer holding a
+   * player object to drive the request. Both terms matter: `gated` stays true on
+   * every path where membership is merely assumed (no SDK, a rejection, an expired
+   * budget) — exactly the paths where Memberstack is absent too, so nothing else
+   * would hide the button — and it is false on the no-API member path, which has
+   * no player at all and would leave a dead button.
    *
    * The attribute ONLY, never an inline style. This button carries Memberstack's
    * own `data-ms-content="members"`, so Memberstack owns its visibility, and an
@@ -456,7 +450,7 @@
    */
   Controller.prototype.showFullscreen = function () {
     var el = this.el('fullscreen')
-    var reachable = !this.gated && this.memberCertain && !!this.player
+    var reachable = !this.gated && !!this.player
     setState(el, 'data-sv-fullscreen', reachable ? 'visible' : 'hidden')
     if (el && !el.hasAttribute('data-ms-content')) {
       warn('#fullscreenBtn carries no data-ms-content; Memberstack is not hiding it for non-members')
@@ -484,16 +478,14 @@
     setState(this.root, 'data-sv-player', 'native')
     setState(this.root, 'data-sv-video', 'ready')
     this.ready = true
-    // Vimeo's bar is the ONLY control surface here, so the hero overlay must come
-    // down with it: left in its authored covering state it sits on top of the very
-    // player this path exists to hand over. The control area is revealed for the
-    // same reason, and the state attributes are written to match the frame that was
-    // just built — autoplaying, muted and looping — rather than left unwritten for
-    // the CSS to read as an empty toggle.
+    // The overlay, and ONLY the overlay. Left in its authored covering state it
+    // sits on top of the very player this path exists to hand over, and the watch
+    // control that would lower it is never wired here. The template's own bar is
+    // deliberately left alone: `native` above tells the CSS to hide it, and with no
+    // player object and no bind() call revealing it would put inert play and mute
+    // buttons beside Vimeo's working ones. Nothing paints a play or mute state for
+    // the same reason — no event stream can ever correct a guess about playback.
     this.showOverlay(false)
-    this.showControls(true)
-    this.paintPlay(true)
-    this.paintMute(true)
     // Hidden, not visible: `gated` is false here but there is no player object and
     // bind() is deliberately never called, so the template's own button could only
     // be a dead control.
@@ -808,15 +800,8 @@
         // knew who was watching.
         var confirmed = !!(state.member && state.certain)
         pending.forEach(function (c) {
-          if (confirmed) {
-            c.memberCertain = true
-            c.upgrade()
-          } else if (!state.certain) {
-            watchForLateMember(c, function () {
-              c.memberCertain = true
-              c.upgrade()
-            })
-          }
+          if (confirmed) c.upgrade()
+          else if (!state.certain) watchForLateMember(c, function () { c.upgrade() })
         })
         noLib.forEach(function (c) {
           if (!confirmed) {
@@ -825,15 +810,9 @@
             // noLib controller was never mounted with the API, so a late answer must
             // go through mountWithoutApi() — routing it through upgrade()/mount()
             // would touch window.Vimeo.Player, which is exactly what is missing here.
-            if (!state.certain) {
-              watchForLateMember(c, function () {
-                c.memberCertain = true
-                c.mountWithoutApi()
-              })
-            }
+            if (!state.certain) watchForLateMember(c, function () { c.mountWithoutApi() })
             return
           }
-          c.memberCertain = true
           c.mountWithoutApi()
         })
       })

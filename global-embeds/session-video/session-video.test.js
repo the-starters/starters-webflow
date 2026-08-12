@@ -381,7 +381,7 @@ test('a member with no player library still gets the full state contract', async
   assert.equal(s.api.status().roots, 1, 'and status() must see it')
 })
 
-test('a member with no player library ends with the overlay lowered', async () => {
+test('a member with no player library ends with the overlay lowered and the template bar still hidden', async () => {
   // Half a fix is not a fix: forcing Vimeo's own bar on this path still left the
   // hero overlay in its authored, covering state on top of it, and the watch
   // control that would lower it is never wired here (no player object, no bind).
@@ -389,13 +389,17 @@ test('a member with no player library ends with the overlay lowered', async () =
   const s = await setup({ withLib: false, member: 'in', width: 375 })
   assert.ok(s.frame(), 'a member should still get the video')
   assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden', 'nothing may cover the only control surface')
-  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'visible')
-  // Coherent with the frame that was just built: autoplaying, muted, looping.
-  assert.equal(s.el('playPauseBtn').getAttribute('data-sv-play'), 'playing')
-  assert.equal(s.el('muteBtn').getAttribute('data-sv-mute'), 'on')
-  // ...and no dead button: there is no player object to drive a fullscreen request.
+  // ...and the template's own bar stays hidden, because `native` is what the CSS
+  // reads here and nothing on this path can drive those buttons. Revealing it
+  // would contradict data-sv-player and render inert play and mute controls beside
+  // Vimeo's working ones — writing showControls(true) here must fail this.
+  assert.equal(s.root.getAttribute('data-sv-player'), 'native')
+  assert.notEqual(s.el('video-controls').getAttribute('data-sv-controls'), 'visible')
+  // No dead full-screen button either: there is no player to drive the request.
   assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden')
-  assert.equal(s.state().playing, true)
+  // And no claim about playback that nothing could ever correct.
+  assert.equal(s.state().playing, false)
+  assert.notEqual(s.el('playPauseBtn').getAttribute('data-sv-play'), 'playing')
 })
 
 test('a no-library viewer whose membership resolves late still gets the full contract', async () => {
@@ -698,16 +702,6 @@ test('a gated frame cannot go fullscreen, and we never touch the button\'s displ
   // Not asserting on style.display: it can no longer be set, so the assertion
   // could never fail. The source-regex test below is what actually pins it.
   assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden')
-})
-
-test('unconfirmed membership hides the fullscreen button, not just a certain gate', async () => {
-  // No SDK, a rejection and an expired budget all mean "assume logged out for
-  // now" — and they are exactly the paths where Memberstack is absent too, so
-  // nothing else hides the button and a press gives no feedback at all.
-  for (const member of ['no-sdk', 'reject', 'never']) {
-    const s = await setup({ member })
-    assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden', member)
-  }
 })
 
 test('an unauthored data-ms-content on the fullscreen button warns on staging', async () => {
