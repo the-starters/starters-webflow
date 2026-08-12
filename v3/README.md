@@ -998,6 +998,26 @@ work. The authoritative scope, endpoint, Designer, user-state, and release
 contract lives in
 [STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md).
 
+The Brand chooser is a Designer-authored native select labeled **Select a
+Brand**. Its empty option is **Choose a Brand**. One eligible Brand is selected
+automatically; multiple eligible Brands require an explicit choice.
+
+## Brand project-proposal approval
+
+`brand-project-proposals.js` adds pending Starter requests to the existing
+Brand Dashboard **Action Items** panel. It clones native Webflow rows, opens a
+read-only review modal, respects server-computed accept/reject capabilities,
+and sends versioned idempotent commands through `Opp30`. It never renders a
+pending proposal as a canonical project. The backend, Designer markup, action,
+feedback, and release contract lives in
+[BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md).
+
+Run the focused tests with:
+
+```sh
+node --test v3/starter-project-form.test.js v3/brand-project-proposals.test.js
+```
+
 ## All Starters favorites
 
 `all-starters-favorites.js` decorates Starter favourite controls and binds the

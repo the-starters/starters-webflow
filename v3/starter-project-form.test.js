@@ -25,6 +25,8 @@ class Element {
     this.style = { display: '', opacity: '', pointerEvents: '' }
     this.classList = new ClassList((attrs.className || '').split(/\s+/).filter(Boolean))
     this.children = []
+    this.options = attrs.tagName === 'select' ? [] : null
+    this.ownerDocument = null
     this.events = []
     this.parent = null
     this.resetCount = 0
@@ -47,7 +49,17 @@ class Element {
     if (index === -1) this.children.push(element)
     else this.children.splice(index, 0, element)
   }
-  remove() {
+  appendChild(element) {
+    element.parent = this
+    this.children.push(element)
+    if (this.options) this.options.push(element)
+  }
+  remove(index) {
+    if (typeof index === 'number' && this.options) {
+      const removed = this.options.splice(index, 1)[0]
+      this.children = this.children.filter((child) => child !== removed)
+      return
+    }
     if (!this.parent) return
     this.parent.children = this.parent.children.filter((child) => child !== this)
   }
@@ -72,22 +84,17 @@ class Element {
       }
       return null
     }
-    if (selector === '#Select-Brand') return this.fields && this.fields.search
-    if (selector === '#brand-list') return this.fields && this.fields.list
+    if (selector === '#Select-Brand') return this.fields && this.fields.select
     if (selector === '#brand-contract') return this.fields && this.fields.brandId
     if (selector === '#hiring-manager-name') return this.fields && this.fields.manager
     if (selector === '#brand-company-name') return this.fields && this.fields.company
     if (selector === '#brand-email') return this.fields && this.fields.email
-    if (selector === '.brand-select_dropdown-item.is-not-found') return this.fields && this.fields.empty
     if (selector === '[data-project-form-state="error"]' || selector === '.w-form-fail') return this.error || null
     if (selector === '[data-project-form-state="success"]' || selector === '.w-form-done') return this.success || null
     if (selector === '[data-project-success-message]') return this.successMessage || null
     return null
   }
   querySelectorAll(selector) {
-    if (selector === '[data-starter-project-brand-option]') {
-      return this.children.filter((child) => child.getAttribute('data-starter-project-brand-option'))
-    }
     if (selector === 'input, select, textarea, button') return this.controls || []
     if (selector === '[data-set-current-date-inited="true"]') {
       return (this.controls || []).filter((control) => control.getAttribute('data-set-current-date-inited') === 'true')
@@ -100,14 +107,12 @@ class Element {
 function formFixture() {
   const form = new Element()
   const wrapper = new Element()
-  const list = new Element()
-  const empty = new Element({ textContent: 'Not found', className: 'brand-select_dropdown-item is-not-found' })
-  empty.parent = list
-  list.children = [empty]
+  const select = new Element({ id: 'Select-Brand', tagName: 'select' })
+  const placeholder = new Element({ value: '', textContent: 'Choose a Brand', tagName: 'option' })
+  select.ownerDocument = { createElement: (tagName) => new Element({ tagName }) }
+  select.appendChild(placeholder)
   form.fields = {
-    search: new Element({ id: 'Select-Brand' }),
-    list,
-    empty,
+    select,
     brandId: new Element({ id: 'brand-contract' }),
     manager: new Element({ id: 'hiring-manager-name', value: 'Sample manager' }),
     company: new Element({ id: 'brand-company-name', value: 'Sample company' }),
@@ -119,7 +124,7 @@ function formFixture() {
   wrapper.success = new Element({ hidden: true })
   wrapper.success.successTitles = [new Element(), new Element()]
   wrapper.success.successMessage = new Element()
-  form.controls = Object.values(form.fields).filter((element) => element !== list && element !== empty)
+  form.controls = Object.values(form.fields)
   return { form, wrapper }
 }
 
@@ -197,7 +202,7 @@ test('selecting a Brand stores its ID and clears stale sample email', () => {
   const selected = { id: 12, label: 'Acme — Jai', company_name: 'Acme', manager_name: 'Jai' }
   assert.equal(api.selectBrand(form, selected), true)
   assert.equal(form.fields.brandId.value, '12')
-  assert.equal(form.fields.search.value, 'Acme — Jai')
+  assert.equal(form.fields.select.value, '12')
   assert.equal(form.fields.company.value, 'Acme')
   assert.equal(form.fields.manager.value, 'Jai')
   assert.equal(form.fields.email.value, '')
@@ -213,6 +218,8 @@ test('loading one eligible Brand selects it automatically', async () => {
   assert.equal(JSON.stringify(calls.options[0]), '{}')
   assert.equal(options.length, 1)
   assert.equal(form.fields.brandId.value, '14')
+  assert.equal(form.fields.select.value, '14')
+  assert.equal(form.fields.select.options.length, 2)
   assert.equal(form.getAttribute('data-starter-project-status'), 'ready')
 })
 
@@ -221,7 +228,32 @@ test('no eligible Brands produces a blocked, non-submittable state', async () =>
   await api.loadOptions(form, window)
   assert.equal(form.getAttribute('data-starter-project-status'), 'blocked')
   assert.match(wrapper.error.textContent, /after a Brand messages you/)
-  assert.equal(form.fields.empty.textContent, 'No eligible brands yet')
+  assert.equal(form.fields.select.options[0].textContent, 'No eligible Brands yet')
+  assert.equal(form.fields.select.disabled, true)
+})
+
+test('multiple eligible Brands render as native select options and require a choice', async () => {
+  const loaded = load({
+    counterparties: [
+      { counterparty_id: 21, company_name: 'Alpha' },
+      { counterparty_id: 22, company_name: 'Beta' },
+    ],
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  assert.equal(loaded.form.fields.select.disabled, false)
+  assert.equal(loaded.form.fields.select.options.length, 3)
+  assert.equal(loaded.form.fields.select.options[0].textContent, 'Choose a Brand')
+  assert.deepEqual(
+    loaded.form.fields.select.options.slice(1).map((option) => [option.value, option.textContent]),
+    [['21', 'Alpha'], ['22', 'Beta']],
+  )
+  assert.equal(loaded.form.fields.brandId.value, '')
+
+  loaded.form.fields.select.value = '22'
+  loaded.document.listeners.input({ target: loaded.form.fields.select })
+  assert.equal(loaded.form.fields.brandId.value, '22')
+  assert.equal(loaded.form.fields.company.value, 'Beta')
 })
 
 test('Starter payload reuses commercial fields and omits connection type and Starter identity', () => {
@@ -255,8 +287,8 @@ test('member scope reset clears cached Brands and ignores the prior in-flight re
 
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(loaded.form.fields.brandId.value, '52')
-  assert.equal(loaded.form.fields.search.value, 'Member B Brand')
-  assert.equal(loaded.form.fields.list.querySelectorAll('[data-starter-project-brand-option]').length, 1)
+  assert.equal(loaded.form.fields.select.value, '52')
+  assert.equal(loaded.form.fields.select.options.length, 2)
 })
 
 test('opening the modal refreshes authorized Brands for the same member', async () => {
@@ -279,7 +311,7 @@ test('opening the modal refreshes authorized Brands for the same member', async 
 
   assert.equal(requestNumber, 2)
   assert.equal(loaded.form.fields.brandId.value, '53')
-  assert.equal(loaded.form.fields.search.value, 'Newly Eligible Brand')
+  assert.equal(loaded.form.fields.select.value, '53')
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
 })
 
@@ -296,11 +328,11 @@ test('authorization refresh clears the prior Brand label before new options load
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
-  assert.equal(loaded.form.fields.search.value, 'Prior Brand')
+  assert.equal(loaded.form.fields.select.value, '56')
 
   const refresh = loaded.api.loadOptions(loaded.form, loaded.window, true)
   await Promise.resolve()
-  assert.equal(loaded.form.fields.search.value, '')
+  assert.equal(loaded.form.fields.select.value, '')
   assert.equal(loaded.form.fields.brandId.value, '')
 
   resolveRefresh({ counterparties: [
@@ -308,7 +340,8 @@ test('authorization refresh clears the prior Brand label before new options load
     { counterparty_id: 58, company_name: 'Current Two' },
   ] })
   await refresh
-  assert.equal(loaded.form.fields.search.value, '')
+  assert.equal(loaded.form.fields.select.value, '')
+  assert.equal(loaded.form.fields.select.options.length, 3)
 })
 
 test('reopening during an options request supersedes its stale response', async () => {
@@ -341,8 +374,8 @@ test('reopening during an options request supersedes its stale response', async 
   resolveSecond({ counterparties: [{ counterparty_id: 55, company_name: 'Current Brand' }] })
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(loaded.form.fields.brandId.value, '55')
-  assert.equal(loaded.form.fields.search.value, 'Current Brand')
-  assert.equal(loaded.form.fields.list.querySelectorAll('[data-starter-project-brand-option]').length, 1)
+  assert.equal(loaded.form.fields.select.value, '55')
+  assert.equal(loaded.form.fields.select.options.length, 2)
 })
 
 test('submission creates a proposal event and never reports a created project', async () => {
