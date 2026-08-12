@@ -197,9 +197,9 @@ function buildItemTemplate() {
   const tagLabel = new El('div')
   tagLabel.textContent = 'Main schedule'
   const buttonGroup = new El('div', { class: 'availability-settings_button-group' })
-  const editBtn = new El('div')
+  const editBtn = new El('div', { 'data-availability-action': 'item-form-open' })
   editBtn.textContent = 'Edit'
-  const removeBtn = new El('div')
+  const removeBtn = new El('div', { 'data-availability-action': 'item-remove' })
   removeBtn.textContent = 'Remove'
   buttonGroup.appendChild(editBtn)
   buttonGroup.appendChild(removeBtn)
@@ -237,7 +237,9 @@ function buildItemTemplate() {
   const form = new El('form', { 'data-availability-element': 'availability-form', 'data-availability-id': '' })
   ;['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].forEach(() => {
     const dayWrap = new El('div')
+    const checkboxSkin = new El('div', { class: 'w-checkbox-input' })
     const checkbox = new El('input', { type: 'checkbox', name: 'avail-day' })
+    dayWrap.appendChild(checkboxSkin)
     dayWrap.appendChild(checkbox)
     form.appendChild(dayWrap)
   })
@@ -249,9 +251,9 @@ function buildItemTemplate() {
   form.appendChild(priceInput)
   formOuter.appendChild(form)
   const buttonRow = new El('div')
-  const cancelBtn = new El('div')
+  const cancelBtn = new El('div', { 'data-availability-action': 'item-form-close' })
   cancelBtn.textContent = 'Cancel'
-  const submitBtn = new El('div')
+  const submitBtn = new El('div', { 'data-availability-action': 'item-form-submit' })
   submitBtn.textContent = 'Save availability'
   buttonRow.appendChild(cancelBtn)
   buttonRow.appendChild(submitBtn)
@@ -309,7 +311,7 @@ function buildSectionDom() {
   listWrapper.appendChild(list)
 
   const createCard = new El('div')
-  const createBtn = new El('div')
+  const createBtn = new El('div', { 'data-availability-action': 'availability-create' })
   createBtn.textContent = 'Add availability window'
   createCard.appendChild(createBtn)
 
@@ -333,6 +335,7 @@ function buildSectionDom() {
     list,
     loadingSettings,
     loadingSlots,
+    slotsWrapper,
     createBtn,
   }
 }
@@ -653,6 +656,174 @@ test('boots directly into connected state when the starter already has a grant/c
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
   assert.notEqual(dom.mainWrapper.style.display, 'none')
   assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // disconnect-google visible
+})
+
+/* ------------------------------------------------------------------ */
+/* Tests: per-item form toggle, action visibility, checkbox skin       */
+/* ------------------------------------------------------------------ */
+
+test('item-form-open toggles the item form open and closed via display', async () => {
+  const { dom } = loadSection()
+  await settle()
+  const card = dom.list.children.find((el) => el.dataset.id === 'general')
+  const buttonGroup = card.children[0].children[2] // topContent -> button-group
+  const formWrapper = card.children[2]
+  const editBtn = buttonGroup.children[0]
+
+  assert.equal(formWrapper.style.display, 'none') // closed by default after render
+  editBtn.click()
+  assert.equal(formWrapper.style.display, 'block')
+  editBtn.click()
+  assert.equal(formWrapper.style.display, 'none')
+  editBtn.click()
+  assert.equal(formWrapper.style.display, 'block')
+})
+
+test('general item shows an edit button but hides remove; a created override item shows both', async () => {
+  const { dom } = loadSection()
+  await settle()
+
+  const generalCard = dom.list.children.find((el) => el.dataset.id === 'general')
+  const generalButtons = generalCard.children[0].children[2]
+  assert.notEqual(generalButtons.children[0].style.display, 'none') // edit
+  assert.equal(generalButtons.children[1].style.display, 'none') // remove
+
+  dom.createBtn.click()
+  await settle()
+
+  const overrideCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const overrideButtons = overrideCard.children[0].children[2]
+  assert.notEqual(overrideButtons.children[0].style.display, 'none') // edit
+  assert.notEqual(overrideButtons.children[1].style.display, 'none') // remove
+})
+
+test('populateItemForm marks selected day checkboxes with the Webflow checked-skin class', async () => {
+  const { dom } = loadSection({
+    serverState: {
+      availability: {
+        items: { general: { days: [1, 3], start: '09:00', end: '17:00', defaultDays: [1, 3] } },
+        manager: null,
+      },
+    },
+  })
+  await settle()
+  const card = dom.list.children.find((el) => el.dataset.id === 'general')
+  const buttonGroup = card.children[0].children[2]
+  const editBtn = buttonGroup.children[0]
+  editBtn.click() // opens + populates
+  await settle()
+
+  const formWrapper = card.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  const dayWraps = form.children.slice(0, 7)
+  const isChecked = (i) => dayWraps[i].children[0].classList.contains('w--redirected-checked')
+
+  assert.ok(isChecked(1))
+  assert.ok(isChecked(3))
+  ;[0, 2, 4, 5, 6].forEach((i) => assert.ok(!isChecked(i)))
+})
+
+test('the explicit [data-availability-action="availability-create"] trigger creates a new item without a text-fallback warning', async () => {
+  const { dom, warnings } = loadSection()
+  await settle()
+  const before = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card').length
+
+  dom.createBtn.click()
+  await settle()
+
+  const after = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card').length
+  assert.equal(after, before + 1)
+  assert.ok(!warnings.some((w) => w.includes('availability-create')))
+})
+
+test('initInputPickers scopes to the freshly rendered list on a full render, and to just the new card on create', async () => {
+  const { dom, window } = loadSection()
+  await settle()
+
+  const calls = []
+  window.wfInputDatepicker = { init: (scope) => calls.push(scope) }
+
+  // activatePlatformManager() ends in a full renderAvailabilityItems() call.
+  dom.connectBtnWrapper.children[0].click()
+  await settle()
+  assert.ok(calls.includes(dom.list))
+
+  calls.length = 0
+  dom.createBtn.click()
+  await settle()
+  const newCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  assert.deepEqual(calls, [newCard])
+})
+
+test('item cards remain visible (not display:none) across repeated renders', async () => {
+  const { dom } = loadSection()
+  await settle()
+
+  dom.createBtn.click()
+  await settle()
+  const newCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const formWrapper = newCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[0].children[1].checked = true // Sunday
+  form.querySelector('[name=start-time]').value = '09:00'
+  form.querySelector('[name=end-time]').value = '10:00'
+
+  const buttonRow = formWrapper.children[0].children[1]
+  buttonRow.children[1].click() // item-form-submit
+  await settle()
+
+  const cards = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card')
+  assert.ok(cards.length > 0)
+  cards.forEach((card) => {
+    assert.notEqual(card.style.display, 'none')
+  })
+})
+
+/* ------------------------------------------------------------------ */
+/* Tests: bookable-slots preview loading state                        */
+/* ------------------------------------------------------------------ */
+
+test('removing an item immediately hides slots-list and shows loading-slots, then reverses once data reloads', async () => {
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: {
+          general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
+          override1: { days: [4], start: '10:00', end: '11:00' },
+        },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  const slotsList = dom.slotsWrapper.querySelector('[data-availability-element="slots-list"]')
+  assert.ok(slotsList)
+  assert.notEqual(slotsList.style.display, 'none')
+  assert.equal(dom.loadingSlots.style.display, 'none')
+
+  const overrideCard = dom.list.children.find((el) => el.dataset.id === 'override1')
+  const removeBtn = overrideCard.children[0].children[2].children[1]
+  removeBtn.click()
+
+  // Both async handlers run their synchronous prefix immediately on click,
+  // before yielding at their first await — the loading flip is not deferred.
+  assert.equal(slotsList.style.display, 'none')
+  assert.notEqual(dom.loadingSlots.style.display, 'none')
+
+  await settle()
+
+  assert.equal(dom.loadingSlots.style.display, 'none')
+  assert.notEqual(slotsList.style.display, 'none')
 })
 
 /* ------------------------------------------------------------------ */

@@ -175,6 +175,16 @@
     })
   }
 
+  // Wires the `[data-input-timepicker]` start/end inputs inside `scope` —
+  // scoped to just the item card(s) that were rendered/cloned, not a full
+  // document re-scan, since global-embeds/form-embeds/timepicker/timepicker.js
+  // only initializes inputs present in the DOM at its own load time otherwise.
+  function initInputPickers(scope) {
+    if (window.wfInputDatepicker && typeof window.wfInputDatepicker.init === 'function') {
+      window.wfInputDatepicker.init(scope)
+    }
+  }
+
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
   }
@@ -1133,9 +1143,28 @@
     tag.style.display = id === 'general' ? 'none' : ''
   }
 
+  // The Designer template's example "General Availability" item has both
+  // action buttons hidden by default (matching the "Main schedule" tag's
+  // hidden-by-default polarity). Every item needs its edit button visible;
+  // `general` can never be removed (see handleAvailabilityRemove's guard),
+  // so its remove button stays hidden while override items show both.
+  function applyItemActionVisibility(card, id) {
+    const buttonGroup = qs('.availability-settings_button-group', card)
+    if (!buttonGroup) return
+    const editBtn = resolveActionTarget(buttonGroup, 'item-form-open', 0)
+    const removeBtn = resolveActionTarget(buttonGroup, 'item-remove', 1)
+    if (editBtn) editBtn.style.display = ''
+    if (removeBtn) removeBtn.style.display = id === 'general' ? 'none' : ''
+  }
+
   function closeItemForm(card) {
     const wrapper = qs(elSel('availability-form-wrapper'), card)
     if (wrapper) wrapper.style.display = 'none'
+  }
+
+  function isItemFormOpen(card) {
+    const wrapper = qs(elSel('availability-form-wrapper'), card)
+    return Boolean(wrapper) && wrapper.style.display === 'block'
   }
 
   function populateItemForm(form, id) {
@@ -1150,6 +1179,14 @@
       if (day.parentElement) {
         if (blocked) day.parentElement.classList.add('overridden')
         else day.parentElement.classList.remove('overridden')
+        // Webflow's custom checkbox skin is a sibling element, not the real
+        // (visually hidden) input — it needs its own "checked" class for the
+        // checkmark to render, mirroring what a native user click would do.
+        const box = qs('.w-checkbox-input', day.parentElement)
+        if (box) {
+          if (selected) box.classList.add('w--redirected-checked')
+          else box.classList.remove('w--redirected-checked')
+        }
       }
     })
     const startInput = qs('[name=start-time]', form)
@@ -1167,14 +1204,24 @@
     form.setAttribute('data-availability-id', id)
     form.dataset.availabilityId = id
     populateItemForm(form, id)
-    wrapper.style.display = 'flex'
+    wrapper.style.display = 'block'
+  }
+
+  function toggleItemForm(card, id) {
+    if (isItemFormOpen(card)) closeItemForm(card)
+    else openItemForm(card, id)
   }
 
   function bindItemActions(card, id) {
     const buttonGroup = qs('.availability-settings_button-group', card)
-    bindActionGroup(buttonGroup, ['edit', 'remove'], function (action) {
-      if (action === 'edit') openItemForm(card, id)
-      else if (action === 'remove') handleAvailabilityRemove(card, id)
+    bindActionGroup(buttonGroup, ['item-form-open', 'item-remove'], function (action) {
+      if (action === 'item-form-open') {
+        toggleItemForm(card, id)
+        renderSlotsPreview()
+      } else if (action === 'item-remove') {
+        handleAvailabilityRemove(card, id)
+        renderSlotsPreview()
+      }
     })
 
     const { form, buttonRow } = getItemFormPieces(card)
@@ -1183,12 +1230,13 @@
         e.preventDefault()
       })
     }
-    bindActionGroup(buttonRow, ['cancel', 'submit'], function (action) {
-      if (action === 'cancel') {
+    bindActionGroup(buttonRow, ['item-form-close', 'item-form-submit'], function (action) {
+      if (action === 'item-form-close') {
         if (availability.items[id]) closeItemForm(card)
         else card.remove()
-      } else if (action === 'submit') {
+      } else if (action === 'item-form-submit') {
         availFormHandler(card, id)
+        renderSlotsPreview()
       }
     })
   }
@@ -1209,7 +1257,10 @@
       return
     }
 
-    const templateDisplay = template.style.display
+    // Guard against `template.style.display` already being 'none' from a
+    // previous render of this same (never-restored) master template —
+    // otherwise every subsequent clone inherits 'none' and stays hidden.
+    const templateDisplay = template.style.display === 'none' ? '' : template.style.display
     template.setAttribute('hidden', '')
     template.setAttribute('aria-hidden', 'true')
     template.style.display = 'none'
@@ -1239,6 +1290,7 @@
       }
 
       applyItemTag(card, id)
+      applyItemActionVisibility(card, id)
       applyDayBadges(card, avail.days)
       applyItemTimeText(card, avail)
       closeItemForm(card)
@@ -1247,6 +1299,7 @@
       list.appendChild(card)
     }
 
+    initInputPickers(list)
     setElementVisible('loading-settings', false)
   }
 
@@ -1270,23 +1323,25 @@
     if (titleEl) titleEl.textContent = 'New availability window'
 
     applyItemTag(card, id)
+    applyItemActionVisibility(card, id)
     applyDayBadges(card, [])
     applyItemTimeText(card, { start: '', end: '' })
     closeItemForm(card)
     bindItemActions(card, id)
 
     list.appendChild(card)
+    initInputPickers(card)
     openItemForm(card, id)
   }
 
   function bindCreateTrigger() {
     const mainWrapper = qs(elSel('main-wrapper'))
-    let trigger = qs('[' + ACTION + '="create"]')
+    let trigger = qs('[' + ACTION + '="availability-create"]')
     if (!trigger && mainWrapper) {
       trigger = findByText(mainWrapper, /add availability/i)
       if (trigger) {
         console.warn(
-          '[scheduling-section] missing [' + ACTION + '="create"]; matched "Add availability window" by text as a fallback',
+          '[scheduling-section] missing [' + ACTION + '="availability-create"]; matched "Add availability window" by text as a fallback',
         )
       }
     }
@@ -1457,10 +1512,10 @@
   // Renders as a plain list built directly by this script — the 2 existing
   // (empty) HtmlEmbeds inside `slots-wrapper` are out of scope and ignored.
   function renderSlotsList(wrapper, slots) {
-    let list = qs('[data-availability-section-slots-list]', wrapper)
+    let list = qs(elSel('slots-list'), wrapper)
     if (!list) {
       list = document.createElement('div')
-      list.setAttribute('data-availability-section-slots-list', '')
+      list.setAttribute(EL, 'slots-list')
       wrapper.appendChild(list)
     }
     list.innerHTML = ''
@@ -1480,6 +1535,8 @@
   async function renderSlotsPreview() {
     const wrapper = qs(elSel('slots-wrapper'))
     if (!wrapper) return
+    setElementVisible('slots-list', false)
+    setElementVisible('loading-slots', true)
     const generalConfig =
       configs.filter(function (c) {
         return !c.is_paid
@@ -1496,6 +1553,7 @@
     })
     renderSlotsList(wrapper, slots)
     setElementVisible('loading-slots', false)
+    setElementVisible('slots-list', true)
   }
 
   /* ------------------------------------------------------------------ */
