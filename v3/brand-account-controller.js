@@ -381,7 +381,8 @@
         throw new Error('Memberstack email updates are unavailable.')
       }
 
-      await runWithRetry(function () {
+      await runWithRetry(async function () {
+        await currentMemberForWrite(client, member)
         return client.updateMemberAuth({ email: email })
       })
     }
@@ -542,7 +543,7 @@
     }
     var client = memberstack()
     diagnosticRequestStarted(form)
-    var member = await currentMemberForWrite(client, memberSnapshot)
+    var member = memberSnapshot || await currentMember(client)
     var result = await updateEmailIfChanged(client, member, email)
     if (result.changed) await sendResetPasswordEmailOnce(form, client, result.email)
     return result
