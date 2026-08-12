@@ -2121,7 +2121,7 @@
   const PROJECT_CONTRACT_BADGE_SELECTOR = '[data-project-contract-badge]'
   const PROJECT_CONTRACT_ACTIONS_SELECTOR = '[data-project-contract-actions]'
   const PROJECT_END_SELECTOR =
-    '[wf-xano-link="project-end"], [data-project-action="end"]'
+    '[wf-xano-link="project-end"], [wf-xano-link="project-decline"], [data-project-action="end"]'
   const PROJECT_REVIEW_SELECTOR =
     '[wf-xano-link="review_starter"], [data-project-action="review"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
