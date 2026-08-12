@@ -26,6 +26,38 @@
   var DEFAULT_REDIRECT = '/freelancer-application/step-2'
   var CONTROLLER_VERSION = 'talent-application-v1'
   var WORKFLOW = 'talent_application'
+  var workflowDiagnosticsControllerScript = document.currentScript
+
+  function loadWorkflowDiagnostics() {
+    if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics)
+    if (window.__startersWorkflowDiagnosticsReady) return window.__startersWorkflowDiagnosticsReady
+    var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
+    if (!source || !document.createElement) return Promise.resolve(null)
+    var url = ''
+    try {
+      var cdnRoot = source.match(
+        /^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/,
+      )
+      url = cdnRoot
+        ? cdnRoot[1] + 'utils/workflow-diagnostics.js'
+        : new URL('../utils/workflow-diagnostics.js', source).href
+    } catch (_) {
+      return Promise.resolve(null)
+    }
+    window.__startersWorkflowDiagnosticsReady = new Promise(function (resolve) {
+      var script = document.createElement('script')
+      script.src = url
+      script.async = false
+      script.addEventListener('load', function () {
+        resolve(window.StartersWorkflowDiagnostics || null)
+      }, { once: true })
+      script.addEventListener('error', function () { resolve(null) }, { once: true })
+      ;(document.head || document.documentElement).appendChild(script)
+    })
+    return window.__startersWorkflowDiagnosticsReady
+  }
+
+  var workflowDiagnosticsReady = loadWorkflowDiagnostics()
 
   function diagnostics() {
     return window.StartersWorkflowDiagnostics || null
@@ -196,25 +228,30 @@
     form.__startersSubmitting = true
     setSubmitting(form, true)
     var startedAt = Date.now()
-    diagnosticStart(form)
     var responseStatus = null
     var failureCode = 'NETWORK_ERROR'
 
-    var payload = fieldMap(new FormData(form))
-    var countryText = selectText(form, 'country')
-    var cityText = selectText(form, 'city')
-    var stateText = selectText(form, 'state')
-    if (countryText) payload.country = countryText
-    if (cityText) payload.city = cityText
-    if (stateText) payload.answers.state = stateText
-    if (countryText) payload.answers.country = countryText
-    if (cityText) payload.answers.city = cityText
+    var startRequest = function () {
+      diagnosticStart(form)
+      var payload = fieldMap(new FormData(form))
+      var countryText = selectText(form, 'country')
+      var cityText = selectText(form, 'city')
+      var stateText = selectText(form, 'state')
+      if (countryText) payload.country = countryText
+      if (cityText) payload.city = cityText
+      if (stateText) payload.answers.state = stateText
+      if (countryText) payload.answers.country = countryText
+      if (cityText) payload.answers.city = cityText
 
-    fetch(ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+      return fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    }
+
+    var request = diagnostics() ? startRequest() : workflowDiagnosticsReady.then(startRequest)
+    request
       .then(function (response) {
         responseStatus = response.status
         if (!response.ok) {

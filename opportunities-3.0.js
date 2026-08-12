@@ -27,6 +27,39 @@
   // load (duplicate embed, Webflow re-init) returns here instead of re-binding.
   if (window.Opp30) return
 
+  const workflowDiagnosticsControllerScript = document.currentScript
+
+  function loadWorkflowDiagnostics() {
+    if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics)
+    if (window.__startersWorkflowDiagnosticsReady) return window.__startersWorkflowDiagnosticsReady
+    const source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
+    if (!source || !document.createElement) return Promise.resolve(null)
+    let url = ''
+    try {
+      const cdnRoot = source.match(
+        /^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/,
+      )
+      url = cdnRoot
+        ? cdnRoot[1] + 'utils/workflow-diagnostics.js'
+        : new URL('utils/workflow-diagnostics.js', source).href
+    } catch (_) {
+      return Promise.resolve(null)
+    }
+    window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => {
+      const script = document.createElement('script')
+      script.src = url
+      script.async = false
+      script.addEventListener('load', () => resolve(window.StartersWorkflowDiagnostics || null), {
+        once: true,
+      })
+      script.addEventListener('error', () => resolve(null), { once: true })
+      ;(document.head || document.documentElement).appendChild(script)
+    })
+    return window.__startersWorkflowDiagnosticsReady
+  }
+
+  const workflowDiagnosticsReady = loadWorkflowDiagnostics()
+
   // Freelancer feed: hide Algolia results until the requested tab's filters are
   // applied. All uses the current member's category refs; Applied deliberately uses
   // application IDs without categories. wf-algolia paints the unfiltered
@@ -396,6 +429,7 @@
   }
 
   async function call(path, { method = 'POST', body } = {}) {
+    if (DIAGNOSTIC_CALLS[path]) await workflowDiagnosticsReady
     const generation = _memberScopeGeneration
     const diagnostic = beginCallDiagnostic(path)
     const startedAt = Date.now()
@@ -2395,12 +2429,14 @@
     feedback.setAttribute('role', isError ? 'alert' : 'status')
     feedback.setAttribute('aria-live', isError ? 'assertive' : 'polite')
     feedback.setAttribute('data-project-action-result', isError ? 'error' : 'success')
-    if (receipt) decorateWorkflowMessage(feedback, message, receipt)
-    else feedback.textContent = message
+    const renderedMessage = receipt
+      ? decorateWorkflowMessage(feedback, message, receipt)
+      : message
+    if (!receipt) feedback.textContent = renderedMessage
     feedback.style.display = ''
     window.clearTimeout(projectWorkflowFeedbackTimer)
     projectWorkflowFeedbackTimer = window.setTimeout(() => {
-      if (feedback.textContent === message) {
+      if (feedback.textContent === renderedMessage) {
         feedback.textContent = ''
         feedback.style.display = 'none'
         feedback.removeAttribute('data-project-action-result')
@@ -2466,8 +2502,10 @@
     }
     const authored =
       label.dataset.projectActionRestLabel || label.dataset.projectActionAuthoredLabel
-    if (receipt) decorateWorkflowMessage(label, message, receipt)
-    else label.textContent = message
+    const renderedMessage = receipt
+      ? decorateWorkflowMessage(label, message, receipt)
+      : message
+    if (!receipt) label.textContent = renderedMessage
     const wrap = projectActionWrap(action)
     if (wrap) {
       window.clearTimeout(projectActionFeedbackTimers.get(wrap))
@@ -2475,7 +2513,7 @@
     }
     const timer = window.setTimeout(() => {
       if (wrap && projectActionFeedbackTimers.get(wrap) !== timer) return
-      if (label.textContent === message) label.textContent = authored
+      if (label.textContent === renderedMessage) label.textContent = authored
       if (wrap) {
         wrap.removeAttribute('data-project-action-result')
         projectActionFeedbackTimers.delete(wrap)
@@ -4677,10 +4715,11 @@
         const payload = readOpportunityForm(modal)
         const validationMessage = validateOpportunityPayload(payload)
         if (validationMessage) {
-          return alert(workflowDiagnosticMessage(
+          return showOpportunityError(
+            createBtn,
             validationMessage,
             validationDiagnostic('opportunity_create', 'opportunity', 'INVALID_FORM'),
-          ))
+          )
         }
         await guard(createBtn, () => API.brandOppCreate(payload))
       })
@@ -4716,10 +4755,11 @@
         const payload = readOpportunityForm(modal)
         const validationMessage = validateOpportunityPayload(payload)
         if (validationMessage) {
-          return alert(workflowDiagnosticMessage(
+          return showOpportunityError(
+            editBtn,
             validationMessage,
             validationDiagnostic('opportunity_edit', 'opportunity', 'INVALID_FORM'),
-          ))
+          )
         }
         await guard(editBtn, () => API.brandOppUpdate(activeOpp, payload), (updatedOpportunity) => {
           paintOpportunityDetail(updatedOpportunity)
@@ -4786,10 +4826,11 @@
         const modal = $('[data-modal-target="apply-opportunity"]')
         const msg = ($('[name="Cover-Letter"]', modal) || {}).value || ''
         if (!msg.trim()) {
-          return alert(workflowDiagnosticMessage(
+          return showOpportunityError(
+            applyBtn,
             'Please write a cover letter',
             validationDiagnostic('opportunity_application', 'application', 'MISSING_COVER_LETTER'),
-          ))
+          )
         }
         await guard(applyBtn, async () => {
           const res = await API.starterAppSubmit(activeOpp, msg.trim())
@@ -4809,10 +4850,11 @@
         const modal = $('[data-modal-target="edit-application"]')
         const msg = ($('[name="Cover-Letter"]', modal) || {}).value || ''
         if (!msg.trim()) {
-          return alert(workflowDiagnosticMessage(
+          return showOpportunityError(
+            editAppBtn,
             'Please write a cover letter',
             validationDiagnostic('application_edit', 'application', 'MISSING_COVER_LETTER'),
-          ))
+          )
         }
         await guard(editAppBtn, async () => {
           let appId = activeApp
@@ -4854,6 +4896,7 @@
     if (guardKey && activeActionGuards.has(guardKey)) return activeActionGuards.get(guardKey)
 
     const request = (async () => {
+      clearOpportunityError(btn)
       setOpportunityActionPending(btn, true)
       try {
         const result = await fn()
@@ -4875,9 +4918,7 @@
         setOpportunityActionPending(btn, false)
         const baseMessage =
           (err && err.data && err.data.message) || 'Something went wrong. Please try again.'
-        const errorReceipt = diagnosticForError(err)
-        const api = workflowDiagnostics()
-        alert(api && errorReceipt ? api.message(baseMessage, errorReceipt) : baseMessage)
+        showOpportunityError(btn, baseMessage, diagnosticForError(err))
         return null
       } finally {
         if (guardKey) activeActionGuards.delete(guardKey)
@@ -4886,6 +4927,41 @@
 
     if (guardKey) activeActionGuards.set(guardKey, request)
     return request
+  }
+
+  function opportunityErrorElement(btn) {
+    if (!btn || !btn.closest) return null
+    const modal = btn.closest('[data-modal-target]')
+    const form = btn.closest('form')
+    const scope = modal || (form && (form.closest('.w-form') || form.parentElement))
+    if (!scope) return null
+    return $('[data-workflow-diagnostic-error]', scope) || $('.w-form-fail', scope)
+  }
+
+  function clearOpportunityError(btn) {
+    const fail = opportunityErrorElement(btn)
+    if (fail) fail.style.display = 'none'
+  }
+
+  function showOpportunityError(btn, message, receipt) {
+    const fail = opportunityErrorElement(btn)
+    if (!fail) {
+      const suffix = receipt && receipt.diagnostic_id
+        ? ' Diagnostic ID: ' + receipt.diagnostic_id + '.'
+        : ''
+      alert(message + suffix)
+      return false
+    }
+    fail.style.display = 'block'
+    const target = fail.querySelector
+      ? $('[data-workflow-diagnostic-message]', fail) || $('p, div', fail) || fail
+      : fail
+    if (target.__startersWorkflowDiagnosticBaseText === undefined) {
+      target.__startersWorkflowDiagnosticBaseText = target.textContent || message
+    }
+    if (receipt) decorateWorkflowMessage(target, message, receipt)
+    else target.textContent = message
+    return true
   }
 
   /* ================== F4: APPLICATION-SENT SCREEN ================ */
@@ -4935,14 +5011,32 @@
   // the page behind it. 'not-applied' mirrors what a fresh load would compute:
   // the detail endpoint filters canceled applications, so appState() would
   // return 'not-applied', showing the Apply CTA + empty-state panel again.
-  function showCancelSuccess() {
+  function showCancelSuccess(result) {
     setActiveApp(null) // the canceled id must never leak into a follow-up edit
     setEditPrefill('') // no live application anymore — a future edit starts blank
+    const modal = $('[data-modal-target="cancel-application"]')
     try {
       paintState(document, 'not-applied')
+      paintState(modal, 'not-applied')
       if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
     } catch (e) {
       /* non-fatal */
+    }
+    const receipt = diagnosticForResponse(result)
+    const steps = modal ? $$('[data-form-flow-step]', modal) : []
+    const visibleStep = steps.find((step) =>
+      step.getAttribute('aria-hidden') !== 'true' && step.style.display !== 'none',
+    )
+    const message = visibleStep && visibleStep.querySelector
+      ? $('[data-workflow-diagnostic-message]', visibleStep) || $('p', visibleStep)
+      : null
+    if (message && receipt) {
+      if (message.__startersWorkflowDiagnosticBaseText === undefined) {
+        message.__startersWorkflowDiagnosticBaseText = message.textContent
+      }
+      decorateWorkflowMessage(message, message.__startersWorkflowDiagnosticBaseText, receipt)
+    } else if (visibleStep && receipt && workflowDiagnostics()) {
+      workflowDiagnostics().decorate(visibleStep, receipt)
     }
   }
 
@@ -5409,6 +5503,8 @@
     opportunityPath,
     pageOppId,
     waitForMemberstackDom,
+    showCancelSuccess,
+    showOpportunityError,
     prepareOpportunityCreateForms: prepareOpportunityForms,
     prepareOpportunityForms,
     prefillEditOpportunity,
