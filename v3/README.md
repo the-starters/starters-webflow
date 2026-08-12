@@ -1020,24 +1020,24 @@ Run its focused test with:
 node --test v3/project-form.test.js
 ```
 
-## Starter project proposal form
+## Starter project form
 
 `starter-project-form.js` binds the existing V3 Starter Dashboard **Start a
 Project** modal. The authoritative scope, endpoint, Designer, user-state, and
 release contract lives in
 [STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md).
 
-## Brand project-proposal approval
+## Superseded Brand proposal approval
 
-`brand-project-proposals.js` adds pending Starter requests to the existing
-Brand Dashboard **Action Items** panel. The backend, Designer markup, action,
-feedback, and release contract lives in
-[BRAND-PROJECT-PROPOSALS-WIRING.md](BRAND-PROJECT-PROPOSALS-WIRING.md).
+`brand-project-proposals.js` is retained as release history. Do not install it
+for the contract-first workflow. A Starter submission creates a normal pending
+project immediately. The existing contract-signing panel supplies both-party
+consent and allows either party to sign first.
 
 Run the focused tests with:
 
 ```sh
-node --test v3/starter-project-form.test.js v3/brand-project-proposals.test.js
+node --test v3/starter-project-form.test.js
 ```
 
 ## All Starters favorites

@@ -192,11 +192,17 @@ function matchesSelector(el, selector) {
 function buildItemTemplate() {
   const template = new El('div', { 'data-availability-element': 'item-template', 'data-id': '' })
 
-  const topContent = new El('div', { class: 'availability-settings_top-content' })
+  const topContent = new El('div', {
+    class: 'availability-settings_top-content',
+    'data-availability-element': 'item-top-content',
+  })
   const itemTitle = new El('p', { 'data-availability-element': 'item-title' })
   const tagLabel = new El('div')
   tagLabel.textContent = 'Main schedule'
-  const buttonGroup = new El('div', { class: 'availability-settings_button-group' })
+  const buttonGroup = new El('div', {
+    class: 'availability-settings_button-group',
+    'data-availability-element': 'item-button-group',
+  })
   const editBtn = new El('div', { 'data-availability-action': 'item-form-open' })
   editBtn.textContent = 'Edit'
   const removeBtn = new El('div', { 'data-availability-action': 'item-remove' })
@@ -207,8 +213,14 @@ function buildItemTemplate() {
   topContent.appendChild(tagLabel)
   topContent.appendChild(buttonGroup)
 
-  const headline = new El('div', { class: 'availability-settings_item-headline' })
-  const timeWrapper = new El('div', { class: 'availability-settings_description-wrapper' })
+  const headline = new El('div', {
+    class: 'availability-settings_item-headline',
+    'data-availability-element': 'item-headline',
+  })
+  const timeWrapper = new El('div', {
+    class: 'availability-settings_description-wrapper',
+    'data-availability-element': 'item-time-wrapper',
+  })
   const startLabel = new El('div')
   const dash = new El('div')
   dash.textContent = '-'
@@ -221,7 +233,10 @@ function buildItemTemplate() {
   timeWrapper.appendChild(endLabel)
   timeWrapper.appendChild(tzBlock)
 
-  const daysWrapper = new El('div', { class: 'availability-settings_description-wrapper' })
+  const daysWrapper = new El('div', {
+    class: 'availability-settings_description-wrapper',
+    'data-availability-element': 'item-days-wrapper',
+  })
   const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
   dayNames.forEach((name) => {
     const badge = new El('div', { class: DAY_VARIANT_DEFAULT })
@@ -271,7 +286,10 @@ function buildSectionDom() {
   const root = new El('div', { 'data-availability-element': 'section' })
 
   const connectWrapper = new El('div', { 'data-availability-element': 'connect-wrapper' })
-  const labelGroup = new El('div', { class: 'button-group is-secondary' })
+  const labelGroup = new El('div', {
+    class: 'button-group is-secondary',
+    'data-availability-element': 'connect-label-group',
+  })
   const disconnectedLabel = new El('div')
   disconnectedLabel.textContent = 'Disonnected'
   const connectedLabel = new El('div')
@@ -658,6 +676,28 @@ test('boots directly into connected state when the starter already has a grant/c
   assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // disconnect-google visible
 })
 
+test('switching straight from Google to Platform clears the existing Google grant first', async () => {
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform, still clickable while on Google
+  await settle()
+
+  const deleteCall = calls.find((c) => c.path === '/grants/delete/v3')
+  assert.ok(deleteCall, 'expected the existing Google grant to be deleted')
+  assert.equal(deleteCall.body.in_grant_id, 'grant-1')
+})
+
 /* ------------------------------------------------------------------ */
 /* Tests: per-item form toggle, action visibility, checkbox skin       */
 /* ------------------------------------------------------------------ */
@@ -789,7 +829,7 @@ test('item cards remain visible (not display:none) across repeated renders', asy
 /* Tests: bookable-slots preview loading state                        */
 /* ------------------------------------------------------------------ */
 
-test('removing an item immediately hides slots-list and shows loading-slots, then reverses once data reloads', async () => {
+test('removing an item waits for the response before refreshing slots (not fired concurrently)', async () => {
   const { dom } = loadSection({
     serverState: {
       grantId: 'grant-1',
@@ -815,15 +855,45 @@ test('removing an item immediately hides slots-list and shows loading-slots, the
   const removeBtn = overrideCard.children[0].children[2].children[1]
   removeBtn.click()
 
-  // Both async handlers run their synchronous prefix immediately on click,
-  // before yielding at their first await — the loading flip is not deferred.
-  assert.equal(slotsList.style.display, 'none')
-  assert.notEqual(dom.loadingSlots.style.display, 'none')
+  // renderSlotsPreview is chained onto the remove request's own promise, not
+  // fired alongside it — so nothing here changes until that request lands.
+  assert.notEqual(slotsList.style.display, 'none')
+  assert.equal(dom.loadingSlots.style.display, 'none')
 
   await settle()
 
   assert.equal(dom.loadingSlots.style.display, 'none')
   assert.notEqual(slotsList.style.display, 'none')
+})
+
+test('opening or closing the item form does not touch the slots preview', async () => {
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  const slotsList = dom.slotsWrapper.querySelector('[data-availability-element="slots-list"]')
+  assert.ok(slotsList)
+  assert.notEqual(slotsList.style.display, 'none')
+  assert.equal(dom.loadingSlots.style.display, 'none')
+
+  const generalCard = dom.list.children.find((el) => el.dataset.id === 'general')
+  const editBtn = generalCard.children[0].children[2].children[0]
+  editBtn.click() // open
+  await settle()
+  editBtn.click() // close
+  await settle()
+
+  assert.notEqual(slotsList.style.display, 'none')
+  assert.equal(dom.loadingSlots.style.display, 'none')
 })
 
 /* ------------------------------------------------------------------ */

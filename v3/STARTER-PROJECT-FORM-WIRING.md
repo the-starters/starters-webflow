@@ -1,7 +1,7 @@
-# V3 Starter project proposal form wiring
+# V3 Starter project form wiring
 
 `v3/starter-project-form.js` connects the existing V3 Starter Dashboard
-**Start a Project** modal to the authenticated V3 project proposal endpoints.
+**Start a Project** modal to the authenticated V3 project endpoints.
 V2 is a behavior reference only. This controller does not call a V2 route,
 Airtable, Make, or a legacy TalkJS table.
 
@@ -12,8 +12,11 @@ Airtable, Make, or a legacy TalkJS table.
 - Keep `#Project-Name` and the existing commercial fields.
 - Do not add or send Connection Type.
 - Do not show opportunity choices or prefill Project Scope yet.
-- Submit a proposal that waits for Brand approval. Do not report that a project
-  or contract was created.
+- Create the canonical project immediately after the server verifies the
+  Starter-to-Brand relationship and commercial fields.
+- For a Standard Contract, enqueue contract generation immediately. Brand and
+  Starter can sign in either order. Both signatures activate the project.
+- Do not add a separate Brand **Approve Project** or **Decline Request** step.
 
 ## Backend contract required before Webflow wiring
 
@@ -37,9 +40,10 @@ Do not return message text or use the browser's Brand value as authority.
 
 `POST projects/submit/v3` accepts the stable `brand_id`, the shared commercial
 payload, and an idempotency key. It must recheck the active relationship and
-create one `core_project_proposals_v3` row with
-`status=awaiting_brand_approval`. It must create zero projects, contract jobs,
-emails, invoices, and points events.
+create one `core_projects_v3` row plus one `project.created` lifecycle event.
+A Standard Contract creates one PandaDoc outbox job. An Own Contract uses the
+existing active-project branch and creates no PandaDoc job. The endpoint must
+not create a proposal row or require a later approval action.
 
 ## Existing Designer contract
 
@@ -73,11 +77,22 @@ Do not add the last loader until both V3 endpoints exist and pass backend tests.
 After release, install it on the reusable V3 **Start a Project** component so
 the existing Navbar action opens the same modal wherever that component renders.
 
+## Backend release evidence
+
+Frontend unit tests and mocked route tests do not prove canonical Xano writes or
+PandaDoc outbox behavior. Before installing the loader, run a separately approved,
+bounded backend canary and read back the canonical records. The evidence must show
+one project and one `project.created` event for each submission, exactly one
+PandaDoc outbox job for a Standard Contract, and no PandaDoc outbox job for an Own
+Contract. Stop at the first mismatch and do not treat prior frontend evidence as
+backend acceptance.
+
 ## User states
 
 - No eligible Brand: **You can start a project after a Brand messages you.**
-- Successful submit: **Project request sent. The Brand can review and accept your project request.**
+- Successful Standard Contract submit: **Project successfully created. Your contract is being prepared. You and the Brand can sign when it is ready.**
+- Successful Own Contract submit: **Project successfully created. Your project is now active.**
 - Stale relationship: ask the Starter to refresh the available Brands and retry.
 
-The success event is `starters:project-proposal-created`. The controller never
-dispatches the canonical project-created event for a Starter proposal.
+The success event is `starters:project-created`. Its detail contains only the
+stable `project_id` and replay state.

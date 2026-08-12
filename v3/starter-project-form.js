@@ -3,8 +3,9 @@
  *
  * Webflow owns the modal and all form markup. This controller binds the
  * existing native Brand select to Xano-authorized options, reuses the
- * shared commercial serializer from v3/project-form.js, and submits a pending
- * Starter proposal. It never creates a canonical project.
+ * shared commercial serializer from v3/project-form.js, and creates the
+ * canonical project. Standard Contract signatures replace a separate Brand
+ * approval step.
  */
 ;(function (global) {
   'use strict'
@@ -23,6 +24,13 @@
   var SUCCESS_SELECTOR = '[data-project-form-state="success"], .w-form-done'
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
   var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
+  var CREATED_PROJECT_STATES = {
+    contract_create_pending: true,
+    contract_draft: true,
+    contract_sent: true,
+    signature_partial: true,
+    active: true,
+  }
   var STARTER_PAYLOAD_FIELDS = [
     'title',
     'service',
@@ -53,6 +61,14 @@
   function positiveId(value) {
     var parsed = Number(clean(value))
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  }
+
+  function createdProject(result) {
+    var project = result && result.project
+    var lifecycleState = clean(project && project.lifecycle_state).toLowerCase()
+    return positiveId(project && project.id) && CREATED_PROJECT_STATES[lifecycleState]
+      ? project
+      : null
   }
 
   function formState(form) {
@@ -384,24 +400,30 @@
     var current = formState(form)
     current.key = ''
     current.keyPayload = ''
+    var project = result && result.project
+    var projectId = positiveId(project && project.id)
+    var isActive = project && project.lifecycle_state === 'active'
     var success = stateElement(form, SUCCESS_SELECTOR)
     if (success) {
       var titles = success.querySelectorAll ? success.querySelectorAll('[data-project-success-title], .generate-contract_success-text') : []
-      Array.prototype.forEach.call(titles, function (title) { title.textContent = 'Project request sent' })
+      Array.prototype.forEach.call(titles, function (title) { title.textContent = 'Project successfully created' })
       var message = success.querySelector && success.querySelector('[data-project-success-message]')
-      if (message) message.textContent = 'The Brand can review and accept your project request.'
+      if (message) {
+        message.textContent = isActive
+          ? 'Your project is now active.'
+          : 'Your contract is being prepared. You and the Brand can sign when it is ready.'
+      }
       success.hidden = false
       if (success.style) success.style.display = 'block'
       if (form.style) form.style.display = 'none'
     }
-    var proposal = result && result.proposal
     if (typeof global.CustomEvent === 'function' && documentObject && documentObject.dispatchEvent) {
-      documentObject.dispatchEvent(new global.CustomEvent('starters:project-proposal-created', {
-        detail: { proposal_id: positiveId(proposal && proposal.id), replayed: Boolean(result && result.replayed) },
+      documentObject.dispatchEvent(new global.CustomEvent('starters:project-created', {
+        detail: { project_id: projectId, replayed: Boolean(result && result.replayed) },
       }))
     }
     if (global.StartersTrack && typeof global.StartersTrack.track === 'function') {
-      global.StartersTrack.track('project_proposal_submitted', { proposal_id: positiveId(proposal && proposal.id) })
+      global.StartersTrack.track('project_created', { project_id: projectId })
     }
   }
 
@@ -409,9 +431,9 @@
     var status = error && Number(error.status)
     if (status === 401) return 'Your session expired. Sign in and try again.'
     if (status === 403) return 'That Brand is no longer eligible. Refresh the Brand list.'
-    if (status === 409) return 'A project request already exists for this Brand.'
+    if (status === 409) return 'A project already exists for this request.'
     if (status === 422) return 'Review the project details and try again.'
-    return 'The project request could not be sent. Try again.'
+    return 'The project could not be created. Try again.'
   }
 
   function submit(form, globalObject, documentObject) {
@@ -439,7 +461,7 @@
     serialized.payload.idempotency_key = current.key
     var request = projectApi(globalObject, 'projectSubmit')
     if (!request) {
-      setStatus(form, 'error', 'The project request service is not available. Reload and try again.')
+      setStatus(form, 'error', 'The project service is not available. Reload and try again.')
       return Promise.resolve(false)
     }
     setStatus(form, 'submitting', '')
@@ -448,6 +470,10 @@
       .then(function () { return request(serialized.payload) })
       .then(function (result) {
         if (generation !== current.generation) return false
+        if (!createdProject(result)) {
+          setStatus(form, 'error', safeError())
+          return false
+        }
         showSuccess(form, result, documentObject)
         return true
       })

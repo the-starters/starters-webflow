@@ -828,6 +828,11 @@
     publishCalendarConnectionState('loading')
     try {
       const memberId = await writeMemberId()
+      // Switching straight from Google to Platform (connect-platform stays
+      // clickable while manager === 'calendar') must clear the existing
+      // Google grant first — otherwise it's orphaned, still connected in
+      // Nylas, while the local state moves on to platform.
+      await clearGrant(memberId, grantId)
       const virtual = await createVirtualCalendarFlow(memberId)
       if (virtual.status !== 200) throw new Error('Virtual calendar setup failed')
       grantId = virtual.grant_id
@@ -1027,21 +1032,8 @@
   /* Connection chrome (connect-wrapper / main-wrapper)                  */
   /* ------------------------------------------------------------------ */
 
-  function findConnectLabelGroup(wrapper) {
-    const groups = qsa('.button-group', wrapper)
-    for (let i = 0; i < groups.length; i++) {
-      const g = groups[i]
-      if (g.hasAttribute(EL)) continue
-      if (g.classList.contains('is-max-width-none')) continue
-      return g
-    }
-    return null
-  }
-
   function applyConnectLabels(state) {
-    const wrapper = qs(elSel('connect-wrapper'))
-    if (!wrapper) return
-    const group = findConnectLabelGroup(wrapper)
+    const group = qs(elSel('connect-label-group'))
     if (!group || !group.children) return
     const connected = state === 'connected'
     if (group.children[0]) group.children[0].style.display = connected ? 'none' : ''
@@ -1091,10 +1083,10 @@
   /* ------------------------------------------------------------------ */
 
   function getItemHeadlineParts(card) {
-    const headline = qs('.availability-settings_item-headline', card)
-    if (!headline) return {}
-    const wrappers = qsa('.availability-settings_description-wrapper', headline)
-    return { timeWrapper: wrappers[0] || null, daysWrapper: wrappers[1] || null }
+    return {
+      timeWrapper: qs(elSel('item-time-wrapper'), card),
+      daysWrapper: qs(elSel('item-days-wrapper'), card),
+    }
   }
 
   function getItemFormPieces(card) {
@@ -1137,20 +1129,19 @@
   // custom window apart from the default schedule. Verify against a real
   // multi-item starter record before shipping; flip the ternary if wrong.
   function applyItemTag(card, id) {
-    const topContent = qs('.availability-settings_top-content', card)
+    const topContent = qs(elSel('item-top-content'), card)
     const tag = topContent && topContent.children ? topContent.children[1] : null
     if (!tag) return
     tag.style.display = id === 'general' ? 'none' : ''
   }
 
-  // The Designer template's example "General Availability" item has both
-  // action buttons hidden by default (matching the "Main schedule" tag's
-  // hidden-by-default polarity). Every item needs its edit button visible;
+  // Every item needs its edit button (and the row that holds it) visible;
   // `general` can never be removed (see handleAvailabilityRemove's guard),
   // so its remove button stays hidden while override items show both.
   function applyItemActionVisibility(card, id) {
-    const buttonGroup = qs('.availability-settings_button-group', card)
+    const buttonGroup = qs(elSel('item-button-group'), card)
     if (!buttonGroup) return
+    buttonGroup.style.display = ''
     const editBtn = resolveActionTarget(buttonGroup, 'item-form-open', 0)
     const removeBtn = resolveActionTarget(buttonGroup, 'item-remove', 1)
     if (editBtn) editBtn.style.display = ''
@@ -1213,14 +1204,17 @@
   }
 
   function bindItemActions(card, id) {
-    const buttonGroup = qs('.availability-settings_button-group', card)
+    const buttonGroup = qs(elSel('item-button-group'), card)
     bindActionGroup(buttonGroup, ['item-form-open', 'item-remove'], function (action) {
       if (action === 'item-form-open') {
+        // Opening/closing the form is a pure UI toggle — it doesn't change
+        // availability data, so it must not disturb the slots preview.
         toggleItemForm(card, id)
-        renderSlotsPreview()
       } else if (action === 'item-remove') {
-        handleAvailabilityRemove(card, id)
-        renderSlotsPreview()
+        // Wait for the mutation to actually land before refreshing slots —
+        // firing them concurrently could render a slots list computed from
+        // the availability that's about to be replaced.
+        handleAvailabilityRemove(card, id).then(renderSlotsPreview)
       }
     })
 
@@ -1235,8 +1229,7 @@
         if (availability.items[id]) closeItemForm(card)
         else card.remove()
       } else if (action === 'item-form-submit') {
-        availFormHandler(card, id)
-        renderSlotsPreview()
+        availFormHandler(card, id).then(renderSlotsPreview)
       }
     })
   }
