@@ -2235,7 +2235,7 @@ test('View Contract is limited to recipient-viewable canonical document states',
   assert.equal(isViewable({ pandadoc_document_id: 'doc-675' }), false)
 })
 
-test('contract signing panel reducer enforces Standard Contract and Brand-first signing', async () => {
+test('contract signing panel reducer allows either party to sign first', async () => {
   const bridge = await loadBridge(async () => response({}))
   const reduce = bridge.window.Opp30.projectContractPanelState
   const base = {
@@ -2252,18 +2252,19 @@ test('contract signing panel reducer enforces Standard Contract and Brand-first 
   assert.equal(reduce({ ...base, contract_source: 'own' }, 'brand').visible, false)
   assert.equal(reduce({ ...base, sync_origin: 'v2' }, 'brand').visible, false)
   assert.equal(reduce(base, 'brand').action, 'sign')
-  assert.equal(reduce(base, 'starter').action, null)
-  assert.equal(reduce(base, 'starter').state, 'waiting')
+  assert.equal(reduce(base, 'starter').action, 'sign')
+  assert.equal(reduce(base, 'starter').state, 'action')
 
   const brandSigned = { ...base, brand_signed_at: '2026-08-12T01:00:00Z' }
   assert.equal(reduce(brandSigned, 'brand').action, 'view')
   assert.equal(reduce(brandSigned, 'starter').action, 'sign')
 
-  const outOfOrder = { ...base, starter_signed_at: '2026-08-12T01:01:00Z' }
-  assert.equal(reduce(outOfOrder, 'brand').action, null)
-  assert.equal(reduce(outOfOrder, 'brand').state, 'attention')
-  assert.equal(reduce(outOfOrder, 'starter').action, null)
-  assert.equal(reduce(outOfOrder, 'starter').state, 'attention')
+  const starterSignedFirst = { ...base, starter_signed_at: '2026-08-12T01:01:00Z' }
+  assert.equal(reduce(starterSignedFirst, 'brand').action, 'sign')
+  assert.equal(reduce(starterSignedFirst, 'brand').state, 'action')
+  assert.equal(reduce(starterSignedFirst, 'brand').title, 'Taylor has signed')
+  assert.equal(reduce(starterSignedFirst, 'starter').action, 'view')
+  assert.equal(reduce(starterSignedFirst, 'starter').state, 'waiting')
 
   const bothSigned = {
     ...brandSigned,
@@ -2409,8 +2410,9 @@ test('contract panel refreshes canonical signing state after returning from Pand
     },
   )
 
-  assert.ok(await waitFor(() => title.textContent === 'Waiting for Acme to sign'))
-  assert.equal(actions.style.display, 'none')
+  assert.ok(await waitFor(() => title.textContent === 'Your signature is required'))
+  assert.equal(signWrap.style.display, '')
+  assert.equal(viewWrap.style.display, 'none')
 
   bridge.dispatchWindow('pageshow')
 
