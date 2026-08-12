@@ -209,14 +209,14 @@ test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', ()
 
 test('normalizes the navbar trigger and disables duplicate Start a Project modals', () => {
   const { api } = load({ noDocument: true })
+  const legacy = new Element({ 'data-modal-target': 'start-project' })
+  legacy.form = new Element()
   const canonical = new Element({ 'data-modal-target': 'start-project' })
-  canonical.form = new Element()
-  const duplicate = new Element({ 'data-modal-target': 'start-project' })
-  duplicate.form = new Element()
+  canonical.form = formFixture().form
   const nestedLink = new Element({ href: '/opportunities-freelancer-view', className: 'clickable_link' })
   const document = {
     querySelectorAll(selector) {
-      if (selector === 'dialog[data-modal-target="start-project"]') return [canonical, duplicate]
+      if (selector === 'dialog[data-modal-target="start-project"]') return [legacy, canonical]
       if (selector === '[data-modal-trigger="start-project"] a.clickable_link') return [nestedLink]
       return []
     },
@@ -224,8 +224,26 @@ test('normalizes the navbar trigger and disables duplicate Start a Project modal
 
   assert.equal(api.normalizeModalMarkup(document), true)
   assert.equal(canonical.getAttribute('data-modal-target'), 'start-project')
-  assert.equal(duplicate.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
+  assert.equal(legacy.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
   assert.equal(nestedLink.getAttribute('href'), '#start-project')
+})
+
+test('disables every target when no modal has the native V3 form contract', () => {
+  const { api } = load({ noDocument: true })
+  const first = new Element({ 'data-modal-target': 'start-project' })
+  first.form = new Element()
+  const second = new Element({ 'data-modal-target': 'start-project' })
+  second.form = new Element()
+  const document = {
+    querySelectorAll(selector) {
+      if (selector === 'dialog[data-modal-target="start-project"]') return [first, second]
+      return []
+    },
+  }
+
+  assert.equal(api.normalizeModalMarkup(document), false)
+  assert.equal(first.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
+  assert.equal(second.getAttribute('data-modal-target'), 'start-project-legacy-disabled-2')
 })
 
 test('selecting a Brand stores its ID and clears stale sample email', () => {

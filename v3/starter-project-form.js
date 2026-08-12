@@ -503,8 +503,14 @@
     if (!documentObject || !documentObject.querySelectorAll) return false
     var dialogs = Array.prototype.slice.call(documentObject.querySelectorAll(MODAL_SELECTOR))
     var canonical = dialogs.find(function (dialog) {
-      return dialog && dialog.querySelector && dialog.querySelector('form')
-    }) || dialogs[0]
+      if (!dialog || !dialog.querySelector) return false
+      var form = dialog.querySelector('form')
+      return form &&
+        form.querySelector(BRAND_SELECT_SELECTOR) &&
+        form.querySelector(BRAND_ID_SELECTOR) &&
+        form.querySelector(MANAGER_NAME_SELECTOR) &&
+        form.querySelector(COMPANY_NAME_SELECTOR)
+    })
     var duplicateNumber = 0
     dialogs.forEach(function (dialog) {
       if (!dialog || dialog === canonical || !dialog.setAttribute) return
