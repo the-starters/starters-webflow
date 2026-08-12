@@ -27,10 +27,27 @@
   var CONTROLLER_VERSION = 'talent-application-v1'
   var WORKFLOW = 'talent_application'
   var workflowDiagnosticsControllerScript = document.currentScript
+  var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
+
+  function boundedWorkflowDiagnostics(promise) {
+    return new Promise(function (resolve) {
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
+      Promise.resolve(promise).then(finish, function () { finish(null) })
+    })
+  }
 
   function loadWorkflowDiagnostics() {
     if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics)
-    if (window.__startersWorkflowDiagnosticsReady) return window.__startersWorkflowDiagnosticsReady
+    if (window.__startersWorkflowDiagnosticsReady) {
+      return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
+    }
     var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
     if (!source || !document.createElement) return Promise.resolve(null)
     var url = ''
@@ -46,15 +63,23 @@
     }
     window.__startersWorkflowDiagnosticsReady = new Promise(function (resolve) {
       var script = document.createElement('script')
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
       script.src = url
       script.async = false
       script.addEventListener('load', function () {
-        resolve(window.StartersWorkflowDiagnostics || null)
+        finish(window.StartersWorkflowDiagnostics)
       }, { once: true })
-      script.addEventListener('error', function () { resolve(null) }, { once: true })
+      script.addEventListener('error', function () { finish(null) }, { once: true })
       ;(document.head || document.documentElement).appendChild(script)
     })
-    return window.__startersWorkflowDiagnosticsReady
+    return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
   }
 
   var workflowDiagnosticsReady = loadWorkflowDiagnostics()

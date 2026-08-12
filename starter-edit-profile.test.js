@@ -28,7 +28,12 @@ class Target {
   getAttribute(name) { return this.attributes.get(name) ?? null }
 }
 
-function createEnvironment(fetchImpl, { browserGlobal = false, workflowDiagnostics = false } = {}) {
+function createEnvironment(fetchImpl, {
+  browserGlobal = false,
+  workflowDiagnostics = false,
+  workflowDiagnosticsReady = null,
+  setTimeoutImpl = () => 1,
+} = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
   const memberAuthUpdates = []
@@ -117,7 +122,8 @@ function createEnvironment(fetchImpl, { browserGlobal = false, workflowDiagnosti
     },
     waitProfileData() {},
     waitForMember(callback) { callback(this.MEMBER) },
-    setTimeout() { return 1 },
+    clearTimeout() {},
+    setTimeout: setTimeoutImpl,
     location: { replace() {}, hostname: 'the-starters-3-0.webflow.io' },
     intlTelInput: Object.assign(() => ({}), { getInstance: () => null }),
     $memberstackDom: {
@@ -133,6 +139,9 @@ function createEnvironment(fetchImpl, { browserGlobal = false, workflowDiagnosti
     navigator: { clipboard: { writeText: async (value) => copied.push(value) } },
     StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
     console,
+  }
+  if (workflowDiagnosticsReady) {
+    window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
 
   const sandbox = {
@@ -266,12 +275,29 @@ async function testPrivacySafeDiagnostics() {
   )
 }
 
+async function testStalledDiagnosticsFailOpen() {
+  let requests = 0
+  const environment = createEnvironment(async () => {
+    requests += 1
+    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+  }, {
+    workflowDiagnosticsReady: new Promise(() => {}),
+    setTimeoutImpl: (callback, ms) => ms === 2000 ? setImmediate(callback) : 1,
+  })
+
+  await submit(environment)
+
+  assert.equal(requests, 1)
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+}
+
 Promise.all([
   testSuccess(),
   testNon2xx(),
   testRejectedFetch(),
   testBrowserGlobalDoesNotRecurse(),
   testPrivacySafeDiagnostics(),
+  testStalledDiagnosticsFailOpen(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {

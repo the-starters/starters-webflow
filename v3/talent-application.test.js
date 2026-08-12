@@ -73,7 +73,12 @@ function makeSelect(options, selectedIndex) {
   return { options, selectedIndex }
 }
 
-function load({ fetchImpl }) {
+function load({
+  fetchImpl,
+  workflowDiagnostics = true,
+  workflowDiagnosticsReady = null,
+  setTimeoutImpl = setTimeout,
+} = {}) {
   const listeners = []
   const assigned = []
   const stored = new Map()
@@ -90,6 +95,8 @@ function load({ fetchImpl }) {
       sessionStorage: { setItem: (key, value) => stored.set(key, value) },
       navigator: { clipboard: { writeText: async (value) => copied.push(value) } },
       StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
+      clearTimeout,
+      setTimeout: setTimeoutImpl,
     },
     document: {
       addEventListener: (type, handler, capture) => listeners.push({ type, handler, capture }),
@@ -108,9 +115,12 @@ function load({ fetchImpl }) {
     Math,
     Uint32Array,
   }
+  if (workflowDiagnosticsReady) {
+    context.window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
+  }
   context.window.document = context.document
   vm.createContext(context)
-  vm.runInContext(diagnosticSource, context)
+  if (workflowDiagnostics) vm.runInContext(diagnosticSource, context)
   vm.runInContext(source, context)
   return { listeners, assigned, context, stored, tracked, copied }
 }
@@ -267,6 +277,27 @@ test('success records only the canonical application id before redirect', async 
   assert.equal(tracked.at(-1).name, 'workflow_form_submit_succeeded')
   assert.equal(form.__startersDiagnostic.resource_id, '709')
   assert.equal(Object.hasOwn(form.__startersDiagnostic, 'email'), false)
+})
+
+test('a stalled shared diagnostics loader fails open before application creation', async () => {
+  const calls = []
+  const { listeners } = load({
+    fetchImpl: (url, options) => {
+      calls.push({ url, options })
+      return Promise.resolve({ ok: true, status: 201, json: () => Promise.resolve({ id: 710 }) })
+    },
+    workflowDiagnostics: false,
+    workflowDiagnosticsReady: new Promise(() => {}),
+    setTimeoutImpl: (callback, ms) => ms === 2000 ? setImmediate(callback) : setTimeout(callback, ms),
+  })
+  const form = makeForm(FULL_ENTRIES)
+
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+  await tick()
+  await tick()
+  await tick()
+
+  assert.equal(calls.length, 1)
 })
 
 test('visible validation failure records no request and gives a copyable id', () => {
