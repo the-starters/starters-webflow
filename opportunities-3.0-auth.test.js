@@ -287,7 +287,7 @@ test('projectDirectCreate sends its payload through the authenticated V3 route',
   assert.deepEqual(JSON.parse(requests[1].init.body), payload)
 })
 
-test('project proposal options, submission, and decisions use authenticated V3 routes', async () => {
+test('project options and canonical Starter submission use authenticated V3 routes', async () => {
   const requests = []
   const bridge = await loadBridge(
     async (input, init = {}) => {
@@ -298,10 +298,10 @@ test('project proposal options, submission, and decisions use authenticated V3 r
         return response({ counterparties: [{ counterparty_id: 81, company_name: 'Acme' }] })
       }
       if (url.includes('/projects/submit/v3')) {
-        return response({ proposal: { id: 72, status: 'awaiting_brand_approval' } })
-      }
-      if (url.includes('/projects/proposal-action/v3')) {
-        return response({ proposal: { id: 72, status: 'accepted' }, project: { id: 669 } })
+        return response({
+          project: { id: 669, lifecycle_state: 'contract_create_pending' },
+          replayed: false,
+        })
       }
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -309,19 +309,12 @@ test('project proposal options, submission, and decisions use authenticated V3 r
   )
 
   const options = await bridge.API.projectOptions()
-  const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-proposal-test' }
+  const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-project-test' }
   const result = await bridge.API.projectSubmit(payload)
-  const decision = {
-    proposal_id: 72,
-    expected_version: 1,
-    action: 'accept',
-    idempotency_key: 'proposal-action-test',
-  }
-  const accepted = await bridge.API.projectProposalAction(decision)
 
   assert.equal(options.counterparties[0].counterparty_id, 81)
-  assert.equal(result.proposal.status, 'awaiting_brand_approval')
-  assert.equal(accepted.project.id, 669)
+  assert.equal(result.project.id, 669)
+  assert.equal(result.project.lifecycle_state, 'contract_create_pending')
   assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/options/v3')
   assert.equal(requests[1].init.method, 'POST')
   assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
@@ -329,9 +322,35 @@ test('project proposal options, submission, and decisions use authenticated V3 r
   assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/submit/v3')
   assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
   assert.deepEqual(JSON.parse(requests[2].init.body), payload)
-  assert.equal(requests[3].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-action/v3')
-  assert.equal(requests[3].init.headers.Authorization, 'Bearer xano-token')
-  assert.deepEqual(JSON.parse(requests[3].init.body), decision)
+})
+
+test('superseded proposal controller retains its authenticated decision route', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/proposal-action/v3')) {
+        return response({ proposal: { id: 72, status: 'accepted' }, project: { id: 669 } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+  const decision = {
+    proposal_id: 72,
+    expected_version: 1,
+    action: 'accept',
+    idempotency_key: 'proposal-action-test',
+  }
+
+  const accepted = await bridge.API.projectProposalAction(decision)
+
+  assert.equal(accepted.project.id, 669)
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/proposal-action/v3')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), decision)
 })
 
 test('invoiceCreate sends the V3 invoice payload through the authenticated Xano bridge', async () => {
