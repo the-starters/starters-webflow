@@ -105,26 +105,30 @@
     const ready = root.querySelector(elementSelector('ready'))
     const disconnected = root.querySelector(elementSelector('disconnected'))
     const wrapper = ready && ready.querySelector('.action-item_button-wrapper')
-    const source =
+    const authoredReadyControl =
+      ready && ready.querySelector('.action-item_button-wrapper > *')
+    const disconnectedSource =
       disconnected &&
       disconnected.querySelector('.action-item_button-wrapper > *')
+    const source = authoredReadyControl || disconnectedSource
 
     if (!wrapper || !source || typeof source.cloneNode !== 'function') return []
 
     const created = []
     if (!ready.querySelector(actionSelector('dashboard'))) {
       const dashboard = configureConnectedControl(
-        source.cloneNode(true),
+        authoredReadyControl || source.cloneNode(true),
         'dashboard',
         'Open Stripe',
       )
-      wrapper.appendChild(dashboard)
+      if (!authoredReadyControl) wrapper.appendChild(dashboard)
       created.push(dashboard)
     }
 
     if (!ready.querySelector(actionSelector('disconnect'))) {
+      const dashboard = ready.querySelector(actionSelector('dashboard'))
       const disconnect = configureConnectedControl(
-        source.cloneNode(true),
+        (dashboard || source).cloneNode(true),
         'disconnect',
         'Disconnect Stripe',
       )

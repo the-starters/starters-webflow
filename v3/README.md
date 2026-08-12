@@ -2382,12 +2382,15 @@ root, use these values:
 
 Give every Connect or Complete setup control
 `data-stripe-connect-action="start"`. An optional retry control can use
-`data-stripe-connect-action="refresh"`. Keep an empty
-`.action-item_button-wrapper` in the `ready` state and an existing Webflow
-button component as the first child of the disconnected state's
-`.action-item_button-wrapper`. At startup, the controller clones that component
-into the ready wrapper as accessible `Open Stripe` and `Disconnect Stripe`
-controls. It assigns `data-stripe-connect-action="dashboard"` and
+`data-stripe-connect-action="refresh"`. Keep an
+`.action-item_button-wrapper` in the `ready` state. If its first child is an
+authored Webflow button component, the controller reuses that component as the
+accessible `Open Stripe` control, so the ready state cannot retain a conflicting
+`Connect Stripe` CTA. Otherwise, keep an existing Webflow button component as
+the first child of the disconnected state's `.action-item_button-wrapper`; the
+controller clones it into the ready wrapper. The controller clones the resolved
+Open Stripe component for `Disconnect Stripe`, assigns
+`data-stripe-connect-action="dashboard"` and
 `data-stripe-connect-action="disconnect"`, respectively, and does not add a
 second copy if either action already exists. Open Stripe requests the exact
 provider-verified connected account destination. Disconnect Stripe asks for an
