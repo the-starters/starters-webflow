@@ -2476,18 +2476,6 @@
       }
     }
 
-    if (starterSigned) {
-      return {
-        ...base,
-        state: brandSigned ? 'waiting' : 'attention',
-        title: brandSigned ? 'Both signatures are complete' : 'Waiting for ' + companyName,
-        body: brandSigned
-          ? 'The project is being activated. This status will update automatically.'
-          : companyName + ' must sign before the project can be activated.',
-        action: 'view',
-        actionLabel: 'View Contract',
-      }
-    }
     if (!brandSigned) {
       return {
         ...base,
@@ -2756,20 +2744,20 @@
     }
   }
 
-  async function currentProjectContext(card, refresh = false, fallbackOnRefreshFailure = false) {
+  function invalidateProjectWorkflowProjection(role) {
+    if (projectWorkflowRole !== role || projectRoleForPath() !== role) return
+    projectWorkflowItems = new Map()
+    decorateProjectCards()
+  }
+
+  async function currentProjectContext(card, refresh = false) {
     const cachedProject = projectContextFromCard(card)
     let project = refresh ? null : cachedProject
     if (project && (project.lifecycle_state || project.status)) return project
     try {
       await refreshProjectWorkflow(projectWorkflowRole, refresh)
     } catch (error) {
-      if (
-        fallbackOnRefreshFailure &&
-        cachedProject &&
-        (cachedProject.lifecycle_state || cachedProject.status)
-      ) {
-        return cachedProject
-      }
+      if (refresh) invalidateProjectWorkflowProjection(projectWorkflowRole)
       throw error
     }
     project = projectContextFromCard(card)
@@ -2781,10 +2769,7 @@
       await refreshProjectWorkflow(role, true)
       return true
     } catch (error) {
-      if (projectWorkflowRole === role && projectRoleForPath() === role) {
-        projectWorkflowItems = new Map()
-        decorateProjectCards()
-      }
+      invalidateProjectWorkflowProjection(role)
       console.error('[opp30:project-action] ' + operation + ' projection refresh failed', error)
       return false
     }

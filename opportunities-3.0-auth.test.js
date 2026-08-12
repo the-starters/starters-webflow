@@ -2274,6 +2274,8 @@ test('View Contract fails closed when the canonical refresh transiently fails', 
   assert.deepEqual(requests, [])
   assert.deepEqual(contractWindow.location, {})
   assert.equal(contractWindow.opener, bridge.window)
+  assert.equal(wrap.style.display, 'none')
+  assert.equal(wrap.getAttribute('aria-hidden'), 'true')
   assert.equal(label.textContent, 'Contract is unavailable. Please try again.')
 })
 
