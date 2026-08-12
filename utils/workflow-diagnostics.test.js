@@ -8,8 +8,8 @@ const vm = require('node:vm')
 
 const SOURCE = fs.readFileSync(path.join(__dirname, 'workflow-diagnostics.js'), 'utf8')
 
-function load() {
-  const stored = new Map()
+function load(existingStorage) {
+  const stored = existingStorage || new Map()
   const tracked = []
   const copied = []
   const window = {
@@ -18,7 +18,10 @@ function load() {
     Math,
     Uint32Array,
     crypto: { randomUUID: () => '12345678-90ab-cdef-1234-567890abcdef' },
-    sessionStorage: { setItem: (key, value) => stored.set(key, value) },
+    sessionStorage: {
+      getItem: (key) => stored.get(key) || null,
+      setItem: (key, value) => stored.set(key, value),
+    },
     navigator: { clipboard: { writeText: async (value) => copied.push(value) } },
     console: { info() {} },
     StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
@@ -44,7 +47,7 @@ test('records an allowlisted receipt and omits arbitrary or unsafe fields', () =
   assert.match(started.diagnostic_id, /^WFD-TALENT_APPLI-\d{8}-12345678$/)
   assert.equal(Object.hasOwn(started, 'email'), false)
   assert.equal(Object.hasOwn(started, 'request_body'), false)
-  assert.equal(stored.size, 1)
+  assert.equal(stored.size, 2)
   assert.equal(tracked[0].name, 'workflow_form_submit_started')
   assert.equal(Object.hasOwn(tracked[0].properties, 'email'), false)
 })
@@ -104,4 +107,20 @@ test('formats, copies, and decorates the visible message without form data', asy
   assert.equal(copied.length, 1)
   assert.match(copied[0], /Workflow: starter_profile_edit/)
   assert.doesNotMatch(copied[0], /private@example\.com/)
+})
+
+test('restores and copies a redirecting receipt on the destination page', async () => {
+  const origin = load()
+  const receipt = origin.api.record(origin.api.create({
+    workflow: 'brand_account_build',
+    result: 'success',
+    stage: 'response',
+    request_started: true,
+  }))
+
+  const destination = load(origin.stored)
+  assert.equal(destination.api.latest('brand_account_build').diagnostic_id, receipt.diagnostic_id)
+  assert.equal(destination.window.__startersWorkflowDiagnosticLast.diagnostic_id, receipt.diagnostic_id)
+  assert.equal(await destination.window.copyWorkflowDiagnostic('brand_account_build'), true)
+  assert.match(destination.copied[0], /Workflow: brand_account_build/)
 })

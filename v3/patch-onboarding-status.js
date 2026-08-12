@@ -77,11 +77,28 @@
   var LOG_PREFIX = '[starters patch-onboarding-status]'
   var CONTROLLER_VERSION = 'patch-onboarding-status-v1'
   var WORKFLOW = 'starter_onboarding_completion'
+  var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
   var workflowDiagnosticsControllerScript = document.currentScript
+
+  function boundedWorkflowDiagnostics(promise) {
+    return new Promise(function (resolve) {
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
+      Promise.resolve(promise).then(finish, function () { finish(null) })
+    })
+  }
 
   function loadWorkflowDiagnostics() {
     if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics)
-    if (window.__startersWorkflowDiagnosticsReady) return window.__startersWorkflowDiagnosticsReady
+    if (window.__startersWorkflowDiagnosticsReady) {
+      return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
+    }
     var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
     if (!source || !document.createElement) return Promise.resolve(null)
     var url = ''
@@ -97,15 +114,23 @@
     }
     window.__startersWorkflowDiagnosticsReady = new Promise(function (resolve) {
       var script = document.createElement('script')
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
       script.src = url
       script.async = false
       script.addEventListener('load', function () {
-        resolve(window.StartersWorkflowDiagnostics || null)
+        finish(window.StartersWorkflowDiagnostics)
       }, { once: true })
-      script.addEventListener('error', function () { resolve(null) }, { once: true })
+      script.addEventListener('error', function () { finish(null) }, { once: true })
       ;(document.head || document.documentElement).appendChild(script)
     })
-    return window.__startersWorkflowDiagnosticsReady
+    return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
   }
 
   var workflowDiagnosticsReady = loadWorkflowDiagnostics()
@@ -378,7 +403,7 @@
   // Tolerant parsing copied verbatim in spirit from opportunities-3.0.js:
   // create_auth_token has been seen to answer a raw string, `{authToken}`, or
   // `{token}`, and all three are valid.
-  async function tradeForXanoToken() {
+  async function tradeForXanoToken(onRequest) {
     var memberstack = await waitForMemberstack()
     if (!memberstack) {
       var unavailable = new Error('Memberstack never became available')
@@ -386,6 +411,7 @@
       throw unavailable
     }
 
+    onRequest()
     var memberstackToken = await memberstack.getMemberCookie()
     if (!memberstackToken) throw loggedOutError()
 
@@ -407,9 +433,9 @@
 
   var xanoTokenPromise = null
 
-  function xanoToken() {
+  function xanoToken(onRequest) {
     if (!xanoTokenPromise) {
-      xanoTokenPromise = tradeForXanoToken().catch(function (error) {
+      xanoTokenPromise = tradeForXanoToken(onRequest).catch(function (error) {
         xanoTokenPromise = null
         throw error
       })
@@ -436,19 +462,28 @@
     var attempts = PATCH_RETRY_DELAYS_MS.length + 1
     var lastError = null
     var finalAttempt = 0
+    var requestStarted = false
+    var markRequestStarted = function () { requestStarted = true }
 
     for (var attempt = 0; attempt < attempts; attempt += 1) {
       finalAttempt = attempt
       if (attempt > 0) await delay(PATCH_RETRY_DELAYS_MS[attempt - 1])
       try {
-        var token = await xanoToken()
+        var token = await xanoToken(markRequestStarted)
+        markRequestStarted()
         var response = await fetchWithTimeout(XANO_ONBOARDING_BASE + SET_STATUS_PATH, {
           method: 'PATCH',
           headers: authHeaders(token),
         })
         if (response && response.ok) {
           note('onboarding_done set on attempt ' + (attempt + 1) + '.')
-          return { ok: true, code: null, status: response.status || 200, replayed: attempt > 0 }
+          return {
+            ok: true,
+            code: null,
+            status: response.status || 200,
+            replayed: attempt > 0,
+            request_started: requestStarted,
+          }
         }
         var responseError = new Error(
           'set_onboarding_status responded ' + ((response && response.status) || 'no response'),
@@ -477,6 +512,7 @@
       status: (lastError && Number(lastError.status)) || 0,
       timedOut: /timed out/i.test(describe(lastError)),
       replayed: finalAttempt > 0,
+      request_started: requestStarted,
     }
   }
 
@@ -527,10 +563,7 @@
           error_code: outcome && outcome.ok ? '' : diagnosticErrorCode(outcome),
           http_status: outcome && outcome.status,
           duration_ms: Date.now() - (wrapper.__startersOnboardingDiagnosticStartedAt || Date.now()),
-          request_started: !(
-            outcome &&
-            (outcome.code === 'logged-out' || outcome.code === 'memberstack-unavailable')
-          ),
+          request_started: Boolean(outcome && outcome.request_started),
           replayed: Boolean(outcome && outcome.replayed),
         })
         decorateOnboardingReceipt(
@@ -559,7 +592,7 @@
           stage: 'response',
           error_code: 'ONBOARDING_STATUS_FAILED',
           duration_ms: Date.now() - (wrapper.__startersOnboardingDiagnosticStartedAt || Date.now()),
-          request_started: true,
+          request_started: false,
         })
         decorateOnboardingReceipt(wrapper, receipt, 'error')
         warn('unexpected failure marking onboarding done: ' + describe(error))
