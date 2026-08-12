@@ -3298,7 +3298,7 @@
     wireProjectWorkflowListeners(role)
     // Webflow authors these controls visible. Hide contracts before the async
     // project projection arrives, and keep newly rendered cards fail-closed.
-    // Canonical sent/viewed/partial rows are revealed by the refresh below.
+    // The refresh below reveals only role-authorized Standard Contract state.
     decorateProjectCards()
     observeProjectCards()
     try {

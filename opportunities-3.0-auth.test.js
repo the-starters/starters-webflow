@@ -2086,6 +2086,70 @@ test('contract panel paints one badge per party and only the authorized role act
   assert.deepEqual(visibleBadges, ['brand-signed', 'starter-pending'])
 })
 
+test('contract panel refreshes canonical signing state after returning from PandaDoc', async () => {
+  const title = el('div', { 'data-project-contract-title': '' })
+  const body = el('div', { 'data-project-contract-body': '' })
+  const badges = [
+    'brand-pending', 'brand-signed', 'starter-pending', 'starter-signed',
+  ].map((value) => el('div', { 'data-project-contract-badge': value }))
+  const signAction = el('a', { 'data-project-contract-action': 'sign' })
+  const signWrap = el('div', { class: 'button_main-wrap' }, [signAction])
+  const viewAction = el('a', { 'data-project-contract-action': 'view' })
+  const viewWrap = el('div', { class: 'button_main-wrap' }, [viewAction])
+  const actions = el('div', { 'data-project-contract-actions': '' }, [signWrap, viewWrap])
+  const panel = el('div', { 'data-project-contract-panel': '' }, [
+    title, body, ...badges, actions,
+  ])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '708' }, [panel])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+  let listRequests = 0
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        listRequests += 1
+        return response({
+          items: [{
+            id: 708,
+            sync_origin: 'v3',
+            contract_source: 'standard',
+            lifecycle_state: listRequests === 1 ? 'contract_sent' : 'signature_partial',
+            contract_status: listRequests === 1 ? 'sent' : 'partial',
+            pandadoc_document_id: 'doc-708',
+            brand_signed_at: listRequests === 1 ? null : '2026-08-12T01:00:00Z',
+            company_name: 'Acme',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => title.textContent === 'Waiting for Acme to sign'))
+  assert.equal(actions.style.display, 'none')
+
+  bridge.dispatchWindow('pageshow')
+
+  assert.ok(await waitFor(() => listRequests === 2 && title.textContent === 'Acme has signed'))
+  assert.equal(signWrap.style.display, '')
+  assert.equal(viewWrap.style.display, 'none')
+  const visibleBadges = badges
+    .filter((badge) => badge.style.display === '')
+    .map((badge) => badge.getAttribute('data-project-contract-badge'))
+  assert.deepEqual(visibleBadges, ['brand-signed', 'starter-pending'])
+})
+
 test('View Contract fails closed when the canonical refresh transiently fails', async () => {
   const contract = el('a', { href: '#contract' })
   const label = el('div', { class: 'button_main-text' })
