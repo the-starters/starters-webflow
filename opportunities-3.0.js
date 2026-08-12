@@ -1903,7 +1903,13 @@
 
   /* ================= PROJECT DASHBOARD ACTIONS ================ */
   const PROJECT_CARD_SELECTOR = '.project_item[data-wf-xano-id]'
-  const PROJECT_CONTRACT_SELECTOR = 'a[href="#contract"], [data-project-action="contract"]'
+  const PROJECT_CONTRACT_SELECTOR =
+    'a[href="#contract"], [data-project-action="contract"], [data-project-contract-action]'
+  const PROJECT_CONTRACT_PANEL_SELECTOR = '[data-project-contract-panel]'
+  const PROJECT_CONTRACT_TITLE_SELECTOR = '[data-project-contract-title]'
+  const PROJECT_CONTRACT_BODY_SELECTOR = '[data-project-contract-body]'
+  const PROJECT_CONTRACT_BADGE_SELECTOR = '[data-project-contract-badge]'
+  const PROJECT_CONTRACT_ACTIONS_SELECTOR = '[data-project-contract-actions]'
   const PROJECT_END_SELECTOR =
     '[wf-xano-link="project-end"], [data-project-action="end"]'
   const PROJECT_REVIEW_SELECTOR =
@@ -1913,6 +1919,19 @@
   // This action calls PandaDoc's recipient view/sign session endpoint. Completed
   // documents require the separate protected-PDF delivery contract.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
+  const PROJECT_CONTRACT_PREPARING_LIFECYCLES = new Set([
+    'draft', 'contract_create_pending', 'contract_draft',
+  ])
+  const PROJECT_CONTRACT_PREPARING_STATUSES = new Set([
+    'not_requested', 'create_pending', 'uploaded', 'draft',
+  ])
+  const PROJECT_CONTRACT_ATTENTION_STATES = new Set([
+    'declined', 'expired', 'exception', 'error', 'contract_declined', 'contract_expired',
+  ])
+  const PROJECT_CONTRACT_HIDDEN_LIFECYCLES = new Set([
+    'active', 'completion_requested', 'termination_requested',
+    'completed', 'terminated', 'canceled', 'cancelled',
+  ])
   const PROJECT_TIMELINE_FIELD_SELECTOR = '[wf-xano-bind="timeline_display"]'
   const PROJECT_CONTRACT_DETAILS_SELECTOR =
     '[wf-xano-element="nest-target"][wf-xano-field="contract_details"]'
@@ -2199,7 +2218,15 @@
 
   function currentProjectContractAction(projectId, fallback = null) {
     const card = $$(PROJECT_CARD_SELECTOR).find((candidate) => projectIdFromCard(candidate) === projectId)
-    return (card && $(PROJECT_CONTRACT_SELECTOR, card)) || fallback
+    const actions = card ? $$(PROJECT_CONTRACT_SELECTOR, card) : []
+    return actions.find((action) => projectActionWrap(action).style.display !== 'none') || actions[0] || fallback
+  }
+
+  function currentProjectContractActions(projectId, fallback = null) {
+    const card = $$(PROJECT_CARD_SELECTOR).find((candidate) => projectIdFromCard(candidate) === projectId)
+    const actions = card ? $$(PROJECT_CONTRACT_SELECTOR, card) : []
+    if (!actions.length && fallback) actions.push(fallback)
+    return actions
   }
 
   function setProjectLifecyclePending(projectId, pending, fallback = null) {
@@ -2208,8 +2235,9 @@
   }
 
   function setProjectContractPending(projectId, pending, fallback = null) {
-    const action = currentProjectContractAction(projectId, fallback)
-    if (action) setOpportunityActionPending(projectActionWrap(action), pending)
+    currentProjectContractActions(projectId, fallback).forEach((action) => {
+      setOpportunityActionPending(projectActionWrap(action), pending)
+    })
   }
 
   function showProjectWorkflowFeedback(message, isError = false) {
@@ -2333,6 +2361,191 @@
     return Boolean(documentId) && PROJECT_VIEWABLE_CONTRACT_STATES.has(contractStatus)
   }
 
+  function projectContractPanelState(project, role) {
+    const hidden = {
+      visible: false,
+      state: 'hidden',
+      title: '',
+      body: '',
+      brandBadge: '',
+      starterBadge: '',
+      action: null,
+      actionLabel: '',
+    }
+    if (!project || !['brand', 'starter'].includes(role)) return hidden
+    const syncOrigin = String(project.sync_origin || '').trim().toLowerCase()
+    const contractSource = String(project.contract_source || '').trim().toLowerCase()
+    if (syncOrigin !== 'v3' || contractSource !== 'standard') return hidden
+
+    const lifecycle = String(project.lifecycle_state || '').trim().toLowerCase()
+    const contractStatus = String(project.contract_status || '').trim().toLowerCase()
+    if (PROJECT_CONTRACT_HIDDEN_LIFECYCLES.has(lifecycle)) return hidden
+
+    const brandSigned = Boolean(project.brand_signed_at)
+    const starterSigned = Boolean(project.starter_signed_at)
+    const starterName = String(project.starter_name || '').trim() || 'The Starter'
+    const companyName = String(project.company_name || '').trim() || 'The Brand'
+    const base = {
+      visible: true,
+      brandBadge: brandSigned ? 'brand-signed' : 'brand-pending',
+      starterBadge: starterSigned ? 'starter-signed' : 'starter-pending',
+    }
+
+    if (
+      PROJECT_CONTRACT_ATTENTION_STATES.has(lifecycle) ||
+      PROJECT_CONTRACT_ATTENTION_STATES.has(contractStatus)
+    ) {
+      return {
+        ...base,
+        state: 'attention',
+        title: 'Contract needs attention',
+        body: 'The contract cannot be signed right now. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      }
+    }
+    if (brandSigned && starterSigned) {
+      return {
+        ...base,
+        state: 'processing',
+        title: 'Both parties have signed',
+        body: 'The project is being activated. This status will update automatically.',
+        action: null,
+        actionLabel: '',
+      }
+    }
+    if (
+      PROJECT_CONTRACT_PREPARING_LIFECYCLES.has(lifecycle) ||
+      PROJECT_CONTRACT_PREPARING_STATUSES.has(contractStatus)
+    ) {
+      return {
+        ...base,
+        state: 'processing',
+        title: 'Preparing the contract',
+        body: 'The contract is being prepared. This status will update automatically.',
+        action: null,
+        actionLabel: '',
+      }
+    }
+
+    const recipientReady = projectContractIsViewable(project) &&
+      ['contract_sent', 'signature_partial'].includes(lifecycle)
+    if (!recipientReady) {
+      return {
+        ...base,
+        state: 'attention',
+        title: 'Contract is not available',
+        body: 'The contract status could not be confirmed. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      }
+    }
+
+    if (role === 'brand') {
+      if (!brandSigned) {
+        return {
+          ...base,
+          state: 'action',
+          title: 'Your signature is required',
+          body: starterSigned
+            ? starterName + ' has signed. Sign the contract to continue.'
+            : 'Sign the contract first. ' + starterName + ' can sign after you.',
+          action: 'sign',
+          actionLabel: 'Review & Sign Contract',
+        }
+      }
+      return {
+        ...base,
+        state: 'waiting',
+        title: 'Waiting for ' + starterName + ' to sign',
+        body: 'Your signature is complete. We will notify you when ' + starterName + ' signs.',
+        action: 'view',
+        actionLabel: 'View Contract',
+      }
+    }
+
+    if (starterSigned) {
+      return {
+        ...base,
+        state: brandSigned ? 'waiting' : 'attention',
+        title: brandSigned ? 'Both signatures are complete' : 'Waiting for ' + companyName,
+        body: brandSigned
+          ? 'The project is being activated. This status will update automatically.'
+          : companyName + ' must sign before the project can be activated.',
+        action: 'view',
+        actionLabel: 'View Contract',
+      }
+    }
+    if (!brandSigned) {
+      return {
+        ...base,
+        state: 'waiting',
+        title: 'Waiting for ' + companyName + ' to sign',
+        body: 'You can sign after ' + companyName + ' signs the contract.',
+        action: null,
+        actionLabel: '',
+      }
+    }
+    return {
+      ...base,
+      state: 'action',
+      title: companyName + ' has signed',
+      body: 'Your signature is required to activate this project.',
+      action: 'sign',
+      actionLabel: 'Review & Sign Contract',
+    }
+  }
+
+  function setProjectPanelNodeVisible(node, visible) {
+    if (!node) return
+    node.style.display = visible ? '' : 'none'
+    node.setAttribute('aria-hidden', visible ? 'false' : 'true')
+  }
+
+  function paintProjectContractPanel(card, project) {
+    if (!card) return
+    const state = projectContractPanelState(project, projectWorkflowRole)
+    const panel = $(PROJECT_CONTRACT_PANEL_SELECTOR, card)
+    if (panel) {
+      setProjectPanelNodeVisible(panel, state.visible)
+      panel.setAttribute('data-project-contract-state', state.state)
+      const title = $(PROJECT_CONTRACT_TITLE_SELECTOR, panel)
+      const body = $(PROJECT_CONTRACT_BODY_SELECTOR, panel)
+      if (title && title.textContent !== state.title) title.textContent = state.title
+      if (body && body.textContent !== state.body) body.textContent = state.body
+      $$(PROJECT_CONTRACT_BADGE_SELECTOR, panel).forEach((badge) => {
+        const value = badge.getAttribute('data-project-contract-badge')
+        setProjectPanelNodeVisible(
+          badge,
+          state.visible && (value === state.brandBadge || value === state.starterBadge),
+        )
+      })
+      const actionsWrap = $(PROJECT_CONTRACT_ACTIONS_SELECTOR, panel)
+      if (actionsWrap) setProjectPanelNodeVisible(actionsWrap, Boolean(state.action))
+      $$('[data-project-contract-action]', panel).forEach((action) => {
+        setProjectActionVisible(
+          action,
+          state.visible && action.getAttribute('data-project-contract-action') === state.action,
+        )
+        if (action.getAttribute('data-project-contract-action') === state.action) {
+          setProjectActionLabel(action, state.actionLabel)
+        }
+      })
+    }
+
+    // Keep the existing project-row contract control synchronized with the
+    // panel. It remains the compact action when the details panel is closed.
+    $$(PROJECT_CONTRACT_SELECTOR, card)
+      .filter((action) => !action.hasAttribute('data-project-contract-action'))
+      .forEach((action) => {
+        action.setAttribute('data-project-action', 'contract')
+        action.setAttribute('data-project-contract-current-action', state.action || '')
+        setProjectActionVisible(action, Boolean(state.action))
+        if (state.action) setProjectActionLabel(action, state.actionLabel)
+      })
+    return state
+  }
+
   // Parse date-only project fields as calendar parts instead of constructing a
   // local Date. That keeps a 2026-08-06 project on August 6 in every timezone.
   function projectDateParts(value) {
@@ -2421,13 +2634,11 @@
   function decorateProjectCard(card) {
     const project = projectContextFromCard(card)
     paintProjectTimeline(card, project)
-    const contract = $(PROJECT_CONTRACT_SELECTOR, card)
-    if (contract) {
-      contract.setAttribute('data-project-action', 'contract')
-      setProjectActionVisible(contract, projectContractIsViewable(project))
-      if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
+    paintProjectContractPanel(card, project)
+    if (projectWorkflowActionLocks.get(projectIdFromCard(card)) === 'contract') {
+      currentProjectContractActions(projectIdFromCard(card)).forEach((contract) => {
         setOpportunityActionPending(projectActionWrap(contract), true)
-      }
+      })
     }
     if (!project || !project.lifecycle_state && !project.status) return
     const state = lifecycleState(project)
@@ -2468,10 +2679,13 @@
     if (!role) return
     if (!projectWorkflowRole || role !== projectWorkflowRole) {
       $$(PROJECT_CARD_SELECTOR).forEach((card) => {
-        const contract = $(PROJECT_CONTRACT_SELECTOR, card)
-        if (!contract) return
-        contract.setAttribute('data-project-action', 'contract')
-        setProjectActionVisible(contract, false)
+        setProjectPanelNodeVisible($(PROJECT_CONTRACT_PANEL_SELECTOR, card), false)
+        $$(PROJECT_CONTRACT_SELECTOR, card).forEach((contract) => {
+          if (!contract.hasAttribute('data-project-contract-action')) {
+            contract.setAttribute('data-project-action', 'contract')
+          }
+          setProjectActionVisible(contract, false)
+        })
       })
       return
     }
@@ -2647,9 +2861,13 @@
         showProjectContractFeedback(projectId, 'Project details unavailable', true)
         return
       }
-      if (!projectContractIsViewable(project)) {
-        const liveAction = currentProjectContractAction(projectId)
-        if (liveAction) setProjectActionVisible(liveAction, false)
+      const panelState = projectContractPanelState(project, projectWorkflowRole)
+      const requestedAction =
+        action.getAttribute('data-project-contract-action') ||
+        action.getAttribute('data-project-contract-current-action') ||
+        ''
+      if (!panelState.visible || panelState.action !== requestedAction) {
+        decorateProjectCard(card)
         showProjectContractFeedback(projectId, 'Contract is not available yet', true)
         return
       }
@@ -2934,6 +3152,8 @@
       document.removeEventListener('click', binding.click, true)
       if (binding.submit) document.removeEventListener('submit', binding.submit, true)
       if (binding.close) window.removeEventListener('modal-close', binding.close)
+      if (binding.pageshow) window.removeEventListener('pageshow', binding.pageshow)
+      if (binding.visibility) document.removeEventListener('visibilitychange', binding.visibility)
     }
     projectWorkflowRole = ''
     projectWorkflowItems = new Map()
@@ -2971,7 +3191,15 @@
     ) return
     unwireProjectDashboardWorkflow()
     projectWorkflowRole = role
-    const binding = { role, generation: _memberScopeGeneration, click: null, submit: null, close: null }
+    const binding = {
+      role,
+      generation: _memberScopeGeneration,
+      click: null,
+      submit: null,
+      close: null,
+      pageshow: null,
+      visibility: null,
+    }
     binding.click = async (event) => {
       if (!projectWorkflowBindingCurrent(binding)) {
         unwireProjectDashboardWorkflow()
@@ -2993,6 +3221,18 @@
       else if (binding.role === 'brand') await openProjectReview(action, card)
     }
     document.addEventListener('click', binding.click, true)
+    binding.pageshow = () => {
+      if (projectWorkflowBindingCurrent(binding)) {
+        refreshProjectWorkflowBestEffort(role, 'pageshow')
+      }
+    }
+    binding.visibility = () => {
+      if (document.visibilityState === 'visible' && projectWorkflowBindingCurrent(binding)) {
+        refreshProjectWorkflowBestEffort(role, 'visibility')
+      }
+    }
+    window.addEventListener('pageshow', binding.pageshow)
+    document.addEventListener('visibilitychange', binding.visibility)
     if (role === 'brand') {
       binding.submit = (event) => {
         if (!projectWorkflowBindingCurrent(binding)) {
@@ -5152,6 +5392,7 @@
     setInvoiceSubmitDisabled,
     projectActionIntent,
     projectContractIsViewable,
+    projectContractPanelState,
     projectMutationFeedback,
     projectActionErrorMessage,
     formatProjectTimeline,

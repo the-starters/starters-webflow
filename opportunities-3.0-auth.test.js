@@ -1014,6 +1014,8 @@ test('project contract lock follows replacement controls during replay', async (
     data: {
       items: [{
         id: 675,
+        sync_origin: 'v3',
+        contract_source: 'standard',
         lifecycle_state: 'contract_sent',
         pandadoc_document_id: 'doc-675',
         contract_status: 'sent',
@@ -1032,6 +1034,8 @@ test('project contract lock follows replacement controls during replay', async (
     const pageItems = page === 1
       ? [{
           id: 675,
+          sync_origin: 'v3',
+          contract_source: 'standard',
           lifecycle_state: 'contract_sent',
           pandadoc_document_id: 'doc-675',
           contract_status: 'sent',
@@ -1867,6 +1871,9 @@ test('View Contract stays hidden until canonical project context authorizes it',
   projectList.resolve(response({
     items: [{
       id: 680,
+      sync_origin: 'v3',
+      contract_source: 'standard',
+      brand_signed_at: '2026-08-12T01:00:00Z',
       lifecycle_state: 'contract_sent',
       pandadoc_document_id: 'doc-680',
       contract_status: 'sent',
@@ -1917,6 +1924,9 @@ test('View Contract fails closed when a project card renders after dashboard boo
   projectList.resolve(response({
     items: [{
       id: 680,
+      sync_origin: 'v3',
+      contract_source: 'standard',
+      brand_signed_at: '2026-08-12T01:00:00Z',
       lifecycle_state: 'contract_sent',
       pandadoc_document_id: 'doc-680',
       contract_status: 'sent',
@@ -1954,6 +1964,123 @@ test('View Contract is limited to recipient-viewable canonical document states',
   assert.equal(isViewable({ pandadoc_document_id: 'doc-675' }), false)
 })
 
+test('contract signing panel reducer enforces Standard Contract and Brand-first signing', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const reduce = bridge.window.Opp30.projectContractPanelState
+  const base = {
+    id: 708,
+    sync_origin: 'v3',
+    contract_source: 'standard',
+    lifecycle_state: 'contract_sent',
+    contract_status: 'sent',
+    pandadoc_document_id: 'doc-708',
+    company_name: 'Acme',
+    starter_name: 'Taylor',
+  }
+
+  assert.equal(reduce({ ...base, contract_source: 'own' }, 'brand').visible, false)
+  assert.equal(reduce({ ...base, sync_origin: 'v2' }, 'brand').visible, false)
+  assert.equal(reduce(base, 'brand').action, 'sign')
+  assert.equal(reduce(base, 'starter').action, null)
+  assert.equal(reduce(base, 'starter').state, 'waiting')
+
+  const brandSigned = { ...base, brand_signed_at: '2026-08-12T01:00:00Z' }
+  assert.equal(reduce(brandSigned, 'brand').action, 'view')
+  assert.equal(reduce(brandSigned, 'starter').action, 'sign')
+
+  const outOfOrder = { ...base, starter_signed_at: '2026-08-12T01:01:00Z' }
+  assert.equal(reduce(outOfOrder, 'brand').action, 'sign')
+  assert.equal(reduce(outOfOrder, 'starter').action, 'view')
+  assert.equal(reduce(outOfOrder, 'starter').state, 'attention')
+
+  const bothSigned = {
+    ...brandSigned,
+    starter_signed_at: '2026-08-12T01:01:00Z',
+    lifecycle_state: 'signature_partial',
+    contract_status: 'partial',
+  }
+  assert.equal(reduce(bothSigned, 'brand').state, 'processing')
+  assert.equal(reduce(bothSigned, 'brand').action, null)
+  assert.equal(reduce({ ...bothSigned, lifecycle_state: 'active' }, 'brand').visible, false)
+
+  const partialWithoutTimestamps = { ...base, contract_status: 'partial' }
+  assert.equal(reduce(partialWithoutTimestamps, 'brand').brandBadge, 'brand-pending')
+  assert.equal(reduce(partialWithoutTimestamps, 'starter').starterBadge, 'starter-pending')
+  assert.equal(reduce({ ...base, lifecycle_state: 'contract_draft' }, 'brand').state, 'processing')
+  assert.equal(reduce({ ...base, contract_status: 'declined' }, 'brand').state, 'attention')
+})
+
+test('contract panel paints one badge per party and only the authorized role action', async () => {
+  const topAction = el('a', { href: '#contract' })
+  const topLabel = el('div', { class: 'button_main-text' })
+  topLabel.textContent = 'View Contract'
+  const topWrap = el('div', { class: 'button_main-wrap' }, [topAction, topLabel])
+  const title = el('div', { 'data-project-contract-title': '' })
+  const body = el('div', { 'data-project-contract-body': '' })
+  const badges = [
+    'brand-pending', 'brand-signed', 'starter-pending', 'starter-signed',
+  ].map((value) => el('div', { 'data-project-contract-badge': value }))
+  const signAction = el('a', { 'data-project-contract-action': 'sign' })
+  const signLabel = el('div', { class: 'button_main-text' })
+  signLabel.textContent = 'Review & Sign Contract'
+  const signWrap = el('div', { class: 'button_main-wrap' }, [signAction, signLabel])
+  const viewAction = el('a', { 'data-project-contract-action': 'view' })
+  const viewLabel = el('div', { class: 'button_main-text' })
+  viewLabel.textContent = 'View Contract'
+  const viewWrap = el('div', { class: 'button_main-wrap' }, [viewAction, viewLabel])
+  const actions = el('div', { 'data-project-contract-actions': '' }, [signWrap, viewWrap])
+  const panel = el('div', { 'data-project-contract-panel': '' }, [
+    title, body, ...badges, actions,
+  ])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '708' }, [
+    topWrap, panel,
+  ])
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{
+            id: 708,
+            sync_origin: 'v3',
+            contract_source: 'standard',
+            lifecycle_state: 'signature_partial',
+            contract_status: 'partial',
+            pandadoc_document_id: 'doc-708',
+            brand_signed_at: '2026-08-12T01:00:00Z',
+            company_name: 'Acme',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => panel.getAttribute('data-project-contract-state') === 'action'))
+  assert.equal(panel.style.display, '')
+  assert.equal(title.textContent, 'Acme has signed')
+  assert.equal(signWrap.style.display, '')
+  assert.equal(viewWrap.style.display, 'none')
+  assert.equal(topWrap.style.display, '')
+  assert.equal(topLabel.textContent, 'Review & Sign Contract')
+  const visibleBadges = badges
+    .filter((badge) => badge.style.display === '')
+    .map((badge) => badge.getAttribute('data-project-contract-badge'))
+  assert.deepEqual(visibleBadges, ['brand-signed', 'starter-pending'])
+})
+
 test('View Contract uses cached authorization when the canonical refresh transiently fails', async () => {
   const contract = el('a', { href: '#contract' })
   const label = el('div', { class: 'button_main-text' })
@@ -1977,6 +2104,8 @@ test('View Contract uses cached authorization when the canonical refresh transie
         return response({
           items: [{
             id: 675,
+            sync_origin: 'v3',
+            contract_source: 'standard',
             lifecycle_state: 'contract_sent',
             pandadoc_document_id: 'doc-675',
             contract_status: 'sent',
@@ -2028,6 +2157,8 @@ test('View Contract closes its blank popup and reports a safe error when Xano re
         return response({
           items: [{
             id: 675,
+            sync_origin: 'v3',
+            contract_source: 'standard',
             lifecycle_state: 'contract_sent',
             pandadoc_document_id: 'doc-675',
             contract_status: 'sent',
@@ -2084,6 +2215,9 @@ test('View Contract uses the authorized session in the current tab when popups a
         return response({
           items: [{
             id: 675,
+            sync_origin: 'v3',
+            contract_source: 'standard',
+            brand_signed_at: '2026-08-12T01:00:00Z',
             lifecycle_state: 'contract_sent',
             pandadoc_document_id: 'doc-675',
             contract_status: 'viewed',
