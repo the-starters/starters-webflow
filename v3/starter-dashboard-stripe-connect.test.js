@@ -278,6 +278,86 @@ test('connected state reuses the authored ready control without leaving Connect 
   assert.equal(controls.length, 2)
 })
 
+test('incomplete and review states each receive a working disconnect control', () => {
+  class FakeControl extends FakeElement {
+    constructor(label = 'Complete Setup') {
+      super()
+      this.label = new FakeElement()
+      this.label.textContent = label
+      this.link = new FakeElement('A')
+    }
+
+    cloneNode() {
+      return new FakeControl(this.label.textContent)
+    }
+
+    querySelector(value) {
+      if (value === '.button_main-text') return this.label
+      return null
+    }
+
+    querySelectorAll(value) {
+      return value === 'a, button, [role="button"]' ? [this.link] : []
+    }
+  }
+
+  const { root, states } = stripeRoot()
+  const readyControls = []
+  const stateControls = { incomplete: [], review: [] }
+  const disconnectedSource = new FakeControl('Connect Stripe')
+  states.disconnected.querySelector = (value) =>
+    value === '.action-item_button-wrapper > *' ? disconnectedSource : null
+  states.ready.querySelector = (value) => {
+    if (value === '.action-item_button-wrapper') {
+      return { appendChild: (control) => readyControls.push(control) }
+    }
+    const action = value.match(/data-stripe-connect-action="([^"]+)"/)
+    return action
+      ? readyControls.find(
+          (control) =>
+            control.getAttribute('data-stripe-connect-action') === action[1],
+        ) || null
+      : null
+  }
+
+  const setupStateNames = ['incomplete', 'review']
+  setupStateNames.forEach((stateName) => {
+    const authored = new FakeControl()
+    const controls = stateControls[stateName]
+    states[stateName].querySelector = (value) => {
+      if (value === '.action-item_button-wrapper') {
+        return { appendChild: (control) => controls.push(control) }
+      }
+      if (value === '.action-item_button-wrapper > *') return authored
+      const action = value.match(/data-stripe-connect-action="([^"]+)"/)
+      return action
+        ? controls.find(
+            (control) =>
+              control.getAttribute('data-stripe-connect-action') === action[1],
+          ) || null
+        : null
+    }
+  })
+
+  api.ensureConnectedControls(root)
+
+  for (const stateName of ['incomplete', 'review']) {
+    assert.equal(stateControls[stateName].length, 1)
+    assert.equal(
+      stateControls[stateName][0].getAttribute('data-stripe-connect-action'),
+      'disconnect',
+    )
+    assert.equal(
+      stateControls[stateName][0].label.textContent,
+      'Disconnect Stripe',
+    )
+  }
+
+  api.ensureConnectedControls(root)
+  assert.equal(stateControls.incomplete.length, 1)
+  assert.equal(stateControls.review.length, 1)
+})
+
 test('the two authored earnings tiles resolve to disconnected and ready states', () => {
   const connect = new FakeElement()
   const history = new FakeElement()
@@ -343,19 +423,33 @@ test('a lone explicitly disconnected tile is never reused as ready', () => {
   assert.equal(connect.getAttribute('aria-disabled'), 'false')
 })
 
-test('exactly one earnings tile is shown for disconnected and ready states', () => {
+test('one authored blue tile stays visible and changes action with Stripe state', () => {
   const connect = new FakeElement()
   const history = new FakeElement()
+  const title = new FakeElement()
+  const description = new FakeElement()
+  history.children.set('.dash-hero_button-title', title)
+  history.children.set('.dash-hero_button-description', description)
   const tiles = api.resolveEarningsTiles([connect, history])
 
   api.renderEarningsTiles(tiles, 'disconnected')
 
-  assert.equal(connect.hidden, false)
-  assert.equal(connect.style.display, '')
-  assert.equal(connect.getAttribute('aria-disabled'), 'false')
-  assert.equal(connect.getAttribute('tabindex'), '0')
-  assert.equal(history.hidden, true)
-  assert.equal(history.style.display, 'none')
+  assert.equal(connect.hidden, true)
+  assert.equal(connect.style.display, 'none')
+  assert.equal(history.hidden, false)
+  assert.equal(history.style.display, '')
+  assert.equal(history.getAttribute('aria-disabled'), 'false')
+  assert.equal(history.getAttribute('tabindex'), '0')
+  assert.equal(history.getAttribute('data-stripe-connect-hero-action'), 'start')
+  assert.equal(title.textContent, 'Get Paid')
+  assert.equal(description.textContent, 'Connect Stripe')
+
+  api.renderEarningsTiles(tiles, 'incomplete')
+
+  assert.equal(history.hidden, false)
+  assert.equal(history.getAttribute('data-stripe-connect-hero-action'), 'start')
+  assert.equal(title.textContent, 'Complete Setup')
+  assert.equal(description.textContent, 'Finish Stripe onboarding')
 
   api.renderEarningsTiles(tiles, 'ready')
 
@@ -365,20 +459,74 @@ test('exactly one earnings tile is shown for disconnected and ready states', () 
   assert.equal(history.style.display, '')
   assert.equal(history.getAttribute('aria-disabled'), 'false')
   assert.equal(history.getAttribute('tabindex'), '0')
+  assert.equal(
+    history.getAttribute('data-stripe-connect-hero-action'),
+    'dashboard',
+  )
+  assert.equal(title.textContent, 'Earnings')
+  assert.equal(description.textContent, 'Payment history & payouts')
 })
 
-test('earnings tiles stay hidden while status is loading or unavailable', () => {
+test('the blue tile stays visible but disabled while status is unresolved', () => {
   const connect = new FakeElement()
   const history = new FakeElement()
+  const title = new FakeElement()
+  const description = new FakeElement()
+  history.children.set('.dash-hero_button-title', title)
+  history.children.set('.dash-hero_button-description', description)
   const tiles = api.resolveEarningsTiles([connect, history])
 
   api.renderEarningsTiles(tiles, 'loading')
   assert.equal(connect.hidden, true)
-  assert.equal(history.hidden, true)
+  assert.equal(history.hidden, false)
+  assert.equal(history.getAttribute('aria-disabled'), 'true')
+  assert.equal(history.getAttribute('data-stripe-connect-hero-action'), 'none')
+  assert.equal(title.textContent, 'Checking Stripe')
+  assert.equal(description.textContent, 'Loading account status')
 
   api.renderEarningsTiles(tiles, 'error')
   assert.equal(connect.hidden, true)
-  assert.equal(history.hidden, true)
+  assert.equal(history.hidden, false)
+  assert.equal(history.getAttribute('aria-disabled'), 'true')
+  assert.equal(title.textContent, 'Stripe Unavailable')
+  assert.equal(description.textContent, 'Use Try Again above')
+})
+
+test('the single blue tile dispatches only its current state action', () => {
+  const tile = new FakeElement()
+  tile.setAttribute('aria-disabled', 'false')
+  const activations = []
+  const event = {
+    key: 'Enter',
+    prevented: false,
+    preventDefault() {
+      this.prevented = true
+    },
+  }
+  const actions = {
+    start: () => activations.push('start'),
+    dashboard: () => activations.push('dashboard'),
+  }
+
+  tile.setAttribute('data-stripe-connect-hero-action', 'start')
+  assert.equal(
+    api.handleHeroTileActivation(tile, event, false, actions),
+    true,
+  )
+
+  tile.setAttribute('data-stripe-connect-hero-action', 'dashboard')
+  assert.equal(
+    api.handleHeroTileActivation(tile, event, true, actions),
+    true,
+  )
+
+  tile.setAttribute('data-stripe-connect-hero-action', 'none')
+  assert.equal(
+    api.handleHeroTileActivation(tile, event, false, actions),
+    false,
+  )
+  assert.deepEqual(activations, ['start', 'dashboard'])
+  assert.equal(event.prevented, true)
 })
 
 test('the disconnected earnings tile activates only while enabled', () => {
@@ -752,7 +900,8 @@ test('ambiguous status responses render the authored fail-closed state', async (
       assert.equal(states.error.style.display, '')
       assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
       assert.equal(connect.hidden, true)
-      assert.equal(history.hidden, true)
+      assert.equal(history.hidden, false)
+      assert.equal(history.getAttribute('aria-disabled'), 'true')
     }
   } finally {
     api.__resetXanoToken()
@@ -1002,7 +1151,8 @@ test('Earnings rejects ambiguous modes and mismatched provider accounts', async 
         false,
       )
       assert.equal(connect.hidden, true)
-      assert.equal(history.hidden, true)
+      assert.equal(history.hidden, false)
+      assert.equal(history.getAttribute('aria-disabled'), 'true')
     }
     assert.equal(tabs.every((tab) => tab.closed), true)
     assert.deepEqual(destinations, [])
@@ -1016,7 +1166,7 @@ test('Earnings rejects ambiguous modes and mismatched provider accounts', async 
   }
 })
 
-test('a blocked Earnings popup hides both stale tiles without a request', async () => {
+test('a blocked Earnings popup leaves one disabled recovery tile visible', async () => {
   const previous = { fetch: global.fetch, open: global.open }
   const { root } = stripeRoot()
   const connect = new FakeElement()
@@ -1043,7 +1193,8 @@ test('a blocked Earnings popup hides both stale tiles without a request', async 
     )
     assert.equal(fetchCount, 0)
     assert.equal(connect.hidden, true)
-    assert.equal(history.hidden, true)
+    assert.equal(history.hidden, false)
+    assert.equal(history.getAttribute('aria-disabled'), 'true')
   } finally {
     global.fetch = previous.fetch
     global.open = previous.open
@@ -1267,8 +1418,12 @@ test('Earnings self-heals when Stripe was disconnected after status loaded', asy
     assert.equal(calls, 2)
     assert.equal(stripeTab.closed, true)
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
-    assert.equal(connect.hidden, false)
-    assert.equal(history.hidden, true)
+    assert.equal(connect.hidden, true)
+    assert.equal(history.hidden, false)
+    assert.equal(
+      history.getAttribute('data-stripe-connect-hero-action'),
+      'start',
+    )
   } finally {
     api.__resetXanoToken()
     global.fetch = previous.fetch
@@ -1321,8 +1476,12 @@ test('disconnect requires confirmation and refreshes to disconnected state', asy
     )
     assert.equal(calls, 2)
     assert.equal(root.getAttribute('data-stripe-connect-view'), 'disconnected')
-    assert.equal(connect.hidden, false)
-    assert.equal(history.hidden, true)
+    assert.equal(connect.hidden, true)
+    assert.equal(history.hidden, false)
+    assert.equal(
+      history.getAttribute('data-stripe-connect-hero-action'),
+      'start',
+    )
 
     global.confirm = () => false
     assert.equal(

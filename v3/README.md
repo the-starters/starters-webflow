@@ -2518,26 +2518,34 @@ Open Stripe component for `Disconnect Stripe`, assigns
 second copy if either action already exists. Open Stripe requests the exact
 provider-verified connected account destination. Disconnect Stripe asks for an
 explicit browser confirmation before it sends the authenticated disconnect.
-The hero has two authored Earnings
-tiles, both with `data-stripe-connect-action="earnings"`: mark the Connect
-Stripe tile with `data-stripe-connect-earnings-state="disconnected"` and the
-Payment history and payouts tile with
-`data-stripe-connect-earnings-state="ready"`. The controller shows exactly one
-tile after the authenticated status read. A disconnected or incomplete account
-gets the enabled Connect Stripe tile, which starts the same guarded
-OAuth/onboarding flow as the action-list CTA. A status with
-`charges_enabled:true` gets the enabled Payment history and payouts tile. That
-tile requests a provider-verified account destination from `dashboard/v3`:
+The controller also clones that action into the `incomplete` and `review`
+wrappers, so a member can disconnect and restart even before charges are
+enabled.
+The hero can keep its two authored Stripe tiles, both with
+`data-stripe-connect-action="earnings"`, but the controller uses only one blue
+tile for the full lifecycle. Mark the original Connect Stripe tile with
+`data-stripe-connect-earnings-state="disconnected"` and the Payment history and
+payouts tile with `data-stripe-connect-earnings-state="ready"`. The ready tile
+is the primary tile when both exist, and the other authored tile stays hidden.
+The primary tile never disappears after the controller starts. Its copy and
+action change with canonical status: `Checking Stripe` while loading, `Get Paid
+/ Connect Stripe` while disconnected, `Complete Setup / Finish Stripe
+onboarding` while incomplete or under review, `Earnings / Payment history &
+payouts` while ready, and a disabled `Stripe Unavailable / Use Try Again above`
+state on an error. The disconnected, incomplete, and review states start the
+same guarded OAuth/onboarding flow as the action-list CTA. A status with
+`charges_enabled:true` requests a provider-verified account destination from
+`dashboard/v3`:
 Express accounts receive a single-use login link, while Standard/full accounts
 receive an account-scoped `/b/<account>` Dashboard URL. The generic Stripe
-Dashboard URL is never used. During loading, review, error, or
-session-failure states both tiles stay hidden so stale state is never shown. For
-the original live markup, where both tiles predate the explicit state attribute,
-the controller preserves the authored two-tile order (Connect first, Payment
-history and payouts second). This keeps the V3 link independent of the legacy
-Make redirect while preserving Stripe as the earnings UI for the connected
-Standard account. Both actions work on either a native anchor or an authored
-non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
+Dashboard URL is never used. Loading and error states keep the primary tile
+visible but disabled, so stale actions cannot run and the hero never has a blank
+Stripe position. For the original live markup, where both tiles predate the
+explicit state attribute, the controller preserves the authored two-tile order
+and chooses the second Payment history tile as primary. This keeps the V3 link
+independent of the legacy Make redirect while preserving Stripe as the earnings
+UI for the connected Standard account. Both actions work on either a native
+anchor or an authored non-anchor tile (e.g. a `div`); an enabled non-anchor tile is exposed as
 `role="button"` with `tabindex="0"` and activates from both click and Enter/Space
 so keyboard users can reach its action. Connect Stripe, Complete setup, Open
 Stripe, and Payment history and payouts all open in a new tab. The controller
