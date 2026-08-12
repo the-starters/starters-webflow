@@ -1,7 +1,7 @@
 /**
  * Fades in the `.nav_bg` layer on scroll for transparent navbar variants.
  *
- * @release v1.59.196
+ * @release v1.59.198
  *
  * The variant attribute follows the Designer component's name — currently
  * `navbar-main` (was `navbar-v2` until the component was renamed, which left
