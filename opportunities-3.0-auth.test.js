@@ -4242,6 +4242,7 @@ test('auth switch during token acquisition does not retry under the new member',
 
 test('auth switch while diagnostics load rejects before token acquisition', async () => {
   const diagnosticsReady = deferred()
+  const receipts = []
   const requests = []
   const bridge = await loadBridge(async (url, options) => {
     requests.push({ url, options })
@@ -4251,10 +4252,28 @@ test('auth switch while diagnostics load rejects before token acquisition', asyn
 
   const request = bridge.API.brandOppCreate({ title: 'A request' })
   bridge.authChange({ id: 'member-b' })
+  bridge.window.StartersWorkflowDiagnostics = {
+    create(fields) {
+      return { diagnostic_id: 'WFD-TEST', ...fields }
+    },
+    record(receipt) {
+      receipts.push(receipt)
+      return receipt
+    },
+    complete(receipt, fields) {
+      return { ...receipt, ...fields }
+    },
+  }
   diagnosticsReady.resolve(null)
 
-  await assert.rejects(request, { code: 'MEMBER_SCOPE_CHANGED' })
+  await assert.rejects(request, (error) => {
+    assert.equal(error.code, 'MEMBER_SCOPE_CHANGED')
+    assert.equal(error.workflowDiagnostic.error_code, 'MEMBER_SCOPE_CHANGED')
+    assert.equal(error.workflowDiagnostic.request_started, false)
+    return true
+  })
   assert.equal(requests.length, 0)
+  assert.equal(receipts.at(-1).result, 'failed')
 })
 
 test('auth switch rejects an in-flight response before it can resolve or track', async () => {

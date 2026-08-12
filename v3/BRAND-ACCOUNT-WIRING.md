@@ -264,6 +264,10 @@ projection.
   deliberate trade for masking the redirect, which is the common case; the
   cancelled-navigation case is rare and self-heals on reload.
 - Custom-field and email assignments retry once only on timeout, 429, or 5xx.
+- Immediately before each changed login-email write attempt, including a retry,
+  the controller re-reads the current Memberstack member and compares its stable
+  ID with the member that initiated the workflow. An account change aborts with
+  `MEMBER_SCOPE_CHANGED` before `updateMemberAuth` can write into the new session.
 - Build Account writes ordinary fields, any changed login email, and the
   completion marker before attempting one reset/set-password email.
 - Account Security and the guarded Talent edit-profile form attempt that email

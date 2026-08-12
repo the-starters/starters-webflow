@@ -12,6 +12,48 @@ const PROFILE_WORKFLOW = 'starter_profile_edit';
 const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v1';
 const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
+let memberAuthGeneration = 0;
+let observedMemberstackClient = null;
+
+function memberFromResult(result) {
+	return result?.data || result?.member || result || null;
+}
+
+function memberScopeChangedError() {
+	const error = new Error('Your signed-in account changed. Refresh and try again.');
+	error.code = 'MEMBER_SCOPE_CHANGED';
+	return error;
+}
+
+function observeMemberstackAuth(client) {
+	if (observedMemberstackClient === client) return;
+	observedMemberstackClient = client;
+	if (typeof client?.onAuthChange === 'function') {
+		client.onAuthChange(() => {
+			memberAuthGeneration += 1;
+		});
+	}
+}
+
+async function captureMemberScope() {
+	const client = window.$memberstackDom;
+	if (!client || typeof client.getCurrentMember !== 'function') {
+		throw new Error('Memberstack member lookup is unavailable.');
+	}
+	observeMemberstackAuth(client);
+	const generation = memberAuthGeneration;
+	const member = memberFromResult(await client.getCurrentMember());
+	if (!member?.id || generation !== memberAuthGeneration) throw memberScopeChangedError();
+	return { client, generation, member };
+}
+
+async function revalidateMemberScope(scope) {
+	const member = memberFromResult(await scope.client.getCurrentMember());
+	if (!member?.id || member.id !== scope.member.id || scope.generation !== memberAuthGeneration) {
+		throw memberScopeChangedError();
+	}
+	return member;
+}
 
 function boundedWorkflowDiagnostics(promise) {
 	return new Promise((resolve) => {
@@ -382,6 +424,22 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		async function submitStep(stepIndex, submitButton) {
 			setSubmitLoading(submitButton, true);
+			let memberScope;
+			try {
+				memberScope = await captureMemberScope();
+			} catch (error) {
+				await workflowDiagnosticsReady;
+				const diagnostic = recordProfileDiagnostic(null, {
+					result: 'failed',
+					stage: 'auth',
+					error_code: error?.code || 'MEMBER_LOOKUP_FAILED',
+					request_started: false,
+				});
+				decorateProfileFeedback('edit-form-error', diagnostic);
+				openErrorModal?.dispatchEvent(new Event('click', { bubbles: true }));
+				setSubmitLoading(submitButton, false);
+				return;
+			}
 			await workflowDiagnosticsReady;
 
 			const payload = getStepPayload(stepIndex);
@@ -467,12 +525,27 @@ document.addEventListener('DOMContentLoaded', function () {
 			let diagnostic = recordProfileDiagnostic(null, {
 				result: 'started',
 				stage: 'request',
-				request_started: true,
+				request_started: false,
 			});
 
 			try {
+				await revalidateMemberScope(memberScope);
+			} catch (error) {
+				diagnostic = recordProfileDiagnostic(diagnostic, {
+					result: 'failed',
+					stage: 'auth',
+					error_code: error?.code || 'MEMBER_LOOKUP_FAILED',
+					request_started: false,
+				});
+				decorateProfileFeedback('edit-form-error', diagnostic);
+				openErrorModal?.dispatchEvent(new Event('click', { bubbles: true }));
+				setSubmitLoading(submitButton, false);
+				return;
+			}
+
+			try {
 				requestStarted = true;
-				const response = await fetch(`${PATCH_ENDPOINT}${window.MEMBER.id}`, {
+				const response = await fetch(`${PATCH_ENDPOINT}${memberScope.member.id}`, {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(payload),
@@ -488,12 +561,13 @@ document.addEventListener('DOMContentLoaded', function () {
 				// update Member customFields, if even one of them was changed
 				if (stepIndex === 1) {
 					if (
-						window.MEMBER.customFields?.['free-user']?.toLowerCase().trim() !== (payload['First_Name'] || '').toLowerCase().trim() ||
-						window.MEMBER.customFields?.['last-name']?.toLowerCase().trim() !== (payload['Last_Name'] || '').toLowerCase().trim() ||
-						window.MEMBER.customFields?.['phone']?.toLowerCase().trim() !== (payload['Phone'] || '').toLowerCase().trim()
+						memberScope.member.customFields?.['free-user']?.toLowerCase().trim() !== (payload['First_Name'] || '').toLowerCase().trim() ||
+						memberScope.member.customFields?.['last-name']?.toLowerCase().trim() !== (payload['Last_Name'] || '').toLowerCase().trim() ||
+						memberScope.member.customFields?.['phone']?.toLowerCase().trim() !== (payload['Phone'] || '').toLowerCase().trim()
 					) {
 						try {
-							await window.$memberstackDom.updateMember({
+							await revalidateMemberScope(memberScope);
+							await memberScope.client.updateMember({
 								customFields: {
 									'free-user': payload.First_Name || '',
 									'last-name': payload.Last_Name || '',
@@ -501,6 +575,7 @@ document.addEventListener('DOMContentLoaded', function () {
 								}
 							});
 						} catch (error) {
+							if (error?.code === 'MEMBER_SCOPE_CHANGED') throw error;
 							console.warn('[starter-edit-profile] Memberstack profile projection failed');
 						}
 					}
@@ -517,10 +592,11 @@ document.addEventListener('DOMContentLoaded', function () {
 				decorateProfileFeedback('edit-form-success', diagnostic);
 				openSuccessModal?.dispatchEvent(new Event('click', { bubbles: true }));
 			} catch (error) {
+				const authChanged = error?.code === 'MEMBER_SCOPE_CHANGED';
 				diagnostic = recordProfileDiagnostic(diagnostic, {
 					result: 'failed',
-					stage: responseStatus === null ? 'network' : 'response',
-					error_code: failureCode,
+					stage: authChanged ? 'auth' : responseStatus === null ? 'network' : 'response',
+					error_code: authChanged ? error.code : failureCode,
 					http_status: responseStatus,
 					duration_ms: Date.now() - startedAt,
 					request_started: requestStarted,

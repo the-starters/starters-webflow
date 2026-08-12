@@ -435,13 +435,14 @@
 
   async function call(path, { method = 'POST', body } = {}) {
     const generation = _memberScopeGeneration
-    if (DIAGNOSTIC_CALLS[path]) await workflowDiagnosticsReady
-    assertMemberScopeGeneration(generation)
-    const diagnostic = beginCallDiagnostic(path)
     const startedAt = Date.now()
+    let diagnostic = null
     let requestStarted = false
     let responseStatus = null
     try {
+      if (DIAGNOSTIC_CALLS[path]) await workflowDiagnosticsReady
+      diagnostic = beginCallDiagnostic(path)
+      assertMemberScopeGeneration(generation)
       const token = await ensureXanoToken(generation)
       assertMemberScopeGeneration(generation)
       requestStarted = true

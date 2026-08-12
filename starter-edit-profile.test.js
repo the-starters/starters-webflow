@@ -37,6 +37,8 @@ function createEnvironment(fetchImpl, {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
   const memberAuthUpdates = []
+  const memberUpdates = []
+  const authChangeListeners = []
   const tracked = []
   const copied = []
   const fields = {
@@ -113,13 +115,14 @@ function createEnvironment(fetchImpl, {
     }
   }
 
+  let currentMember = {
+    id: 'mem_test',
+    auth: { email: 'old@example.com' },
+    customFields: { 'free-user': '', 'last-name': '', phone: fields.phone.value },
+  }
   const window = {
     activeProfile: { type: 'full', type_id: 1 },
-    MEMBER: {
-      id: 'mem_test',
-      auth: { email: 'old@example.com' },
-      customFields: { 'free-user': '', 'last-name': '', phone: fields.phone.value },
-    },
+    MEMBER: currentMember,
     waitProfileData() {},
     waitForMember(callback) { callback(this.MEMBER) },
     clearTimeout() {},
@@ -127,7 +130,9 @@ function createEnvironment(fetchImpl, {
     location: { replace() {}, hostname: 'the-starters-3-0.webflow.io' },
     intlTelInput: Object.assign(() => ({}), { getInstance: () => null }),
     $memberstackDom: {
-      async updateMember() {},
+      async getCurrentMember() { return { data: currentMember } },
+      onAuthChange(listener) { authChangeListeners.push(listener) },
+      async updateMember(payload) { memberUpdates.push(payload) },
       async updateMemberAuth(payload) { memberAuthUpdates.push(payload) },
     },
     FinsweetAttributes: [],
@@ -173,11 +178,16 @@ function createEnvironment(fetchImpl, {
     button,
     modalEvents,
     memberAuthUpdates,
+    memberUpdates,
     tracked,
     copied,
     successFeedback,
     errorFeedback,
     window,
+    switchMember(member) {
+      currentMember = member
+      authChangeListeners.forEach((listener) => listener({ data: member }))
+    },
   }
 }
 
@@ -291,6 +301,52 @@ async function testStalledDiagnosticsFailOpen() {
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
 }
 
+async function testAuthSwitchDuringDiagnosticsDoesNotWrite() {
+  const diagnosticsReady = deferred()
+  let requests = 0
+  const environment = createEnvironment(async () => {
+    requests += 1
+    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+  }, {
+    workflowDiagnosticsReady: diagnosticsReady.promise,
+    setTimeoutImpl: (callback, ms) => (ms === 2000 ? 1 : setImmediate(callback)),
+  })
+
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'other@example.com' },
+    customFields: {},
+  })
+  diagnosticsReady.resolve(null)
+  await submission
+
+  assert.equal(requests, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.equal(environment.button.style.pointerEvents, '')
+  assert.equal(environment.button.style.opacity, '')
+}
+
+async function testAuthSwitchAfterPatchDoesNotProjectToNewSession() {
+  const request = deferred()
+  const environment = createEnvironment(() => request.promise)
+  environment.window.MEMBER.customFields.phone = ''
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+
+  environment.switchMember({
+    id: 'mem_other',
+    auth: { email: 'other@example.com' },
+    customFields: {},
+  })
+  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  await submission
+
+  assert.equal(environment.memberUpdates.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+}
+
 Promise.all([
   testSuccess(),
   testNon2xx(),
@@ -298,6 +354,8 @@ Promise.all([
   testBrowserGlobalDoesNotRecurse(),
   testPrivacySafeDiagnostics(),
   testStalledDiagnosticsFailOpen(),
+  testAuthSwitchDuringDiagnosticsDoesNotWrite(),
+  testAuthSwitchAfterPatchDoesNotProjectToNewSession(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {

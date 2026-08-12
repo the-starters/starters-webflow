@@ -273,6 +273,7 @@ function loadController(options = {}) {
       },
     },
     setTimeout(fn, ms) {
+      if (options.setTimeout) return options.setTimeout(fn, ms)
       if (ms >= 10000) return ++longTimer
       return setImmediate(fn)
     },
@@ -401,6 +402,7 @@ test('Build Account writes ordinary fields, changed email, then completion in or
     [
       'getCurrentMember',
       'updateMember',
+      'getCurrentMember',
       'updateMemberAuth',
       'updateMember',
       'sendMemberResetPasswordEmail',
@@ -413,16 +415,48 @@ test('Build Account writes ordinary fields, changed email, then completion in or
       company: 'Analytical Engines',
     },
   })
-  assert.deepEqual(plain(environment.calls[2].payload), { email: 'ada+new@example.com' })
-  assert.deepEqual(plain(environment.calls[3].payload), {
+  assert.deepEqual(plain(environment.calls[3].payload), { email: 'ada+new@example.com' })
+  assert.deepEqual(plain(environment.calls[4].payload), {
     customFields: { 'completed-brand-profile': 'true' },
   })
-  assert.deepEqual(plain(environment.calls[4].payload), { email: 'ada+new@example.com' })
+  assert.deepEqual(plain(environment.calls[5].payload), { email: 'ada+new@example.com' })
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
   // A redirect was initiated, so the form stays busy until the page unloads.
   // See the `redirecting` flag in bindForm() for why.
   assert.equal(buildForm.getAttribute('aria-busy'), 'true')
   assert.equal(buildForm.submit.disabled, true)
+})
+
+test('Build Account refuses an email write after the signed-in member changes', async () => {
+  const buildForm = makeForm('build', { email: 'next@example.com' })
+  let current = {
+    id: 'mem-brand-a',
+    auth: { email: 'old@example.com' },
+  }
+  const environment = loadController({
+    buildForm,
+    getCurrentMember: async () => ({ data: current }),
+    updateMember: async (payload) => {
+      if (!payload.customFields['completed-brand-profile']) {
+        current = {
+          id: 'mem-brand-b',
+          auth: { email: 'other@example.com' },
+        }
+      }
+      return { ok: true }
+    },
+  })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'updateMember', 'getCurrentMember'],
+  )
+  assert.equal(buildForm.wrapper.fail.style.display, 'block')
+  assert.match(buildForm.wrapper.failText.textContent, /signed-in account changed/i)
+  assert.deepEqual(environment.redirects, [])
 })
 
 test('Build Account success records and exposes a privacy-safe copyable receipt', async () => {
@@ -598,6 +632,7 @@ test('a marker write that throws does not disturb the rest of the submit', async
       [
         'getCurrentMember',
         'updateMember',
+        'getCurrentMember',
         'updateMemberAuth',
         'updateMember',
         'sendMemberResetPasswordEmail',
@@ -683,7 +718,7 @@ test('email collision leaves completion unset and reports a stable user-facing e
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMember', 'updateMemberAuth'],
+    ['getCurrentMember', 'updateMember', 'getCurrentMember', 'updateMemberAuth'],
   )
   assert.equal(buildForm.wrapper.failText.textContent, 'That email is already in use. Choose another email address.')
   assert.equal(environment.redirects.length, 0)
@@ -769,12 +804,13 @@ test('Build Account sends one reset password email after changing auth', async (
     [
       'getCurrentMember',
       'updateMember',
+      'getCurrentMember',
       'updateMemberAuth',
       'updateMember',
       'sendMemberResetPasswordEmail',
     ],
   )
-  assert.deepEqual(plain(environment.calls[4].payload), {
+  assert.deepEqual(plain(environment.calls[5].payload), {
     email: 'verified-next@example.com',
   })
 })
@@ -799,6 +835,7 @@ test('reset password email failure keeps durable completion and provides recover
     [
       'getCurrentMember',
       'updateMember',
+      'getCurrentMember',
       'updateMemberAuth',
       'updateMember',
       'sendMemberResetPasswordEmail',
@@ -886,9 +923,9 @@ test('Brand Account Security changes email and sends reset password email once',
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
-  assert.deepEqual(plain(environment.calls[2].payload), { email: 'next@example.com' })
+  assert.deepEqual(plain(environment.calls[3].payload), { email: 'next@example.com' })
   assert.equal(securityForm.wrapper.done.style.display, 'block')
 })
 
@@ -912,6 +949,7 @@ test('Brand-scoped Account Security binds Brand roles and sends only the reset p
     assert.deepEqual(
       environment.calls.map((call) => call.method),
       [
+        'getCurrentMember',
         'getCurrentMember',
         'updateMemberAuth',
         'sendMemberResetPasswordEmail',
@@ -941,13 +979,97 @@ test('Identity-scoped Account Security owns Talent email changes', async () => {
   assert.equal(submission.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
-  assert.deepEqual(plain(environment.calls[1].payload), {
+  assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'talent-next@example.com',
   })
   assert.equal(securityForm.nativeSubmits, 0)
   assert.equal(securityForm.wrapper.done.style.display, 'block')
+})
+
+test('Account Security refuses an auth switch while diagnostics load', async () => {
+  const diagnosticsReady = deferred()
+  const securityForm = makeForm('security', { email: 'talent-next@example.com' })
+  let current = {
+    id: 'mem-talent-a',
+    auth: { email: 'talent-old@example.com' },
+  }
+  const environment = loadController({
+    buildForm: null,
+    securityForm,
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    getCurrentMember: async () => ({ data: current }),
+    diagnosticsReady: diagnosticsReady.promise,
+    setTimeout: (callback, ms) => (ms === 2000 ? 1 : setImmediate(callback)),
+  })
+
+  securityForm.submitEvent()
+  while (environment.calls.filter((call) => call.method === 'getCurrentMember').length < 1) {
+    await flush()
+  }
+  current = {
+    id: 'mem-talent-b',
+    auth: { email: 'other@example.com' },
+  }
+  diagnosticsReady.resolve(null)
+  await settle()
+
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    ['getCurrentMember', 'getCurrentMember'],
+  )
+  assert.equal(securityForm.wrapper.fail.style.display, 'block')
+  assert.match(securityForm.wrapper.failText.textContent, /signed-in account changed/i)
+})
+
+test('Account Security revalidates identity before a retried email write', async () => {
+  const securityForm = makeForm('security', { email: 'next@example.com' })
+  let current = {
+    id: 'mem-talent-a',
+    auth: { email: 'old@example.com' },
+  }
+  let attempts = 0
+  const environment = loadController({
+    buildForm: null,
+    securityForm,
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    getCurrentMember: async () => ({ data: current }),
+    updateMemberAuth: async () => {
+      attempts += 1
+      const error = new Error('temporary')
+      error.status = 503
+      throw error
+    },
+    setTimeout(callback, ms) {
+      if (ms >= 10000) return 1
+      if (ms === 300) {
+        current = {
+          id: 'mem-talent-b',
+          auth: { email: 'other@example.com' },
+        }
+      }
+      return setImmediate(callback)
+    },
+  })
+
+  securityForm.submitEvent()
+  await settle(12)
+
+  assert.equal(attempts, 1)
+  assert.deepEqual(
+    environment.calls.map((call) => call.method),
+    [
+      'getCurrentMember',
+      'getCurrentMember',
+      'updateMemberAuth',
+      'getCurrentMember',
+    ],
+  )
+  assert.equal(securityForm.wrapper.fail.style.display, 'block')
+  assert.match(securityForm.wrapper.failText.textContent, /signed-in account changed/i)
 })
 
 test('Talent Account Security success exposes no email in its diagnostic receipt', async () => {
@@ -994,9 +1116,9 @@ test('visible Starter Edit Profile changes Memberstack email before replaying th
   assert.equal(submission.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
-  assert.deepEqual(plain(environment.calls[1].payload), {
+  assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'talent-next@example.com',
   })
   assert.equal(starterProfileForm.nativeSubmits, 1)
@@ -1023,7 +1145,7 @@ test('visible Starter Edit Profile changes email independently when unrelated re
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.validityReports, 0)
@@ -1053,7 +1175,7 @@ test('independent Starter email accepts a click from nested submit content', asy
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
@@ -1088,7 +1210,7 @@ test('independent Starter email accepts the disabled authored submit wrapper cli
   assert.equal(click.event.stopped, true)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 0)
   assert.equal(starterProfileForm.wrapper.done.style.display, 'block')
@@ -1157,12 +1279,12 @@ test('independent Starter email change preserves its validated click-time snapsh
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
-  assert.deepEqual(plain(environment.calls[1].payload), {
+  assert.deepEqual(plain(environment.calls[2].payload), {
     email: 'validated@example.com',
   })
-  assert.deepEqual(plain(environment.calls[2].payload), {
+  assert.deepEqual(plain(environment.calls[3].payload), {
     email: 'validated@example.com',
   })
 })
@@ -1277,7 +1399,7 @@ test('visible Starter Edit Profile replays after reset password email failure', 
 
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
   assert.equal(starterProfileForm.nativeSubmits, 1)
   assert.equal(
@@ -1435,7 +1557,7 @@ test('Identity-scoped Account Security still leaves unknown and conflicted roles
   }
 })
 
-test('Identity-scoped Account Security uses its authorized member snapshot for mutation', async () => {
+test('Identity-scoped Account Security revalidates the same member before mutation', async () => {
   const securityForm = makeForm('security', { email: 'next@example.com' })
   let reads = 0
   const authorizedMember = {
@@ -1462,10 +1584,10 @@ test('Identity-scoped Account Security uses its authorized member snapshot for m
   securityForm.submitEvent()
   await settle()
 
-  assert.equal(reads, 1)
+  assert.equal(reads, 2)
   assert.deepEqual(
     environment.calls.map((call) => call.method),
-    ['getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
+    ['getCurrentMember', 'getCurrentMember', 'updateMemberAuth', 'sendMemberResetPasswordEmail'],
   )
   assert.equal(securityForm.nativeSubmits, 0)
 })

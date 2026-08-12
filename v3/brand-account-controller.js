@@ -345,6 +345,20 @@
     return member
   }
 
+  function memberScopeChangedError() {
+    var error = new Error('Your signed-in account changed. Refresh and try again.')
+    error.code = 'MEMBER_SCOPE_CHANGED'
+    return error
+  }
+
+  async function currentMemberForWrite(client, memberSnapshot) {
+    var member = await currentMember(client)
+    if (memberSnapshot && memberSnapshot.id !== member.id) {
+      throw memberScopeChangedError()
+    }
+    return member
+  }
+
   async function updateOrdinaryFields(client, values) {
     if (typeof client.updateMember !== 'function') {
       throw new Error('Memberstack profile updates are unavailable.')
@@ -367,7 +381,8 @@
         throw new Error('Memberstack email updates are unavailable.')
       }
 
-      await runWithRetry(function () {
+      await runWithRetry(async function () {
+        await currentMemberForWrite(client, member)
         return client.updateMemberAuth({ email: email })
       })
     }
@@ -527,12 +542,8 @@
       throw validationError
     }
     var client = memberstack()
-    var member = memberSnapshot
-    if (!member) {
-      diagnosticRequestStarted(form)
-      member = await currentMember(client)
-    }
     diagnosticRequestStarted(form)
+    var member = memberSnapshot || await currentMember(client)
     var result = await updateEmailIfChanged(client, member, email)
     if (result.changed) await sendResetPasswordEmailOnce(form, client, result.email)
     return result
