@@ -4,15 +4,20 @@
 custom code and embed elements) is a mirror of what's in here — not the other way
 around.
 
-Unlike the CDN-served scripts elsewhere in this repo, these files are **not**
-loaded via jsDelivr. They are copied/pasted into Webflow embeds by hand, and this
-folder exists as the versioned backup of that code.
+Unlike the CDN-served scripts elsewhere in this repo, **most** of these files are
+not loaded via jsDelivr. They are copied/pasted into Webflow embeds by hand, and
+this folder exists as the versioned backup of that code.
+
+A few are CDN-served instead, and each says so in its own header block or
+README (`session-video/`, for example). For those, a change here only reaches the
+site once a release tag is pushed — pasting is not part of their workflow.
 
 ## Workflow
 
 1. Make changes **here first** (or, if a change was made directly in Webflow,
    copy it back here immediately so this folder stays authoritative).
-2. Paste the updated code into the corresponding Webflow embed.
+2. Paste the updated code into the corresponding Webflow embed (pasted embeds
+   only — a CDN-served file needs a release tag instead).
 3. Commit via the normal PR flow so the history stays clean.
 
 If this folder and Webflow ever disagree, treat **this folder** as correct and
