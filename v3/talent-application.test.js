@@ -5,6 +5,7 @@ const vm = require('node:vm')
 const { setImmediate: tick } = require('node:timers/promises')
 
 const source = fs.readFileSync(require.resolve('./talent-application.js'), 'utf8')
+const diagnosticSource = fs.readFileSync(require.resolve('../utils/workflow-diagnostics.js'), 'utf8')
 
 function makeField({ valid = true, visible = true, willValidate = true } = {}) {
   return {
@@ -23,11 +24,24 @@ function makeField({ valid = true, visible = true, willValidate = true } = {}) {
 }
 
 function makeForm(entries, attrs = {}, selects = {}, elements) {
-  const failEl = { style: { display: 'none' } }
+  const messageAttrs = {}
+  const messageListeners = {}
+  const messageEl = {
+    textContent: 'Something went wrong.',
+    setAttribute(name, value) { messageAttrs[name] = String(value) },
+    getAttribute(name) { return messageAttrs[name] ?? null },
+    addEventListener(name, handler) { messageListeners[name] = handler },
+  }
+  const failEl = {
+    style: { display: 'none' },
+    querySelector() { return messageEl },
+  }
   return {
     entries,
     attrs,
     failEl,
+    messageEl,
+    messageListeners,
     elements,
     __startersSubmitting: undefined,
     matches(selector) {
@@ -62,10 +76,20 @@ function makeSelect(options, selectedIndex) {
 function load({ fetchImpl }) {
   const listeners = []
   const assigned = []
+  const stored = new Map()
+  const tracked = []
+  const copied = []
   const context = {
     window: {
       location: { assign: (url) => assigned.push(url) },
       console,
+      Date,
+      Math,
+      Uint32Array,
+      crypto: { randomUUID: () => '12345678-90ab-cdef-1234-567890abcdef' },
+      sessionStorage: { setItem: (key, value) => stored.set(key, value) },
+      navigator: { clipboard: { writeText: async (value) => copied.push(value) } },
+      StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
     },
     document: {
       addEventListener: (type, handler, capture) => listeners.push({ type, handler, capture }),
@@ -80,11 +104,15 @@ function load({ fetchImpl }) {
       }
     },
     console,
+    Date,
+    Math,
+    Uint32Array,
   }
   context.window.document = context.document
   vm.createContext(context)
+  vm.runInContext(diagnosticSource, context)
   vm.runInContext(source, context)
-  return { listeners, assigned, context }
+  return { listeners, assigned, context, stored, tracked, copied }
 }
 
 function submitEvent(form) {
@@ -201,7 +229,7 @@ test('consult-only coalesces the consult role/rate pair', async () => {
 })
 
 test('failure shows the fail block and allows retry', async () => {
-  const { listeners, assigned } = load({
+  const { listeners, assigned, tracked } = load({
     fetchImpl: () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) }),
   })
   const form = makeForm(FULL_ENTRIES)
@@ -213,6 +241,45 @@ test('failure shows the fail block and allows retry', async () => {
   assert.equal(assigned.length, 0)
   assert.equal(form.failEl.style.display, 'block')
   assert.equal(form.__startersSubmitting, false)
+  assert.match(form.messageEl.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(form.messageEl.getAttribute('data-workflow-diagnostic-copy'), 'talent_application')
+  assert.deepEqual(
+    tracked.map((event) => event.name),
+    ['workflow_form_submit_started', 'workflow_form_submit_failed'],
+  )
+  const receipt = form.__startersDiagnostic
+  assert.equal(receipt.error_code, 'HTTP_ERROR')
+  assert.equal(receipt.http_status, 500)
+  assert.equal(Object.hasOwn(receipt, 'email'), false)
+})
+
+test('success records only the canonical application id before redirect', async () => {
+  const { listeners, assigned, tracked } = load({
+    fetchImpl: () => Promise.resolve({ ok: true, status: 201, json: () => Promise.resolve({ id: 709, email: 'private@example.com' }) }),
+  })
+  const form = makeForm(FULL_ENTRIES)
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+  await tick()
+  await tick()
+  await tick()
+
+  assert.deepEqual(assigned, ['/freelancer-application/step-2'])
+  assert.equal(tracked.at(-1).name, 'workflow_form_submit_succeeded')
+  assert.equal(form.__startersDiagnostic.resource_id, '709')
+  assert.equal(Object.hasOwn(form.__startersDiagnostic, 'email'), false)
+})
+
+test('visible validation failure records no request and gives a copyable id', () => {
+  const invalid = makeField({ valid: false, visible: true })
+  const { listeners, tracked } = load({ fetchImpl: () => Promise.reject(new Error('must not fetch')) })
+  const form = makeForm(FULL_ENTRIES, {}, {}, [invalid])
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+
+  assert.equal(tracked.length, 1)
+  assert.equal(tracked[0].name, 'workflow_form_validation_failed')
+  assert.equal(form.__startersDiagnostic.request_started, false)
+  assert.equal(form.__startersDiagnostic.error_code, 'NATIVE_VALIDATION')
+  assert.match(form.messageEl.textContent, /Diagnostic ID: WFD-/)
 })
 
 test('resolves country/state select indexes to option text', async () => {

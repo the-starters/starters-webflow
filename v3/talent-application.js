@@ -24,6 +24,35 @@
   var MULTISTEP_SUBMIT_SELECTOR =
     '[data-form="submit-btn"], [data-form-ms="submit-btn"]'
   var DEFAULT_REDIRECT = '/freelancer-application/step-2'
+  var CONTROLLER_VERSION = 'talent-application-v1'
+  var WORKFLOW = 'talent_application'
+
+  function diagnostics() {
+    return window.StartersWorkflowDiagnostics || null
+  }
+
+  function diagnosticStart(form, fields) {
+    var api = diagnostics()
+    if (!api) return null
+    var receipt = api.record(api.create(Object.assign({
+      workflow: WORKFLOW,
+      controller_version: CONTROLLER_VERSION,
+      result: 'started',
+      stage: 'request',
+      request_started: true,
+      resource_type: 'talent_application',
+    }, fields || {})))
+    if (form) form.__startersDiagnostic = receipt
+    return receipt
+  }
+
+  function diagnosticComplete(form, fields) {
+    var api = diagnostics()
+    if (!api) return null
+    var receipt = api.record(api.complete(form && form.__startersDiagnostic, fields || {}))
+    if (form) form.__startersDiagnostic = receipt
+    return receipt
+  }
 
   // The country/state selects store numeric option indexes as values (their
   // options are built from a locations JSON); the human-readable name is the
@@ -69,10 +98,19 @@
     }
   }
 
-  function showFail(form) {
+  function showFail(form, receipt) {
     var wrapper = form.closest('.w-form') || form.parentElement
     var fail = wrapper ? wrapper.querySelector('.w-form-fail') : null
-    if (fail) fail.style.display = 'block'
+    if (!fail) return
+    fail.style.display = 'block'
+    var api = diagnostics()
+    if (!api || !receipt) return
+    var target = fail.querySelector && fail.querySelector('[data-workflow-diagnostic-message], div, p') || fail
+    if (target.__startersWorkflowDiagnosticBaseText === undefined) {
+      target.__startersWorkflowDiagnosticBaseText = target.textContent || 'We could not submit your application. Please try again.'
+    }
+    target.textContent = api.message(target.__startersWorkflowDiagnosticBaseText, receipt)
+    api.decorate(target, receipt)
   }
 
   function setSubmitting(form, submitting) {
@@ -140,7 +178,16 @@
     // taking ownership of that click. Only the visible controls are checked so
     // required-but-hidden Webflow fields (the non-selected consult/full pair,
     // inactive steps) cannot silently block Complete with an unshowable error.
-    if (!reportValidityForVisible(form)) return
+    if (!reportValidityForVisible(form)) {
+      var validationReceipt = diagnosticStart(form, {
+        result: 'failed',
+        stage: 'validation',
+        request_started: false,
+        error_code: 'NATIVE_VALIDATION',
+      })
+      if (validationReceipt) showFail(form, validationReceipt)
+      return
+    }
 
     event.preventDefault()
     event.stopImmediatePropagation()
@@ -148,6 +195,10 @@
     if (form.__startersSubmitting) return
     form.__startersSubmitting = true
     setSubmitting(form, true)
+    var startedAt = Date.now()
+    diagnosticStart(form)
+    var responseStatus = null
+    var failureCode = 'NETWORK_ERROR'
 
     var payload = fieldMap(new FormData(form))
     var countryText = selectText(form, 'country')
@@ -165,19 +216,40 @@
       body: JSON.stringify(payload),
     })
       .then(function (response) {
-        if (!response.ok) throw new Error('intake ' + response.status)
+        responseStatus = response.status
+        if (!response.ok) {
+          failureCode = 'HTTP_ERROR'
+          throw new Error('intake ' + response.status)
+        }
         return response.json()
       })
       .then(function (result) {
         if (!result || result.id === undefined || result.id === null) {
+          failureCode = 'INVALID_RESPONSE'
           throw new Error('intake returned no application id')
         }
+        diagnosticComplete(form, {
+          result: 'success',
+          stage: 'response',
+          http_status: responseStatus,
+          duration_ms: Date.now() - startedAt,
+          request_started: true,
+          resource_id: result.id,
+        })
         window.location.assign(redirectTarget(form))
       })
       .catch(function (error) {
         form.__startersSubmitting = false
         setSubmitting(form, false)
-        showFail(form)
+        var failureReceipt = diagnosticComplete(form, {
+          result: 'failed',
+          stage: responseStatus === null ? 'network' : 'response',
+          error_code: failureCode,
+          http_status: responseStatus,
+          duration_ms: Date.now() - startedAt,
+          request_started: true,
+        })
+        showFail(form, failureReceipt)
         if (window.console && console.warn) {
           console.warn('[talent-application] submit failed:', error)
         }

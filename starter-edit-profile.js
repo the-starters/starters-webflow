@@ -8,6 +8,37 @@
 (() => {
 const qs = (selector, scope = document) => (scope || document).querySelector(selector);
 const qsa = (selector, scope = document) => Array.from((scope || document).querySelectorAll(selector));
+const PROFILE_WORKFLOW = 'starter_profile_edit';
+const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v1';
+
+function workflowDiagnostics() {
+	return window.StartersWorkflowDiagnostics || null;
+}
+
+function recordProfileDiagnostic(receipt, fields) {
+	const api = workflowDiagnostics();
+	if (!api) return null;
+	return api.record(receipt ? api.complete(receipt, fields || {}) : api.create({
+		workflow: PROFILE_WORKFLOW,
+		controller_version: PROFILE_CONTROLLER_VERSION,
+		resource_type: 'profile',
+		...(fields || {}),
+	}));
+}
+
+function decorateProfileFeedback(modalName, receipt) {
+	const api = workflowDiagnostics();
+	if (!api || !receipt) return;
+	const modal = qs(`[data-modal-target="${modalName}"]`);
+	if (!modal) return;
+	const target = qs('[data-workflow-diagnostic-message]', modal) || qs('p', modal) || modal;
+	if (target.__startersWorkflowDiagnosticBaseText === undefined) {
+		target.__startersWorkflowDiagnosticBaseText = target.textContent ||
+			(receipt.result === 'success' ? 'Your profile was saved.' : 'Your profile could not be saved.');
+	}
+	target.textContent = api.message(target.__startersWorkflowDiagnosticBaseText, receipt);
+	api.decorate(target, receipt);
+}
 
 function waitProfileData(callback) {
 	if (typeof window.waitProfileData === 'function') {
@@ -177,13 +208,11 @@ document.addEventListener('DOMContentLoaded', function () {
 				const labelType = label.dataset.labelType;
 				label.style.display = labelType === type ? 'block' : 'none';
 			});
-			console.log("qsa('[data-label-type]')", qsa('[data-label-type]'));
 
 			qsa('[data-group-hide]').forEach((group) => {
 				const hideForType = group.dataset.groupHide;
 				group.style.display = hideForType === type ? 'none' : 'block';
 			});
-			console.log("qsa('[data-group-hide]')", qsa('[data-group-hide]'));
 
 			qsa('[data-call-rate-radio]').forEach((group) => {
 				const checkForType = group.dataset.callRateRadio;
@@ -191,19 +220,16 @@ document.addEventListener('DOMContentLoaded', function () {
 					group.click();
 				}
 			});
-			console.log("qsa('[data-call-rate-radio]')", qsa('[data-call-rate-radio]'));
 
 			qsa('[data-paid-group-reverse]').forEach(group => {
 				const checkForType = group.dataset.paidGroupReverse;
 				group.style.flexDirection = checkForType === type ? 'column-reverse' : 'column';
 			});
-			console.log("qsa('[data-paid-group-reverse]')", qsa('[data-paid-group-reverse]'));
 
 			qsa('[data-non-required]').forEach(input => {
 				const checkForType = input.dataset.nonRequired;
 				input.required = checkForType === type ? false : true;
 			});
-			console.log("qsa('[data-non-required]')", qsa('[data-non-required]'));
 		}
 
 		/* SUBMIT METHODS */
@@ -286,6 +312,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
 					if (!isStepValid(stepIndex)) {
 						validateStepSubmit(stepIndex, false);
+						recordProfileDiagnostic(null, {
+							result: 'failed',
+							stage: 'validation',
+							error_code: 'NATIVE_VALIDATION',
+							request_started: false,
+						});
 						return;
 					}
 
@@ -298,7 +330,6 @@ document.addEventListener('DOMContentLoaded', function () {
 			setSubmitLoading(submitButton, true);
 
 			const payload = getStepPayload(stepIndex);
-			console.log("Raw payload", payload);
 
 			// Country, State
 			if (payload.Country && payload.State_Province) {
@@ -315,7 +346,7 @@ document.addEventListener('DOMContentLoaded', function () {
 				try {
 					return JSON.parse(value);
 				} catch (error) {
-					console.warn("Invalid JSON field:", value);
+					console.warn('[starter-edit-profile] ignored an invalid service JSON field');
 					return null;
 				}
 			};
@@ -355,12 +386,16 @@ document.addEventListener('DOMContentLoaded', function () {
 			payload["Updated_On"] = Date.now();
 
 			if (!Object.keys(payload).length) {
-				console.warn(`Step ${stepIndex} has empty payload.`);
+				console.warn(`[starter-edit-profile] step ${stepIndex} has no owned fields`);
+				recordProfileDiagnostic(null, {
+					result: 'failed',
+					stage: 'validation',
+					error_code: 'EMPTY_STEP_PAYLOAD',
+					request_started: false,
+				});
 				setSubmitLoading(submitButton, false);
 				return;
 			}
-
-			console.log("Ready payload", payload);
 
 			// if (!localStorage.getItem('editSubmit') || localStorage.getItem('editSubmit') !== 'true') {
 			// 	console.log(`Step ${stepIndex} submit skipped (disabled by localStorage).`);
@@ -370,16 +405,28 @@ document.addEventListener('DOMContentLoaded', function () {
 			// 	return;
 			// }
 
+			const startedAt = Date.now();
+			let responseStatus = null;
+			let requestStarted = false;
+			let failureCode = 'NETWORK_ERROR';
+			let diagnostic = recordProfileDiagnostic(null, {
+				result: 'started',
+				stage: 'request',
+				request_started: true,
+			});
+
 			try {
+				requestStarted = true;
 				const response = await fetch(`${PATCH_ENDPOINT}${window.MEMBER.id}`, {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(payload),
 				});
 
+				responseStatus = response.status;
 				const result = await response.json().catch(() => null);
 				if (!response.ok) {
-					console.error(`Step ${stepIndex} submit error:`, result);
+					failureCode = 'HTTP_ERROR';
 					throw new Error(result?.message || result?.error || `Profile update failed (${response.status})`);
 				}
 
@@ -399,17 +446,36 @@ document.addEventListener('DOMContentLoaded', function () {
 								}
 							});
 						} catch (error) {
-							console.error("Failed to update Member customFields:", error);
+							console.warn('[starter-edit-profile] Memberstack profile projection failed');
 						}
 					}
 				}
 
-				console.log(`Step ${stepIndex} submitted successfully:`, result);
+				diagnostic = recordProfileDiagnostic(diagnostic, {
+					result: 'success',
+					stage: 'response',
+					http_status: responseStatus,
+					duration_ms: Date.now() - startedAt,
+					request_started: true,
+					resource_id: result?.id || result?.profile_id || window.activeProfile?.id || '',
+				});
+				decorateProfileFeedback('edit-form-success', diagnostic);
 				openSuccessModal?.dispatchEvent(new Event('click', { bubbles: true }));
 			} catch (error) {
+				diagnostic = recordProfileDiagnostic(diagnostic, {
+					result: 'failed',
+					stage: responseStatus === null ? 'network' : 'response',
+					error_code: failureCode,
+					http_status: responseStatus,
+					duration_ms: Date.now() - startedAt,
+					request_started: requestStarted,
+				});
+				decorateProfileFeedback('edit-form-error', diagnostic);
 				openErrorModal?.dispatchEvent(new Event('click', { bubbles: true }));
-
-				console.error(`Step ${stepIndex} submit failed:`, error);
+				console.error(`[starter-edit-profile] step ${stepIndex} submit failed`, {
+					diagnostic_id: diagnostic?.diagnostic_id || '',
+					error_code: diagnostic?.error_code || 'WORKFLOW_ERROR',
+				});
 			} finally {
 				setSubmitLoading(submitButton, false);
 			}

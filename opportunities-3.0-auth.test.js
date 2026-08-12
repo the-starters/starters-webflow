@@ -5,6 +5,10 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(path.join(__dirname, 'opportunities-3.0.js'), 'utf8')
+const diagnosticSource = fs.readFileSync(
+  path.join(__dirname, 'utils/workflow-diagnostics.js'),
+  'utf8',
+)
 
 function deferred() {
   let resolve
@@ -39,6 +43,7 @@ async function loadBridge(
     search = '',
     wfXano = null,
     getXanoAuthToken = null,
+    workflowDiagnostics = false,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -82,6 +87,7 @@ async function loadBridge(
     readyState: 'loading',
   }
   const trackCalls = []
+  const diagnosticStorage = new Map()
   const window = {
     $memberstackDom: {
       getCurrentMember: async () => ({ data: typeof member === 'function' ? member() : member }),
@@ -154,6 +160,17 @@ async function loadBridge(
     location,
     window,
   })
+  if (workflowDiagnostics) {
+    window.location = location
+    window.Date = Date
+    window.Math = Math
+    window.Uint32Array = Uint32Array
+    window.crypto = { randomUUID: () => '12345678-90ab-cdef-1234-567890abcdef' }
+    window.sessionStorage = { setItem: (key, value) => diagnosticStorage.set(key, value) }
+    window.navigator = { clipboard: { writeText: async () => undefined } }
+    window.console = context.console
+    vm.runInContext(diagnosticSource, context)
+  }
   vm.runInContext(source, context)
   if (routeGuardDelayMs !== null) {
     setTimeout(() => documentElement.setAttribute('data-route-guard', 'checking'), routeGuardDelayMs)
@@ -170,6 +187,7 @@ async function loadBridge(
     fetch: window.fetch,
     location,
     trackCalls,
+    diagnosticStorage,
     window,
     notifyMutations(mutations = []) {
       mutationObservers
@@ -279,6 +297,71 @@ test('invoiceCreate sends the V3 invoice payload through the authenticated Xano 
     description: 'August test invoice',
     idempotency_key: 'invoice-v3-675-test',
   })
+})
+
+test('mutation diagnostics retain only safe invoice lifecycle fields', async () => {
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/create/v3')) {
+        return response({
+          invoice_id: 901,
+          payment_link: 'https://private.example/payment/customer-value',
+          status: 'unpaid',
+          customer_email: 'private@example.com',
+        }, true, 201)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember, workflowDiagnostics: true },
+  )
+
+  await bridge.API.invoiceCreate({
+    project_id: 709,
+    amount: 500,
+    description: 'Private project description',
+    idempotency_key: 'private-retry-key',
+  })
+
+  const receipt = bridge.window.__startersWorkflowDiagnosticLast
+  assert.equal(receipt.workflow, 'generate_invoice')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.http_status, 201)
+  assert.equal(receipt.resource_type, 'invoice')
+  assert.equal(receipt.resource_id, '901')
+  const serialized = JSON.stringify(receipt)
+  assert.doesNotMatch(serialized, /private@example\.com/)
+  assert.doesNotMatch(serialized, /Private project description/)
+  assert.doesNotMatch(serialized, /private-retry-key/)
+  assert.doesNotMatch(serialized, /customer-value/)
+})
+
+test('failed mutation exposes a safe diagnostic on the thrown error', async () => {
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/opportunities/create')) {
+        return response({ message: 'Rejected private@example.com opportunity' }, false, 422)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember, workflowDiagnostics: true },
+  )
+
+  await assert.rejects(
+    bridge.API.brandOppCreate({ title: 'Private launch plan' }),
+    (error) => {
+      assert.equal(error.workflowDiagnostic.workflow, 'opportunity_create')
+      assert.equal(error.workflowDiagnostic.result, 'failed')
+      assert.equal(error.workflowDiagnostic.error_code, 'HTTP_ERROR')
+      assert.equal(error.workflowDiagnostic.http_status, 422)
+      assert.equal(error.workflowDiagnostic.request_started, true)
+      assert.doesNotMatch(JSON.stringify(error.workflowDiagnostic), /private@example\.com|Private launch plan/)
+      return true
+    },
+  )
 })
 
 test('project dashboard actions use the authenticated canonical endpoints', async () => {
