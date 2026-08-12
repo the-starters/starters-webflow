@@ -287,6 +287,39 @@ test('projectDirectCreate sends its payload through the authenticated V3 route',
   assert.deepEqual(JSON.parse(requests[1].init.body), payload)
 })
 
+test('Starter project options and proposal submission use authenticated V3 routes', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/projects/options/v3')) {
+        return response({ counterparties: [{ counterparty_id: 81, company_name: 'Acme' }] })
+      }
+      if (url.includes('/projects/submit/v3')) {
+        return response({ proposal: { id: 72, status: 'awaiting_brand_approval' } })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+
+  const options = await bridge.API.projectOptions()
+  const payload = { brand_id: 81, title: 'Launch project', idempotency_key: 'starter-proposal-test' }
+  const result = await bridge.API.projectSubmit(payload)
+
+  assert.equal(options.counterparties[0].counterparty_id, 81)
+  assert.equal(result.proposal.status, 'awaiting_brand_approval')
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/options/v3')
+  assert.equal(requests[1].init.method, 'POST')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), {})
+  assert.equal(requests[2].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/projects/submit/v3')
+  assert.equal(requests[2].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[2].init.body), payload)
+})
+
 test('invoiceCreate sends the V3 invoice payload through the authenticated Xano bridge', async () => {
   const requests = []
   const bridge = await loadBridge(

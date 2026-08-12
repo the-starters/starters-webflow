@@ -519,6 +519,8 @@
       call('brand/applications/restore', { method: 'PATCH', body: { application_id } }),
     projectCreate: (payload) => call('projects/create/v3', { body: payload }),
     projectDirectCreate: (payload) => call('projects/create-direct/v3', { body: payload }),
+    projectOptions: (payload = {}) => call('projects/options/v3', { body: payload }),
+    projectSubmit: (payload) => call('projects/submit/v3', { body: payload }),
     brandProjectList: (page = 1, per_page = 12) =>
       call('brand/projects/mine', { body: { page, per_page } }),
     starterProjectList: (page = 1, per_page = 12) =>
