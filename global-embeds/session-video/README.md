@@ -112,6 +112,14 @@ viewer gets nothing rather than the whole video. A confirmed member still gets a
 player through a separate no-API path, which is **forced native regardless of
 width**: that path holds no player object and binds no controls, so the
 template's own bar would be inert, and Vimeo's cramped bar beats no bar at all.
+It writes `data-sv-overlay="hidden"` — plus the `data-sv-fullscreen="hidden"`
+described below — and nothing else about the control surfaces. The hero overlay
+has to come down or it covers the only player the viewer can reach, and the watch
+control that would normally lower it is never wired there; `data-sv-player="native"`
+keeps the template's own bar hidden, because revealing it would put inert play and
+mute buttons beside Vimeo's working ones. No play or mute state is painted either:
+with no event stream a guess about playback could never be corrected, and
+`status()` would report a stalled video as playing.
 
 ## Native controls vs the template's own
 
@@ -212,7 +220,7 @@ classes.
 | `data-sv-controls` | `#video-controls` | `visible` \| `hidden` | Control-bar state |
 | `data-sv-play` | `#playPauseBtn` | `playing` \| `paused` | Playback state |
 | `data-sv-mute` | `#muteBtn` | `on` \| `off` | `on` means the video is muted |
-| `data-sv-fullscreen` | `#fullscreenBtn` | `visible` \| `hidden` | `hidden` whenever full screen is unreachable |
+| `data-sv-fullscreen` | `#fullscreenBtn` | `visible` \| `hidden` | `visible` only for an ungated viewer holding a player object; `hidden` everywhere else |
 
 `data-sv-player="native"` is the CSS's cue to lift `pointer-events` onto the
 iframe, hide `#videoClickOverlay` (it would otherwise swallow every click meant
@@ -242,10 +250,17 @@ Not written by this module, and the gate is wrong without them:
 - **The inline hero-video script must be removed.** This module replaces it.
 - `#fullscreenBtn` carries Memberstack's `data-ms-content="members"`.
 - The CSS carries `#fullscreenBtn[data-sv-fullscreen="hidden"] { display: none }`.
-  Without it the button is visible and inert on every path where membership is
-  unconfirmed (no SDK, a rejection, an expired budget) and on any page where
-  `data-ms-content` has not been authored yet — and a press gives no feedback at
-  all, because the full-screen handler returns early for a gated viewer.
+  **The attribute reads `visible` only for an ungated viewer holding a player
+  object.** It is `hidden` on every path where membership is merely assumed (no
+  SDK, a rejection, an expired budget — exactly the paths where Memberstack is
+  absent too, so nothing else would hide the button), and on the no-API member
+  fallback, which is ungated but has no player to drive the request. Without the
+  CSS rule the button is visible and inert everywhere the module hides it, and a
+  press gives no feedback at all: on a gated mount `bind()` does arm the control
+  and its handler returns early, and on the no-API path `bind()` is never called.
+  A missing `data-ms-content` on that element warns on staging, so an unauthored
+  Designer state surfaces in QA rather than shipping as a members-only control
+  nobody is hiding.
 - Whatever CSS sized the authored iframe still has to match the built one. The
   existing `.hero-video-wrap iframe` rule sizes any iframe created inside that
   wrapper, so it keeps working if the stage sits there; retarget it at the stage
