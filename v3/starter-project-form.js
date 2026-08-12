@@ -81,6 +81,7 @@
       keyPayload: '',
       lockedControls: null,
       generation: 0,
+      optionsGeneration: 0,
     }
   }
 
@@ -266,6 +267,7 @@
 
   function invalidateOptions(form) {
     var current = formState(form)
+    current.optionsGeneration += 1
     current.options = []
     current.optionsLoaded = false
     clearSelectedBrand(form)
@@ -274,10 +276,11 @@
 
   function loadOptions(form, globalObject, forceRefresh) {
     var current = formState(form)
-    if (current.optionsRequest) return current.optionsRequest
     if (forceRefresh) invalidateOptions(form)
+    if (current.optionsRequest && !forceRefresh) return current.optionsRequest
     if (current.optionsLoaded) return Promise.resolve(current.options)
     var generation = current.generation
+    var optionsGeneration = current.optionsGeneration
     var request = projectApi(globalObject, 'projectOptions')
     if (!request) {
       setStatus(form, 'error', 'The Brand list is not available. Reload and try again.')
@@ -290,7 +293,7 @@
     var optionsRequest = Promise.resolve()
       .then(function () { return request({}) })
       .then(function (response) {
-        if (generation !== current.generation) return []
+        if (generation !== current.generation || optionsGeneration !== current.optionsGeneration) return []
         current.options = normalizeOptions(response)
         current.optionsLoaded = true
         clearSelectedBrand(form)
@@ -304,7 +307,7 @@
         return current.options
       })
       .catch(function () {
-        if (generation !== current.generation) return []
+        if (generation !== current.generation || optionsGeneration !== current.optionsGeneration) return []
         setEmptyCopy(form, 'Could not load brands')
         setStatus(form, 'error', 'The Brand list could not load. Try again.')
         return []

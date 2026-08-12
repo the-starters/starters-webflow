@@ -278,6 +278,40 @@ test('opening the modal refreshes authorized Brands for the same member', async 
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
 })
 
+test('reopening during an options request supersedes its stale response', async () => {
+  let resolveFirst
+  let resolveSecond
+  let requestNumber = 0
+  const loaded = load({
+    projectOptions: () => {
+      requestNumber += 1
+      return new Promise((resolve) => {
+        if (requestNumber === 1) resolveFirst = resolve
+        else resolveSecond = resolve
+      })
+    },
+  })
+  loaded.document.listeners.click({
+    target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
+  })
+  await Promise.resolve()
+  loaded.document.listeners.click({
+    target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
+  })
+  await Promise.resolve()
+  assert.equal(requestNumber, 2)
+
+  resolveFirst({ counterparties: [{ counterparty_id: 54, company_name: 'Stale Brand' }] })
+  await Promise.resolve()
+  assert.equal(loaded.form.fields.brandId.value, '')
+
+  resolveSecond({ counterparties: [{ counterparty_id: 55, company_name: 'Current Brand' }] })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(loaded.form.fields.brandId.value, '55')
+  assert.equal(loaded.form.fields.search.value, 'Current Brand')
+  assert.equal(loaded.form.fields.list.querySelectorAll('[data-starter-project-brand-option]').length, 1)
+})
+
 test('submission creates a proposal event and never reports a created project', async () => {
   const loaded = load({
     noDocument: true,
