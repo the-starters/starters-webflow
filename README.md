@@ -860,7 +860,10 @@ comes from the nested contract-detail row or the direct `timeline_display`
 fallback.
 
 The contract signing panel is Webflow-authored native markup. Put
-`data-project-contract-panel` on its root, `data-project-contract-title` and
+`data-project-contract-panel`, the native `hidden` attribute, and
+`aria-hidden="true"` on its root so placeholder copy cannot flash or remain
+visible when the controller does not boot. The controller removes `hidden`
+only after canonical project state authorizes the panel. Put `data-project-contract-title` and
 `data-project-contract-body` on its status copy, and
 `data-project-contract-actions` around its actions. Author four badge variants,
 one each with `data-project-contract-badge="brand-pending"`, `"brand-signed"`,

@@ -1542,7 +1542,15 @@ test('invoice listeners teardown and rebind with Memberstack scope changes', asy
 // broadened or its form/modal scoping dropped.
 function el(tag, attrs = {}, children = []) {
   const attributes = new Map(Object.entries(attrs))
-  const node = { tag, attributes, children, parent: null, dataset: {}, style: {} }
+  const node = {
+    tag,
+    attributes,
+    children,
+    parent: null,
+    dataset: {},
+    hidden: attributes.has('hidden'),
+    style: {},
+  }
   node.classList = {
     add: (...names) => {
       const classes = new Set((attributes.get('class') || '').split(/\s+/).filter(Boolean))
@@ -2034,7 +2042,7 @@ test('contract panel paints one badge per party and only the authorized role act
   viewLabel.textContent = 'View Contract'
   const viewWrap = el('div', { class: 'button_main-wrap' }, [viewAction, viewLabel])
   const actions = el('div', { 'data-project-contract-actions': '' }, [signWrap, viewWrap])
-  const panel = el('div', { 'data-project-contract-panel': '' }, [
+  const panel = el('div', { 'data-project-contract-panel': '', hidden: '' }, [
     title, body, ...badges, actions,
   ])
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '708' }, [
@@ -2074,6 +2082,7 @@ test('contract panel paints one badge per party and only the authorized role act
   )
 
   assert.ok(await waitFor(() => panel.getAttribute('data-project-contract-state') === 'action'))
+  assert.equal(panel.hidden, false)
   assert.equal(panel.style.display, '')
   assert.equal(title.textContent, 'Acme has signed')
   assert.equal(signWrap.style.display, '')
@@ -2160,7 +2169,7 @@ test('contract panel fails closed when its return refresh fails', async () => {
   const signAction = el('a', { 'data-project-contract-action': 'sign' })
   const signWrap = el('div', { class: 'button_main-wrap' }, [signAction])
   const actions = el('div', { 'data-project-contract-actions': '' }, [signWrap])
-  const panel = el('div', { 'data-project-contract-panel': '' }, [actions])
+  const panel = el('div', { 'data-project-contract-panel': '', hidden: '' }, [actions])
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '708' }, [panel])
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
   let listRequests = 0
@@ -2201,6 +2210,7 @@ test('contract panel fails closed when its return refresh fails', async () => {
   bridge.dispatchWindow('focus')
 
   assert.ok(await waitFor(() => listRequests === 2 && panel.style.display === 'none'))
+  assert.equal(panel.hidden, true)
   assert.equal(panel.getAttribute('aria-hidden'), 'true')
   assert.equal(signWrap.style.display, 'none')
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /focus projection refresh failed/)

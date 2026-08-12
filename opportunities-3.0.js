@@ -2510,6 +2510,7 @@
 
   function setProjectPanelNodeVisible(node, visible) {
     if (!node) return
+    node.hidden = !visible
     node.style.display = visible ? '' : 'none'
     node.setAttribute('aria-hidden', visible ? 'false' : 'true')
   }
