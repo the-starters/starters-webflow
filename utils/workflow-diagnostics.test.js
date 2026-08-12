@@ -7,6 +7,21 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const SOURCE = fs.readFileSync(path.join(__dirname, 'workflow-diagnostics.js'), 'utf8')
+const visualEvidence = {}
+
+test.after(() => {
+  const evidenceFile = process.env.NO_MISTAKES_VISUAL_EVIDENCE_FILE
+  if (!evidenceFile || !visualEvidence.message || !visualEvidence.copied) return
+
+  const escape = (value) => String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+  fs.writeFileSync(evidenceFile, `<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Workflow diagnostic evidence</title>
+<style>body{font:16px/1.5 system-ui;background:#f5f6f8;color:#17202a;padding:40px}.card{max-width:720px;margin:auto;background:white;border:1px solid #d8dde5;border-radius:12px;padding:24px;box-shadow:0 8px 24px #17202a18}.status{border-left:4px solid #c0392b;padding:12px 16px;background:#fff6f5}.copy{white-space:pre-wrap;background:#f1f3f5;border-radius:8px;padding:16px}</style>
+<body><main class="card"><h1>Copyable workflow diagnostic</h1><p class="status">${escape(visualEvidence.message)}</p><h2>Copied receipt</h2><pre class="copy">${escape(visualEvidence.copied)}</pre></main></body></html>\n`)
+})
 
 function load(existingStorage) {
   const stored = existingStorage || new Map()
@@ -107,6 +122,8 @@ test('formats, copies, and decorates the visible message without form data', asy
   assert.equal(copied.length, 1)
   assert.match(copied[0], /Workflow: starter_profile_edit/)
   assert.doesNotMatch(copied[0], /private@example\.com/)
+  visualEvidence.message = api.message('Could not save your profile.', receipt)
+  visualEvidence.copied = copied[0]
 })
 
 test('restores and copies a redirecting receipt on the destination page', async () => {

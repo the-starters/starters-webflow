@@ -69,4 +69,3 @@ test('controllers boot with an authenticated member and absent authored regions 
     assert.deepEqual(requests, [], `${asset} wrote without its authored region`)
   }
 })
-

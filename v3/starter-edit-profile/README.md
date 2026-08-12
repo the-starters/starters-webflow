@@ -23,6 +23,11 @@ Loader pattern:
 
 Use the matching asset path for the other five replacements. Do not combine or reorder the loaders.
 
+The sitewide `v3/native-form-diagnostics.js` loader must run before these
+deferred mutation assets so their photo, portfolio, and company-experience
+requests can emit receipts. The root [Current Scripts](../../README.md#current-scripts)
+section owns that shared loader contract.
+
 ## Deliberately excluded
 
 The following live blocks remain unchanged because they own or are coupled to Elvin's availability, booking, and paid/free-call work:
@@ -45,4 +50,3 @@ Account-settings tabs, membership panels, and pause/cancel UI are separate share
 6. Publish staging and use human-like clicks for photo, portfolio, company experience, and work dates without submitting the full profile.
 7. Verify current network responses, console state, and no unexpected Xano writes, then publish production and repeat.
 8. Scan both published domains for Airtable, Make, and PAT exposure patterns.
-

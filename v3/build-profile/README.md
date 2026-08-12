@@ -25,6 +25,11 @@ not read fields, intercept the click, or change the coupled writer.
 
 Replace each exact inline block in place with its matching deferred loader. Do not consolidate or reorder these loaders: the untouched blocks between them still supply shared globals and form state.
 
+The sitewide `v3/native-form-diagnostics.js` loader must run before these
+deferred mutation assets so their photo, portfolio, and company-experience
+requests can emit receipts. The root [Current Scripts](../../README.md#current-scripts)
+section owns that shared loader contract.
+
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/profile-photo.js"></script>
 ```

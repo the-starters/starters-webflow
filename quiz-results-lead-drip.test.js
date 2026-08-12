@@ -249,6 +249,11 @@ test('completed quiz posts current matches with safe email properties', async ()
     const calls = enrollmentCalls(harness.fetchCalls)
     const payload = JSON.parse(calls[0].options.body)
 
+    assert.equal(
+        calls[0].url,
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/quiz_email/enroll/v3',
+    )
+    assert.equal(calls[0].options.method, 'POST')
     assert.equal(calls[0].options.headers.Authorization, 'Bearer xano-token')
     assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
     assert.equal(payload.properties.starter_1_first_name, 'Alex')
