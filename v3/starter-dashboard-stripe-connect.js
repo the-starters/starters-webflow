@@ -697,12 +697,20 @@
         title: 'Get Paid',
       }
     }
-    if (view === 'incomplete' || view === 'review') {
+    if (view === 'incomplete') {
       return {
         action: 'start',
         description: 'Finish Stripe onboarding',
         enabled: true,
         title: 'Complete Setup',
+      }
+    }
+    if (view === 'review') {
+      return {
+        action: 'none',
+        description: 'Stripe is reviewing your account',
+        enabled: false,
+        title: 'Under Review',
       }
     }
     if (view === 'ready') {
@@ -1207,6 +1215,7 @@
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
         renderRoots(roots, 'error')
+        renderEarningsTiles(earningsTiles, 'error')
         emit('starterStripeConnectError', {
           action: 'start',
           message: 'Browser blocked the Stripe Connect tab',
@@ -1269,6 +1278,7 @@
           if (result !== true) {
             if (returnWatcher) returnWatcher.cancel()
             closeStripeTab(stripeTab)
+            renderEarningsTiles(earningsTiles, 'error')
             return result
           }
 

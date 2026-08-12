@@ -2530,10 +2530,11 @@ is the primary tile when both exist, and the other authored tile stays hidden.
 The primary tile never disappears after the controller starts. Its copy and
 action change with canonical status: `Checking Stripe` while loading, `Get Paid
 / Connect Stripe` while disconnected, `Complete Setup / Finish Stripe
-onboarding` while incomplete or under review, `Earnings / Payment history &
-payouts` while ready, and a disabled `Stripe Unavailable / Use Try Again above`
-state on an error. The disconnected, incomplete, and review states start the
-same guarded OAuth/onboarding flow as the action-list CTA. A status with
+onboarding` while incomplete, a disabled `Under Review / Stripe is reviewing
+your account` state while under review, `Earnings / Payment history & payouts`
+while ready, and a disabled `Stripe Unavailable / Use Try Again above` state on
+an error. The disconnected and incomplete states start the same guarded
+OAuth/onboarding flow as the action-list CTA. A status with
 `charges_enabled:true` requests a provider-verified account destination from
 `dashboard/v3`:
 Express accounts receive a single-use login link, while Standard/full accounts

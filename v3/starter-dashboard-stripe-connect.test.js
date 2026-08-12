@@ -451,6 +451,15 @@ test('one authored blue tile stays visible and changes action with Stripe state'
   assert.equal(title.textContent, 'Complete Setup')
   assert.equal(description.textContent, 'Finish Stripe onboarding')
 
+  api.renderEarningsTiles(tiles, 'review')
+
+  assert.equal(history.hidden, false)
+  assert.equal(history.getAttribute('aria-disabled'), 'true')
+  assert.equal(history.getAttribute('tabindex'), '-1')
+  assert.equal(history.getAttribute('data-stripe-connect-hero-action'), 'none')
+  assert.equal(title.textContent, 'Under Review')
+  assert.equal(description.textContent, 'Stripe is reviewing your account')
+
   api.renderEarningsTiles(tiles, 'ready')
 
   assert.equal(connect.hidden, true)
@@ -2065,6 +2074,12 @@ test('a failed Connect Stripe request closes the reserved tab and restores recov
   }
   const { root, states } = stripeRoot()
   const connect = new FakeElement()
+  const title = new FakeElement()
+  const description = new FakeElement()
+  connect.children.set('.dash-hero_button-title', title)
+  connect.children.set('.dash-hero_button-description', description)
+  const earningsTiles = api.resolveEarningsTiles([connect])
+  api.renderEarningsTiles(earningsTiles, 'disconnected')
   const stripeTab = {
     closed: false,
     close() {
@@ -2100,12 +2115,17 @@ test('a failed Connect Stripe request closes the reserved tab and restores recov
         connect,
         [root],
         'member-123',
+        earningsTiles,
       ),
       false,
     )
     assert.equal(stripeTab.closed, true)
     assert.equal(connect.getAttribute('aria-busy'), 'false')
-    assert.equal(connect.getAttribute('aria-disabled'), 'false')
+    assert.equal(connect.getAttribute('aria-disabled'), 'true')
+    assert.equal(connect.getAttribute('tabindex'), '-1')
+    assert.equal(connect.getAttribute('data-stripe-connect-hero-action'), 'none')
+    assert.equal(title.textContent, 'Stripe Unavailable')
+    assert.equal(description.textContent, 'Use Try Again above')
     assert.equal(states.error.style.display, '')
   } finally {
     api.__resetXanoToken()
@@ -2120,6 +2140,13 @@ test('a failed Connect Stripe request closes the reserved tab and restores recov
 test('a blocked popup fails closed before making a Stripe Connect request', async () => {
   const previous = { fetch: global.fetch, open: global.open }
   const { root, states } = stripeRoot()
+  const connect = new FakeElement()
+  const title = new FakeElement()
+  const description = new FakeElement()
+  connect.children.set('.dash-hero_button-title', title)
+  connect.children.set('.dash-hero_button-description', description)
+  const earningsTiles = api.resolveEarningsTiles([connect])
+  api.renderEarningsTiles(earningsTiles, 'disconnected')
   let fetchCount = 0
   global.fetch = async () => {
     fetchCount += 1
@@ -2131,15 +2158,22 @@ test('a blocked popup fails closed before making a Stripe Connect request', asyn
     assert.equal(
       await api.startInNewTab(
         api.createExclusiveRunner(),
-        new FakeElement(),
-        new FakeElement(),
+        connect,
+        connect,
         [root],
         'member-123',
+        earningsTiles,
       ),
       false,
     )
     assert.equal(fetchCount, 0)
     assert.equal(states.error.style.display, '')
+    assert.equal(connect.hidden, false)
+    assert.equal(connect.getAttribute('aria-disabled'), 'true')
+    assert.equal(connect.getAttribute('tabindex'), '-1')
+    assert.equal(connect.getAttribute('data-stripe-connect-hero-action'), 'none')
+    assert.equal(title.textContent, 'Stripe Unavailable')
+    assert.equal(description.textContent, 'Use Try Again above')
   } finally {
     global.fetch = previous.fetch
     global.open = previous.open
