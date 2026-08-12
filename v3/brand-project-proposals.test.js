@@ -196,6 +196,30 @@ test('renders proposal rows as Action Items from the authored template', () => {
   assert.equal(fixture.list.children[1].hidden, true)
 })
 
+test('proposal links expose only safe relative or HTTP destinations', () => {
+  const scope = new Element()
+  const profile = new Element({ 'data-project-proposal-link': 'profile', href: '/stale' })
+  const message = new Element({ 'data-project-proposal-link': 'message', href: '/stale' })
+  scope.links = [profile, message]
+
+  api.paintFields(scope, api.normalizeProposal(proposal({
+    starter_profile_url: 'javascript:alert(1)',
+    message_url: '/messages/thread-41',
+  })))
+  assert.equal(profile.hasAttribute('href'), false)
+  assert.equal(profile.hidden, true)
+  assert.equal(message.getAttribute('href'), '/messages/thread-41')
+  assert.equal(message.hidden, false)
+
+  api.paintFields(scope, api.normalizeProposal(proposal({
+    starter_profile_url: 'https://thestarters.com/starters/82',
+    message_url: 'java\nscript:alert(1)',
+  })))
+  assert.equal(profile.getAttribute('href'), 'https://thestarters.com/starters/82')
+  assert.equal(message.hasAttribute('href'), false)
+  assert.equal(message.hidden, true)
+})
+
 test('accept sends the authorized command and keeps success feedback outside the closing modal', async () => {
   const fixture = controllerFixture()
   fixture.controller.render(fixture.projection)
@@ -290,11 +314,15 @@ test('member reset clears pending cards and retry state', () => {
   fixture.controller.render(fixture.projection)
   fixture.controller.state.keys.test = 'key'
   fixture.controller.state.resolved[41] = true
+  fixture.globalFeedback.textContent = 'Project approved and created.'
+  fixture.globalFeedback.hidden = false
   fixture.controller.reset()
   assert.equal(fixture.controller.state.proposals.length, 0)
   assert.deepEqual(fixture.controller.state.keys, {})
   assert.deepEqual(fixture.controller.state.resolved, {})
   assert.equal(fixture.list.children.length, 1)
+  assert.equal(fixture.globalFeedback.textContent, '')
+  assert.equal(fixture.globalFeedback.hidden, true)
 })
 
 test('a projection version change closes stale modal terms and announces the refresh', () => {

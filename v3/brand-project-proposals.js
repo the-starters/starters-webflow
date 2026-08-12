@@ -218,6 +218,14 @@
     if (element.setAttribute) element.setAttribute('aria-hidden', visible ? 'false' : 'true')
   }
 
+  function safeLink(value) {
+    var href = clean(value)
+    if (!href || /[\u0000-\u001f\u007f\\]/.test(href)) return ''
+    if (/^https?:\/\//i.test(href)) return href
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || /^\/\//.test(href)) return ''
+    return href
+  }
+
   function paintFields(scope, proposal) {
     if (!scope || !scope.querySelectorAll) return
     var values = proposalDisplay(proposal)
@@ -227,7 +235,7 @@
     })
     Array.prototype.forEach.call(scope.querySelectorAll('[data-project-proposal-link]'), function (link) {
       var type = clean(link.getAttribute('data-project-proposal-link'))
-      var href = type === 'profile' ? proposal.starter_profile_url : type === 'message' ? proposal.message_url : ''
+      var href = safeLink(type === 'profile' ? proposal.starter_profile_url : type === 'message' ? proposal.message_url : '')
       if (href) link.setAttribute('href', href)
       else link.removeAttribute('href')
       setVisible(link, Boolean(href))
@@ -549,6 +557,7 @@
       state.resolved = {}
       clearCards(list)
       close()
+      announce('', false)
     }
 
     function destroy() {
@@ -619,6 +628,7 @@
     proposalDisplay: proposalDisplay,
     renderCards: renderCards,
     scopePreview: scopePreview,
+    safeLink: safeLink,
   }
 
   if (isCommonJs) {
