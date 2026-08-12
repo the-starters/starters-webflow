@@ -75,6 +75,96 @@
   // length of the patch window. The page works without it.
   var LOADER_SELECTOR = '[data-page-spinner]'
   var LOG_PREFIX = '[starters patch-onboarding-status]'
+  var CONTROLLER_VERSION = 'patch-onboarding-status-v1'
+  var WORKFLOW = 'starter_onboarding_completion'
+  var workflowDiagnosticsControllerScript = document.currentScript
+
+  function loadWorkflowDiagnostics() {
+    if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics)
+    if (window.__startersWorkflowDiagnosticsReady) return window.__startersWorkflowDiagnosticsReady
+    var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
+    if (!source || !document.createElement) return Promise.resolve(null)
+    var url = ''
+    try {
+      var cdnRoot = source.match(
+        /^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/,
+      )
+      url = cdnRoot
+        ? cdnRoot[1] + 'utils/workflow-diagnostics.js'
+        : new URL('../utils/workflow-diagnostics.js', source).href
+    } catch (error) {
+      return Promise.resolve(null)
+    }
+    window.__startersWorkflowDiagnosticsReady = new Promise(function (resolve) {
+      var script = document.createElement('script')
+      script.src = url
+      script.async = false
+      script.addEventListener('load', function () {
+        resolve(window.StartersWorkflowDiagnostics || null)
+      }, { once: true })
+      script.addEventListener('error', function () { resolve(null) }, { once: true })
+      ;(document.head || document.documentElement).appendChild(script)
+    })
+    return window.__startersWorkflowDiagnosticsReady
+  }
+
+  var workflowDiagnosticsReady = loadWorkflowDiagnostics()
+
+  function diagnosticStart(wrapper) {
+    var api = window.StartersWorkflowDiagnostics
+    if (!api) return null
+    var receipt = api.record(api.create({
+      workflow: WORKFLOW,
+      controller_version: CONTROLLER_VERSION,
+      result: 'started',
+      stage: 'request',
+      request_started: false,
+      resource_type: 'starter_onboarding',
+    }))
+    if (wrapper) {
+      wrapper.__startersOnboardingDiagnostic = receipt
+      wrapper.__startersOnboardingDiagnosticStartedAt = Date.now()
+    }
+    return receipt
+  }
+
+  function diagnosticComplete(wrapper, fields) {
+    var api = window.StartersWorkflowDiagnostics
+    if (!api) return null
+    var receipt = api.record(api.complete(
+      wrapper && wrapper.__startersOnboardingDiagnostic,
+      fields || {},
+    ))
+    if (wrapper) wrapper.__startersOnboardingDiagnostic = receipt
+    return receipt
+  }
+
+  function diagnosticErrorCode(outcome) {
+    if (outcome && outcome.code === 'logged-out') return 'MEMBER_LOGGED_OUT'
+    if (outcome && outcome.code === 'memberstack-unavailable') return 'MEMBERSTACK_UNAVAILABLE'
+    if (outcome && outcome.timedOut) return 'REQUEST_TIMEOUT'
+    if (outcome && outcome.status) return 'HTTP_ERROR'
+    return 'ONBOARDING_STATUS_FAILED'
+  }
+
+  function decorateOnboardingReceipt(wrapper, receipt, kind) {
+    var api = window.StartersWorkflowDiagnostics
+    if (!wrapper || !api || !receipt || typeof wrapper.querySelector !== 'function') return false
+    var target = wrapper.querySelector(
+      kind === 'success' || kind === 'visible-error' ? DONE_SELECTOR : '.w-form-fail',
+    )
+    if (!target) return false
+    var text = target.querySelector && target.querySelector('[data-workflow-diagnostic-message], div, p') || target
+    if (text.__startersWorkflowDiagnosticBaseText === undefined) {
+      text.__startersWorkflowDiagnosticBaseText = kind === 'visible-error'
+        ? 'We could not confirm your member session. Please log in and try again.'
+        : text.textContent ||
+          (kind === 'success' ? 'Onboarding completed.' : 'We could not confirm onboarding status.')
+    }
+    text.textContent = api.message(text.__startersWorkflowDiagnosticBaseText, receipt)
+    api.decorate(text, receipt)
+    return true
+  }
 
   /* ------------------------------ environment ------------------------------ */
 
@@ -305,7 +395,11 @@
     var data = await response.json().catch(function () {
       return null
     })
-    if (!response.ok) throw new Error('Xano token trade failed with ' + response.status)
+    if (!response.ok) {
+      var tradeError = new Error('Xano token trade failed with ' + response.status)
+      tradeError.status = response.status || 0
+      throw tradeError
+    }
     var token = typeof data === 'string' ? data : data && (data.authToken || data.token)
     if (!token) throw new Error('Xano token trade returned no token')
     return token
@@ -341,8 +435,10 @@
   async function attemptMarkOnboardingDone() {
     var attempts = PATCH_RETRY_DELAYS_MS.length + 1
     var lastError = null
+    var finalAttempt = 0
 
     for (var attempt = 0; attempt < attempts; attempt += 1) {
+      finalAttempt = attempt
       if (attempt > 0) await delay(PATCH_RETRY_DELAYS_MS[attempt - 1])
       try {
         var token = await xanoToken()
@@ -352,11 +448,13 @@
         })
         if (response && response.ok) {
           note('onboarding_done set on attempt ' + (attempt + 1) + '.')
-          return { ok: true, code: null }
+          return { ok: true, code: null, status: response.status || 200, replayed: attempt > 0 }
         }
-        throw new Error(
+        var responseError = new Error(
           'set_onboarding_status responded ' + ((response && response.status) || 'no response'),
         )
+        responseError.status = (response && response.status) || 0
+        throw responseError
       } catch (error) {
         lastError = error
         // The token may itself be the reason this failed; re-trade next round
@@ -373,7 +471,13 @@
         describe(lastError) +
         ' — the member can still be marked on a later visit.',
     )
-    return { ok: false, code: (lastError && lastError.code) || null }
+    return {
+      ok: false,
+      code: (lastError && lastError.code) || null,
+      status: (lastError && Number(lastError.status)) || 0,
+      timedOut: /timed out/i.test(describe(lastError)),
+      replayed: finalAttempt > 0,
+    }
   }
 
   // The plain boolean form, kept for hand-exercising the write on staging.
@@ -412,8 +516,32 @@
     var loader = showLoader()
     hideWrapper(wrapper)
 
-    attemptMarkOnboardingDone().then(
+    Promise.resolve(workflowDiagnosticsReady).then(function () {
+      diagnosticStart(wrapper)
+      return attemptMarkOnboardingDone()
+    }).then(
       function (outcome) {
+        var receipt = diagnosticComplete(wrapper, {
+          result: outcome && outcome.ok ? 'success' : 'failed',
+          stage: 'response',
+          error_code: outcome && outcome.ok ? '' : diagnosticErrorCode(outcome),
+          http_status: outcome && outcome.status,
+          duration_ms: Date.now() - (wrapper.__startersOnboardingDiagnosticStartedAt || Date.now()),
+          request_started: !(
+            outcome &&
+            (outcome.code === 'logged-out' || outcome.code === 'memberstack-unavailable')
+          ),
+          replayed: Boolean(outcome && outcome.replayed),
+        })
+        decorateOnboardingReceipt(
+          wrapper,
+          receipt,
+          outcome && outcome.ok
+            ? 'success'
+            : outcome && outcome.code === 'logged-out'
+              ? 'visible-error'
+              : 'error',
+        )
         // A member with no session has nowhere to be sent, so the page is put
         // back the way it was found. Every other failure still redirects:
         // leaving them behind a hidden form is worse than a record that gets
@@ -426,6 +554,14 @@
         goToDashboard()
       },
       function (error) {
+        var receipt = diagnosticComplete(wrapper, {
+          result: 'failed',
+          stage: 'response',
+          error_code: 'ONBOARDING_STATUS_FAILED',
+          duration_ms: Date.now() - (wrapper.__startersOnboardingDiagnosticStartedAt || Date.now()),
+          request_started: true,
+        })
+        decorateOnboardingReceipt(wrapper, receipt, 'error')
         warn('unexpected failure marking onboarding done: ' + describe(error))
         goToDashboard()
       },
