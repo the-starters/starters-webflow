@@ -1,7 +1,7 @@
 /**
  * /complete-profile — role routing for a page that belongs to exactly one role.
  *
- * @release v1.59.167
+ * @release v1.59.176
  *
  * ONE job: put every MAPPED member who lands on /complete-profile where they
  * actually belong, without a hop through /login. The page is a paid-Brand form,
@@ -538,7 +538,7 @@
   window.StartersCompleteProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/complete-profile-redirect.test.js drift guard asserts they match.
-    release: 'v1.59.167',
+    release: 'v1.59.176',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isCompleteProfilePath: isCompleteProfilePath,

@@ -1,7 +1,7 @@
 /**
  * /build-profile/* — funnel-position redirect.
  *
- * @release v1.59.167
+ * @release v1.59.176
  *
  * ONE job: keep a Talent member who is PAST the Build-profile step from
  * re-entering it. The product flow is Apply → Build profile (stamps the Xano
@@ -416,7 +416,7 @@
   window.StartersBuildProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/build-profile-redirect.test.js drift guard asserts they match.
-    release: 'v1.59.167',
+    release: 'v1.59.176',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isBuildProfilePath: isBuildProfilePath,
