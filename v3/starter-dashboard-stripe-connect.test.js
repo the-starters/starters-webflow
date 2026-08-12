@@ -1227,7 +1227,7 @@ test('staging query flags do not bypass authenticated Dashboard access', async (
   }
   global.getXanoAuthToken = async () => 'xano-token'
   global.$memberstackDom = {
-    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getCurrentMember: async () => ({ data: { id: 'mem_sb_member_123' } }),
   }
   global.fetch = async (url, options) => {
     fetchCount += 1
@@ -1250,7 +1250,7 @@ test('staging query flags do not bypass authenticated Dashboard access', async (
         api.createExclusiveRunner(),
         new FakeElement('A'),
         [stripeRoot().root],
-        'member-123',
+        'mem_sb_member_123',
         api.resolveEarningsTiles([]),
       ),
       true,
@@ -1259,6 +1259,103 @@ test('staging query flags do not bypass authenticated Dashboard access', async (
     assert.equal(fetchCount, 1)
     assert.ok(stripeRequest(requests, '/stripe_connect/dashboard/v3'))
   } finally {
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.location = previous.location
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
+test('server environment mismatches fail before Stripe or projection access', async () => {
+  const previous = {
+    console: global.console,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    location: global.location,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const cases = [
+    {
+      memberId: 'member-live-123',
+      origin: 'https://the-starters-3-0.webflow.io',
+    },
+    {
+      memberId: 'mem_sb_test_123',
+      origin: 'https://thestarters.com',
+    },
+  ]
+  global.console = { ...console, error: () => {} }
+  global.getXanoAuthToken = async () => 'xano-token'
+
+  try {
+    for (const fixture of cases) {
+      const effects = {
+        endpointCalls: 0,
+        keySelections: 0,
+        projectionReads: 0,
+        stripeCalls: 0,
+      }
+      const stripeTab = {
+        closed: false,
+        close() {
+          this.closed = true
+        },
+        location: { replace: () => {} },
+      }
+      const testMember = fixture.memberId.startsWith('mem_sb_')
+      const testOrigin = fixture.origin === 'https://the-starters-3-0.webflow.io'
+      global.location = {
+        hostname: new URL(fixture.origin).hostname,
+        origin: fixture.origin,
+        search: '',
+      }
+      global.$memberstackDom = {
+        getCurrentMember: async () => ({ data: { id: fixture.memberId } }),
+      }
+      global.open = () => stripeTab
+      global.fetch = async () => {
+        effects.endpointCalls += 1
+        if (testMember !== testOrigin) {
+          return response(
+            { error: 'Stripe environment mismatch' },
+            { ok: false, status: 403 },
+          )
+        }
+        effects.keySelections += 1
+        effects.projectionReads += 1
+        effects.stripeCalls += 1
+        return response({
+          account_id: 'acct_environment123',
+          connected: true,
+          mode: 'full',
+          url: 'https://dashboard.stripe.com/b/acct_environment123',
+        })
+      }
+      const { root, states } = stripeRoot()
+
+      assert.equal(
+        await api.openDashboardInNewTab(
+          api.createExclusiveRunner(),
+          new FakeElement('A'),
+          [root],
+          fixture.memberId,
+          api.resolveEarningsTiles([]),
+        ),
+        false,
+      )
+      assert.deepEqual(effects, {
+        endpointCalls: 1,
+        keySelections: 0,
+        projectionReads: 0,
+        stripeCalls: 0,
+      })
+      assert.equal(stripeTab.closed, true)
+      assert.equal(states.error.style.display, '')
+    }
+  } finally {
+    global.console = previous.console
     global.fetch = previous.fetch
     global.getXanoAuthToken = previous.getXanoAuthToken
     global.location = previous.location
@@ -1590,7 +1687,7 @@ test('staging query flags do not bypass confirmed disconnect', async () => {
   }
   global.getXanoAuthToken = async () => 'xano-token'
   global.$memberstackDom = {
-    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+    getCurrentMember: async () => ({ data: { id: 'mem_sb_member_123' } }),
   }
   global.fetch = async (url, options) => {
     fetchCount += 1
@@ -1605,7 +1702,7 @@ test('staging query flags do not bypass confirmed disconnect', async () => {
         new FakeElement('BUTTON'),
         [stripeRoot().root],
         api.resolveEarningsTiles([]),
-        'member-123',
+        'mem_sb_member_123',
       ),
       true,
     )
@@ -3016,7 +3113,7 @@ test('staging callback uses the persistent exchange and keeps the TEST domain', 
     assign: (url) => assigned.push(url),
   }
   global.$memberstackDom = {
-    getCurrentMember: async () => ({ data: { id: 'mem-test' } }),
+    getCurrentMember: async () => ({ data: { id: 'mem_sb_test' } }),
     getMemberCookie: async () => 'ms-cookie',
   }
   global.fetch = async (url, options) => {
