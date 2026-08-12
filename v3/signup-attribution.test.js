@@ -8,13 +8,13 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.169'
+const RELEASE = 'v1.59.199'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
 
 // Cookie name to Memberstack custom-field ID: the literals both this file and
-// quiz-results.js are pinned to. All ten are verified to exist in the Memberstack
+// quiz-results.js are pinned to. All eleven are verified to exist in the Memberstack
 // app config, which is what makes them a contract rather than a convention.
 const FIELD_IDS = {
     utm_source: 'utm-source',
@@ -27,6 +27,7 @@ const FIELD_IDS = {
     event_id: 'event-id',
     signup_source: 'signup-source',
     signup_referrer: 'signup-referrer',
+    signup_trigger: 'signup-trigger',
 }
 
 const COOKIE_NAMES = Object.keys(FIELD_IDS)
@@ -116,7 +117,7 @@ function sliceFunction(src, declaration) {
  * @param {string} resultsSource Contents of quiz-results.js.
  */
 function bothWriteOnceGuards(resultsSource) {
-    const ids = '["signup-source","signup-referrer"]'
+    const ids = '["signup-source","signup-referrer","signup-trigger"]'
 
     return {
         v3: vm.runInNewContext(
@@ -193,8 +194,9 @@ function documentDouble(initial, readOnly, forms, referrer) {
         listeners: [],
         jar,
         writes,
-        addEventListener(name, handler) {
-            this.listeners.push([name, handler])
+        addEventListener(name, handler, options) {
+            const capture = options === true || (options && options.capture === true)
+            this.listeners.push([name, handler, capture])
         },
         // Only `data-ms-form` selectors are modelled, with and without the
         // `form` prefix, because the script's two selectors differ by exactly
@@ -335,6 +337,7 @@ function boot(options = {}) {
     }
 
     const hostname = options.hostname || 'the-starters-3-0.webflow.io'
+    const openedSignup = []
     const window = {
         $memberstackDom: options.noMemberstack ? undefined : memberstack,
         location: {
@@ -348,6 +351,16 @@ function boot(options = {}) {
             host: hostname,
             pathname: options.pathname === undefined ? '/quiz' : options.pathname,
             search: options.search || '',
+        },
+        lumos: {
+            modal: {
+                list: {
+                    'signup-modal': {
+                        el: { open: false },
+                        open: () => openedSignup.push(true),
+                    },
+                },
+            },
         },
         sessionStorage: {
             getItem: (key) => (session.has(key) ? session.get(key) : null),
@@ -407,7 +420,52 @@ function boot(options = {}) {
         updateCalls,
         warnings,
         window,
+        openedSignup,
         api: window.StartersAttribution,
+        clickTrigger: (attrs = {}) => {
+            const target = {
+                getAttribute(name) {
+                    if (name === 'data-signup-trigger-element') {
+                        return attrs.element === undefined ? null : attrs.element
+                    }
+                    if (name === 'data-signup-trigger-value') {
+                        return attrs.value === undefined ? null : attrs.value
+                    }
+                    return null
+                },
+                closest(selector) {
+                    if (selector === '[data-signup-trigger-element]') return this
+                    return null
+                },
+            }
+            const event = {
+                target,
+                defaultPrevented: false,
+                propagationStopped: false,
+                immediateStopped: false,
+            }
+            event.preventDefault = () => {
+                event.defaultPrevented = true
+            }
+            event.stopPropagation = () => {
+                event.propagationStopped = true
+            }
+            event.stopImmediatePropagation = () => {
+                event.immediateStopped = true
+                event.propagationStopped = true
+            }
+            const handlers = document.listeners.filter(([name]) => name === 'click')
+            const capture = handlers.filter((entry) => entry[2]).map((entry) => entry[1])
+            const bubble = handlers.filter((entry) => !entry[2]).map((entry) => entry[1])
+            for (const handler of capture) {
+                handler(event)
+                if (event.immediateStopped) break
+            }
+            if (!event.immediateStopped) {
+                for (const handler of bubble) handler(event)
+            }
+            return event
+        },
         rerun: () => vm.runInNewContext(source, context),
         settle: () => new Promise((resolve) => setImmediate(resolve)),
         writesFor: (name) =>
@@ -508,6 +566,7 @@ test('a URL with no parameters writes nothing but the event id', () => {
         // load must leave them exactly as it found them.
         signup_source: '/all-starters',
         signup_referrer: '/starters/john-doe',
+        signup_trigger: 'hire',
     }
     const harness = boot({ cookies: existing })
 
@@ -596,12 +655,12 @@ test('ensureEventId falls back when crypto.randomUUID is missing', () => {
 
 /* ---------------------------- field-ID contract --------------------------- */
 
-test('getParams exposes exactly the ten contract cookies', () => {
+test('getParams exposes exactly the eleven contract cookies', () => {
     const harness = boot()
     assert.deepEqual(Object.keys(harness.api.getParams()), COOKIE_NAMES)
 })
 
-test('the field mapping is underscore to hyphen for all ten cookies', () => {
+test('the field mapping is underscore to hyphen for all eleven cookies', () => {
     for (const [cookie, field] of Object.entries(FIELD_IDS)) {
         assert.equal(cookie.replace(/_/g, '-'), field, cookie)
     }
@@ -609,7 +668,7 @@ test('the field mapping is underscore to hyphen for all ten cookies', () => {
     assert.equal(FIELD_IDS.event_id, 'event-id')
 })
 
-test('the map in the script is exactly the ten contract pairs', () => {
+test('the map in the script is exactly the eleven contract pairs', () => {
     // The map stopped being documentation when /sign-up started writing the
     // fields from here, so it is now pinned as code.
     assert.deepEqual(extractLiteral('FIELD_IDS'), FIELD_IDS)
@@ -634,9 +693,10 @@ test('COOKIE_NAMES is derived from FIELD_IDS so the two cannot drift', () => {
     // `?signup_referrer=` would let the address bar dictate them.
     assert.equal(urlParams.includes('signup_source'), false)
     assert.equal(urlParams.includes('signup_referrer'), false)
+    assert.equal(urlParams.includes('signup_trigger'), false)
 })
 
-test('the drift guard sees ten pairs, and both maps carry all ten', () => {
+test('the drift guard sees eleven pairs, and both maps carry all eleven', () => {
     // The count is asserted explicitly so adding a field to one map and not the
     // other cannot pass by making both sides equally wrong.
     const resultsSource = fs.readFileSync(
@@ -649,13 +709,13 @@ test('the drift guard sees ten pairs, and both maps carry all ten', () => {
         'const',
     )
 
-    assert.equal(Object.keys(FIELD_IDS).length, 10)
-    assert.equal(Object.keys(extractLiteral('FIELD_IDS')).length, 10)
-    assert.equal(Object.keys(inQuizResults).length, 10)
+    assert.equal(Object.keys(FIELD_IDS).length, 11)
+    assert.equal(Object.keys(extractLiteral('FIELD_IDS')).length, 11)
+    assert.equal(Object.keys(inQuizResults).length, 11)
     assert.deepEqual(inQuizResults, FIELD_IDS)
 })
 
-test('both scripts guard the same two write-once fields', () => {
+test('both scripts guard the same three write-once fields', () => {
     // A split set would silently protect a field on one signup route and not the
     // other, which is the same class of bug the FIELD_IDS drift guard exists for.
     const resultsSource = fs.readFileSync(
@@ -667,13 +727,13 @@ test('both scripts guard the same two write-once fields', () => {
     // their file's own field map, so they cannot be evaluated on their own.
     assert.match(
         source,
-        /var WRITE_ONCE_FIELD_IDS = \[\s*FIELD_IDS\.signup_source,\s*FIELD_IDS\.signup_referrer,\s*\]/,
-        'signup-attribution.js must guard exactly signup_source and signup_referrer',
+        /var WRITE_ONCE_FIELD_IDS = \[\s*FIELD_IDS\.signup_source,\s*FIELD_IDS\.signup_referrer,\s*FIELD_IDS\.signup_trigger,\s*\]/,
+        'signup-attribution.js must guard signup_source, signup_referrer, and signup_trigger',
     )
     assert.match(
         resultsSource,
-        /const writeOnceFieldIds = \[\s*attributionCookieFieldIds\.signup_source,\s*attributionCookieFieldIds\.signup_referrer,\s*\]/,
-        'quiz-results.js must guard exactly the same two',
+        /const writeOnceFieldIds = \[\s*attributionCookieFieldIds\.signup_source,\s*attributionCookieFieldIds\.signup_referrer,\s*attributionCookieFieldIds\.signup_trigger,\s*\]/,
+        'quiz-results.js must guard exactly the same three',
     )
 })
 
@@ -772,7 +832,7 @@ test('the two form selectors keep their deliberate asymmetry', () => {
     )
 })
 
-test('the header and README document all ten contract field IDs', () => {
+test('the header and README document all eleven contract field IDs', () => {
     for (const [cookie, field] of Object.entries(FIELD_IDS)) {
         const row = new RegExp('`' + cookie + '` -> `' + field + '`')
         assert.match(header, row, `${cookie} missing from the script header`)
@@ -1828,13 +1888,13 @@ test('the stored path is normalized the same way the path map is matched', async
 
     assert.equal(profile.api.getParams().signup_source, '/starters/john-doe')
 
-    // The homepage keeps its slash: normalizePath only strips one from a longer
-    // path, so a home signup is "/" and never an empty string.
+    // The homepage keeps its slash through normalizePath (never an empty
+    // string) and attribution stores that root as /home.
     const home = boot({ member: null, pathname: '/', forms: ['signup'] })
     await home.settle()
     home.authHandlers[0](loggedInMember)
 
-    assert.equal(home.api.getParams().signup_source, '/')
+    assert.equal(home.api.getParams().signup_source, '/home')
 })
 
 /* ----------------------------- signup referrer ---------------------------- */
@@ -1845,6 +1905,7 @@ const SITE = 'https://the-starters-3-0.webflow.io'
 test('a homepage click through to /quiz records the homepage', async () => {
     // The case signup_source cannot answer: / has no signup form at all, so the
     // source is /quiz and only the referrer can say they started on the homepage.
+    // Attribution stores that root as /home, not /, so analytics stays path-shaped.
     const harness = boot({
         member: null,
         pathname: '/quiz',
@@ -1854,7 +1915,7 @@ test('a homepage click through to /quiz records the homepage', async () => {
 
     harness.authHandlers[0](loggedInMember)
 
-    assert.equal(harness.api.getParams().signup_referrer, '/')
+    assert.equal(harness.api.getParams().signup_referrer, '/home')
     assert.equal(harness.api.getParams().signup_source, '/quiz')
 })
 
@@ -1908,7 +1969,7 @@ test('a referrer query string and hash are dropped, and the path normalized', as
     assert.equal(harness.api.getParams().signup_referrer, '/starters/john-doe')
 })
 
-test('the homepage referrer stays "/" and never becomes an empty string', async () => {
+test('the homepage referrer stores /home and never becomes an empty string', async () => {
     const harness = boot({
         member: null,
         pathname: '/sign-up',
@@ -1918,7 +1979,7 @@ test('the homepage referrer stays "/" and never becomes an empty string', async 
 
     harness.authHandlers[0](loggedInMember)
 
-    assert.equal(harness.api.getParams().signup_referrer, '/')
+    assert.equal(harness.api.getParams().signup_referrer, '/home')
 })
 
 test('a location object without origin still resolves same-origin', async () => {
@@ -1952,12 +2013,12 @@ test('/quiz records the referrer despite directSave being false', async () => {
     await harness.settle()
     await harness.settle()
 
-    assert.equal(harness.api.getParams().signup_referrer, '/')
+    assert.equal(harness.api.getParams().signup_referrer, '/home')
     // Nothing written from here, exactly as before: quiz-results.js owns it.
     assert.deepEqual(harness.updateCalls, [])
     assert.equal(harness.pendingSave(), undefined)
     // And the cookie jar is what quiz-results.js will read a page later.
-    assert.match(harness.document.cookie, /signup_referrer=%2F(?:;|$)/)
+    assert.match(harness.document.cookie, /signup_referrer=%2Fhome(?:;|$)/)
 })
 
 test('the /quiz-results load cannot overwrite the referrer the quiz signup stored', async () => {
@@ -1976,7 +2037,7 @@ test('the /quiz-results load cannot overwrite the referrer the quiz signup store
     quiz.authHandlers[0](loggedInMember)
     await quiz.settle()
 
-    assert.equal(quiz.api.getParams().signup_referrer, '/')
+    assert.equal(quiz.api.getParams().signup_referrer, '/home')
 
     // The next page, same cookie jar, referred by /quiz.
     const results = boot({
@@ -1990,7 +2051,7 @@ test('the /quiz-results load cannot overwrite the referrer the quiz signup store
 
     assert.deepEqual(results.writesFor('signup_referrer'), [])
     // What quiz-results.js reads when it builds its single save.
-    assert.equal(results.api.getParams().signup_referrer, '/')
+    assert.equal(results.api.getParams().signup_referrer, '/home')
     assert.equal(results.api.getParams().signup_source, '/quiz')
 })
 
@@ -2056,7 +2117,7 @@ test('the modal reload cannot overwrite the referrer it signed up under', async 
     await harness.settle()
     await harness.settle()
 
-    assert.equal(harness.savedFields()[0]['signup-referrer'], '/')
+    assert.equal(harness.savedFields()[0]['signup-referrer'], '/home')
     assert.equal(harness.savedFields()[0]['signup-source'], '/all-starters')
 
     // The reload: same jar, and this time /all-starters is its own referrer.
@@ -2072,7 +2133,7 @@ test('the modal reload cannot overwrite the referrer it signed up under', async 
     await reload.settle()
 
     assert.deepEqual(reload.writesFor('signup_referrer'), [])
-    assert.equal(reload.api.getParams().signup_referrer, '/')
+    assert.equal(reload.api.getParams().signup_referrer, '/home')
 })
 
 /* ------------------ signup source and referrer are write-once ------------- */
@@ -2303,6 +2364,187 @@ test('the guard never touches the other eight fields', async () => {
     await harness.settle()
 
     assert.deepEqual(harness.savedFields(), [CLICK_FIELDS])
+})
+
+/* ------------------------------ signup trigger ---------------------------- */
+
+const hirePage = {
+    member: null,
+    pathname: '/hire/jane-doe',
+    forms: ['signup'],
+}
+
+test('a logged-out Hire click stores hire and opens the signup modal', async () => {
+    const harness = boot(hirePage)
+    await harness.settle()
+
+    const event = harness.clickTrigger({ element: 'hire' })
+
+    assert.equal(harness.api.getParams().signup_trigger, 'hire')
+    assert.equal(harness.writesFor('signup_trigger').length, 1)
+    assert.equal(event.defaultPrevented, true)
+    assert.equal(event.propagationStopped, true)
+    assert.equal(harness.openedSignup.length, 1)
+})
+
+test('Message and Book Call clicks store their enum values', async () => {
+    for (const element of ['message', 'book-call']) {
+        const harness = boot(hirePage)
+        await harness.settle()
+        harness.clickTrigger({ element })
+        assert.equal(harness.api.getParams().signup_trigger, element, element)
+    }
+})
+
+test('a service click with a value stores service:<detail>', async () => {
+    const harness = boot(hirePage)
+    await harness.settle()
+
+    harness.clickTrigger({ element: 'service', value: 'brand-strategy' })
+
+    assert.equal(harness.api.getParams().signup_trigger, 'service:brand-strategy')
+})
+
+test('a service click without a value writes nothing', async () => {
+    const harness = boot(hirePage)
+    await harness.settle()
+
+    harness.clickTrigger({ element: 'service' })
+
+    assert.equal(harness.api.getParams().signup_trigger, null)
+    assert.deepEqual(harness.writesFor('signup_trigger'), [])
+    assert.equal(harness.openedSignup.length, 0)
+    assert.ok(
+        harness.warnings.some((message) => /signup trigger/.test(message)),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+})
+
+test('an unknown trigger element writes nothing', async () => {
+    const harness = boot(hirePage)
+    await harness.settle()
+
+    harness.clickTrigger({ element: 'newsletter' })
+
+    assert.equal(harness.api.getParams().signup_trigger, null)
+    assert.deepEqual(harness.writesFor('signup_trigger'), [])
+    assert.equal(harness.openedSignup.length, 0)
+    assert.ok(
+        harness.warnings.some((message) => /signup trigger/.test(message)),
+        `no staging warning in ${JSON.stringify(harness.warnings)}`,
+    )
+})
+
+test('an unknown trigger element stays silent on production', async () => {
+    const harness = boot(Object.assign({}, hirePage, { hostname: 'thestarters.com' }))
+    await harness.settle()
+
+    harness.clickTrigger({ element: 'newsletter' })
+
+    assert.deepEqual(harness.warnings, [])
+    assert.equal(harness.api.getParams().signup_trigger, null)
+})
+
+test('the last CTA click wins until signup', async () => {
+    const harness = boot(hirePage)
+    await harness.settle()
+
+    harness.clickTrigger({ element: 'message' })
+    harness.clickTrigger({ element: 'hire' })
+
+    assert.equal(harness.api.getParams().signup_trigger, 'hire')
+    assert.equal(harness.writesFor('signup_trigger').length, 2)
+})
+
+test('a logged-in click does not stamp Signup Trigger or open signup', async () => {
+    const harness = boot(
+        Object.assign({}, hirePage, { member: loggedInMember }),
+    )
+    await harness.settle()
+
+    const event = harness.clickTrigger({ element: 'hire' })
+
+    assert.equal(harness.api.getParams().signup_trigger, null)
+    assert.deepEqual(harness.writesFor('signup_trigger'), [])
+    assert.equal(event.defaultPrevented, false)
+    assert.deepEqual(harness.openedSignup, [])
+})
+
+test('an optional value attr overrides the Hire/Message/Book Call enum', async () => {
+    const harness = boot(hirePage)
+    await harness.settle()
+
+    harness.clickTrigger({ element: 'hire', value: 'hire-sticky' })
+
+    assert.equal(harness.api.getParams().signup_trigger, 'hire-sticky')
+})
+
+test('a signup_trigger URL parameter cannot spoof the cookie', async () => {
+    const harness = boot({
+        member: null,
+        pathname: '/hire/jane-doe',
+        forms: ['signup'],
+        search: '?signup_trigger=hire',
+    })
+    await harness.settle()
+
+    assert.deepEqual(harness.writesFor('signup_trigger'), [])
+    assert.equal(harness.api.getParams().signup_trigger, null)
+})
+
+test('the signup write includes Signup Trigger from the cookie', async () => {
+    const harness = boot(
+        Object.assign({}, hirePage, { cookies: clickCookies, pathname: '/hire/jane-doe' }),
+    )
+    await harness.settle()
+
+    harness.clickTrigger({ element: 'hire' })
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.savedFields()[0]['signup-trigger'], 'hire')
+    assert.equal(harness.savedFields()[0]['signup-source'], '/hire/jane-doe')
+})
+
+test('a pending retry writes Signup Trigger from the signup-time snapshot', async () => {
+    const harness = boot({
+        cookies: { utm_source: 'google', signup_trigger: 'message' },
+        member: loggedInMember,
+        pathname: '/hire/jane-doe',
+        forms: ['signup'],
+        session: {
+            [PENDING_SAVE_FLAG]: 'true',
+            [PENDING_FIELDS_KEY]: JSON.stringify({
+                'utm-source': 'facebook',
+                'signup-trigger': 'hire',
+                'signup-source': '/hire/jane-doe',
+            }),
+        },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.savedFields()[0]['signup-trigger'], 'hire')
+    assert.equal(harness.savedFields()[0]['utm-source'], 'facebook')
+    assert.equal(harness.pendingSave(), undefined)
+})
+
+test('a member who already has Signup Trigger keeps it', async () => {
+    const harness = boot(
+        Object.assign({}, hirePage, { cookies: clickCookies }),
+    )
+    await harness.settle()
+
+    harness.clickTrigger({ element: 'hire' })
+    harness.authHandlers[0](
+        memberWithFields({ 'signup-trigger': 'message' }),
+    )
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal('signup-trigger' in harness.savedFields()[0], false)
+    assert.equal(harness.savedFields()[0]['utm-source'], 'facebook')
 })
 
 /* ----------------------------- file contract ------------------------------ */

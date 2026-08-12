@@ -120,7 +120,8 @@ test('every attribution cookie maps to its verified Memberstack field ID', () =>
             // clicked through from, which the source can never name: /quiz is
             // always the source for this funnel.
             'signup_source=/quiz',
-            'signup_referrer=/',
+            'signup_referrer=/home',
+            'signup_trigger=hire',
         ].join('; '),
     )
 
@@ -134,7 +135,8 @@ test('every attribution cookie maps to its verified Memberstack field ID', () =>
         fbp: 'fb.1.1700000000.987654321',
         'event-id': 'evt-42',
         'signup-source': '/quiz',
-        'signup-referrer': '/',
+        'signup-referrer': '/home',
+        'signup-trigger': 'hire',
     })
 })
 

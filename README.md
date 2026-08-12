@@ -912,12 +912,11 @@ The panel is limited to canonical V3 Standard Contracts: `sync_origin` must be
 `v3` and `contract_source` must be `standard`. Own-contract rows and active,
 request, completed, terminated, or canceled lifecycle states hide it. Each
 visible panel shows exactly one Brand badge and one Starter badge from the
-canonical `brand_signed_at` and `starter_signed_at` values. Brand signs first.
-Before the Brand signs, only the Brand receives Review & Sign Contract; the
-Starter sees a waiting state without an action. After the Brand signs, the Brand
-receives View Contract and only the Starter receives Review & Sign Contract.
-Inconsistent partial or out-of-order signature state shows an attention state
-without an action. Draft or queued state shows preparation status, and provider
+canonical `brand_signed_at` and `starter_signed_at` values. Either party can sign
+first. Each unsigned party receives Review & Sign Contract. A party that already
+signed receives View Contract while waiting for the other signature. A partial
+provider state without either canonical signer timestamp shows an attention
+state without an action. Draft or queued state shows preparation status, and provider
 failure states show the help message without an action. After both signatures,
 the panel shows activation processing without another signing action.
 

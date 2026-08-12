@@ -117,6 +117,7 @@ function load(options = {}) {
   const navigations = []
   const closed = []
   const opened = []
+  const openedSignup = []
   const calls = { users: [], conversations: [], mounted: [], selected: [], chatbox: 0 }
   const windowListeners = []
   const modalId = options.modalId || MODAL_ID
@@ -223,6 +224,11 @@ function load(options = {}) {
                 },
                 close: () => closed.push(true),
               },
+              'signup-modal': {
+                el: { open: false },
+                open: () => openedSignup.push(true),
+                close: () => {},
+              },
             },
           },
         },
@@ -287,6 +293,7 @@ function load(options = {}) {
     navigations,
     closed,
     opened,
+    openedSignup,
     calls,
     container,
     dialog,
@@ -699,18 +706,19 @@ test('Designer placeholder content is cleared when the chat mounts', async () =>
 
 /* ============================ gatekeeping ========================= */
 
-test('a logged-out visitor is sent to the quiz funnel', async () => {
+test('a logged-out visitor is sent to the hire signup modal', async () => {
   const loaded = load({ triggers: [starterTrigger()], member: null })
   await settle()
 
   loaded.openModal()
   await settle()
 
-  assert.deepEqual(loaded.navigations, ['/quiz'])
+  assert.deepEqual(loaded.navigations, [])
+  assert.equal(loaded.openedSignup.length, 1)
   assert.equal(loaded.calls.mounted.length, 0)
 })
 
-test('a logged-out click is intercepted before the modal can open', async () => {
+test('a logged-out click opens signup instead of the quiz funnel', async () => {
   const element = starterTrigger()
   const loaded = load({ triggers: [element], member: null })
   await settle()
@@ -719,7 +727,8 @@ test('a logged-out click is intercepted before the modal can open', async () => 
 
   assert.equal(event.defaultPrevented, true)
   assert.equal(event.propagationStopped, true, 'modal.js must not see this click')
-  assert.deepEqual(loaded.navigations, ['/quiz'])
+  assert.deepEqual(loaded.navigations, [])
+  assert.equal(loaded.openedSignup.length, 1)
 })
 
 test('a paid Brand click is taken over and opens the modal directly', async () => {

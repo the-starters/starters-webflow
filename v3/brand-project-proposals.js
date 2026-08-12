@@ -1,10 +1,12 @@
 /**
  * V3 Brand Dashboard pending Starter project-proposal controller.
  *
- * Webflow owns the Action Items row template and review dialog. This controller
- * binds the authenticated `brand/projects/mine` proposal projection, paints
- * read-only proposal terms, and submits versioned accept/reject commands through
- * Opp30. A proposal is never treated as a canonical project before acceptance.
+ * Webflow owns the Action Items row template. The controller prefers an authored
+ * review dialog and creates a read-only fallback dialog when that Designer
+ * element is not available yet. It binds the authenticated
+ * `brand/projects/mine` proposal projection, paints read-only proposal terms,
+ * and submits versioned accept/reject commands through Opp30. A proposal is
+ * never treated as a canonical project before acceptance.
  */
 ;(function (global) {
   'use strict'
@@ -25,6 +27,7 @@
   var FEEDBACK_SELECTOR = '[data-project-proposal-feedback]'
   var GLOBAL_FEEDBACK_SELECTOR = '[data-project-proposal-global-feedback]'
   var CONFIRM_SELECTOR = '[data-project-proposal-confirm="reject"]'
+  var FALLBACK_STYLE_ID = 'brand-project-proposal-fallback-styles'
   var MEMBER_RESET_EVENT = 'opp30:member-scope-reset'
 
   function clean(value) {
@@ -248,6 +251,261 @@
     })
   }
 
+  function setAttributes(element, attributes) {
+    if (!element || !element.setAttribute) return element
+    Object.keys(attributes || {}).forEach(function (name) {
+      var value = attributes[name]
+      if (value === null || value === undefined) return
+      element.setAttribute(name, String(value))
+    })
+    return element
+  }
+
+  function appendElement(documentObject, parent, tagName, attributes, text) {
+    if (!documentObject || typeof documentObject.createElement !== 'function' || !parent) return null
+    var element = documentObject.createElement(tagName)
+    setAttributes(element, attributes)
+    if (text !== undefined && text !== null) element.textContent = String(text)
+    parent.appendChild(element)
+    return element
+  }
+
+  function registerModalPart(modal, type, name, element) {
+    if (!modal || !element) return element
+    if (type === 'field') {
+      modal.fields = modal.fields || []
+      modal.fields.push(element)
+    } else if (type === 'link') {
+      modal.links = modal.links || []
+      modal.links.push(element)
+    } else if (type === 'image') {
+      modal.images = modal.images || []
+      modal.images.push(element)
+    } else if (type === 'action') {
+      modal.actions = modal.actions || {}
+      modal.actions[name] = element
+    }
+    return element
+  }
+
+  function appendField(documentObject, modal, parent, name, tagName, className) {
+    var field = appendElement(documentObject, parent, tagName || 'dd', {
+      'data-project-proposal-field': name,
+      'class': className || 'project-proposal-review_value',
+    })
+    return registerModalPart(modal, 'field', name, field)
+  }
+
+  function appendDetail(documentObject, modal, parent, label, fieldName) {
+    var item = appendElement(documentObject, parent, 'div', { 'class': 'project-proposal-review_detail' })
+    appendElement(documentObject, item, 'dt', { 'class': 'project-proposal-review_label' }, label)
+    appendField(documentObject, modal, item, fieldName)
+    return item
+  }
+
+  function ensureFallbackStyles(documentObject) {
+    if (!documentObject || !documentObject.head || typeof documentObject.createElement !== 'function') return null
+    if (documentObject.getElementById && documentObject.getElementById(FALLBACK_STYLE_ID)) return null
+    var style = documentObject.createElement('style')
+    style.id = FALLBACK_STYLE_ID
+    style.textContent = [
+      '.project-proposal-review_dialog{border:0;padding:0;width:min(48rem,calc(100vw - 2rem));max-height:calc(100vh - 2rem);background:#fff;color:#1d1f1d;}',
+      '.project-proposal-review_dialog::backdrop{background:rgba(16,19,16,.68);}',
+      '.project-proposal-review_layout{display:grid;gap:1.5rem;padding:clamp(1.25rem,3vw,2.5rem);max-height:calc(100vh - 2rem);overflow:auto;}',
+      '.project-proposal-review_header{display:flex;justify-content:space-between;gap:1rem;align-items:start;}',
+      '.project-proposal-review_close{border:0;background:transparent;font:inherit;cursor:pointer;padding:.25rem;}',
+      '.project-proposal-review_byline{margin:0;color:#5d625d;}',
+      '.project-proposal-review_grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem 1.5rem;margin:0;}',
+      '.project-proposal-review_group{display:grid;gap:.75rem;padding-top:1rem;border-top:1px solid #d9ddd9;}',
+      '.project-proposal-review_detail{display:grid;gap:.25rem;}',
+      '.project-proposal-review_label{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:#6d726d;}',
+      '.project-proposal-review_value{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;}',
+      '.project-proposal-review_actions{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;}',
+      '.project-proposal-review_button{border:1px solid #1d1f1d;background:#fff;color:#1d1f1d;padding:.75rem 1rem;font:inherit;cursor:pointer;}',
+      '.project-proposal-review_button.is-primary{background:#1d1f1d;color:#fff;}',
+      '.project-proposal-review_button.is-danger{border-color:#b3261e;color:#b3261e;}',
+      '.project-proposal-review_feedback{padding:.75rem;background:#f1f3f1;}',
+      '.project-proposal-review_confirm{display:grid;gap:.75rem;padding:1rem;border:1px solid #d9ddd9;}',
+      '@media(max-width:47.99rem){.project-proposal-review_grid{grid-template-columns:1fr;}}',
+    ].join('')
+    documentObject.head.appendChild(style)
+    return style
+  }
+
+  function createFallbackReviewModal(documentObject) {
+    if (!documentObject || !documentObject.body || typeof documentObject.createElement !== 'function') return null
+    ensureFallbackStyles(documentObject)
+
+    var modal = appendElement(documentObject, documentObject.body, 'dialog', {
+      'class': 'modal_dialog project-proposal-review_dialog',
+      'data-modal-target': MODAL_ID,
+      'data-project-proposal-generated': 'true',
+      'aria-labelledby': 'project-proposal-review-heading',
+    })
+    if (!modal) return null
+
+    var layout = appendElement(documentObject, modal, 'div', { 'class': 'project-proposal-review_layout' })
+    var header = appendElement(documentObject, layout, 'div', { 'class': 'project-proposal-review_header' })
+    var heading = appendElement(documentObject, header, 'h2', {
+      'id': 'project-proposal-review-heading',
+      'data-project-proposal-heading': '',
+      'tabindex': '-1',
+    }, 'Review project request')
+    modal.heading = heading
+    var closeButton = appendElement(documentObject, header, 'button', {
+      'type': 'button',
+      'class': 'project-proposal-review_close',
+      'data-project-proposal-action': 'close',
+      'aria-label': 'Close project request review',
+    }, 'Close')
+    registerModalPart(modal, 'action', 'close', closeButton)
+
+    var byline = appendElement(documentObject, layout, 'p', { 'class': 'project-proposal-review_byline' })
+    appendElement(documentObject, byline, 'span', {}, 'Review the terms submitted by ')
+    appendField(documentObject, modal, byline, 'starter_name', 'strong', 'project-proposal-review_value')
+    appendElement(documentObject, byline, 'span', {}, '. Approving creates the project with these terms.')
+
+    var starterGroup = appendElement(documentObject, layout, 'section', { 'class': 'project-proposal-review_group' })
+    appendElement(documentObject, starterGroup, 'h3', {}, 'Starter')
+    var starterImage = appendElement(documentObject, starterGroup, 'img', {
+      'data-project-proposal-image': 'starter',
+      'class': 'project-proposal-review_image',
+      'width': '64',
+      'height': '64',
+    })
+    registerModalPart(modal, 'image', 'starter', starterImage)
+    appendField(documentObject, modal, starterGroup, 'starter_name', 'p')
+    var profileLink = appendElement(documentObject, starterGroup, 'a', {
+      'data-project-proposal-link': 'profile',
+      'class': 'project-proposal-review_link',
+    }, 'View Starter profile')
+    registerModalPart(modal, 'link', 'profile', profileLink)
+
+    var projectGroup = appendElement(documentObject, layout, 'section', { 'class': 'project-proposal-review_group' })
+    appendElement(documentObject, projectGroup, 'h3', {}, 'Project')
+    var projectGrid = appendElement(documentObject, projectGroup, 'dl', { 'class': 'project-proposal-review_grid' })
+    appendDetail(documentObject, modal, projectGrid, 'Project name', 'title')
+    appendDetail(documentObject, modal, projectGrid, 'Service', 'service')
+    appendDetail(documentObject, modal, projectGrid, 'Proposed start date', 'start_date')
+    appendDetail(documentObject, modal, projectGrid, 'Estimated end date', 'estimated_end_date')
+
+    var pricingGroup = appendElement(documentObject, layout, 'section', { 'class': 'project-proposal-review_group' })
+    appendElement(documentObject, pricingGroup, 'h3', {}, 'Pricing and contract')
+    var pricingGrid = appendElement(documentObject, pricingGroup, 'dl', { 'class': 'project-proposal-review_grid' })
+    appendDetail(documentObject, modal, pricingGrid, 'Fee structure', 'engagement_type')
+    appendDetail(documentObject, modal, pricingGrid, 'Commercial terms', 'commercial_summary')
+    appendDetail(documentObject, modal, pricingGrid, 'Contract', 'contract_type')
+    appendDetail(documentObject, modal, pricingGrid, 'Invoice frequency', 'invoice_frequency')
+
+    var scopeGroup = appendElement(documentObject, layout, 'section', { 'class': 'project-proposal-review_group' })
+    appendElement(documentObject, scopeGroup, 'h3', {}, 'Project scope')
+    appendField(documentObject, modal, scopeGroup, 'project_scope', 'p')
+
+    var feedback = appendElement(documentObject, layout, 'p', {
+      'class': 'project-proposal-review_feedback',
+      'data-project-proposal-feedback': '',
+      'role': 'status',
+      'aria-live': 'polite',
+      'hidden': '',
+    })
+    feedback.hidden = true
+    modal.feedback = feedback
+
+    var actions = appendElement(documentObject, layout, 'div', { 'class': 'project-proposal-review_actions' })
+    var message = appendElement(documentObject, actions, 'a', {
+      'class': 'project-proposal-review_button',
+      'data-project-proposal-action': 'message',
+      'data-project-proposal-link': 'message',
+    }, 'Message Starter')
+    registerModalPart(modal, 'action', 'message', message)
+    registerModalPart(modal, 'link', 'message', message)
+    var reject = appendElement(documentObject, actions, 'button', {
+      'type': 'button',
+      'class': 'project-proposal-review_button is-danger',
+      'data-project-proposal-action': 'reject',
+    }, 'Decline Request')
+    registerModalPart(modal, 'action', 'reject', reject)
+    var accept = appendElement(documentObject, actions, 'button', {
+      'type': 'button',
+      'class': 'project-proposal-review_button is-primary',
+      'data-project-proposal-action': 'accept',
+    }, 'Approve & Create Project')
+    registerModalPart(modal, 'action', 'accept', accept)
+
+    var confirm = appendElement(documentObject, layout, 'div', {
+      'class': 'project-proposal-review_confirm',
+      'data-project-proposal-confirm': 'reject',
+      'hidden': '',
+    })
+    confirm.hidden = true
+    modal.confirm = confirm
+    appendElement(documentObject, confirm, 'p', {}, 'Decline this project request? The Starter will need to submit a new request if you want to use different terms.')
+    var confirmActions = appendElement(documentObject, confirm, 'div', { 'class': 'project-proposal-review_actions' })
+    var cancelReject = appendElement(documentObject, confirmActions, 'button', {
+      'type': 'button',
+      'class': 'project-proposal-review_button',
+      'data-project-proposal-action': 'reject-cancel',
+    }, 'Keep Request')
+    registerModalPart(modal, 'action', 'reject-cancel', cancelReject)
+    var confirmReject = appendElement(documentObject, confirmActions, 'button', {
+      'type': 'button',
+      'class': 'project-proposal-review_button is-danger',
+      'data-project-proposal-action': 'reject-confirm',
+    }, 'Decline Request')
+    registerModalPart(modal, 'action', 'reject-confirm', confirmReject)
+    return modal
+  }
+
+  function replaceExactText(root, before, after) {
+    if (!root || !root.querySelectorAll) return false
+    var candidates = [root].concat(Array.prototype.slice.call(root.querySelectorAll('*')))
+      .filter(function (element) { return clean(element.textContent) === before })
+      .sort(function (left, right) {
+        return left.querySelectorAll('*').length - right.querySelectorAll('*').length
+      })
+    if (!candidates.length) return false
+    candidates[0].textContent = after
+    return true
+  }
+
+  function prepareFallbackCard(card) {
+    if (!card || !card.querySelector) return card
+    if (!card.querySelector(FIELD_SELECTOR)) {
+      var status = card.querySelector('.label_text')
+      var title = card.querySelector('.action-item_title')
+      if (status) status.setAttribute('data-project-proposal-field', 'status_label')
+      if (title) title.setAttribute('data-project-proposal-field', 'title')
+    }
+    if (!card.querySelector('[data-project-proposal-open]')) {
+      var buttons = card.querySelectorAll('.button_main-wrap')
+      var opener = buttons && buttons[0]
+      if (opener) {
+        opener.setAttribute('data-project-proposal-open', '')
+        opener.setAttribute('aria-label', 'Review project request')
+        replaceExactText(opener, 'Post Opportunity', 'Review request')
+      }
+      if (buttons && buttons[1]) setVisible(buttons[1], false)
+    }
+    return card
+  }
+
+  function ensureGlobalFeedback(documentObject, list) {
+    if (!documentObject || !list) return null
+    var existing = documentObject.querySelector
+      ? documentObject.querySelector(GLOBAL_FEEDBACK_SELECTOR)
+      : null
+    if (existing) return existing
+    var target = appendElement(documentObject, list, 'p', {
+      'class': 'project-proposal-review_feedback',
+      'data-project-proposal-global-feedback': '',
+      'role': 'status',
+      'aria-live': 'polite',
+      'hidden': '',
+    })
+    if (target) target.hidden = true
+    return target
+  }
+
   function clearCards(list) {
     if (!list || !list.querySelectorAll) return
     Array.prototype.forEach.call(list.querySelectorAll(CARD_SELECTOR), function (card) {
@@ -265,6 +523,7 @@
       card.setAttribute('data-project-proposal-card', '')
       card.setAttribute('data-project-proposal-id', String(proposal.id))
       card.setAttribute('data-action-element', 'item')
+      prepareFallbackCard(card)
       paintFields(card, proposal)
       setVisible(card, true)
       list.insertBefore(card, template)
@@ -535,7 +794,9 @@
       if (action === 'message') return
       event.preventDefault()
       event.stopImmediatePropagation()
-      if (action === 'reject') {
+      if (action === 'close') {
+        close()
+      } else if (action === 'reject') {
         confirmation(true)
         var confirm = actionControl('reject-confirm')
         if (confirm && typeof confirm.focus === 'function') confirm.focus()
@@ -574,9 +835,16 @@
       if (typeof state.unsubscribe === 'function') state.unsubscribe()
       state.unsubscribe = null
       documentObject.removeEventListener('click', onClick, true)
+      if (modal && modal.removeEventListener) modal.removeEventListener('cancel', onModalCancel)
+    }
+
+    function onModalCancel(event) {
+      if (event && event.preventDefault) event.preventDefault()
+      close()
     }
 
     documentObject.addEventListener('click', onClick, true)
+    if (modal && modal.addEventListener) modal.addEventListener('cancel', onModalCancel)
 
     return {
       act: act,
@@ -604,7 +872,10 @@
     var template = documentObject.querySelector(TEMPLATE_SELECTOR)
     var modal = documentObject.querySelector('[data-modal-target="' + MODAL_ID + '"]')
     var list = template && template.parentNode
-    if (!template || !list || !modal) return null
+    if (!template || !list) return null
+    ensureGlobalFeedback(documentObject, list)
+    if (!modal) modal = createFallbackReviewModal(documentObject)
+    if (!modal) return null
     var api = globalObject.Opp30 && globalObject.Opp30.API
     var controller = createController({
       globalObject: globalObject,
@@ -626,14 +897,17 @@
 
   var publicApi = {
     commercialSummary: commercialSummary,
+    createFallbackReviewModal: createFallbackReviewModal,
     createController: createController,
     dateLabel: dateLabel,
     decisionPayload: decisionPayload,
     errorMessage: errorMessage,
+    ensureGlobalFeedback: ensureGlobalFeedback,
     mount: mount,
     normalizeProposal: normalizeProposal,
     normalizeProposals: normalizeProposals,
     paintFields: paintFields,
+    prepareFallbackCard: prepareFallbackCard,
     proposalDisplay: proposalDisplay,
     renderCards: renderCards,
     scopePreview: scopePreview,
