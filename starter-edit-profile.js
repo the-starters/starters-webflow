@@ -382,6 +382,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		async function submitStep(stepIndex, submitButton) {
 			setSubmitLoading(submitButton, true);
+			const submissionMemberId = window.MEMBER?.id || '';
 			await workflowDiagnosticsReady;
 
 			const payload = getStepPayload(stepIndex);
@@ -467,12 +468,25 @@ document.addEventListener('DOMContentLoaded', function () {
 			let diagnostic = recordProfileDiagnostic(null, {
 				result: 'started',
 				stage: 'request',
-				request_started: true,
+				request_started: false,
 			});
+
+			if (!submissionMemberId || window.MEMBER?.id !== submissionMemberId) {
+				diagnostic = recordProfileDiagnostic(diagnostic, {
+					result: 'failed',
+					stage: 'auth',
+					error_code: 'MEMBER_SCOPE_CHANGED',
+					request_started: false,
+				});
+				decorateProfileFeedback('edit-form-error', diagnostic);
+				openErrorModal?.dispatchEvent(new Event('click', { bubbles: true }));
+				setSubmitLoading(submitButton, false);
+				return;
+			}
 
 			try {
 				requestStarted = true;
-				const response = await fetch(`${PATCH_ENDPOINT}${window.MEMBER.id}`, {
+				const response = await fetch(`${PATCH_ENDPOINT}${submissionMemberId}`, {
 					method: 'PATCH',
 					headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify(payload),

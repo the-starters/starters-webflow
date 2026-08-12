@@ -291,6 +291,33 @@ async function testStalledDiagnosticsFailOpen() {
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
 }
 
+async function testAuthSwitchDuringDiagnosticsDoesNotWrite() {
+  const diagnosticsReady = deferred()
+  let requests = 0
+  const environment = createEnvironment(async () => {
+    requests += 1
+    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+  }, {
+    workflowDiagnosticsReady: diagnosticsReady.promise,
+    setTimeoutImpl: (callback, ms) => (ms === 2000 ? 1 : setImmediate(callback)),
+  })
+
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+  environment.window.MEMBER = {
+    id: 'mem_other',
+    auth: { email: 'other@example.com' },
+    customFields: {},
+  }
+  diagnosticsReady.resolve(null)
+  await submission
+
+  assert.equal(requests, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.equal(environment.button.style.pointerEvents, '')
+  assert.equal(environment.button.style.opacity, '')
+}
+
 Promise.all([
   testSuccess(),
   testNon2xx(),
@@ -298,6 +325,7 @@ Promise.all([
   testBrowserGlobalDoesNotRecurse(),
   testPrivacySafeDiagnostics(),
   testStalledDiagnosticsFailOpen(),
+  testAuthSwitchDuringDiagnosticsDoesNotWrite(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {
