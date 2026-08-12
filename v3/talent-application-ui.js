@@ -1,7 +1,7 @@
 /**
  * GitHub-owned UI controller for /freelancer-application/step-1.
  *
- * This is the source-controlled replacement for the former Webflow Code Embed.
+ * This is the source-controlled replacement for the Webflow Code Embed.
  * Native Webflow form markup remains authoritative. Submission transport stays
  * in v3/talent-application.js; this file owns field validation, conditional
  * blocks, location selects, and the authored custom-select UI only.
