@@ -24,6 +24,92 @@
   var MULTISTEP_SUBMIT_SELECTOR =
     '[data-form="submit-btn"], [data-form-ms="submit-btn"]'
   var DEFAULT_REDIRECT = '/freelancer-application/step-2'
+  var CONTROLLER_VERSION = 'talent-application-v1'
+  var WORKFLOW = 'talent_application'
+  var workflowDiagnosticsControllerScript = document.currentScript
+  var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
+
+  function boundedWorkflowDiagnostics(promise) {
+    return new Promise(function (resolve) {
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
+      Promise.resolve(promise).then(finish, function () { finish(null) })
+    })
+  }
+
+  function loadWorkflowDiagnostics() {
+    if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics)
+    if (window.__startersWorkflowDiagnosticsReady) {
+      return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
+    }
+    var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
+    if (!source || !document.createElement) return Promise.resolve(null)
+    var url = ''
+    try {
+      var cdnRoot = source.match(
+        /^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/,
+      )
+      url = cdnRoot
+        ? cdnRoot[1] + 'utils/workflow-diagnostics.js'
+        : new URL('../utils/workflow-diagnostics.js', source).href
+    } catch (_) {
+      return Promise.resolve(null)
+    }
+    window.__startersWorkflowDiagnosticsReady = new Promise(function (resolve) {
+      var script = document.createElement('script')
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
+      script.src = url
+      script.async = false
+      script.addEventListener('load', function () {
+        finish(window.StartersWorkflowDiagnostics)
+      }, { once: true })
+      script.addEventListener('error', function () { finish(null) }, { once: true })
+      ;(document.head || document.documentElement).appendChild(script)
+    })
+    return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
+  }
+
+  var workflowDiagnosticsReady = loadWorkflowDiagnostics()
+
+  function diagnostics() {
+    return window.StartersWorkflowDiagnostics || null
+  }
+
+  function diagnosticStart(form, fields) {
+    var api = diagnostics()
+    if (!api) return null
+    var receipt = api.record(api.create(Object.assign({
+      workflow: WORKFLOW,
+      controller_version: CONTROLLER_VERSION,
+      result: 'started',
+      stage: 'request',
+      request_started: true,
+      resource_type: 'talent_application',
+    }, fields || {})))
+    if (form) form.__startersDiagnostic = receipt
+    return receipt
+  }
+
+  function diagnosticComplete(form, fields) {
+    var api = diagnostics()
+    if (!api || !form || !form.__startersDiagnostic) return null
+    var receipt = api.record(api.complete(form.__startersDiagnostic, fields || {}))
+    form.__startersDiagnostic = receipt
+    return receipt
+  }
 
   // The country/state selects store numeric option indexes as values (their
   // options are built from a locations JSON); the human-readable name is the
@@ -69,10 +155,19 @@
     }
   }
 
-  function showFail(form) {
+  function showFail(form, receipt) {
     var wrapper = form.closest('.w-form') || form.parentElement
     var fail = wrapper ? wrapper.querySelector('.w-form-fail') : null
-    if (fail) fail.style.display = 'block'
+    if (!fail) return
+    fail.style.display = 'block'
+    var api = diagnostics()
+    if (!api || !receipt) return
+    var target = fail.querySelector && fail.querySelector('[data-workflow-diagnostic-message], div, p') || fail
+    if (target.__startersWorkflowDiagnosticBaseText === undefined) {
+      target.__startersWorkflowDiagnosticBaseText = target.textContent || 'We could not submit your application. Please try again.'
+    }
+    target.textContent = api.message(target.__startersWorkflowDiagnosticBaseText, receipt)
+    api.decorate(target, receipt)
   }
 
   function setSubmitting(form, submitting) {
@@ -140,7 +235,16 @@
     // taking ownership of that click. Only the visible controls are checked so
     // required-but-hidden Webflow fields (the non-selected consult/full pair,
     // inactive steps) cannot silently block Complete with an unshowable error.
-    if (!reportValidityForVisible(form)) return
+    if (!reportValidityForVisible(form)) {
+      var validationReceipt = diagnosticStart(form, {
+        result: 'failed',
+        stage: 'validation',
+        request_started: false,
+        error_code: 'NATIVE_VALIDATION',
+      })
+      if (validationReceipt) showFail(form, validationReceipt)
+      return
+    }
 
     event.preventDefault()
     event.stopImmediatePropagation()
@@ -148,36 +252,66 @@
     if (form.__startersSubmitting) return
     form.__startersSubmitting = true
     setSubmitting(form, true)
+    var startedAt = Date.now()
+    var responseStatus = null
+    var failureCode = 'NETWORK_ERROR'
 
-    var payload = fieldMap(new FormData(form))
-    var countryText = selectText(form, 'country')
-    var cityText = selectText(form, 'city')
-    var stateText = selectText(form, 'state')
-    if (countryText) payload.country = countryText
-    if (cityText) payload.city = cityText
-    if (stateText) payload.answers.state = stateText
-    if (countryText) payload.answers.country = countryText
-    if (cityText) payload.answers.city = cityText
+    var startRequest = function () {
+      diagnosticStart(form)
+      var payload = fieldMap(new FormData(form))
+      var countryText = selectText(form, 'country')
+      var cityText = selectText(form, 'city')
+      var stateText = selectText(form, 'state')
+      if (countryText) payload.country = countryText
+      if (cityText) payload.city = cityText
+      if (stateText) payload.answers.state = stateText
+      if (countryText) payload.answers.country = countryText
+      if (cityText) payload.answers.city = cityText
 
-    fetch(ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+      return fetch(ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    }
+
+    var request = diagnostics() ? startRequest() : workflowDiagnosticsReady.then(startRequest)
+    request
       .then(function (response) {
-        if (!response.ok) throw new Error('intake ' + response.status)
+        responseStatus = response.status
+        if (!response.ok) {
+          failureCode = 'HTTP_ERROR'
+          throw new Error('intake ' + response.status)
+        }
         return response.json()
       })
       .then(function (result) {
         if (!result || result.id === undefined || result.id === null) {
+          failureCode = 'INVALID_RESPONSE'
           throw new Error('intake returned no application id')
         }
+        diagnosticComplete(form, {
+          result: 'success',
+          stage: 'response',
+          http_status: responseStatus,
+          duration_ms: Date.now() - startedAt,
+          request_started: true,
+          resource_id: result.id,
+        })
         window.location.assign(redirectTarget(form))
       })
       .catch(function (error) {
         form.__startersSubmitting = false
         setSubmitting(form, false)
-        showFail(form)
+        var failureReceipt = diagnosticComplete(form, {
+          result: 'failed',
+          stage: responseStatus === null ? 'network' : 'response',
+          error_code: failureCode,
+          http_status: responseStatus,
+          duration_ms: Date.now() - startedAt,
+          request_started: true,
+        })
+        showFail(form, failureReceipt)
         if (window.console && console.warn) {
           console.warn('[talent-application] submit failed:', error)
         }

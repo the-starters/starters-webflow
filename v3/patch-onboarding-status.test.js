@@ -6,6 +6,10 @@ const vm = require('node:vm')
 const MODULE_PATH = require.resolve('./patch-onboarding-status.js')
 const REDIRECT_PATH = require.resolve('./onboarding-done-redirect.js')
 const source = fs.readFileSync(MODULE_PATH, 'utf8')
+const diagnosticSource = fs.readFileSync(
+  require.resolve('../utils/workflow-diagnostics.js'),
+  'utf8',
+)
 
 const XANO = 'https://x08a-5ko8-jj1r.n7c.xano.io'
 const TRADE_URL = XANO + '/api:g1vmSLWh/auth/trade-token/v3'
@@ -15,6 +19,12 @@ const DASHBOARD = '/starter-dashboard'
 
 function flush() {
   return new Promise((resolve) => setImmediate(resolve))
+}
+
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
 }
 
 /**
@@ -115,8 +125,23 @@ function formWrapper({
 } = {}) {
   const done = {
     style: { display: doneVisible ? 'block' : 'none' },
+    textContent: 'Your onboarding details were saved.',
+    attributes: {},
+    listeners: {},
     offsetParent: null,
     observers: [],
+    setAttribute(name, value) { this.attributes[name] = String(value) },
+    getAttribute(name) { return this.attributes[name] || null },
+    addEventListener(name, listener) { this.listeners[name] = listener },
+  }
+  const fail = {
+    style: { display: 'none' },
+    textContent: 'We could not confirm onboarding status.',
+    attributes: {},
+    listeners: {},
+    setAttribute(name, value) { this.attributes[name] = String(value) },
+    getAttribute(name) { return this.attributes[name] || null },
+    addEventListener(name, listener) { this.listeners[name] = listener },
   }
   const form = {
     style: {},
@@ -134,6 +159,7 @@ function formWrapper({
     querySelector(selector) {
       if (selector === 'form') return withForm ? form : null
       if (selector === '.w-form-done') return withDone ? done : null
+      if (selector === '.w-form-fail') return fail
       return null
     },
   }
@@ -142,6 +168,7 @@ function formWrapper({
     wrapper,
     form,
     done,
+    fail,
     /** What Webflow does on a successful AJAX submit. */
     succeed() {
       form.style.display = 'none'
@@ -199,6 +226,7 @@ function loadModule(options = {}) {
     }
 
     if (url === PATCH_URL) {
+      if (options.patchResponse) return options.patchResponse
       const outcome = patchOutcomes.length ? patchOutcomes.shift() : 'ok'
       if (outcome === 'reject') throw new Error('patch network failure')
       if (outcome === 'fail') return jsonResponse(null, { ok: false, status: 500 })
@@ -244,6 +272,7 @@ function loadModule(options = {}) {
       }
     },
   }
+  if (options.diagnosticsReady) window.__startersWorkflowDiagnosticsReady = options.diagnosticsReady
   if (options.debug) window.STARTERS_DEBUG = true
 
   if (!options.memberstackMissing) {
@@ -287,6 +316,16 @@ function loadModule(options = {}) {
     },
   })
 
+  if (options.diagnostics) {
+    window.Date = FakeDate
+    window.Math = Math
+    window.Uint32Array = Uint32Array
+    window.crypto = { randomUUID: () => '12345678-90ab-cdef-1234-567890abcdef' }
+    window.navigator = { clipboard: { writeText: async () => {} } }
+    window.StartersTrack = { track() {} }
+    vm.runInContext(diagnosticSource, context)
+  }
+
   const run = () => vm.runInContext(source, context)
   run()
 
@@ -294,6 +333,7 @@ function loadModule(options = {}) {
     api: window.StartersPatchOnboardingStatus,
     aborted,
     clock,
+    context,
     document,
     fetchCalls,
     loader,
@@ -368,6 +408,31 @@ test('a Webflow success PATCHes the status endpoint with a bearer token', async 
   assert.ok(urlsOf(fetchCalls)[0].startsWith(TRADE_URL + '?token='))
 })
 
+test('a successful onboarding PATCH records a privacy-safe copyable receipt', async () => {
+  const fixture = formWrapper()
+  const { location } = loadModule({ wrappers: [fixture], diagnostics: true })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await flush()
+
+  const receipt = fixture.wrapper.__startersOnboardingDiagnostic
+  assert.equal(receipt.workflow, 'starter_onboarding_completion')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.http_status, 200)
+  assert.equal(receipt.request_started, true)
+  assert.equal(receipt.replayed, false)
+  assert.equal(Object.hasOwn(receipt, 'memberstack_token'), false)
+  assert.equal(Object.hasOwn(receipt, 'authorization'), false)
+  assert.match(fixture.done.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(
+    fixture.done.getAttribute('data-workflow-diagnostic-copy'),
+    'starter_onboarding_completion',
+  )
+  assert.equal(location.replaced, DASHBOARD)
+})
+
 // --- Loader, hidden form, redirect --------------------------------------------
 
 test('a success shows the loader and hides the form before the PATCH goes out', async () => {
@@ -412,6 +477,45 @@ test('a missing loader is a silent no-op that still patches and redirects', asyn
   assert.equal(location.replaced, DASHBOARD)
   assert.equal(logs.warn.length, 0, 'an unbuilt Designer element is not a fault')
   assert.ok(logs.info.some((line) => line.includes(LOADER_SELECTOR)))
+})
+
+test('a stalled shared diagnostics loader fails open to onboarding PATCH and redirect', async () => {
+  const fixture = formWrapper()
+  const { clock, fetchCalls, location } = loadModule({
+    wrappers: [fixture],
+    diagnosticsReady: new Promise(() => {}),
+  })
+  await flush()
+
+  fixture.succeed()
+  await clock.advance(1999)
+  assert.equal(fetchCalls.length, 0)
+  await clock.advance(1)
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+  assert.equal(location.replaced, DASHBOARD)
+})
+
+test('a helper loaded after diagnostics timeout does not fabricate a receipt', async () => {
+  const patchReady = deferred()
+  const fixture = formWrapper()
+  const environment = loadModule({
+    wrappers: [fixture],
+    diagnosticsReady: Promise.resolve(null),
+    patchResponse: patchReady.promise,
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  vm.runInContext(diagnosticSource, environment.context)
+  patchReady.resolve(jsonResponse({ onboarding_done: true }))
+  await flush()
+  await flush()
+
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast, undefined)
+  assert.equal(fixture.wrapper.__startersOnboardingDiagnostic, undefined)
+  assert.equal(environment.location.replaced, DASHBOARD)
 })
 
 test('a wrapper that cannot be styled does not block the PATCH or the redirect', async () => {
@@ -635,6 +739,28 @@ test('a logged-out submit never reaches Xano, is not retried, and is left in pla
   // Left on the page means left on a usable page, not behind a spinner.
   assert.equal(loader.style.display, 'none', 'the loader is taken back down')
   assert.equal(fixture.wrapper.style.display, '', 'the form goes back to its authored display')
+})
+
+test('a logged-out onboarding completion leaves a visible copyable failure receipt', async () => {
+  const fixture = formWrapper()
+  const { fetchCalls } = loadModule({
+    loggedOut: true,
+    wrappers: [fixture],
+    diagnostics: true,
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  await flush()
+
+  const receipt = fixture.wrapper.__startersOnboardingDiagnostic
+  assert.equal(fetchCalls.length, 0)
+  assert.equal(receipt.result, 'failed')
+  assert.equal(receipt.error_code, 'MEMBER_LOGGED_OUT')
+  assert.equal(receipt.request_started, true)
+  assert.match(fixture.done.textContent, /could not confirm your member session/i)
+  assert.match(fixture.done.textContent, /Diagnostic ID: WFD-/)
 })
 
 // --- Scope gates --------------------------------------------------------------

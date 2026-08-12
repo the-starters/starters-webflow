@@ -17,11 +17,11 @@ The read half is
 [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md), which acts on
 the record on later visits by keeping a finished member out of the onboarding
 flow. Both jobs shipped as one file through v1.59.45 and were split at
-v1.59.47. They are deliberately self-contained twins — host allowlist, path
-gate, trade-token auth, the 8-second request budget, and the staging-only
-diagnostics are duplicated in both files rather than shared — so either can be
-edited or pulled without disturbing the other. They still install together and
-version together.
+v1.59.47. Their host allowlist, path gate, trade-token auth, 8-second request
+budget, and staging-only console diagnostics remain self-contained. The write
+half now also attempts to load the repository's shared privacy-safe workflow
+receipt helper from the same jsDelivr repository ref. The pair still installs
+and versions together.
 
 It is not a sibling of [route-guard.js](route-guard.js) and does not replace it.
 The route guard answers "may this role open this page" from Memberstack plans;
@@ -38,6 +38,7 @@ have just finished with, which is navigation, not authorization.
 | That wrapper's success block mutates again | Nothing — the observer disconnected on the first hit |
 | A `PATCH` attempt fails or times out | Retry at roughly 1s and 3s, re-trading the token between attempts |
 | All attempts fail | Warn on staging, then redirect anyway — a member behind a hidden form must never be stranded |
+| The completion attempt settles | Record a privacy-safe receipt that distinguishes whether any auth or status request started; decorate the authored success/error message when it remains visible |
 | No `[data-page-spinner]` element on the page | Nothing; the rest of the sequence runs unchanged |
 | A success block is already visible when the module boots | Leave it alone — only a transition *into* the done state is a submit |
 | Logged out (no Memberstack session) | Write nothing and redirect nowhere: put the loader back down and the form back up, leaving the page as authored |
@@ -275,6 +276,21 @@ chatty, production is silent.
 | Loader is up on a page nobody submitted on | That is the read half's window, not this one. Expected while its status check runs (and permanently once its redirect is navigating) — see [onboarding-done-redirect.js](ONBOARDING-DONE-REDIRECT-WIRING.md). |
 
 ## Diagnostics
+
+The completion attempt uses the shared receipt contract owned by
+[`../README.md`](../README.md#current-scripts). It records only allowlisted
+workflow metadata and never records the member, form values, token, headers, or
+request/response bodies. Because the normal success/fail-open path hides the
+form and redirects, retrieve the retained receipt on the dashboard with:
+
+```js
+copyWorkflowDiagnostic('starter_onboarding_completion')
+```
+
+The logged-out path restores the authored form state, whose existing message
+also carries the diagnostic ID and copy action. A receipt with
+`request_started: false` means no authenticated workflow request attempt began;
+it must not be read as a failed attempted PATCH.
 
 `window.StartersPatchOnboardingStatus` exposes `allowedHost`, `stagingHost`,
 `isOnboardingPath`, `diagnosticsEnabled`, `isShown`, `watchForms`,

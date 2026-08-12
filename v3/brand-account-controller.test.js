@@ -7,9 +7,19 @@ const source = fs.readFileSync(
   require.resolve('./brand-account-controller.js'),
   'utf8',
 )
+const diagnosticSource = fs.readFileSync(
+  require.resolve('../utils/workflow-diagnostics.js'),
+  'utf8',
+)
 
 function flush() {
   return new Promise((resolve) => setImmediate(resolve))
+}
+
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
 }
 
 function plain(value) {
@@ -23,14 +33,19 @@ async function settle(rounds = 8) {
 function makeElement(value = '') {
   return {
     value,
+    textContent: '',
     disabled: false,
     style: {},
     attributes: new Map(),
+    listeners: new Map(),
     setAttribute(name, next) {
       this.attributes.set(name, String(next))
     },
     getAttribute(name) {
       return this.attributes.has(name) ? this.attributes.get(name) : null
+    },
+    addEventListener(name, listener) {
+      this.listeners.set(name, listener)
     },
   }
 }
@@ -38,8 +53,9 @@ function makeElement(value = '') {
 function makeWrapper() {
   const done = makeElement()
   const fail = makeElement()
-  const failText = { textContent: 'Original failure' }
-  fail.querySelector = (selector) => (selector === 'div' ? failText : null)
+  const failText = makeElement()
+  failText.textContent = 'Original failure'
+  fail.querySelector = (selector) => (selector.includes('div') ? failText : null)
   return {
     done,
     fail,
@@ -248,7 +264,7 @@ function loadController(options = {}) {
     // itself what throws in Safari private mode, so the controller's try/catch
     // has to cover the lookup and not just the write.
     sessionStorage: options.sessionStorageMissing ? undefined : sessionStorage,
-    $memberstackDom: memberstack,
+    $memberstackDom: options.memberstackMissing ? undefined : memberstack,
     StartersBrandAccountConfig: options.config || {},
     StartersV3RouteGuard: options.routeGuard,
     StartersTrack: {
@@ -262,6 +278,7 @@ function loadController(options = {}) {
     },
     clearTimeout() {},
   }
+  if (options.diagnosticsReady) window.__startersWorkflowDiagnosticsReady = options.diagnosticsReady
   const document = {
     readyState: 'complete',
     querySelector(selector) {
@@ -273,6 +290,23 @@ function loadController(options = {}) {
     },
     addEventListener() {},
   }
+  const appendedScripts = []
+  if (options.captureNativeDiagnosticsLoader) {
+    document.currentScript = {
+      src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/brand-account-controller.js',
+    }
+    document.createElement = () => makeElement()
+    document.head = { appendChild(script) { appendedScripts.push(script) } }
+    const querySelector = document.querySelector.bind(document)
+    document.querySelector = (selector) => {
+      if (selector === 'script[data-starters-native-form-diagnostics]') {
+        return appendedScripts.find((script) => (
+          script.getAttribute('data-starters-native-form-diagnostics') !== null
+        )) || null
+      }
+      return querySelector(selector)
+    }
+  }
   const context = vm.createContext({
     window,
     document,
@@ -282,10 +316,19 @@ function loadController(options = {}) {
     String,
     console,
   })
+  if (options.diagnostics) {
+    window.Date = Date
+    window.Math = Math
+    window.Uint32Array = Uint32Array
+    window.crypto = { randomUUID: () => '12345678-90ab-cdef-1234-567890abcdef' }
+    window.navigator = { clipboard: { writeText: async () => {} } }
+    vm.runInContext(diagnosticSource, context)
+  }
   vm.runInContext(source, context)
 
   return {
     api: window.StartersBrandAccount,
+    appendedScripts,
     buildForm,
     calls,
     context,
@@ -380,6 +423,86 @@ test('Build Account writes ordinary fields, changed email, then completion in or
   // See the `redirecting` flag in bindForm() for why.
   assert.equal(buildForm.getAttribute('aria-busy'), 'true')
   assert.equal(buildForm.submit.disabled, true)
+})
+
+test('Build Account success records and exposes a privacy-safe copyable receipt', async () => {
+  const buildForm = makeForm('build', { email: 'private@example.com' })
+  const environment = loadController({ buildForm, diagnostics: true })
+
+  buildForm.submitEvent()
+  await settle()
+
+  const receipt = buildForm.__startersAccountDiagnostic
+  assert.equal(receipt.workflow, 'brand_account_build')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.request_started, true)
+  assert.equal(Object.hasOwn(receipt, 'email'), false)
+  assert.equal(Object.hasOwn(receipt, 'firstName'), false)
+  assert.match(buildForm.wrapper.done.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(
+    buildForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'),
+    'brand_account_build',
+  )
+  assert.ok(environment.tracked.some((event) => event.name === 'workflow_form_submit_succeeded'))
+})
+
+test('Build Account validation receipt truthfully records that no request started', async () => {
+  const buildForm = makeForm('build')
+  buildForm.inputs.get('[name="First-Name"]').value = ''
+  const environment = loadController({ buildForm, diagnostics: true })
+
+  buildForm.submitEvent()
+  await settle()
+
+  const receipt = buildForm.__startersAccountDiagnostic
+  assert.equal(receipt.result, 'failed')
+  assert.equal(receipt.stage, 'validation')
+  assert.equal(receipt.error_code, 'FORM_VALIDATION')
+  assert.equal(receipt.request_started, false)
+  assert.equal(environment.calls.length, 0)
+  assert.match(buildForm.wrapper.failText.textContent, /Diagnostic ID: WFD-/)
+})
+
+test('Build Account setup failure records that no Memberstack request started', async () => {
+  const buildForm = makeForm('build')
+  const environment = loadController({ buildForm, diagnostics: true, memberstackMissing: true })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(buildForm.__startersAccountDiagnostic.result, 'failed')
+  assert.equal(buildForm.__startersAccountDiagnostic.request_started, false)
+  assert.equal(environment.calls.length, 0)
+})
+
+test('a stalled shared diagnostics loader fails open before Build Account requests', async () => {
+  const environment = loadController({
+    diagnosticsReady: new Promise(() => {}),
+  })
+
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.equal(environment.calls[0].method, 'getCurrentMember')
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('a helper loaded after diagnostics timeout does not fabricate a receipt', async () => {
+  const memberReady = deferred()
+  const environment = loadController({
+    diagnosticsReady: Promise.resolve(null),
+    getCurrentMember: () => memberReady.promise,
+  })
+
+  environment.buildForm.submitEvent()
+  await flush()
+  vm.runInContext(diagnosticSource, environment.context)
+  memberReady.resolve({ data: environment.member })
+  await settle()
+
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast, undefined)
+  assert.equal(environment.buildForm.__startersAccountDiagnostic, undefined)
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
 // --- The redirect busy latch --------------------------------------------------
@@ -825,6 +948,29 @@ test('Identity-scoped Account Security owns Talent email changes', async () => {
   })
   assert.equal(securityForm.nativeSubmits, 0)
   assert.equal(securityForm.wrapper.done.style.display, 'block')
+})
+
+test('Talent Account Security success exposes no email in its diagnostic receipt', async () => {
+  const securityForm = makeForm('security', { email: 'private-next@example.com' })
+  loadController({
+    buildForm: null,
+    securityForm,
+    currentEmail: 'private-old@example.com',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    diagnostics: true,
+  })
+
+  securityForm.submitEvent()
+  await settle()
+
+  const receipt = securityForm.__startersAccountDiagnostic
+  assert.equal(receipt.workflow, 'talent_account_email')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.request_started, true)
+  assert.equal(Object.hasOwn(receipt, 'email'), false)
+  assert.equal(Object.hasOwn(receipt, 'member_id'), false)
+  assert.match(securityForm.wrapper.done.textContent, /Diagnostic ID: WFD-/)
 })
 
 test('visible Starter Edit Profile changes Memberstack email before replaying the authored submit', async () => {
@@ -1496,4 +1642,20 @@ test('Account Security suppresses an A-B-A replay after ambiguous email sends', 
 test('controller does not bind on an unapproved host', () => {
   const environment = loadController({ hostname: 'lookalike.example' })
   assert.equal(environment.buildForm.listeners.has('submit'), false)
+})
+
+test('native form diagnostics inherit the controller CDN ref and use one loader sentinel', () => {
+  const environment = loadController({ buildForm: null, captureNativeDiagnosticsLoader: true })
+  const nativeScripts = () => environment.appendedScripts.filter((script) => (
+    script.getAttribute('data-starters-native-form-diagnostics') !== null
+  ))
+  assert.equal(nativeScripts().length, 1)
+  const script = nativeScripts()[0]
+  assert.equal(
+    script.src,
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/native-form-diagnostics.js',
+  )
+  assert.equal(script.getAttribute('data-starters-native-form-diagnostics'), '')
+  environment.api.init()
+  assert.equal(nativeScripts().length, 1)
 })

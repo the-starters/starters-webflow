@@ -36,6 +36,10 @@
         'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
     const quizLeadDripEndpoint = '/quiz_email/enroll/v3'
     const quizLeadDripRetryDelays = [0, 750, 2000]
+    const workflowDiagnosticsControllerVersion = 'quiz-results-v1'
+    const workflowDiagnosticsTimeoutMs = 2000
+    const workflowDiagnosticsControllerScript = document.currentScript
+    const workflowDiagnosticStates = new Map()
     const learnContentSectionSelector = '.section_results-learn'
     const learnContentResultsSelector =
         learnContentSectionSelector + ' [wf-algolia-element="results"]'
@@ -72,6 +76,136 @@
             ['marketing-strategy-brand'],
         ],
     ])
+
+    function boundedWorkflowDiagnostics(promise) {
+        return new Promise((resolve) => {
+            let settled = false
+            const finish = (api) => {
+                if (settled) return
+                settled = true
+                window.clearTimeout(timer)
+                resolve(api || null)
+            }
+            const timer = window.setTimeout(
+                () => finish(null),
+                workflowDiagnosticsTimeoutMs,
+            )
+            Promise.resolve(promise).then(finish, () => finish(null))
+        })
+    }
+
+    function loadWorkflowDiagnostics() {
+        if (typeof window === 'undefined') return Promise.resolve(null)
+        if (window.StartersWorkflowDiagnostics) {
+            return Promise.resolve(window.StartersWorkflowDiagnostics)
+        }
+        if (window.__startersWorkflowDiagnosticsReady) {
+            return boundedWorkflowDiagnostics(
+                window.__startersWorkflowDiagnosticsReady,
+            )
+        }
+        const source = workflowDiagnosticsControllerScript?.src || ''
+        if (!source || !document.createElement) return Promise.resolve(null)
+        let url = ''
+        try {
+            const cdnRoot = source.match(
+                /^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/,
+            )
+            url = cdnRoot
+                ? cdnRoot[1] + 'utils/workflow-diagnostics.js'
+                : new URL('utils/workflow-diagnostics.js', source).href
+        } catch {
+            return Promise.resolve(null)
+        }
+        window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => {
+            const script = document.createElement('script')
+            let settled = false
+            const finish = (api) => {
+                if (settled) return
+                settled = true
+                window.clearTimeout(timer)
+                resolve(api || null)
+            }
+            const timer = window.setTimeout(
+                () => finish(null),
+                workflowDiagnosticsTimeoutMs,
+            )
+            script.src = url
+            script.async = false
+            script.addEventListener(
+                'load',
+                () => finish(window.StartersWorkflowDiagnostics),
+                { once: true },
+            )
+            script.addEventListener('error', () => finish(null), { once: true })
+            ;(document.head || document.documentElement).appendChild(script)
+        })
+        return boundedWorkflowDiagnostics(
+            window.__startersWorkflowDiagnosticsReady,
+        )
+    }
+
+    const workflowDiagnosticsReady = loadWorkflowDiagnostics()
+
+    function flushWorkflowDiagnostic(workflow, api) {
+        api = api || window.StartersWorkflowDiagnostics
+        const state = workflowDiagnosticStates.get(workflow)
+        if (!state || !api) return null
+        if (!state.receipt) {
+            state.receipt = api.record(
+                api.create({
+                    workflow,
+                    controller_version: workflowDiagnosticsControllerVersion,
+                    result: 'started',
+                    stage: state.stage,
+                    request_started: false,
+                    resource_type: state.resourceType,
+                }),
+            )
+        }
+        if (state.completeFields && !state.completed) {
+            state.completed = true
+            state.receipt = api.record(
+                api.complete(state.receipt, {
+                    ...state.completeFields,
+                    duration_ms: Date.now() - state.startedAt,
+                    request_started: state.requestStarted,
+                }),
+            )
+        }
+        return state.receipt
+    }
+
+    function startWorkflowDiagnostic(workflow, stage, resourceType) {
+        const state = {
+            completeFields: null,
+            completed: false,
+            receipt: null,
+            requestStarted: false,
+            resourceType,
+            stage,
+            startedAt: Date.now(),
+        }
+        workflowDiagnosticStates.set(workflow, state)
+        Promise.resolve(workflowDiagnosticsReady).then((api) => {
+            flushWorkflowDiagnostic(workflow, api)
+        })
+        return state
+    }
+
+    function markWorkflowRequestStarted(workflow) {
+        const state = workflowDiagnosticStates.get(workflow)
+        if (state) state.requestStarted = true
+    }
+
+    function completeWorkflowDiagnostic(workflow, fields) {
+        const state = workflowDiagnosticStates.get(workflow)
+        if (!state) return
+        state.completeFields = fields || {}
+        Promise.resolve(workflowDiagnosticsReady).then((api) => {
+            flushWorkflowDiagnostic(workflow, api)
+        })
+    }
 
     function normalizeQuizLeadDripText(value, maxLength = 500) {
         return String(value || '')
@@ -425,6 +559,7 @@
 
     async function postQuizLeadDripEvent(properties) {
         const memberstack = await waitForQuizLeadDripMemberstack()
+        markWorkflowRequestStarted('quiz_lead_drip_enrollment')
         const token = await getQuizLeadDripToken(memberstack)
         const response = await fetch(
             quizLeadDripV3Base + quizLeadDripEndpoint,
@@ -486,6 +621,11 @@
     }
 
     async function enrollQuizLeadDrip(pendingQuiz, recommendations) {
+        startWorkflowDiagnostic(
+            'quiz_lead_drip_enrollment',
+            'prepare',
+            'workflow_event',
+        )
         const learnSelection =
             await getQuizLeadDripLearnSelection(pendingQuiz)
         const properties = createQuizLeadDripProperties(
@@ -498,6 +638,11 @@
             logQuizLeadDripFlow(
                 'quiz lead event skipped; required result data is missing',
             )
+            completeWorkflowDiagnostic('quiz_lead_drip_enrollment', {
+                result: 'failure',
+                stage: 'validation',
+                error_code: 'MISSING_RESULT_DATA',
+            })
             return null
         }
 
@@ -510,6 +655,11 @@
                     replayed: Boolean(result.replayed),
                     status: result.status,
                 })
+                completeWorkflowDiagnostic('quiz_lead_drip_enrollment', {
+                    result: 'success',
+                    stage: 'complete',
+                    replayed: Boolean(result.replayed),
+                })
                 return result
             } catch (error) {
                 lastError = error
@@ -519,6 +669,12 @@
         logQuizLeadDripFlow('V3 quiz lead event registration failed', {
             status: lastError?.status || 0,
             error: lastError?.message || String(lastError),
+        })
+        completeWorkflowDiagnostic('quiz_lead_drip_enrollment', {
+            result: 'failure',
+            stage: 'request',
+            error_code: 'QUIZ_LEAD_ENROLL_FAILED',
+            http_status: lastError?.status || null,
         })
         return null
     }
@@ -6390,15 +6546,26 @@
      * @returns {Promise<object | null>} Save outcome, or null on failure.
      */
     async function savePendingQuizToMemberstack(pendingQuiz) {
+        startWorkflowDiagnostic(
+            'quiz_results_save',
+            'prepare',
+            'member_account',
+        )
         if (pendingQuiz.memberstackSavedAt) {
             logQuizFlow('pending quiz already saved to Memberstack; save skipped', {
                 memberstackSavedAt: pendingQuiz.memberstackSavedAt,
             })
-            return {
+            const result = {
                 saved: true,
                 newlySaved: false,
                 starterQuiz: createMemberstackStarterQuizPayload(pendingQuiz),
             }
+            completeWorkflowDiagnostic('quiz_results_save', {
+                result: 'success',
+                stage: 'complete',
+                replayed: true,
+            })
+            return result
         }
 
         const memberstack = await waitForMemberstack()
@@ -6409,24 +6576,40 @@
                 null,
                 'The current quiz result could not be saved',
             )
+            completeWorkflowDiagnostic('quiz_results_save', {
+                result: 'failure',
+                stage: 'setup',
+                error_code: 'MEMBERSTACK_UNAVAILABLE',
+            })
             return null
         }
 
         try {
+            markWorkflowRequestStarted('quiz_results_save')
             const starterQuiz = await saveQuizToMemberJson(memberstack, pendingQuiz)
             await saveQuizCustomField(memberstack, starterQuiz || pendingQuiz)
 
-            return {
+            const result = {
                 saved: true,
                 newlySaved: true,
                 starterQuiz,
             }
+            completeWorkflowDiagnostic('quiz_results_save', {
+                result: 'success',
+                stage: 'complete',
+            })
+            return result
         } catch (error) {
             logQuizFlow('Memberstack save failed', { error })
             settleQuizEmailTestSavedState(
                 null,
                 'The current quiz result could not be saved',
             )
+            completeWorkflowDiagnostic('quiz_results_save', {
+                result: 'failure',
+                stage: 'request',
+                error_code: 'QUIZ_RESULTS_SAVE_FAILED',
+            })
             return null
         }
     }

@@ -67,7 +67,138 @@
   // by which time the Memberstack webhook has stamped brands_v3 for real.
   var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var BRAND_PROFILE_MARKER_VALUE = '1'
+  var CONTROLLER_VERSION = 'brand-account-controller-v1'
+  var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
+  var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
+  var workflowDiagnosticsControllerScript = document.currentScript
+
+  function boundedWorkflowDiagnostics(promise) {
+    return new Promise(function (resolve) {
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
+      Promise.resolve(promise).then(finish, function () { finish(null) })
+    })
+  }
+
+  function loadWorkflowDiagnostics() {
+    if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics)
+    if (window.__startersWorkflowDiagnosticsReady) {
+      return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
+    }
+    var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
+    if (!source || !document.createElement) return Promise.resolve(null)
+    var url = ''
+    try {
+      var cdnRoot = source.match(
+        /^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/,
+      )
+      url = cdnRoot
+        ? cdnRoot[1] + 'utils/workflow-diagnostics.js'
+        : new URL('../utils/workflow-diagnostics.js', source).href
+    } catch (error) {
+      return Promise.resolve(null)
+    }
+    window.__startersWorkflowDiagnosticsReady = new Promise(function (resolve) {
+      var script = document.createElement('script')
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
+      script.src = url
+      script.async = false
+      script.addEventListener('load', function () {
+        finish(window.StartersWorkflowDiagnostics)
+      }, { once: true })
+      script.addEventListener('error', function () { finish(null) }, { once: true })
+      ;(document.head || document.documentElement).appendChild(script)
+    })
+    return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
+  }
+
+  var workflowDiagnosticsReady = loadWorkflowDiagnostics()
+
+  function loadNativeFormDiagnostics() {
+    if (window.StartersNativeFormDiagnostics || !document.createElement) return
+    var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
+    if (!source) return
+    var url = ''
+    try {
+      var cdnRoot = source.match(
+        /^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/,
+      )
+      url = cdnRoot
+        ? cdnRoot[1] + 'v3/' + NATIVE_FORM_DIAGNOSTICS_SCRIPT
+        : new URL(NATIVE_FORM_DIAGNOSTICS_SCRIPT, source).href
+    } catch (error) {
+      return
+    }
+    if (document.querySelector('script[data-starters-native-form-diagnostics]')) return
+    var script = document.createElement('script')
+    script.src = url
+    script.async = false
+    script.setAttribute('data-starters-native-form-diagnostics', '')
+    ;(document.head || document.documentElement).appendChild(script)
+  }
+
+  function workflowForOperation(operation) {
+    if (operation === 'brand/account/build') return 'brand_account_build'
+    if (operation === 'starter/account/email') return 'talent_account_email'
+    return 'brand_account_email'
+  }
+
+  function diagnosticStart(form, operation) {
+    var api = window.StartersWorkflowDiagnostics
+    if (!api) return null
+    var receipt = api.record(api.create({
+      workflow: workflowForOperation(operation),
+      controller_version: CONTROLLER_VERSION,
+      result: 'started',
+      stage: 'request',
+      request_started: false,
+      resource_type: 'member_account',
+    }))
+    if (form) {
+      form.__startersAccountDiagnostic = receipt
+      form.__startersAccountDiagnosticStartedAt = Date.now()
+      form.__startersAccountDiagnosticRequestStarted = false
+    }
+    return receipt
+  }
+
+  function diagnosticComplete(form, fields) {
+    var api = window.StartersWorkflowDiagnostics
+    if (!api || !form || !form.__startersAccountDiagnostic) return null
+    fields = Object.assign({}, fields || {}, {
+      request_started: Boolean(form && form.__startersAccountDiagnosticRequestStarted),
+    })
+    var receipt = api.record(api.complete(form.__startersAccountDiagnostic, fields))
+    form.__startersAccountDiagnostic = receipt
+    return receipt
+  }
+
+  function diagnosticRequestStarted(form) {
+    if (form) form.__startersAccountDiagnosticRequestStarted = true
+  }
+
+  function diagnosticErrorCode(error) {
+    if (error && error.code === 'validation') return 'FORM_VALIDATION'
+    if (error && error.passwordEmailAttempted) return 'PASSWORD_EMAIL_FAILED'
+    var status = statusOf(error)
+    if (status === 408) return 'REQUEST_TIMEOUT'
+    if (status) return 'HTTP_ERROR'
+    return 'ACCOUNT_UPDATE_FAILED'
+  }
 
   function config() {
     return window.StartersBrandAccountConfig || {}
@@ -306,7 +437,7 @@
     return form && typeof form.closest === 'function' ? form.closest('.w-form') : null
   }
 
-  function setMessage(form, kind, message) {
+  function setMessage(form, kind, message, receipt) {
     var wrapper = formWrapper(form)
     if (!wrapper) return
     var success = wrapper.querySelector('.w-form-done')
@@ -317,6 +448,19 @@
       var text = failure.querySelector('div')
       if (text && message) text.textContent = message
     }
+    var target = kind === 'success' ? success : kind === 'error' ? failure : null
+    var api = window.StartersWorkflowDiagnostics
+    if (!target || !api || !receipt) return
+    var textTarget = target.querySelector && target.querySelector('[data-workflow-diagnostic-message], div, p') || target
+    if (textTarget.__startersWorkflowDiagnosticBaseText === undefined) {
+      textTarget.__startersWorkflowDiagnosticBaseText =
+        textTarget.textContent || (kind === 'success' ? 'Your account was updated.' : message)
+    }
+    textTarget.textContent = api.message(
+      kind === 'error' && message ? message : textTarget.__startersWorkflowDiagnosticBaseText,
+      receipt,
+    )
+    api.decorate(textTarget, receipt)
   }
 
   function setBusy(form, busy) {
@@ -349,9 +493,14 @@
   async function submitBuild(form) {
     var values = buildValues(form)
     var invalid = validate(values)
-    if (invalid) throw new Error(invalid)
+    if (invalid) {
+      var validationError = new Error(invalid)
+      validationError.code = 'validation'
+      throw validationError
+    }
 
     var client = memberstack()
+    diagnosticRequestStarted(form)
     var member = await currentMember(client)
 
     // Completion is the last durable member write. The password email follows
@@ -372,9 +521,18 @@
 
   async function submitSecurity(form, memberSnapshot, emailSnapshot) {
     var email = trim(emailSnapshot).toLowerCase()
-    if (!EMAIL_PATTERN.test(email)) throw new Error('Enter a valid email address.')
+    if (!EMAIL_PATTERN.test(email)) {
+      var validationError = new Error('Enter a valid email address.')
+      validationError.code = 'validation'
+      throw validationError
+    }
     var client = memberstack()
-    var member = memberSnapshot || (await currentMember(client))
+    var member = memberSnapshot
+    if (!member) {
+      diagnosticRequestStarted(form)
+      member = await currentMember(client)
+    }
+    diagnosticRequestStarted(form)
     var result = await updateEmailIfChanged(client, member, email)
     if (result.changed) await sendResetPasswordEmailOnce(form, client, result.email)
     return result
@@ -406,12 +564,19 @@
         // submit loader stay up through the redirect.
         var redirecting = false
 
-        Promise.resolve()
+        Promise.resolve(workflowDiagnosticsReady)
           .then(function () {
+            diagnosticStart(form, operation)
             return submitter(form)
           })
           .then(function () {
-            setMessage(form, 'success', '')
+            var receipt = diagnosticComplete(form, {
+              result: 'success',
+              stage: 'response',
+              duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
+              request_started: true,
+            })
+            setMessage(form, 'success', '', receipt)
             if (redirectOnSuccess) {
               var redirect = form.getAttribute('redirect') || form.getAttribute('data-redirect')
               if (redirect) {
@@ -423,7 +588,15 @@
             }
           })
           .catch(function (error) {
-            setMessage(form, 'error', friendlyError(error))
+            var receipt = diagnosticComplete(form, {
+              result: 'failed',
+              stage: error && error.code === 'validation' ? 'validation' : 'response',
+              error_code: diagnosticErrorCode(error),
+              http_status: statusOf(error),
+              duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
+              request_started: !(error && error.code === 'validation'),
+            })
+            setMessage(form, 'error', friendlyError(error), receipt)
             trackFailure(error, operation)
           })
           .finally(function () {
@@ -519,8 +692,16 @@
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
+            await workflowDiagnosticsReady
+            diagnosticStart(form, 'starter/account/email')
             await submitSecurity(form, member, email)
-            setMessage(form, 'success', '')
+            var receipt = diagnosticComplete(form, {
+              result: 'success',
+              stage: 'response',
+              duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
+              request_started: true,
+            })
+            setMessage(form, 'success', '', receipt)
             return true
           })
           .then(function (owned) {
@@ -533,7 +714,15 @@
               if (typeof form.reportValidity === 'function') form.reportValidity()
               return
             }
-            setMessage(form, 'error', friendlyError(error))
+            var receipt = diagnosticComplete(form, {
+              result: 'failed',
+              stage: error && error.code === 'validation' ? 'validation' : 'response',
+              error_code: diagnosticErrorCode(error),
+              http_status: statusOf(error),
+              duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
+              request_started: !(error && error.code === 'validation'),
+            })
+            setMessage(form, 'error', friendlyError(error), receipt)
             trackFailure(error, 'starter/account/email')
           })
           .finally(function () {
@@ -571,7 +760,15 @@
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
+            await workflowDiagnosticsReady
+            diagnosticStart(form, 'starter/account/email')
             await submitSecurity(form, member, email)
+            diagnosticComplete(form, {
+              result: 'success',
+              stage: 'response',
+              duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
+              request_started: true,
+            })
             return true
           })
           .then(function () {
@@ -585,7 +782,15 @@
             if (error && error.passwordEmailAttempted) {
               replayNativeSubmit(form, submitter)
             }
-            setMessage(form, 'error', friendlyError(error))
+            var receipt = diagnosticComplete(form, {
+              result: 'failed',
+              stage: error && error.code === 'validation' ? 'validation' : 'response',
+              error_code: diagnosticErrorCode(error),
+              http_status: statusOf(error),
+              duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
+              request_started: !(error && error.code === 'validation'),
+            })
+            setMessage(form, 'error', friendlyError(error), receipt)
             trackFailure(error, 'starter/account/email')
           })
           .finally(function () {
@@ -631,8 +836,16 @@
             ownsSubmission = true
             setBusy(form, true)
             setMessage(form, 'idle', '')
+            await workflowDiagnosticsReady
+            diagnosticStart(form, securityFailurePath(role))
             await submitSecurity(form, member, email)
-            setMessage(form, 'success', '')
+            var receipt = diagnosticComplete(form, {
+              result: 'success',
+              stage: 'response',
+              duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
+              request_started: true,
+            })
+            setMessage(form, 'success', '', receipt)
             return true
           })
           .then(function (owned) {
@@ -643,7 +856,15 @@
               replayNativeSubmit(form, submitter)
               return
             }
-            setMessage(form, 'error', friendlyError(error))
+            var receipt = diagnosticComplete(form, {
+              result: 'failed',
+              stage: error && error.code === 'validation' ? 'validation' : 'response',
+              error_code: diagnosticErrorCode(error),
+              http_status: statusOf(error),
+              duration_ms: Date.now() - (form.__startersAccountDiagnosticStartedAt || Date.now()),
+              request_started: !(error && error.code === 'validation'),
+            })
+            setMessage(form, 'error', friendlyError(error), receipt)
             trackFailure(error, securityFailurePath(submissionRole))
           })
           .finally(function () {
@@ -663,6 +884,7 @@
     // The same Webflow site serves Memberstack Test Data on its webflow.io
     // hostname and Live Data on the custom domains. Keep the Designer-authored
     // live fallback, but align the plan before Memberstack handles signup.
+    loadNativeFormDiagnostics()
     var bound = configureBrandSignupPlan(location.hostname || '')
     var buildForm = document.querySelector(BUILD_FORM_SELECTOR)
     if (buildForm) {

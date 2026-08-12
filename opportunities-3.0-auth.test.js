@@ -5,6 +5,10 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(path.join(__dirname, 'opportunities-3.0.js'), 'utf8')
+const diagnosticSource = fs.readFileSync(
+  path.join(__dirname, 'utils/workflow-diagnostics.js'),
+  'utf8',
+)
 
 function deferred() {
   let resolve
@@ -39,6 +43,10 @@ async function loadBridge(
     search = '',
     wfXano = null,
     getXanoAuthToken = null,
+    workflowDiagnostics = false,
+    autoLoadWorkflowDiagnostics = false,
+    workflowDiagnosticsReady = null,
+    setTimeoutImpl = setTimeout,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -50,8 +58,18 @@ async function loadBridge(
   if (routeGuard) {
     attributes.set('data-route-guard', routeGuard === true ? 'allowed' : String(routeGuard))
   }
+  let context
+  const appendedScripts = []
   const documentElement = {
-    appendChild() {},
+    appendChild(node) {
+      if (!node || node.tag !== 'script') return node
+      appendedScripts.push(node.src)
+      if (autoLoadWorkflowDiagnostics && /\/utils\/workflow-diagnostics\.js$/.test(node.src || '')) {
+        vm.runInContext(diagnosticSource, context)
+        node.dispatch?.('load')
+      }
+      return node
+    },
     getAttribute: (name) => attributes.get(name) || null,
     setAttribute: (name, value) => attributes.set(name, String(value)),
   }
@@ -69,8 +87,15 @@ async function loadBridge(
       )
     },
     createElement(tag) {
-      return el(tag)
+      const node = el(tag)
+      const listeners = new Map()
+      node.addEventListener = (type, listener) => listeners.set(type, listener)
+      node.dispatch = (type) => listeners.get(type)?.({ type })
+      return node
     },
+    currentScript: autoLoadWorkflowDiagnostics
+      ? { src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/opportunities-3.0.js' }
+      : null,
     documentElement,
     getElementById: () => null,
     head: documentElement,
@@ -82,6 +107,8 @@ async function loadBridge(
     readyState: 'loading',
   }
   const trackCalls = []
+  const diagnosticStorage = new Map()
+  const copiedDiagnostics = []
   const window = {
     $memberstackDom: {
       getCurrentMember: async () => ({ data: typeof member === 'function' ? member() : member }),
@@ -106,7 +133,10 @@ async function loadBridge(
       windowListeners.set(type, listeners.filter((candidate) => candidate !== listener))
     },
     setInterval,
-    setTimeout,
+    setTimeout: setTimeoutImpl,
+  }
+  if (workflowDiagnosticsReady) {
+    window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
   if (wfXano) window.WfXano = wfXano
   if (getXanoAuthToken) window.getXanoAuthToken = getXanoAuthToken
@@ -118,7 +148,7 @@ async function loadBridge(
     pathname,
     search,
   }
-  const context = vm.createContext({
+  context = vm.createContext({
     CustomEvent: class CustomEvent {
       constructor(type, options) {
         this.type = type
@@ -154,6 +184,17 @@ async function loadBridge(
     location,
     window,
   })
+  if (workflowDiagnostics) {
+    window.location = location
+    window.Date = Date
+    window.Math = Math
+    window.Uint32Array = Uint32Array
+    window.crypto = { randomUUID: () => '12345678-90ab-cdef-1234-567890abcdef' }
+    window.sessionStorage = { setItem: (key, value) => diagnosticStorage.set(key, value) }
+    window.navigator = { clipboard: { writeText: async (value) => copiedDiagnostics.push(value) } }
+    window.console = context.console
+    vm.runInContext(diagnosticSource, context)
+  }
   vm.runInContext(source, context)
   if (routeGuardDelayMs !== null) {
     setTimeout(() => documentElement.setAttribute('data-route-guard', 'checking'), routeGuardDelayMs)
@@ -170,6 +211,9 @@ async function loadBridge(
     fetch: window.fetch,
     location,
     trackCalls,
+    diagnosticStorage,
+    copiedDiagnostics,
+    appendedScripts,
     window,
     notifyMutations(mutations = []) {
       mutationObservers
@@ -279,6 +323,178 @@ test('invoiceCreate sends the V3 invoice payload through the authenticated Xano 
     description: 'August test invoice',
     idempotency_key: 'invoice-v3-675-test',
   })
+})
+
+test('mutation diagnostics retain only safe invoice lifecycle fields', async () => {
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/invoices/create/v3')) {
+        return response({
+          invoice_id: 901,
+          payment_link: 'https://private.example/payment/customer-value',
+          status: 'unpaid',
+          customer_email: 'private@example.com',
+        }, true, 201)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember, workflowDiagnostics: true },
+  )
+
+  await bridge.API.invoiceCreate({
+    project_id: 709,
+    amount: 500,
+    description: 'Private project description',
+    idempotency_key: 'private-retry-key',
+  })
+
+  const receipt = bridge.window.__startersWorkflowDiagnosticLast
+  assert.equal(receipt.workflow, 'generate_invoice')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.http_status, 201)
+  assert.equal(receipt.resource_type, 'invoice')
+  assert.equal(receipt.resource_id, '')
+  assert.equal(receipt.replayed, false)
+  const serialized = JSON.stringify(receipt)
+  assert.doesNotMatch(serialized, /private@example\.com/)
+  assert.doesNotMatch(serialized, /Private project description/)
+  assert.doesNotMatch(serialized, /private-retry-key/)
+  assert.doesNotMatch(serialized, /customer-value/)
+})
+
+test('failed mutation exposes a safe diagnostic on the thrown error', async () => {
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/opportunities/create')) {
+        return response({ message: 'Rejected private@example.com opportunity' }, false, 422)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember, workflowDiagnostics: true },
+  )
+
+  await assert.rejects(
+    bridge.API.brandOppCreate({ title: 'Private launch plan' }),
+    (error) => {
+      assert.equal(error.workflowDiagnostic.workflow, 'opportunity_create')
+      assert.equal(error.workflowDiagnostic.result, 'failed')
+      assert.equal(error.workflowDiagnostic.error_code, 'HTTP_ERROR')
+      assert.equal(error.workflowDiagnostic.http_status, 422)
+      assert.equal(error.workflowDiagnostic.request_started, true)
+      assert.doesNotMatch(JSON.stringify(error.workflowDiagnostic), /private@example\.com|Private launch plan/)
+      return true
+    },
+  )
+})
+
+test('loads the matching-version diagnostic helper before an opportunity mutation', async () => {
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/opportunities/create')) return response({ id: 710 }, true, 201)
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember, autoLoadWorkflowDiagnostics: true },
+  )
+
+  await bridge.API.brandOppCreate({ title: 'Private launch plan' })
+
+  assert.deepEqual(bridge.appendedScripts, [
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/utils/workflow-diagnostics.js',
+  ])
+  assert.equal(bridge.window.__startersWorkflowDiagnosticLast.workflow, 'opportunity_create')
+  assert.equal(bridge.window.__startersWorkflowDiagnosticLast.result, 'success')
+})
+
+test('a stalled shared diagnostics loader fails open before an opportunity mutation', async () => {
+  const calls = []
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/opportunities/create')) return response({ id: 711 }, true, 201)
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      workflowDiagnosticsReady: new Promise(() => {}),
+      setTimeoutImpl: (callback, ms) => ms === 2000 ? setImmediate(callback) : setTimeout(callback, ms),
+    },
+  )
+
+  await bridge.API.brandOppCreate({ title: 'Bounded diagnostics' })
+
+  assert.equal(calls.some((url) => url.includes('/brand/opportunities/create')), true)
+})
+
+test('opportunity failures decorate the authored native failure state for copying', async () => {
+  const message = el('p')
+  message.textContent = 'Something went wrong.'
+  const listeners = new Map()
+  message.addEventListener = (type, listener) => listeners.set(type, listener)
+  const fail = el('div', { class: 'w-form-fail' }, [message])
+  const button = el('button', { 'data-opp-submit': 'apply' })
+  button.addEventListener = () => {}
+  const modal = el('div', { 'data-modal-target': 'apply-opportunity' }, [fail, button])
+  const bridge = await loadBridge(async () => response({}), {
+    workflowDiagnostics: true,
+    querySelector: (selector) => selectorMatches(modal, selector) ? modal : modal.querySelector(selector),
+    querySelectorAll: (selector) => [modal, ...descendants(modal)].filter((node) => selectorMatches(node, selector)),
+  })
+  const receipt = bridge.window.StartersWorkflowDiagnostics.record(
+    bridge.window.StartersWorkflowDiagnostics.create({
+      workflow: 'opportunity_application',
+      result: 'failed',
+      stage: 'response',
+      error_code: 'HTTP_ERROR',
+    }),
+  )
+
+  assert.equal(bridge.window.Opp30.showOpportunityError(button, 'Request failed.', receipt), true)
+  assert.equal(fail.style.display, 'block')
+  assert.match(message.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), 'opportunity_application')
+  listeners.get('click')({ type: 'click' })
+  await Promise.resolve()
+  assert.match(bridge.copiedDiagnostics[0], /Workflow: opportunity_application/)
+})
+
+test('withdraw success decorates the visible authored confirmation state', async () => {
+  const message = el('p')
+  message.textContent = 'Your application was withdrawn.'
+  const listeners = new Map()
+  message.addEventListener = (type, listener) => listeners.set(type, listener)
+  const step = el('div', { 'data-form-flow-step': '', 'aria-hidden': 'false' }, [message])
+  const modal = el('div', { 'data-modal-target': 'cancel-application' }, [step])
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/applications/cancel')) return response({ application_id: 711 })
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      workflowDiagnostics: true,
+      querySelector: (selector) => selectorMatches(modal, selector) ? modal : modal.querySelector(selector),
+      querySelectorAll: (selector) => [modal, ...descendants(modal)].filter((node) => selectorMatches(node, selector)),
+    },
+  )
+  const result = await bridge.API.starterAppCancel(711)
+
+  bridge.window.Opp30.showCancelSuccess(result)
+
+  assert.match(message.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), 'application_withdraw')
+  listeners.get('click')({ type: 'click' })
+  await Promise.resolve()
+  assert.match(bridge.copiedDiagnostics[0], /Workflow: application_withdraw/)
 })
 
 test('project dashboard actions use the authenticated canonical endpoints', async () => {
@@ -3989,6 +4205,23 @@ test('auth switch during token acquisition does not retry under the new member',
 
   await assert.rejects(request, { code: 'MEMBER_SCOPE_CHANGED' })
   assert.equal(requests.length, 1)
+})
+
+test('auth switch while diagnostics load rejects before token acquisition', async () => {
+  const diagnosticsReady = deferred()
+  const requests = []
+  const bridge = await loadBridge(async (url, options) => {
+    requests.push({ url, options })
+    return response({ authToken: 'xano-b' })
+  }, { workflowDiagnosticsReady: diagnosticsReady.promise })
+  bridge.authChange({ id: 'member-a' })
+
+  const request = bridge.API.brandOppCreate({ title: 'A request' })
+  bridge.authChange({ id: 'member-b' })
+  diagnosticsReady.resolve(null)
+
+  await assert.rejects(request, { code: 'MEMBER_SCOPE_CHANGED' })
+  assert.equal(requests.length, 0)
 })
 
 test('auth switch rejects an in-flight response before it can resolve or track', async () => {

@@ -4,6 +4,10 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./quiz-results.js'), 'utf8')
+const workflowDiagnosticsSource = fs.readFileSync(
+    require.resolve('./utils/workflow-diagnostics.js'),
+    'utf8',
+)
 const recommendationVersion = 'category-subcategory-pairs-v19'
 const evidence = {}
 
@@ -97,6 +101,7 @@ async function runController({
     waitUntil,
     tradeTokenResponse = { authToken: 'xano-token' },
     algoliaHits = null,
+    enableDiagnostics = false,
 }) {
     const documentListeners = new Map()
     const fetchCalls = []
@@ -182,6 +187,10 @@ async function runController({
             indexName: 'test-index',
         },
     }
+    window.Date = Date
+    window.crypto = {
+        randomUUID: () => '12345678-1234-1234-1234-123456789012',
+    }
     window.window = window
 
     class CustomEvent {
@@ -191,13 +200,14 @@ async function runController({
         }
     }
 
-    vm.runInContext(
-        source,
-        vm.createContext({
+    const context = vm.createContext({
             CustomEvent,
+            Date,
             Map,
+            Math,
             Promise,
             Set,
+            Uint32Array,
             URL,
             URLSearchParams,
             console: { log() {}, warn() {}, error() {} },
@@ -207,8 +217,11 @@ async function runController({
             sessionStorage: storage,
             setTimeout: runSoon,
             window,
-        }),
-    )
+        })
+    if (enableDiagnostics) {
+        vm.runInContext(workflowDiagnosticsSource, context)
+    }
+    vm.runInContext(source, context)
 
     for (const listener of documentListeners.get('DOMContentLoaded') || []) {
         listener()
@@ -236,6 +249,11 @@ test('completed quiz posts current matches with safe email properties', async ()
     const calls = enrollmentCalls(harness.fetchCalls)
     const payload = JSON.parse(calls[0].options.body)
 
+    assert.equal(
+        calls[0].url,
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/quiz_email/enroll/v3',
+    )
+    assert.equal(calls[0].options.method, 'POST')
     assert.equal(calls[0].options.headers.Authorization, 'Bearer xano-token')
     assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
     assert.equal(payload.properties.starter_1_first_name, 'Alex')
@@ -296,6 +314,60 @@ test('email payload maps three canonical Algolia profile photos for enrollment',
         starter_2_image_url: imageProperties[1],
         starter_3_image_url: imageProperties[2],
     }
+})
+
+test('quiz save and lead enrollment expose privacy-safe terminal receipts', async () => {
+    const storage = createStorage(completedQuiz())
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        enableDiagnostics: true,
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    await waitFor(() => {
+        const receipts = harness.window.__startersWorkflowDiagnostics || {}
+        return receipts.quiz_results_save?.result === 'success' &&
+            receipts.quiz_lead_drip_enrollment?.result === 'success'
+    })
+    const save = harness.window.StartersWorkflowDiagnostics.latest('quiz_results_save')
+    const enrollment = harness.window.StartersWorkflowDiagnostics.latest(
+        'quiz_lead_drip_enrollment',
+    )
+
+    assert.equal(save.result, 'success')
+    assert.equal(save.request_started, true)
+    assert.equal(save.resource_type, 'member_account')
+    assert.equal(enrollment.result, 'success')
+    assert.equal(enrollment.request_started, true)
+    assert.equal(enrollment.resource_type, 'workflow_event')
+    assert.equal(JSON.stringify({ save, enrollment }).includes('Alex'), false)
+    assert.equal(JSON.stringify({ save, enrollment }).includes('memberstack-session'), false)
+})
+
+test('a failed lead enrollment records the final HTTP status without request data', async () => {
+    const storage = createStorage(
+        completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' }),
+    )
+    const harness = await runController({
+        storage,
+        enrollmentResponses: Array.from({ length: 3 }, () =>
+            response({ ok: false, status: 503 }),
+        ),
+        enableDiagnostics: true,
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 3,
+    })
+    await waitFor(() =>
+        harness.window.__startersWorkflowDiagnostics
+            ?.quiz_lead_drip_enrollment?.result === 'failure',
+    )
+    const receipt = harness.window.StartersWorkflowDiagnostics.latest(
+        'quiz_lead_drip_enrollment',
+    )
+
+    assert.equal(receipt.error_code, 'QUIZ_LEAD_ENROLL_FAILED')
+    assert.equal(receipt.http_status, 503)
+    assert.equal(receipt.request_started, true)
+    assert.equal('properties' in receipt, false)
 })
 
 test('one approved review uses singular copy', async () => {

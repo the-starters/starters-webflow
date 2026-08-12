@@ -124,6 +124,25 @@ The endpoint #1513 backend replay prerequisite below has passed. Keep the
 frontend install unpublished until the remaining Build/Edit inbox and token-
 redemption canaries pass.
 
+## Support diagnostic receipts
+
+Build Account and guarded Brand/Talent login-email mutations use the shared
+privacy-safe receipt contract owned by
+[`../README.md`](../README.md#current-scripts). Before the mutation starts, the
+controller attempts to load that helper from the same jsDelivr repository ref.
+A helper load failure does not block the existing account workflow. Validation
+failures remain distinct from attempted requests through the receipt's
+`request_started` field.
+
+When an authored success or failure state is available, its existing message
+shows the diagnostic ID and becomes the copy action. The latest receipts remain
+available in the current tab through
+`copyWorkflowDiagnostic('brand_account_build')`,
+`copyWorkflowDiagnostic('brand_account_email')`, or
+`copyWorkflowDiagnostic('talent_account_email')`. Do not add identity fields or
+form values to these receipts; the shared README owns the exact allowlist and
+exclusions.
+
 ## Executed endpoint #1513 replay results
 
 The prerequisite backend replay gate passed using redacted Memberstack Test Mode
@@ -270,8 +289,10 @@ projection.
 - `completed-brand-profile` is the final durable Build Account write. Any
   earlier account-write failure leaves the member on onboarding for a safe
   idempotent replay; an email failure occurs only after completion is durable.
-- Error telemetry carries only operation path and HTTP status, never member ID,
-  email, name, or company.
+- Existing account error telemetry still carries only operation path and HTTP
+  status. Shared workflow receipts add only the README-owned allowlisted fields;
+  neither channel carries member ID, email, name, company, tokens, headers, or
+  request/response bodies.
 
 ## Brand canary matrix
 
