@@ -9,6 +9,7 @@ const DOCS = [
   'README.md',
   path.join('v3', 'README.md'),
   path.join('global-embeds', 'session-video', 'README.md'),
+  path.join('global-embeds', 'learn-cta-gate', 'README.md'),
   path.join('global-embeds', 'form-embeds', 'README.md'),
 ]
 
@@ -118,6 +119,8 @@ test('pointer-style inventory entries retain an owner-document link', () => {
     'v3/scheduling-availability-writer.js',
     'account-settings/ms-form-cancel-state.js',
     'global-embeds/session-video/session-video.js',
+    'global-embeds/learn-cta-gate/learn-cta-gate.js',
+    'global-embeds/learn-cta-gate/learn-cta-gate.css',
     'global-embeds/form-embeds/turnstile-contents-fix.js',
   ]
 
