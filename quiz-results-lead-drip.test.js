@@ -254,6 +254,28 @@ test('completed quiz posts current matches with safe email properties', async ()
     evidence.completed_quiz_enrollment = payload
 })
 
+test('email payload uses the canonical Algolia profile-photo image field', async () => {
+    const quiz = completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' })
+    quiz.featuredFreelancers[0]['profile-photo'] =
+        'https://images.example/alex-morgan.jpg'
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(
+        payload.properties.starter_1_image_url,
+        'https://images.example/alex-morgan.jpg',
+    )
+    evidence.canonical_profile_photo =
+        payload.properties.starter_1_image_url
+})
+
 test('one approved review uses singular copy', async () => {
     const quiz = completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' })
     quiz.featuredFreelancers[0].review_count = 1
