@@ -31,7 +31,7 @@ page exactly as authored.
 | Phase | Trigger | Behaviour | Gate |
 | --- | --- | --- | --- |
 | Background | mount | Autoplays muted, loops inside the first `data-session-video-bg` seconds (default 20). No controls, no sound, no full screen. | **Not armed** |
-| Watch | click on `[data-element-trigger="show-video"]` | Overlay hides, controls appear, sound comes on, looping stops. Playback **continues from where the ambient loop was** — it does not restart. | Armed |
+| Watch | click on `[data-element-trigger="show-video"]`, and also a click on `#videoClickOverlay` or `#playPauseBtn`: both are wired through `toggle()`, which calls `watch()` while the gate is unarmed, so a plain click on the hero during the background phase arms the clamp too | Overlay hides, controls appear, sound comes on, looping stops. Playback **continues from where the ambient loop was** — it does not restart. | Armed |
 | Clamp | playback reaches `data-session-video-cut` seconds (default 180) | Playback freezes, position is pinned at the cut point, and the signup trigger is clicked. Dismissing the modal leaves the frame frozen; any play attempt reopens it. | Enforced |
 
 A member never reaches the third phase and gets the whole video, full screen
@@ -207,7 +207,7 @@ classes.
 | Attribute | On | Values | Meaning |
 | --- | --- | --- | --- |
 | `data-sv-player` | root | `native` \| `custom` | Which UI is in charge |
-| `data-sv-video` | root | `loading` \| `ready` | `ready` once the video is genuinely playing |
+| `data-sv-video` | root | `loading` \| `ready` | `ready` once the video is genuinely playing, except on the no-library member path, which has no progress event to wait for and writes `ready` at mount |
 | `data-sv-overlay` | `[data-element="hero-element"]` | `visible` \| `hidden` | Overlay state |
 | `data-sv-controls` | `#video-controls` | `visible` \| `hidden` | Control-bar state |
 | `data-sv-play` | `#playPauseBtn` | `playing` \| `paused` | Playback state |
@@ -220,7 +220,11 @@ for Vimeo's bar) and hide the template's own control bar.
 
 `data-sv-video` retires an optional `[data-sv-poster]` cover image authored
 *inside* the stage, and **deliberately never retires it if the video never
-loads**. `ready` is preserved across a remount: an upgrade replaces the frame
+loads**. The one exception is the no-library member fallback: with no player
+object there is no `timeupdate` to prove pixels are on screen, so that path
+writes `ready` at mount and the poster is retired immediately rather than
+covering a player that may well be working. `ready` is preserved across a
+remount: an upgrade replaces the frame
 under a video that is already showing pixels, and resetting to `loading` re-covered
 it with the poster for a beat.
 
