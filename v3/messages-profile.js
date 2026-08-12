@@ -1,7 +1,7 @@
 /**
  * /hire/<slug> — "Message this starter" modal.
  *
- * @release v1.59.108
+ * @release v1.59.199
  *
  * Mounts a TalkJS chatbox with the profiled starter inside the page's existing
  * modal, so a brand can start or resume the conversation without leaving the
@@ -38,8 +38,9 @@
  * SEO-relevant, so visitors who never press Message never pay for the SDK.
  *
  * Who gets through:
- *   logged out    -> /quiz (the signup funnel; the chat intent is intentionally
- *                    dropped — there is no login round trip back to the modal)
+ *   logged out    -> the hire-page signup modal (`data-modal-target="signup-modal"`).
+ *                    Chat intent is dropped in v1 — no auto-continue after signup.
+ *                    Does not send the visitor to /quiz.
  *   free Brand    -> `messages-profile-upgrade` when set, else route-guard's
  *                    brandFreeHome: /quiz-results once the Memberstack
  *                    `starter-quiz` field says the quiz is done, /quiz until then
@@ -81,6 +82,7 @@
   var MESSAGES_PATH = '/messages'
   var DEEP_LINK_PARAM = 'with'
   var MODAL_PARAM = 'modal-id'
+  var SIGNUP_MODAL_ID = 'signup-modal'
   var FALLBACK_FREE_BRAND_PATH = '/quiz'
 
   var TALKJS_APP_ID = 'LmYV8DIA'
@@ -293,19 +295,31 @@
     return true
   }
 
-  /* ============================ DESTINATIONS ========================= */
-
   /**
-   * Where a logged-out visitor goes: the quiz signup funnel, not /login. The
-   * product call (2026-07-29) is that a visitor who is not a member yet should
-   * enter the funnel rather than bounce off a login form. The cost is that the
-   * chat intent is dropped — nothing brings them back to this conversation
-   * after signup — which is accepted.
-   * @returns {string}
+   * Open the hire-page signup dialog for a logged-out visitor. Closes the
+   * message modal first so the two are not stacked. Missing signup markup is
+   * a staging warning, not a bounce to /quiz.
+   * @returns {boolean}
    */
-  function loggedOutUrl() {
-    return FALLBACK_FREE_BRAND_PATH
+  function openSignupModal() {
+    closeModal()
+    var modal = window.lumos && window.lumos.modal
+    var entry = modal && modal.list ? modal.list[SIGNUP_MODAL_ID] : null
+    if (!entry || typeof entry.open !== 'function') {
+      warn('signup modal is not on this page, logged-out Message has nowhere to go')
+      return false
+    }
+    if (entry.el && entry.el.open) return true
+    try {
+      entry.open()
+    } catch (error) {
+      warn('signup modal refused to open: ' + (error && error.message))
+      return false
+    }
+    return true
   }
+
+  /* ============================ DESTINATIONS ========================= */
 
   /**
    * Where a free Brand goes instead of the chat: `/quiz-results` once they have
@@ -613,7 +627,7 @@
       var state = viewer.resolved ? viewer : await resolveViewer()
 
       if (!state.member) {
-        goTo(loggedOutUrl())
+        openSignupModal()
         return
       }
       if (state.member.id === identity.id) {
@@ -698,7 +712,7 @@
     pendingIdentity = identity
 
     if (viewer.resolved && !viewer.member) {
-      goTo(loggedOutUrl())
+      openSignupModal()
       return
     }
     if (
@@ -899,7 +913,7 @@
     // dispatches `modal-open` before the listener exists. Gate this on the URL
     // parameter captured at parse time rather than on `dialog.open`: a page that
     // ships the dialog with an `open` attribute would otherwise mount — and
-    // redirect a logged-out visitor to login — with nobody having clicked.
+    // redirect a logged-out visitor to the signup modal — with nobody having clicked.
     if (BOOT_MODAL_ID && BOOT_MODAL_ID === modalId()) openChat()
   }
 

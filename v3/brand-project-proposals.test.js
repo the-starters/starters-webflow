@@ -30,6 +30,25 @@ class Element {
   remove() {
     if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((child) => child !== this)
   }
+  appendChild(element) {
+    element.parentNode = this
+    this.children.push(element)
+    return element
+  }
+  descendants() {
+    return this.children.flatMap((child) => [child, ...child.descendants()])
+  }
+  matches(selector) {
+    if (selector === '*') return true
+    if (selector.startsWith('.')) {
+      return String(this.getAttribute('class') || '').split(/\s+/).includes(selector.slice(1))
+    }
+    const exact = /^\[([^=\]]+)="([^"]*)"\]$/.exec(selector)
+    if (exact) return this.getAttribute(exact[1]) === exact[2]
+    const present = /^\[([^\]]+)\]$/.exec(selector)
+    if (present) return this.hasAttribute(present[1])
+    return false
+  }
   cloneNode() {
     const clone = new Element({ ...this.attrs })
     clone.fields = this.fields.map((field) => new Element({ ...field.attrs }))
@@ -49,17 +68,30 @@ class Element {
     const action = /^\[data-project-proposal-action="([^"]+)"\]$/.exec(selector)
     if (action) return this.actions[action[1]] || null
     if (selector === '[data-project-proposal-heading], h1, h2') return this.heading || null
-    return null
+    return this.descendants().find((element) => selector.split(',').some((part) => element.matches(part.trim()))) || null
   }
   querySelectorAll(selector) {
-    if (selector === '[data-project-proposal-field]') return this.fields
-    if (selector === '[data-project-proposal-link]') return this.links
-    if (selector === '[data-project-proposal-image="starter"]') return this.images
-    if (selector === '[data-project-proposal-action]') return Object.values(this.actions)
+    if (selector === '[data-project-proposal-field]' && this.fields.length) return this.fields
+    if (selector === '[data-project-proposal-link]' && this.links.length) return this.links
+    if (selector === '[data-project-proposal-image="starter"]' && this.images.length) return this.images
+    if (selector === '[data-project-proposal-action]' && Object.keys(this.actions).length) return Object.values(this.actions)
     if (selector === '[data-project-proposal-card]') {
       return this.children.filter((child) => child.hasAttribute('data-project-proposal-card'))
     }
-    return []
+    return this.descendants().filter((element) => selector.split(',').some((part) => element.matches(part.trim())))
+  }
+}
+
+function fallbackDocument() {
+  const head = new Element()
+  const body = new Element()
+  return {
+    head,
+    body,
+    createElement() { return new Element() },
+    getElementById(id) {
+      return [...head.descendants(), ...body.descendants()].find((element) => element.id === id) || null
+    },
   }
 }
 
@@ -194,6 +226,60 @@ test('renders proposal rows as Action Items from the authored template', () => {
   assert.equal(card.getAttribute('data-action-element'), 'item')
   assert.equal(card.fields[0].textContent, 'Alex Starter')
   assert.equal(fixture.list.children[1].hidden, true)
+})
+
+test('builds a complete read-only review dialog when Designer markup is absent', () => {
+  const documentObject = fallbackDocument()
+  const modal = api.createFallbackReviewModal(documentObject)
+  assert.ok(modal)
+  assert.equal(modal.getAttribute('data-modal-target'), 'review-project-request')
+  assert.equal(modal.getAttribute('data-project-proposal-generated'), 'true')
+  assert.equal(modal.heading.textContent, 'Review project request')
+  assert.equal(modal.actions.accept.textContent, 'Approve & Create Project')
+  assert.equal(modal.actions.reject.textContent, 'Decline Request')
+  assert.equal(modal.actions.message.textContent, 'Message Starter')
+  assert.equal(modal.actions['reject-confirm'].textContent, 'Decline Request')
+  assert.equal(modal.confirm.hidden, true)
+  assert.equal(documentObject.body.children.includes(modal), true)
+
+  api.paintFields(modal, api.normalizeProposal(proposal({
+    starter_profile_url: '/starters/alex',
+    message_url: '/messages/alex',
+  })))
+  assert.equal(modal.fields.find((field) => field.getAttribute('data-project-proposal-field') === 'title').textContent, 'Retention launch')
+  assert.equal(modal.actions.message.getAttribute('href'), '/messages/alex')
+})
+
+test('adds one persistent Action Items feedback region when none is authored', () => {
+  const documentObject = fallbackDocument()
+  const list = new Element()
+  const first = api.ensureGlobalFeedback(documentObject, list)
+  assert.ok(first)
+  assert.equal(first.getAttribute('data-project-proposal-global-feedback'), '')
+  assert.equal(first.getAttribute('aria-live'), 'polite')
+  assert.equal(first.hidden, true)
+
+  documentObject.querySelector = (selector) => selector === '[data-project-proposal-global-feedback]' ? first : null
+  const second = api.ensureGlobalFeedback(documentObject, list)
+  assert.equal(second, first)
+  assert.equal(list.children.length, 1)
+})
+
+test('adapts the existing Action Items row when nested proposal attributes are absent', () => {
+  const card = new Element()
+  const label = card.appendChild(new Element({ class: 'label_text', textContent: 'Onboarding' }))
+  const title = card.appendChild(new Element({ class: 'action-item_title', textContent: 'Have great talent come to you.' }))
+  const review = card.appendChild(new Element({ class: 'button_main-wrap' }))
+  review.appendChild(new Element({ textContent: 'Post Opportunity' }))
+  const dismiss = card.appendChild(new Element({ class: 'button_main-wrap' }))
+  dismiss.appendChild(new Element({ textContent: 'Dismiss' }))
+
+  api.prepareFallbackCard(card)
+  assert.equal(label.getAttribute('data-project-proposal-field'), 'status_label')
+  assert.equal(title.getAttribute('data-project-proposal-field'), 'title')
+  assert.equal(review.hasAttribute('data-project-proposal-open'), true)
+  assert.equal(review.children[0].textContent, 'Review request')
+  assert.equal(dismiss.hidden, true)
 })
 
 test('proposal links expose only safe relative or HTTP destinations', () => {

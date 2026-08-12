@@ -4626,8 +4626,9 @@
     else (window.WfXano = window.WfXano || []).push(run)
   }
 
-  /** Keep the single authored Navbar v2 component aligned with the merged
-   *  opportunities role. Webflow can restore a component property's authored
+  /** Keep the single authored Navbar Main component (renamed from Navbar v2 in
+   *  the Designer) aligned with the merged opportunities role. Webflow can
+   *  restore a component property's authored
    *  value after this controller first resolves the member, so re-apply the
    *  existing data-preview-nav attribute when that value or the component DOM
    *  changes. This mutates attributes only; it never creates navbar markup. */
