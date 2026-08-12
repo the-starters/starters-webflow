@@ -895,9 +895,10 @@ Immediately before a click, the controller must refresh canonical project state;
 a failed or inconsistent refresh does not fall back to cached authorization. A
 missing or rejected session closes the pre-opened blank tab and shows only the
 generic `Contract is unavailable. Please try again.` message. Returning from
-PandaDoc refreshes the loaded project page range on `pageshow` or when the page
-becomes visible, so the panel repaints from canonical signature state without
-discarding pagination.
+PandaDoc refreshes the loaded project page range on `pageshow`, window `focus`,
+or when the page becomes visible. The `focus` path covers a separate PandaDoc
+window that never hides the dashboard. The panel repaints from canonical
+signature state without discarding pagination.
 
 The Webflow-authored panel and compact action fail closed from dashboard boot:
 they stay hidden while Memberstack resolves, while the project list is pending or

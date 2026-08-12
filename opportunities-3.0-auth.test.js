@@ -2084,6 +2084,7 @@ test('contract panel paints one badge per party and only the authorized role act
     .filter((badge) => badge.style.display === '')
     .map((badge) => badge.getAttribute('data-project-contract-badge'))
   assert.deepEqual(visibleBadges, ['brand-signed', 'starter-pending'])
+
 })
 
 test('contract panel refreshes canonical signing state after returning from PandaDoc', async () => {
@@ -2148,6 +2149,11 @@ test('contract panel refreshes canonical signing state after returning from Pand
     .filter((badge) => badge.style.display === '')
     .map((badge) => badge.getAttribute('data-project-contract-badge'))
   assert.deepEqual(visibleBadges, ['brand-signed', 'starter-pending'])
+
+  // PandaDoc can open in a separate window without hiding the dashboard.
+  // Returning to the dashboard fires focus rather than pageshow.
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => listRequests === 3))
 })
 
 test('View Contract fails closed when the canonical refresh transiently fails', async () => {

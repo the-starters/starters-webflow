@@ -3165,6 +3165,7 @@
       if (binding.submit) document.removeEventListener('submit', binding.submit, true)
       if (binding.close) window.removeEventListener('modal-close', binding.close)
       if (binding.pageshow) window.removeEventListener('pageshow', binding.pageshow)
+      if (binding.focus) window.removeEventListener('focus', binding.focus)
       if (binding.visibility) document.removeEventListener('visibilitychange', binding.visibility)
     }
     projectWorkflowRole = ''
@@ -3210,6 +3211,7 @@
       submit: null,
       close: null,
       pageshow: null,
+      focus: null,
       visibility: null,
     }
     binding.click = async (event) => {
@@ -3238,12 +3240,18 @@
         refreshProjectWorkflowBestEffort(role, 'pageshow')
       }
     }
+    binding.focus = () => {
+      if (projectWorkflowBindingCurrent(binding)) {
+        refreshProjectWorkflowBestEffort(role, 'focus')
+      }
+    }
     binding.visibility = () => {
       if (document.visibilityState === 'visible' && projectWorkflowBindingCurrent(binding)) {
         refreshProjectWorkflowBestEffort(role, 'visibility')
       }
     }
     window.addEventListener('pageshow', binding.pageshow)
+    window.addEventListener('focus', binding.focus)
     document.addEventListener('visibilitychange', binding.visibility)
     if (role === 'brand') {
       binding.submit = (event) => {
