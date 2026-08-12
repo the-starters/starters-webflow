@@ -346,6 +346,15 @@
       modal.setAttribute('aria-busy', locked ? 'true' : 'false')
     }
 
+    function paintActionCapabilities(proposal) {
+      if (!proposal) return
+      var alreadyResolved = Boolean(state.resolved[proposal.id])
+      setVisible(actionControl('accept'), proposal.can_accept && !alreadyResolved)
+      setVisible(actionControl('reject'), proposal.can_reject && !alreadyResolved)
+      setVisible(actionControl('reject-confirm'), proposal.can_reject && !alreadyResolved)
+      lockActions(Boolean(state.pendingAction))
+    }
+
     function render(value) {
       state.proposals = normalizeProposals(value)
       renderCards(list, template, state.proposals)
@@ -358,6 +367,7 @@
           announce('This project request changed. Review the latest request before continuing.', false)
         } else {
           state.active = refreshedActive
+          paintActionCapabilities(refreshedActive)
         }
       }
       if (typeof globalObject.CustomEvent === 'function' && globalObject.dispatchEvent) {
@@ -408,11 +418,8 @@
       feedback('', false)
       confirmation(false)
       var alreadyResolved = Boolean(state.resolved[proposal.id])
-      setVisible(actionControl('accept'), proposal.can_accept && !alreadyResolved)
-      setVisible(actionControl('reject'), proposal.can_reject && !alreadyResolved)
-      setVisible(actionControl('reject-confirm'), proposal.can_reject && !alreadyResolved)
+      paintActionCapabilities(proposal)
       if (alreadyResolved) feedback('This project request was already handled. Refresh the dashboard to update the list.', false)
-      lockActions(Boolean(state.pendingAction))
       show()
       return true
     }
@@ -492,8 +499,8 @@
         if (state.pendingAction !== request) return false
         var safeError = errorMessage(error)
         if (state.active && state.active.id === request.proposalId) feedback(safeError, true)
+        announce(safeError, true)
         if (Number(error && error.status) === 403 || Number(error && error.status) === 409) {
-          announce(safeError, true)
           try { await refresh() } catch (refreshError) { /* retain safe error */ }
         }
         return false

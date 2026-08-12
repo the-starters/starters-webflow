@@ -269,6 +269,27 @@ test('a failed retry reuses its idempotency key and maps stale conflicts safely'
   assert.doesNotMatch(fixture.modal.feedback.textContent, /raw stale detail/)
 })
 
+test('every mapped action error remains visible after the modal closes', async () => {
+  const fixture = controllerFixture({
+    api: {
+      async projectProposalAction() {
+        throw Object.assign(new Error('raw backend detail'), { status: 422 })
+      },
+    },
+  })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+  assert.equal(await fixture.controller.act('accept'), false)
+  assert.match(fixture.modal.feedback.textContent, /could not be approved/)
+  assert.equal(fixture.globalFeedback.textContent, fixture.modal.feedback.textContent)
+  assert.equal(fixture.globalFeedback.getAttribute('role'), 'alert')
+
+  fixture.controller.close()
+  assert.equal(fixture.modal.feedback.textContent, '')
+  assert.match(fixture.globalFeedback.textContent, /could not be approved/)
+  assert.equal(fixture.globalFeedback.hidden, false)
+})
+
 test('an in-flight request keeps later proposal actions locked until it settles', async () => {
   let settleFirst
   const calls = []
@@ -334,4 +355,23 @@ test('a projection version change closes stale modal terms and announces the ref
   assert.equal(fixture.modal.open, false)
   assert.match(fixture.globalFeedback.textContent, /changed/)
   assert.equal(fixture.controller.state.active, null)
+})
+
+test('an open modal repaints action controls from refreshed server capabilities', () => {
+  const fixture = controllerFixture()
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+  assert.equal(fixture.modal.actions.accept.hidden, false)
+  assert.equal(fixture.modal.actions.reject.hidden, false)
+
+  fixture.controller.render({ project_proposals: [proposal({ can_accept: false, can_reject: true })] })
+  assert.equal(fixture.controller.state.active.can_accept, false)
+  assert.equal(fixture.modal.actions.accept.hidden, true)
+  assert.equal(fixture.modal.actions.reject.hidden, false)
+  assert.equal(fixture.modal.actions['reject-confirm'].hidden, false)
+
+  fixture.controller.render({ project_proposals: [proposal({ can_accept: true, can_reject: false })] })
+  assert.equal(fixture.modal.actions.accept.hidden, false)
+  assert.equal(fixture.modal.actions.reject.hidden, true)
+  assert.equal(fixture.modal.actions['reject-confirm'].hidden, true)
 })
