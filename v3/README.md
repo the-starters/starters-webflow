@@ -2108,6 +2108,86 @@ Run its focused test with:
 node v3/scheduling-availability-writer.test.js
 ```
 
+## Booking-stage availability section
+
+`scheduling-availability-section.js` is the non-modal counterpart to the
+writer above, wiring the Designer "Dashboard / Calendar" component on the
+canonical `/starter-dashboard` page: availability is always visible instead
+of living behind the `set-availability` modal, and each availability item now
+carries its own inline edit form instead of sharing one. It installs on the
+same host/path boundary as the writer and reuses its connect/disconnect,
+per-item CRUD, timezone, and Nylas scheduler-configuration logic without any
+step/modal machinery. Real result popups (create/edit/remove/connect/
+disconnect) are intentionally deferred for now — every action logs its
+outcome to the console instead.
+
+It does not depend on `scheduling-availability-init.js`: that module's job
+(show/hide the legacy `[init-availability]`/`[update-availability]` hero
+controls, pick the old modal's initial step) has no equivalent in the new
+component, so this module reads the canonical starter record itself.
+
+Designer markup contract (`data-availability-element="<name>"` unless noted):
+`section` (root), `connect-wrapper`, `connect-info-wrapper`, `connect-btn-wrapper`
+(3 buttons, fixed order: platform / Google / disconnect Google),
+`main-wrapper` (hidden until any connection exists), `list`, `loading-settings`,
+`item-template` (`data-id=""`, cloned per item), `item-title`, `item-timezone`,
+`availability-form-wrapper` (closed by default), `availability-form`
+(`data-availability-id=""`), `slots-wrapper`, `loading-slots`. Day selection
+renders as 7 Labelv2 badges per item; selected/unselected is a Designer
+component-variant class swap (`w-variant-89402c65-…` default,
+`w-variant-ebea452c-…` selected), not a data attribute.
+
+Action buttons (connect-platform/connect-google/disconnect-google, item
+edit/remove, form cancel/submit) are Webflow Component Instances, which the
+Designer API cannot attach custom attributes to directly — until thin wrapper
+`<div data-availability-action="…">`s are added around them, the script falls
+back to the button's ordinal position inside its known wrapper and logs one
+console warning per action. Prefer adding the wrapper attributes over relying
+on the fallback long-term.
+
+OAuth-callback ownership: on any page carrying this section's root, this
+module is the sole consumer of the Nylas `?code&state` / `?success&grant_id`
+return. `scheduling-availability-writer.js` carries a matching guard — it
+bails out before capturing the callback whenever
+`[data-availability-element="section"]` is present — so the two scripts never
+race to redeem the same one-time code. The writer stays fully active on
+`--availability-stage`, which never carries that markup.
+
+The "Live bookable slots preview" card fetches the starter's own next
+upcoming Nylas scheduler slots (`scheduler/get_availability/v3`, GET) and
+renders a short list, replacing its loader. The single-slot version of this
+query used by the Bookings pages
+(`getNextAvailableTimeSlot`/`getNearestSlot` in the **separate**, non-repo
+`book-func-lib-2.html` Webflow embed) was refactored alongside this to expose
+the full sorted slot list via a new `getUpcomingTimeSlots`, so both stay in
+sync; that embed is deployed outside this repository.
+
+Known open items, tracked for a Designer/QA follow-up rather than blocking
+this module: the "Main schedule" tag's shown/hidden polarity for override vs.
+general items is a best-effort port of the old modal's logic, unverified
+against a real multi-item starter record; and the per-item time inputs'
+`data-input-timepicker` value format is assumed to be `HH:MM` but has no
+controller in this repo to confirm it.
+
+Runtime contract:
+
+- `data-scheduling-availability-section` on the document root reports
+  `loading`, `ready`, `not-applicable` (no `[data-availability-element="section"]`),
+  `missing-auth`, or `error`.
+- Shares `data-scheduling-calendar-state`, `window.STARTER_SCHEDULING_CONNECTION`,
+  and the `starterSchedulingConnectionStateChanged` event with the writer, so
+  other dashboard widgets (e.g. `dashboard-action-items.js`) work regardless
+  of which script is active on the page.
+- `window.StarterSchedulingAvailabilitySection` exposes `initialize()`,
+  `daysAlias`, `getAvailArray`, `applyDayBadges`, `getUpcomingTimeSlots`, and
+  `publishCalendarConnectionState`.
+
+Run its focused test with:
+
+```sh
+node --test v3/scheduling-availability-section.test.js
+```
+
 ## Calendar OAuth return (no separate page)
 
 There is no `/connect-success` page in V3. `grants/oauth/v3` returns the current

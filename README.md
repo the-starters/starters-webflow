@@ -132,6 +132,7 @@ Do not discard local changes unless the user explicitly asks.
   Calendar CTA follows `loading`/`disconnected`/`connected`/`reconnect`/`error`;
   see `v3/README.md` for its host, markup, and safety boundary
 - `v3/scheduling-availability-writer.js` — availability form, manager, Nylas scheduler, timezone, and calendar OAuth writer through `window.xanoAuthFetch`; the authoritative host, path, identity, and safety boundary lives in [`v3/README.md`](v3/README.md#booking-stage-availability-writer)
+- `v3/scheduling-availability-section.js` — non-modal counterpart to the writer above for the Designer "Dashboard / Calendar" section on the canonical Starter dashboard: per-item CRUD with an inline edit form per item, connect/disconnect, timezone, and a live bookable-slots preview, reusing the writer's connection/config logic without its modal steps; see [`v3/README.md`](v3/README.md#booking-stage-availability-section) for its markup contract and the OAuth-callback handoff with the writer
 - `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed legacy calls to V3, blocks unclassified routes, and retains only approved legacy Stripe calls; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
