@@ -519,9 +519,15 @@ test('failed retry keeps the same idempotency key', async () => {
 })
 
 test('a rejected Brand authorization is invalidated before another submit', async () => {
+  let optionsRequest = 0
   const loaded = load({
     noDocument: true,
-    counterparties: [{ counterparty_id: 42, company_name: 'Revoked Brand' }],
+    projectOptions: async () => {
+      optionsRequest += 1
+      return { counterparties: optionsRequest === 1
+        ? [{ counterparty_id: 42, company_name: 'Revoked Brand' }]
+        : [{ counterparty_id: 43, company_name: 'Current Brand' }] }
+    },
     projectSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
       throw Object.assign(new Error('revoked'), { status: 403 })
@@ -530,10 +536,17 @@ test('a rejected Brand authorization is invalidated before another submit', asyn
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
   assert.equal(loaded.form.fields.brandId.value, '')
+  assert.equal(loaded.form.fields.select.disabled, true)
+  assert.equal(loaded.form.fields.select.getAttribute('aria-disabled'), 'true')
   assert.match(loaded.wrapper.error.textContent, /no longer eligible/)
 
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
   assert.equal(loaded.calls.submit.length, 1)
+
+  await loaded.api.loadOptions(loaded.form, loaded.window, true)
+  assert.equal(loaded.form.fields.select.disabled, false)
+  assert.equal(loaded.form.fields.select.value, '43')
+  assert.equal(loaded.form.fields.brandId.value, '43')
 })
 
 test('an injected Brand ID cannot bypass the V3 options response', async () => {

@@ -290,6 +290,20 @@ test('every mapped action error remains visible after the modal closes', async (
   assert.equal(fixture.globalFeedback.hidden, false)
 })
 
+test('an unavailable action service reports persistent feedback', async () => {
+  const fixture = controllerFixture({ api: {} })
+  fixture.controller.render(fixture.projection)
+  fixture.controller.open(fixture.controller.state.proposals[0])
+  assert.equal(await fixture.controller.act('accept'), false)
+  assert.match(fixture.modal.feedback.textContent, /not available/)
+  assert.equal(fixture.globalFeedback.textContent, fixture.modal.feedback.textContent)
+
+  fixture.controller.close()
+  assert.equal(fixture.modal.feedback.textContent, '')
+  assert.match(fixture.globalFeedback.textContent, /not available/)
+  assert.equal(fixture.globalFeedback.getAttribute('role'), 'alert')
+})
+
 test('an in-flight request keeps later proposal actions locked until it settles', async () => {
   let settleFirst
   const calls = []

@@ -447,7 +447,9 @@
       if (action === 'accept' && !proposal.can_accept) return false
       if (action === 'reject' && !proposal.can_reject) return false
       if (!api || typeof api.projectProposalAction !== 'function') {
-        feedback('Project request actions are not available. Reload and try again.', true)
+        var unavailableMessage = 'Project request actions are not available. Reload and try again.'
+        feedback(unavailableMessage, true)
+        announce(unavailableMessage, true)
         return false
       }
       var scope = proposal.id + ':' + proposal.version + ':' + action

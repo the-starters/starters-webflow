@@ -460,6 +460,7 @@
       .finally(function () {
         if (generation !== current.generation || current.submitRequest !== submitRequest) return
         lockForm(form, false)
+        if (!current.optionsLoaded) setSelectState(form, 'Choose a Brand', true)
         current.submitRequest = null
       })
     current.submitRequest = submitRequest
