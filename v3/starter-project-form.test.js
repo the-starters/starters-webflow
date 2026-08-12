@@ -34,7 +34,13 @@ class Element {
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return this.attrs[name] ?? null }
   removeAttribute(name) { delete this.attrs[name] }
-  dispatchEvent(event) { this.events.push(event.type) }
+  dispatchEvent(event) {
+    this.events.push(event.type)
+    event.target = this
+    if (event.bubbles && this.eventDocument && this.eventDocument.listeners[event.type]) {
+      this.eventDocument.listeners[event.type](event)
+    }
+  }
   cloneNode() {
     return new Element({
       ...this.attrs,
@@ -152,10 +158,13 @@ function load(options = {}) {
     querySelector(selector) { return selector.includes('start-project') ? form : null },
     dispatchEvent(event) { events.push(event) },
   }
+  Object.values(form.fields).forEach((element) => { element.eventDocument = document })
   const window = {
     document: options.noDocument ? null : document,
     crypto: { randomUUID: () => 'proposal-key-123' },
-    Event: class Event { constructor(type) { this.type = type } },
+    Event: class Event {
+      constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles) }
+    },
     CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init.detail } },
     WeakMap,
     listeners: {},
@@ -208,9 +217,8 @@ test('selecting a Brand stores its ID and clears stale sample email', () => {
   assert.equal(form.fields.email.value, '')
 })
 
-test('loading one eligible Brand selects it automatically', async () => {
+test('auto-selection and user selection use native select behavior without re-entry', async () => {
   const { api, calls, form, window } = load({
-    noDocument: true,
     counterparties: [{ counterparty_id: 14, company_name: 'Only Brand', hiring_manager_name: 'Manager' }],
   })
   const options = await api.loadOptions(form, window)
@@ -221,6 +229,18 @@ test('loading one eligible Brand selects it automatically', async () => {
   assert.equal(form.fields.select.value, '14')
   assert.equal(form.fields.select.options.length, 2)
   assert.equal(form.getAttribute('data-starter-project-status'), 'ready')
+  assert.deepEqual(form.fields.select.events, [])
+
+  const multiple = load({ counterparties: [
+    { counterparty_id: 14, company_name: 'Only Brand', hiring_manager_name: 'Manager' },
+    { counterparty_id: 15, company_name: 'Second Brand', hiring_manager_name: 'Owner' },
+  ] })
+  await multiple.api.loadOptions(multiple.form, multiple.window)
+  multiple.form.fields.select.value = '15'
+  multiple.form.fields.select.dispatchEvent(new multiple.window.Event('input', { bubbles: true }))
+  assert.equal(multiple.form.fields.brandId.value, '15')
+  assert.equal(multiple.form.fields.company.value, 'Second Brand')
+  assert.deepEqual(multiple.form.fields.select.events, ['input'])
 })
 
 test('no eligible Brands produces a blocked, non-submittable state', async () => {

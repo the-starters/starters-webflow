@@ -130,12 +130,17 @@
     }
   }
 
+  function writeSelectValue(form, value) {
+    var select = field(form, BRAND_SELECT_SELECTOR)
+    if (select) select.value = clean(value)
+  }
+
   function selectBrand(form, option) {
     if (!form || !option || !positiveId(option.id)) return false
     var current = formState(form)
     current.selected = option
     writeField(field(form, BRAND_ID_SELECTOR), option.id)
-    writeField(field(form, BRAND_SELECT_SELECTOR), option.id)
+    writeSelectValue(form, option.id)
     writeField(field(form, MANAGER_NAME_SELECTOR), option.manager_name)
     writeField(field(form, COMPANY_NAME_SELECTOR), option.company_name)
     // The V3 options response intentionally omits Brand email. Clear any stale
@@ -220,7 +225,7 @@
     current.optionsGeneration += 1
     current.options = []
     current.optionsLoaded = false
-    writeField(field(form, BRAND_SELECT_SELECTOR), '')
+    writeSelectValue(form, '')
     clearSelectedBrand(form)
     clearRenderedOptions(form)
     setSelectState(form, 'Choose a Brand', true)
@@ -345,7 +350,7 @@
     current.selected = null
     current.key = ''
     current.keyPayload = ''
-    writeField(field(form, BRAND_SELECT_SELECTOR), '')
+    writeSelectValue(form, '')
     clearSelectedBrand(form)
   }
 
