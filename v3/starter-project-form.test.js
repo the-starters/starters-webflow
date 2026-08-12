@@ -31,6 +31,7 @@ class Element {
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return this.attrs[name] ?? null }
+  removeAttribute(name) { delete this.attrs[name] }
   dispatchEvent(event) { this.events.push(event.type) }
   cloneNode() {
     return new Element({
@@ -88,6 +89,9 @@ class Element {
       return this.children.filter((child) => child.getAttribute('data-starter-project-brand-option'))
     }
     if (selector === 'input, select, textarea, button') return this.controls || []
+    if (selector === '[data-set-current-date-inited="true"]') {
+      return (this.controls || []).filter((control) => control.getAttribute('data-set-current-date-inited') === 'true')
+    }
     if (selector === '[data-project-success-title], .generate-contract_success-text') return this.successTitles || []
     return []
   }
@@ -156,6 +160,7 @@ function load(options = {}) {
       serialize: () => ({ payload: { ...serializedPayload } }),
       commercialValidationError: options.validationError || (() => ''),
       createIdempotencyKey: () => 'proposal-key-123',
+      fillCurrentDates: options.fillCurrentDates,
     },
     Opp30: { API: {
       projectOptions: options.projectOptions || (async (payload) => {
@@ -278,6 +283,34 @@ test('opening the modal refreshes authorized Brands for the same member', async 
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
 })
 
+test('authorization refresh clears the prior Brand label before new options load', async () => {
+  let resolveRefresh
+  let requestNumber = 0
+  const loaded = load({
+    projectOptions: () => {
+      requestNumber += 1
+      if (requestNumber === 1) {
+        return Promise.resolve({ counterparties: [{ counterparty_id: 56, company_name: 'Prior Brand' }] })
+      }
+      return new Promise((resolve) => { resolveRefresh = resolve })
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(loaded.form.fields.search.value, 'Prior Brand')
+
+  const refresh = loaded.api.loadOptions(loaded.form, loaded.window, true)
+  await Promise.resolve()
+  assert.equal(loaded.form.fields.search.value, '')
+  assert.equal(loaded.form.fields.brandId.value, '')
+
+  resolveRefresh({ counterparties: [
+    { counterparty_id: 57, company_name: 'Current One' },
+    { counterparty_id: 58, company_name: 'Current Two' },
+  ] })
+  await refresh
+  assert.equal(loaded.form.fields.search.value, '')
+})
+
 test('reopening during an options request supersedes its stale response', async () => {
   let resolveFirst
   let resolveSecond
@@ -348,6 +381,37 @@ test('opening the modal after success restores the form and hides success state'
   assert.equal(loaded.wrapper.success.style.display, 'none')
   assert.equal(loaded.form.resetCount, 1)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
+})
+
+test('opening after success reinitializes reset current-date fields', async () => {
+  const fixture = formFixture()
+  const date = new Element({ value: '08/12/2026', 'data-set-current-date-inited': 'true' })
+  fixture.form.controls.push(date)
+  fixture.form.reset = function () {
+    this.resetCount += 1
+    date.value = ''
+  }
+  let fillCalls = 0
+  const loaded = load({
+    fixture,
+    counterparties: [{ counterparty_id: 62, company_name: 'Brand' }],
+    fillCurrentDates: (form) => {
+      fillCalls += 1
+      if (!date.getAttribute('data-set-current-date-inited') && !date.value) {
+        date.value = '08/12/2026'
+        date.setAttribute('data-set-current-date-inited', 'true')
+      }
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+
+  loaded.document.listeners.click({
+    target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
+  })
+  assert.equal(date.value, '08/12/2026')
+  assert.equal(date.getAttribute('data-set-current-date-inited'), 'true')
+  assert.ok(fillCalls > 0)
 })
 
 test('failed retry keeps the same idempotency key', async () => {

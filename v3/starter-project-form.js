@@ -25,6 +25,7 @@
   var ERROR_SELECTOR = '[data-project-form-state="error"], .w-form-fail'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"], .w-form-done'
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
+  var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
   var STARTER_PAYLOAD_FIELDS = [
     'title',
     'service',
@@ -270,6 +271,7 @@
     current.optionsGeneration += 1
     current.options = []
     current.optionsLoaded = false
+    writeField(field(form, BRAND_SEARCH_SELECTOR), '')
     clearSelectedBrand(form)
     clearRenderedOptions(form)
   }
@@ -376,7 +378,13 @@
   }
 
   function resetPresentation(form, resetValues) {
-    if (resetValues && typeof form.reset === 'function') form.reset()
+    if (resetValues && typeof form.reset === 'function') {
+      form.reset()
+      var initializedDates = form.querySelectorAll ? form.querySelectorAll(CURRENT_DATE_INITIALIZED_SELECTOR) : []
+      Array.prototype.forEach.call(initializedDates, function (dateField) {
+        if (dateField && typeof dateField.removeAttribute === 'function') dateField.removeAttribute('data-set-current-date-inited')
+      })
+    }
     if (form.style) form.style.display = ''
     var success = stateElement(form, SUCCESS_SELECTOR)
     if (success) {
