@@ -2421,9 +2421,20 @@
     return projectWorkflowItems.get(id) || { id, project_id: id }
   }
 
+  function projectLifecycleActionsFromCard(card) {
+    return card ? $$(PROJECT_END_SELECTOR, card) : []
+  }
+
+  function primaryProjectLifecycleAction(card) {
+    const actions = projectLifecycleActionsFromCard(card)
+    return actions.find((action) => action.getAttribute('wf-xano-link') === 'project-end') ||
+      actions.find((action) => !action.hasAttribute('data-project-action-duplicate')) ||
+      actions[0] || null
+  }
+
   function currentProjectLifecycleAction(projectId, fallback = null) {
     const card = $$(PROJECT_CARD_SELECTOR).find((candidate) => projectIdFromCard(candidate) === projectId)
-    return (card && $(PROJECT_END_SELECTOR, card)) || fallback
+    return primaryProjectLifecycleAction(card) || fallback
   }
 
   function currentProjectContractAction(projectId, fallback = null) {
@@ -2841,13 +2852,20 @@
     }
     if (!project || !project.lifecycle_state && !project.status) return
     const state = lifecycleState(project)
-    const end = $(PROJECT_END_SELECTOR, card)
+    const ends = projectLifecycleActionsFromCard(card)
+    const end = primaryProjectLifecycleAction(card)
     const review = $(PROJECT_REVIEW_SELECTOR, card)
 
+    ends.forEach((action) => {
+      const primary = action === end
+      action.removeAttribute('wf-xano-link')
+      action.setAttribute('data-project-action', 'end')
+      if (primary) action.removeAttribute('data-project-action-duplicate')
+      else action.setAttribute('data-project-action-duplicate', 'true')
+      setProjectActionVisible(action, primary && !PROJECT_TERMINAL_STATES.has(state))
+    })
+
     if (end) {
-      end.removeAttribute('wf-xano-link')
-      end.setAttribute('data-project-action', 'end')
-      setProjectActionVisible(end, !PROJECT_TERMINAL_STATES.has(state))
       const label =
         state === 'pending'
           ? 'Cancel Project'

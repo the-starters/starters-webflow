@@ -2063,11 +2063,15 @@ test('Brand project cards expose only canonical actions for their current lifecy
   assert.equal(review.wrap.style.display, '')
 })
 
-test('completed Brand project cards hide the authored request-era Decline action', async () => {
+test('completed Brand project cards hide every authored end action when legacy and canonical controls coexist', async () => {
   const decline = el('button', { 'wf-xano-link': 'project-decline' })
   const declineLabel = el('div', { class: 'button_main-text' })
   declineLabel.textContent = 'Decline Request'
   const declineWrap = el('div', { class: 'button_main-wrap' }, [decline, declineLabel])
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const endLabel = el('div', { class: 'button_main-text' })
+  endLabel.textContent = 'End Project & Review'
+  const endWrap = el('div', { class: 'button_main-wrap' }, [end, endLabel])
   const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
   const reviewWrap = el('div', { class: 'button_main-wrap' }, [review])
   const message = el('a', { href: '/messages?project=708' })
@@ -2075,7 +2079,7 @@ test('completed Brand project cards hide the authored request-era Decline action
   const card = el(
     'div',
     { class: 'project_item', 'data-wf-xano-id': '708' },
-    [declineWrap, reviewWrap, messageWrap],
+    [declineWrap, endWrap, reviewWrap, messageWrap],
   )
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
 
@@ -2109,11 +2113,63 @@ test('completed Brand project cards hide the authored request-era Decline action
 
   assert.equal(decline.getAttribute('wf-xano-link'), null)
   assert.equal(decline.getAttribute('data-project-action'), 'end')
+  assert.equal(decline.getAttribute('data-project-action-duplicate'), 'true')
   assert.equal(declineWrap.style.display, 'none')
+  assert.equal(end.getAttribute('wf-xano-link'), null)
+  assert.equal(end.getAttribute('data-project-action'), 'end')
+  assert.equal(end.getAttribute('data-project-action-duplicate'), null)
+  assert.equal(endWrap.style.display, 'none')
   assert.equal(reviewWrap.style.display, '')
   assert.equal(message.getAttribute('href'), '/messages?project=708')
   assert.equal(message.getAttribute('data-project-action'), null)
   assert.equal(messageWrap.style.display, undefined)
+})
+
+test('pending project cards suppress the request-era duplicate and keep one canonical Cancel action', async () => {
+  const decline = el('button', { 'wf-xano-link': 'project-decline' })
+  const declineLabel = el('div', { class: 'button_main-text' })
+  declineLabel.textContent = 'Decline Request'
+  const declineWrap = el('div', { class: 'button_main-wrap' }, [decline, declineLabel])
+  const end = el('button', { 'wf-xano-link': 'project-end' })
+  const endLabel = el('div', { class: 'button_main-text' })
+  endLabel.textContent = 'End Project & Review'
+  const endWrap = el('div', { class: 'button_main-wrap' }, [end, endLabel])
+  const card = el(
+    'div',
+    { class: 'project_item', 'data-wf-xano-id': '709' },
+    [declineWrap, endWrap],
+  )
+  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/projects/mine')) {
+        return response({
+          items: [{ id: 709, status: 'pending', lifecycle_state: 'contract_sent' }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: talentMember,
+      pathname: '/starter-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.equal(decline.getAttribute('data-project-action-duplicate'), 'true')
+  assert.equal(declineWrap.style.display, 'none')
+  assert.equal(end.getAttribute('data-project-action-duplicate'), null)
+  assert.equal(end.getAttribute('data-project-action'), 'end')
+  assert.equal(endWrap.style.display, '')
+  assert.equal(endLabel.textContent, 'Cancel Project')
 })
 
 test('Starter project cards keep completed contracts off the signing-session route', async () => {
