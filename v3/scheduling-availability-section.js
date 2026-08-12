@@ -175,6 +175,16 @@
     })
   }
 
+  // Wires the `[data-input-timepicker]` start/end inputs inside `scope` —
+  // scoped to just the item card(s) that were rendered/cloned, not a full
+  // document re-scan, since global-embeds/form-embeds/timepicker/timepicker.js
+  // only initializes inputs present in the DOM at its own load time otherwise.
+  function initInputPickers(scope) {
+    if (window.wfInputDatepicker && typeof window.wfInputDatepicker.init === 'function') {
+      window.wfInputDatepicker.init(scope)
+    }
+  }
+
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
   }
@@ -1289,6 +1299,7 @@
       list.appendChild(card)
     }
 
+    initInputPickers(list)
     setElementVisible('loading-settings', false)
   }
 
@@ -1319,6 +1330,7 @@
     bindItemActions(card, id)
 
     list.appendChild(card)
+    initInputPickers(card)
     openItemForm(card, id)
   }
 

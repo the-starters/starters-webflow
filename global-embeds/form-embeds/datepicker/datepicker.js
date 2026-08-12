@@ -1,6 +1,6 @@
 // Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/form-embeds/datepicker
 
-  (function () {
+(function () {
     'use strict'
 
     var INPUT_SELECTOR = '[data-input-datepicker]'
@@ -86,7 +86,17 @@
     var moveDatepickerIntoModal = function ($, input) {
       var $modal = $(input).closest(MODAL_SELECTOR)
       if (!$modal.length) $modal = $(input).closest('.modal_dialog')
-      if (!$modal.length) return
+
+      if (!$modal.length) {
+        // Not in a modal — if a previous open left the shared picker parented
+        // inside some modal, move it back before jQuery UI positions it,
+        // otherwise it renders relative to that (possibly hidden) modal.
+        var dp = document.getElementById('ui-datepicker-div')
+        if (dp && dp.parentNode !== document.body) {
+          document.body.appendChild(dp)
+        }
+        return
+      }
 
       setTimeout(function () {
         $('#ui-datepicker-div').appendTo($modal)
@@ -99,7 +109,7 @@
     var baseOptions = function ($, inputEl) {
       var opts = {
         numberOfMonths: parseInt(getOpt(inputEl, 'months', '1'), 10) || 1,
-        dateFormat: getOpt(inputEl, 'format', 'mm/dd/yy'),
+        dateFormat: getOpt(inputEl, 'format', inputEl.dataset.format || 'mm/dd/yy'),
         beforeShow: function (input) {
           moveDatepickerIntoModal($, input)
         },
@@ -212,30 +222,43 @@
       })
     }
 
-    var run = function () {
+    var run = function (scope) {
       bindGlobalListeners()
-      initDatepickers(document)
+      initDatepickers(scope || document)
     }
 
-    var loadDatepickerEmbed = function () {
+    var MAX_WAIT_MS = 10000
+
+    var loadDatepickerEmbed = function (elapsed, scope) {
+      elapsed = elapsed || 0
       var $ = window.jQuery
       if (!$) {
-        setTimeout(loadDatepickerEmbed, 50)
+        if (elapsed >= MAX_WAIT_MS) {
+          console.warn('[wf datepicker] Gave up waiting for jQuery to load.')
+          return
+        }
+        setTimeout(function () {
+          loadDatepickerEmbed(elapsed + 50, scope)
+        }, 50)
         return
       }
 
       var ns = ensureNamespace()
 
       if ($.fn.datepicker) {
-        run()
+        run(scope)
         return
       }
 
       if (ns.uiLoading) {
+        var waitStart = Date.now()
         var wait = setInterval(function () {
           if ($.fn.datepicker) {
             clearInterval(wait)
-            run()
+            run(scope)
+          } else if (Date.now() - waitStart >= MAX_WAIT_MS) {
+            clearInterval(wait)
+            console.warn('[wf datepicker] Gave up waiting for jQuery UI to finish loading.')
           }
         }, 50)
         return
@@ -246,9 +269,25 @@
       script.src = 'https://code.jquery.com/ui/1.14.1/jquery-ui.min.js'
       script.onload = function () {
         ns.uiLoading = false
-        run()
+        run(scope)
+      }
+      script.onerror = function () {
+        ns.uiLoading = false
+        console.warn('[wf datepicker] Failed to load jQuery UI script.')
       }
       document.head.appendChild(script)
+    }
+
+    /**
+     * Public re-entry point for dynamically injected markup (multistep forms, CMS-rendered
+     * fields, etc). Safe to call repeatedly: the jQuery UI <script> tag is only ever added
+     * once (guarded by ns.uiLoading/$.fn.datepicker), and already-initialized inputs/groups
+     * are skipped via the data('datepicker') / INIT_ATTR checks in initStandalone/initGroup.
+     * Pass a container element to limit the scan to newly added markup.
+     */
+    window.wfInputDatepicker = window.wfInputDatepicker || {}
+    window.wfInputDatepicker.init = function (scope) {
+      loadDatepickerEmbed(0, scope)
     }
 
     loadDatepickerEmbed()

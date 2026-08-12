@@ -738,6 +738,27 @@ test('the explicit [data-availability-action="availability-create"] trigger crea
   assert.ok(!warnings.some((w) => w.includes('availability-create')))
 })
 
+test('initInputPickers scopes to the freshly rendered list on a full render, and to just the new card on create', async () => {
+  const { dom, window } = loadSection()
+  await settle()
+
+  const calls = []
+  window.wfInputDatepicker = { init: (scope) => calls.push(scope) }
+
+  // activatePlatformManager() ends in a full renderAvailabilityItems() call.
+  dom.connectBtnWrapper.children[0].click()
+  await settle()
+  assert.ok(calls.includes(dom.list))
+
+  calls.length = 0
+  dom.createBtn.click()
+  await settle()
+  const newCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  assert.deepEqual(calls, [newCard])
+})
+
 test('item cards remain visible (not display:none) across repeated renders', async () => {
   const { dom } = loadSection()
   await settle()
