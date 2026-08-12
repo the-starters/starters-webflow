@@ -254,6 +254,30 @@ test('member scope reset clears cached Brands and ignores the prior in-flight re
   assert.equal(loaded.form.fields.list.querySelectorAll('[data-starter-project-brand-option]').length, 1)
 })
 
+test('opening the modal refreshes authorized Brands for the same member', async () => {
+  let requestNumber = 0
+  const loaded = load({
+    projectOptions: async () => {
+      requestNumber += 1
+      return { counterparties: requestNumber === 1
+        ? []
+        : [{ counterparty_id: 53, company_name: 'Newly Eligible Brand' }] }
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'blocked')
+
+  loaded.document.listeners.click({
+    target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  assert.equal(requestNumber, 2)
+  assert.equal(loaded.form.fields.brandId.value, '53')
+  assert.equal(loaded.form.fields.search.value, 'Newly Eligible Brand')
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
+})
+
 test('submission creates a proposal event and never reports a created project', async () => {
   const loaded = load({
     noDocument: true,
@@ -284,6 +308,7 @@ test('opening the modal after success restores the form and hides success state'
   loaded.document.listeners.click({
     target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
   })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(loaded.form.style.display, '')
   assert.equal(loaded.wrapper.success.hidden, true)
   assert.equal(loaded.wrapper.success.style.display, 'none')
@@ -309,6 +334,24 @@ test('failed retry keeps the same idempotency key', async () => {
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.equal(submitted.length, 2)
   assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
+})
+
+test('a rejected Brand authorization is invalidated before another submit', async () => {
+  const loaded = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 42, company_name: 'Revoked Brand' }],
+    projectSubmit: async (payload) => {
+      loaded.calls.submit.push(payload)
+      throw Object.assign(new Error('revoked'), { status: 403 })
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(loaded.form.fields.brandId.value, '')
+  assert.match(loaded.wrapper.error.textContent, /no longer eligible/)
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(loaded.calls.submit.length, 1)
 })
 
 test('an injected Brand ID cannot bypass the V3 options response', async () => {

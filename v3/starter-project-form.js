@@ -264,9 +264,18 @@
     }
   }
 
-  function loadOptions(form, globalObject) {
+  function invalidateOptions(form) {
+    var current = formState(form)
+    current.options = []
+    current.optionsLoaded = false
+    clearSelectedBrand(form)
+    clearRenderedOptions(form)
+  }
+
+  function loadOptions(form, globalObject, forceRefresh) {
     var current = formState(form)
     if (current.optionsRequest) return current.optionsRequest
+    if (forceRefresh) invalidateOptions(form)
     if (current.optionsLoaded) return Promise.resolve(current.options)
     var generation = current.generation
     var request = projectApi(globalObject, 'projectOptions')
@@ -407,15 +416,6 @@
   function prepareOpen(form, documentObject, globalObject) {
     var wasSuccessful = form.getAttribute && form.getAttribute('data-starter-project-status') === 'success'
     resetPresentation(form, wasSuccessful)
-    var current = formState(form)
-    if (!current.optionsLoaded) return
-    renderOptions(form, current.options)
-    if (!current.options.length) {
-      setStatus(form, 'blocked', 'You can start a project after a Brand messages you.')
-      return
-    }
-    setStatus(form, 'ready', '')
-    if (current.options.length === 1 && !current.selected) selectBrand(form, current.options[0])
     syncCommercialForm(form, documentObject, globalObject)
   }
 
@@ -493,6 +493,7 @@
       })
       .catch(function (requestError) {
         if (generation !== current.generation) return false
+        if (Number(requestError && requestError.status) === 403) invalidateOptions(form)
         setStatus(form, 'error', safeError(requestError))
         return false
       })
@@ -523,7 +524,7 @@
         var form = documentObject.querySelector(FORM_SELECTOR)
         if (form) {
           prepareOpen(form, documentObject, globalObject)
-          loadOptions(form, globalObject)
+          loadOptions(form, globalObject, true)
         }
         return
       }
