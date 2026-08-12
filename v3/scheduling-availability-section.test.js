@@ -415,7 +415,16 @@ function buildStatefulRoutes(initialState) {
       state.grantId = null
       state.grantEmail = null
       state.calendarId = null
-      return { status: 200, body: {} }
+      return {
+        status: 200,
+        body: {
+          connected: false,
+          already_disconnected: false,
+          availability: {},
+          deleted_configuration_ids: [],
+          provider_response: { status: 200 },
+        },
+      }
     },
     '/grants/oauth/v3': () => ({
       status: 200,
@@ -521,6 +530,7 @@ function loadSection(options = {}) {
     },
     MEMBER: { auth: { email: 'member@example.com' } },
     xanoAuthFetch,
+    clearGrantData: options.clearGrantData,
   }
 
   class CustomEvent {
@@ -677,7 +687,9 @@ test('boots directly into connected state when the starter already has a grant/c
 })
 
 test('switching straight from Google to Platform clears the existing Google grant first', async () => {
+  const legacyClearCalls = []
   const { dom, calls } = loadSection({
+    clearGrantData: async (...args) => legacyClearCalls.push(args),
     serverState: {
       grantId: 'grant-1',
       grantEmail: 'g@example.com',
@@ -696,6 +708,35 @@ test('switching straight from Google to Platform clears the existing Google gran
   const deleteCall = calls.find((c) => c.path === '/grants/delete/v3')
   assert.ok(deleteCall, 'expected the existing Google grant to be deleted')
   assert.equal(deleteCall.body.in_grant_id, 'grant-1')
+  assert.deepEqual(legacyClearCalls, [], 'legacy clearGrantData must not own provider disconnect')
+})
+
+test('an active-booking disconnect rejection stops the Google-to-Platform switch', async () => {
+  const { dom, calls, window } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { code: 'ERROR_CODE_INPUT_ERROR', message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+
+  dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
 /* ------------------------------------------------------------------ */

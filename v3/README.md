@@ -2168,6 +2168,13 @@ It does not depend on `scheduling-availability-init.js`: that module's job
 controls, pick the old modal's initial step) has no equivalent in the new
 component, so this module reads the canonical starter record itself.
 
+Google Calendar disconnect and manager switches use the authenticated
+`grants/delete/v3` composite route as the only clear operation. That route
+blocks disconnect while an active booking exists, deletes the provider grant
+first, and then clears configurations and canonical scheduling state. This
+section never calls the page's legacy `window.clearGrantData` helper or clears
+canonical grant fields before the composite request.
+
 Designer markup contract (`data-availability-element="<name>"` unless noted):
 `section` (root), `connect-wrapper`, `connect-info-wrapper`, `connect-btn-wrapper`
 (3 buttons, fixed order: platform / Google / disconnect Google),
