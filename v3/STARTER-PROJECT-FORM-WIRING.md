@@ -63,9 +63,18 @@ One eligible Brand is selected automatically. Multiple eligible Brands keep the
 placeholder selected and require the Starter to choose. Zero eligible Brands
 disable the select and show **No eligible Brands yet**.
 
+The canonical modal is the first `start-project` dialog whose form contains
+`#Brand`, `#brand-contract`, `#hiring-manager-name`, and `#brand-company-name`.
+Before the shared modal initializer runs, the controller changes every other
+`start-project` dialog target to `start-project-legacy-disabled-N`. If no dialog
+matches the native V3 form contract, it disables every `start-project` dialog
+target. It also changes the nested `a.clickable_link` in each `start-project`
+trigger to `href="#start-project"`, so the Navbar control cannot follow its
+legacy opportunities URL.
+
 ## Script order
 
-Load the existing shared scripts first, then the Starter adapter:
+Load the existing data and form scripts first, then the Starter adapter:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities-3.0.js"></script>
@@ -76,6 +85,9 @@ Load the existing shared scripts first, then the Starter adapter:
 Do not add the last loader until both V3 endpoints exist and pass backend tests.
 After release, install it on the reusable V3 **Start a Project** component so
 the existing Navbar action opens the same modal wherever that component renders.
+The deferred Starter adapter must execute before `global-embeds/modal/modal.js`
+initializes the shared modal registry, because it normalizes duplicate targets
+and the Navbar link during boot.
 
 ## Backend release evidence
 
