@@ -1,4 +1,4 @@
-# Ordered fallback list: use whichever agent is available, preferring codex.
+# Ordered fallback list: use whichever agent is available, preferring claude.
 # NOTE: this list selects on AVAILABILITY, not on crash-recovery. codex is
 # installed, so it will be chosen; if it dies mid-step the run fails rather
 # than falling back to claude. Context: codex was SIGKILLed three times on this
@@ -6,8 +6,10 @@
 # retry), which blocked every branch until it was temporarily pinned to claude.
 # `no-mistakes doctor` reporting codex runnable only proves it spawns, not that
 # it survives a step. If runs start failing with "codex exited: signal: killed",
-# swap the order to [claude, codex].
-agent: [codex, claude]
+# swap the order to [claude, codex]. Codex returned no output in two
+# consecutive Calendar disconnect review runs on 2026-08-13, so use the
+# documented resilient order.
+agent: [claude, codex]
 
 ignore_patterns:
   - "*.min.js"
