@@ -2,7 +2,7 @@
  * V3 Starter "Start a Project" controller.
  *
  * Webflow owns the modal and all form markup. This controller binds the
- * existing searchable Brand field to Xano-authorized options, reuses the
+ * existing native Brand select to Xano-authorized options, reuses the
  * shared commercial serializer from v3/project-form.js, and submits a pending
  * Starter proposal. It never creates a canonical project.
  */
@@ -14,14 +14,11 @@
 
   var FORM_SELECTOR = 'dialog[data-modal-target="start-project"] form'
   var TRIGGER_SELECTOR = '[data-modal-trigger="start-project"]'
-  var BRAND_SEARCH_SELECTOR = '#Select-Brand'
-  var BRAND_LIST_SELECTOR = '#brand-list'
+  var BRAND_SELECT_SELECTOR = '#Brand'
   var BRAND_ID_SELECTOR = '#brand-contract'
   var MANAGER_NAME_SELECTOR = '#hiring-manager-name'
   var COMPANY_NAME_SELECTOR = '#brand-company-name'
   var EMAIL_SELECTOR = '#brand-email'
-  var OPTION_SELECTOR = '[data-starter-project-brand-option]'
-  var EMPTY_SELECTOR = '.brand-select_dropdown-item.is-not-found'
   var ERROR_SELECTOR = '[data-project-form-state="error"], .w-form-fail'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"], .w-form-done'
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
@@ -133,19 +130,22 @@
     }
   }
 
+  function writeSelectValue(form, value) {
+    var select = field(form, BRAND_SELECT_SELECTOR)
+    if (select) select.value = clean(value)
+  }
+
   function selectBrand(form, option) {
     if (!form || !option || !positiveId(option.id)) return false
     var current = formState(form)
     current.selected = option
     writeField(field(form, BRAND_ID_SELECTOR), option.id)
-    writeField(field(form, BRAND_SEARCH_SELECTOR), option.label)
+    writeSelectValue(form, option.id)
     writeField(field(form, MANAGER_NAME_SELECTOR), option.manager_name)
     writeField(field(form, COMPANY_NAME_SELECTOR), option.company_name)
     // The V3 options response intentionally omits Brand email. Clear any stale
     // sample or previous selection value already present in the authored form.
     writeField(field(form, EMAIL_SELECTOR), '')
-    filterOptions(form, '')
-    closeOptions(form)
     return true
   }
 
@@ -158,87 +158,41 @@
     writeField(field(form, EMAIL_SELECTOR), '')
   }
 
-  function listElement(form) {
-    return field(form, BRAND_LIST_SELECTOR)
-  }
-
-  function emptyElement(form) {
-    return field(form, EMPTY_SELECTOR)
-  }
-
   function clearRenderedOptions(form) {
-    var list = listElement(form)
-    if (!list || !list.querySelectorAll) return
-    Array.prototype.forEach.call(list.querySelectorAll(OPTION_SELECTOR), function (option) {
-      if (option && typeof option.remove === 'function') option.remove()
-    })
+    var select = field(form, BRAND_SELECT_SELECTOR)
+    if (!select || !select.options) return
+    while (select.options.length > 1) select.remove(1)
   }
 
-  function setEmptyCopy(form, text) {
-    var empty = emptyElement(form)
-    if (!empty) return
-    empty.textContent = text
-    empty.hidden = false
-    if (empty.style) empty.style.display = 'block'
+  function setSelectState(form, placeholder, disabled) {
+    var select = field(form, BRAND_SELECT_SELECTOR)
+    if (!select) return false
+    var first = select.options && select.options[0]
+    if (first) {
+      first.value = ''
+      first.textContent = clean(placeholder)
+    }
+    select.disabled = Boolean(disabled)
+    select.setAttribute('aria-disabled', disabled ? 'true' : 'false')
+    return true
   }
 
   function renderOptions(form, options) {
     clearRenderedOptions(form)
-    var list = listElement(form)
-    var template = emptyElement(form)
-    if (!list || !template || typeof template.cloneNode !== 'function') return false
+    var select = field(form, BRAND_SELECT_SELECTOR)
+    if (!select || !select.ownerDocument || !select.ownerDocument.createElement) return false
     if (!options.length) {
-      setEmptyCopy(form, 'No eligible brands yet')
+      setSelectState(form, 'No eligible Brands yet', true)
       return true
     }
-    template.hidden = true
-    if (template.style) template.style.display = 'none'
     options.forEach(function (option) {
-      var element = template.cloneNode(true)
+      var element = select.ownerDocument.createElement('option')
       element.textContent = option.label
-      if (element.classList) element.classList.remove('is-not-found')
-      element.hidden = false
-      if (element.style) element.style.display = 'block'
-      element.setAttribute('data-starter-project-brand-option', String(option.id))
-      element.setAttribute('role', 'option')
-      element.setAttribute('tabindex', '0')
-      list.insertBefore(element, template)
+      element.value = String(option.id)
+      select.appendChild(element)
     })
+    setSelectState(form, 'Choose a Brand', false)
     return true
-  }
-
-  function openOptions(form) {
-    var list = listElement(form)
-    if (!list || !list.style) return
-    list.style.opacity = '1'
-    list.style.pointerEvents = 'auto'
-  }
-
-  function closeOptions(form) {
-    var list = listElement(form)
-    if (!list || !list.style) return
-    list.style.opacity = '0'
-    list.style.pointerEvents = 'none'
-  }
-
-  function filterOptions(form, query) {
-    var list = listElement(form)
-    if (!list || !list.querySelectorAll) return 0
-    var normalized = clean(query).toLowerCase()
-    var count = 0
-    Array.prototype.forEach.call(list.querySelectorAll(OPTION_SELECTOR), function (option) {
-      var matches = !normalized || clean(option.textContent).toLowerCase().indexOf(normalized) !== -1
-      option.hidden = !matches
-      if (option.style) option.style.display = matches ? 'block' : 'none'
-      if (matches) count += 1
-    })
-    var empty = emptyElement(form)
-    if (empty) {
-      empty.textContent = count ? '' : 'No brands found'
-      empty.hidden = count > 0
-      if (empty.style) empty.style.display = count ? 'none' : 'block'
-    }
-    return count
   }
 
   function projectApi(globalObject, method) {
@@ -271,13 +225,15 @@
     current.optionsGeneration += 1
     current.options = []
     current.optionsLoaded = false
-    writeField(field(form, BRAND_SEARCH_SELECTOR), '')
+    writeSelectValue(form, '')
     clearSelectedBrand(form)
     clearRenderedOptions(form)
+    setSelectState(form, 'Choose a Brand', true)
   }
 
   function loadOptions(form, globalObject, forceRefresh) {
     var current = formState(form)
+    if (current.submitRequest) return Promise.resolve(current.options)
     if (forceRefresh) invalidateOptions(form)
     if (current.optionsRequest && !forceRefresh) return current.optionsRequest
     if (current.optionsLoaded) return Promise.resolve(current.options)
@@ -290,8 +246,7 @@
     }
     syncCommercialForm(form, globalObject && globalObject.document, globalObject)
     setStatus(form, 'loading', '')
-    setEmptyCopy(form, 'Loading brands...')
-    openOptions(form)
+    setSelectState(form, 'Loading Brands...', true)
     var optionsRequest = Promise.resolve()
       .then(function () { return request({}) })
       .then(function (response) {
@@ -310,7 +265,7 @@
       })
       .catch(function () {
         if (generation !== current.generation || optionsGeneration !== current.optionsGeneration) return []
-        setEmptyCopy(form, 'Could not load brands')
+        setSelectState(form, 'Could not load Brands', true)
         setStatus(form, 'error', 'The Brand list could not load. Try again.')
         return []
       })
@@ -396,7 +351,7 @@
     current.selected = null
     current.key = ''
     current.keyPayload = ''
-    writeField(field(form, BRAND_SEARCH_SELECTOR), '')
+    writeSelectValue(form, '')
     clearSelectedBrand(form)
   }
 
@@ -414,13 +369,7 @@
     current.lockedControls = null
     resetPresentation(form, true)
     clearRenderedOptions(form)
-    var empty = emptyElement(form)
-    if (empty) {
-      empty.textContent = ''
-      empty.hidden = true
-      if (empty.style) empty.style.display = 'none'
-    }
-    closeOptions(form)
+    setSelectState(form, 'Choose a Brand', true)
     setStatus(form, 'idle', '')
   }
 
@@ -511,6 +460,7 @@
       .finally(function () {
         if (generation !== current.generation || current.submitRequest !== submitRequest) return
         lockForm(form, false)
+        if (!current.optionsLoaded) setSelectState(form, 'Choose a Brand', true)
         current.submitRequest = null
       })
     current.submitRequest = submitRequest
@@ -519,10 +469,6 @@
 
   function formFromTarget(target) {
     return target && target.closest ? target.closest(FORM_SELECTOR) : null
-  }
-
-  function optionFromTarget(target) {
-    return target && target.closest ? target.closest(OPTION_SELECTOR) : null
   }
 
   function bind(documentObject, globalObject) {
@@ -539,26 +485,6 @@
         }
         return
       }
-      var optionElement = optionFromTarget(event.target)
-      if (!optionElement) return
-      var optionForm = formFromTarget(optionElement)
-      if (!optionForm) return
-      var id = positiveId(optionElement.getAttribute('data-starter-project-brand-option'))
-      var option = formState(optionForm).options.find(function (item) { return item.id === id })
-      if (option) selectBrand(optionForm, option)
-    })
-    documentObject.addEventListener('keydown', function (event) {
-      if (event.key !== 'Enter' && event.key !== ' ') return
-      var optionElement = optionFromTarget(event.target)
-      if (!optionElement) return
-      if (event.preventDefault) event.preventDefault()
-      if (typeof optionElement.click === 'function') optionElement.click()
-    })
-    documentObject.addEventListener('focusin', function (event) {
-      var form = formFromTarget(event.target)
-      if (!form || !event.target.matches || !event.target.matches(BRAND_SEARCH_SELECTOR)) return
-      filterOptions(form, event.target.value)
-      openOptions(form)
     })
     documentObject.addEventListener('input', function (event) {
       var form = formFromTarget(event.target)
@@ -567,10 +493,11 @@
       var current = formState(form)
       current.key = ''
       current.keyPayload = ''
-      if (event.target.matches && event.target.matches(BRAND_SEARCH_SELECTOR)) {
-        if (!current.selected || clean(event.target.value) !== current.selected.label) clearSelectedBrand(form)
-        filterOptions(form, event.target.value)
-        openOptions(form)
+      if (event.target.matches && event.target.matches(BRAND_SELECT_SELECTOR)) {
+        var id = positiveId(event.target.value)
+        var option = current.options.find(function (item) { return item.id === id })
+        if (option) selectBrand(form, option)
+        else clearSelectedBrand(form)
       }
     })
     documentObject.addEventListener('submit', function (event) {
@@ -594,8 +521,8 @@
     normalizeOptions: normalizeOptions,
     selectBrand: selectBrand,
     clearSelectedBrand: clearSelectedBrand,
-    filterOptions: filterOptions,
     renderOptions: renderOptions,
+    setSelectState: setSelectState,
     syncCommercialForm: syncCommercialForm,
     starterPayload: starterPayload,
     validationError: validationError,
