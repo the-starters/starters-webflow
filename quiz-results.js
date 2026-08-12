@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.170
+ * @release v1.59.199
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -6292,7 +6292,7 @@
     // so a load-time capture would have overwritten the real answer with /quiz
     // before this read ever happens.
     //
-    // All ten IDs below exist in the live app config. Verify any of them with:
+    // All eleven IDs below exist in the live app config. Verify any of them with:
     //   curl -s https://client.memberstack.com/app \
     //     -H 'X-APP-ID: app_clc2a0dyo00kf0uldcm11fl0q'
     const attributionCookieFieldIds = {
@@ -6306,6 +6306,7 @@
         event_id: 'event-id',
         signup_source: 'signup-source',
         signup_referrer: 'signup-referrer',
+        signup_trigger: 'signup-trigger',
     }
 
     /**
@@ -6367,6 +6368,7 @@
     const writeOnceFieldIds = [
         attributionCookieFieldIds.signup_source,
         attributionCookieFieldIds.signup_referrer,
+        attributionCookieFieldIds.signup_trigger,
     ]
 
     /**
@@ -6516,7 +6518,9 @@
                     // The fields held BACK from this write, not the ones kept in
                     // it: `kept` means the opposite inside the guard itself.
                     heldBackFieldIds: writeOnceFieldIds.filter(
-                        (fieldId) => guarded[fieldId] === undefined,
+                        (fieldId) =>
+                            attributionCustomFields[fieldId] !== undefined &&
+                            guarded[fieldId] === undefined,
                     ),
                 })
             }

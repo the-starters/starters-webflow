@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.169
+ * @release v1.59.199
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
  * one funnel, which is why it lives here in `v3/` alongside the other standalone
@@ -24,22 +24,26 @@
  *   event_id      `evt_<uuid>`, generated once and then reused
  *   signup_source   normalized path of the page the signup happened on
  *   signup_referrer normalized path of the same-origin page they came FROM
+ *   signup_trigger  which CTA opened the signup surface (`hire`, `message`,
+ *                   `book-call`, or `service:<detail>`)
  *
  * A URL parameter only overwrites its cookie when the URL actually carries a
  * value, so the freshest click wins and a plain internal navigation never clears
  * an earlier one. The `_fbc`/`_fbp` copy is re-checked on every page load
  * because the pixel writes those cookies itself and can load after this script.
  *
- * The two signup cookies are the ones no URL can supply. Both are derived at the
- * Memberstack auth transition, not during capture, and neither is in URL_PARAMS
- * so that `?signup_source=` and `?signup_referrer=` cannot dictate a field whose
- * whole job is to report what really happened.
+ * The three signup cookies are the ones no URL can supply. Source and referrer
+ * are derived at the Memberstack auth transition, not during capture, and
+ * trigger is derived from the CTA that opened signup. None of them are in
+ * URL_PARAMS so that `?signup_source=`, `?signup_referrer=`, or
+ * `?signup_trigger=` cannot dictate a field whose whole job is to report what
+ * really happened.
  *
  * `signup_source` answers "which page was the form on" from `location.pathname`.
  * `signup_referrer` answers "where were they when they decided" from
  * `document.referrer`, same-origin only, path only. The pair is needed because a
  * visitor who clicks Get started on `/` signs up on `/quiz`: the source says
- * `/quiz`, and only the referrer says `/`. `/` carries no signup form at all, so
+ * `/quiz`, and only the referrer says `/home`. `/` carries no signup form at all, so
  * source alone can never name it.
  *
  * Capture at the transition rather than on load, for both, for the same reason.
@@ -61,14 +65,15 @@
  * rather than a value: no referrer at all (direct navigation, typed URL, stripped
  * referrer policy), a cross-origin referrer, and an empty path.
  *
- * The cookies overwrite freely; two FIELDS do not. `signup-source` and
- * `signup-referrer` are write-once on the member: once either holds a non-empty
- * value, no write here may replace it, because "where did this member come from"
- * stops being true the moment it is overwritten. Both are facts about one signup
- * that never change afterwards, so they are guarded together; guarding one and
- * not the other would read as a deliberate distinction that does not exist. The
- * other eight fields stay last-touch, so the guard strips at most those two keys
- * from the outgoing payload and leaves the rest of the write alone. It is needed
+ * The cookies overwrite freely; three FIELDS do not. `signup-source`,
+ * `signup-referrer`, and `signup-trigger` are write-once on the member: once
+ * any of them holds a non-empty value, no write here may replace that field,
+ * did this member come from" (and which CTA opened signup) stops being true the
+ * moment it is overwritten. All three are facts about one signup that never
+ * change afterwards, so they are guarded together; guarding a subset would read
+ * as a deliberate distinction that does not exist. The other eight fields stay
+ * last-touch, so the guard strips at most those three keys from the outgoing
+ * payload and leaves the rest of the write alone. It is needed
  * because this script cannot see a signup, only a logged-out to logged-in
  * transition on a page that has a signup form, and a returning member logging in
  * there looks identical. When the member's existing values cannot be read at all
@@ -76,7 +81,7 @@
  * the other way here than it does for CompleteRegistration.
  *
  * Memberstack custom-field mapping, cookie name to field ID: underscores become
- * hyphens. All 10 field IDs are verified to exist in the Memberstack app config,
+ * hyphens. All 11 field IDs are verified to exist in the Memberstack app config,
  * so do not rename any of them here: Memberstack silently drops a write to a
  * field it does not know.
  *
@@ -90,6 +95,7 @@
  *   `event_id` -> `event-id`
  *   `signup_source` -> `signup-source`
  *   `signup_referrer` -> `signup-referrer`
+ *   `signup_trigger` -> `signup-trigger`
  *
  * The same map is duplicated in the repo-root `quiz-results.js`, which owns the
  * write for the quiz funnel. Keep the two in step: a field ID that exists in
@@ -196,7 +202,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.169'
+    var RELEASE = 'v1.59.199'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -226,6 +232,17 @@
     // captureSignupSource and captureSignupReferrer.
     var SIGNUP_SOURCE_COOKIE = 'signup_source'
     var SIGNUP_REFERRER_COOKIE = 'signup_referrer'
+    var SIGNUP_TRIGGER_COOKIE = 'signup_trigger'
+    var SIGNUP_TRIGGER_ELEMENT_ATTR = 'data-signup-trigger-element'
+    var SIGNUP_TRIGGER_VALUE_ATTR = 'data-signup-trigger-value'
+    var SIGNUP_TRIGGER_SELECTOR = '[' + SIGNUP_TRIGGER_ELEMENT_ATTR + ']'
+    var SIGNUP_MODAL_ID = 'signup-modal'
+    var ALLOWED_TRIGGER_ELEMENTS = {
+        hire: true,
+        message: true,
+        'book-call': true,
+        service: true,
+    }
 
     // Cookie name to Memberstack custom-field ID: underscores swapped for
     // hyphens. Duplicated in quiz-results.js on purpose (the house pattern for
@@ -243,16 +260,18 @@
         event_id: 'event-id',
         signup_source: 'signup-source',
         signup_referrer: 'signup-referrer',
+        signup_trigger: 'signup-trigger',
     }
 
     // The fields that record a fact about one signup rather than a last-touch
-    // value. Both are set once, at the transition, and are wrong the moment
-    // anything replaces them, so saveAttribution holds them back for a member who
-    // already has one. The eight click fields are deliberately not in here: a
-    // fresh ad click is supposed to update those.
+    // value. All three are set once, at the transition (paths) or the CTA click
+    // (trigger), and are wrong the moment anything replaces them, so saveAttribution
+    // holds them back for a member who already has one. The eight click fields are
+    // deliberately not in here: a fresh ad click is supposed to update those.
     var WRITE_ONCE_FIELD_IDS = [
         FIELD_IDS.signup_source,
         FIELD_IDS.signup_referrer,
+        FIELD_IDS.signup_trigger,
     ]
 
     // Every cookie this script owns, in FIELD_IDS contract order.
@@ -522,6 +541,21 @@
     }
 
     /**
+     * Path written into signup_source / signup_referrer cookies.
+     *
+     * The live homepage route stays `/`. Attribution stores `/home` so every
+     * persisted value is path-shaped with a leading slash.
+     *
+     * @param {string} pathname
+     * @returns {string}
+     */
+    var storedAttributionPath = function (pathname) {
+        var path = normalizePath(pathname)
+        if (path === '/') return '/home'
+        return path
+    }
+
+    /**
      * Stores the page this signup happened on, in the normalized form the rest of
      * the file already compares paths in.
      *
@@ -544,7 +578,7 @@
      */
     var captureSignupSource = function () {
         try {
-            var path = normalizePath(
+            var path = storedAttributionPath(
                 (window.location && window.location.pathname) || '',
             )
             if (!path) return
@@ -606,11 +640,134 @@
 
             // pathname carries neither the query string nor the hash, so
             // normalizePath gets the bare path and this matches signup_source.
-            var path = normalizePath(parsed.pathname)
+            var path = storedAttributionPath(parsed.pathname)
             if (!path) return
             writeCookie(SIGNUP_REFERRER_COOKIE, path)
         } catch (error) {
             /* an unrecorded referrer must never break the signup */
+        }
+    }
+
+    // Tri-state: true = confirmed logged out (stamp + open signup on tagged
+    // CTAs). false = confirmed logged in (leave Hire/Message/Book alone).
+    // null = unreadable; do not invent a signup modal.
+    var viewerLoggedOut = null
+
+    /**
+     * @param {string} raw
+     * @returns {string}
+     */
+    var trimmed = function (raw) {
+        return raw == null ? '' : String(raw).trim()
+    }
+
+    /**
+     * @param {Element} node
+     * @returns {string | null} Cookie value to store, or null to write nothing.
+     */
+    var signupTriggerValueFrom = function (node) {
+        var element = trimmed(node.getAttribute(SIGNUP_TRIGGER_ELEMENT_ATTR))
+        if (!ALLOWED_TRIGGER_ELEMENTS[element]) {
+            warn(
+                'unknown ' +
+                    SIGNUP_TRIGGER_ELEMENT_ATTR +
+                    ' "' +
+                    element +
+                    '", signup trigger not stored',
+            )
+            return null
+        }
+
+        var custom = trimmed(node.getAttribute(SIGNUP_TRIGGER_VALUE_ATTR))
+        if (element === 'service') {
+            if (!custom) {
+                warn(
+                    'service trigger missing ' +
+                        SIGNUP_TRIGGER_VALUE_ATTR +
+                        ', signup trigger not stored',
+                )
+                return null
+            }
+            return 'service:' + custom
+        }
+
+        return custom || element
+    }
+
+    /**
+     * @returns {object | null}
+     */
+    var signupModalEntry = function () {
+        try {
+            var modal = window.lumos && window.lumos.modal
+            return modal && modal.list ? modal.list[SIGNUP_MODAL_ID] || null : null
+        } catch (error) {
+            return null
+        }
+    }
+
+    /**
+     * Capture-phase: stamp Signup Trigger and, when logged out, open signup
+     * instead of Hire/Message/Book. Unknown or incomplete tags are ignored and
+     * do not steal the click. The cookie is written only when signup actually
+     * opens.
+     *
+     * @param {Event} event
+     * @returns {void}
+     */
+    var onSignupTriggerClick = function (event) {
+        try {
+            if (viewerLoggedOut !== true) return
+            var target = event && event.target
+            if (!target || typeof target.closest !== 'function') return
+            var node = target.closest(SIGNUP_TRIGGER_SELECTOR)
+            if (!node) return
+
+            var value = signupTriggerValueFrom(node)
+            if (!value) return
+            var entry = signupModalEntry()
+            if (!entry || typeof entry.open !== 'function') {
+                warn('signup modal not found, tagged CTA did not open signup')
+                return
+            }
+
+            if (typeof event.preventDefault === 'function') event.preventDefault()
+            if (typeof event.stopPropagation === 'function') event.stopPropagation()
+            if (typeof event.stopImmediatePropagation === 'function') {
+                event.stopImmediatePropagation()
+            }
+            writeCookie(SIGNUP_TRIGGER_COOKIE, value)
+            if (entry.el && entry.el.open) return
+            entry.open()
+        } catch (error) {
+            /* a missed trigger must never break the click */
+        }
+    }
+
+    /**
+     * @returns {Promise<void>}
+     */
+    var probeViewerLoggedOut = async function () {
+        var memberstack = await waitForMemberstack()
+        if (!memberstack) return
+        try {
+            viewerLoggedOut = !isLoggedInMember(
+                getMemberData(await memberstack.getCurrentMember()),
+            )
+        } catch (error) {
+            viewerLoggedOut = null
+        }
+    }
+
+    /**
+     * @returns {void}
+     */
+    var bindSignupTriggerClicks = function () {
+        try {
+            if (!document || typeof document.addEventListener !== 'function') return
+            document.addEventListener('click', onSignupTriggerClick, true)
+        } catch (error) {
+            /* a page that cannot listen just never stamps a trigger */
         }
     }
 
@@ -966,7 +1123,7 @@
      * come from", and that answer stops being true the moment anything overwrites
      * it. They are one signup's facts, fixed at one moment, so they are guarded
      * as a set. The eight click fields are last-touch by design: a fresh ad click
-     * is supposed to update them. So the guard is deliberately two keys wide
+     * is supposed to update them. So the guard is deliberately three keys wide
      * rather than a rule about the payload.
      *
      * It is needed because this script cannot actually see a signup. It sees a
@@ -1237,9 +1394,11 @@
         try {
             var current = await memberstack.getCurrentMember()
             seenLoggedOut = !isLoggedInMember(getMemberData(current))
+            viewerLoggedOut = seenLoggedOut
         } catch (error) {
             warn('member state unreadable at signup watch start')
             seenLoggedOut = null
+            viewerLoggedOut = null
         }
 
         if (typeof memberstack.onAuthChange !== 'function') {
@@ -1278,6 +1437,7 @@
                 // the watch: a logged-in replay is "already in", a logged-out
                 // reading waits for a later transition.
                 seenLoggedOut = loggedIn ? false : true
+                viewerLoggedOut = seenLoggedOut
             } catch (error) {
                 /* attribution must never break the signup */
             }
@@ -1366,6 +1526,10 @@
         // One scan of the DOM as it stands now; rearm() covers a form injected
         // later.
         armSignupWatch()
+        bindSignupTriggerClicks()
+        if (!signupWatchArmed && hasElementMatching(SIGNUP_TRIGGER_SELECTOR)) {
+            runSafely(probeViewerLoggedOut, 'viewer probe for signup trigger failed')
+        }
         // Sitewide, not just on the signup pages: this is the step that finishes a
         // direct save that the signup form's own redirect cut short.
         runSafely(retryPendingSave, 'pending attribution save failed')
