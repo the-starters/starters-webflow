@@ -112,11 +112,17 @@ Do not discard local changes unless the user explicitly asks.
 - `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior
   migrated from the legacy Webflow footer. It keeps the existing Designer form
   contract, shows success only after a confirmed 2xx Xano response, and shows the
-  error state for rejected or failed profile updates. The script owns its DOM,
+  error state for rejected or failed profile updates. Each submit captures the
+  current Memberstack member, revalidates that same identity before the Xano
+  PATCH, and binds the request URL to the captured member ID. It revalidates
+  again before its Memberstack custom-field projection, so an account change
+  stops the workflow instead of writing into the new session and records a safe
+  auth-failure receipt when diagnostics are available. The script owns its DOM,
   readiness, validation, rate-input, and loader fallbacks. The site-wide Webflow
-  Head Code still initializes `MEMBER`, `memberReady`, and the matching helper
-  aliases before deferred page scripts. Load `intl-tel-input`, Quill, then this
-  deferred `@latest` asset. `v3/brand-account-controller.js` must load first with
+  Head Code still initializes
+  `MEMBER`, `memberReady`, and the matching helper aliases before deferred page
+  scripts. Load `intl-tel-input`, Quill, then this deferred `@latest` asset.
+  `v3/brand-account-controller.js` must load first with
   `guardSecurityForm: 'identity'`; it alone writes a changed Memberstack login
   email, then replays this controller's Xano profile save.
   It uses the shared diagnostic receipt contract above and decorates the existing
@@ -669,6 +675,9 @@ category filter.
 Memberstack account changes clear the cached Xano token, match context, applied IDs,
 and Algolia results. Requests that were already in flight reject with
 `MEMBER_SCOPE_CHANGED` instead of returning or tracking data for the previous member.
+If the account changes while the diagnostic helper is loading, the mutation rejects
+before token acquisition or any Xano request and records a failed auth receipt with
+`request_started: false` when the helper becomes available.
 
 If the match context has no valid positive category refs, All stays collapsed and
 the existing `[wf-algolia-element="no-results"]` state becomes a Complete profile
