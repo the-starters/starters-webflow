@@ -4,7 +4,7 @@ The native Webflow forms and their authored success/error elements stay in Webfl
 
 ## Scoped migration
 
-The files below are exact, source-controlled copies of self-contained controller blocks that are currently inline on both `/build-profile/consult` and `/build-profile/full-profile`. [`live-body-provenance.json`](./live-body-provenance.json) records the read-only Webflow page IDs, update times, script positions, character counts, and SHA-256 values captured from each page on 2026-08-12. Both pages produced the same nine body hashes.
+The files below are source-controlled candidates for self-contained controller blocks that are currently inline on both `/build-profile/consult` and `/build-profile/full-profile`. [`live-body-provenance.json`](./live-body-provenance.json) keeps the authenticated live-body capture separate from the instrumented Git candidate hashes. Its `pages` records are immutable readback evidence; its `candidateAssets` records identify the reviewed files that replace those blocks. Both pages produced the same nine captured body hashes.
 
 | Original order | GitHub asset | Live inline body SHA-256 | Responsibility |
 | --- | --- | --- | --- |

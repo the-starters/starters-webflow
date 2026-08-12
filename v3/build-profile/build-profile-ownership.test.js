@@ -24,7 +24,7 @@ function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
 
-test('both captured pages map the same nine live bodies to executable assets', () => {
+test('both captured pages preserve the same nine immutable live-body observations', () => {
   const expectedFiles = Object.keys(PROVENANCE.pages[PAGES[0]].scripts).sort()
   assert.equal(expectedFiles.length, 9)
 
@@ -35,14 +35,37 @@ test('both captured pages map the same nine live bodies to executable assets', (
     assert.equal(new Set(indexes).size, indexes.length)
 
     for (const file of expectedFiles) {
-      const body = executableBody(file)
-      assert.equal(body.length, observations[file].characters, `${page} ${file} characters`)
-      assert.equal(sha256(body), observations[file].sha256, `${page} ${file} hash`)
+      assert.equal(
+        observations[file].characters,
+        PROVENANCE.pages[PAGES[0]].scripts[file].characters,
+        `${page} ${file} characters`,
+      )
+      assert.equal(
+        observations[file].sha256,
+        PROVENANCE.pages[PAGES[0]].scripts[file].sha256,
+        `${page} ${file} hash`,
+      )
     }
   }
 })
 
-test('each captured controller remains valid as a standalone classic script', () => {
+test('candidate asset hashes identify current Git blobs, not live captures', () => {
+  assert.match(PROVENANCE.captureMethod, /Authenticated published-page HTML/)
+  assert.match(PROVENANCE.candidateAssets.hashMethod, /not authenticated Webflow captures/)
+
+  for (const [file, candidate] of Object.entries(PROVENANCE.candidateAssets.files)) {
+    const bytes = fs.readFileSync(path.resolve(DIR, '../..', candidate.path))
+    assert.equal(bytes.length, candidate.bytes, file)
+    assert.equal(sha256(bytes), candidate.sha256, file)
+  }
+
+  assert.notEqual(
+    PROVENANCE.pages[PAGES[0]].scripts['profile-photo.js'].sha256,
+    PROVENANCE.candidateAssets.files['profile-photo.js'].sha256,
+  )
+})
+
+test('each candidate controller remains valid as a standalone classic script', () => {
   for (const file of Object.keys(PROVENANCE.pages[PAGES[0]].scripts)) {
     assert.doesNotThrow(() => new vm.Script(source(file), { filename: file }), file)
   }

@@ -4,7 +4,7 @@ The native `/starter-edit-profile` form, fields, and success/error elements stay
 
 ## In-place loader replacements
 
-Replace only an exact live inline body whose index and SHA-256 match `live-body-provenance.json`. Keep each replacement in its existing Code Embed position.
+Replace only an exact live inline body whose index and SHA-256 match the captured `page.scripts` records in `live-body-provenance.json`. The separate `candidateAssets` records identify the instrumented GitHub files. Keep each replacement in its existing Code Embed position.
 
 | Live index | GitHub asset | Responsibility |
 | --- | --- | --- |
