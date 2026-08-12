@@ -11,10 +11,27 @@ const qsa = (selector, scope = document) => Array.from((scope || document).query
 const PROFILE_WORKFLOW = 'starter_profile_edit';
 const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v1';
 const workflowDiagnosticsControllerScript = document.currentScript;
+const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
+
+function boundedWorkflowDiagnostics(promise) {
+	return new Promise((resolve) => {
+		let settled = false;
+		const finish = (api) => {
+			if (settled) return;
+			settled = true;
+			window.clearTimeout(timer);
+			resolve(api || null);
+		};
+		const timer = window.setTimeout(() => finish(null), WORKFLOW_DIAGNOSTICS_TIMEOUT_MS);
+		Promise.resolve(promise).then(finish, () => finish(null));
+	});
+}
 
 function loadWorkflowDiagnostics() {
 	if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics);
-	if (window.__startersWorkflowDiagnosticsReady) return window.__startersWorkflowDiagnosticsReady;
+	if (window.__startersWorkflowDiagnosticsReady) {
+		return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady);
+	}
 	const source = workflowDiagnosticsControllerScript?.src;
 	if (!source || !document.createElement) return Promise.resolve(null);
 	let url = '';
@@ -28,13 +45,21 @@ function loadWorkflowDiagnostics() {
 	}
 	window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => {
 		const script = document.createElement('script');
+		let settled = false;
+		const finish = (api) => {
+			if (settled) return;
+			settled = true;
+			window.clearTimeout(timer);
+			resolve(api || null);
+		};
+		const timer = window.setTimeout(() => finish(null), WORKFLOW_DIAGNOSTICS_TIMEOUT_MS);
 		script.src = url;
 		script.async = false;
-		script.addEventListener('load', () => resolve(window.StartersWorkflowDiagnostics || null), { once: true });
-		script.addEventListener('error', () => resolve(null), { once: true });
+		script.addEventListener('load', () => finish(window.StartersWorkflowDiagnostics), { once: true });
+		script.addEventListener('error', () => finish(null), { once: true });
 		(document.head || document.documentElement).appendChild(script);
 	});
-	return window.__startersWorkflowDiagnosticsReady;
+	return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady);
 }
 
 const workflowDiagnosticsReady = loadWorkflowDiagnostics();

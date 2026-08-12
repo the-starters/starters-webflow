@@ -45,6 +45,8 @@ async function loadBridge(
     getXanoAuthToken = null,
     workflowDiagnostics = false,
     autoLoadWorkflowDiagnostics = false,
+    workflowDiagnosticsReady = null,
+    setTimeoutImpl = setTimeout,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -131,7 +133,10 @@ async function loadBridge(
       windowListeners.set(type, listeners.filter((candidate) => candidate !== listener))
     },
     setInterval,
-    setTimeout,
+    setTimeout: setTimeoutImpl,
+  }
+  if (workflowDiagnosticsReady) {
+    window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
   if (wfXano) window.WfXano = wfXano
   if (getXanoAuthToken) window.getXanoAuthToken = getXanoAuthToken
@@ -403,6 +408,28 @@ test('loads the matching-version diagnostic helper before an opportunity mutatio
   ])
   assert.equal(bridge.window.__startersWorkflowDiagnosticLast.workflow, 'opportunity_create')
   assert.equal(bridge.window.__startersWorkflowDiagnosticLast.result, 'success')
+})
+
+test('a stalled shared diagnostics loader fails open before an opportunity mutation', async () => {
+  const calls = []
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/opportunities/create')) return response({ id: 711 }, true, 201)
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      workflowDiagnosticsReady: new Promise(() => {}),
+      setTimeoutImpl: (callback, ms) => ms === 2000 ? setImmediate(callback) : setTimeout(callback, ms),
+    },
+  )
+
+  await bridge.API.brandOppCreate({ title: 'Bounded diagnostics' })
+
+  assert.equal(calls.some((url) => url.includes('/brand/opportunities/create')), true)
 })
 
 test('opportunity failures decorate the authored native failure state for copying', async () => {

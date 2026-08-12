@@ -4,7 +4,7 @@ The native Webflow forms and their authored success/error elements stay in Webfl
 
 ## Scoped migration
 
-The files below are exact, source-controlled copies of self-contained controller blocks that are currently inline on both `/build-profile/consult` and `/build-profile/full-profile`.
+The files below are exact, source-controlled copies of self-contained controller blocks that are currently inline on both `/build-profile/consult` and `/build-profile/full-profile`. [`live-body-provenance.json`](./live-body-provenance.json) records the read-only Webflow page IDs, update times, script positions, character counts, and SHA-256 values captured from each page on 2026-08-12. Both pages produced the same nine body hashes.
 
 | Original order | GitHub asset | Live inline body SHA-256 | Responsibility |
 | --- | --- | --- | --- |
@@ -43,8 +43,7 @@ This exclusion is a release boundary, not proof that the remaining inline code i
 1. Verify every file passes `node --check` and the exposure scan.
 2. Release through no-mistakes, semver, and jsDelivr purge.
 3. Back up every exact Webflow Code Embed block before replacement.
-4. Replace only a block whose live body SHA-256 matches this inventory.
+4. Recapture both pages and replace only a block whose script position, character count, and SHA-256 match `live-body-provenance.json`.
 5. Publish staging first, then use human-like clicks for photo, portfolio, work history, counters, bio, and grouped selects without submitting the full profile.
 6. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
 7. Scan both published domains for Airtable, Make, and PAT exposure patterns.
-
