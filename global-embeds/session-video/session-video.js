@@ -66,6 +66,9 @@
  *     data-session-video-id                Vimeo ID, CMS-bound
  *     data-session-video-cut               optional seconds, default 180
  *     data-session-video-bg                optional seconds, default 20
+ *     data-session-video-native-min        optional px, default 768. Below this
+ *                                          player width NOBODY gets Vimeo's own
+ *                                          controls, member or not.
  *   [data-session-video="stage"]           the iframe is built in here
  *   [data-session-video="signup-trigger"]  hidden; carries data-modal-trigger
  *
@@ -73,6 +76,11 @@
  *   [data-element="hero-element"]           the overlay
  *   [data-element-trigger="show-video"]     the watch control
  *   #video-controls  #playPauseBtn  #muteBtn  #fullscreenBtn  #videoClickOverlay
+ *
+ * REQUIRED OF THE TEMPLATE, not written by this file:
+ *   #fullscreenBtn carries Memberstack's `data-ms-content="members"`, and the CSS
+ *   carries `#fullscreenBtn[data-sv-fullscreen="hidden"] { display: none }`. This
+ *   file writes the attribute and never an inline style — see mount().
  *
  * STATE IS WRITTEN AS ATTRIBUTES, for the template's CSS to react to:
  *   [data-session-video="root"]    data-sv-player   native | custom
@@ -157,8 +165,8 @@
     if (el) el.setAttribute(attr, value)
   }
 
-  /** Positive seconds from an attribute, or the default for empty/unusable. */
-  function seconds(root, attr, fallback) {
+  /** A positive number from an attribute, or the default for empty/unusable. */
+  function positiveNumber(root, attr, fallback) {
     var raw = root.getAttribute(attr)
     if (raw === null || String(raw).trim() === '') return fallback
     var n = Number(raw)
@@ -170,14 +178,26 @@
   }
 
   /**
-   * Is the viewport wide enough for Vimeo's own controls to be usable? Read ONCE
-   * at mount, because the iframe's `controls` parameter is fixed at load — a
-   * rotation cannot change it without rebuilding the frame, and rebuilding would
-   * interrupt playback. So a viewer keeps what they got until they reload.
+   * Is the player box wide enough for Vimeo's own controls to be usable? Measured
+   * at mount, because the iframe's `controls` parameter is fixed at load and a
+   * rotation cannot change it without rebuilding the frame, which would interrupt
+   * playback. So a viewer keeps what they got unless something else remounts —
+   * `upgrade()` does recompute, so a rotation before a late membership answer can
+   * change it.
    */
   function wideEnough(root) {
-    var min = seconds(root, ATTR_NATIVE_MIN, NATIVE_MIN_WIDTH)
-    var w = window.innerWidth || 0
+    var min = positiveNumber(root, ATTR_NATIVE_MIN, NATIVE_MIN_WIDTH)
+    // The player's own box, not the window: the evidence for this threshold is a
+    // 375px PLAYER, and a wide window with a narrow hero column gets exactly the
+    // same broken Vimeo UI. Falls back to the viewport, then to 0 — and 0 resolves
+    // to the template's own controls, which always work.
+    var w = 0
+    var stage = part(root, 'stage') || root
+    if (stage && typeof stage.getBoundingClientRect === 'function') {
+      var rect = stage.getBoundingClientRect()
+      w = (rect && rect.width) || 0
+    }
+    if (!w) w = window.innerWidth || 0
     return w >= min
   }
 
@@ -335,8 +355,8 @@
   function Controller(root) {
     this.root = root
     this.videoId = String(root.getAttribute(ATTR_ID) || '').trim()
-    this.cut = seconds(root, ATTR_CUT, DEFAULT_CUT_SECONDS)
-    this.bg = seconds(root, ATTR_BG, DEFAULT_BG_SECONDS)
+    this.cut = positiveNumber(root, ATTR_CUT, DEFAULT_CUT_SECONDS)
+    this.bg = positiveNumber(root, ATTR_BG, DEFAULT_BG_SECONDS)
     this.gated = true
     this.armed = false
     this.atWall = false
@@ -349,6 +369,7 @@
     this.wallOpens = 0
     this.bound = false
     this.ready = false
+    this.native = false
   }
 
   /**
@@ -419,9 +440,14 @@
     var stage = part(this.root, 'stage')
     if (!stage) return false
     this.gated = false
-    this.native = wideEnough(this.root)
-    stage.append(buildFrame(this.videoId, false, this.native))
-    setState(this.root, 'data-sv-player', this.native ? 'native' : 'custom')
+    // FORCED native, regardless of width. This path has no player object and never
+    // calls bind(), so the template's own bar is inert here — reporting `custom` on
+    // a narrow screen left a member with a muted, looping, autoplaying video and no
+    // play, pause, mute or full-screen route at all, with the CSS also keeping
+    // pointer-events off the iframe. Vimeo's cramped bar beats no bar.
+    this.native = true
+    stage.append(buildFrame(this.videoId, false, true))
+    setState(this.root, 'data-sv-player', 'native')
     setState(this.root, 'data-sv-video', 'ready')
     this.ready = true
     controllers.push(this)
@@ -480,11 +506,17 @@
 
     // A gated viewer can never reach fullscreen, because the frame was built
     // without permission. Hide the control rather than leave a dead button.
-    // The attribute ONLY. This button carries Memberstack's own
-    // `data-ms-content="members"`, so Memberstack owns its visibility — and an
-    // inline style written by us onto an element Memberstack meant to hide is
-    // exactly how a members-only control leaks to a non-member if our answer and
-    // theirs ever disagree. Diagnostics, never display.
+    // The attribute ONLY, never an inline style. This button carries Memberstack's
+    // own `data-ms-content="members"`, so Memberstack owns its visibility, and an
+    // inline style written by us onto an element Memberstack meant to hide is how a
+    // members-only control leaks when the two answers disagree.
+    //
+    // THE TEMPLATE MUST THEREFORE CARRY
+    //   #fullscreenBtn[data-sv-fullscreen="hidden"] { display: none }
+    // or the button is visible and inert on every path where membership is
+    // unconfirmed (no SDK, a rejection, an expired budget) and on any page where
+    // `data-ms-content` has not been authored yet. bind() returns early for a gated
+    // viewer, so a press gives no feedback at all.
     setState(this.el('fullscreen'), 'data-sv-fullscreen', gated ? 'hidden' : 'visible')
 
     this.bind()
