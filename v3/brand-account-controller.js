@@ -68,12 +68,29 @@
   var BRAND_PROFILE_MARKER_KEY = 'thestarters:v3-brand-profile-completed'
   var BRAND_PROFILE_MARKER_VALUE = '1'
   var CONTROLLER_VERSION = 'brand-account-controller-v1'
+  var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
   var passwordEmailAttempts = new WeakMap()
   var workflowDiagnosticsControllerScript = document.currentScript
 
+  function boundedWorkflowDiagnostics(promise) {
+    return new Promise(function (resolve) {
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
+      Promise.resolve(promise).then(finish, function () { finish(null) })
+    })
+  }
+
   function loadWorkflowDiagnostics() {
     if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics)
-    if (window.__startersWorkflowDiagnosticsReady) return window.__startersWorkflowDiagnosticsReady
+    if (window.__startersWorkflowDiagnosticsReady) {
+      return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
+    }
     var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
     if (!source || !document.createElement) return Promise.resolve(null)
     var url = ''
@@ -89,15 +106,23 @@
     }
     window.__startersWorkflowDiagnosticsReady = new Promise(function (resolve) {
       var script = document.createElement('script')
+      var settled = false
+      var finish = function (api) {
+        if (settled) return
+        settled = true
+        window.clearTimeout(timer)
+        resolve(api || null)
+      }
+      var timer = window.setTimeout(function () { finish(null) }, WORKFLOW_DIAGNOSTICS_TIMEOUT_MS)
       script.src = url
       script.async = false
       script.addEventListener('load', function () {
-        resolve(window.StartersWorkflowDiagnostics || null)
+        finish(window.StartersWorkflowDiagnostics)
       }, { once: true })
-      script.addEventListener('error', function () { resolve(null) }, { once: true })
+      script.addEventListener('error', function () { finish(null) }, { once: true })
       ;(document.head || document.documentElement).appendChild(script)
     })
-    return window.__startersWorkflowDiagnosticsReady
+    return boundedWorkflowDiagnostics(window.__startersWorkflowDiagnosticsReady)
   }
 
   var workflowDiagnosticsReady = loadWorkflowDiagnostics()
@@ -122,6 +147,7 @@
     if (form) {
       form.__startersAccountDiagnostic = receipt
       form.__startersAccountDiagnosticStartedAt = Date.now()
+      form.__startersAccountDiagnosticRequestStarted = false
     }
     return receipt
   }
@@ -129,9 +155,16 @@
   function diagnosticComplete(form, fields) {
     var api = window.StartersWorkflowDiagnostics
     if (!api) return null
-    var receipt = api.record(api.complete(form && form.__startersAccountDiagnostic, fields || {}))
+    fields = Object.assign({}, fields || {}, {
+      request_started: Boolean(form && form.__startersAccountDiagnosticRequestStarted),
+    })
+    var receipt = api.record(api.complete(form && form.__startersAccountDiagnostic, fields))
     if (form) form.__startersAccountDiagnostic = receipt
     return receipt
+  }
+
+  function diagnosticRequestStarted(form) {
+    if (form) form.__startersAccountDiagnosticRequestStarted = true
   }
 
   function diagnosticErrorCode(error) {
@@ -443,6 +476,7 @@
     }
 
     var client = memberstack()
+    diagnosticRequestStarted(form)
     var member = await currentMember(client)
 
     // Completion is the last durable member write. The password email follows
@@ -469,7 +503,12 @@
       throw validationError
     }
     var client = memberstack()
-    var member = memberSnapshot || (await currentMember(client))
+    var member = memberSnapshot
+    if (!member) {
+      diagnosticRequestStarted(form)
+      member = await currentMember(client)
+    }
+    diagnosticRequestStarted(form)
     var result = await updateEmailIfChanged(client, member, email)
     if (result.changed) await sendResetPasswordEmailOnce(form, client, result.email)
     return result
