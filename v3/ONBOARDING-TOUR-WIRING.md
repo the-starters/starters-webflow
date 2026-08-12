@@ -92,9 +92,10 @@ Page Settings → Custom Code → Head Code on each page that has a tour
 (current scope: `/starter-dashboard` — 5-step Talent tour; `/brand-dashboard`
 — 6-step brand-paid tour whose finale highlights the navbar Post Opportunity
 button via `data-tour-target=".navbar_button:has(a[href='/opportunities-brands-view'])"`
-on a page-scoped carrier, since that button lives in the shared `Navbar v2`
-component and cannot carry a custom attribute headlessly; both installed
-headlessly 2026-07-24 via `data_scripts_tool set_page_freeform_code`):
+on a page-scoped carrier, since that button lives in the shared `Navbar Main`
+component (renamed from `Navbar v2`) and cannot carry a custom attribute
+headlessly; both installed headlessly 2026-07-24 via
+`data_scripts_tool set_page_freeform_code`):
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/onboarding-tour.js"></script>

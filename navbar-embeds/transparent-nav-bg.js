@@ -1,7 +1,17 @@
+/**
+ * Fades in the `.nav_bg` layer on scroll for transparent navbar variants.
+ *
+ * @release v1.59.198
+ *
+ * The variant attribute follows the Designer component's name — currently
+ * `navbar-main` (was `navbar-v2` until the component was renamed, which left
+ * this selector matching nothing site-wide). Keep it in sync with the
+ * companion transparent-nav-bg.css.
+ */
 document.addEventListener('DOMContentLoaded', function () {
-    const nav = document.querySelectorAll('[data-wf--navbar-v2--variant="transparent"], [data-wf--navbar-v2--variant="transparent-light"]');
+    const navs = document.querySelectorAll('[data-wf--navbar-main--variant="transparent"], [data-wf--navbar-main--variant="transparent-light"]');
 
-    nav.forEach(function (nav) {
+    navs.forEach(function (nav) {
       const navBg = nav.querySelector('.nav_bg');
 
       if (!navBg) return;
