@@ -859,31 +859,54 @@ Malformed values leave the Xano-authored timeline value unchanged, whether it
 comes from the nested contract-detail row or the direct `timeline_display`
 fallback.
 
-View Contract accepts `a[href="#contract"]` or
-`[data-project-action="contract"]`, is shown only when the project has a PandaDoc
-document id and canonical `contract_status` is `sent`, `viewed`, or `partial`,
-and requests a fresh recipient-scoped URL from authenticated Xano
+The contract signing panel is Webflow-authored native markup. Put
+`data-project-contract-panel`, the native `hidden` attribute, and
+`aria-hidden="true"` on its root so placeholder copy cannot flash or remain
+visible when the controller does not boot. The controller removes `hidden`
+only after canonical project state authorizes the panel. Put `data-project-contract-title` and
+`data-project-contract-body` on its status copy, and
+`data-project-contract-actions` around its actions. Author four badge variants,
+one each with `data-project-contract-badge="brand-pending"`, `"brand-signed"`,
+`"starter-pending"`, or `"starter-signed"`, and separate
+`data-project-contract-action="sign"` and `"view"` controls. The
+controller changes text and visibility only; it does not generate panel, badge,
+or action markup. The compact project-row control may remain
+`a[href="#contract"]` or `[data-project-action="contract"]`; the controller
+keeps its label and action synchronized with the panel.
+
+The panel is limited to canonical V3 Standard Contracts: `sync_origin` must be
+`v3` and `contract_source` must be `standard`. Own-contract rows and active,
+request, completed, terminated, or canceled lifecycle states hide it. Each
+visible panel shows exactly one Brand badge and one Starter badge from the
+canonical `brand_signed_at` and `starter_signed_at` values. Brand signs first.
+Before the Brand signs, only the Brand receives Review & Sign Contract; the
+Starter sees a waiting state without an action. After the Brand signs, the Brand
+receives View Contract and only the Starter receives Review & Sign Contract.
+Inconsistent partial or out-of-order signature state shows an attention state
+without an action. Draft or queued state shows preparation status, and provider
+failure states show the help message without an action. After both signatures,
+the panel shows activation processing without another signing action.
+
+Both sign and view request a fresh recipient-scoped URL from authenticated Xano
 `contracts/link/v3`. The URL opens in a new tab when the browser permits it and
 falls back to the current tab. No PandaDoc credential or stored contract URL is
-exposed in the page. `not_requested`, `create_pending`, `uploaded`, `draft`,
-`declined`, `expired`, and `error` never offer the action. Xano rechecks project
-ownership, environment, canonical contract state, and the live PandaDoc document
-status before minting the one-hour session, so stale browser data cannot expose a
-draft or terminally unavailable document. Sent or partially signed documents open
-the recipient's view/sign session. Completed documents require a separate
-authenticated protected-PDF delivery endpoint and remain hidden until that path is
-implemented and verified. On click, the controller
-first tries to refresh the canonical project list. A transient list failure may
-fall back to the already role-gated cached project only to request this link; the
-link endpoint remains the final authorization boundary. A missing or rejected
-session closes the pre-opened blank tab and shows only the generic
-`Contract is unavailable. Please try again.` message; provider and bridge details
-are not rendered into the dashboard.
-The Webflow-authored control fails closed from dashboard boot: it stays hidden
-while Memberstack resolves, while the project list is pending or unavailable,
-and when a project card renders before its canonical row. A card is revealed
-only after that row supplies both an allowed state and a PandaDoc document id.
-This gate never changes the separate Starter invoice control.
+exposed in the page. Xano rechecks project ownership, environment, canonical
+contract state, and the live PandaDoc document status before minting the one-hour
+session. A completed document offers no recipient-session action; protected-PDF
+delivery still requires a separate authenticated endpoint.
+Immediately before a click, the controller must refresh canonical project state;
+a failed or inconsistent refresh does not fall back to cached authorization. A
+missing or rejected session closes the pre-opened blank tab and shows only the
+generic `Contract is unavailable. Please try again.` message. Returning from
+PandaDoc refreshes the loaded project page range on `pageshow`, window `focus`,
+or when the page becomes visible. The `focus` path covers a separate PandaDoc
+window that never hides the dashboard. The panel repaints from canonical
+signature state without discarding pagination.
+
+The Webflow-authored panel and compact action fail closed from dashboard boot:
+they stay hidden while Memberstack resolves, while the project list is pending or
+unavailable, and when a project card renders before its canonical row. The
+separate Starter invoice control is unchanged.
 
 The existing `[wf-xano-link="project-end"]` control is upgraded to
 `data-project-action="end"`. Its label and mutation follow canonical lifecycle
