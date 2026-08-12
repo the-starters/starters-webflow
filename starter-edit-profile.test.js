@@ -3,12 +3,15 @@ const fs = require('node:fs')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./starter-edit-profile.js'), 'utf8')
+const diagnosticSource = fs.readFileSync(require.resolve('./utils/workflow-diagnostics.js'), 'utf8')
 
 class Target {
   constructor() {
     this.listeners = new Map()
     this.style = {}
     this.dataset = {}
+    this.attributes = new Map()
+    this.textContent = ''
   }
 
   addEventListener(type, listener) {
@@ -20,12 +23,17 @@ class Target {
   dispatchEvent(event) {
     return Promise.all((this.listeners.get(event.type) || []).map((listener) => listener(event)))
   }
+
+  setAttribute(name, value) { this.attributes.set(name, String(value)) }
+  getAttribute(name) { return this.attributes.get(name) ?? null }
 }
 
-function createEnvironment(fetchImpl, { browserGlobal = false } = {}) {
+function createEnvironment(fetchImpl, { browserGlobal = false, workflowDiagnostics = false } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
   const memberAuthUpdates = []
+  const tracked = []
+  const copied = []
   const fields = {
     email: Object.assign(new Target(), {
       value: 'new@example.com',
@@ -60,6 +68,12 @@ function createEnvironment(fetchImpl, { browserGlobal = false } = {}) {
 
   const successModal = new Target()
   const errorModal = new Target()
+  const successFeedback = Object.assign(new Target(), { textContent: 'Your profile was saved.' })
+  const errorFeedback = Object.assign(new Target(), { textContent: 'Your profile could not be saved.' })
+  const successTarget = new Target()
+  const errorTarget = new Target()
+  successTarget.querySelector = (selector) => selector === 'p' ? successFeedback : null
+  errorTarget.querySelector = (selector) => selector === 'p' ? errorFeedback : null
   successModal.addEventListener('click', () => { modalEvents.success += 1 })
   errorModal.addEventListener('click', () => { modalEvents.error += 1 })
 
@@ -71,6 +85,8 @@ function createEnvironment(fetchImpl, { browserGlobal = false } = {}) {
       if (selector === '[build-profile-form]') return form
       if (selector === "[data-modal-trigger='edit-form-success']") return successModal
       if (selector === "[data-modal-trigger='edit-form-error']") return errorModal
+      if (selector === '[data-modal-target="edit-form-success"]') return successTarget
+      if (selector === '[data-modal-target="edit-form-error"]') return errorTarget
       if (selector === '#email') return fields.email
       if (selector === '#phone' || selector === 'input[name="phone"]') return fields.phone
       if (selector === '[data-form="step"][data-index="1"]') return step
@@ -102,13 +118,21 @@ function createEnvironment(fetchImpl, { browserGlobal = false } = {}) {
     waitProfileData() {},
     waitForMember(callback) { callback(this.MEMBER) },
     setTimeout() { return 1 },
-    location: { replace() {} },
+    location: { replace() {}, hostname: 'the-starters-3-0.webflow.io' },
     intlTelInput: Object.assign(() => ({}), { getInstance: () => null }),
     $memberstackDom: {
       async updateMember() {},
       async updateMemberAuth(payload) { memberAuthUpdates.push(payload) },
     },
     FinsweetAttributes: [],
+    Date,
+    Math,
+    Uint32Array,
+    crypto: { randomUUID: () => '12345678-90ab-cdef-1234-567890abcdef' },
+    sessionStorage: { setItem() {} },
+    navigator: { clipboard: { writeText: async (value) => copied.push(value) } },
+    StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
+    console,
   }
 
   const sandbox = {
@@ -120,6 +144,8 @@ function createEnvironment(fetchImpl, { browserGlobal = false } = {}) {
     console,
     Promise,
     Date,
+    Math,
+    Uint32Array,
     setInterval: () => 1,
     clearInterval() {},
   }
@@ -128,10 +154,22 @@ function createEnvironment(fetchImpl, { browserGlobal = false } = {}) {
     window.window = window
   }
   const context = vm.createContext(browserGlobal ? window : sandbox)
+  if (workflowDiagnostics) {
+    new vm.Script(diagnosticSource, { filename: 'workflow-diagnostics.js' }).runInContext(context)
+  }
   new vm.Script(source, { filename: 'starter-edit-profile.js' }).runInContext(context)
   domReady[0]()
 
-  return { button, modalEvents, memberAuthUpdates }
+  return {
+    button,
+    modalEvents,
+    memberAuthUpdates,
+    tracked,
+    copied,
+    successFeedback,
+    errorFeedback,
+    window,
+  }
 }
 
 function deferred() {
@@ -206,7 +244,35 @@ async function testBrowserGlobalDoesNotRecurse() {
   assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
 }
 
-Promise.all([testSuccess(), testNon2xx(), testRejectedFetch(), testBrowserGlobalDoesNotRecurse()])
+async function testPrivacySafeDiagnostics() {
+  const environment = createEnvironment(async () => ({
+    ok: false,
+    status: 422,
+    json: async () => ({ message: 'Rejected private@example.com profile' }),
+  }), { workflowDiagnostics: true })
+
+  await submit(environment)
+
+  const receipt = environment.window.__startersWorkflowDiagnosticLast
+  assert.equal(receipt.workflow, 'starter_profile_edit')
+  assert.equal(receipt.result, 'failed')
+  assert.equal(receipt.error_code, 'HTTP_ERROR')
+  assert.equal(receipt.http_status, 422)
+  assert.match(environment.errorFeedback.textContent, /Diagnostic ID: WFD-/)
+  assert.doesNotMatch(JSON.stringify(receipt), /private@example\.com|new@example\.com|\+15555555555/)
+  assert.deepEqual(
+    environment.tracked.map((event) => event.name),
+    ['workflow_form_submit_started', 'workflow_form_submit_failed'],
+  )
+}
+
+Promise.all([
+  testSuccess(),
+  testNon2xx(),
+  testRejectedFetch(),
+  testBrowserGlobalDoesNotRecurse(),
+  testPrivacySafeDiagnostics(),
+])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {
     console.error(error)
