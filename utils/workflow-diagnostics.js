@@ -1,10 +1,9 @@
 /**
  * Privacy-safe workflow diagnostics for browser-owned Webflow forms.
  *
- * The receipt is intentionally allowlisted. Do not add names, emails, form
- * answers, prices, tokens, request bodies, response bodies, or idempotency
- * keys. Controllers should pass only stable workflow metadata and canonical
- * numeric/string record IDs that are already safe for support use.
+ * The receipt is intentionally allowlisted. README.md owns the shared receipt
+ * fields, exclusions, covered workflows, and support-copy contract. Keep
+ * normalize() as the only field allowlist, and do not widen it implicitly.
  */
 ;(function (global) {
   'use strict'
