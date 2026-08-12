@@ -49,6 +49,7 @@
   const ELEMENT_ATTR = 'data-stripe-connect-element'
   const ACTION_ATTR = 'data-stripe-connect-action'
   const EARNINGS_STATE_ATTR = 'data-stripe-connect-earnings-state'
+  const HERO_ACTION_ATTR = 'data-stripe-connect-hero-action'
   const PENDING_TABINDEX_ATTR = 'data-stripe-connect-pending-tabindex'
   const STATES = [
     'loading',
@@ -135,6 +136,30 @@
       wrapper.appendChild(disconnect)
       created.push(disconnect)
     }
+
+    const connectedSetupStates = ['incomplete', 'review']
+    connectedSetupStates.forEach(function (stateName) {
+      const state = root.querySelector(elementSelector(stateName))
+      const stateWrapper =
+        state && state.querySelector('.action-item_button-wrapper')
+      const stateSource =
+        state && state.querySelector('.action-item_button-wrapper > *')
+      if (
+        !stateWrapper ||
+        !stateSource ||
+        typeof stateSource.cloneNode !== 'function' ||
+        state.querySelector(actionSelector('disconnect'))
+      ) {
+        return
+      }
+      const disconnect = configureConnectedControl(
+        stateSource.cloneNode(true),
+        'disconnect',
+        'Disconnect Stripe',
+      )
+      stateWrapper.appendChild(disconnect)
+      created.push(disconnect)
+    })
 
     return created
   }
@@ -647,20 +672,100 @@
       tiles.ready = elements[0]
     }
 
+    tiles.primary = tiles.ready || tiles.disconnected
+
     return tiles
   }
 
+  function setHeroTileCopy(tile, title, description) {
+    if (!tile) return
+    const titleElement = tile.querySelector('.dash-hero_button-title')
+    const descriptionElement = tile.querySelector(
+      '.dash-hero_button-description',
+    )
+    if (titleElement) titleElement.textContent = title
+    if (descriptionElement) descriptionElement.textContent = description
+    tile.setAttribute('aria-label', title + '. ' + description)
+  }
+
+  function heroTileState(view) {
+    if (view === 'disconnected') {
+      return {
+        action: 'start',
+        description: 'Connect Stripe',
+        enabled: true,
+        title: 'Get Paid',
+      }
+    }
+    if (view === 'incomplete') {
+      return {
+        action: 'start',
+        description: 'Finish Stripe onboarding',
+        enabled: true,
+        title: 'Complete Setup',
+      }
+    }
+    if (view === 'review') {
+      return {
+        action: 'none',
+        description: 'Stripe is reviewing your account',
+        enabled: false,
+        title: 'Under Review',
+      }
+    }
+    if (view === 'ready') {
+      return {
+        action: 'dashboard',
+        description: 'Payment history & payouts',
+        enabled: true,
+        title: 'Earnings',
+      }
+    }
+    if (view === 'error') {
+      return {
+        action: 'none',
+        description: 'Use Try Again above',
+        enabled: false,
+        title: 'Stripe Unavailable',
+      }
+    }
+    return {
+      action: 'none',
+      description: 'Loading account status',
+      enabled: false,
+      title: 'Checking Stripe',
+    }
+  }
+
   function renderEarningsTiles(tiles, view) {
-    const showDisconnected = view === 'disconnected' || view === 'incomplete'
-    const showReady = view === 'ready'
+    const primary = tiles.primary || tiles.ready || tiles.disconnected
+    const state = heroTileState(view)
 
     tiles.all.forEach(function (element) {
       show(element, false)
     })
-    setConnectAccess(tiles.disconnected, showDisconnected)
-    setEarningsAccess(tiles.ready ? [tiles.ready] : [], showReady)
-    show(tiles.disconnected, showDisconnected)
-    show(tiles.ready, showReady)
+    if (!primary) return
+
+    primary.setAttribute(HERO_ACTION_ATTR, state.action)
+    setHeroTileCopy(primary, state.title, state.description)
+    setEarningsAccess([primary], state.enabled)
+    show(primary, true)
+  }
+
+  function handleHeroTileActivation(element, event, keyboard, actions) {
+    const action = element.getAttribute(HERO_ACTION_ATTR)
+    if (action === 'start') {
+      const handle = keyboard ? handleConnectKeydown : handleConnectClick
+      return handle(element, event, actions.start)
+    }
+    if (action === 'dashboard') {
+      const handle = keyboard ? handleEarningsKeydown : handleEarningsClick
+      return handle(element, event, actions.dashboard)
+    }
+    if (event && typeof event.preventDefault === 'function') {
+      event.preventDefault()
+    }
+    return false
   }
 
   function handleConnectClick(element, event, activate) {
@@ -850,6 +955,7 @@
   ) {
     if (sandboxMode()) return Promise.resolve(false)
     return runExclusive(async function () {
+      let failed = false
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
         renderRoots(roots, 'error')
@@ -882,6 +988,7 @@
         emit('starterStripeConnectDashboard', { mode: result.mode || '' })
         return true
       } catch (error) {
+        failed = true
         if (!shouldRetainDashboardKey(error)) clearDashboardAttemptKey()
         closeStripeTab(stripeTab)
         renderRoots(roots, 'error')
@@ -897,6 +1004,7 @@
         return false
       } finally {
         setActionPending(button, false)
+        if (failed) renderEarningsTiles(earningsTiles, 'error')
       }
     })
   }
@@ -1107,6 +1215,7 @@
       const stripeTab = reserveStripeTab()
       if (!stripeTab) {
         renderRoots(roots, 'error')
+        renderEarningsTiles(earningsTiles, 'error')
         emit('starterStripeConnectError', {
           action: 'start',
           message: 'Browser blocked the Stripe Connect tab',
@@ -1169,6 +1278,7 @@
           if (result !== true) {
             if (returnWatcher) returnWatcher.cancel()
             closeStripeTab(stripeTab)
+            renderEarningsTiles(earningsTiles, 'error')
             return result
           }
 
@@ -1206,57 +1316,36 @@
 
     try {
       const memberId = await initialMemberId()
-      if (earningsTiles.ready) {
-        const link = earningsTiles.ready
-        link.addEventListener('click', function (event) {
-          handleEarningsClick(link, event, function () {
-            openDashboardInNewTab(
-              runExclusive,
-              link,
-              roots,
-              memberId,
-              earningsTiles,
-            )
-          })
-        })
-        link.addEventListener('keydown', function (event) {
-          handleEarningsKeydown(link, event, function () {
-            openDashboardInNewTab(
-              runExclusive,
-              link,
-              roots,
-              memberId,
-              earningsTiles,
-            )
-          })
-        })
-      }
-      if (earningsTiles.disconnected) {
-        const connectTile = earningsTiles.disconnected
-        const startFromTile = function (event) {
-          return handleConnectClick(connectTile, event, function () {
-            startInNewTab(
-              runExclusive,
-              connectTile,
-              connectTile,
-              roots,
-              memberId,
-              earningsTiles,
-            )
+      if (earningsTiles.primary) {
+        const heroTile = earningsTiles.primary
+        const activateHeroTile = function (event, keyboard) {
+          return handleHeroTileActivation(heroTile, event, keyboard, {
+            start: function () {
+              startInNewTab(
+                runExclusive,
+                heroTile,
+                heroTile,
+                roots,
+                memberId,
+                earningsTiles,
+              )
+            },
+            dashboard: function () {
+              openDashboardInNewTab(
+                runExclusive,
+                heroTile,
+                roots,
+                memberId,
+                earningsTiles,
+              )
+            },
           })
         }
-        connectTile.addEventListener('click', startFromTile)
-        connectTile.addEventListener('keydown', function (event) {
-          handleConnectKeydown(connectTile, event, function () {
-            startInNewTab(
-              runExclusive,
-              connectTile,
-              connectTile,
-              roots,
-              memberId,
-              earningsTiles,
-            )
-          })
+        heroTile.addEventListener('click', function (event) {
+          activateHeroTile(event, false)
+        })
+        heroTile.addEventListener('keydown', function (event) {
+          activateHeroTile(event, true)
         })
       }
       roots.forEach(function (root) {
@@ -1280,7 +1369,7 @@
             startInNewTab(
               runExclusive,
               button,
-              earningsTiles.disconnected,
+              earningsTiles.primary,
               roots,
               memberId,
               earningsTiles,
@@ -1428,7 +1517,9 @@
     handleDisconnect,
     handleEarningsClick,
     handleEarningsKeydown,
+    handleHeroTileActivation,
     handleStart,
+    heroTileState,
     navigateStripeTab,
     openDashboardInNewTab,
     reserveStripeTab,
@@ -1447,6 +1538,7 @@
     sandboxMode,
     setActionPending,
     setEarningsAccess,
+    setHeroTileCopy,
     setStartPending,
     setView,
     shouldRetainConnectStartKey,
