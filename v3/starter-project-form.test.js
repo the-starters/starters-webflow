@@ -27,6 +27,7 @@ class Element {
     this.children = []
     this.events = []
     this.parent = null
+    this.resetCount = 0
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
   getAttribute(name) { return this.attrs[name] ?? null }
@@ -49,6 +50,7 @@ class Element {
     if (!this.parent) return
     this.parent.children = this.parent.children.filter((child) => child !== this)
   }
+  reset() { this.resetCount += 1 }
   matches(selector) {
     if (selector === '#Select-Brand') return this.attrs.id === 'Select-Brand'
     return false
@@ -124,6 +126,9 @@ function load(options = {}) {
   const tracks = []
   const serializedPayload = {
     starter_memberstack_id: 'mem_starter',
+    connection_type: 'opportunity',
+    opportunity_id: 991,
+    pandadoc_job_id: 44,
     title: 'Retention launch',
     service: 'Email Marketing',
     engagement_type: 'monthly',
@@ -144,6 +149,8 @@ function load(options = {}) {
     Event: class Event { constructor(type) { this.type = type } },
     CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init.detail } },
     WeakMap,
+    listeners: {},
+    addEventListener(name, handler) { this.listeners[name] = handler },
     StartersTrack: { track(name, payload) { tracks.push({ name, payload }) } },
     StartersProjectFormV3: {
       serialize: () => ({ payload: { ...serializedPayload } }),
@@ -221,6 +228,30 @@ test('Starter payload reuses commercial fields and omits connection type and Sta
   assert.equal(serialized.payload.project_scope, 'Build the retention program.')
   assert.equal(Object.prototype.hasOwnProperty.call(serialized.payload, 'starter_memberstack_id'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(serialized.payload, 'connection_type'), false)
+  assert.equal(Object.prototype.hasOwnProperty.call(serialized.payload, 'opportunity_id'), false)
+  assert.equal(Object.prototype.hasOwnProperty.call(serialized.payload, 'pandadoc_job_id'), false)
+})
+
+test('member scope reset clears cached Brands and ignores the prior in-flight response', async () => {
+  let resolveFirst
+  let requestNumber = 0
+  const loaded = load({
+    projectOptions: () => {
+      requestNumber += 1
+      if (requestNumber === 1) return new Promise((resolve) => { resolveFirst = resolve })
+      return Promise.resolve({ counterparties: [{ counterparty_id: 52, company_name: 'Member B Brand' }] })
+    },
+  })
+  const firstRequest = loaded.api.loadOptions(loaded.form, loaded.window)
+  await Promise.resolve()
+  loaded.window.listeners['opp30:member-scope-reset']({ detail: { memberId: 'member-b' } })
+  resolveFirst({ counterparties: [{ counterparty_id: 51, company_name: 'Member A Brand' }] })
+  assert.equal((await firstRequest).length, 0)
+
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(loaded.form.fields.brandId.value, '52')
+  assert.equal(loaded.form.fields.search.value, 'Member B Brand')
+  assert.equal(loaded.form.fields.list.querySelectorAll('[data-starter-project-brand-option]').length, 1)
 })
 
 test('submission creates a proposal event and never reports a created project', async () => {
@@ -241,6 +272,23 @@ test('submission creates a proposal event and never reports a created project', 
     'Project request sent',
     'Project request sent',
   ])
+})
+
+test('opening the modal after success restores the form and hides success state', async () => {
+  const loaded = load({ counterparties: [{ counterparty_id: 61, company_name: 'Brand' }] })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(loaded.form.style.display, 'none')
+  assert.equal(loaded.wrapper.success.style.display, 'block')
+
+  loaded.document.listeners.click({
+    target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
+  })
+  assert.equal(loaded.form.style.display, '')
+  assert.equal(loaded.wrapper.success.hidden, true)
+  assert.equal(loaded.wrapper.success.style.display, 'none')
+  assert.equal(loaded.form.resetCount, 1)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
 })
 
 test('failed retry keeps the same idempotency key', async () => {

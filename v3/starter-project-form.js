@@ -25,6 +25,27 @@
   var ERROR_SELECTOR = '[data-project-form-state="error"], .w-form-fail'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"], .w-form-done'
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
+  var STARTER_PAYLOAD_FIELDS = [
+    'title',
+    'service',
+    'engagement_type',
+    'contract_type',
+    'invoice_frequency',
+    'project_scope',
+    'start_date',
+    'estimated_end_date',
+    'total_cost',
+    'paid_upfront_pct',
+    'hourly_rate',
+    'hourly_billing_frequency',
+    'maximum_total_hours',
+    'maximum_hours_per_week',
+    'maximum_hours_per_month',
+    'weekly_rate',
+    'number_of_weeks',
+    'monthly_rate',
+    'number_of_months',
+  ]
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   function clean(value) {
@@ -59,6 +80,7 @@
       key: '',
       keyPayload: '',
       lockedControls: null,
+      generation: 0,
     }
   }
 
@@ -246,6 +268,7 @@
     var current = formState(form)
     if (current.optionsRequest) return current.optionsRequest
     if (current.optionsLoaded) return Promise.resolve(current.options)
+    var generation = current.generation
     var request = projectApi(globalObject, 'projectOptions')
     if (!request) {
       setStatus(form, 'error', 'The Brand list is not available. Reload and try again.')
@@ -255,9 +278,10 @@
     setStatus(form, 'loading', '')
     setEmptyCopy(form, 'Loading brands...')
     openOptions(form)
-    current.optionsRequest = Promise.resolve()
+    var optionsRequest = Promise.resolve()
       .then(function () { return request({}) })
       .then(function (response) {
+        if (generation !== current.generation) return []
         current.options = normalizeOptions(response)
         current.optionsLoaded = true
         clearSelectedBrand(form)
@@ -271,12 +295,16 @@
         return current.options
       })
       .catch(function () {
+        if (generation !== current.generation) return []
         setEmptyCopy(form, 'Could not load brands')
         setStatus(form, 'error', 'The Brand list could not load. Try again.')
         return []
       })
-      .finally(function () { current.optionsRequest = null })
-    return current.optionsRequest
+      .finally(function () {
+        if (current.optionsRequest === optionsRequest) current.optionsRequest = null
+      })
+    current.optionsRequest = optionsRequest
+    return optionsRequest
   }
 
   function sharedFormApi(globalObject) {
@@ -287,8 +315,11 @@
     var shared = sharedFormApi(globalObject)
     if (!shared || typeof shared.serialize !== 'function') return { error: 'The project form is not available.' }
     var serialized = shared.serialize(form, documentObject)
-    var payload = serialized && serialized.payload ? serialized.payload : {}
-    delete payload.starter_memberstack_id
+    var source = serialized && serialized.payload ? serialized.payload : {}
+    var payload = {}
+    STARTER_PAYLOAD_FIELDS.forEach(function (name) {
+      if (Object.prototype.hasOwnProperty.call(source, name)) payload[name] = source[name]
+    })
     var current = formState(form)
     payload.brand_id = positiveId(current.selected && current.selected.id) || positiveId(field(form, BRAND_ID_SELECTOR) && field(form, BRAND_ID_SELECTOR).value)
     return { payload: payload }
@@ -332,6 +363,62 @@
     current.lockedControls = null
   }
 
+  function resetPresentation(form, resetValues) {
+    if (resetValues && typeof form.reset === 'function') form.reset()
+    if (form.style) form.style.display = ''
+    var success = stateElement(form, SUCCESS_SELECTOR)
+    if (success) {
+      success.hidden = true
+      if (success.style) success.style.display = 'none'
+    }
+    if (!resetValues) return
+    var current = formState(form)
+    current.selected = null
+    current.key = ''
+    current.keyPayload = ''
+    writeField(field(form, BRAND_SEARCH_SELECTOR), '')
+    clearSelectedBrand(form)
+  }
+
+  function resetMemberState(form) {
+    var current = formState(form)
+    lockForm(form, false)
+    current.generation += 1
+    current.optionsRequest = null
+    current.submitRequest = null
+    current.options = []
+    current.optionsLoaded = false
+    current.selected = null
+    current.key = ''
+    current.keyPayload = ''
+    current.lockedControls = null
+    resetPresentation(form, true)
+    clearRenderedOptions(form)
+    var empty = emptyElement(form)
+    if (empty) {
+      empty.textContent = ''
+      empty.hidden = true
+      if (empty.style) empty.style.display = 'none'
+    }
+    closeOptions(form)
+    setStatus(form, 'idle', '')
+  }
+
+  function prepareOpen(form, documentObject, globalObject) {
+    var wasSuccessful = form.getAttribute && form.getAttribute('data-starter-project-status') === 'success'
+    resetPresentation(form, wasSuccessful)
+    var current = formState(form)
+    if (!current.optionsLoaded) return
+    renderOptions(form, current.options)
+    if (!current.options.length) {
+      setStatus(form, 'blocked', 'You can start a project after a Brand messages you.')
+      return
+    }
+    setStatus(form, 'ready', '')
+    if (current.options.length === 1 && !current.selected) selectBrand(form, current.options[0])
+    syncCommercialForm(form, documentObject, globalObject)
+  }
+
   function showSuccess(form, result, documentObject) {
     setStatus(form, 'success', '')
     var current = formState(form)
@@ -370,6 +457,7 @@
   function submit(form, globalObject, documentObject) {
     var current = formState(form)
     if (current.submitRequest) return current.submitRequest
+    var generation = current.generation
     syncCommercialForm(form, documentObject, globalObject)
     var shared = sharedFormApi(globalObject)
     if (shared && typeof shared.reportActiveValidity === 'function' && !shared.reportActiveValidity(form)) {
@@ -396,21 +484,25 @@
     }
     setStatus(form, 'submitting', '')
     lockForm(form, true)
-    current.submitRequest = Promise.resolve()
+    var submitRequest = Promise.resolve()
       .then(function () { return request(serialized.payload) })
       .then(function (result) {
+        if (generation !== current.generation) return false
         showSuccess(form, result, documentObject)
         return true
       })
       .catch(function (requestError) {
+        if (generation !== current.generation) return false
         setStatus(form, 'error', safeError(requestError))
         return false
       })
       .finally(function () {
+        if (generation !== current.generation || current.submitRequest !== submitRequest) return
         lockForm(form, false)
         current.submitRequest = null
       })
-    return current.submitRequest
+    current.submitRequest = submitRequest
+    return submitRequest
   }
 
   function formFromTarget(target) {
@@ -429,7 +521,10 @@
       var trigger = event.target && event.target.closest ? event.target.closest(TRIGGER_SELECTOR) : null
       if (trigger) {
         var form = documentObject.querySelector(FORM_SELECTOR)
-        if (form) loadOptions(form, globalObject)
+        if (form) {
+          prepareOpen(form, documentObject, globalObject)
+          loadOptions(form, globalObject)
+        }
         return
       }
       var optionElement = optionFromTarget(event.target)
@@ -473,6 +568,12 @@
       event.stopImmediatePropagation()
       submit(form, globalObject, documentObject)
     }, true)
+    if (globalObject && globalObject.addEventListener) {
+      globalObject.addEventListener('opp30:member-scope-reset', function () {
+        var form = documentObject.querySelector(FORM_SELECTOR)
+        if (form) resetMemberState(form)
+      })
+    }
     return true
   }
 
