@@ -1601,3 +1601,18 @@ test('controller does not bind on an unapproved host', () => {
   const environment = loadController({ hostname: 'lookalike.example' })
   assert.equal(environment.buildForm.listeners.has('submit'), false)
 })
+
+test('native form diagnostics inherit the controller CDN ref and use one loader sentinel', () => {
+  assert.match(
+    source,
+    /cdnRoot\[1\] \+ 'v3\/' \+ NATIVE_FORM_DIAGNOSTICS_SCRIPT/,
+  )
+  assert.match(
+    source,
+    /document\.querySelector\('script\[data-starters-native-form-diagnostics\]'\)/,
+  )
+  assert.match(
+    source,
+    /script\.setAttribute\('data-starters-native-form-diagnostics', ''\)/,
+  )
+})

@@ -18,6 +18,11 @@ The files below are exact, source-controlled copies of self-contained controller
 | 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor and word limit |
 | 14 | `grouped-selects.js` | `e80bb01f28a43ebcb5b28e8ea733bac273985ddfa3235179cdfc6a9a5168ae84` | Grouped multi-select options |
 
+`submit-diagnostics.js` is an additional observer-only loader, not a replacement
+for an inline block. It watches the existing human click on `[form-submit]` and
+the authored `[build-profile-success]` / `[build-profile-error]` states. It does
+not read fields, intercept the click, or change the coupled writer.
+
 Replace each exact inline block in place with its matching deferred loader. Do not consolidate or reorder these loaders: the untouched blocks between them still supply shared globals and form state.
 
 ```html
@@ -26,13 +31,19 @@ Replace each exact inline block in place with its matching deferred loader. Do n
 
 Use the same URL pattern for the other eight files.
 
+Add the observer loader after the final writer on both pages:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/build-profile/submit-diagnostics.js"></script>
+```
+
 ## Deliberately excluded
 
 These live blocks stay unchanged while Elvin owns availability, booking, and paid-call work:
 
 - the shared profile/session foundation;
 - draft restore and incremental dropdown state;
-- the final Build Profile submit writer, which includes availability and paid-call fields;
+- the final Build Profile submit writer, which includes availability and paid-call fields. The separate diagnostic observer does not change it;
 - page validation and rate formatting that is coupled to those fields;
 - Consult and Full Profile call/retainer visibility controllers.
 

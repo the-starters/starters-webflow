@@ -69,6 +69,7 @@
   var BRAND_PROFILE_MARKER_VALUE = '1'
   var CONTROLLER_VERSION = 'brand-account-controller-v1'
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
+  var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
   var workflowDiagnosticsControllerScript = document.currentScript
 
@@ -126,6 +127,29 @@
   }
 
   var workflowDiagnosticsReady = loadWorkflowDiagnostics()
+
+  function loadNativeFormDiagnostics() {
+    if (window.StartersNativeFormDiagnostics || !document.createElement) return
+    var source = workflowDiagnosticsControllerScript && workflowDiagnosticsControllerScript.src
+    if (!source) return
+    var url = ''
+    try {
+      var cdnRoot = source.match(
+        /^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/,
+      )
+      url = cdnRoot
+        ? cdnRoot[1] + 'v3/' + NATIVE_FORM_DIAGNOSTICS_SCRIPT
+        : new URL(NATIVE_FORM_DIAGNOSTICS_SCRIPT, source).href
+    } catch (error) {
+      return
+    }
+    if (document.querySelector('script[data-starters-native-form-diagnostics]')) return
+    var script = document.createElement('script')
+    script.src = url
+    script.async = false
+    script.setAttribute('data-starters-native-form-diagnostics', '')
+    ;(document.head || document.documentElement).appendChild(script)
+  }
 
   function workflowForOperation(operation) {
     if (operation === 'brand/account/build') return 'brand_account_build'
@@ -860,6 +884,7 @@
     // The same Webflow site serves Memberstack Test Data on its webflow.io
     // hostname and Live Data on the custom domains. Keep the Designer-authored
     // live fallback, but align the plan before Memberstack handles signup.
+    loadNativeFormDiagnostics()
     var bound = configureBrandSignupPlan(location.hostname || '')
     var buildForm = document.querySelector(BUILD_FORM_SELECTOR)
     if (buildForm) {
