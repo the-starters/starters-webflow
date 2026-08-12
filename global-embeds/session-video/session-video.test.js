@@ -54,6 +54,8 @@ class Element {
   hasAttribute(n) { return this._attrs.has(n) }
   append(...kids) { kids.forEach((k) => { k.parentNode = this; this.childNodes._insert(k) }); return this }
   remove() { if (this.parentNode) this.parentNode.childNodes._delete(this); this.parentNode = null }
+  /** wideEnough() measures the stage box; the harness sets _width on it. */
+  getBoundingClientRect() { return { width: this._width || 0, height: (this._width || 0) * 9 / 16 } }
   removeChild(n) { this.childNodes._delete(n); n.parentNode = null; return n }
   addEventListener(t, fn) {
     if (!this._listeners.has(t)) this._listeners.set(t, [])
@@ -93,7 +95,7 @@ function h(name, attrs, kids = []) {
 }
 
 /** The Sessions template, reduced to what this module reads. */
-function template({ videoId = '1212735272', cut = null, bg = null, stage = true, trigger = true, watch = true } = {}) {
+function template({ videoId = '1212735272', cut = null, bg = null, nativeMin = null, stage = true, trigger = true, watch = true } = {}) {
   const kids = []
   if (stage) kids.push(h('div', { 'data-session-video': 'stage' }))
   const overlayKids = watch ? [h('div', { 'data-element-trigger': 'show-video' })] : []
@@ -109,6 +111,7 @@ function template({ videoId = '1212735272', cut = null, bg = null, stage = true,
   if (videoId !== null) attrs[ATTR_ID] = videoId
   if (cut !== null) attrs['data-session-video-cut'] = cut
   if (bg !== null) attrs['data-session-video-bg'] = bg
+  if (nativeMin !== null) attrs['data-session-video-native-min'] = nativeMin
   return h('section', attrs, kids)
 }
 const ATTR_ID = 'data-session-video-id'
@@ -136,7 +139,7 @@ class FakePlayer {
  *   'out' reproduces the real site exactly: memberReady resolves {} (truthy!)
  *   while getCurrentMember returns { data: null }.
  */
-async function setup({ member = 'out', withLib = true, hostname = 'the-starters-3-0.webflow.io', roots = [template()], watch = null, watchClick = false } = {}) {
+async function setup({ member = 'out', withLib = true, hostname = 'the-starters-3-0.webflow.io', roots = [template()], watch = null, watchClick = false, width = 1280, stageWidth = null } = {}) {
   const body = h('body', {})
   roots.forEach((r) => body.append(r))
   // Register ids by walking the finished tree. Doing it in the Element
@@ -166,6 +169,7 @@ async function setup({ member = 'out', withLib = true, hostname = 'the-starters-
 
   const windowObj = {
     location: { hostname, pathname: '/learn/sessions/x' },
+    innerWidth: width,
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length },
     dispatchEvent: (e) => events.push(e),
     CustomEvent: class { constructor(t, i) { this.type = t; this.detail = i && i.detail } },
@@ -205,6 +209,11 @@ async function setup({ member = 'out', withLib = true, hostname = 'the-starters-
     windowObj.Vimeo = { Player: class extends FakePlayer { constructor(f) { super(f, players) } } }
   }
   context.globalThis = context
+
+  // The stage is what wideEnough() measures, so size it like the real box.
+  body.querySelectorAll('[data-session-video="stage"]').forEach((el) => {
+    el._width = stageWidth === null ? width : stageWidth
+  })
 
   vm.createContext(context)
   vm.runInContext(source, context, { filename: 'session-video.js' })
@@ -305,7 +314,7 @@ test('the background loop is capped inside the teaser window', async () => {
   assert.deepEqual(p.did('setCurrentTime'), [['setCurrentTime', 0]])
 })
 
-test('a member gets Vimeo\'s native player, a gated viewer gets none of it', async () => {
+test('on a wide screen a member gets Vimeo\'s native player, a gated viewer does not', async () => {
   const out = await setup({ member: 'out' })
   assert.match(src(out.frame()), /controls=0/)
   assert.match(src(out.frame()), /keyboard=0/)
@@ -345,6 +354,18 @@ test('the poster stays up when a mounted video never progresses', async () => {
   s.players[0].fire('play')            // it claims to play...
   s.players[0].seconds(0)              // ...but never advances
   assert.equal(s.root.getAttribute('data-sv-video'), 'loading', 'no pixels, no retirement')
+})
+
+test('a member with no player library gets NATIVE controls even on a phone', async () => {
+  // This path has no player object and never binds, so the template's own bar is
+  // inert. Reporting `custom` on a narrow screen left a member with a muted,
+  // looping, autoplaying video and no control route at all. Mutating the forced
+  // `native = true` back to a width check previously left all 64 tests green.
+  const s = await setup({ withLib: false, member: 'in', width: 375 })
+  assert.ok(s.frame(), 'a member should still get the video')
+  assert.equal(s.root.getAttribute('data-sv-player'), 'native', 'ugly beats unusable')
+  assert.match(src(s.frame()), /controls=1/, 'Vimeo UI is the only surface here')
+  assert.equal(s.api.status().sessions[0].player, 'native')
 })
 
 test('a member with no player library still gets the full state contract', async () => {
@@ -649,12 +670,79 @@ test('no class is ever read or written', () => {
 // Fullscreen
 // ---------------------------------------------------------------------------
 
-test('a gated frame cannot go fullscreen and the button is hidden', async () => {
+test('a gated frame cannot go fullscreen, and we never touch the button\'s display', async () => {
   const s = await setup()
   const f = s.frame()
   assert.equal(f.hasAttribute('allowfullscreen'), false)
   assert.doesNotMatch(f.getAttribute('allow'), /fullscreen/)
-  assert.equal(s.el('fullscreenBtn').style.display, 'none')
+  assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden')
+  // Memberstack owns this button's visibility via data-ms-content="members". An
+  // inline style from us on an element Memberstack meant to hide is how a
+  // members-only control leaks if our answer and theirs disagree.
+  // Not asserting on style.display: it can no longer be set, so the assertion
+  // could never fail. The source-regex test below is what actually pins it.
+  assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden')
+})
+
+test('the module never writes an inline display on the fullscreen button', () => {
+  assert.doesNotMatch(source, /fullscreen'\)[\s\S]{0,120}style\.display/)
+  assert.doesNotMatch(source, /fs\.style\.display/)
+})
+
+test('a narrow viewport gives EVERYONE the template controls, member or not', async () => {
+  // Vimeo drops its full-screen button and overflows its own control bar at phone
+  // width — verified on a bare player at 375px. Its UI is cross-origin so no CSS
+  // of ours can repair it, so below the threshold nobody gets it.
+  const m = await setup({ member: 'in', width: 375 })
+  assert.equal(m.root.getAttribute('data-sv-player'), 'custom')
+  assert.match(src(m.frame()), /controls=0/)
+  assert.match(src(m.frame()), /keyboard=0/)
+  assert.match(src(m.frame()), /pip=0/)
+
+  const g = await setup({ member: 'out', width: 375 })
+  assert.equal(g.root.getAttribute('data-sv-player'), 'custom')
+})
+
+test('a member on a narrow screen keeps the fullscreen permission', async () => {
+  // Controls and permission are separate: the template's own button drives
+  // fullscreen through the API, so the frame must still allow it.
+  const s = await setup({ member: 'in', width: 375 })
+  assert.equal(s.frame().hasAttribute('allowfullscreen'), true)
+  assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'visible')
+})
+
+test('the threshold is overridable without a release', async () => {
+  const wide = await setup({ member: 'in', width: 500, roots: [template({ nativeMin: '400' })] })
+  assert.equal(wide.root.getAttribute('data-sv-player'), 'native')
+  const narrow = await setup({ member: 'in', width: 500, roots: [template({ nativeMin: '900' })] })
+  assert.equal(narrow.root.getAttribute('data-sv-player'), 'custom')
+})
+
+test('the threshold measures the player box, not the window', async () => {
+  // A WIDE window with a NARROW hero column gets exactly the same broken Vimeo UI,
+  // so the window is the wrong thing to measure. My first attempt at this test
+  // asserted a source regex and mutated green — measuring window.innerWidth instead
+  // of the box left all 66 passing. This separates the two dimensions for real.
+  const s = await setup({ member: 'in', width: 1400, stageWidth: 320 })
+  assert.equal(s.root.getAttribute('data-sv-player'), 'custom', 'narrow box -> template controls')
+  assert.match(src(s.frame()), /controls=0/)
+})
+
+test('a narrow window with a wide box still gets native controls', async () => {
+  // The mirror case, so the test above cannot pass just by ignoring width entirely.
+  const s = await setup({ member: 'in', width: 400, stageWidth: 1200 })
+  assert.equal(s.root.getAttribute('data-sv-player'), 'native')
+  assert.match(src(s.frame()), /controls=1/)
+})
+
+test('the window is used only when the box cannot be measured', async () => {
+  const s = await setup({ member: 'in', width: 1400, stageWidth: 0 })
+  assert.equal(s.root.getAttribute('data-sv-player'), 'native', 'falls back to the viewport')
+})
+
+test('exactly at the threshold counts as wide', async () => {
+  const s = await setup({ member: 'in', width: 768 })
+  assert.equal(s.root.getAttribute('data-sv-player'), 'native')
 })
 
 test('a member frame allows fullscreen and the button works', async () => {
@@ -662,7 +750,6 @@ test('a member frame allows fullscreen and the button works', async () => {
   const f = s.frame()
   assert.equal(f.hasAttribute('allowfullscreen'), true)
   assert.match(f.getAttribute('allow'), /fullscreen/)
-  assert.notEqual(s.el('fullscreenBtn').style.display, 'none')
   s.el('fullscreenBtn').click()
   assert.deepEqual(s.live().did('requestFullscreen'), [['requestFullscreen']])
 })
@@ -754,7 +841,6 @@ test('late membership swaps in the full frame at the same position', async () =>
   assert.equal(f.hasAttribute('allowfullscreen'), true, 'the member frame allows fullscreen')
   assert.deepEqual(s.players[1].did('setCurrentTime'), [['setCurrentTime', 9]], 'resumes where it was')
   assert.equal(s.state().gated, false)
-  assert.notEqual(s.el('fullscreenBtn').style.display, 'none')
 })
 
 test('a late upgrade does not double-count preview-start', async () => {
