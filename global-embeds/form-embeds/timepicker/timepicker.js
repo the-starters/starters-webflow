@@ -234,9 +234,9 @@
       })
     }
 
-    var run = function () {
+    var run = function (scope) {
       bindGlobalListeners()
-      initTimepickers(document)
+      initTimepickers(scope || document)
     }
 
     /** Inject a stylesheet once (addon CSS). */
@@ -280,17 +280,19 @@
       loadScript(ADDON_JS, next)
     }
 
-    var loadTimepickerEmbed = function () {
+    var loadTimepickerEmbed = function (scope) {
       var $ = window.jQuery
       if (!$) {
-        setTimeout(loadTimepickerEmbed, 50)
+        setTimeout(function () {
+          loadTimepickerEmbed(scope)
+        }, 50)
         return
       }
 
       var ns = ensureNamespace()
 
       if ($.fn.timepicker) {
-        run()
+        run(scope)
         return
       }
 
@@ -298,7 +300,7 @@
         var wait = setInterval(function () {
           if ($.fn.timepicker) {
             clearInterval(wait)
-            run()
+            run(scope)
           }
         }, 50)
         return
@@ -308,9 +310,22 @@
       withJqueryUi($, function () {
         withAddon($, function () {
           ns.loading = false
-          run()
+          run(scope)
         })
       })
+    }
+
+    /**
+     * Public re-entry point for dynamically injected markup (multistep forms, CMS-rendered
+     * fields, etc). Safe to call repeatedly: the jQuery UI / addon <script> and <link> tags
+     * are only ever added once (guarded by ns.loading/$.fn.timepicker/existing script and
+     * link lookups), and already-initialized inputs/groups are skipped via the
+     * isInited/INIT_ATTR checks in initStandalone/initGroup. Pass a container element to
+     * limit the scan to newly added markup.
+     */
+    window.wfInputTimepicker = window.wfInputTimepicker || {}
+    window.wfInputTimepicker.init = function (scope) {
+      loadTimepickerEmbed(scope)
     }
 
     loadTimepickerEmbed()

@@ -743,7 +743,7 @@ test('initInputPickers scopes to the freshly rendered list on a full render, and
   await settle()
 
   const calls = []
-  window.wfInputDatepicker = { init: (scope) => calls.push(scope) }
+  window.wfInputTimepicker = { init: (scope) => calls.push(scope) }
 
   // activatePlatformManager() ends in a full renderAvailabilityItems() call.
   dom.connectBtnWrapper.children[0].click()
