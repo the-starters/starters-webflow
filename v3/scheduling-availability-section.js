@@ -180,8 +180,8 @@
   // document re-scan, since global-embeds/form-embeds/timepicker/timepicker.js
   // only initializes inputs present in the DOM at its own load time otherwise.
   function initInputPickers(scope) {
-    if (window.wfInputDatepicker && typeof window.wfInputDatepicker.init === 'function') {
-      window.wfInputDatepicker.init(scope)
+    if (window.wfInputTimepicker && typeof window.wfInputTimepicker.init === 'function') {
+      window.wfInputTimepicker.init(scope)
     }
   }
 
