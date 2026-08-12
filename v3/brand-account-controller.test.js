@@ -7,6 +7,10 @@ const source = fs.readFileSync(
   require.resolve('./brand-account-controller.js'),
   'utf8',
 )
+const diagnosticSource = fs.readFileSync(
+  require.resolve('../utils/workflow-diagnostics.js'),
+  'utf8',
+)
 
 function flush() {
   return new Promise((resolve) => setImmediate(resolve))
@@ -23,14 +27,19 @@ async function settle(rounds = 8) {
 function makeElement(value = '') {
   return {
     value,
+    textContent: '',
     disabled: false,
     style: {},
     attributes: new Map(),
+    listeners: new Map(),
     setAttribute(name, next) {
       this.attributes.set(name, String(next))
     },
     getAttribute(name) {
       return this.attributes.has(name) ? this.attributes.get(name) : null
+    },
+    addEventListener(name, listener) {
+      this.listeners.set(name, listener)
     },
   }
 }
@@ -38,8 +47,9 @@ function makeElement(value = '') {
 function makeWrapper() {
   const done = makeElement()
   const fail = makeElement()
-  const failText = { textContent: 'Original failure' }
-  fail.querySelector = (selector) => (selector === 'div' ? failText : null)
+  const failText = makeElement()
+  failText.textContent = 'Original failure'
+  fail.querySelector = (selector) => (selector.includes('div') ? failText : null)
   return {
     done,
     fail,
@@ -282,6 +292,14 @@ function loadController(options = {}) {
     String,
     console,
   })
+  if (options.diagnostics) {
+    window.Date = Date
+    window.Math = Math
+    window.Uint32Array = Uint32Array
+    window.crypto = { randomUUID: () => '12345678-90ab-cdef-1234-567890abcdef' }
+    window.navigator = { clipboard: { writeText: async () => {} } }
+    vm.runInContext(diagnosticSource, context)
+  }
   vm.runInContext(source, context)
 
   return {
@@ -380,6 +398,44 @@ test('Build Account writes ordinary fields, changed email, then completion in or
   // See the `redirecting` flag in bindForm() for why.
   assert.equal(buildForm.getAttribute('aria-busy'), 'true')
   assert.equal(buildForm.submit.disabled, true)
+})
+
+test('Build Account success records and exposes a privacy-safe copyable receipt', async () => {
+  const buildForm = makeForm('build', { email: 'private@example.com' })
+  const environment = loadController({ buildForm, diagnostics: true })
+
+  buildForm.submitEvent()
+  await settle()
+
+  const receipt = buildForm.__startersAccountDiagnostic
+  assert.equal(receipt.workflow, 'brand_account_build')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.request_started, true)
+  assert.equal(Object.hasOwn(receipt, 'email'), false)
+  assert.equal(Object.hasOwn(receipt, 'firstName'), false)
+  assert.match(buildForm.wrapper.done.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(
+    buildForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'),
+    'brand_account_build',
+  )
+  assert.ok(environment.tracked.some((event) => event.name === 'workflow_form_submit_succeeded'))
+})
+
+test('Build Account validation receipt truthfully records that no request started', async () => {
+  const buildForm = makeForm('build')
+  buildForm.inputs.get('[name="First-Name"]').value = ''
+  const environment = loadController({ buildForm, diagnostics: true })
+
+  buildForm.submitEvent()
+  await settle()
+
+  const receipt = buildForm.__startersAccountDiagnostic
+  assert.equal(receipt.result, 'failed')
+  assert.equal(receipt.stage, 'validation')
+  assert.equal(receipt.error_code, 'FORM_VALIDATION')
+  assert.equal(receipt.request_started, false)
+  assert.equal(environment.calls.length, 0)
+  assert.match(buildForm.wrapper.failText.textContent, /Diagnostic ID: WFD-/)
 })
 
 // --- The redirect busy latch --------------------------------------------------
@@ -825,6 +881,29 @@ test('Identity-scoped Account Security owns Talent email changes', async () => {
   })
   assert.equal(securityForm.nativeSubmits, 0)
   assert.equal(securityForm.wrapper.done.style.display, 'block')
+})
+
+test('Talent Account Security success exposes no email in its diagnostic receipt', async () => {
+  const securityForm = makeForm('security', { email: 'private-next@example.com' })
+  loadController({
+    buildForm: null,
+    securityForm,
+    currentEmail: 'private-old@example.com',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+    diagnostics: true,
+  })
+
+  securityForm.submitEvent()
+  await settle()
+
+  const receipt = securityForm.__startersAccountDiagnostic
+  assert.equal(receipt.workflow, 'talent_account_email')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.request_started, true)
+  assert.equal(Object.hasOwn(receipt, 'email'), false)
+  assert.equal(Object.hasOwn(receipt, 'member_id'), false)
+  assert.match(securityForm.wrapper.done.textContent, /Diagnostic ID: WFD-/)
 })
 
 test('visible Starter Edit Profile changes Memberstack email before replaying the authored submit', async () => {
