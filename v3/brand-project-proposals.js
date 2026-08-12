@@ -288,7 +288,7 @@
       proposals: [],
       active: null,
       activeTrigger: null,
-      pendingAction: '',
+      pendingAction: null,
       keys: {},
       unsubscribe: null,
       generation: 0,
@@ -385,8 +385,7 @@
       else if (modal) modal.removeAttribute('open')
       confirmation(false)
       feedback('', false)
-      lockActions(false)
-      state.pendingAction = ''
+      lockActions(Boolean(state.pendingAction))
       state.active = null
       var trigger = state.activeTrigger
       state.activeTrigger = null
@@ -397,7 +396,6 @@
       if (!proposal) return false
       state.active = proposal
       state.activeTrigger = trigger || null
-      state.pendingAction = ''
       paintFields(modal, proposal)
       feedback('', false)
       confirmation(false)
@@ -406,6 +404,7 @@
       setVisible(actionControl('reject'), proposal.can_reject && !alreadyResolved)
       setVisible(actionControl('reject-confirm'), proposal.can_reject && !alreadyResolved)
       if (alreadyResolved) feedback('This project request was already handled. Refresh the dashboard to update the list.', false)
+      lockActions(Boolean(state.pendingAction))
       show()
       return true
     }
@@ -438,11 +437,17 @@
       }
       var scope = proposal.id + ':' + proposal.version + ':' + action
       if (!state.keys[scope]) state.keys[scope] = makeKey(globalObject, proposal, action)
-      state.pendingAction = action
+      var request = {
+        action: action,
+        generation: state.generation,
+        proposalId: proposal.id,
+      }
+      state.pendingAction = request
       lockActions(true)
       feedback('', false)
       try {
         var result = await api.projectProposalAction(decisionPayload(proposal, action, state.keys[scope]))
+        if (state.pendingAction !== request) return false
         delete state.keys[scope]
         var resultProposal = result && result.proposal
         var resultProject = result && result.project
@@ -460,30 +465,35 @@
         }
         state.resolved[proposal.id] = true
         var successMessage = action === 'accept' ? 'Project approved and created.' : 'Project request declined.'
-        feedback(successMessage, false)
+        if (state.active && state.active.id === request.proposalId) feedback(successMessage, false)
         announce(successMessage, false)
         try {
           await refresh()
         } catch (refreshError) {
-          feedback(
-            action === 'accept'
-              ? 'Project approved. Refresh the dashboard to load the project.'
-              : 'Project request declined. Refresh the dashboard to update the list.',
-            false,
-          )
+          if (state.active && state.active.id === request.proposalId) {
+            feedback(
+              action === 'accept'
+                ? 'Project approved. Refresh the dashboard to load the project.'
+                : 'Project request declined. Refresh the dashboard to update the list.',
+              false,
+            )
+          }
         }
         return true
       } catch (error) {
+        if (state.pendingAction !== request) return false
         var safeError = errorMessage(error)
-        feedback(safeError, true)
+        if (state.active && state.active.id === request.proposalId) feedback(safeError, true)
         if (Number(error && error.status) === 403 || Number(error && error.status) === 409) {
           announce(safeError, true)
           try { await refresh() } catch (refreshError) { /* retain safe error */ }
         }
         return false
       } finally {
-        state.pendingAction = ''
-        lockActions(false)
+        if (state.pendingAction === request) {
+          state.pendingAction = null
+          lockActions(false)
+        }
       }
     }
 
@@ -533,6 +543,7 @@
 
     function reset() {
       state.generation += 1
+      state.pendingAction = null
       state.proposals = []
       state.keys = {}
       state.resolved = {}

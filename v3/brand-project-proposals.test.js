@@ -245,6 +245,46 @@ test('a failed retry reuses its idempotency key and maps stale conflicts safely'
   assert.doesNotMatch(fixture.modal.feedback.textContent, /raw stale detail/)
 })
 
+test('an in-flight request keeps later proposal actions locked until it settles', async () => {
+  let settleFirst
+  const calls = []
+  const proposals = [proposal(), proposal({ proposal_id: 42, title: 'Lifecycle audit' })]
+  const projection = { status: 'success', data: { project_proposals: proposals } }
+  const fixture = controllerFixture({
+    api: {
+      async projectProposalAction(payload) {
+        calls.push(payload)
+        if (calls.length === 1) {
+          return new Promise((resolve) => { settleFirst = resolve })
+        }
+        return { proposal: { id: 42 }, replayed: false }
+      },
+    },
+    instance: {
+      subscribe() { return () => {} },
+      getState() { return projection },
+      async refresh() {},
+    },
+  })
+  fixture.controller.render(projection)
+  fixture.controller.open(fixture.controller.state.proposals.find((item) => item.id === 41))
+  const firstAction = fixture.controller.act('accept')
+
+  fixture.controller.close()
+  fixture.controller.open(fixture.controller.state.proposals.find((item) => item.id === 42))
+  assert.equal(fixture.modal.actions.accept.disabled, true)
+  assert.equal(await fixture.controller.act('reject'), false)
+  assert.equal(calls.length, 1)
+
+  settleFirst({ proposal: { id: 41 }, project: { id: 95 }, replayed: false })
+  assert.equal(await firstAction, true)
+  assert.equal(fixture.controller.state.active.id, 42)
+  assert.equal(fixture.modal.actions.accept.disabled, false)
+  assert.equal(fixture.modal.feedback.textContent, '')
+  assert.equal(await fixture.controller.act('reject'), true)
+  assert.equal(calls.length, 2)
+})
+
 test('member reset clears pending cards and retry state', () => {
   const fixture = controllerFixture()
   fixture.controller.render(fixture.projection)
