@@ -792,30 +792,20 @@
     }
   }
 
-  async function clearGrant(memberId, currentGrantId) {
+  async function clearGrant(currentGrantId) {
     if (!currentGrantId) return
     await ensureTimezone()
-    if (typeof window.clearGrantData === 'function') {
-      await window.clearGrantData(memberId, currentGrantId)
-      return
+    // The authenticated Xano route owns the complete provider-first lifecycle:
+    // active-booking guard, Nylas grant deletion, configuration cleanup,
+    // canonical availability cleanup, and Memberstack reconciliation. Never
+    // call the page's legacy clearGrantData helper or clear canonical fields
+    // before this request, because doing so removes the ownership proof that
+    // the composite route needs to delete the provider grant safely.
+    const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
+    if (!result || result.connected !== false) {
+      throw new Error('grants/delete/v3 returned an invalid disconnected state')
     }
-    await xanoPost('/starter/clear_calendar_data/v3', { member_id: memberId })
-    const currentConfigs = (await getConfigs(currentGrantId)) || []
-    for (const config of currentConfigs) {
-      try {
-        await xanoPost('/scheduler/configurations/delete/v3', {
-          grant_id: config.grant_id,
-          configuration_id: config.config_id,
-        })
-      } catch (error) {
-        console.warn('[scheduling-section] config delete failed:', error && error.message)
-      }
-    }
-    try {
-      await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
-    } catch (error) {
-      console.warn('[scheduling-section] grant delete failed:', error && error.message)
-    }
+    return result
   }
 
   /* ------------------------------------------------------------------ */
@@ -832,7 +822,7 @@
       // clickable while manager === 'calendar') must clear the existing
       // Google grant first — otherwise it's orphaned, still connected in
       // Nylas, while the local state moves on to platform.
-      await clearGrant(memberId, grantId)
+      await clearGrant(grantId)
       const virtual = await createVirtualCalendarFlow(memberId)
       if (virtual.status !== 200) throw new Error('Virtual calendar setup failed')
       grantId = virtual.grant_id
@@ -858,7 +848,7 @@
     publishCalendarConnectionState('loading')
     try {
       const memberId = await writeMemberId()
-      await clearGrant(memberId, grantId)
+      await clearGrant(grantId)
       grantId = null
       grantEmail = null
       grantCalendarId = null
@@ -885,7 +875,7 @@
     publishCalendarConnectionState('loading')
     try {
       const memberId = await writeMemberId()
-      await clearGrant(memberId, grantId)
+      await clearGrant(grantId)
       availability.manager = null
 
       const virtual = await createVirtualCalendarFlow(memberId)

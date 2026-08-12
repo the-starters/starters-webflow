@@ -388,7 +388,16 @@ function defaultRoutes(overridesMap = {}) {
       status: 200,
       body: { response: { result: { data: { id: 'vcal-1' } } } },
     }),
-    '/grants/delete/v3': () => ({ status: 200, body: {} }),
+    '/grants/delete/v3': () => ({
+      status: 200,
+      body: {
+        connected: false,
+        already_disconnected: false,
+        availability: {},
+        deleted_configuration_ids: [],
+        provider_response: { status: 200 },
+      },
+    }),
   }
   return { ...routes, ...overridesMap }
 }
@@ -854,14 +863,14 @@ test('refuses to write when the member session changed after bootstrap', async (
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriteError'))
 })
 
-test('choosing own-calendar clears grant data and opens Google OAuth directly', async () => {
+test('choosing own-calendar uses the composite disconnect and opens Google OAuth directly', async () => {
   let cleared = false
   const result = loadWriter({
     storage: TZ_CACHED,
     routes: {
-      '/starter/clear_calendar_data/v3': () => {
+      '/grants/delete/v3': () => {
         cleared = true
-        return { status: 200, body: { id: 1 } }
+        return { status: 200, body: { connected: false } }
       },
       '/starter/get_by_memberstack/v3': () => ({
         status: 200,
@@ -885,8 +894,8 @@ test('choosing own-calendar clears grant data and opens Google OAuth directly', 
   result.clickAction(result.dom.buttons.managerSubmit)
   await settle()
 
-  const clear = result.calls.find((c) => c.path === '/starter/clear_calendar_data/v3')
-  assert.deepEqual(clear.body, { member_id: 'member-a' })
+  const clear = result.calls.find((c) => c.path === '/grants/delete/v3')
+  assert.deepEqual(clear.body, { in_grant_id: 'grant-1' })
   const update = result.calls.find((c) => c.path === '/starter/update_availability/v3')
   assert.equal(update.body.availability.manager, null)
   assert.equal(result.dom.steps['success-calendar'].style.display, 'none')
@@ -894,13 +903,13 @@ test('choosing own-calendar clears grant data and opens Google OAuth directly', 
   assert.deepEqual(result.assigned, ['https://nylas.example/oauth'])
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
   const paths = result.calls.map((call) => call.path)
-  const clearIndex = paths.indexOf('/starter/clear_calendar_data/v3')
+  const clearIndex = paths.indexOf('/grants/delete/v3')
   const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', clearIndex + 1)
   assert.ok(canonicalReadIndex > clearIndex)
   assert.ok(paths.indexOf('/grants/oauth/v3') > canonicalReadIndex)
 })
 
-test('own-calendar prefers the page bookings-aware clearGrantData composite', async () => {
+test('own-calendar never delegates disconnect ownership to clearGrantData', async () => {
   const composite = []
   const result = loadWriter({
     storage: TZ_CACHED,
@@ -912,11 +921,33 @@ test('own-calendar prefers the page bookings-aware clearGrantData composite', as
   result.clickAction(result.dom.buttons.managerSubmit)
   await settle()
 
-  assert.deepEqual(composite, [{ memberId: 'member-a', grantId: 'grant-1' }])
-  assert.equal(
-    result.calls.filter((c) => c.path === '/starter/clear_calendar_data/v3').length,
-    0,
-  )
+  assert.deepEqual(composite, [])
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+})
+
+test('an active-booking rejection stops the platform-to-Google manager switch', async () => {
+  const availability = defaultAvailability()
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+
+  result.dom.managers.calendar.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/grants/oauth/v3').length, 0)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'platform')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
 test('choosing platform creates the virtual calendar chain and configs', async () => {
@@ -1016,6 +1047,43 @@ test('platform setup failure shows config-request-error and writes nothing', asy
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
+test('an active-booking rejection stops the Google-to-Platform manager switch', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+})
+
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {
   let virtualPersisted = false
   let configCreated = false
@@ -1065,7 +1133,7 @@ test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virt
   await settle()
 
   const paths = result.calls.map((c) => c.path)
-  assert.ok(paths.indexOf('/starter/clear_calendar_data/v3') > -1)
+  assert.ok(paths.indexOf('/grants/delete/v3') > -1)
   const accountIndex = paths.indexOf('/grants/create_virtual_account/v3')
   const calendarIndex = paths.indexOf('/grants/create_virtual_calendar/v3')
   assert.ok(accountIndex > -1 && calendarIndex > accountIndex)
@@ -1086,6 +1154,45 @@ test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virt
 
   const loader = result.dom.steps['disconnect-calendar'].querySelector('[data-custom-loader]')
   assert.match(loader.getAttribute('style'), /visibility: hidden/)
+})
+
+test('an active-booking rejection preserves calendar state in the disconnect flow', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  const legacyClearCalls = []
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    clearGrantData: async (...args) => legacyClearCalls.push(args),
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability,
+          nylas_grant_id: 'grant-1',
+          nylas_grant_email: 'grant@example.com',
+          nylas_calendar_id: 'cal-1',
+        },
+      }),
+      '/grants/delete/v3': () => ({
+        status: 400,
+        body: { message: 'Resolve active bookings before disconnecting the calendar' },
+      }),
+    },
+  })
+  await settle()
+
+  result.clickAction(result.dom.buttons.disconnectCalendar)
+  await settle()
+
+  assert.equal(result.calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
+  assert.equal(result.calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 0)
+  assert.deepEqual(legacyClearCalls, [])
+  assert.equal(result.window.STARTER_AVAILABILITY.manager, 'calendar')
+  assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
 test('calendar connection copy describes the explicit same-tab handoff', async () => {

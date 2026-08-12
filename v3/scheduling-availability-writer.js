@@ -15,8 +15,9 @@
   // - the unscoped `starter-availability` localStorage key (replaced by the
   //   init module's member-scoped cache);
   // - the `dev-speed-test` localStorage payload override;
-  // - the bookings list machinery (delegated to the page's bookings embed
-  //   via guarded window.generateBookingsList / window.clearGrantData).
+  // - the bookings list machinery (rendering is delegated to the page's
+  //   bookings embed via guarded window.generateBookingsList). Disconnects
+  //   stay owned by the authenticated grants/delete/v3 composite route.
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
@@ -927,32 +928,14 @@
     }
   }
 
-  async function clearGrant(memberId, currentGrantId) {
+  async function clearGrant(currentGrantId) {
     if (!currentGrantId) return
     await ensureTimezone()
-    // Prefer the page's bookings-aware composite (declines pending bookings and
-    // repaints booking cards) when the dashboard embed provides it.
-    if (typeof window.clearGrantData === 'function') {
-      await window.clearGrantData(memberId, currentGrantId)
-      return
+    const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
+    if (!result || result.connected !== false) {
+      throw new Error('grants/delete/v3 returned an invalid disconnected state')
     }
-    await xanoPost('/starter/clear_calendar_data/v3', { member_id: memberId })
-    const currentConfigs = (await getConfigs(currentGrantId)) || []
-    for (const config of currentConfigs) {
-      try {
-        await xanoPost('/scheduler/configurations/delete/v3', {
-          grant_id: config.grant_id,
-          configuration_id: config.config_id,
-        })
-      } catch (error) {
-        console.warn('[scheduling-writer] config delete failed:', error && error.message)
-      }
-    }
-    try {
-      await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
-    } catch (error) {
-      console.warn('[scheduling-writer] grant delete failed:', error && error.message)
-    }
+    return result
   }
 
   /* ------------------------------------------------------------------ */
@@ -1137,6 +1120,7 @@
         switchStep('virtual-connect')
         publishCalendarConnectionState('loading')
         const memberId = await writeMemberId()
+        await clearGrant(grantId)
         const virtual = await createVirtualCalendarFlow(memberId)
         if (virtual.status === 200) {
           grantId = virtual.grant_id
@@ -1164,7 +1148,7 @@
       } else {
         publishCalendarConnectionState('loading')
         const memberId = await writeMemberId()
-        await clearGrant(memberId, grantId)
+        await clearGrant(grantId)
         grantId = null
         grantEmail = null
         grantCalendarId = null
@@ -1194,7 +1178,7 @@
     try {
       publishCalendarConnectionState('loading')
       const memberId = await writeMemberId()
-      await clearGrant(memberId, grantId)
+      await clearGrant(grantId)
       availability.manager = null
 
       const virtual = await createVirtualCalendarFlow(memberId)

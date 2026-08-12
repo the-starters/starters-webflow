@@ -1,13 +1,11 @@
-# Ordered fallback list: use whichever agent is available, preferring codex.
-# NOTE: this list selects on AVAILABILITY, not on crash-recovery. codex is
-# installed, so it will be chosen; if it dies mid-step the run fails rather
-# than falling back to claude. Context: codex was SIGKILLed three times on this
-# repo on 2026-08-08 (at spawn, ~26 minutes into a review step, and after 3s on
-# retry), which blocked every branch until it was temporarily pinned to claude.
-# `no-mistakes doctor` reporting codex runnable only proves it spawns, not that
-# it survives a step. If runs start failing with "codex exited: signal: killed",
-# swap the order to [claude, codex].
-agent: [codex, claude]
+# Ordered fallback list: use whichever agent is available, preferring claude.
+# NOTE: this list selects on AVAILABILITY, not on crash recovery. Claude is
+# first because Codex returned no output in two consecutive Calendar disconnect
+# reviews on 2026-08-13. If the selected agent dies or returns no output during
+# a step, the run fails instead of switching agents. `no-mistakes doctor`
+# reporting an agent runnable only proves it spawns, not that it survives a
+# step.
+agent: [claude, codex]
 
 ignore_patterns:
   - "*.min.js"
