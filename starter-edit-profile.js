@@ -10,6 +10,34 @@ const qs = (selector, scope = document) => (scope || document).querySelector(sel
 const qsa = (selector, scope = document) => Array.from((scope || document).querySelectorAll(selector));
 const PROFILE_WORKFLOW = 'starter_profile_edit';
 const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v1';
+const workflowDiagnosticsControllerScript = document.currentScript;
+
+function loadWorkflowDiagnostics() {
+	if (window.StartersWorkflowDiagnostics) return Promise.resolve(window.StartersWorkflowDiagnostics);
+	if (window.__startersWorkflowDiagnosticsReady) return window.__startersWorkflowDiagnosticsReady;
+	const source = workflowDiagnosticsControllerScript?.src;
+	if (!source || !document.createElement) return Promise.resolve(null);
+	let url = '';
+	try {
+		const cdnRoot = source.match(/^(https:\/\/cdn\.jsdelivr\.net\/gh\/the-starters\/starters-webflow@[^/]+\/)/);
+		url = cdnRoot
+			? `${cdnRoot[1]}utils/workflow-diagnostics.js`
+			: new URL('utils/workflow-diagnostics.js', source).href;
+	} catch (_) {
+		return Promise.resolve(null);
+	}
+	window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => {
+		const script = document.createElement('script');
+		script.src = url;
+		script.async = false;
+		script.addEventListener('load', () => resolve(window.StartersWorkflowDiagnostics || null), { once: true });
+		script.addEventListener('error', () => resolve(null), { once: true });
+		(document.head || document.documentElement).appendChild(script);
+	});
+	return window.__startersWorkflowDiagnosticsReady;
+}
+
+const workflowDiagnosticsReady = loadWorkflowDiagnostics();
 
 function workflowDiagnostics() {
 	return window.StartersWorkflowDiagnostics || null;
@@ -312,6 +340,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 					if (!isStepValid(stepIndex)) {
 						validateStepSubmit(stepIndex, false);
+						await workflowDiagnosticsReady;
 						recordProfileDiagnostic(null, {
 							result: 'failed',
 							stage: 'validation',
@@ -328,6 +357,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
 		async function submitStep(stepIndex, submitButton) {
 			setSubmitLoading(submitButton, true);
+			await workflowDiagnosticsReady;
 
 			const payload = getStepPayload(stepIndex);
 
