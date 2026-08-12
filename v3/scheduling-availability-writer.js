@@ -927,32 +927,14 @@
     }
   }
 
-  async function clearGrant(memberId, currentGrantId) {
+  async function clearGrant(currentGrantId) {
     if (!currentGrantId) return
     await ensureTimezone()
-    // Prefer the page's bookings-aware composite (declines pending bookings and
-    // repaints booking cards) when the dashboard embed provides it.
-    if (typeof window.clearGrantData === 'function') {
-      await window.clearGrantData(memberId, currentGrantId)
-      return
+    const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
+    if (!result || result.connected !== false) {
+      throw new Error('grants/delete/v3 returned an invalid disconnected state')
     }
-    await xanoPost('/starter/clear_calendar_data/v3', { member_id: memberId })
-    const currentConfigs = (await getConfigs(currentGrantId)) || []
-    for (const config of currentConfigs) {
-      try {
-        await xanoPost('/scheduler/configurations/delete/v3', {
-          grant_id: config.grant_id,
-          configuration_id: config.config_id,
-        })
-      } catch (error) {
-        console.warn('[scheduling-writer] config delete failed:', error && error.message)
-      }
-    }
-    try {
-      await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
-    } catch (error) {
-      console.warn('[scheduling-writer] grant delete failed:', error && error.message)
-    }
+    return result
   }
 
   /* ------------------------------------------------------------------ */
@@ -1137,6 +1119,7 @@
         switchStep('virtual-connect')
         publishCalendarConnectionState('loading')
         const memberId = await writeMemberId()
+        await clearGrant(grantId)
         const virtual = await createVirtualCalendarFlow(memberId)
         if (virtual.status === 200) {
           grantId = virtual.grant_id
@@ -1164,7 +1147,7 @@
       } else {
         publishCalendarConnectionState('loading')
         const memberId = await writeMemberId()
-        await clearGrant(memberId, grantId)
+        await clearGrant(grantId)
         grantId = null
         grantEmail = null
         grantCalendarId = null
@@ -1194,7 +1177,7 @@
     try {
       publishCalendarConnectionState('loading')
       const memberId = await writeMemberId()
-      await clearGrant(memberId, grantId)
+      await clearGrant(grantId)
       availability.manager = null
 
       const virtual = await createVirtualCalendarFlow(memberId)
