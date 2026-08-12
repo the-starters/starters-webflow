@@ -254,10 +254,21 @@ test('completed quiz posts current matches with safe email properties', async ()
     evidence.completed_quiz_enrollment = payload
 })
 
-test('email payload uses the canonical Algolia profile-photo image field', async () => {
+test('email payload maps three canonical Algolia profile photos for enrollment', async () => {
     const quiz = completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' })
-    quiz.featuredFreelancers[0]['profile-photo'] =
-        'https://images.example/alex-morgan.jpg'
+    quiz.featuredFreelancers = [
+        ...quiz.featuredFreelancers,
+        {
+            objectID: 'starter-3',
+            name: 'Jordan Lee',
+            slug: 'jordan-lee',
+            review_count: 5,
+            review_average: 4.6,
+        },
+    ].map((starter, index) => ({
+        ...starter,
+        'profile-photo': `https://images.example/starter-${index + 1}.jpg`,
+    }))
     const storage = createStorage(quiz)
     const harness = await runController({
         storage,
@@ -268,12 +279,23 @@ test('email payload uses the canonical Algolia profile-photo image field', async
         enrollmentCalls(harness.fetchCalls)[0].options.body,
     )
 
-    assert.equal(
-        payload.properties.starter_1_image_url,
-        'https://images.example/alex-morgan.jpg',
+    const imageProperties = [1, 2, 3].map(
+        (index) => payload.properties[`starter_${index}_image_url`],
     )
-    evidence.canonical_profile_photo =
-        payload.properties.starter_1_image_url
+
+    assert.deepEqual(imageProperties, [
+        'https://images.example/starter-1.jpg',
+        'https://images.example/starter-2.jpg',
+        'https://images.example/starter-3.jpg',
+    ])
+    assert.equal(payload.properties.starter_count, '3')
+    evidence.canonical_profile_photo_enrollment = {
+        endpoint: enrollmentCalls(harness.fetchCalls)[0].url,
+        starter_count: payload.properties.starter_count,
+        starter_1_image_url: imageProperties[0],
+        starter_2_image_url: imageProperties[1],
+        starter_3_image_url: imageProperties[2],
+    }
 })
 
 test('one approved review uses singular copy', async () => {
