@@ -5,6 +5,11 @@ Brand Dashboard **Action Items** panel. It reads only Brand-scoped pending
 proposals, opens a read-only review modal, and sends an authenticated accept or
 reject command. A proposal is not a canonical project until Xano accepts it.
 
+The controller prefers the native authored modal below. If that modal is absent,
+it creates an accessible read-only fallback dialog from the same projection and
+action contract. It never creates form fields or editable commercial terms. The
+fallback lets the workflow function while the final Designer layout is refined.
+
 ## Backend contract required before Webflow wiring
 
 The existing Brand projects projection must add `project_proposals` beside its
@@ -49,7 +54,11 @@ Author one hidden row inside the existing Action Items list:
 The script clones this authored row and adds `data-action-element="item"`, so
 `dashboard-action-items.js` owns the shared count and empty state. The proposal
 script must not add a second Action Items section or place a pending proposal in
-the canonical Projects list.
+the canonical Projects list. During the current Designer migration, the script
+can also adapt the existing duplicated Action Items row: it binds the authored
+label and title, converts its first button to **Review request**, and hides the
+unused second button. Explicit proposal attributes remain the preferred final
+markup.
 
 ## Review modal
 
@@ -78,6 +87,11 @@ closes the modal.
 
 The modal is read-only. Approval accepts the submitted terms as one unit. The
 Brand can decline and message the Starter if the terms need changes.
+
+If the native dialog is absent, the fallback includes the same project,
+commercial, contract, scope, message, accept, decline-confirmation, feedback,
+focus, and Escape-close behavior. When the native dialog is later authored, the
+controller selects it and does not create the fallback.
 
 ## Script order and release gate
 
