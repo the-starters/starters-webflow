@@ -2428,6 +2428,18 @@
       }
     }
 
+    const partialState = lifecycle === 'signature_partial' || contractStatus === 'partial'
+    if (starterSigned && !brandSigned || partialState && !brandSigned && !starterSigned) {
+      return {
+        ...base,
+        state: 'attention',
+        title: 'Contract needs attention',
+        body: 'The contract status could not be confirmed. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      }
+    }
+
     const recipientReady = projectContractIsViewable(project) &&
       ['contract_sent', 'signature_partial'].includes(lifecycle)
     if (!recipientReady) {
@@ -2856,7 +2868,7 @@
     setProjectContractPending(projectId, true, action)
     let contractWindow = null
     try {
-      const project = await currentProjectContext(card, true, true)
+      const project = await currentProjectContext(card, true)
       if (!project) {
         showProjectContractFeedback(projectId, 'Project details unavailable', true)
         return

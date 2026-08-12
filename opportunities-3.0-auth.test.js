@@ -1989,8 +1989,9 @@ test('contract signing panel reducer enforces Standard Contract and Brand-first 
   assert.equal(reduce(brandSigned, 'starter').action, 'sign')
 
   const outOfOrder = { ...base, starter_signed_at: '2026-08-12T01:01:00Z' }
-  assert.equal(reduce(outOfOrder, 'brand').action, 'sign')
-  assert.equal(reduce(outOfOrder, 'starter').action, 'view')
+  assert.equal(reduce(outOfOrder, 'brand').action, null)
+  assert.equal(reduce(outOfOrder, 'brand').state, 'attention')
+  assert.equal(reduce(outOfOrder, 'starter').action, null)
   assert.equal(reduce(outOfOrder, 'starter').state, 'attention')
 
   const bothSigned = {
@@ -2004,6 +2005,10 @@ test('contract signing panel reducer enforces Standard Contract and Brand-first 
   assert.equal(reduce({ ...bothSigned, lifecycle_state: 'active' }, 'brand').visible, false)
 
   const partialWithoutTimestamps = { ...base, contract_status: 'partial' }
+  assert.equal(reduce(partialWithoutTimestamps, 'brand').state, 'attention')
+  assert.equal(reduce(partialWithoutTimestamps, 'brand').action, null)
+  assert.equal(reduce(partialWithoutTimestamps, 'starter').state, 'attention')
+  assert.equal(reduce(partialWithoutTimestamps, 'starter').action, null)
   assert.equal(reduce(partialWithoutTimestamps, 'brand').brandBadge, 'brand-pending')
   assert.equal(reduce(partialWithoutTimestamps, 'starter').starterBadge, 'starter-pending')
   assert.equal(reduce({ ...base, lifecycle_state: 'contract_draft' }, 'brand').state, 'processing')
@@ -2081,7 +2086,7 @@ test('contract panel paints one badge per party and only the authorized role act
   assert.deepEqual(visibleBadges, ['brand-signed', 'starter-pending'])
 })
 
-test('View Contract uses cached authorization when the canonical refresh transiently fails', async () => {
+test('View Contract fails closed when the canonical refresh transiently fails', async () => {
   const contract = el('a', { href: '#contract' })
   const label = el('div', { class: 'button_main-text' })
   label.textContent = 'View Contract'
@@ -2134,11 +2139,12 @@ test('View Contract uses cached authorization when the canonical refresh transie
 
   bridge.dispatchDocument('click', clickEvent(contract).event)
 
-  assert.ok(await waitFor(() => requests.length === 1))
+  assert.ok(await waitFor(() => wrap.getAttribute('data-project-action-result') === 'error'))
   assert.equal(listCount, 2)
-  assert.match(requests[0], /\/contracts\/link\/v3$/)
-  assert.equal(contractWindow.location.href, 'https://app.pandadoc.com/s/sent-contract')
-  assert.equal(contractWindow.opener, null)
+  assert.deepEqual(requests, [])
+  assert.deepEqual(contractWindow.location, {})
+  assert.equal(contractWindow.opener, bridge.window)
+  assert.equal(label.textContent, 'Contract is unavailable. Please try again.')
 })
 
 test('View Contract closes its blank popup and reports a safe error when Xano returns no URL', async () => {
