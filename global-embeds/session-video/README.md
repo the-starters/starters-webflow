@@ -74,12 +74,14 @@ Resolution returns two values, `member` and `certain`:
 | `getCurrentMember()` answered with a `data` object | `true` | `true` | Upgrade to the full video |
 | `getCurrentMember()` answered `{ data: null }` | `false` | `true` | Stay gated; no further asking |
 | Memberstack SDK absent | `false` | `false` | Stay gated, keep watching for a late answer |
-| `getCurrentMember()` rejected or threw | `false` | `false` | Stay gated, keep watching for a late answer |
+| `getCurrentMember()` rejected | `false` | `false` | Stay gated, keep watching for a late answer |
+| `getCurrentMember()` threw | `false` | `false` | Stay gated, keep watching for a late answer |
 | Nothing answered within the 1200 ms budget | `false` | `false` | Stay gated, keep watching for a late answer |
 
-`certain` exists because only one of those four unresolved outcomes used to arm
-the retry: a member whose SDK loaded after the module stayed gated for the page's
-whole life.
+Those last four are the module's fail-closed paths, one per place it gives up on
+an answer. `certain` exists because only one of the four used to arm the retry:
+a member whose SDK loaded after the module stayed gated for the page's whole
+life.
 
 **It fails closed**, unlike [`learn-cta-gate.js`](../learn-cta-gate/learn-cta-gate.js),
 which fails open. That embed risks trapping a member on a scroll-locked page, so
@@ -141,6 +143,12 @@ decision — all off whenever the template's controls are in charge, which is ev
 gated viewer and any member on a narrow screen. The full-screen attributes follow
 the **gated** decision instead: a gated frame gets `allow="autoplay"`, an ungated
 one gets `allow="autoplay; fullscreen"` plus `allowfullscreen`.
+
+Turning off `keyboard` and `pip` closes two bypass routes deliberately, not
+incidentally: arrow keys seek, and a picture-in-picture window ships its own
+scrubber outside our control. Full screen is withheld from a gated viewer for the
+opposite reason — full screen with no visible controls would strand them with no
+interface at all.
 
 **The module never writes an inline `display` on `#fullscreenBtn`.** That button
 carries Memberstack's own `data-ms-content="members"`, and an inline style from us
@@ -234,8 +242,10 @@ Not written by this module, and the gate is wrong without them:
   unconfirmed (no SDK, a rejection, an expired budget) and on any page where
   `data-ms-content` has not been authored yet — and a press gives no feedback at
   all, because the full-screen handler returns early for a gated viewer.
-- The CSS that sized the authored iframe is retargeted at the stage attribute,
-  since the iframe is now created there rather than authored.
+- Whatever CSS sized the authored iframe still has to match the built one. The
+  existing `.hero-video-wrap iframe` rule sizes any iframe created inside that
+  wrapper, so it keeps working if the stage sits there; retarget it at the stage
+  attribute if the stage sits anywhere else.
 - The signup trigger carries a `data-modal-trigger` pointing at the signup modal.
 
 CMS-bound attributes can only be authored in the Designer and are invisible to
