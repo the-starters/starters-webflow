@@ -200,6 +200,7 @@
             ),
             image_url: getQuizLeadDripImageUrl(
                 getQuizLeadDripValue(record, [
+                    'profile-photo',
                     'profile-photo-xano',
                     'profile_photo',
                     'profile-image',
