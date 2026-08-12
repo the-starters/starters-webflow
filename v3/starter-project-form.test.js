@@ -540,6 +540,39 @@ test('failed retry keeps the same idempotency key', async () => {
   assert.equal(submitted[0].idempotency_key, submitted[1].idempotency_key)
 })
 
+test('malformed project responses fail and preserve the retry key', async () => {
+  const submitted = []
+  const responses = [
+    { proposal: { id: 72, status: 'awaiting_brand_approval' } },
+    { project: { id: 91, lifecycle_state: 'unexpected' } },
+    { project: { id: 91, lifecycle_state: 'contract_create_pending' }, replayed: true },
+  ]
+  const loaded = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 41, company_name: 'Brand' }],
+    projectSubmit: async (payload) => {
+      submitted.push({ ...payload })
+      return responses.shift()
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
+  assert.equal(loaded.events.length, 0)
+  assert.equal(loaded.tracks.length, 0)
+  assert.equal(loaded.form.style.display, '')
+  assert.match(loaded.wrapper.error.textContent, /could not be created/)
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.deepEqual(submitted.map((payload) => payload.idempotency_key), [
+    'project-key-123',
+    'project-key-123',
+    'project-key-123',
+  ])
+  assert.equal(loaded.events[0].detail.project_id, 91)
+})
+
 test('a rejected Brand authorization is invalidated before another submit', async () => {
   let optionsRequest = 0
   const loaded = load({

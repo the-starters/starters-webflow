@@ -24,6 +24,13 @@
   var SUCCESS_SELECTOR = '[data-project-form-state="success"], .w-form-done'
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
   var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
+  var CREATED_PROJECT_STATES = {
+    contract_create_pending: true,
+    contract_draft: true,
+    contract_sent: true,
+    signature_partial: true,
+    active: true,
+  }
   var STARTER_PAYLOAD_FIELDS = [
     'title',
     'service',
@@ -54,6 +61,14 @@
   function positiveId(value) {
     var parsed = Number(clean(value))
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  }
+
+  function createdProject(result) {
+    var project = result && result.project
+    var lifecycleState = clean(project && project.lifecycle_state).toLowerCase()
+    return positiveId(project && project.id) && CREATED_PROJECT_STATES[lifecycleState]
+      ? project
+      : null
   }
 
   function formState(form) {
@@ -455,6 +470,10 @@
       .then(function () { return request(serialized.payload) })
       .then(function (result) {
         if (generation !== current.generation) return false
+        if (!createdProject(result)) {
+          setStatus(form, 'error', safeError())
+          return false
+        }
         showSuccess(form, result, documentObject)
         return true
       })
