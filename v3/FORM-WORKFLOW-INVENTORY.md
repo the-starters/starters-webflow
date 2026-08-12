@@ -23,7 +23,7 @@ Scope: user-facing forms that create or change an account, profile, opportunity,
 
 ## Release gates
 
-- PR #404 is the aggregate review candidate for PRs #399, #400, #401, and #403. This branch builds on its exact head and must remain one additive review stack.
+- PR #406 is the aggregate review candidate. This follow-up preserves its additive review stack and keeps authenticated live captures distinct from GitHub candidate hashes.
 - The live 2026-08-12 Brand Dashboard readback shows `#wf-form-Pause-Membership` and `#wf-form-Cancel-Membership` as ordinary Webflow forms (`method="get"`, no `data-ms-form`, no provider action). Their successful Webflow receipt proves request intake only. A separate server-side membership-change owner is still required before the UI may truthfully claim that a membership changed.
 - Replace the Talent Application inline block only after its exact backup, hash, and sentinel inventory are saved.
 - Replace Build Profile blocks only after exact live-body hash matches. Keep all excluded Elvin-owned or coupled blocks untouched.
