@@ -80,7 +80,7 @@
  * REQUIRED OF THE TEMPLATE, not written by this file:
  *   #fullscreenBtn carries Memberstack's `data-ms-content="members"`, and the CSS
  *   carries `#fullscreenBtn[data-sv-fullscreen="hidden"] { display: none }`. This
- *   file writes the attribute and never an inline style — see mount().
+ *   file writes the attribute and never an inline style — see showFullscreen().
  *
  * STATE IS WRITTEN AS ATTRIBUTES, for the template's CSS to react to:
  *   [data-session-video="root"]    data-sv-player   native | custom
@@ -430,6 +430,34 @@
   }
 
   /**
+   * The full-screen control is revealed only to an ungated viewer holding a
+   * player object to drive the request. Both terms matter: `gated` stays true on
+   * every path where membership is merely assumed (no SDK, a rejection, an expired
+   * budget) — exactly the paths where Memberstack is absent too, so nothing else
+   * would hide the button — and it is false on the no-API member path, which has
+   * no player at all and would leave a dead button.
+   *
+   * The attribute ONLY, never an inline style. This button carries Memberstack's
+   * own `data-ms-content="members"`, so Memberstack owns its visibility, and an
+   * inline style written by us onto an element Memberstack meant to hide is how a
+   * members-only control leaks when the two answers disagree.
+   *
+   * THE TEMPLATE MUST THEREFORE CARRY
+   *   #fullscreenBtn[data-sv-fullscreen="hidden"] { display: none }
+   * or the button is visible and inert everywhere we hide it: on a gated mount
+   * bind() still arms the control and it is armControl's handler that returns
+   * early on `gated`, and on the no-API path bind() is never called at all.
+   */
+  Controller.prototype.showFullscreen = function () {
+    var el = this.el('fullscreen')
+    var reachable = !this.gated && !!this.player
+    setState(el, 'data-sv-fullscreen', reachable ? 'visible' : 'hidden')
+    if (el && !el.hasAttribute('data-ms-content')) {
+      warn('#fullscreenBtn carries no data-ms-content; Memberstack is not hiding it for non-members')
+    }
+  }
+
+  /**
    * Member fallback when player.js never arrived. Still writes the full state
    * contract: without it `data-sv-player` and `data-sv-video` are absent, so the
    * authored poster never retires and #videoClickOverlay keeps swallowing the
@@ -450,6 +478,18 @@
     setState(this.root, 'data-sv-player', 'native')
     setState(this.root, 'data-sv-video', 'ready')
     this.ready = true
+    // The overlay, and ONLY the overlay. Left in its authored covering state it
+    // sits on top of the very player this path exists to hand over, and the watch
+    // control that would lower it is never wired here. The template's own bar is
+    // deliberately left alone: `native` above tells the CSS to hide it, and with no
+    // player object and no bind() call revealing it would put inert play and mute
+    // buttons beside Vimeo's working ones. Nothing paints a play or mute state for
+    // the same reason — no event stream can ever correct a guess about playback.
+    this.showOverlay(false)
+    // Hidden, not visible: `gated` is false here but there is no player object and
+    // bind() is deliberately never called, so the template's own button could only
+    // be a dead control.
+    this.showFullscreen()
     controllers.push(this)
     info('member fallback: native player, no script control')
     return true
@@ -505,19 +545,9 @@
     this.paintMute(true)
 
     // A gated viewer can never reach fullscreen, because the frame was built
-    // without permission. Hide the control rather than leave a dead button.
-    // The attribute ONLY, never an inline style. This button carries Memberstack's
-    // own `data-ms-content="members"`, so Memberstack owns its visibility, and an
-    // inline style written by us onto an element Memberstack meant to hide is how a
-    // members-only control leaks when the two answers disagree.
-    //
-    // THE TEMPLATE MUST THEREFORE CARRY
-    //   #fullscreenBtn[data-sv-fullscreen="hidden"] { display: none }
-    // or the button is visible and inert on every path where membership is
-    // unconfirmed (no SDK, a rejection, an expired budget) and on any page where
-    // `data-ms-content` has not been authored yet. bind() returns early for a gated
-    // viewer, so a press gives no feedback at all.
-    setState(this.el('fullscreen'), 'data-sv-fullscreen', gated ? 'hidden' : 'visible')
+    // without permission. Hide the control rather than leave a dead button — and
+    // hide it too whenever membership is merely assumed. See showFullscreen().
+    this.showFullscreen()
 
     this.bind()
     return true
@@ -765,12 +795,16 @@
       if (!pending.length && !noLib.length) return
       return memberPromise.then(function (state) {
         info('viewer is ' + (state.member ? 'a member' : 'logged out') + (state.certain ? '' : ' (unconfirmed)'))
+        // Only getCurrentMember answering with a member is confirmation; everything
+        // else is "assume logged out for now", which must not be paid out as if we
+        // knew who was watching.
+        var confirmed = !!(state.member && state.certain)
         pending.forEach(function (c) {
-          if (state.member) c.upgrade()
+          if (confirmed) c.upgrade()
           else if (!state.certain) watchForLateMember(c, function () { c.upgrade() })
         })
         noLib.forEach(function (c) {
-          if (!state.member) {
+          if (!confirmed) {
             // Not confirmed logged out? Keep asking, or a member with both a slow
             // SDK and a failed library gets nothing for the page's whole life. A
             // noLib controller was never mounted with the API, so a late answer must
