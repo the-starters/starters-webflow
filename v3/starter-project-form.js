@@ -14,7 +14,9 @@
   global.__startersV3StarterProjectFormBooted = true
 
   var FORM_SELECTOR = 'dialog[data-modal-target="start-project"] form'
+  var MODAL_SELECTOR = 'dialog[data-modal-target="start-project"]'
   var TRIGGER_SELECTOR = '[data-modal-trigger="start-project"]'
+  var TRIGGER_LINK_SELECTOR = TRIGGER_SELECTOR + ' a.clickable_link'
   var BRAND_SELECT_SELECTOR = '#Brand'
   var BRAND_ID_SELECTOR = '#brand-contract'
   var MANAGER_NAME_SELECTOR = '#hiring-manager-name'
@@ -497,8 +499,31 @@
     return target && target.closest ? target.closest(FORM_SELECTOR) : null
   }
 
+  function normalizeModalMarkup(documentObject) {
+    if (!documentObject || !documentObject.querySelectorAll) return false
+    var dialogs = Array.prototype.slice.call(documentObject.querySelectorAll(MODAL_SELECTOR))
+    var canonical = dialogs.find(function (dialog) {
+      return dialog && dialog.querySelector && dialog.querySelector('form')
+    }) || dialogs[0]
+    var duplicateNumber = 0
+    dialogs.forEach(function (dialog) {
+      if (!dialog || dialog === canonical || !dialog.setAttribute) return
+      duplicateNumber += 1
+      dialog.setAttribute('data-modal-target', 'start-project-legacy-disabled-' + duplicateNumber)
+    })
+    var triggerLinks = documentObject.querySelectorAll(TRIGGER_LINK_SELECTOR)
+    Array.prototype.forEach.call(triggerLinks, function (link) {
+      if (link && link.setAttribute) link.setAttribute('href', '#start-project')
+    })
+    return Boolean(canonical)
+  }
+
   function bind(documentObject, globalObject) {
     if (!documentObject || !documentObject.addEventListener) return false
+    // This deferred head script runs before the shared modal initializer. Fix
+    // the legacy nested navigation link and duplicate modal target first so a
+    // navbar click opens only the canonical Start a Project form.
+    normalizeModalMarkup(documentObject)
     documentObject.addEventListener('click', function (event) {
       var clickedForm = formFromTarget(event.target)
       if (clickedForm) syncCommercialForm(clickedForm, documentObject, globalObject)
@@ -554,6 +579,7 @@
     validationError: validationError,
     loadOptions: loadOptions,
     submit: submit,
+    normalizeModalMarkup: normalizeModalMarkup,
     bind: bind,
   }
   global.StartersStarterProjectFormV3 = api

@@ -98,6 +98,7 @@ class Element {
     if (selector === '[data-project-form-state="error"]' || selector === '.w-form-fail') return this.error || null
     if (selector === '[data-project-form-state="success"]' || selector === '.w-form-done') return this.success || null
     if (selector === '[data-project-success-message]') return this.successMessage || null
+    if (selector === 'form') return this.form || null
     return null
   }
   querySelectorAll(selector) {
@@ -204,6 +205,27 @@ test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', ()
     { id: 9, label: 'Zulu — Zoe', company_name: 'Zulu', manager_name: 'Zoe' },
   ])
   assert.equal(Object.prototype.hasOwnProperty.call(options[0], 'email'), false)
+})
+
+test('normalizes the navbar trigger and disables duplicate Start a Project modals', () => {
+  const { api } = load({ noDocument: true })
+  const canonical = new Element({ 'data-modal-target': 'start-project' })
+  canonical.form = new Element()
+  const duplicate = new Element({ 'data-modal-target': 'start-project' })
+  duplicate.form = new Element()
+  const nestedLink = new Element({ href: '/opportunities-freelancer-view', className: 'clickable_link' })
+  const document = {
+    querySelectorAll(selector) {
+      if (selector === 'dialog[data-modal-target="start-project"]') return [canonical, duplicate]
+      if (selector === '[data-modal-trigger="start-project"] a.clickable_link') return [nestedLink]
+      return []
+    },
+  }
+
+  assert.equal(api.normalizeModalMarkup(document), true)
+  assert.equal(canonical.getAttribute('data-modal-target'), 'start-project')
+  assert.equal(duplicate.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
+  assert.equal(nestedLink.getAttribute('href'), '#start-project')
 })
 
 test('selecting a Brand stores its ID and clears stale sample email', () => {
