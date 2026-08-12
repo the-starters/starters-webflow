@@ -2156,6 +2156,56 @@ test('contract panel refreshes canonical signing state after returning from Pand
   assert.ok(await waitFor(() => listRequests === 3))
 })
 
+test('contract panel fails closed when its return refresh fails', async () => {
+  const signAction = el('a', { 'data-project-contract-action': 'sign' })
+  const signWrap = el('div', { class: 'button_main-wrap' }, [signAction])
+  const actions = el('div', { 'data-project-contract-actions': '' }, [signWrap])
+  const panel = el('div', { 'data-project-contract-panel': '' }, [actions])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '708' }, [panel])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  let listRequests = 0
+
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        listRequests += 1
+        if (listRequests > 1) throw new Error('Temporary project list failure')
+        return response({
+          items: [{
+            id: 708,
+            sync_origin: 'v3',
+            contract_source: 'standard',
+            lifecycle_state: 'contract_sent',
+            contract_status: 'sent',
+            pandadoc_document_id: 'doc-708',
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => signWrap.style.display === ''))
+
+  bridge.dispatchWindow('focus')
+
+  assert.ok(await waitFor(() => listRequests === 2 && panel.style.display === 'none'))
+  assert.equal(panel.getAttribute('aria-hidden'), 'true')
+  assert.equal(signWrap.style.display, 'none')
+  assert.match(String(bridge.consoleErrors.at(-1)[0]), /focus projection refresh failed/)
+})
+
 test('View Contract fails closed when the canonical refresh transiently fails', async () => {
   const contract = el('a', { href: '#contract' })
   const label = el('div', { class: 'button_main-text' })

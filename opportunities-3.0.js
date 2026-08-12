@@ -2780,6 +2780,10 @@
       await refreshProjectWorkflow(role, true)
       return true
     } catch (error) {
+      if (projectWorkflowRole === role && projectRoleForPath() === role) {
+        projectWorkflowItems = new Map()
+        decorateProjectCards()
+      }
       console.error('[opp30:project-action] ' + operation + ' projection refresh failed', error)
       return false
     }
