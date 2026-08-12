@@ -8,7 +8,7 @@ Scope: user-facing forms that create or change an account, profile, opportunity,
 | Brand signup, `/sign-up` and Quiz signup | Memberstack, then Xano webhook | GitHub: `brand-account-controller.js`, `signup-attribution.js`, Quiz controllers | Memberstack-native only; shared receipt pending | No page-specific writer found |
 | Forgot/reset password | Memberstack | GitHub: `password-recovery.js` | Memberstack-native only; shared receipt pending | No page-specific writer found |
 | Brand Build Account, `/complete-profile` | Memberstack + canonical Xano webhook path | GitHub: `brand-account-controller.js` | PR #401 | No page-specific writer found |
-| Build Profile Consult / Full Profile | Xano | Mixed: GitHub plus this directory | Profile writer receipt not yet complete | Nine self-contained blocks in this PR; excluded coupled blocks remain inline |
+| Build Profile Consult / Full Profile | Xano | Mixed: GitHub assets in [`build-profile/`](build-profile/README.md) plus untouched inline Webflow blocks | Profile writer receipt not yet complete | Nine self-contained blocks in this PR; excluded coupled blocks remain inline |
 | Starter Onboarding | Xano | GitHub: `patch-onboarding-status.js` | PR #401 | No mutation writer should remain inline |
 | Brand Quiz and Quiz Results | Memberstack + Xano lead-drip bridge | GitHub: `quiz-main/quiz-main.js`, `quiz-results.js` | Shared receipt pending | No page-specific mutation writer found |
 | Talent Application steps 1–2 | Xano | GitHub: `talent-application.js`; UI replacement in PR #400 | PR #399 | 23 KB UI block remains live until PR #400 release and Webflow replacement |
