@@ -2645,7 +2645,7 @@
     }
 
     const partialState = lifecycle === 'signature_partial' || contractStatus === 'partial'
-    if (starterSigned && !brandSigned || partialState && !brandSigned && !starterSigned) {
+    if (partialState && !brandSigned && !starterSigned) {
       return {
         ...base,
         state: 'attention',
@@ -2669,46 +2669,28 @@
       }
     }
 
-    if (role === 'brand') {
-      if (!brandSigned) {
-        return {
-          ...base,
-          state: 'action',
-          title: 'Your signature is required',
-          body: starterSigned
-            ? starterName + ' has signed. Sign the contract to continue.'
-            : 'Sign the contract first. ' + starterName + ' can sign after you.',
-          action: 'sign',
-          actionLabel: 'Review & Sign Contract',
-        }
-      }
+    const viewerSigned = role === 'brand' ? brandSigned : starterSigned
+    const otherSigned = role === 'brand' ? starterSigned : brandSigned
+    const counterpartyName = role === 'brand' ? starterName : companyName
+    if (!viewerSigned) {
       return {
         ...base,
-        state: 'waiting',
-        title: 'Waiting for ' + starterName + ' to sign',
-        body: 'Your signature is complete. We will notify you when ' + starterName + ' signs.',
-        action: 'view',
-        actionLabel: 'View Contract',
-      }
-    }
-
-    if (!brandSigned) {
-      return {
-        ...base,
-        state: 'waiting',
-        title: 'Waiting for ' + companyName + ' to sign',
-        body: 'You can sign after ' + companyName + ' signs the contract.',
-        action: null,
-        actionLabel: '',
+        state: 'action',
+        title: otherSigned ? counterpartyName + ' has signed' : 'Your signature is required',
+        body: otherSigned
+          ? 'Your signature is required to activate this project.'
+          : 'Review and sign the contract. The project starts after both parties sign.',
+        action: 'sign',
+        actionLabel: 'Review & Sign Contract',
       }
     }
     return {
       ...base,
-      state: 'action',
-      title: companyName + ' has signed',
-      body: 'Your signature is required to activate this project.',
-      action: 'sign',
-      actionLabel: 'Review & Sign Contract',
+      state: 'waiting',
+      title: 'Waiting for ' + counterpartyName + ' to sign',
+      body: 'Your signature is complete. We will notify you when ' + counterpartyName + ' signs.',
+      action: 'view',
+      actionLabel: 'View Contract',
     }
   }
 
