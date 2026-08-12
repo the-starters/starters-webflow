@@ -1210,25 +1210,38 @@ test('a blocked Earnings popup leaves one disabled recovery tile visible', async
   }
 })
 
-test('sandbox mode disables Dashboard access before popup or network access', async () => {
+test('staging query flags do not bypass authenticated Dashboard access', async () => {
   const previous = {
     fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
     location: global.location,
+    memberstack: global.$memberstackDom,
     open: global.open,
   }
+  const requests = []
   let fetchCount = 0
   let openCount = 0
   global.location = {
     hostname: 'the-starters-3-0.webflow.io',
     search: '?stripe_connect_sandbox=1',
   }
-  global.fetch = async () => {
+  global.getXanoAuthToken = async () => 'xano-token'
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.fetch = async (url, options) => {
     fetchCount += 1
-    return response({})
+    requests.push({ url, options })
+    return response({
+      connected: true,
+      account_id: 'acct_test123',
+      mode: 'express',
+      url: 'https://connect.stripe.com/express/acct_test123/login/test',
+    })
   }
   global.open = () => {
     openCount += 1
-    return {}
+    return { closed: false, location: { replace: () => {} } }
   }
 
   try {
@@ -1240,13 +1253,16 @@ test('sandbox mode disables Dashboard access before popup or network access', as
         'member-123',
         api.resolveEarningsTiles([]),
       ),
-      false,
+      true,
     )
-    assert.equal(openCount, 0)
-    assert.equal(fetchCount, 0)
+    assert.equal(openCount, 1)
+    assert.equal(fetchCount, 1)
+    assert.ok(stripeRequest(requests, '/stripe_connect/dashboard/v3'))
   } finally {
     global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
     global.location = previous.location
+    global.$memberstackDom = previous.memberstack
     global.open = previous.open
   }
 })
@@ -1553,12 +1569,15 @@ test('disconnect rejects a changed member before calling the provider endpoint',
   }
 })
 
-test('sandbox mode disables disconnect before confirmation or network access', async () => {
+test('staging query flags do not bypass confirmed disconnect', async () => {
   const previous = {
     confirm: global.confirm,
     fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
     location: global.location,
+    memberstack: global.$memberstackDom,
   }
+  const requests = []
   let confirmCount = 0
   let fetchCount = 0
   global.location = {
@@ -1569,8 +1588,13 @@ test('sandbox mode disables disconnect before confirmation or network access', a
     confirmCount += 1
     return true
   }
-  global.fetch = async () => {
+  global.getXanoAuthToken = async () => 'xano-token'
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.fetch = async (url, options) => {
     fetchCount += 1
+    requests.push({ url, options })
     return response({ connected: false })
   }
 
@@ -1583,14 +1607,18 @@ test('sandbox mode disables disconnect before confirmation or network access', a
         api.resolveEarningsTiles([]),
         'member-123',
       ),
-      false,
+      true,
     )
-    assert.equal(confirmCount, 0)
-    assert.equal(fetchCount, 0)
+    assert.equal(confirmCount, 1)
+    assert.equal(fetchCount, 2)
+    assert.ok(stripeRequest(requests, '/stripe_connect/disconnect/v3'))
+    assert.ok(stripeRequest(requests, '/stripe_connect/status/v3'))
   } finally {
     global.confirm = previous.confirm
     global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
     global.location = previous.location
+    global.$memberstackDom = previous.memberstack
   }
 })
 
@@ -1795,7 +1823,6 @@ test('start sends the dashboard return URL and accepts Stripe URLs only', async 
   try {
     const result = await api.startConnect(
       'https://thestarters.com/starter-dashboard',
-      false,
       'connect-attempt-123',
     )
     assert.equal(result.mode, 'oauth')
@@ -1972,23 +1999,23 @@ test('opaque production OAuth state accepts only the backend length contract', (
 
 test('Connect exchange modes are explicit and fail closed', () => {
   assert.equal(
-    api.resolveExchangeMode({ connected: true, mode: 'completed' }, false),
+    api.resolveExchangeMode({ connected: true, mode: 'completed' }),
     'completed',
   )
   assert.equal(
-    api.resolveExchangeMode({ connected: false, mode: 'reconciliation_required' }, false),
+    api.resolveExchangeMode({ connected: false, mode: 'reconciliation_required' }),
     'reconciliation_required',
   )
   assert.equal(
-    api.resolveExchangeMode({ connected: false, mode: 'restart_required' }, false),
+    api.resolveExchangeMode({ connected: false, mode: 'restart_required' }),
     'restart_required',
   )
   assert.throws(
-    () => api.resolveExchangeMode({ connected: false, mode: 'completed' }, false),
+    () => api.resolveExchangeMode({ connected: false, mode: 'completed' }),
     /did not connect/,
   )
   assert.throws(
-    () => api.resolveExchangeMode({ connected: false, mode: 'unknown' }, false),
+    () => api.resolveExchangeMode({ connected: false, mode: 'unknown' }),
     /unknown mode/,
   )
 })
@@ -2600,7 +2627,7 @@ test('closing a background Stripe tab releases recovery without focus', async ()
   }
 })
 
-test('sandbox start is staging-only and sends an explicit callback URL', async () => {
+test('staging uses the normal persistent Connect endpoint with an explicit callback', async () => {
   const previous = {
     fetch: global.fetch,
     location: global.location,
@@ -2626,24 +2653,21 @@ test('sandbox start is staging-only and sends an explicit callback URL', async (
   }
 
   try {
-    assert.equal(api.sandboxMode(), true)
     await api.startConnect(
       'https://the-starters-3-0.webflow.io/starter-dashboard',
-      true,
+      'staging-connect-attempt',
     )
     const startRequest = stripeRequest(
       requests,
-      '/stripe_connect/sandbox/start/v3',
+      '/stripe_connect/start/v3',
     )
     assert.match(startRequest.options.headers.Authorization, /^Bearer .+/)
     assert.deepEqual(JSON.parse(startRequest.options.body), {
       return_url: 'https://the-starters-3-0.webflow.io/starter-dashboard',
       callback_url:
         'https://the-starters-3-0.webflow.io/stripe-connect-callback',
+      idempotency_key: 'staging-connect-attempt',
     })
-
-    global.location.hostname = 'thestarters.com'
-    assert.equal(api.sandboxMode(), false)
   } finally {
     global.fetch = previous.fetch
     global.location = previous.location
@@ -2735,39 +2759,33 @@ test('OAuth exchange 401 never replays a one-time code', async () => {
   global.$memberstackDom = { getMemberCookie: async () => 'ms-cookie' }
 
   try {
-    for (const sandbox of [false, true]) {
-      const requests = []
-      let trades = 0
-      api.__resetXanoToken()
-      global.fetch = async (url, options) => {
-        if (String(url).includes('/auth/trade-token/v3')) {
-          trades += 1
-          return response({ authToken: 'xano-token-' + trades })
-        }
-        requests.push({ url, options })
-        return response({ error: 'expired token' }, { ok: false, status: 401 })
+    const requests = []
+    let trades = 0
+    api.__resetXanoToken()
+    global.fetch = async (url, options) => {
+      if (String(url).includes('/auth/trade-token/v3')) {
+        trades += 1
+        return response({ authToken: 'xano-token-' + trades })
       }
-
-      await assert.rejects(
-        () => api.exchangeCode('one-time-code', 'opaque-state-1234567890', sandbox),
-        /oauth_exchange\/v3 failed \(401\)/,
-      )
-
-      assert.equal(requests.length, 1, 'the authorization code is sent once')
-      assert.equal(trades, 1, 'the exchange does not refresh authentication')
-      assert.deepEqual(
-        JSON.parse(requests[0].options.body),
-        sandbox
-          ? { code: 'one-time-code' }
-          : { code: 'one-time-code', state: 'opaque-state-1234567890' },
-      )
-      assert.equal(
-        new URL(requests[0].url).pathname.endsWith(
-          sandbox ? api.SANDBOX_EXCHANGE_PATH : api.EXCHANGE_PATH,
-        ),
-        true,
-      )
+      requests.push({ url, options })
+      return response({ error: 'expired token' }, { ok: false, status: 401 })
     }
+
+    await assert.rejects(
+      () => api.exchangeCode('one-time-code', 'opaque-state-1234567890'),
+      /oauth_exchange\/v3 failed \(401\)/,
+    )
+
+    assert.equal(requests.length, 1, 'the authorization code is sent once')
+    assert.equal(trades, 1, 'the exchange does not refresh authentication')
+    assert.deepEqual(JSON.parse(requests[0].options.body), {
+      code: 'one-time-code',
+      state: 'opaque-state-1234567890',
+    })
+    assert.equal(
+      new URL(requests[0].url).pathname.endsWith(api.EXCHANGE_PATH),
+      true,
+    )
   } finally {
     global.fetch = previous.fetch
     global.$memberstackDom = previous.memberstack
@@ -2972,7 +2990,7 @@ test('callback handles reconciliation and restart modes without replaying the co
   }
 })
 
-test('sandbox callback exchanges without production persistence and marks verification', async () => {
+test('staging callback uses the persistent exchange and keeps the TEST domain', async () => {
   const previous = {
     document: global.document,
     fetch: global.fetch,
@@ -2993,7 +3011,7 @@ test('sandbox callback exchanges without production persistence and marks verifi
     hostname: 'the-starters-3-0.webflow.io',
     href:
       'https://the-starters-3-0.webflow.io/stripe-connect-callback?' +
-      'code=test-code&state=sandbox%3Amem-test',
+      'code=test-code&state=opaque-test-state-123456',
     origin: 'https://the-starters-3-0.webflow.io',
     assign: (url) => assigned.push(url),
   }
@@ -3009,23 +3027,24 @@ test('sandbox callback exchanges without production persistence and marks verifi
     return response({
       connected: true,
       charges_enabled: false,
-      sandbox: true,
+      mode: 'completed',
     })
   }
 
   try {
     const result = await api.mountCallback()
-    assert.equal(result.sandbox, true)
+    assert.equal(result.mode, 'completed')
     const exchangeRequest = stripeRequest(
       requests,
-      '/stripe_connect/sandbox/oauth_exchange/v3',
+      '/stripe_connect/oauth_exchange/v3',
     )
     assert.deepEqual(JSON.parse(exchangeRequest.options.body), {
       code: 'test-code',
+      state: 'opaque-test-state-123456',
     })
     assert.deepEqual(assigned, [
       'https://the-starters-3-0.webflow.io/starter-dashboard?' +
-        'stripe_connect=connected&stripe_connect_sandbox=verified',
+        'stripe_connect=connected',
     ])
     assert.equal(states.error.style.display, 'none')
   } finally {

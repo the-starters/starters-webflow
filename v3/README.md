@@ -2583,7 +2583,7 @@ control is ignored while an authenticated action is resolving. Start
 posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
 URL built against the exact V3 callback instead of falling back to its legacy
-V2 default. Production start also sends one bounded idempotency key. A retry
+V2 default. Every start also sends one bounded idempotency key. A retry
 after a network-ambiguous, timeout, conflict, rate-limit, or server outcome
 reuses that key; a confirmed redirect or later intentional attempt uses a new
 key. The controller accepts only an HTTPS `connect.stripe.com` URL before
@@ -2610,7 +2610,7 @@ connected but the readiness flag is still false, it selects the authored
 account always returns to `disconnected`, even when a stale return marker is
 present.
 
-The production callback reads `code` and the backend-issued opaque `state`,
+The callback reads `code` and the backend-issued opaque `state`,
 removes OAuth parameters from the visible URL before network work, resolves the
 current Memberstack member, validates the bounded state shape, and posts
 `{code, state}` to `oauth_exchange/v3`. Xano binds the state to the authenticated
@@ -2633,34 +2633,33 @@ diagnostics only, but `starterStripeConnectReady` and
 [Action Items panel](#dashboard-action-items-panel) settles its loading card on
 either of them, so keep dispatching both on every terminal outcome.
 
-### Isolated sandbox flow
+### Domain-isolated TEST and LIVE environments
 
-An opt-in sandbox path lets the staging V3 Test Talent member complete a
-Connect OAuth round-trip without creating a live-mode connection or writing a
-test account ID into `freelancers_v3`. It activates only when both conditions
-hold: the page is served from the Webflow staging host
-`the-starters-3-0.webflow.io`, and the request carries `stripe_connect_sandbox=1`
-in the query string. Every other host or a missing flag keeps the production
-flow unchanged. Like the OAuth parameters, `stripe_connect_sandbox` is stripped
-from the visible URL before network work.
+Stripe mode is persistent and server-owned. The Webflow staging domain
+`the-starters-3-0.webflow.io` uses Memberstack Test Data, Stripe TEST keys, TEST
+OAuth state, TEST webhook events, and only the `stripe_*_test` projection fields.
+The production domains `thestarters.com` and `www.thestarters.com` use
+Memberstack Live Data, Stripe LIVE keys, LIVE OAuth state and webhook events,
+and only the LIVE projection fields. Query parameters such as
+`stripe_connect_sandbox=1` do not select or bypass an environment.
 
-In sandbox mode `start` posts the same `return_url` and `callback_url` to
-`/stripe_connect/sandbox/start/v3`, and the exchange posts to
-`/stripe_connect/sandbox/oauth_exchange/v3`. Both sandbox endpoints stay
-Bearer-authenticated the same way as the production ones; the Xano exchange
-uses the test secret key and performs no database write. Sandbox mode disables
-connected-account Dashboard access and disconnect before any popup,
-confirmation, or endpoint request, so those production actions cannot cross the
-TEST/LIVE boundary.
+Xano derives the member environment from the authenticated `user_v3` record.
+A Memberstack member ID beginning with `mem_sb_` is Test Data. A member ID
+without that prefix is Live Data. The authenticated Connect endpoints also
+derive the request environment from the exact HTTP `Origin`. Every member ID,
+origin, return URL, callback URL, and durable OAuth state receipt must resolve
+to the same environment. Xano rejects unknown origins and every mismatch before
+it selects a Stripe secret or reads or writes a Stripe projection. The browser
+never sends a trusted `test` or `live` selector.
 
-The sandbox callback is staging-only and self-identifying: its OAuth `state` is
-the member id prefixed with `sandbox:`. The callback rejects a `sandbox:` state
-unless it is running on the staging host, requires the state to equal
-`sandbox:<member_id>`, and requires the exchange to return `sandbox: true` so a
-sandbox request can never resolve through the production, persisted path. A
-successful sandbox exchange redirects to
-`/starter-dashboard?stripe_connect=connected&stripe_connect_sandbox=verified`,
-after which the dashboard re-reads canonical status exactly as in production.
+Staging uses the same authenticated `status/v3`, `start/v3`, `dashboard/v3`,
+`disconnect/v3`, and `oauth_exchange/v3` endpoints as production. This gives a
+Test Data member the full persistent Connect lifecycle, including Complete
+setup, Open Stripe, Disconnect Stripe, callback processing, and TEST
+reconciliation, without touching LIVE account fields. The signed Connect
+webhook independently derives its environment from Stripe event `livemode` and
+keeps TEST and LIVE updates isolated. The reconciliation operator must supply
+one explicit environment per run; there is no shared global mode switch.
 
 Run its focused tests with:
 

@@ -34,10 +34,6 @@
   const DASHBOARD_ACCESS_PATH = '/stripe_connect/dashboard/v3'
   const DISCONNECT_PATH = '/stripe_connect/disconnect/v3'
   const EXCHANGE_PATH = '/stripe_connect/oauth_exchange/v3'
-  const SANDBOX_START_PATH = '/stripe_connect/sandbox/start/v3'
-  const SANDBOX_EXCHANGE_PATH = '/stripe_connect/sandbox/oauth_exchange/v3'
-  const SANDBOX_STATE_PREFIX = 'sandbox:'
-  const SANDBOX_HOST = 'the-starters-3-0.webflow.io'
   const RETURN_CHANNEL_NAME = 'starters-stripe-connect-return'
   const DASHBOARD_PATH = '/starter-dashboard'
   const CALLBACK_PATH = '/stripe-connect-callback'
@@ -326,12 +322,6 @@
     return post(STATUS_PATH, {})
   }
 
-  function sandboxMode() {
-    if (!global.location || global.location.hostname !== SANDBOX_HOST) return false
-    const params = new URLSearchParams(global.location.search)
-    return params.get('stripe_connect_sandbox') === '1'
-  }
-
   function createAttemptKey(prefix) {
     const safePrefix = String(prefix || 'attempt').replace(/[^a-z0-9_-]/gi, '-')
     let entropy = ''
@@ -411,20 +401,18 @@
     return shouldRetainConnectStartKey(error)
   }
 
-  function startConnect(returnUrl, sandbox, idempotencyKey) {
+  function startConnect(returnUrl, idempotencyKey) {
     const callbackUrl = new URL(CALLBACK_PATH, new URL(returnUrl).origin).toString()
     const payload = {
       return_url: returnUrl,
       callback_url: callbackUrl,
     }
-    if (!sandbox) {
-      const attemptKey = idempotencyKey || createAttemptKey('connect-start')
-      if (!attemptKey || attemptKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
-        throw new Error('Stripe Connect idempotency key is invalid')
-      }
-      payload.idempotency_key = attemptKey
+    const attemptKey = idempotencyKey || createAttemptKey('connect-start')
+    if (!attemptKey || attemptKey.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+      throw new Error('Stripe Connect idempotency key is invalid')
     }
-    return post(sandbox ? SANDBOX_START_PATH : START_PATH, payload)
+    payload.idempotency_key = attemptKey
+    return post(START_PATH, payload)
   }
 
   function dashboardAccess(idempotencyKey) {
@@ -441,20 +429,13 @@
     return post(DISCONNECT_PATH, { idempotency_key: idempotencyKey })
   }
 
-  function exchangeCode(code, state, sandbox) {
-    const payload = sandbox ? { code } : { code, state }
-    return post(sandbox ? SANDBOX_EXCHANGE_PATH : EXCHANGE_PATH, payload, false)
+  function exchangeCode(code, state) {
+    return post(EXCHANGE_PATH, { code, state }, false)
   }
 
-  function resolveExchangeMode(result, sandbox) {
+  function resolveExchangeMode(result) {
     if (!result || typeof result !== 'object') {
       throw new Error('Stripe Connect exchange returned no result')
-    }
-    if (sandbox) {
-      if (result.connected !== true || result.sandbox !== true) {
-        throw new Error('Stripe Connect sandbox exchange was not isolated')
-      }
-      return 'completed'
     }
     const mode = result.mode || (result.connected === true ? 'completed' : '')
     if (
@@ -953,7 +934,6 @@
     memberId,
     earningsTiles = resolveEarningsTiles([]),
   ) {
-    if (sandboxMode()) return Promise.resolve(false)
     return runExclusive(async function () {
       let failed = false
       const stripeTab = reserveStripeTab()
@@ -1025,7 +1005,6 @@
     earningsTiles,
     bootMemberId,
   ) {
-    if (sandboxMode()) return Promise.resolve(false)
     if (!confirmDisconnect()) return Promise.resolve(false)
     return runExclusive(async function () {
       setActionPending(button, true)
@@ -1078,7 +1057,6 @@
     const url = new URL(global.location.href)
     url.searchParams.delete('after_onboarding')
     url.searchParams.delete('stripe_connect')
-    url.searchParams.delete('stripe_connect_sandbox')
     global.history.replaceState(
       {},
       global.document.title,
@@ -1158,11 +1136,9 @@
         throw new Error('Member session changed before Stripe Connect redirect')
       }
       const returnUrl = new URL(DASHBOARD_PATH, global.location.origin).toString()
-      const sandbox = sandboxMode()
-      const attemptKey = sandbox ? null : currentConnectStartAttemptKey()
-      const result = await startConnect(returnUrl, sandbox, attemptKey)
+      const attemptKey = currentConnectStartAttemptKey()
+      const result = await startConnect(returnUrl, attemptKey)
       if (
-        !sandbox &&
         (result.mode === 'connected' || result.mode === 'reconciliation_required')
       ) {
         clearConnectStartAttemptKey()
@@ -1175,17 +1151,17 @@
         return result.mode
       }
       if (!isStripeUrl(result.url)) {
-        if (!sandbox) clearConnectStartAttemptKey()
+        clearConnectStartAttemptKey()
         throw new Error('Stripe Connect start returned an invalid URL')
       }
       emit('starterStripeConnectRedirect', { mode: result.mode || '' })
       if (!navigateStripeTab(stripeTab, result.url)) {
         throw new Error('Unable to open the Stripe Connect tab')
       }
-      if (!sandbox) clearConnectStartAttemptKey()
+      clearConnectStartAttemptKey()
       return true
     } catch (error) {
-      if (!sandboxMode() && !shouldRetainConnectStartKey(error)) {
+      if (!shouldRetainConnectStartKey(error)) {
         clearConnectStartAttemptKey()
       }
       closeStripeTab(stripeTab)
@@ -1448,20 +1424,12 @@
       if (!params.code) throw new Error('Stripe Connect callback code is missing')
 
       const memberId = await currentMemberId()
-      const sandbox = params.state.startsWith(SANDBOX_STATE_PREFIX)
-      if (sandbox && global.location.hostname !== SANDBOX_HOST) {
-        throw new Error('Stripe Connect sandbox callback is staging-only')
-      }
-      if (sandbox) {
-        if (params.state !== SANDBOX_STATE_PREFIX + memberId) {
-          throw new Error('Stripe Connect sandbox state does not match the logged-in member')
-        }
-      } else if (!validOpaqueState(params.state)) {
+      if (!validOpaqueState(params.state)) {
         throw new Error('Stripe Connect state is missing or invalid')
       }
 
-      const result = await exchangeCode(params.code, params.state, sandbox)
-      const mode = resolveExchangeMode(result, sandbox)
+      const result = await exchangeCode(params.code, params.state)
+      const mode = resolveExchangeMode(result)
 
       if (mode === 'completed') signalStripeReturn(memberId)
       const dashboardUrl = new URL(DASHBOARD_PATH, global.location.origin)
@@ -1469,7 +1437,6 @@
         'stripe_connect',
         mode === 'completed' ? 'connected' : mode,
       )
-      if (sandbox) dashboardUrl.searchParams.set('stripe_connect_sandbox', 'verified')
       global.location.assign(dashboardUrl.toString())
       return result
     } catch (error) {
@@ -1489,8 +1456,6 @@
     DASHBOARD_PATH,
     DISCONNECT_PATH,
     EXCHANGE_PATH,
-    SANDBOX_EXCHANGE_PATH,
-    SANDBOX_START_PATH,
     START_PATH,
     STATUS_PATH,
     __resetXanoToken: function () {
@@ -1535,7 +1500,6 @@
     resolveDashboardDestination,
     resolveEarningsTiles,
     resolveDashboardView,
-    sandboxMode,
     setActionPending,
     setEarningsAccess,
     setHeroTileCopy,
