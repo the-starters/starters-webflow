@@ -564,8 +564,9 @@ TTL on `path=/`:
 | `fbc` | Meta's own `_fbc` cookie, copied when ours is unset |
 | `fbp` | Meta's own `_fbp` cookie, copied when ours is unset |
 | `event_id` | `evt_<uuid>`, generated once and then reused |
-| `signup_source` | Path of the page the signup happened on, normalized (lowercased, one trailing slash removed, no query string), written at the Memberstack auth transition |
-| `signup_referrer` | Path of the same-origin page the signup was reached from, normalized the same way, written at the same transition. Nothing is written for an absent or cross-origin referrer |
+| `signup_source` | Path of the page the signup happened on, normalized (lowercased, one trailing slash removed, no query string; the site root `/` is stored as `/home`), written at the Memberstack auth transition |
+| `signup_referrer` | Path of the same-origin page the signup was reached from, normalized the same way (including `/home` for `/`), written at the same transition. Nothing is written for an absent or cross-origin referrer |
+| `signup_trigger` | Which CTA opened the signup surface. Written on click of `data-signup-trigger-element` when that click opens signup. Values: `hire`, `message`, `book-call`, or `service:<detail>`. Not a URL parameter. |
 
 A parameter only overwrites its cookie when the URL actually carries a non-empty
 value. The freshest click therefore wins, and browsing the rest of the site never
@@ -574,16 +575,17 @@ load, since the pixel writes those cookies itself and can finish loading after
 this script runs. The event id is reused for the life of the cookie so the
 browser event and any server-side copy of the same registration share one id.
 
-`signup_source` and `signup_referrer` are the two cookies no URL can supply, and
-they answer different questions. The source is which page the form was on. The
-referrer is where the visitor was when they decided. Both matter because they are
+`signup_source`, `signup_referrer`, and `signup_trigger` are the three cookies no
+URL can supply, and they answer different questions. The source is which page the
+form was on. The referrer is where the visitor was when they decided. The trigger
+is which CTA opened signup. Source and referrer both matter because they are
 usually not the same page: someone who clicks Get started on `/` signs up on
 `/quiz`, so the source is `/quiz` and only the referrer names the homepage. `/`
 carries no signup form at all, so the source can never name it.
 
-Both are written at the auth transition and not during the sitewide capture that
-runs on every page load. Capturing on load would make each mean "last page
-loaded", and each signup page would be overwritten by its own redirect:
+Source and referrer are written at the auth transition and not during the sitewide
+capture that runs on every page load. Capturing on load would make each mean "last
+page loaded", and each signup page would be overwritten by its own redirect:
 `/sign-up` would end up saying `/brand-dashboard` and `/quiz` would say
 `/quiz-results`. The referrer is the sharper case, because `quiz-results.js` reads
 these cookies a page later: a load-time capture would have replaced the referrer
@@ -593,10 +595,11 @@ modal works for the same reason: the transition fires on the first page load,
 before the modal's `?modal-id=signup-modal` reload, so the referrer is still the
 page that linked there rather than `/all-starters` itself.
 
-Leaving both out of the URL parameters is what stops a `?signup_source=` or
+Leaving both path cookies out of the URL parameters is what stops a `?signup_source=` or
 `?signup_referrer=` in the address bar dictating a field that is meant to report
-what really happened. Homepage values store `/`, and `/Starters/John-Doe/` stores
-`/starters/john-doe`.
+what really happened. Homepage values store `/home`, and `/Starters/John-Doe/` stores
+`/starters/john-doe`. `signup_trigger` is also absent from the URL parameters: it
+is derived from the CTA that opened signup, not from the address bar.
 
 `signup_source` always overwrites its cookie, because reaching the transition on
 an armed page is a signup and so always carries a real path. `signup_referrer`
@@ -625,9 +628,10 @@ the cookie name with underscores replaced by hyphens:
 `event_id` -> `event-id`
 `signup_source` -> `signup-source`
 `signup_referrer` -> `signup-referrer`
+`signup_trigger` -> `signup-trigger`
 
-All ten field IDs are verified to exist in the Memberstack app config. Do not
-rename any of them, or add an eleventh, without changing the app config first:
+All eleven field IDs are verified to exist in the Memberstack app config. Do not
+rename any of them, or add a twelfth, without changing the app config first:
 Memberstack silently drops a write to a field it does not know, so a wrong ID
 costs that one value while the rest of the write still lands, with no error
 anywhere. Check any ID against the live config with:
@@ -636,16 +640,42 @@ anywhere. Check any ID against the live config with:
 curl -s https://client.memberstack.com/app -H 'X-APP-ID: app_clc2a0dyo00kf0uldcm11fl0q'
 ```
 
-The ten do not all behave the same way on the member. Eight of them are
+The eleven do not all behave the same way on the member. Eight of them are
 last-touch: a fresh ad click is supposed to update them, and every signup rewrites
-them from the current cookies. `signup-source` and `signup-referrer` are
-write-once. Once a member holds a non-empty value in either, no write from either
-script may replace it, because "where did this member come from" stops being true
-the moment something overwrites it. The two are guarded as a set because they are
-facts about one signup, fixed at one moment: guarding one and not the other would
-read as a deliberate distinction that does not exist. Each is still judged on its
-own, so a member who has a source but no referrer keeps the source and gets the
-referrer filled in.
+them from the current cookies. `signup-source`, `signup-referrer`, and
+`signup-trigger` are write-once. Once a member holds a non-empty value in any of
+them, no write from either script may replace it, because "where did this member
+come from" (and which CTA opened signup) stops being true the moment something
+overwrites it. The three are guarded as a set because they are facts about one
+signup, fixed at one moment: guarding a subset would read as a deliberate
+distinction that does not exist. Each is still judged on its own, so a member who
+has a source but no referrer keeps the source and gets the referrer filled in.
+
+### Signup Trigger CTAs
+
+On `/hire/<slug>`, tag the logged-out Hire, Message, Book Call, and service
+controls so a click stamps `signup_trigger` and opens the signup modal
+(`data-modal-target="signup-modal"`). Create the Memberstack `signup-trigger`
+field before shipping a release that writes it.
+
+```html
+<button data-signup-trigger-element="hire">Hire</button>
+<button data-signup-trigger-element="message">Message</button>
+<button data-signup-trigger-element="book-call">Book Call</button>
+<button
+  data-signup-trigger-element="service"
+  data-signup-trigger-value="brand-strategy">
+  Brand strategy
+</button>
+```
+
+Allowed `data-signup-trigger-element` values: `hire`, `message`, `book-call`,
+`service`. Optional `data-signup-trigger-value` overrides the stored string for
+the three CTAs; for `service` it is required and stores `service:<detail>`.
+Unknown elements and incomplete service tags write nothing (staging warning).
+Logged-in clicks are ignored so Hire/Message/Book keep their member flows.
+Last tagged click wins until signup (72h cookie). The hire template also needs
+`form[data-ms-form="signup"]` in that dialog, same contract as `/all-starters`.
 
 The guard exists because neither script can actually see a signup. What they see
 is a logged-out to logged-in transition on a page that has a signup form, and a
@@ -658,7 +688,7 @@ a fresh `signup_referrer`, they land on `/quiz-results`, and `quiz-results.js`
 writes both over their real values. Both writers hold the guard, not just the
 direct-save path.
 
-The guard strips only those two keys from the outgoing payload and leaves the rest
+The guard strips only those three keys from the outgoing payload and leaves the rest
 of the write intact, so a login on such a page still refreshes the eight click
 fields exactly as it does today. Empty, whitespace-only and absent existing values
 all count as unfilled and are written over.
@@ -746,8 +776,10 @@ it for a caller that injects a signup form later, the same shape as
 the watch is armed and is a no-op once it is, because a second `onAuthChange` listener
 would fire `CompleteRegistration` twice.
 
-The script binds no form or submit listeners of any kind. It reads the DOM to decide
-whether to watch, and nothing more.
+The script binds a capture-phase `click` listener for Signup Trigger
+(`data-signup-trigger-element`). It does not bind form or submit listeners. It
+reads the DOM to decide whether to watch, and stamps a trigger only when a
+confirmed logged-out visitor clicks a tagged CTA (opening the signup modal).
 
 ### CompleteRegistration
 
@@ -925,7 +957,7 @@ Who gets through:
 
 | viewer | outcome |
 | --- | --- |
-| logged out | `/quiz` — the signup funnel; the chat intent is intentionally dropped, there is no login round trip back to the modal |
+| logged out | hire-page signup modal (`data-modal-target="signup-modal"`). Chat intent is dropped in v1; the visitor is not sent to `/quiz` |
 | free Brand | `messages-profile-upgrade` when set, else route-guard's `brandFreeHome`: `/quiz-results` once the Memberstack `starter-quiz` field records completion, `/quiz` until then |
 | talent | trigger hidden; modal closes if opened anyway |
 | viewer is this starter | trigger hidden; modal closes if opened anyway |
