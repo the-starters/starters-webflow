@@ -2092,11 +2092,12 @@ Deliberately NOT ported from the legacy inline writer:
 - the `dev-speed-test` localStorage payload override;
 - the `availability-popup-shown` auto-open behavior (the init module owns
   initial visibility);
-- the bookings list machinery — the writer delegates to the page embed's
-  `window.generateBookingsList` / bookings-aware `window.clearGrantData` when
-  present, and otherwise falls back to a minimal authenticated grant clear
-  (`starter/clear_calendar_data/v3` + configuration deletes through `/v3` +
-  `grants/delete/v3`).
+- the bookings list machinery — the writer delegates list rendering to the page
+  embed's `window.generateBookingsList` when present. Disconnects and manager
+  switches never delegate to `window.clearGrantData`: the authenticated
+  `grants/delete/v3` composite route is the single clear owner, blocks while an
+  active booking exists, deletes the provider grant first, and only then clears
+  configurations and canonical scheduling state.
 - One deliberate behavior fix: a failed configuration update no longer falls
   through to the `success` step (legacy phantom-success bug).
 
@@ -2113,8 +2114,9 @@ call).
 
 All other writer reads and writes now use their reviewed `/v3` routes:
 `starter/get_by_memberstack`, `starter/set_timezone`,
-`starter/clear_calendar_data`, `nylas_configurations/get_all`, configuration
-create/update/delete, virtual-account/calendar creation, and grant deletion.
+`starter/update_availability`, `nylas_configurations/get_all`, configuration
+create/update, virtual-account/calendar creation, and the composite
+`grants/delete` operation described above.
 On the approved production dashboard, bootstrap remains read-only: a missing
 row timezone is persisted through `starter/set_timezone/v3` only when the
 member submits an availability or calendar action. A member-scoped cached

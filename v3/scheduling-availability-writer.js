@@ -15,8 +15,9 @@
   // - the unscoped `starter-availability` localStorage key (replaced by the
   //   init module's member-scoped cache);
   // - the `dev-speed-test` localStorage payload override;
-  // - the bookings list machinery (delegated to the page's bookings embed
-  //   via guarded window.generateBookingsList / window.clearGrantData).
+  // - the bookings list machinery (rendering is delegated to the page's
+  //   bookings embed via guarded window.generateBookingsList). Disconnects
+  //   stay owned by the authenticated grants/delete/v3 composite route.
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
