@@ -316,8 +316,11 @@ missing, or invalid count or average produces no review text, with no fallback
 to legacy review strings. For each Starter, the browser also sends
 `reviews_display` as the allowlisted value `table-cell` when that review text
 exists, or `none` otherwise, so Mailchimp removes the entire empty review cell.
-Recommendations cached before these review fields were added refresh before
-enrollment without changing the quiz revision. When no Learn record is
+Each Starter image comes from Algolia's canonical `profile-photo` field and
+maps to the matching `starter_1_image_url`, `starter_2_image_url`, or
+`starter_3_image_url` property; legacy photo-field aliases remain compatibility
+fallbacks. Recommendations cached before these review fields were added refresh
+before enrollment without changing the quiz revision. When no Learn record is
 available, it sends the safe `/learn` fallback instead of leaving the email
 empty.
 The Memberstack session exchange accepts every response shape used by the
