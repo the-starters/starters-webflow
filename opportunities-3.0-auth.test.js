@@ -2070,10 +2070,12 @@ test('completed Brand project cards hide the authored request-era Decline action
   const declineWrap = el('div', { class: 'button_main-wrap' }, [decline, declineLabel])
   const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
   const reviewWrap = el('div', { class: 'button_main-wrap' }, [review])
+  const message = el('a', { href: '/messages?project=708' })
+  const messageWrap = el('div', { class: 'button_main-wrap' }, [message])
   const card = el(
     'div',
     { class: 'project_item', 'data-wf-xano-id': '708' },
-    [declineWrap, reviewWrap],
+    [declineWrap, reviewWrap, messageWrap],
   )
   const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
 
@@ -2109,6 +2111,9 @@ test('completed Brand project cards hide the authored request-era Decline action
   assert.equal(decline.getAttribute('data-project-action'), 'end')
   assert.equal(declineWrap.style.display, 'none')
   assert.equal(reviewWrap.style.display, '')
+  assert.equal(message.getAttribute('href'), '/messages?project=708')
+  assert.equal(message.getAttribute('data-project-action'), null)
+  assert.equal(messageWrap.style.display, undefined)
 })
 
 test('Starter project cards keep completed contracts off the signing-session route', async () => {
