@@ -77,6 +77,16 @@ Do not add the last loader until both V3 endpoints exist and pass backend tests.
 After release, install it on the reusable V3 **Start a Project** component so
 the existing Navbar action opens the same modal wherever that component renders.
 
+## Backend release evidence
+
+Frontend unit tests and mocked route tests do not prove canonical Xano writes or
+PandaDoc outbox behavior. Before installing the loader, run a separately approved,
+bounded backend canary and read back the canonical records. The evidence must show
+one project and one `project.created` event for each submission, exactly one
+PandaDoc outbox job for a Standard Contract, and no PandaDoc outbox job for an Own
+Contract. Stop at the first mismatch and do not treat prior frontend evidence as
+backend acceptance.
+
 ## User states
 
 - No eligible Brand: **You can start a project after a Brand messages you.**
