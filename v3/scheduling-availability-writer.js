@@ -41,6 +41,15 @@
   const isApprovedProductionPath =
     PRODUCTION_HOSTS.has(window.location.hostname) && activePath === PRODUCTION_PATH
   if (!isStagingHost && !isApprovedProductionPath) return
+  // The staging-host gate above has no path restriction, so on
+  // the-starters-3-0.webflow.io this writer would otherwise self-activate on
+  // /starter-dashboard too — the same page as the new non-modal
+  // "Dashboard / Calendar" section (scheduling-availability-section.js).
+  // Both scripts would then race to capture and redeem the same one-time
+  // Nylas OAuth ?code&state. Defer to the section script wherever its root
+  // exists; this writer stays fully functional on --availability-stage,
+  // which never carries that markup.
+  if (document.querySelector('[data-availability-element="section"]')) return
   if (window.__tsSchedulingAvailabilityWriter) return
   window.__tsSchedulingAvailabilityWriter = true
 
