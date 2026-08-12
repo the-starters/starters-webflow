@@ -161,7 +161,7 @@ function load(options = {}) {
   Object.values(form.fields).forEach((element) => { element.eventDocument = document })
   const window = {
     document: options.noDocument ? null : document,
-    crypto: { randomUUID: () => 'proposal-key-123' },
+    crypto: { randomUUID: () => 'project-key-123' },
     Event: class Event {
       constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles) }
     },
@@ -173,7 +173,7 @@ function load(options = {}) {
     StartersProjectFormV3: {
       serialize: () => ({ payload: { ...serializedPayload } }),
       commercialValidationError: options.validationError || (() => ''),
-      createIdempotencyKey: () => 'proposal-key-123',
+      createIdempotencyKey: () => 'project-key-123',
       fillCurrentDates: options.fillCurrentDates,
     },
     Opp30: { API: {
@@ -183,7 +183,7 @@ function load(options = {}) {
       }),
       projectSubmit: options.projectSubmit || (async (payload) => {
         calls.submit.push(payload)
-        return { proposal: { id: 81, status: 'awaiting_brand_approval' }, replayed: false }
+        return { project: { id: 81, lifecycle_state: 'contract_create_pending' }, replayed: false }
       }),
     } },
   }
@@ -398,7 +398,7 @@ test('reopening during an options request supersedes its stale response', async 
   assert.equal(loaded.form.fields.select.options.length, 2)
 })
 
-test('submission creates a proposal event and never reports a created project', async () => {
+test('submission reports the canonical project and contract-first success state', async () => {
   const loaded = load({
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
@@ -407,15 +407,37 @@ test('submission creates a proposal event and never reports a created project', 
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.equal(loaded.calls.submit.length, 1)
   assert.equal(loaded.calls.submit[0].brand_id, 31)
-  assert.equal(loaded.calls.submit[0].idempotency_key, 'proposal-key-123')
+  assert.equal(loaded.calls.submit[0].idempotency_key, 'project-key-123')
   assert.equal(Object.prototype.hasOwnProperty.call(loaded.calls.submit[0], 'connection_type'), false)
-  assert.equal(loaded.events[0].type, 'starters:project-proposal-created')
-  assert.equal(loaded.events[0].detail.proposal_id, 81)
-  assert.equal(loaded.tracks[0].name, 'project_proposal_submitted')
+  assert.equal(loaded.events[0].type, 'starters:project-created')
+  assert.equal(loaded.events[0].detail.project_id, 81)
+  assert.equal(loaded.tracks[0].name, 'project_created')
   assert.deepEqual(loaded.wrapper.success.successTitles.map((title) => title.textContent), [
-    'Project request sent',
-    'Project request sent',
+    'Project successfully created',
+    'Project successfully created',
   ])
+  assert.equal(
+    loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
+    'Your contract is being prepared. You and the Brand can sign when it is ready.',
+  )
+})
+
+test('Own Contract submission reports immediate activation', async () => {
+  let loaded
+  loaded = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+    projectSubmit: async (payload) => {
+      loaded.calls.submit.push(payload)
+      return { project: { id: 82, lifecycle_state: 'active' }, replayed: false }
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(
+    loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
+    'Your project is now active.',
+  )
 })
 
 test('opening the modal after success restores the form and hides success state', async () => {
@@ -455,7 +477,7 @@ test('reopening during submission cannot let an options refresh replace success'
   assert.equal(loaded.calls.options.length, 1)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'submitting')
 
-  resolveSubmit({ proposal: { id: 92, status: 'awaiting_brand_approval' }, replayed: false })
+  resolveSubmit({ project: { id: 92, lifecycle_state: 'contract_create_pending' }, replayed: false })
   assert.equal(await submission, true)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'success')
 
@@ -508,7 +530,7 @@ test('failed retry keeps the same idempotency key', async () => {
       submitted.push({ ...payload })
       attempt += 1
       if (attempt === 1) throw Object.assign(new Error('temporary'), { status: 503 })
-      return { proposal: { id: 91 }, replayed: true }
+      return { project: { id: 91, lifecycle_state: 'contract_create_pending' }, replayed: true }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
