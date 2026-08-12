@@ -71,7 +71,7 @@ class Element {
   }
   reset() { this.resetCount += 1 }
   matches(selector) {
-    if (selector === '#Select-Brand') return this.attrs.id === 'Select-Brand'
+    if (selector === '#Brand') return this.attrs.id === 'Brand'
     return false
   }
   closest(selector) {
@@ -90,7 +90,7 @@ class Element {
       }
       return null
     }
-    if (selector === '#Select-Brand') return this.fields && this.fields.select
+    if (selector === '#Brand') return this.fields && this.fields.select
     if (selector === '#brand-contract') return this.fields && this.fields.brandId
     if (selector === '#hiring-manager-name') return this.fields && this.fields.manager
     if (selector === '#brand-company-name') return this.fields && this.fields.company
@@ -113,7 +113,7 @@ class Element {
 function formFixture() {
   const form = new Element()
   const wrapper = new Element()
-  const select = new Element({ id: 'Select-Brand', tagName: 'select' })
+  const select = new Element({ id: 'Brand', name: 'Brand', tagName: 'select' })
   const placeholder = new Element({ value: '', textContent: 'Choose a Brand', tagName: 'option' })
   select.ownerDocument = { createElement: (tagName) => new Element({ tagName }) }
   select.appendChild(placeholder)
@@ -432,6 +432,37 @@ test('opening the modal after success restores the form and hides success state'
   assert.equal(loaded.form.style.display, '')
   assert.equal(loaded.wrapper.success.hidden, true)
   assert.equal(loaded.wrapper.success.style.display, 'none')
+  assert.equal(loaded.form.resetCount, 1)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
+})
+
+test('reopening during submission cannot let an options refresh replace success', async () => {
+  let resolveSubmit
+  const loaded = load({
+    counterparties: [{ counterparty_id: 63, company_name: 'Brand' }],
+    projectSubmit: (payload) => {
+      loaded.calls.submit.push(payload)
+      return new Promise((resolve) => { resolveSubmit = resolve })
+    },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  const submission = loaded.api.submit(loaded.form, loaded.window, loaded.document)
+  await Promise.resolve()
+
+  loaded.document.listeners.click({
+    target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
+  })
+  assert.equal(loaded.calls.options.length, 1)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'submitting')
+
+  resolveSubmit({ proposal: { id: 92, status: 'awaiting_brand_approval' }, replayed: false })
+  assert.equal(await submission, true)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'success')
+
+  loaded.document.listeners.click({
+    target: { closest: (selector) => selector === '[data-modal-trigger="start-project"]' ? {} : null },
+  })
+  await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(loaded.form.resetCount, 1)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
 })

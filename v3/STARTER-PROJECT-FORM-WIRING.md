@@ -8,7 +8,7 @@ Airtable, Make, or a legacy TalkJS table.
 ## Phase 1 scope
 
 - Reuse `dialog[data-modal-target="start-project"]` and its existing native form.
-- Use the Designer-authored native Brand select `select#Select-Brand`.
+- Use the Designer-authored native Brand select `select#Brand[name="Brand"]`.
 - Keep `#Project-Name` and the existing commercial fields.
 - Do not add or send Connection Type.
 - Do not show opportunity choices or prefill Project Scope yet.
@@ -46,7 +46,7 @@ The controller binds these existing elements:
 
 - modal: `dialog[data-modal-target="start-project"]`;
 - form: the native form inside that dialog;
-- Brand select: `select#Select-Brand`, labeled **Select a Brand**, with one
+- Brand select: `select#Brand[name="Brand"]`, labeled **Select a Brand**, with one
   authored empty placeholder option labeled **Choose a Brand**;
 - stable selected Brand ID: `#brand-contract`;
 - Brand display fields: `#brand-company-name` and `#hiring-manager-name`;

@@ -14,7 +14,7 @@
 
   var FORM_SELECTOR = 'dialog[data-modal-target="start-project"] form'
   var TRIGGER_SELECTOR = '[data-modal-trigger="start-project"]'
-  var BRAND_SELECT_SELECTOR = '#Select-Brand'
+  var BRAND_SELECT_SELECTOR = '#Brand'
   var BRAND_ID_SELECTOR = '#brand-contract'
   var MANAGER_NAME_SELECTOR = '#hiring-manager-name'
   var COMPANY_NAME_SELECTOR = '#brand-company-name'
@@ -233,6 +233,7 @@
 
   function loadOptions(form, globalObject, forceRefresh) {
     var current = formState(form)
+    if (current.submitRequest) return Promise.resolve(current.options)
     if (forceRefresh) invalidateOptions(form)
     if (current.optionsRequest && !forceRefresh) return current.optionsRequest
     if (current.optionsLoaded) return Promise.resolve(current.options)
