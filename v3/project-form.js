@@ -1183,9 +1183,8 @@
     return { payload: payload }
   }
 
-  function validationError(serialized) {
+  function commercialValidationError(serialized) {
     var payload = serialized.payload
-    if (!clean(payload.starter_memberstack_id)) return 'The selected Starter could not be identified. Reload and try again.'
     if (!payload.engagement_type) return 'Choose a supported fee structure.'
     if (!payload.contract_type) return 'Choose a contract type.'
     if (payload.contract_type === 'standard' && !payload.invoice_frequency) return 'Choose an invoice frequency.'
@@ -1207,6 +1206,12 @@
       return 'Paid upfront must be between 0% and 100%.'
     }
     return ''
+  }
+
+  function validationError(serialized) {
+    var payload = serialized.payload
+    if (!clean(payload.starter_memberstack_id)) return 'The selected Starter could not be identified. Reload and try again.'
+    return commercialValidationError(serialized)
   }
 
   function state(form) {
@@ -1580,6 +1585,7 @@
     lastDiagnostic: function () { return lastDiagnostic(global) },
     copyLastDiagnostic: function () { return copyLastDiagnostic(global) },
     serialize: serialize,
+    commercialValidationError: commercialValidationError,
     validationError: validationError,
     bindTrigger: bindTrigger,
     submit: submit,
