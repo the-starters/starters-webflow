@@ -12,7 +12,7 @@ Scope: user-facing forms that create or change an account, profile, opportunity,
 | Starter Onboarding | Xano | GitHub: `patch-onboarding-status.js` | PR #401 | No mutation writer should remain inline |
 | Brand Quiz and Quiz Results | Memberstack + Xano lead-drip bridge | GitHub: `quiz-main/quiz-main.js`, `quiz-results.js` | Shared receipt pending | No page-specific mutation writer found |
 | Talent Application steps 1–2 | Xano | GitHub: `talent-application.js`; UI replacement in PR #400 | PR #399 | 23 KB UI block remains live until PR #400 release and Webflow replacement |
-| Starter Edit Profile | Xano | GitHub: `starter-edit-profile.js` plus mixed inline UI/CRUD | PR #399 | Large portfolio/company/profile blocks remain inline; excluded field coupling must not be changed |
+| Starter Edit Profile | Xano | GitHub: `starter-edit-profile.js`; scoped inline replacement assets in `v3/starter-edit-profile/` | PR #399 | Six self-contained blocks are ready for exact loader replacement; the final submit and excluded field coupling remain inline |
 | Opportunity create/edit/close/reopen | Xano | GitHub: `opportunities---create.js`, `opportunities-3.0.js` | PR #399 | No authoritative writer should remain inline |
 | Application submit/edit/withdraw/archive/restore | Xano | GitHub: `opportunities-3.0.js` | PR #399 | No authoritative writer should remain inline |
 | Start Project / Contract Generation | Xano + PandaDoc outbox | GitHub: `v3/project-form.js` | Live in v1.59.190 | No authoritative writer should remain inline |
