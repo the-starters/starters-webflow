@@ -73,7 +73,7 @@ the existing Navbar action opens the same modal wherever that component renders.
 ## User states
 
 - No eligible Brand: **You can start a project after a Brand messages you.**
-- Successful submit: **Project request sent. The Brand must approve it before the contract is created.**
+- Successful submit: **Project request sent. The Brand can review and accept your project request.**
 - Stale relationship: ask the Starter to refresh the available Brands and retry.
 
 The success event is `starters:project-proposal-created`. The controller never

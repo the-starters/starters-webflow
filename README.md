@@ -116,6 +116,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
 - `v3/project-form.js` — authenticated V3 direct-hire adapter for the Designer-owned Contract Generation form on `/hire/<slug>`; also owns the Memberstack hiring-manager prefill, CMS `data-sp-fill` attribute presets, and `data-set-current-date` initialization that the page's Code Embeds used to provide; see [`v3/PROJECT-FORM-WIRING.md`](v3/PROJECT-FORM-WIRING.md) for the field, prefill, state, and release contract
+- `v3/starter-project-form.js` — V3 Starter Dashboard adapter for the existing Start a Project modal; loads authorized Brands and submits an idempotent proposal without creating a project or downstream work; see [`v3/STARTER-PROJECT-FORM-WIRING.md`](v3/STARTER-PROJECT-FORM-WIRING.md) for the authoritative scope, endpoint, Designer, and release contract
 - `opportunities---create.js` — dedicated `/opportunities---create` controller; binds the same `[data-opp-form="create"]` contract through the shared Opportunities 3.0 core
 - `starters-list/apply-button-disable.js`
 - `starters-list/range-backfill.js`

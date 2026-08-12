@@ -965,6 +965,16 @@ Run its focused test with:
 node --test v3/project-form.test.js
 ```
 
+## Starter project proposal form
+
+`starter-project-form.js` binds the existing V3 Starter Dashboard **Start a
+Project** modal. It reuses `project-form.js` for the shared commercial fields,
+loads only V3-authorized Brands, and submits an idempotent
+`awaiting_brand_approval` proposal without creating a project or downstream
+work. The authoritative scope, endpoint, Designer, user-state, and release
+contract lives in
+[STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md).
+
 ## All Starters favorites
 
 `all-starters-favorites.js` decorates Starter favourite controls and binds the
