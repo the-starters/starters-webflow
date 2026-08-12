@@ -105,9 +105,9 @@
 
   function diagnosticComplete(form, fields) {
     var api = diagnostics()
-    if (!api) return null
-    var receipt = api.record(api.complete(form && form.__startersDiagnostic, fields || {}))
-    if (form) form.__startersDiagnostic = receipt
+    if (!api || !form || !form.__startersDiagnostic) return null
+    var receipt = api.record(api.complete(form.__startersDiagnostic, fields || {}))
+    form.__startersDiagnostic = receipt
     return receipt
   }
 

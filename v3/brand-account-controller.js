@@ -178,12 +178,12 @@
 
   function diagnosticComplete(form, fields) {
     var api = window.StartersWorkflowDiagnostics
-    if (!api) return null
+    if (!api || !form || !form.__startersAccountDiagnostic) return null
     fields = Object.assign({}, fields || {}, {
       request_started: Boolean(form && form.__startersAccountDiagnosticRequestStarted),
     })
-    var receipt = api.record(api.complete(form && form.__startersAccountDiagnostic, fields))
-    if (form) form.__startersAccountDiagnostic = receipt
+    var receipt = api.record(api.complete(form.__startersAccountDiagnostic, fields))
+    form.__startersAccountDiagnostic = receipt
     return receipt
   }
 

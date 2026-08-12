@@ -434,8 +434,9 @@
   }
 
   async function call(path, { method = 'POST', body } = {}) {
-    if (DIAGNOSTIC_CALLS[path]) await workflowDiagnosticsReady
     const generation = _memberScopeGeneration
+    if (DIAGNOSTIC_CALLS[path]) await workflowDiagnosticsReady
+    assertMemberScopeGeneration(generation)
     const diagnostic = beginCallDiagnostic(path)
     const startedAt = Date.now()
     let requestStarted = false

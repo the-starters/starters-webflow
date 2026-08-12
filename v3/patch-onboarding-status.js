@@ -155,12 +155,12 @@
 
   function diagnosticComplete(wrapper, fields) {
     var api = window.StartersWorkflowDiagnostics
-    if (!api) return null
+    if (!api || !wrapper || !wrapper.__startersOnboardingDiagnostic) return null
     var receipt = api.record(api.complete(
-      wrapper && wrapper.__startersOnboardingDiagnostic,
+      wrapper.__startersOnboardingDiagnostic,
       fields || {},
     ))
-    if (wrapper) wrapper.__startersOnboardingDiagnostic = receipt
+    wrapper.__startersOnboardingDiagnostic = receipt
     return receipt
   }
 

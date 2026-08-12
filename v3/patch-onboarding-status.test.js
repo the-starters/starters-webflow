@@ -21,6 +21,12 @@ function flush() {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 /**
  * A deterministic clock driving both `Date.now()` and the module's timers, so
  * the 8s request/Memberstack budgets and the 1s/3s PATCH backoff are testable
@@ -220,6 +226,7 @@ function loadModule(options = {}) {
     }
 
     if (url === PATCH_URL) {
+      if (options.patchResponse) return options.patchResponse
       const outcome = patchOutcomes.length ? patchOutcomes.shift() : 'ok'
       if (outcome === 'reject') throw new Error('patch network failure')
       if (outcome === 'fail') return jsonResponse(null, { ok: false, status: 500 })
@@ -326,6 +333,7 @@ function loadModule(options = {}) {
     api: window.StartersPatchOnboardingStatus,
     aborted,
     clock,
+    context,
     document,
     fetchCalls,
     loader,
@@ -486,6 +494,28 @@ test('a stalled shared diagnostics loader fails open to onboarding PATCH and red
 
   assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
   assert.equal(location.replaced, DASHBOARD)
+})
+
+test('a helper loaded after diagnostics timeout does not fabricate a receipt', async () => {
+  const patchReady = deferred()
+  const fixture = formWrapper()
+  const environment = loadModule({
+    wrappers: [fixture],
+    diagnosticsReady: Promise.resolve(null),
+    patchResponse: patchReady.promise,
+  })
+  await flush()
+
+  fixture.succeed()
+  await flush()
+  vm.runInContext(diagnosticSource, environment.context)
+  patchReady.resolve(jsonResponse({ onboarding_done: true }))
+  await flush()
+  await flush()
+
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast, undefined)
+  assert.equal(fixture.wrapper.__startersOnboardingDiagnostic, undefined)
+  assert.equal(environment.location.replaced, DASHBOARD)
 })
 
 test('a wrapper that cannot be styled does not block the PATCH or the redirect', async () => {

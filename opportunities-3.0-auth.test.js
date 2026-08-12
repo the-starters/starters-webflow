@@ -3935,6 +3935,23 @@ test('auth switch during token acquisition does not retry under the new member',
   assert.equal(requests.length, 1)
 })
 
+test('auth switch while diagnostics load rejects before token acquisition', async () => {
+  const diagnosticsReady = deferred()
+  const requests = []
+  const bridge = await loadBridge(async (url, options) => {
+    requests.push({ url, options })
+    return response({ authToken: 'xano-b' })
+  }, { workflowDiagnosticsReady: diagnosticsReady.promise })
+  bridge.authChange({ id: 'member-a' })
+
+  const request = bridge.API.brandOppCreate({ title: 'A request' })
+  bridge.authChange({ id: 'member-b' })
+  diagnosticsReady.resolve(null)
+
+  await assert.rejects(request, { code: 'MEMBER_SCOPE_CHANGED' })
+  assert.equal(requests.length, 0)
+})
+
 test('auth switch rejects an in-flight response before it can resolve or track', async () => {
   const apiResponse = deferred()
   const requests = []

@@ -16,6 +16,12 @@ function flush() {
   return new Promise((resolve) => setImmediate(resolve))
 }
 
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 function plain(value) {
   return JSON.parse(JSON.stringify(value))
 }
@@ -478,6 +484,24 @@ test('a stalled shared diagnostics loader fails open before Build Account reques
   await settle()
 
   assert.equal(environment.calls[0].method, 'getCurrentMember')
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
+})
+
+test('a helper loaded after diagnostics timeout does not fabricate a receipt', async () => {
+  const memberReady = deferred()
+  const environment = loadController({
+    diagnosticsReady: Promise.resolve(null),
+    getCurrentMember: () => memberReady.promise,
+  })
+
+  environment.buildForm.submitEvent()
+  await flush()
+  vm.runInContext(diagnosticSource, environment.context)
+  memberReady.resolve({ data: environment.member })
+  await settle()
+
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast, undefined)
+  assert.equal(environment.buildForm.__startersAccountDiagnostic, undefined)
   assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 

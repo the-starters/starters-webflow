@@ -7,6 +7,12 @@ const { setImmediate: tick } = require('node:timers/promises')
 const source = fs.readFileSync(require.resolve('./talent-application.js'), 'utf8')
 const diagnosticSource = fs.readFileSync(require.resolve('../utils/workflow-diagnostics.js'), 'utf8')
 
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 function makeField({ valid = true, visible = true, willValidate = true } = {}) {
   return {
     willValidate,
@@ -298,6 +304,29 @@ test('a stalled shared diagnostics loader fails open before application creation
   await tick()
 
   assert.equal(calls.length, 1)
+})
+
+test('a helper loaded after diagnostics timeout does not fabricate a receipt', async () => {
+  const responseReady = deferred()
+  const diagnosticsReady = Promise.resolve(null)
+  const environment = load({
+    fetchImpl: () => responseReady.promise,
+    workflowDiagnostics: false,
+    workflowDiagnosticsReady: diagnosticsReady,
+  })
+  const form = makeForm(FULL_ENTRIES)
+
+  environment.listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+  await tick()
+  vm.runInContext(diagnosticSource, environment.context)
+  responseReady.resolve({ ok: true, status: 201, json: async () => ({ id: 711 }) })
+  await tick()
+  await tick()
+  await tick()
+
+  assert.equal(environment.context.window.__startersWorkflowDiagnosticLast, undefined)
+  assert.equal(form.__startersDiagnostic, undefined)
+  assert.deepEqual(environment.assigned, ['/freelancer-application/step-2'])
 })
 
 test('visible validation failure records no request and gives a copyable id', () => {
