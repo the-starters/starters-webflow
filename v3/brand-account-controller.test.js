@@ -258,7 +258,7 @@ function loadController(options = {}) {
     // itself what throws in Safari private mode, so the controller's try/catch
     // has to cover the lookup and not just the write.
     sessionStorage: options.sessionStorageMissing ? undefined : sessionStorage,
-    $memberstackDom: memberstack,
+    $memberstackDom: options.memberstackMissing ? undefined : memberstack,
     StartersBrandAccountConfig: options.config || {},
     StartersV3RouteGuard: options.routeGuard,
     StartersTrack: {
@@ -272,6 +272,7 @@ function loadController(options = {}) {
     },
     clearTimeout() {},
   }
+  if (options.diagnosticsReady) window.__startersWorkflowDiagnosticsReady = options.diagnosticsReady
   const document = {
     readyState: 'complete',
     querySelector(selector) {
@@ -436,6 +437,30 @@ test('Build Account validation receipt truthfully records that no request starte
   assert.equal(receipt.request_started, false)
   assert.equal(environment.calls.length, 0)
   assert.match(buildForm.wrapper.failText.textContent, /Diagnostic ID: WFD-/)
+})
+
+test('Build Account setup failure records that no Memberstack request started', async () => {
+  const buildForm = makeForm('build')
+  const environment = loadController({ buildForm, diagnostics: true, memberstackMissing: true })
+
+  buildForm.submitEvent()
+  await settle()
+
+  assert.equal(buildForm.__startersAccountDiagnostic.result, 'failed')
+  assert.equal(buildForm.__startersAccountDiagnostic.request_started, false)
+  assert.equal(environment.calls.length, 0)
+})
+
+test('a stalled shared diagnostics loader fails open before Build Account requests', async () => {
+  const environment = loadController({
+    diagnosticsReady: new Promise(() => {}),
+  })
+
+  environment.buildForm.submitEvent()
+  await settle()
+
+  assert.equal(environment.calls[0].method, 'getCurrentMember')
+  assert.deepEqual(environment.redirects, ['/brand-dashboard'])
 })
 
 // --- The redirect busy latch --------------------------------------------------

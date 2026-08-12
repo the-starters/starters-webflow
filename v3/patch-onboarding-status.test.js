@@ -265,6 +265,7 @@ function loadModule(options = {}) {
       }
     },
   }
+  if (options.diagnosticsReady) window.__startersWorkflowDiagnosticsReady = options.diagnosticsReady
   if (options.debug) window.STARTERS_DEBUG = true
 
   if (!options.memberstackMissing) {
@@ -468,6 +469,23 @@ test('a missing loader is a silent no-op that still patches and redirects', asyn
   assert.equal(location.replaced, DASHBOARD)
   assert.equal(logs.warn.length, 0, 'an unbuilt Designer element is not a fault')
   assert.ok(logs.info.some((line) => line.includes(LOADER_SELECTOR)))
+})
+
+test('a stalled shared diagnostics loader fails open to onboarding PATCH and redirect', async () => {
+  const fixture = formWrapper()
+  const { clock, fetchCalls, location } = loadModule({
+    wrappers: [fixture],
+    diagnosticsReady: new Promise(() => {}),
+  })
+  await flush()
+
+  fixture.succeed()
+  await clock.advance(1999)
+  assert.equal(fetchCalls.length, 0)
+  await clock.advance(1)
+
+  assert.equal(callsTo(fetchCalls, PATCH_URL).length, 1)
+  assert.equal(location.replaced, DASHBOARD)
 })
 
 test('a wrapper that cannot be styled does not block the PATCH or the redirect', async () => {
@@ -710,7 +728,7 @@ test('a logged-out onboarding completion leaves a visible copyable failure recei
   assert.equal(fetchCalls.length, 0)
   assert.equal(receipt.result, 'failed')
   assert.equal(receipt.error_code, 'MEMBER_LOGGED_OUT')
-  assert.equal(receipt.request_started, false)
+  assert.equal(receipt.request_started, true)
   assert.match(fixture.done.textContent, /could not confirm your member session/i)
   assert.match(fixture.done.textContent, /Diagnostic ID: WFD-/)
 })

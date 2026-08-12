@@ -12,6 +12,7 @@
 
   var SCHEMA = 'starters_workflow_diagnostic_v1'
   var STORAGE_PREFIX = 'starters.workflow.diagnostic.'
+  var STORAGE_LATEST_KEY = STORAGE_PREFIX + 'latest'
 
   function clean(value, limit) {
     return String(value == null ? '' : value).trim().slice(0, limit || 120)
@@ -155,6 +156,7 @@
     try {
       if (global.sessionStorage) {
         global.sessionStorage.setItem(STORAGE_PREFIX + receipt.workflow, JSON.stringify(receipt))
+        global.sessionStorage.setItem(STORAGE_LATEST_KEY, JSON.stringify(receipt))
       }
     } catch (_) {}
     try {
@@ -196,7 +198,20 @@
     if (key && global.__startersWorkflowDiagnostics && global.__startersWorkflowDiagnostics[key]) {
       return global.__startersWorkflowDiagnostics[key]
     }
-    return global.__startersWorkflowDiagnosticLast || null
+    if (!key && global.__startersWorkflowDiagnosticLast) return global.__startersWorkflowDiagnosticLast
+    try {
+      var stored = global.sessionStorage && global.sessionStorage.getItem(
+        key ? STORAGE_PREFIX + key : STORAGE_LATEST_KEY,
+      )
+      if (!stored) return key ? null : global.__startersWorkflowDiagnosticLast || null
+      var receipt = normalize(JSON.parse(stored))
+      global.__startersWorkflowDiagnosticLast = receipt
+      global.__startersWorkflowDiagnostics = global.__startersWorkflowDiagnostics || {}
+      global.__startersWorkflowDiagnostics[receipt.workflow] = receipt
+      return receipt
+    } catch (_) {
+      return key ? null : global.__startersWorkflowDiagnosticLast || null
+    }
   }
 
   function copy(receiptOrWorkflow) {
@@ -255,4 +270,5 @@
     errorCode: errorCode,
   }
   global.copyWorkflowDiagnostic = function (workflow) { return copy(workflow) }
+  latest()
 })(window)
