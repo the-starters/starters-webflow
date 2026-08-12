@@ -662,7 +662,7 @@ test('boots directly into connected state when the starter already has a grant/c
 /* Tests: per-item form toggle, action visibility, checkbox skin       */
 /* ------------------------------------------------------------------ */
 
-test('item-form-open toggles the item form open and closed via max-height', async () => {
+test('item-form-open toggles the item form open and closed via display', async () => {
   const { dom } = loadSection()
   await settle()
   const card = dom.list.children.find((el) => el.dataset.id === 'general')
@@ -670,13 +670,13 @@ test('item-form-open toggles the item form open and closed via max-height', asyn
   const formWrapper = card.children[2]
   const editBtn = buttonGroup.children[0]
 
-  assert.equal(formWrapper.style.maxHeight, '0') // closed by default after render
+  assert.equal(formWrapper.style.display, 'none') // closed by default after render
   editBtn.click()
-  assert.equal(formWrapper.style.maxHeight, 'unset')
+  assert.equal(formWrapper.style.display, 'block')
   editBtn.click()
-  assert.equal(formWrapper.style.maxHeight, '0')
+  assert.equal(formWrapper.style.display, 'none')
   editBtn.click()
-  assert.equal(formWrapper.style.maxHeight, 'unset')
+  assert.equal(formWrapper.style.display, 'block')
 })
 
 test('general item shows an edit button but hides remove; a created override item shows both', async () => {

@@ -1159,12 +1159,12 @@
 
   function closeItemForm(card) {
     const wrapper = qs(elSel('availability-form-wrapper'), card)
-    if (wrapper) wrapper.style.maxHeight = '0'
+    if (wrapper) wrapper.style.display = 'none'
   }
 
   function isItemFormOpen(card) {
     const wrapper = qs(elSel('availability-form-wrapper'), card)
-    return Boolean(wrapper) && wrapper.style.maxHeight === 'unset'
+    return Boolean(wrapper) && wrapper.style.display === 'block'
   }
 
   function populateItemForm(form, id) {
@@ -1204,7 +1204,7 @@
     form.setAttribute('data-availability-id', id)
     form.dataset.availabilityId = id
     populateItemForm(form, id)
-    wrapper.style.maxHeight = 'unset'
+    wrapper.style.display = 'block'
   }
 
   function toggleItemForm(card, id) {
