@@ -33,38 +33,21 @@
   var controllerScript = document.currentScript
   var pendingAuthForm = null
 
-  function observedFetch(url, method) {
-    var value = String(url || '')
-    try {
-      var parsed = new URL(value, window.location && window.location.href || undefined)
-      if (parsed.hostname !== 'x08a-5ko8-jj1r.n7c.xano.io') return null
-      value = parsed.pathname + parsed.search
-    } catch (error) {
-      return null
-    }
-    var upperMethod = String(method || 'GET').toUpperCase()
-    var rules = [
-      [/\/api:KZf7nFnk\/build_profile\/starter\/profile_image(?:\?|$)/, 'POST', 'profile_photo_xano_upload', 'talent_profile_photo'],
-      [/\/api:PmBJV0AG\/Create_portfolio(?:\?|$)/, 'POST', 'portfolio_record_create', 'talent_portfolio'],
-      [/\/api:PmBJV0AG\/Update_portfolio(?:\/|\?|$)/, 'PATCH', 'portfolio_record_update', 'talent_portfolio'],
-      [/\/api:PmBJV0AG\/Delete_portfolio(?:\/|\?|$)/, 'DELETE', 'portfolio_record_delete', 'talent_portfolio'],
-      [/\/api:PmBJV0AG\/upload-image(?:\?|$)/, 'POST', 'portfolio_image_upload', 'talent_portfolio_media'],
-      [/\/api:PmBJV0AG\/Add_portfolio_image(?:\?|$)/, 'POST', 'portfolio_image_attach', 'talent_portfolio_media'],
-      [/\/api:PmBJV0AG\/upload-video(?:\?|$)/, 'POST', 'portfolio_video_upload', 'talent_portfolio_media'],
-      [/\/api:PmBJV0AG\/Add_portfolio_video(?:\?|$)/, 'POST', 'portfolio_video_attach', 'talent_portfolio_media'],
-      [/\/api:PmBJV0AG\/Delete_portfolio_image(?:\/|\?|$)/, 'DELETE', 'portfolio_image_delete', 'talent_portfolio_media'],
-      [/\/api:PmBJV0AG\/Delete_portfolio_video(?:\/|\?|$)/, 'DELETE', 'portfolio_video_delete', 'talent_portfolio_media'],
-      [/\/api:SYL06lUR\/companies(?:\?|$)/, 'POST', 'company_experience_create', 'talent_company_experience'],
-      [/\/api:SYL06lUR\/companies\/[A-Za-z0-9_-]+(?:\?|$)/, 'PATCH', 'company_experience_update', 'talent_company_experience'],
-      [/\/api:SYL06lUR\/companies\/[A-Za-z0-9_-]+(?:\?|$)/, 'DELETE', 'company_experience_delete', 'talent_company_experience'],
-      [/\/api:KZf7nFnk\/starter\/set_also_worked_with(?:\?|$)/, 'POST', 'company_experience_associations', 'talent_company_experience'],
-    ]
-    for (var index = 0; index < rules.length; index += 1) {
-      if (rules[index][1] === upperMethod && rules[index][0].test(value)) {
-        return { workflow: rules[index][2], resourceType: rules[index][3] }
-      }
-    }
-    return null
+  var MUTATION_WORKFLOWS = {
+    profile_photo_xano_upload: 'talent_profile_photo',
+    portfolio_record_create: 'talent_portfolio',
+    portfolio_record_update: 'talent_portfolio',
+    portfolio_record_delete: 'talent_portfolio',
+    portfolio_image_upload: 'talent_portfolio_media',
+    portfolio_image_attach: 'talent_portfolio_media',
+    portfolio_video_upload: 'talent_portfolio_media',
+    portfolio_video_attach: 'talent_portfolio_media',
+    portfolio_image_delete: 'talent_portfolio_media',
+    portfolio_video_delete: 'talent_portfolio_media',
+    company_experience_create: 'talent_company_experience',
+    company_experience_update: 'talent_company_experience',
+    company_experience_delete: 'talent_company_experience',
+    company_experience_associations: 'talent_company_experience',
   }
 
   function observeFetchRequest(observation) {
@@ -104,19 +87,13 @@
     }
   }
 
-  function installFetchObserver() {
-    if (typeof window.fetch !== 'function' || window.fetch.__startersProfileDiagnostics) {
-      return false
-    }
-    var original = window.fetch
-    var wrapped = function (input, init) {
-      var method = init && init.method || input && input.method || 'GET'
-      var observation = observedFetch(input && input.url || input, method)
-      if (!observation) return original.apply(this, arguments)
-      var diagnostic = observeFetchRequest(observation)
-      var request
+  function observeMutation(workflow, request) {
+    var resourceType = MUTATION_WORKFLOWS[workflow]
+    if (!resourceType || typeof request !== 'function') return request()
+    var diagnostic = observeFetchRequest({ workflow: workflow, resourceType: resourceType })
+    var response
       try {
-        request = original.apply(this, arguments)
+        response = request()
       } catch (error) {
         diagnostic.complete({
           result: 'failure',
@@ -125,14 +102,14 @@
         })
         throw error
       }
-      return Promise.resolve(request).then(function (response) {
+      return Promise.resolve(response).then(function (result) {
         diagnostic.complete({
-          result: response && response.ok ? 'success' : 'failure',
+          result: result && result.ok ? 'success' : 'failure',
           stage: 'response',
-          error_code: response && response.ok ? '' : 'HTTP_ERROR',
-          http_status: response && response.status,
+          error_code: result && result.ok ? '' : 'HTTP_ERROR',
+          http_status: result && result.status,
         })
-        return response
+        return result
       }, function (error) {
         diagnostic.complete({
           result: 'failure',
@@ -141,11 +118,6 @@
         })
         throw error
       })
-    }
-    wrapped.__startersProfileDiagnostics = true
-    wrapped.__startersProfileDiagnosticsOriginal = original
-    window.fetch = wrapped
-    return true
   }
 
   function allowedHost(hostname) {
@@ -217,6 +189,22 @@
   }
 
   var helperReady = loadHelper()
+  var pendingForms = []
+
+  function flushPendingForms() {
+    var forms = pendingForms.slice()
+    pendingForms = []
+    forms.forEach(function (form) {
+      if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
+        validationFailed(form)
+        return
+      }
+      started(form)
+      var kind = form.getAttribute('data-ms-form')
+      if (kind === 'login' || kind === 'signup') pendingAuthForm = form
+      checkStates(form)
+    })
+  }
 
   function normalizedPath() {
     var pathname = (window.location && window.location.pathname) || '/'
@@ -361,15 +349,8 @@
     if (!form || form.__startersMemberstackDiagnosticsBound || !workflowFor(form)) return false
     form.__startersMemberstackDiagnosticsBound = true
     form.addEventListener('submit', function () {
-      Promise.resolve(helperReady).then(function () {
-        if (typeof form.checkValidity === 'function' && !form.checkValidity()) {
-          validationFailed(form)
-          return
-        }
-        started(form)
-        var kind = form.getAttribute('data-ms-form')
-        if (kind === 'login' || kind === 'signup') pendingAuthForm = form
-      })
+      if (pendingForms.indexOf(form) === -1) pendingForms.push(form)
+      Promise.resolve(helperReady).then(flushPendingForms)
     }, true)
     form.addEventListener('invalid', function () {
       Promise.resolve(helperReady).then(function () {
@@ -450,7 +431,6 @@
 
   function init() {
     if (!allowedHost((window.location && window.location.hostname) || '')) return 0
-    installFetchObserver()
     var count = bindAll()
     watchAuth()
     return count
@@ -459,8 +439,7 @@
   window.StartersNativeFormDiagnostics = {
     bindAll: bindAll,
     init: init,
-    installFetchObserver: installFetchObserver,
-    observedFetch: observedFetch,
+    observeMutation: observeMutation,
     visible: visible,
     workflowFor: workflowFor,
   }

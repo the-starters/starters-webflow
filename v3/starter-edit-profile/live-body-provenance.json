@@ -8,13 +8,12 @@
     "pageId": "6a44b2477e93b2d11b905de0",
     "lastUpdated": "2026-08-11T17:46:16.651Z",
     "scripts": {
-      "profile-photo.js": { "asset": "../build-profile/profile-photo.js", "index": 84, "characters": 6026, "sha256": "213646b19cc04f2b87375afeb303cc7ebe1f598cd5ffa4ce471b7c4ca895cf5c" },
-      "portfolio-crud.js": { "asset": "portfolio-crud.js", "index": 87, "characters": 49773, "sha256": "8def2d83a95789431895634566199088cae153f1d517210abcb917977dd02e5d" },
+      "profile-photo.js": { "asset": "../build-profile/profile-photo.js", "index": 84, "characters": 6236, "sha256": "959ad06c13239877f2ee3f73c249fae0dedc8a84fe2a714f65cd4e16a5b8872d" },
+      "portfolio-crud.js": { "asset": "portfolio-crud.js", "index": 87, "characters": 50313, "sha256": "6845ceb5dc8fbdef9787c3ef4b703e18bdd83b0544795faacb5166ede6b3d4ac" },
       "portfolio-list.js": { "asset": "portfolio-list.js", "index": 88, "characters": 3763, "sha256": "2d0a3261493ac1e07a63a16981083920425e91315ced4d84d3f9d6e6709bfb18" },
       "company-autocomplete.js": { "asset": "company-autocomplete.js", "index": 89, "characters": 12671, "sha256": "24702eef9717e717f266be3f7f1b22f84609acf486c20042fb7f6a8d7d3b427f" },
-      "company-experience-crud.js": { "asset": "company-experience-crud.js", "index": 90, "characters": 45194, "sha256": "1224636b9f1167c5534957407d3451640b8d5b17e52f4930011e17f5a0eb8664" },
+      "company-experience-crud.js": { "asset": "company-experience-crud.js", "index": 90, "characters": 46187, "sha256": "a0d4f0ccc63267c126bbd040c9c34990f67d016c617f533e42e1f381f4007544" },
       "work-dates.js": { "asset": "../build-profile/work-dates.js", "index": 91, "characters": 1685, "sha256": "4d8aa2dbd4c7668f37430a73c92049a7a5fa566d99915f5e45a61be5dac0c321" }
     }
   }
 }
-

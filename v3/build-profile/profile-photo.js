@@ -142,7 +142,11 @@
       }
 
       async function requestJson(url, options, errorLabel) {
-        const response = await fetch(url, options);
+        const diagnostics = window.StartersNativeFormDiagnostics;
+        const request = () => fetch(url, options);
+        const response = await (diagnostics
+          ? diagnostics.observeMutation('profile_photo_xano_upload', request)
+          : request());
         const data = await response.json();
         if (!response.ok) {
           console.error(`${errorLabel}:`, data);
@@ -190,4 +194,3 @@
       });
     });
   });
-

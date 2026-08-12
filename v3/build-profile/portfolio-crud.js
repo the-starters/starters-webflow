@@ -87,8 +87,12 @@
         return getAssetUrl(value) || PLACEHOLDER_IMAGE;
       }
 
-      async function requestJson(url, options, errorLabel) {
-        const response = await fetch(url, options);
+      async function requestJson(url, options, errorLabel, workflow) {
+        const diagnostics = window.StartersNativeFormDiagnostics;
+        const request = () => fetch(url, options);
+        const response = await (workflow && diagnostics
+          ? diagnostics.observeMutation(workflow, request)
+          : request());
         const data = await response.json();
         if (!response.ok) {
           console.error(`${errorLabel}:`, data);
@@ -107,6 +111,7 @@
             body: formData,
           },
           'Image upload failed',
+          'portfolio_image_upload',
         );
       }
 
@@ -120,6 +125,7 @@
             body: formData,
           },
           'Video upload failed',
+          'portfolio_video_upload',
         );
         if (data.path) return data;
         if (data.video && data.video.path) return data.video;
@@ -151,6 +157,7 @@
             body: JSON.stringify(payload),
           },
           'Portfolio creation failed',
+          'portfolio_record_create',
         );
       }
 
@@ -163,6 +170,7 @@
             body: JSON.stringify(payload),
           },
           'Portfolio update failed',
+          'portfolio_record_update',
         );
       }
 
@@ -175,6 +183,7 @@
             body: JSON.stringify(payload),
           },
           'Portfolio deletion failed',
+          'portfolio_record_delete',
         );
       }
 
@@ -187,6 +196,7 @@
             body: JSON.stringify(payload),
           },
           'Portfolio image creation failed',
+          'portfolio_image_attach',
         );
       }
 
@@ -199,6 +209,7 @@
             body: JSON.stringify(payload),
           },
           'Portfolio video creation failed',
+          'portfolio_video_attach',
         );
       }
 
@@ -214,6 +225,7 @@
             }),
           },
           'Image deletion failed',
+          'portfolio_image_delete',
         );
       }
 
@@ -229,6 +241,7 @@
             }),
           },
           'Video deletion failed',
+          'portfolio_video_delete',
         );
       }
 
@@ -964,4 +977,3 @@
       }
     });
   });
-

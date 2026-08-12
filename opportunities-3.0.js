@@ -368,33 +368,13 @@
     }))
   }
 
-  function diagnosticResourceId(path, body, data) {
-    const candidates = [
-      data && data.id,
-      data && data.opportunity_id,
-      data && data.application_id,
-      data && data.project_id,
-      data && data.invoice_id,
-      data && data.review_id,
-      data && data.opportunity && data.opportunity.id,
-      data && data.application && data.application.id,
-      data && data.project && data.project.id,
-      data && data.invoice && data.invoice.id,
-      data && data.review && data.review.id,
-      body && body.opportunity_id,
-      body && body.application_id,
-      body && body.project_id,
-    ]
-    return candidates.find((value) => value !== undefined && value !== null && value !== '') || ''
-  }
-
-  function completeCallDiagnostic(receipt, path, body, data, fields) {
+  function completeCallDiagnostic(receipt, data, fields) {
     const api = workflowDiagnostics()
     if (!api || !receipt) return null
     const completed = api.record(api.complete(receipt, {
       ...(fields || {}),
-      resource_id: diagnosticResourceId(path, body, data),
-      replayed: Boolean(data && (data.replayed || data.duplicate || data.idempotent_replay)),
+      resource_id: '',
+      replayed: false,
     }))
     if (data && (typeof data === 'object' || typeof data === 'function')) {
       responseDiagnostics.set(data, completed)
@@ -483,7 +463,7 @@
           data,
         })
       }
-      completeCallDiagnostic(diagnostic, path, body, data, {
+      completeCallDiagnostic(diagnostic, data, {
         result: 'success',
         stage: 'response',
         http_status: responseStatus,
@@ -502,7 +482,7 @@
       assertMemberScopeGeneration(generation)
       return data
     } catch (error) {
-      const failure = completeCallDiagnostic(diagnostic, path, body, null, {
+      const failure = completeCallDiagnostic(diagnostic, null, {
         result: 'failed',
         stage: requestStarted ? (responseStatus == null ? 'network' : 'response') : 'auth',
         error_code: error && error.code === 'MEMBER_SCOPE_CHANGED'

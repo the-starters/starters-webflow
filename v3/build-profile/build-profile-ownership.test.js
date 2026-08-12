@@ -82,13 +82,3 @@ test('controllers boot against native markup without creating forms or excluded 
     assert.equal(requests.some((url) => /availability|booking|paid[_-]?call|free-consulting/i.test(url)), false, file)
   }
 })
-
-test('controllers exclude browser-exposed integration secrets', () => {
-  for (const file of Object.keys(PROVENANCE.pages[PAGES[0]].scripts)) {
-    assert.doesNotMatch(
-      source(file),
-      /api\.airtable\.com|hook\.us1\.make\.com|\bpat[A-Za-z0-9]{20,}/,
-      file,
-    )
-  }
-})

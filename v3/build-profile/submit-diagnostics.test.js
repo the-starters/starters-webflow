@@ -19,7 +19,7 @@ class Element {
     this.parentElement = null
   }
   addEventListener(type, listener) { ;(this.listeners[type] ||= []).push(listener) }
-  dispatch(type) { for (const listener of this.listeners[type] || []) listener({ type }) }
+  dispatch(type, extra = {}) { for (const listener of this.listeners[type] || []) listener({ type, ...extra }) }
   getAttribute(name) {
     return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null
   }
@@ -27,7 +27,7 @@ class Element {
   closest() { return null }
 }
 
-function boot() {
+function boot({ delayHelper = false } = {}) {
   const form = new Element({ 'build-profile-form': '' })
   const trigger = new Element({ 'form-submit': '' })
   const success = new Element({ 'build-profile-success': '' })
@@ -75,9 +75,20 @@ function boot() {
     Date, Math, MutationObserver, Promise, Uint32Array, URL, clearTimeout,
     console: window.console, document, setTimeout, window,
   })
-  new vm.Script(helperSource).runInContext(context)
+  let resolveHelper = null
+  if (delayHelper) {
+    window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => { resolveHelper = resolve })
+  } else {
+    new vm.Script(helperSource).runInContext(context)
+  }
   new vm.Script(source).runInContext(context)
-  return { error, form, observers, success, trigger, window }
+  return {
+    error, form, observers, success, trigger, window,
+    resolveHelper: delayHelper ? () => {
+      new vm.Script(helperSource).runInContext(context)
+      resolveHelper(window.StartersWorkflowDiagnostics)
+    } : null,
+  }
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
@@ -115,8 +126,30 @@ test('authored error records a stable failure without form data', async () => {
   assert.equal(JSON.stringify(receipt).includes('email'), false)
 })
 
-test('observer does not read fields, intercept clicks, or send requests', () => {
-  assert.equal(/\.value\b/.test(source), false)
-  assert.equal(/FormData|preventDefault|stopPropagation|stopImmediatePropagation/.test(source), false)
-  assert.equal(/fetch\s*\(/.test(source), false)
+test('an authored outcome observed before helper readiness is reconciled', async () => {
+  const page = boot({ delayHelper: true })
+  page.trigger.dispatch('click')
+  page.success.style.display = 'block'
+  page.observers[0].callback()
+  page.resolveHelper()
+  await tick()
+  await tick()
+  const receipt = page.window.StartersWorkflowDiagnostics.latest('build_profile_submit')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.request_started, true)
+})
+
+test('observer leaves the authored click transparent and does not inspect fields', async () => {
+  const page = boot()
+  Object.defineProperties(page.trigger, {
+    value: { get() { throw new Error('field value read') } },
+    files: { get() { throw new Error('field files read') } },
+  })
+  page.window.fetch = () => { throw new Error('request sent') }
+  assert.doesNotThrow(() => page.trigger.dispatch('click', {
+    preventDefault() { throw new Error('click intercepted') },
+    stopPropagation() { throw new Error('click propagation stopped') },
+  }))
+  await tick()
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('build_profile_submit').result, 'started')
 })

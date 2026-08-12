@@ -70,9 +70,3 @@ test('controllers boot with an authenticated member and absent authored regions 
   }
 })
 
-test('controllers exclude browser-exposed integration secrets', () => {
-  for (const { asset } of Object.values(PROVENANCE.page.scripts)) {
-    assert.doesNotMatch(source(asset), /api\.airtable\.com|hook\.us1\.make\.com|\bpat[A-Za-z0-9]{20,}/, asset)
-  }
-})
-

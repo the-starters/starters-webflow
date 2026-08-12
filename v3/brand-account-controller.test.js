@@ -284,6 +284,23 @@ function loadController(options = {}) {
     },
     addEventListener() {},
   }
+  const appendedScripts = []
+  if (options.captureNativeDiagnosticsLoader) {
+    document.currentScript = {
+      src: 'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/brand-account-controller.js',
+    }
+    document.createElement = () => makeElement()
+    document.head = { appendChild(script) { appendedScripts.push(script) } }
+    const querySelector = document.querySelector.bind(document)
+    document.querySelector = (selector) => {
+      if (selector === 'script[data-starters-native-form-diagnostics]') {
+        return appendedScripts.find((script) => (
+          script.getAttribute('data-starters-native-form-diagnostics') !== null
+        )) || null
+      }
+      return querySelector(selector)
+    }
+  }
   const context = vm.createContext({
     window,
     document,
@@ -305,6 +322,7 @@ function loadController(options = {}) {
 
   return {
     api: window.StartersBrandAccount,
+    appendedScripts,
     buildForm,
     calls,
     context,
@@ -1603,16 +1621,17 @@ test('controller does not bind on an unapproved host', () => {
 })
 
 test('native form diagnostics inherit the controller CDN ref and use one loader sentinel', () => {
-  assert.match(
-    source,
-    /cdnRoot\[1\] \+ 'v3\/' \+ NATIVE_FORM_DIAGNOSTICS_SCRIPT/,
+  const environment = loadController({ buildForm: null, captureNativeDiagnosticsLoader: true })
+  const nativeScripts = () => environment.appendedScripts.filter((script) => (
+    script.getAttribute('data-starters-native-form-diagnostics') !== null
+  ))
+  assert.equal(nativeScripts().length, 1)
+  const script = nativeScripts()[0]
+  assert.equal(
+    script.src,
+    'https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.60.0/v3/native-form-diagnostics.js',
   )
-  assert.match(
-    source,
-    /document\.querySelector\('script\[data-starters-native-form-diagnostics\]'\)/,
-  )
-  assert.match(
-    source,
-    /script\.setAttribute\('data-starters-native-form-diagnostics', ''\)/,
-  )
+  assert.equal(script.getAttribute('data-starters-native-form-diagnostics'), '')
+  environment.api.init()
+  assert.equal(nativeScripts().length, 1)
 })

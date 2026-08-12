@@ -22,6 +22,8 @@
   var controllerScript = document.currentScript
   var receipt = null
   var startedAt = 0
+  var pendingStart = false
+  var pendingOutcome = null
 
   function allowed() {
     var location = window.location || {}
@@ -157,6 +159,27 @@
     return receipt
   }
 
+  function flushPending() {
+    if (pendingStart) {
+      pendingStart = false
+      start()
+    }
+    if (pendingOutcome) {
+      var outcome = pendingOutcome
+      pendingOutcome = null
+      complete(outcome.result, outcome.errorCode, outcome.target)
+    }
+  }
+
+  function observeOutcome(result, errorCode, target) {
+    pendingOutcome = { result: result, errorCode: errorCode, target: target }
+    if (window.StartersWorkflowDiagnostics) {
+      flushPending()
+      return
+    }
+    Promise.resolve(helperReady).then(flushPending)
+  }
+
   function init() {
     if (!allowed()) return false
     var form = document.querySelector('[build-profile-form]')
@@ -169,16 +192,21 @@
 
     trigger.addEventListener('click', function () {
       if (disabled(trigger)) return
-      Promise.resolve(helperReady).then(function () { start() })
+      pendingStart = true
+      if (window.StartersWorkflowDiagnostics) {
+        flushPending()
+        return
+      }
+      Promise.resolve(helperReady).then(flushPending)
     }, true)
 
     if (typeof MutationObserver === 'function') {
       var observer = new MutationObserver(function () {
         if (visible(success)) {
-          complete('success', '', success)
+          observeOutcome('success', '', success)
           return
         }
-        if (visible(error)) complete('failure', 'BUILD_PROFILE_SAVE_FAILED', error)
+        if (visible(error)) observeOutcome('failure', 'BUILD_PROFILE_SAVE_FAILED', error)
       })
       observer.observe(document.documentElement, {
         attributes: true,

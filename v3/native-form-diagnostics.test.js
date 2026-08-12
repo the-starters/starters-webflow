@@ -73,7 +73,7 @@ function formHarness(kind, options = {}) {
   return { done, fail, form, memberstackDone, memberstackFail, wrapper }
 }
 
-function boot({ kind = 'login', pathname = '/login', valid = true, id = '' } = {}) {
+function boot({ kind = 'login', pathname = '/login', valid = true, id = '', delayHelper = false } = {}) {
   const parts = formHarness(kind, { valid, id })
   const observers = []
   let authListener = null
@@ -140,13 +140,22 @@ function boot({ kind = 'login', pathname = '/login', valid = true, id = '' } = {
     setTimeout,
     window,
   })
-  new vm.Script(helperSource, { filename: 'workflow-diagnostics.js' }).runInContext(context)
+  let resolveHelper = null
+  if (delayHelper) {
+    window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => { resolveHelper = resolve })
+  } else {
+    new vm.Script(helperSource, { filename: 'workflow-diagnostics.js' }).runInContext(context)
+  }
   new vm.Script(source, { filename: 'native-form-diagnostics.js' }).runInContext(context)
   return {
     ...parts,
     auth: (payload) => authListener && authListener(payload),
     observers,
     fetchCalls,
+    resolveHelper: delayHelper ? () => {
+      new vm.Script(helperSource, { filename: 'workflow-diagnostics.js' }).runInContext(context)
+      resolveHelper(window.StartersWorkflowDiagnostics)
+    } : null,
     window,
   }
 }
@@ -240,20 +249,45 @@ test('a logged-out to logged-in transition completes the pending login once', as
   assert.equal(receipt.resource_id, '')
 })
 
-test('the observer never reads input values or intercepts native submission', () => {
-  assert.equal(/\.value\b/.test(source), false)
-  assert.equal(/preventDefault\s*\(/.test(source), false)
-  assert.equal(/fetch\s*\(/.test(source), false)
-  assert.equal(/innerHTML|insertAdjacentHTML/.test(source), false)
+test('an authored outcome observed before helper readiness is reconciled', async () => {
+  const page = boot({ kind: 'forgot-password', delayHelper: true })
+  page.form.dispatch('submit')
+  page.fail.style.display = 'block'
+  page.observers[0].callback()
+  page.resolveHelper()
+  await tick()
+  await tick()
+  const receipt = page.window.StartersWorkflowDiagnostics.latest('password_forgot')
+  assert.equal(receipt.result, 'failure')
+  assert.equal(receipt.request_started, true)
 })
 
-test('profile mutation fetch outcomes are recorded without request or response data', async () => {
+test('native submission remains transparent and does not inspect form data', async () => {
+  const page = boot({ kind: 'login' })
+  Object.defineProperties(page.form, {
+    value: { get() { throw new Error('form value read') } },
+    elements: { get() { throw new Error('form elements read') } },
+    innerHTML: { get() { throw new Error('form HTML read') } },
+  })
+  assert.doesNotThrow(() => page.form.dispatch('submit', {
+    preventDefault() { throw new Error('submission intercepted') },
+  }))
+  await tick()
+  assert.equal(page.fetchCalls.length, 0)
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('brand_login').result, 'started')
+})
+
+test('explicit profile mutation outcomes are recorded without transport inspection', async () => {
   const page = boot()
-  const response = await page.window.fetch(
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
-    {
-      method: 'POST',
-      body: JSON.stringify({ email: 'private@example.com', company: 'Private Co' }),
+  const privateTransport = {
+    get url() { throw new Error('URL inspected') },
+    get body() { throw new Error('body inspected') },
+  }
+  const response = await page.window.StartersNativeFormDiagnostics.observeMutation(
+    'company_experience_create',
+    () => {
+      assert.equal(privateTransport instanceof Object, true)
+      return { ok: true, status: 200 }
     },
   )
   await tick()
@@ -262,45 +296,27 @@ test('profile mutation fetch outcomes are recorded without request or response d
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.http_status, 200)
   assert.equal(receipt.resource_type, 'talent_company_experience')
-  assert.equal(JSON.stringify(receipt).includes('private@example.com'), false)
+  assert.equal(response.ok, true)
   assert.equal('body' in receipt, false)
 })
 
-test('profile mutation observation requires the exact canonical endpoint and method', () => {
+test('profile mutation observation accepts only allowlisted operations', async () => {
   const page = boot()
-  const cases = [
-    ['/api:KZf7nFnk/build_profile/starter/profile_image', 'POST', 'profile_photo_xano_upload'],
-    ['/api:PmBJV0AG/Create_portfolio', 'POST', 'portfolio_record_create'],
-    ['/api:PmBJV0AG/Update_portfolio/17', 'PATCH', 'portfolio_record_update'],
-    ['/api:PmBJV0AG/Delete_portfolio/17', 'DELETE', 'portfolio_record_delete'],
-    ['/api:PmBJV0AG/upload-image', 'POST', 'portfolio_image_upload'],
-    ['/api:PmBJV0AG/Add_portfolio_image', 'POST', 'portfolio_image_attach'],
-    ['/api:PmBJV0AG/upload-video', 'POST', 'portfolio_video_upload'],
-    ['/api:PmBJV0AG/Add_portfolio_video', 'POST', 'portfolio_video_attach'],
-    ['/api:PmBJV0AG/Delete_portfolio_image/17', 'DELETE', 'portfolio_image_delete'],
-    ['/api:PmBJV0AG/Delete_portfolio_video/17', 'DELETE', 'portfolio_video_delete'],
-    ['/api:SYL06lUR/companies', 'POST', 'company_experience_create'],
-    ['/api:SYL06lUR/companies/17', 'PATCH', 'company_experience_update'],
-    ['/api:SYL06lUR/companies/17', 'DELETE', 'company_experience_delete'],
-    ['/api:KZf7nFnk/starter/set_also_worked_with', 'POST', 'company_experience_associations'],
-  ]
-
-  for (const [pathname, method, workflow] of cases) {
-    const url = `https://x08a-5ko8-jj1r.n7c.xano.io${pathname}`
-    assert.equal(page.window.StartersNativeFormDiagnostics.observedFetch(url, method).workflow, workflow)
-    assert.equal(page.window.StartersNativeFormDiagnostics.observedFetch(url, 'GET'), null)
-    assert.equal(
-      page.window.StartersNativeFormDiagnostics.observedFetch(`https://example.com${pathname}`, method),
-      null,
-    )
-  }
+  let calls = 0
+  await page.window.StartersNativeFormDiagnostics.observeMutation('unrelated_read', () => {
+    calls += 1
+    return { ok: true, status: 200 }
+  })
+  await tick()
+  assert.equal(calls, 1)
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('unrelated_read'), null)
 })
 
 test('profile mutation HTTP failures remain transparent to the caller', async () => {
   const page = boot()
-  const response = await page.window.fetch(
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:PmBJV0AG/Create_portfolio',
-    { method: 'POST', testOk: false, testStatus: 422 },
+  const response = await page.window.StartersNativeFormDiagnostics.observeMutation(
+    'portfolio_record_create',
+    () => ({ ok: false, status: 422 }),
   )
   await tick()
   const receipt = page.window.StartersWorkflowDiagnostics.latest('portfolio_record_create')
@@ -308,21 +324,4 @@ test('profile mutation HTTP failures remain transparent to the caller', async ()
   assert.equal(receipt.result, 'failure')
   assert.equal(receipt.error_code, 'HTTP_ERROR')
   assert.equal(receipt.http_status, 422)
-})
-
-test('unrelated and read-only fetches bypass diagnostics', async () => {
-  const page = boot()
-  await page.window.fetch(
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:SYL06lUR/companies',
-    { method: 'GET' },
-  )
-  await tick()
-  assert.equal(page.window.StartersWorkflowDiagnostics.latest('company_experience_create'), null)
-  await page.window.fetch(
-    'https://example.com/api:SYL06lUR/companies',
-    { method: 'POST' },
-  )
-  await tick()
-  assert.equal(page.window.StartersWorkflowDiagnostics.latest('company_experience_create'), null)
-  assert.equal(page.fetchCalls.length, 2)
 })

@@ -433,13 +433,17 @@
       }
 
       async function createCompany(payload) {
-        const response = await fetch(XANO_CREATE_COMPANY_URL, {
+        const request = () => fetch(XANO_CREATE_COMPANY_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
         });
+        const diagnostics = window.StartersNativeFormDiagnostics;
+        const response = await (diagnostics
+          ? diagnostics.observeMutation('company_experience_create', request)
+          : request());
 
         const data = await response.json();
 
@@ -452,13 +456,17 @@
       }
 
       async function updateCompany(companyId, payload) {
-        const response = await fetch(`${XANO_UPDATE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
+        const request = () => fetch(`${XANO_UPDATE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(payload),
         });
+        const diagnostics = window.StartersNativeFormDiagnostics;
+        const response = await (diagnostics
+          ? diagnostics.observeMutation('company_experience_update', request)
+          : request());
 
         const data = await response.json();
 
@@ -471,12 +479,16 @@
       }
 
       async function deleteCompany(companyId) {
-        const response = await fetch(`${XANO_DELETE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
+        const request = () => fetch(`${XANO_DELETE_COMPANY_URL}/${encodeURIComponent(companyId)}`, {
           method: 'DELETE',
           headers: {
             'Content-Type': 'application/json',
           },
         });
+        const diagnostics = window.StartersNativeFormDiagnostics;
+        const response = await (diagnostics
+          ? diagnostics.observeMutation('company_experience_delete', request)
+          : request());
 
         let data = null;
 
@@ -914,4 +926,3 @@
       openAddCompanyAccordionIfEmpty();
     });
   });
-
