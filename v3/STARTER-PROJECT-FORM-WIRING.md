@@ -18,7 +18,8 @@ Airtable, Make, or a legacy TalkJS table.
 ## Backend contract required before Webflow wiring
 
 `POST projects/options/v3` must authenticate the Starter and return only Brands
-authorized by the V3 signed-message relationship projection:
+authorized by the server-verified V3 Brand-to-Starter message relationship
+projection:
 
 ```json
 {
