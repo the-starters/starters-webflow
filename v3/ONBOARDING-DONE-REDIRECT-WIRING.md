@@ -17,11 +17,12 @@ Its required pair is
 [patch-onboarding-status.js](ONBOARDING-PATCH-STATUS-WIRING.md), the write half,
 which records the completion in the first place and owns everything that happens
 in the moments after a submit. Both jobs shipped as one file through v1.59.45
-and were split at v1.59.47. They are deliberately self-contained twins — host
-allowlist, path gate, trade-token auth, the 8-second request budget, and the
-staging-only diagnostics are duplicated in both files rather than shared — so
-either can be edited or pulled without disturbing the other. They still install
-together and version together.
+and were split at v1.59.47. Their host allowlist, path gate, trade-token auth,
+8-second request budget, and staging-only console diagnostics remain
+self-contained. The write half separately uses the shared privacy-safe workflow
+receipt helper documented in
+[`../README.md`](../README.md#current-scripts). The pair still installs and
+versions together.
 
 It is not a sibling of [route-guard.js](route-guard.js) and does not replace it.
 The route guard answers "may this role open this page" from Memberstack plans;
