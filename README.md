@@ -584,7 +584,8 @@ reveals the allowed wrapper, stamps `html[data-opp-role-resolved]`, and
 activates only that wrapper's root through the race-safe `window.WfXano`
 pre-load queue. The hidden, wrong-role feed is never initialized.
 
-The merged page keeps exactly one native Webflow `Navbar v2` component.
+The merged page keeps exactly one native Webflow `Navbar Main` component
+(renamed from `Navbar v2` in the Designer).
 Its root carries the component's existing `data-preview-nav` attribute and its
 authored descendant groups retain their `#freelancer` / `#brands` and
 `data-ms-content` contracts. When the opportunity role resolves, the controller
