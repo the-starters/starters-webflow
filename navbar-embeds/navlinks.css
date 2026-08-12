@@ -17,7 +17,8 @@
   }
 
   /*
-   * The merged /opportunities page keeps one native Navbar v2 component.
+   * The merged /opportunities page keeps one native Navbar Main component
+   * (renamed from Navbar v2 in the Designer).
    * opportunities-3.0.js changes only its existing data-preview-nav attribute
    * after Memberstack resolves the page role; these selectors let the authored
    * Webflow groups own published visibility just as they do in Designer.
