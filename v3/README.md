@@ -119,8 +119,15 @@ transitions, security requirements, and the production-cutover constraint.
 
 ## Talent application intake
 
-`talent-application.js` owns the apply-form submission on
-`/freelancer-application/step-1`. Videsigns' multistep library calls jQuery's
+Two GitHub assets split the page's existing responsibilities without changing
+the native Webflow form markup. `talent-application-ui.js` replaces the 23 KB
+Webflow Code Embed and owns field validation, the conditional profile and
+referral blocks, location loading, and custom-select behavior.
+`talent-application.js` remains the only submission owner and canonical Xano
+writer. The UI controller does not bind a submit handler, build a submission
+payload, or log applicant fields.
+
+Videsigns' multistep library calls jQuery's
 synthetic `form.submit()` from its final "Complete" click handler, so a native
 `submit` capture listener never sees that event. The script therefore listens
 in capture phase two ways: a `click` listener on the multistep submit control
@@ -140,22 +147,38 @@ consult/full-profile pair, inactive steps) cannot silently block Complete with
 an unshowable error. When a visible field is invalid the submission is aborted
 and the native validation UI is shown.
 
-Install the script on step 1 only:
+After the GitHub release is available, replace the full legacy inline Code
+Embed with the UI loader below. Install both scripts on step 1 only, in this
+order:
 
 ```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talent-application-ui.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talent-application.js"></script>
 ```
+
+Do not keep the legacy inline controller after this cutover. Both loaders are
+deferred and must remain in the order shown.
 
 Webflow contract:
 
 - Keep `application-form` on the form itself:
   `<form application-form>`. Generated IDs and styling classes are not selector
   fallbacks.
+- Keep the existing `[form-next]` and `[form-submit]` controls, profile radios,
+  field IDs, and `[data-element]` conditional blocks. The UI controller binds
+  the authored elements and does not generate the form markup.
+- Keep the existing `country`, `state`, and `city` selects. The UI controller
+  populates them from the published locations asset and adds the searchable
+  custom-select presentation beside each native select.
 - Keep the multistep Complete control's `data-form="submit-btn"` (or
   `data-form-ms="submit-btn"`) attribute. The capture-phase click listener keys
   off it to intercept the final step before the multistep library submits.
 - Keep the form inside its `.w-form` wrapper with a `.w-form-fail` block. A
-  failed request reveals that block and re-enables the submit control for retry.
+  submit stopped by native constraint validation, or a failed request, reveals
+  that block with a privacy-safe diagnostic ID; a failed request also re-enables
+  the submit control for retry. The shared receipt allowlist and console-copy
+  fallback are documented in
+  [`../README.md`](../README.md#current-scripts).
 - Set the form's `data-redirect` to `/freelancer-application/step-2`. The
   script also accepts `redirect` and otherwise defaults to that path.
 - Remove any other custom submit interceptor from this form. The native
@@ -179,10 +202,10 @@ redirect, including Xano's successful response for a duplicate open
 application with the same email. A non-success HTTP status, malformed response,
 or response without an `id` stays on step 1 and exposes the retry state.
 
-Run the focused test with:
+Run the focused checks with:
 
 ```sh
-node --test v3/talent-application.test.js
+node --test v3/talent-application-ui.test.js v3/talent-application.test.js
 ```
 
 ## Protected-route guard
