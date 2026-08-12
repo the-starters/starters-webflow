@@ -53,9 +53,10 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-results.min.js`
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
 - `opportunities-3.0.js` — Opportunities 3.0 page and dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`, drives authenticated canonical project actions on both role dashboards, and keeps Generate Invoice Starter-only
+- `utils/workflow-diagnostics.js` — sitewide privacy-safe receipt helper for important V3 forms. It stores and copies only allowlisted workflow metadata: diagnostic ID, UTC time, controller/environment, result/stage, safe error code, HTTP status, duration, request-attempted state, canonical record type/ID, and replay state. It never accepts form answers, names, emails, prices, tokens, request/response bodies, or idempotency keys. Load it once with `defer` before the form controllers.
 - `v3/auth-route.js` — V3 login/signup router on `/login`, `/starter-login`, and `/auth-route`; consumes the sitewide role contract, applies role-scoped `next` destinations, and checks Talent and paid-Brand funnel position through Xano; the authoritative routing table, failure semantics, and install map live in [`v3/README.md`](v3/README.md#login-router) and [`v3/AUTH-ROUTE-WIRING.md`](v3/AUTH-ROUTE-WIRING.md)
 
-- `v3/talent-application.js` — `/freelancer-application/step-1` intake controller; suppresses the native Webflow/Zapier submission, posts `form[application-form]` to Xano, and continues successful applicants to step 2
+- `v3/talent-application.js` — `/freelancer-application/step-1` intake controller; suppresses the native Webflow/Zapier submission, posts `form[application-form]` to Xano, continues successful applicants to step 2, and adds a copyable privacy-safe diagnostic ID to the authored failure state
 - `v3/route-guard.js` — sitewide V3 stable role resolver, canonical `/dashboard` router, and direct-access guard for protected role-scoped pages, plus public-entry and funnel-page bounce rules; the authoritative page rules, redirect semantics, and install order live in [`v3/README.md`](v3/README.md#protected-route-guard) and [`v3/ROUTE-GUARD-WIRING.md`](v3/ROUTE-GUARD-WIRING.md)
 - `v3/password-recovery.js` — shared Brand/Talent recovery on `/forgot-password -> /reset-password -> /password-success`, preserving reset-token parameters across legacy-path redirects; see [`v3/README.md`](v3/README.md#shared-password-recovery)
 - `v3/onboarding-tour.js` — attribute-driven V3 product tours with highlight and disclosure overrides, role targeting, per-member seen-state, and replay/reset controls
@@ -100,6 +101,10 @@ Do not discard local changes unless the user explicitly asks.
   deferred `@latest` asset. `v3/brand-account-controller.js` must load first with
   `guardSecurityForm: 'identity'`; it alone writes a changed Memberstack login
   email, then replays this controller's Xano profile save.
+  The controller emits privacy-safe success, validation, HTTP, and network
+  receipts through `utils/workflow-diagnostics.js`, decorates the existing
+  success/error modal copy when available, and never logs the profile payload
+  or raw Xano response.
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero
