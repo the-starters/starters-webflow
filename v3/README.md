@@ -2560,8 +2560,9 @@ While a Connect or Complete setup request is in flight, the Connect Stripe tile
 and initiating control stay visible but receive `is-disabled`, `aria-disabled="true"`,
 `aria-busy="true"`, `tabindex="-1"`, and blocked pointer events. This provides
 pending feedback and prevents repeat mouse or keyboard activation. If the start
-request fails, the controller restores their prior tab order and active state
-before showing the authored error card. The controller reserves a blank tab
+request fails, the controller clears the pending state from the initiating
+controls, shows the authored error card, and keeps the primary hero tile visible
+in its disabled `Stripe Unavailable` state. The controller reserves a blank tab
 synchronously before the asynchronous Xano request so browser popup protection
 does not discard a legitimate human activation. It closes that tab on any
 request, session, or URL-validation failure. A successful request navigates the
