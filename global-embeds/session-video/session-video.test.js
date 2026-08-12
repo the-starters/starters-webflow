@@ -381,6 +381,23 @@ test('a member with no player library still gets the full state contract', async
   assert.equal(s.api.status().roots, 1, 'and status() must see it')
 })
 
+test('a member with no player library ends with the overlay lowered', async () => {
+  // Half a fix is not a fix: forcing Vimeo's own bar on this path still left the
+  // hero overlay in its authored, covering state on top of it, and the watch
+  // control that would lower it is never wired here (no player object, no bind).
+  // Deleting the showOverlay(false) in mountWithoutApi must fail this.
+  const s = await setup({ withLib: false, member: 'in', width: 375 })
+  assert.ok(s.frame(), 'a member should still get the video')
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden', 'nothing may cover the only control surface')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'visible')
+  // Coherent with the frame that was just built: autoplaying, muted, looping.
+  assert.equal(s.el('playPauseBtn').getAttribute('data-sv-play'), 'playing')
+  assert.equal(s.el('muteBtn').getAttribute('data-sv-mute'), 'on')
+  // ...and no dead button: there is no player object to drive a fullscreen request.
+  assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden')
+  assert.equal(s.state().playing, true)
+})
+
 test('a no-library viewer whose membership resolves late still gets the full contract', async () => {
   // The late path must NEVER route a no-library controller through upgrade(): that
   // calls mount(), which does `new window.Vimeo.Player`, and window.Vimeo is exactly
@@ -675,13 +692,31 @@ test('a gated frame cannot go fullscreen, and we never touch the button\'s displ
   const f = s.frame()
   assert.equal(f.hasAttribute('allowfullscreen'), false)
   assert.doesNotMatch(f.getAttribute('allow'), /fullscreen/)
-  assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden')
   // Memberstack owns this button's visibility via data-ms-content="members". An
   // inline style from us on an element Memberstack meant to hide is how a
   // members-only control leaks if our answer and theirs disagree.
   // Not asserting on style.display: it can no longer be set, so the assertion
   // could never fail. The source-regex test below is what actually pins it.
   assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden')
+})
+
+test('unconfirmed membership hides the fullscreen button, not just a certain gate', async () => {
+  // No SDK, a rejection and an expired budget all mean "assume logged out for
+  // now" — and they are exactly the paths where Memberstack is absent too, so
+  // nothing else hides the button and a press gives no feedback at all.
+  for (const member of ['no-sdk', 'reject', 'never']) {
+    const s = await setup({ member })
+    assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden', member)
+  }
+})
+
+test('an unauthored data-ms-content on the fullscreen button warns on staging', async () => {
+  // The template's Memberstack attribute is the other half of hiding this button.
+  // If the Designer state was never authored, QA has to be able to see it.
+  const s = await setup()
+  assert.ok(s.logs.warn.some((m) => /data-ms-content/.test(m)))
+  const prod = await setup({ hostname: 'www.thestarters.com' })
+  assert.deepEqual(prod.logs.warn, [], 'and never in production')
 })
 
 test('the module never writes an inline display on the fullscreen button', () => {
@@ -854,7 +889,10 @@ test('a missing Memberstack SDK still watches for a late answer', async () => {
   // whole page life.
   const s = await setup({ member: 'no-sdk' })
   assert.equal(s.state().gated, true)
-  assert.match(source, /if \(!state\.certain\) watchForLateMember/)
+  // Both late watchers — the mounted one and the no-library one — must arm on
+  // !certain. The SDK is absent in this harness, so the watcher itself cannot be
+  // observed from the outside; the source is what pins the condition.
+  assert.equal((source.match(/!state\.certain\)\s*\{?\s*watchForLateMember/g) || []).length, 2)
 })
 
 test('the play control is not double-bound by a remount', async () => {
