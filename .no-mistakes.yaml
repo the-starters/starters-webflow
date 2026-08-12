@@ -15,9 +15,6 @@ ignore_patterns:
 intent:
   enabled: true
 
-# This repository has no GitHub Actions or other PR status-check provider.
-no_ci: true
-
 test:
   evidence:
     store_in_repo: false
