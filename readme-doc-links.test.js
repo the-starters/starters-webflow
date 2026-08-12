@@ -5,7 +5,11 @@ const test = require('node:test')
 
 // These READMEs are public documentation artifacts. Relative links and section
 // anchors are part of their reader-facing navigation contract.
-const DOCS = ['README.md', path.join('v3', 'README.md')]
+const DOCS = [
+  'README.md',
+  path.join('v3', 'README.md'),
+  path.join('global-embeds', 'session-video', 'README.md'),
+]
 
 function slugify(heading) {
   return heading
@@ -112,6 +116,7 @@ test('pointer-style inventory entries retain an owner-document link', () => {
     'v3/xano-grabber/xano-grabber.js',
     'v3/scheduling-availability-writer.js',
     'account-settings/ms-form-cancel-state.js',
+    'global-embeds/session-video/session-video.js',
   ]
 
   const entries = new Map()
