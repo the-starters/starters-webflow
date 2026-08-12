@@ -1,3 +1,13 @@
+/* transparent-nav-bg.css — fills the transparent navbar background while the
+ * mobile menu is open ([data-nav-menu-open]).
+ *
+ * @release v1.59.196
+ *
+ * The variant attribute follows the Designer component's name — currently
+ * `navbar-main` (was `navbar-v2` until the component was renamed, which left
+ * this selector matching nothing site-wide). Keep it in sync with the
+ * companion transparent-nav-bg.js.
+ */
 .section_navbar:is([data-wf--navbar-main--variant='transparent'], [data-wf--navbar-main--variant='transparent-light']):has([data-nav-menu-open]) {
     background-color: var(--_navbar---main--background);
   }
