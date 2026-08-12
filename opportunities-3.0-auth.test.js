@@ -2063,6 +2063,59 @@ test('Brand project cards expose only canonical actions for their current lifecy
   assert.equal(review.wrap.style.display, '')
 })
 
+test('completed Brand project cards hide the authored request-era Decline action', async () => {
+  const decline = el('button', { 'wf-xano-link': 'project-decline' })
+  const declineLabel = el('div', { class: 'button_main-text' })
+  declineLabel.textContent = 'Decline Request'
+  const declineWrap = el('div', { class: 'button_main-wrap' }, [decline, declineLabel])
+  const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
+  const reviewWrap = el('div', { class: 'button_main-wrap' }, [review])
+  const message = el('a', { href: '/messages?project=708' })
+  const messageWrap = el('div', { class: 'button_main-wrap' }, [message])
+  const card = el(
+    'div',
+    { class: 'project_item', 'data-wf-xano-id': '708' },
+    [declineWrap, reviewWrap, messageWrap],
+  )
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+
+  await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 708,
+            lifecycle_state: 'completed',
+            review_eligible: true,
+            has_review: false,
+          }],
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  await new Promise(setImmediate)
+
+  assert.equal(decline.getAttribute('wf-xano-link'), null)
+  assert.equal(decline.getAttribute('data-project-action'), 'end')
+  assert.equal(declineWrap.style.display, 'none')
+  assert.equal(reviewWrap.style.display, '')
+  assert.equal(message.getAttribute('href'), '/messages?project=708')
+  assert.equal(message.getAttribute('data-project-action'), null)
+  assert.equal(messageWrap.style.display, undefined)
+})
+
 test('Starter project cards keep completed contracts off the signing-session route', async () => {
   const contract = el('a', { href: '#contract' })
   const label = el('div', { class: 'button_main-text' })
