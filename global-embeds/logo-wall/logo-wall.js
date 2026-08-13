@@ -2,6 +2,8 @@
 /**
  * Logo Wall — attribute-driven looping tracks of CMS logos.
  *
+ * @release v1.59.230
+ *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. GSAP is assumed
  * as a page global (already on the V3 site). Without GSAP the tracks still
  * build; they just do not loop.
@@ -16,18 +18,26 @@
  *   data-logo-wall-speed             default 0.4 (~40px/s; GSAP horizontalLoop units)
  *   data-logo-wall-pause-on-hover    default on; "false" opts out
  *
+ * THE CONTAINER IS THE MASK. The wrapper itself is the overflow-hidden clip,
+ * at whatever width the Designer gives it. This script never measures the
+ * viewport, never sizes the wrapper, and never touches an ancestor's styles —
+ * full-bleed is a Designer layout choice (make the section full-width), not
+ * script behaviour.
+ *
  * Unique logos are dealt round-robin across Tracks. Each Track clones its own
- * items on both sides until it overflows (including reduced-motion freeze), so
- * the unique set starts centered. The wrapper bleeds to the viewport so bands
- * roll device-edge to device-edge (not clipped to a padded container). Then
- * GSAP's horizontalLoop helper seamless-loops them. Even Tracks run LTR
- * (logos travel toward the right); odd Tracks run RTL.
+ * items on both sides until it overflows the wrapper (including reduced-motion
+ * freeze), so the unique set starts centered. Then GSAP's horizontalLoop helper
+ * seamless-loops them. Even Tracks run LTR (logos travel toward the right);
+ * odd Tracks run RTL.
  * Hover pauses that Track. Off-screen wrappers pause. prefers-reduced-motion
  * freezes the bands.
  */
 (function () {
   if (window.__startersLogoWallInit) return;
   window.__startersLogoWallInit = true;
+
+  var RELEASE = 'v1.59.230';
+  window.__startersLogoWall = { release: RELEASE };
 
   var WRAPPER_SEL = '[data-logo-wall-element="wrapper"]';
   var ITEM_SEL = '[data-logo-wall-element="item"]';
@@ -196,38 +206,10 @@
     });
   }
 
-  function viewportWidth() {
-    return document.documentElement.clientWidth || window.innerWidth || 0;
-  }
-
-  function unclipBleedAncestors(wrapper) {
-    var el = wrapper.parentElement;
-    while (el && el !== document.body && el !== document.documentElement) {
-      var cs = window.getComputedStyle(el);
-      var ox = cs.overflowX;
-      if (ox === 'hidden' || ox === 'auto' || ox === 'scroll' || ox === 'clip') {
-        el.style.overflowX = 'visible';
-        el.style.overflowY = 'visible';
-      }
-      el = el.parentElement;
-    }
-  }
-
-  function bleedToViewport(wrapper) {
-    unclipBleedAncestors(wrapper);
-    var vw = viewportWidth();
-    wrapper.style.width = vw + 'px';
-    wrapper.style.maxWidth = vw + 'px';
-    wrapper.style.marginLeft = '0px';
-    wrapper.style.marginRight = '0px';
-    var left = wrapper.getBoundingClientRect().left;
-    if (left) wrapper.style.marginLeft = -left + 'px';
-  }
-
-  function fillTrack(track, originals) {
+  function fillTrack(track, originals, wrapper) {
     removeClones(track);
     if (!originals.length) return;
-    var viewW = viewportWidth();
+    var viewW = wrapper.clientWidth || 0;
     if (viewW <= 0) return;
     var copies = 0;
     while (track.scrollWidth < viewW * FILL_TIMES && copies < MAX_CLONES) {
@@ -384,9 +366,8 @@
 
   function armLoops(state) {
     killLoops(state);
-    bleedToViewport(state.wrapper);
     state.tracks.forEach(function (entry) {
-      fillTrack(entry.track, entry.originals);
+      fillTrack(entry.track, entry.originals, state.wrapper);
     });
     if (state.reduceMotion || typeof window.gsap === 'undefined') return;
     state.loops = state.tracks.map(function (entry, index) {

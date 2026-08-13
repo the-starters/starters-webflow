@@ -211,8 +211,8 @@ Attribute-driven components published for reuse across pages. Most carry a
 - `global-embeds/loader/loader.js` — the shared `setLoader(state, wrapper)` helper: shows or hides a scoped `[data-loader]` via inline visibility/opacity, then collapses `display` after the 300ms fade. No Docs URL and no owner doc; consumers call it directly
 - `global-embeds/text-methods/text-methods.js` — the shared `truncateText(text, limit)` helper: word-boundary truncation with an ellipsis, non-string input returning empty. No Docs URL and no owner doc
 - `global-embeds/millify.js` — formats long numbers as `1.2K` / `3.4M` through `data-millify` attributes; formatting adapted from millify v6.1.0 (MIT), diagnostics staging-gated. No Docs URL and no owner doc
-- `global-embeds/logo-wall/logo-wall.js` — **CDN-served** (jsDelivr `defer`, not a paste embed): attribute-driven Logo Wall; CMS logos split round-robin into looping GSAP tracks (`data-logo-wall-element="wrapper|item"`), unique set starts centered, bands reach the viewport edges, pause-on-hover, off-screen pause, reduced-motion freeze ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/logo-wall))
-- `global-embeds/logo-wall/logo-wall.css` — **CDN-served** companion structural CSS (viewport full-bleed + centered flex tracks); load in **Head** from the same jsDelivr ref as the script. The script also unclips padded ancestors so the band is not masked by a container.
+- `global-embeds/logo-wall/logo-wall.js` — **CDN-served** (jsDelivr `defer`, not a paste embed): attribute-driven Logo Wall; CMS logos split round-robin into looping GSAP tracks (`data-logo-wall-element="wrapper|item"`), unique set starts centered, clipped by its own wrapper (the container is the mask; full-bleed is a Designer layout choice), pause-on-hover, off-screen pause, reduced-motion freeze ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/logo-wall))
+- `global-embeds/logo-wall/logo-wall.css` — **CDN-served** companion structural CSS (overflow mask + flex tracks); load in **Head** from the same jsDelivr ref as the script.
 
 ### Form embeds (`global-embeds/form-embeds/`)
 

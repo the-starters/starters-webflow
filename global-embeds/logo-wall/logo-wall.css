@@ -1,6 +1,10 @@
 /* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/logo-wall
  *
  * CDN-served. Load in Head (same jsDelivr ref as logo-wall.js). Not a paste embed.
+ *
+ * The wrapper is the mask: it clips its Tracks at whatever width the Designer
+ * gives it. Nothing here sizes the wrapper — full-bleed is a Designer layout
+ * choice, not a rule in this file.
  */
 
 [data-logo-wall-element='wrapper'] {
@@ -9,12 +13,6 @@
   align-items: center;
   overflow: hidden;
   box-sizing: border-box;
-  padding-left: 0;
-  padding-right: 0;
-  width: 100vw;
-  max-width: 100vw;
-  margin-left: calc(50% - 50vw);
-  margin-right: calc(50% - 50vw);
 }
 
 [data-logo-wall-element='track'] {
