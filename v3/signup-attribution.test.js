@@ -1012,7 +1012,17 @@ test('each production Hire CTA registers the correct Booking or Connect lead ent
                     : { signup_trigger: trigger.element },
             ),
         })
-        assert.equal(harness.posthogCalls[0].properties.track_key, trackKey)
+        assert.deepEqual(plain(harness.posthogCalls), [
+            {
+                name: 'v3_lead_entry_registered',
+                properties: {
+                    track_key: trackKey,
+                    intent_subtype: intentSubtype,
+                    source_collection_id: '69f241ec147b71addb6f1531',
+                    payload_version: 'lead_entry_browser_v1',
+                },
+            },
+        ])
     }
 })
 
@@ -1129,7 +1139,6 @@ test('a real production CMS signup registers one authenticated V3 lead entry', a
             properties: {
                 track_key: 'collection',
                 intent_subtype: 'collection_signup',
-                source_route: '/skills/growth-marketing',
                 source_collection_id: '69cccee53fd01363c8d406f3',
                 payload_version: 'lead_entry_browser_v1',
             },
@@ -1175,7 +1184,6 @@ test('an accepted lead entry retries PostHog after the real SDK loads', async ()
             properties: {
                 track_key: 'collection',
                 intent_subtype: 'collection_signup',
-                source_route: '/skills/growth-marketing',
                 source_collection_id: '69cccee53fd01363c8d406f3',
                 payload_version: 'lead_entry_browser_v1',
             },
@@ -1257,7 +1265,6 @@ test('the same-page retry captures once when PostHog finishes loading', async ()
             properties: {
                 track_key: 'learn_ungated',
                 intent_subtype: 'learn_signup',
-                source_route: '/learn/interviews-analyses/operator-story',
                 source_collection_id: '69dca9df095d2fbcf34e255b',
                 payload_version: 'lead_entry_browser_v1',
             },

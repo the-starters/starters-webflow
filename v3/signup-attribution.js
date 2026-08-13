@@ -868,7 +868,6 @@
             window.posthog.capture('v3_lead_entry_registered', {
                 track_key: pending.track_key,
                 intent_subtype: pending.intent_subtype,
-                source_route: pending.source_route,
                 source_collection_id: pending.source_collection_id,
                 payload_version: 'lead_entry_browser_v1',
             })
