@@ -1084,10 +1084,8 @@ node --test v3/project-form.test.js
 ## Starter project form
 
 `starter-project-form.js` binds the Starter Dashboard copy of the shared
-**Contract Generation** component used on `/hire/<slug>`. It replaces detached
-CMS values with the authenticated Starter profile and server-authorized Brand
-options, while reusing `project-form.js` for the commercial field contract. The
-authoritative scope, endpoint, Designer, user-state, and release contract lives in
+**Contract Generation** component used on `/hire/<slug>`. The authoritative
+scope, endpoint, Designer, user-state, and release contract lives in
 [STARTER-PROJECT-FORM-WIRING.md](STARTER-PROJECT-FORM-WIRING.md).
 
 ## Superseded Brand proposal approval

@@ -35,7 +35,10 @@ class Element {
     this.parentElement = null
     this.resetCount = 0
   }
-  setAttribute(name, value) { this.attrs[name] = String(value) }
+  setAttribute(name, value) {
+    this.attrs[name] = String(value)
+    if (this.onAttributeChange) this.onAttributeChange(name, String(value))
+  }
   getAttribute(name) { return this.attrs[name] ?? null }
   removeAttribute(name) { delete this.attrs[name] }
   dispatchEvent(event) {
@@ -78,6 +81,7 @@ class Element {
   matches(selector) {
     if (selector === '#Brand' || selector.includes('#Brand')) return this.attrs.id === 'Brand'
     if (selector === '[data-project-form-v3="starter"]') return this.getAttribute('data-project-form-v3') === 'starter'
+    if (selector === '.generate-contract_success') return this.classList.contains('generate-contract_success')
     return false
   }
   closest(selector) {
@@ -88,6 +92,12 @@ class Element {
     if (selector === 'dialog') return this.dialog || null
     if (selector === '[data-starter-project-brand-option]') {
       return this.getAttribute('data-starter-project-brand-option') ? this : null
+    }
+    if (selector === '[dx-button="review"]') {
+      return this.getAttribute('dx-button') === 'review' ? this : null
+    }
+    if (selector === '[dx-button="edit"]') {
+      return this.getAttribute('dx-button') === 'edit' ? this : null
     }
     return null
   }
@@ -110,16 +120,23 @@ class Element {
     if (selector === '[data-project-form-state="error"]' || selector === '.w-form-fail') return this.error || null
     if (selector === '[data-project-form-state="success"]' || selector === '.w-form-done') return this.success || null
     if (selector === '[data-project-success-message]') return this.successMessage || null
+    if (selector === '.generate-contract_success-layout > p:not(.generate-contract_success-text)') return this.successMessage || null
+    if (selector === '.generate-contract_success') return this.preview || null
+    if (selector === '.generate-contract_success a.clickable_link') return this.successLink || null
+    if (selector === '.w-form-done a.clickable_link') return this.successLink || null
     if (selector === 'form') return this.form || null
     return null
   }
   querySelectorAll(selector) {
     if (selector === 'input, select, textarea, button') return this.controls || []
+    if (selector === 'input, select, textarea') return this.controls || []
     if (selector === '[data-set-current-date-inited="true"]') {
       return (this.controls || []).filter((control) => control.getAttribute('data-set-current-date-inited') === 'true')
     }
     if (selector === '[data-project-success-title], .generate-contract_success-text') return this.successTitles || []
     if (selector === '[data-project-bind], [element]') return this.profileTargets || []
+    if (selector === 'p, label, span') return this.copyTargets || []
+    if (selector === '.generate-contract_success a.clickable_link, .w-form-done a.clickable_link') return this.successLinks || []
     if (selector === '#brand-name-contract, #brand-name, #freeName, #FreeEmail, #pushMemID') return this.cmsOnly || []
     return []
   }
@@ -147,9 +164,29 @@ function formFixture() {
   Object.values(form.fields).forEach((element) => { element.context = context })
   form.wrapper = wrapper
   wrapper.error = new Element()
-  wrapper.success = new Element({ hidden: true })
+  wrapper.success = new Element({ hidden: true, className: 'generate-contract_success' })
   wrapper.success.successTitles = [new Element(), new Element()]
   wrapper.success.successMessage = new Element()
+  const successLink = new Element({ href: '/brand-dashboard', tagName: 'a' })
+  wrapper.success.successLink = successLink
+  context.successLinks = [successLink]
+  context.profileTargets = [
+    new Element({ tagName: 'img', element: 'profile_photo' }),
+    new Element({ element: 'full_name', textContent: 'Full Name' }),
+    new Element({ element: 'professional_headline', textContent: 'Headline' }),
+    new Element({ element: 'list_roles' }),
+    new Element({ element: 'role_name' }),
+    new Element({ element: 'freelancer_infromation', textContent: 'Freelancer information' }),
+  ]
+  context.copyTargets = [
+    new Element({ tagName: 'p', textContent: 'Selected Freelancer:' }),
+    new Element({ tagName: 'p', textContent: 'Starting a project is how you hire talent on The Starters' }),
+    new Element({ tagName: 'p', textContent: "This is where you'll define scope, set milestones, and get to work. Once a project is created, you can document the engagement, sign a contract, and pay your Starter all in one place." }),
+    new Element({ tagName: 'label', textContent: 'Add project scope for the freelancer' }),
+    new Element({ tagName: 'p', textContent: "The share of the total you'll pay the freelancer before work begins (0–100%)." }),
+    new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
+    new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
+  ]
   form.controls = Object.values(form.fields)
   return { context, form, wrapper }
 }
@@ -174,7 +211,11 @@ function load(options = {}) {
   }
   const document = {
     listeners: {},
-    addEventListener(name, handler) { this.listeners[name] = handler },
+    captureListeners: {},
+    addEventListener(name, handler, capture) {
+      if (capture === true) this.captureListeners[name] = handler
+      else this.listeners[name] = handler
+    },
     querySelector(selector) {
       if (selector === '[data-project-form-v3="starter"]') return context
       return selector.includes('start-project') || selector.includes('data-project-form-v3') ? form : null
@@ -418,7 +459,7 @@ test('disables every target when no modal has the native V3 form contract', () =
 })
 
 test('selecting a Brand stores its ID and clears stale sample email', () => {
-  const { api, form } = load({ noDocument: true })
+  const { api, context, form } = load({ noDocument: true })
   const selected = { id: 12, label: 'Acme — Jai', company_name: 'Acme', manager_name: 'Jai' }
   assert.equal(api.selectBrand(form, selected), true)
   assert.equal(form.fields.brandId.value, '12')
@@ -426,6 +467,28 @@ test('selecting a Brand stores its ID and clears stale sample email', () => {
   assert.equal(form.fields.company.value, 'Acme')
   assert.equal(form.fields.manager.value, 'Jai')
   assert.equal(form.fields.email.value, '')
+  assert.equal(context.profileTargets[0].hidden, true)
+  assert.equal(context.profileTargets[1].textContent, 'Acme')
+  assert.equal(context.profileTargets[2].textContent, 'Hiring manager: Jai')
+  assert.equal(context.profileTargets[3].hidden, true)
+  assert.equal(context.profileTargets[5].hidden, true)
+})
+
+test('prepares Starter-specific copy and dashboard destination without changing native markup', () => {
+  const { api, context, form } = load({ noDocument: true })
+
+  assert.equal(api.prepareStarterContext(form), true)
+
+  assert.deepEqual(context.copyTargets.map((element) => element.textContent), [
+    'Selected Brand:',
+    'Starting a project lets you work with a Brand on The Starters',
+    'Define the scope, agree on terms, and get to work. After the project is created, both parties can review and sign the contract.',
+    'Add the project scope you agreed with the Brand',
+    'The share of the total project cost the Brand will pay before work begins (0–100%).',
+    'The contract will continue until you or the Brand ends the project',
+    'The contract will continue until you or the Brand ends the project',
+  ])
+  assert.equal(context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
 })
 
 test('auto-selection and user selection use native select behavior without re-entry', async () => {
@@ -614,6 +677,14 @@ test('submission reports the canonical project and contract-first success state'
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
   })
+  const renderedBrand = new Element()
+  loaded.wrapper.success.onAttributeChange = (name, value) => {
+    if (name === 'aria-hidden' && value === 'false') {
+      renderedBrand.textContent = loaded.form.fields.company.disabled
+        ? ''
+        : loaded.form.fields.company.value
+    }
+  }
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.equal(loaded.calls.submit.length, 1)
@@ -631,6 +702,81 @@ test('submission reports the canonical project and contract-first success state'
     loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
     'Your contract is being prepared. You and the Brand can sign when it is ready.',
   )
+  assert.equal(loaded.context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
+  assert.equal(loaded.wrapper.success.getAttribute('aria-hidden'), 'false')
+  assert.equal(renderedBrand.textContent, 'Brand')
+})
+
+test('Review then submit restores preview fields without enabling authored disabled fields', async () => {
+  const loaded = load({
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+  })
+  const review = new Element({ 'dx-button': 'review', tagName: 'button' })
+  review.form = loaded.form
+  const renderedBrand = new Element()
+  loaded.wrapper.success.onAttributeChange = (name, value) => {
+    if (name === 'aria-hidden' && value === 'false') {
+      renderedBrand.textContent = loaded.form.fields.company.disabled
+        ? ''
+        : loaded.form.fields.company.value
+    }
+  }
+
+  loaded.api.prepareStarterContext(loaded.form)
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(loaded.form.fields.company.disabled, false)
+  assert.equal(loaded.form.fields.email.disabled, true)
+
+  loaded.document.captureListeners.click({ target: review })
+  loaded.form.controls.forEach((control) => { control.disabled = true })
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(renderedBrand.textContent, 'Brand')
+  assert.equal(loaded.form.fields.company.disabled, false)
+  assert.equal(loaded.form.fields.email.disabled, true)
+})
+
+test('Review Edit fee change refreshes preview controls and preserves authored disabled fields', async () => {
+  const loaded = load({
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+  })
+  const review = new Element({ 'dx-button': 'review', tagName: 'button' })
+  const edit = new Element({ 'dx-button': 'edit', tagName: 'button' })
+  review.form = loaded.form
+  edit.form = loaded.form
+  const flatCost = new Element({ value: '1000' })
+  const monthlyRate = new Element({ value: '3200', disabled: true })
+  flatCost.form = loaded.form
+  monthlyRate.form = loaded.form
+  loaded.form.controls.push(flatCost, monthlyRate)
+  let renderedMonthlyRate = ''
+  loaded.wrapper.success.onAttributeChange = (name, value) => {
+    if (name === 'aria-hidden' && value === 'false') {
+      renderedMonthlyRate = monthlyRate.disabled ? '' : monthlyRate.value
+    }
+  }
+
+  loaded.api.prepareStarterContext(loaded.form)
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  loaded.document.captureListeners.click({ target: review })
+  loaded.form.controls.forEach((control) => { control.disabled = true })
+
+  // The legacy Edit handler enables all controls before the document listener
+  // reapplies Starter identity state and the selected fee branch changes.
+  loaded.form.controls.forEach((control) => { control.disabled = false })
+  loaded.document.listeners.click({ target: edit })
+  flatCost.disabled = true
+  monthlyRate.disabled = false
+
+  loaded.document.captureListeners.click({ target: review })
+  loaded.form.controls.forEach((control) => { control.disabled = true })
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(renderedMonthlyRate, '3200')
+  assert.equal(flatCost.disabled, true)
+  assert.equal(monthlyRate.disabled, false)
+  assert.equal(loaded.form.fields.email.disabled, true)
 })
 
 test('Own Contract submission reports immediate activation', async () => {
