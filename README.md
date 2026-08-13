@@ -243,6 +243,7 @@ Algolia filter chrome for the Starters browse list; each carries its `// Docs:` 
 Post-render transforms applied to Algolia hit markup; each carries its `// Docs:` URL.
 
 - `algolia-result-modifiers/roles.js` — splits and labels a hit's roles values ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/roles))
+- `algolia-result-modifiers/subcategories.js` — splits a hit's `categories.lvl1` hierarchical paths into one Subcategory tag per leaf ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/subcategories))
 - `algolia-result-modifiers/companies.js` — renders a hit's work-history companies ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/companies))
 - `algolia-result-modifiers/learn-categories.js` — maps Learn category values to display labels ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/learn-categories))
 - `algolia-result-modifiers/price-label.js` — formats the price label on a hit ([docs](https://wf-starter-embeds-docs.vercel.app/docs/algolia-result-modifiers/price-label))
