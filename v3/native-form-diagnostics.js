@@ -294,19 +294,6 @@
       request_started: true,
     }))
     form.__startersMemberstackDiagnostic = receipt
-    if (target) {
-      var textTarget = target.querySelector && target.querySelector(
-        '[data-workflow-diagnostic-message], [data-ms-message-text], p, div',
-      ) || target
-      if (textTarget.__startersWorkflowDiagnosticBaseText === undefined) {
-        textTarget.__startersWorkflowDiagnosticBaseText = textTarget.textContent || ''
-      }
-      textTarget.textContent = api.message(
-        textTarget.__startersWorkflowDiagnosticBaseText,
-        receipt,
-      )
-      api.decorate(textTarget, receipt)
-    }
     return receipt
   }
 

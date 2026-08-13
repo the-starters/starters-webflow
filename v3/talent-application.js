@@ -160,14 +160,6 @@
     var fail = wrapper ? wrapper.querySelector('.w-form-fail') : null
     if (!fail) return
     fail.style.display = 'block'
-    var api = diagnostics()
-    if (!api || !receipt) return
-    var target = fail.querySelector && fail.querySelector('[data-workflow-diagnostic-message], div, p') || fail
-    if (target.__startersWorkflowDiagnosticBaseText === undefined) {
-      target.__startersWorkflowDiagnosticBaseText = target.textContent || 'We could not submit your application. Please try again.'
-    }
-    target.textContent = api.message(target.__startersWorkflowDiagnosticBaseText, receipt)
-    api.decorate(target, receipt)
   }
 
   function setSubmitting(form, submitting) {

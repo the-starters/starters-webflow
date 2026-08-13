@@ -151,7 +151,7 @@
     }, SUCCESS_REDIRECT_DELAY_MS)
   }
 
-  function complete(result, errorCode, target) {
+  function complete(result, errorCode) {
     var api = window.StartersWorkflowDiagnostics
     if (!api || !receipt || receipt.result !== 'started') return receipt
     receipt = api.record(api.complete(receipt, {
@@ -161,19 +161,6 @@
       duration_ms: Date.now() - startedAt,
       request_started: true,
     }))
-    if (target) {
-      var textTarget = target.querySelector && target.querySelector(
-        '[data-workflow-diagnostic-message], p, div',
-      ) || target
-      if (textTarget.__startersWorkflowDiagnosticBaseText === undefined) {
-        textTarget.__startersWorkflowDiagnosticBaseText = textTarget.textContent || ''
-      }
-      textTarget.textContent = api.message(
-        textTarget.__startersWorkflowDiagnosticBaseText,
-        receipt,
-      )
-      api.decorate(textTarget, receipt)
-    }
     return receipt
   }
 
@@ -185,7 +172,7 @@
     if (pendingOutcome) {
       var outcome = pendingOutcome
       pendingOutcome = null
-      complete(outcome.result, outcome.errorCode, outcome.target)
+      complete(outcome.result, outcome.errorCode)
     }
   }
 
