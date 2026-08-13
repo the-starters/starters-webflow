@@ -196,7 +196,8 @@
  * `lead_email/register/v3` owns identity, Brand Free eligibility, route and CMS
  * collection allowlists, suppression, and idempotency. Unsupported routes and
  * non-production hosts fail closed. The accepted event is reported to PostHog
- * once per browser session without member IDs or email addresses.
+ * at most once per event and CMS resource in the browser session, without
+ * member IDs or email addresses.
  *
  * Debug: `window.StartersAttribution.getParams()` returns the current cookie
  * values, and `window.StartersAttribution.rearm()` reports (and, if a signup form
@@ -748,7 +749,7 @@
             if (!storage) return
             storage.setItem(LEAD_ENTRY_PENDING_KEY, JSON.stringify(pending))
         } catch (error) {
-            /* blocked storage leaves only the current-page attempt */
+            /* blocked storage fails closed because registration reads this snapshot */
         }
     }
 
