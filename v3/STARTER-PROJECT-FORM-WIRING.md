@@ -71,9 +71,9 @@ The controller binds these existing elements:
   not expose it;
 - counterparty rail: the selected Brand member's full name fills the existing
   `full_name` binding, and the Brand company fills `professional_headline`.
-  Eligible options must include both values. The controller clears and hides the copied
-  Starter photo, role, role list, and profile information. Existing `element`
-  attributes remain supported; new markup should use
+  Eligible options must include both values. The controller clears and hides
+  the copied Starter photo, role, role list, and profile information. Existing
+  `element` attributes remain supported; new markup should use
   `data-project-bind="starter.<field>"`;
 - shared commercial fields: serialized and validated by `v3/project-form.js`.
 
