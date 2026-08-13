@@ -22,11 +22,15 @@
  *      modal leaves the frame frozen; any play attempt reopens it.
  *   4. A member gets the whole video, fullscreen included, and never sees a wall.
  *   5. A confirmed member whose player box is NARROWER than the native-controls
- *      threshold goes straight to the device's own fullscreen player on the watch
- *      tap — the same tap, plus a fullscreen request fired inside that gesture.
- *      Only on a genuine activation (see enterFullscreen), never for a gated
- *      viewer, and never above the threshold, where Vimeo's own bar already
- *      carries the button. An early tap on a not-yet-upgraded frame, or a refused
+ *      threshold (read once at mount — a later rotation does not rebuild) goes
+ *      fullscreen on the watch tap — the same tap, plus a fullscreen request
+ *      fired inside that gesture. On iPhone that is the device's own player; on
+ *      Android and narrow desktop the browser fullscreens our iframe, which
+ *      carries Vimeo's bar so fullscreen has pause, scrub, volume and exit.
+ *      Inline, the template UI stays in charge. Only on a genuine activation
+ *      (see enterFullscreen), never for a gated viewer, and never above the
+ *      threshold as measured at mount, where Vimeo's own bar already carries
+ *      the button. An early tap on a not-yet-upgraded frame, or a refused
  *      request, plays inline exactly as (3) and (4) describe — that fallback is
  *      the designed outcome, not an error.
  *      LEAVING fullscreen pauses: the shipped pause shape returns (overlay back,
@@ -83,8 +87,15 @@
  *     data-session-video-cut               optional seconds, default 180
  *     data-session-video-bg                optional seconds, default 20
  *     data-session-video-native-min        optional px, default 768. Below this
- *                                          player width NOBODY gets Vimeo's own
- *                                          controls, member or not.
+ *                                          player width (read once at mount)
+ *                                          nobody gets Vimeo's UI in charge —
+ *                                          the template overlay and bar stay in
+ *                                          front. For a confirmed member it also
+ *                                          means the watch tap goes fullscreen
+ *                                          and leaving fullscreen pauses. The
+ *                                          iframe still carries Vimeo's bar
+ *                                          (controls=1) so fullscreen has an
+ *                                          interface; keyboard and pip stay off.
  *   [data-session-video="stage"]           the iframe is built in here
  *   [data-session-video="signup-trigger"]  hidden; carries data-modal-trigger
  *
@@ -138,7 +149,9 @@
   // roughly this width — measured on a bare player at 375px: no play button, no
   // full screen, no quality, and `scrollWidth > clientWidth` on the bar itself.
   // Its native UI is cross-origin, so no CSS of ours can repair it. Below this
-  // width EVERYONE gets the template's own controls, member or not.
+  // width EVERYONE gets the template's own controls in charge, member or not.
+  // Ungated frames still load Vimeo's bar (see showsVimeoControls) so a
+  // fullscreen of the iframe has an interface.
   var NATIVE_MIN_WIDTH = 768
 
   var ROOT_SELECTOR = '[data-session-video="root"]'
@@ -305,24 +318,41 @@
   }
 
   /**
+   * Vimeo's control bar is ON for every ungated frame, even a narrow one.
+   * `player.requestFullscreen()` fullscreens the iframe; with controls=0 that
+   * is a bare video filling the screen — no pause, scrub, volume, or visible
+   * exit — on Android Chrome and narrow desktop. iPhone masks this via the OS
+   * player. Inline, the template UI stays in charge (`data-sv-player=custom`,
+   * #videoClickOverlay intercepts taps so Vimeo's bar idles). The enabled bar
+   * exists so FULLSCREEN has an interface. Gated frames stay controls=0: a
+   * scrubber would advertise the full runtime and make the wall look abrupt.
+   */
+  function showsVimeoControls(gated) {
+    return !gated
+  }
+
+  /**
    * Built here rather than authored, so the controls, fullscreen and
    * picture-in-picture attributes are correct AT LOAD for this particular viewer:
    * a gated viewer and a member get different native UI, per the split below.
    */
   function buildFrame(videoId, gated, native) {
-    // `native` decides the control UI; `gated` decides the full-screen permission.
-    // They are separate because a member on a narrow screen gets the template's own
-    // controls (Vimeo's are unusable there) but keeps the permission.
+    // `native` decides keyboard, pip, and which UI is in charge. `gated` decides
+    // the full-screen permission AND Vimeo's control bar (see showsVimeoControls).
+    // They are separate because a member on a narrow screen keeps the template's
+    // overlay in charge inline, but the iframe still carries Vimeo's bar so a
+    // fullscreen of that iframe has an interface.
     //
-    // No native UI means no scrubber to drag past the cut point, no keyboard
-    // seeking and no picture-in-picture window carrying its own scrubber. The
-    // clamp catches seeks anyway, so a scrubber was never a bypass — it only makes
-    // the wall look abrupt and advertises the full runtime.
+    // keyboard and pip stay off on every non-native frame: no keyboard seeking
+    // and no picture-in-picture window carrying its own scrubber. Gated frames
+    // also omit the control bar. The clamp catches seeks anyway, so a scrubber
+    // was never a bypass — it only makes the wall look abrupt and advertises the
+    // full runtime.
     var params = [
       'autoplay=1',
       'muted=1',
       'loop=1',
-      'controls=' + (native ? '1' : '0'),
+      'controls=' + (showsVimeoControls(gated) ? '1' : '0'),
       'keyboard=' + (native ? '1' : '0'),
       'pip=' + (native ? '1' : '0'),
       'title=0',
@@ -351,21 +381,29 @@
    */
   function armControl(el, label, onActivate) {
     if (!el) return
-    if (el.nodeName !== 'BUTTON') {
-      el.setAttribute('role', 'button')
-      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0')
+    // A null label is a pointer-only surface (#videoClickOverlay). Keyboard
+    // users have the named controls; giving this full-bleed layer role=button
+    // and tabindex made an unnamed focusable button that could seize the
+    // screen on Space.
+    if (label) {
+      if (el.nodeName !== 'BUTTON') {
+        el.setAttribute('role', 'button')
+        if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0')
+      }
+      if (!el.hasAttribute('aria-label')) el.setAttribute('aria-label', label)
     }
-    if (label && !el.hasAttribute('aria-label')) el.setAttribute('aria-label', label)
     el.addEventListener('click', function (e) {
       if (e && typeof e.preventDefault === 'function') e.preventDefault()
-      onActivate()
+      onActivate(true)
     })
-    el.addEventListener('keydown', function (e) {
-      var k = e && e.key
-      if (k !== 'Enter' && k !== ' ' && k !== 'Spacebar') return
-      if (typeof e.preventDefault === 'function') e.preventDefault()
-      onActivate()
-    })
+    if (label) {
+      el.addEventListener('keydown', function (e) {
+        var k = e && e.key
+        if (k !== 'Enter' && k !== ' ' && k !== 'Spacebar') return
+        if (typeof e.preventDefault === 'function') e.preventDefault()
+        onActivate(true)
+      })
+    }
   }
 
   function Controller(root) {
@@ -386,9 +424,9 @@
     this.bound = false
     this.ready = false
     this.native = false
-    // Is the player box too narrow for Vimeo's own bar? Width only, no membership
-    // in it. For a member that box is the one where a watch tap goes straight to
-    // the device's fullscreen player. Set by mount().
+    // Is the player box too narrow for Vimeo's own bar to be in charge? Width
+    // only, no membership in it. For a member that box is the one where a watch
+    // tap goes fullscreen. Set by the ungated mount path (and mountWithoutApi).
     this.narrow = false
   }
 
@@ -442,6 +480,14 @@
     setState(el, 'data-sv-mute', m ? 'on' : 'off')
     if (el) el.setAttribute('aria-label', m ? 'Unmute the session video' : 'Mute the session video')
   }
+  Controller.prototype.paintWatch = function () {
+    var el = this.el('watch')
+    if (!el) return
+    el.setAttribute(
+      'aria-label',
+      this.watchDrivesFullscreen() ? 'Watch the session in full screen' : 'Watch the session',
+    )
+  }
   Controller.prototype.showOverlay = function (show) {
     setState(this.el('overlay'), 'data-sv-overlay', show ? 'visible' : 'hidden')
   }
@@ -494,6 +540,8 @@
     // play, pause, mute or full-screen route at all, with the CSS also keeping
     // pointer-events off the iframe. Vimeo's cramped bar beats no bar.
     this.native = true
+    // Width is still a fact about the box. native is forced; narrow must not lie.
+    this.narrow = !wideEnough(this.root)
     stage.append(buildFrame(this.videoId, false, true))
     setState(this.root, 'data-sv-player', 'native')
     setState(this.root, 'data-sv-video', 'ready')
@@ -516,16 +564,19 @@
   }
 
   Controller.prototype.mount = function (gated) {
-    // One measurement, two answers. `narrow` is a fact about the box and nothing
-    // else — membership is checked separately at the point of use, so dropping
-    // either half of that test is visible in the tests rather than covered for by
-    // the other. Read here rather than per tap for the reason wideEnough() gives:
-    // the frame's `controls` parameter is fixed at load, so a re-measure mid-gesture
-    // could disagree with the UI the viewer is actually looking at. upgrade() calls
-    // mount() again, so a late member gets both recomputed.
-    var wide = wideEnough(this.root)
-    this.native = !gated && wide
-    this.narrow = !wide
+    // Measure only when ungated. A gated mount is always custom, and reading the
+    // box here used to thrash layout on every visitor's first paint for a fact
+    // that cannot change the gated frame. upgrade() remounts ungated and measures
+    // then. One writer of the width fact per path: gated leaves narrow unknown
+    // (false); ungated writes both native and narrow from the same reading.
+    if (!gated) {
+      var wide = wideEnough(this.root)
+      this.native = wide
+      this.narrow = !wide
+    } else {
+      this.native = false
+      this.narrow = false
+    }
     var self = this
     if (!window.Vimeo || typeof window.Vimeo.Player !== 'function') {
       warn('mount called without the Vimeo Player API; refusing to build a frame')
@@ -584,6 +635,7 @@
     this.showFullscreen()
 
     this.bind()
+    this.paintWatch()
     return true
   }
 
@@ -594,16 +646,16 @@
     this.bound = true
     var self = this
 
-    // `true` marks these as USER ACTIVATIONS. armControl only ever calls back from a
-    // click or an Enter/Space keydown, so every route through here is a real gesture
-    // — which is what licenses the fullscreen request in watch(). upgrade() calls
+    // armControl calls back with `true` from a click or (when labelled) an
+    // Enter/Space keydown, so every route through here is a real gesture —
+    // which is what licenses the fullscreen request in watch(). upgrade() calls
     // watch() with no argument, and must keep doing so.
     var watch = this.el('watch')
-    if (watch) armControl(watch, 'Watch the session', function () { self.watch(true) })
+    if (watch) armControl(watch, 'Watch the session', function (byGesture) { self.watch(byGesture) })
     else warn('no [data-element-trigger="show-video"] inside the root')
 
-    armControl(this.el('play'), 'Play or pause the session video', function () { self.toggle(true) })
-    armControl(this.el('click'), null, function () { self.toggle(true) })
+    armControl(this.el('play'), 'Play or pause the session video', function (byGesture) { self.toggle(byGesture) })
+    armControl(this.el('click'), null, function (byGesture) { self.toggle(byGesture) })
 
     armControl(this.el('mute'), 'Mute or unmute the session video', function () {
       if (!self.player) return
@@ -636,10 +688,12 @@
   }
 
   /**
-   * Straight into the device's own fullscreen player, for a confirmed member whose
-   * player box is too narrow for Vimeo's bar, fired inside the tap that asked for
+   * Straight into fullscreen for a confirmed member whose player box is too
+   * narrow for Vimeo's bar to be in charge, fired inside the tap that asked for
    * it. On a phone the inline hero is a postage stamp with our minimal controls,
    * and finding the separate fullscreen button was a second step nobody took.
+   * On iPhone the OS takes over; elsewhere the browser fullscreens our iframe,
+   * which carries Vimeo's bar so the full-screen surface has an interface.
    *
    * Called from BOTH of watch()'s branches: the first tap starts fullscreen, and
    * every later tap re-enters it from wherever an exit left the position. On a
@@ -821,6 +875,9 @@
     if (!d || typeof d.fullscreen === 'undefined') return
     if (d.fullscreen) return
     if (!this.watchDrivesFullscreen()) return
+    // Ambient loop: pause() would fire, onPause would return early on !armed,
+    // timeupdates would stop, and the muted hero would freeze.
+    if (!this.armed) return
     safe(this.player.pause())
     info('left fullscreen at ' + this.position.toFixed(1) + 's; pausing')
   }
@@ -994,6 +1051,8 @@
             muted: c.muted,
             position: c.position,
             player: c.native ? 'native' : 'custom',
+            narrow: !!c.narrow,
+            fullscreenTap: c.watchDrivesFullscreen(),
             videoReady: c.ready,
             wallOpens: c.wallOpens,
           }
