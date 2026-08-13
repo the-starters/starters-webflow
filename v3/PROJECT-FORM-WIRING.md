@@ -398,6 +398,8 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    PandaDoc generation or email claim.
 10. Without issuing a project request, open the form and trigger authored and
     browser validation failures. Confirm each action emits the matching PostHog
-    event, the authored message shows an `SPF-...` ID, and click or keyboard copy
-    returns only the allowlisted receipt fields above. Confirm the receipt has no
-    form values, identity values, credentials, request body, or response body.
+    event and leaves the authored success and error messages free of diagnostic
+    IDs, receipt data, and copy interactions. In the browser console, confirm
+    `copyProjectDiagnostic()` returns the latest receipt with only the allowlisted
+    fields above and no form values, identity values, credentials, request body,
+    or response body.
