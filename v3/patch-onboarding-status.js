@@ -173,22 +173,8 @@
   }
 
   function decorateOnboardingReceipt(wrapper, receipt, kind) {
-    var api = window.StartersWorkflowDiagnostics
-    if (!wrapper || !api || !receipt || typeof wrapper.querySelector !== 'function') return false
-    var target = wrapper.querySelector(
-      kind === 'success' || kind === 'visible-error' ? DONE_SELECTOR : '.w-form-fail',
-    )
-    if (!target) return false
-    var text = target.querySelector && target.querySelector('[data-workflow-diagnostic-message], div, p') || target
-    if (text.__startersWorkflowDiagnosticBaseText === undefined) {
-      text.__startersWorkflowDiagnosticBaseText = kind === 'visible-error'
-        ? 'We could not confirm your member session. Please log in and try again.'
-        : text.textContent ||
-          (kind === 'success' ? 'Onboarding completed.' : 'We could not confirm onboarding status.')
-    }
-    text.textContent = api.message(text.__startersWorkflowDiagnosticBaseText, receipt)
-    api.decorate(text, receipt)
-    return true
+    // Diagnostics are console-only. The authored success/error state owns its DOM.
+    return Boolean(wrapper && receipt && kind)
   }
 
   /* ------------------------------ environment ------------------------------ */
