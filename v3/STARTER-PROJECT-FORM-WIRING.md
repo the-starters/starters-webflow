@@ -69,11 +69,11 @@ The controller binds these existing elements:
   fills Hiring Manager;
 - the Brand email input is disabled and hidden because the options endpoint does
   not expose it;
-- counterparty rail: the selected Brand company fills the existing `full_name`
-  binding, and the hiring manager full name fills `professional_headline` as
-  **Hiring manager: &lt;full name&gt;**. The controller clears and hides the copied
-  Starter photo, role, role list, and profile information. Existing `element`
-  attributes remain supported; new markup should use
+- counterparty rail: the selected Brand member's full name fills the existing
+  `full_name` binding, and the Brand company fills `professional_headline`.
+  Eligible options must include both values. The controller clears and hides
+  the copied Starter photo, role, role list, and profile information. Existing
+  `element` attributes remain supported; new markup should use
   `data-project-bind="starter.<field>"`;
 - shared commercial fields: serialized and validated by `v3/project-form.js`.
 

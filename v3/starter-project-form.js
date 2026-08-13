@@ -128,11 +128,11 @@
       if (!id || seen[id]) return items
       var company = clean(raw && (raw.company_name || raw.counterparty_label || raw.label))
       var manager = clean(raw && (raw.hiring_manager_name || raw.full_name || raw.manager_name))
-      var label = company || manager
-      if (company && manager && company.toLowerCase() !== manager.toLowerCase()) {
+      if (!company || !manager) return items
+      var label = company
+      if (company.toLowerCase() !== manager.toLowerCase()) {
         label = company + ' — ' + manager
       }
-      if (!label) return items
       seen[id] = true
       items.push({ id: id, label: label, company_name: company, manager_name: manager })
       return items
@@ -247,8 +247,8 @@
     var company = clean(option && option.company_name)
     var manager = clean(option && option.manager_name)
     var values = {
-      full_name: company || manager,
-      professional_headline: manager ? 'Hiring manager: ' + manager : '',
+      full_name: manager,
+      professional_headline: company,
       profile_photo: '',
       role_name: '',
       list_roles: '',
