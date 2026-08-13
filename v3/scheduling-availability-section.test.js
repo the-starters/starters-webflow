@@ -206,7 +206,9 @@ function buildItemTemplate() {
   const editBtn = new El('div', { 'data-availability-action': 'item-form-open' })
   editBtn.textContent = 'Edit'
   const removeBtn = new El('div', { 'data-availability-action': 'item-remove' })
-  removeBtn.textContent = 'Remove'
+  const removeBtnText = new El('span', { 'text-element': '' })
+  removeBtnText.textContent = 'Remove'
+  removeBtn.appendChild(removeBtnText)
   buttonGroup.appendChild(editBtn)
   buttonGroup.appendChild(removeBtn)
   topContent.appendChild(itemTitle)
@@ -258,11 +260,23 @@ function buildItemTemplate() {
     dayWrap.appendChild(checkbox)
     form.appendChild(dayWrap)
   })
-  const startInput = new El('input', { name: 'start-time' })
-  const endInput = new El('input', { name: 'end-time' })
+  const timepickerGroup = new El('div', { 'data-input-timepicker-group': '' })
+  const startInput = new El('input', {
+    name: 'start-time',
+    id: 'start-time',
+    'data-input-timepicker': '',
+    'data-input-timepicker-role': 'start',
+  })
+  const endInput = new El('input', {
+    name: 'end-time',
+    id: 'end-time',
+    'data-input-timepicker': '',
+    'data-input-timepicker-role': 'end',
+  })
+  timepickerGroup.appendChild(startInput)
+  timepickerGroup.appendChild(endInput)
   const priceInput = new El('input', { type: 'hidden', id: 'price', name: 'price', 'data-rate': '150' })
-  form.appendChild(startInput)
-  form.appendChild(endInput)
+  form.appendChild(timepickerGroup)
   form.appendChild(priceInput)
   formOuter.appendChild(form)
   const buttonRow = new El('div')
@@ -739,6 +753,41 @@ test('an active-booking disconnect rejection stops the Google-to-Platform switch
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
+test('connect-label-group and connect-info-wrapper do not flash mid-request on disconnect-google', async () => {
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+
+  // Sanity: boots into the connected look.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none') // "Disconnected" label hidden
+  assert.equal(dom.labelGroup.children[1].style.display, '') // "Connected" label shown
+  assert.equal(dom.connectInfoWrapper.style.display, 'none')
+
+  dom.connectBtnWrapper.children[2].click() // disconnect-google — publishes 'loading' synchronously
+
+  // The request hasn't resolved yet — both elements must still read exactly
+  // as they did before the click, not flip to a "disconnected" look.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '')
+  assert.equal(dom.connectInfoWrapper.style.display, 'none')
+
+  await settle()
+
+  // Disconnect reverts to the platform manager, landing back on a connected
+  // look once the real response arrives.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.connectInfoWrapper.style.display, 'none')
+})
+
 /* ------------------------------------------------------------------ */
 /* Tests: per-item form toggle, action visibility, checkbox skin       */
 /* ------------------------------------------------------------------ */
@@ -840,6 +889,49 @@ test('initInputPickers scopes to the freshly rendered list on a full render, and
   assert.deepEqual(calls, [newCard])
 })
 
+test('a cloned item-card gets fresh timepicker markup so global timepicker.js does not skip re-init', async () => {
+  const { dom, window } = loadSection()
+  await settle()
+
+  // Minimal stand-in for global-embeds/form-embeds/timepicker/timepicker.js's
+  // own guard: a group already carrying data-input-timepicker-initialized
+  // ="true" is skipped entirely (initGroup() returns immediately).
+  const initedGroups = []
+  window.wfInputTimepicker = {
+    init(scope) {
+      scope.querySelectorAll('[data-input-timepicker-group]').forEach((group) => {
+        if (group.getAttribute('data-input-timepicker-initialized') === 'true') return
+        initedGroups.push(group)
+        group.setAttribute('data-input-timepicker-initialized', 'true')
+      })
+    },
+  }
+
+  // Reproduce the real precondition: the item-template is a hidden sibling
+  // inside `list` (never removed), so the very first initInputPickers(list)
+  // call in renderAvailabilityItems() reaches and marks it too — every future
+  // clone would otherwise inherit this mark via cloneNode(true).
+  const template = dom.list.children.find((el) => el.getAttribute('data-availability-element') === 'item-template')
+  template.querySelector('[data-input-timepicker-group]').setAttribute('data-input-timepicker-initialized', 'true')
+
+  dom.createBtn.click()
+  await settle()
+
+  const newCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const newGroup = newCard.querySelector('[data-input-timepicker-group]')
+  assert.ok(
+    initedGroups.includes(newGroup),
+    'initGroup() must actually run on the clone instead of bailing on an inherited INIT_ATTR',
+  )
+
+  const newStart = newCard.querySelector('[data-input-timepicker][data-input-timepicker-role="start"]')
+  const newEnd = newCard.querySelector('[data-input-timepicker][data-input-timepicker-role="end"]')
+  assert.equal(newStart.getAttribute('id'), null, 'cloned start input id must be stripped to avoid duplicate DOM ids')
+  assert.equal(newEnd.getAttribute('id'), null, 'cloned end input id must be stripped to avoid duplicate DOM ids')
+})
+
 test('item cards remain visible (not display:none) across repeated renders', async () => {
   const { dom } = loadSection()
   await settle()
@@ -905,6 +997,72 @@ test('removing an item waits for the response before refreshing slots (not fired
 
   assert.equal(dom.loadingSlots.style.display, 'none')
   assert.notEqual(slotsList.style.display, 'none')
+})
+
+test('item-remove shows a Removing... state and dims the card while the request is in flight', async () => {
+  const { dom } = loadSection({
+    serverState: {
+      availability: {
+        items: {
+          general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
+          override1: { days: [4], start: '10:00', end: '11:00' },
+        },
+        manager: null,
+      },
+    },
+  })
+  await settle()
+
+  const overrideCard = dom.list.children.find((el) => el.dataset.id === 'override1')
+  const removeBtn = overrideCard.children[0].children[2].children[1]
+  const removeBtnText = removeBtn.children[0]
+
+  assert.equal(removeBtnText.textContent, 'Remove')
+
+  removeBtn.click()
+
+  assert.equal(removeBtnText.textContent, 'Removing...')
+  assert.equal(overrideCard.style.opacity, '0.6')
+  assert.equal(overrideCard.style.pointerEvents, 'none')
+
+  await settle()
+
+  // Removal succeeded — override1 is gone after the re-render.
+  const stillThere = dom.list.children.find((el) => el.dataset.id === 'override1')
+  assert.equal(stillThere, undefined)
+})
+
+test('item-remove reverts its loading state on failure without removing the card', async () => {
+  const { dom, warnings } = loadSection({
+    serverState: {
+      availability: {
+        items: {
+          general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
+          override1: { days: [4], start: '10:00', end: '11:00' },
+        },
+        manager: null,
+      },
+    },
+    postRoutes: {
+      '/starter/update_availability/v3': () => ({ status: 500, body: null }),
+    },
+  })
+  await settle()
+
+  const overrideCard = dom.list.children.find((el) => el.dataset.id === 'override1')
+  const removeBtn = overrideCard.children[0].children[2].children[1]
+  const removeBtnText = removeBtn.children[0]
+
+  removeBtn.click()
+  assert.equal(removeBtnText.textContent, 'Removing...')
+  assert.equal(overrideCard.style.opacity, '0.6')
+
+  await settle()
+
+  assert.equal(removeBtnText.textContent, 'Remove')
+  assert.equal(overrideCard.style.opacity, '1')
+  assert.equal(overrideCard.style.pointerEvents, 'auto')
+  assert.ok(warnings.some((w) => w.includes('availability remove failed')))
 })
 
 test('opening or closing the item form does not touch the slots preview', async () => {
