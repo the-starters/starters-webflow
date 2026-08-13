@@ -983,7 +983,10 @@ context. The submit adapter accepts the live `Feedback` field and the legacy
 Post-call review emails use the same authored modal through a separate,
 fail-closed booking contract. Their CTA opens
 `/brand-dashboard?review_booking=<encoded booking id>` with the stable Mandrill
-UTM values and `#calls-section`. After the paid-Brand gate passes, the controller
+UTM values and `#calls-section`. The versioned sender, first-name personalization,
+CTA, and UTM contract is
+[`v3/email-automation/post-call-review-v1.json`](v3/email-automation/post-call-review-v1.json).
+After the paid-Brand gate passes, the controller
 posts only that booking ID to authenticated
 `brand/call-reviews/eligibility/v3`. Xano must confirm that the signed-in Brand
 owns the completed booking, that payment is reconciled when required, and that

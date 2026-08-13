@@ -1,0 +1,25 @@
+{
+  "contract_version": 1,
+  "workflow": "v3_post_call_review",
+  "release_mode": "configuration_only_no_send_no_activation",
+  "sender": {
+    "name": "The Starters",
+    "email": "hello@thestarters.com"
+  },
+  "personalization": {
+    "brand_name_field": "brand_first_name",
+    "starter_name_field": "starter_first_name",
+    "name_policy": "first_name_only"
+  },
+  "cta": {
+    "path": "/brand-dashboard",
+    "booking_query_parameter": "review_booking",
+    "fragment": "calls-section",
+    "utm": {
+      "utm_source": "mandrill",
+      "utm_medium": "email",
+      "utm_campaign": "v3_post_call_review",
+      "utm_content": "review_call_cta"
+    }
+  }
+}

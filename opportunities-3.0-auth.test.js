@@ -3134,8 +3134,10 @@ test('call-review email deep link validates the booking before opening and submi
   rating.value = '5'
   const feedback = el('textarea', { name: 'Public-Feedback' })
   feedback.value = 'Excellent advice after the completed call.'
+  const privateFeedback = el('textarea', { name: 'Private-Feedback' })
+  const privateWrap = el('div', { class: 'form_field-wrap' }, [privateFeedback])
   const submit = el('button', { type: 'submit' })
-  const form = el('form', {}, [rating, feedback, submit])
+  const form = el('form', {}, [rating, feedback, privateWrap, submit])
   form.reset = () => {}
   const starterName = el('p')
   starterName.textContent = 'Rate your call with [Starter Name]'
@@ -3152,7 +3154,9 @@ test('call-review email deep link validates the booking before opening and submi
     async (input, init = {}) => {
       const url = String(input)
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/brand/projects/mine')) return response({ items: [] })
+      if (url.includes('/brand/projects/mine')) {
+        return response({ message: 'Projects unavailable' }, false, 503)
+      }
       if (url.includes('/brand/call-reviews/eligibility/v3')) {
         requests.push({ type: 'eligibility', url, body: JSON.parse(init.body) })
         return response({
@@ -3182,6 +3186,7 @@ test('call-review email deep link validates the booking before opening and submi
 
   assert.ok(await waitFor(() => modal.getAttribute('open') === ''))
   assert.equal(starterName.textContent, 'Rate your call with Brian')
+  assert.equal(privateWrap.style.display, 'none')
   assert.deepEqual(requests[0].body, { booking_id: 'booking/email 42' })
   assert.match(requests[0].url, /api:KZf7nFnk\/brand\/call-reviews\/eligibility\/v3$/)
 
@@ -3207,6 +3212,67 @@ test('call-review email deep link validates the booking before opening and submi
   })
   await new Promise(setImmediate)
   assert.equal(requests.filter((request) => request.type === 'submit').length, 1)
+})
+
+test('pending call-review eligibility cannot replace a newer project review', async () => {
+  const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [review])
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = 'Rate your call with [Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card, modal])
+  const pendingEligibility = deferred()
+  let projectRequests = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        projectRequests += 1
+        return response({
+          items: [{
+            id: 675,
+            lifecycle_state: 'completed',
+            review_eligible: true,
+            has_review: false,
+            starter_name: 'New Project Starter',
+          }],
+        })
+      }
+      if (url.includes('/brand/call-reviews/eligibility/v3')) {
+        return pendingEligibility.promise
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_booking=older-call',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => projectRequests === 1))
+  assert.equal(modal.getAttribute('open'), null)
+  bridge.dispatchDocument('click', clickEvent(review).event)
+  assert.ok(await waitFor(() => starterName.textContent === 'Rate your call with New Project Starter'))
+
+  pendingEligibility.resolve(response({
+    booking_id: 'older-call',
+    eligible: true,
+    already_reviewed: false,
+    starter_name: 'Older Call Starter',
+  }))
+  await new Promise(setImmediate)
+  await new Promise(setImmediate)
+
+  assert.equal(starterName.textContent, 'Rate your call with New Project Starter')
 })
 
 test('call-review email deep link fails closed when Xano says the booking is ineligible', async () => {

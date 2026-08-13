@@ -3271,6 +3271,16 @@
     return painted
   }
 
+  function hideProjectReviewPrivateFeedback(modal) {
+    const privateFeedback = $('[name="Private-Feedback"]', modal)
+    if (!privateFeedback) return
+    const privateWrap = privateFeedback.closest(
+      '.modal_input-group, .modal-form_field-wrap, .form_field-wrap, .field-wrap',
+    )
+    if (privateWrap) privateWrap.style.display = 'none'
+    else privateFeedback.style.display = 'none'
+  }
+
   function prepareProjectReview(project) {
     if (reviewSubmitting) return false
     clearProjectReviewContext(activeReviewModal, true)
@@ -3296,14 +3306,7 @@
     }
     if (done) done.style.display = ''
     if (fail) fail.style.display = ''
-    const privateFeedback = $('[name="Private-Feedback"]', modal)
-    if (privateFeedback) {
-      const privateWrap = privateFeedback.closest(
-        '.modal_input-group, .modal-form_field-wrap, .form_field-wrap, .field-wrap',
-      )
-      if (privateWrap) privateWrap.style.display = 'none'
-      else privateFeedback.style.display = 'none'
-    }
+    hideProjectReviewPrivateFeedback(modal)
     showProjectModal(PROJECT_REVIEW_MODAL_ID, modal)
     return true
   }
@@ -3329,6 +3332,7 @@
     }
     if (done) done.style.display = ''
     if (fail) fail.style.display = ''
+    hideProjectReviewPrivateFeedback(modal)
     showProjectModal(PROJECT_REVIEW_MODAL_ID, modal)
     return true
   }
@@ -3339,8 +3343,14 @@
     if (!bookingId || bookingId.length > 255) return false
     if (callReviewDeepLinkGeneration === _memberScopeGeneration) return false
     callReviewDeepLinkGeneration = _memberScopeGeneration
+    const requestGeneration = ++projectReviewOpenGeneration
     try {
       const eligibility = await API.callReviewEligibility(bookingId)
+      if (
+        requestGeneration !== projectReviewOpenGeneration ||
+        projectWorkflowRole !== 'brand'
+      ) return false
+      if (String(eligibility && eligibility.booking_id || '').trim() !== bookingId) return false
       if (!prepareCallReview(eligibility)) {
         showProjectLifecycleFeedback(
           '',
@@ -3353,6 +3363,10 @@
       }
       return true
     } catch (error) {
+      if (
+        requestGeneration !== projectReviewOpenGeneration ||
+        projectWorkflowRole !== 'brand'
+      ) return false
       showProjectLifecycleFeedback(
         '',
         projectActionErrorMessage(error, 'Review is not available yet.'),
@@ -3620,11 +3634,15 @@
     // The refresh below reveals only role-authorized Standard Contract state.
     decorateProjectCards()
     observeProjectCards()
+    const callReviewOpen = role === 'brand'
+      ? openCallReviewFromEmail()
+      : Promise.resolve(false)
     try {
       await refreshProjectWorkflow(role)
-      if (role === 'brand') await openCallReviewFromEmail()
+      await callReviewOpen
       return true
     } catch (error) {
+      await callReviewOpen
       console.error('[opp30:project-action] failed to load project action context', error)
       return false
     }
