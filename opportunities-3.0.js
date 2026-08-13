@@ -496,6 +496,43 @@
     }
   }
 
+  async function callBinary(path, { method = 'POST', body, base = XANO_OPP_BASE } = {}) {
+    const generation = _memberScopeGeneration
+    let requestStarted = false
+    let responseStatus = null
+    try {
+      assertMemberScopeGeneration(generation)
+      const token = await ensureXanoToken(generation)
+      assertMemberScopeGeneration(generation)
+      requestStarted = true
+      const res = await fetch(`${base}/${path}`, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      responseStatus = res.status
+      assertMemberScopeGeneration(generation)
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        assertMemberScopeGeneration(generation)
+        track('bridge_error', { path, status: res.status })
+        throw Object.assign(new Error(data && data.message ? data.message : `API ${res.status}`), {
+          status: res.status,
+          data,
+        })
+      }
+      const blob = await res.blob()
+      assertMemberScopeGeneration(generation)
+      return blob
+    } catch (error) {
+      if (requestStarted && responseStatus == null) track('bridge_error', { path, status: 0 })
+      throw error
+    }
+  }
+
   /* ===================== ENDPOINT WRAPPERS ======================= */
   // Lists return Xano paged objects: { items: [...], itemsTotal, curPage, ... }
   const API = {
@@ -526,6 +563,8 @@
     starterProjectList: (page = 1, per_page = 12) =>
       call('starter/projects/mine', { body: { page, per_page } }),
     contractLink: (project_id) => call('contracts/link/v3', { body: { project_id } }),
+    contractDownload: (project_id) =>
+      callBinary('contracts/download/v3', { body: { project_id } }),
     projectAction: (payload) => call('projects/action/v3', { body: payload }),
     brandReviewSubmit: (payload) => call('brand/reviews/submit', { body: payload }),
     callReviewEligibility: (booking_id) =>
@@ -2131,9 +2170,13 @@
     '[wf-xano-link="review_starter"], [data-project-action="review"]'
   const PROJECT_REVIEW_MODAL_ID = 'rate-starter-call'
   const PROJECT_TERMINAL_STATES = new Set(['completed', 'terminated', 'canceled', 'cancelled'])
-  // This action calls PandaDoc's recipient view/sign session endpoint. Completed
-  // documents require the separate protected-PDF delivery contract.
+  // Sent documents use recipient view/sign sessions. Completed documents use
+  // a separate protected-PDF route and never mint a signing session.
   const PROJECT_VIEWABLE_CONTRACT_STATES = new Set(['sent', 'viewed', 'partial'])
+  const PROJECT_COMPLETED_CONTRACT_LIFECYCLES = new Set([
+    'active', 'completion_requested', 'termination_requested',
+    'completed', 'terminated',
+  ])
   const PROJECT_CONTRACT_PREPARING_LIFECYCLES = new Set([
     'draft', 'contract_create_pending', 'contract_draft',
   ])
@@ -2596,6 +2639,12 @@
     return Boolean(documentId) && PROJECT_VIEWABLE_CONTRACT_STATES.has(contractStatus)
   }
 
+  function projectContractIsDownloadable(project) {
+    const documentId = String(project && project.pandadoc_document_id || '').trim()
+    const contractStatus = String(project && project.contract_status || '').trim().toLowerCase()
+    return Boolean(documentId) && contractStatus === 'completed'
+  }
+
   function projectContractAttentionCopy(lifecycle, contractStatus) {
     const states = new Set([lifecycle, contractStatus])
     if (states.has('declined') || states.has('contract_declined')) {
@@ -2640,6 +2689,21 @@
 
     const lifecycle = String(project.lifecycle_state || '').trim().toLowerCase()
     const contractStatus = String(project.contract_status || '').trim().toLowerCase()
+    if (
+      PROJECT_COMPLETED_CONTRACT_LIFECYCLES.has(lifecycle) &&
+      projectContractIsDownloadable(project)
+    ) {
+      return {
+        visible: true,
+        state: 'complete',
+        title: 'Contract signed',
+        body: 'Both parties signed the contract. You can view the completed copy at any time.',
+        brandBadge: 'brand-signed',
+        starterBadge: 'starter-signed',
+        action: 'view',
+        actionLabel: 'View Signed Contract',
+      }
+    }
     if (PROJECT_CONTRACT_HIDDEN_LIFECYCLES.has(lifecycle)) return hidden
 
     const brandSigned = Boolean(project.brand_signed_at)
@@ -3125,9 +3189,22 @@
         return
       }
       if (typeof window.open === 'function') contractWindow = window.open('', '_blank')
-      const result = await API.contractLink(project.id || project.project_id)
-      const url = String(result && result.url || '').trim()
-      if (!url) throw new Error('Contract link was not returned')
+      let url = ''
+      if (projectContractIsDownloadable(project)) {
+        const blob = await API.contractDownload(project.id || project.project_id)
+        if (!blob || !blob.size || !/^application\/pdf\b/i.test(String(blob.type || ''))) {
+          throw new Error('Completed contract was not returned')
+        }
+        const objectUrlOwner = window.URL || URL
+        if (!objectUrlOwner || typeof objectUrlOwner.createObjectURL !== 'function') {
+          throw new Error('Completed contract cannot be opened')
+        }
+        url = objectUrlOwner.createObjectURL(blob)
+      } else {
+        const result = await API.contractLink(project.id || project.project_id)
+        url = String(result && result.url || '').trim()
+        if (!url) throw new Error('Contract link was not returned')
+      }
       if (contractWindow && !contractWindow.closed) {
         contractWindow.opener = null
         contractWindow.location.href = url
@@ -5874,6 +5951,7 @@
     setInvoiceSubmitDisabled,
     projectActionIntent,
     projectContractIsViewable,
+    projectContractIsDownloadable,
     projectContractPanelState,
     projectMutationFeedback,
     projectActionErrorMessage,
