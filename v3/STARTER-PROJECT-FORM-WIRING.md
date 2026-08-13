@@ -64,12 +64,16 @@ The controller binds these existing elements:
   authored empty placeholder option labeled **Choose a Brand**;
 - stable selected Brand ID: `#brand-contract`;
 - Brand display fields: `#Company-Name` and `#Hiring-Manager-Name` (legacy
-  lowercase Starter IDs remain supported during rollback);
+  lowercase Starter IDs remain supported during rollback). The selected
+  option's `company_name` fills Company and its `hiring_manager_name` full name
+  fills Hiring Manager;
 - the Brand email input is disabled and hidden because the options endpoint does
   not expose it;
-- authenticated Starter display bindings: `profile_photo`, `full_name`,
-  `role_name`, `professional_headline`, and `freelancer_infromation` through the
-  existing `element` attributes. New markup should use
+- counterparty rail: the selected Brand company fills the existing `full_name`
+  binding, and the hiring manager full name fills `professional_headline` as
+  **Hiring manager: &lt;full name&gt;**. The controller clears and hides the copied
+  Starter photo, role, role list, and profile information. Existing `element`
+  attributes remain supported; new markup should use
   `data-project-bind="starter.<field>"`;
 - shared commercial fields: serialized and validated by `v3/project-form.js`.
 
@@ -93,6 +97,18 @@ controller disables them, removes Starter Memberstack bindings from the Brand
 display fields, and submits only the authenticated Starter plus the selected
 server-authorized Brand ID. JavaScript binds behavior and values; it does not
 generate form HTML.
+
+The controller also corrects the copied Brand-facing text in the native modal
+for the Starter flow. The right rail says **Selected Brand**, the introduction
+describes working with a Brand, and the scope, upfront-payment, and ongoing-term
+help text addresses the Starter. These are exact-text updates to existing
+Designer elements, not generated markup.
+
+After a successful submit, the controller restores the native controls before
+it reveals `.generate-contract_success`. This lets the existing shared preview
+renderer populate Review Details from the values that were submitted. It does
+not create a second preview renderer or a second project request. The success
+panel's **Manage Projects** link goes to `/starter-dashboard#projects`.
 
 ## Script order
 

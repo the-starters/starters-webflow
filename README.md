@@ -143,7 +143,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
 - `v3/project-form.js` — authenticated V3 direct-hire adapter for the Designer-owned Contract Generation form on `/hire/<slug>`; also owns the Memberstack hiring-manager prefill, CMS `data-sp-fill` attribute presets, and `data-set-current-date` initialization that the page's Code Embeds used to provide; see [`v3/PROJECT-FORM-WIRING.md`](v3/PROJECT-FORM-WIRING.md) for the field, prefill, state, and release contract
-- `v3/starter-project-form.js` — V3 Starter Dashboard adapter for the detached copy of the shared Contract Generation component; binds the authenticated Starter and server-authorized Brands, then submits through the contract-first workflow; see [`v3/STARTER-PROJECT-FORM-WIRING.md`](v3/STARTER-PROJECT-FORM-WIRING.md) for the authoritative scope, endpoint, Designer, and release contract
+- `v3/starter-project-form.js` — V3 Starter Dashboard adapter for the detached copy of the shared Contract Generation component; see [`v3/STARTER-PROJECT-FORM-WIRING.md`](v3/STARTER-PROJECT-FORM-WIRING.md) for the authoritative scope, endpoint, Designer, user-state, and release contract
 - `v3/brand-project-proposals.js` — superseded proposal-approval controller retained as release history; do not install it for the contract-first Starter workflow
 - `opportunities---create.js` — dedicated `/opportunities---create` controller; binds the same `[data-opp-form="create"]` contract through the shared Opportunities 3.0 core
 - `starters-list/apply-button-disable.js`
@@ -979,6 +979,23 @@ latest click may open the modal; an older canonical lookup that resolves later
 is discarded. Closing the dialog clears the painted name and pending project
 context. The submit adapter accepts the live `Feedback` field and the legacy
 `Public-Feedback` field during the authored surface transition.
+
+The V3 post-call review email contract targets the same authored modal through
+a separate, fail-closed booking contract. Its CTA opens
+`/brand-dashboard?review_booking=<encoded booking id>` with the stable Mandrill
+UTM values and `#calls-section`. The versioned sender, first-name personalization,
+CTA, UTM, and release-mode contract is
+[`v3/email-automation/post-call-review-v1.json`](v3/email-automation/post-call-review-v1.json).
+After the paid-Brand gate passes, the controller
+posts only that booking ID to authenticated
+`brand/call-reviews/eligibility/v3`. Xano must confirm that the signed-in Brand
+owns the completed booking, that payment is reconciled when required, and that
+no review exists before the modal opens. The eligibility response supplies only
+the Starter's first name for the authored placeholder. A valid call review posts
+a 1–5 rating and 10–2,000 character public review to
+`brand/call-reviews/submit/v3` with a retry-stable idempotency key. Ineligible,
+already-reviewed, missing, oversized, or cross-Brand booking values fail closed
+without opening the modal or creating a review.
 
 All project-action listeners, cached rows, and pending review context are
 discarded when the signed-in Memberstack account changes. The new account must
