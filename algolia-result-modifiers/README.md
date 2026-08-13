@@ -6,7 +6,9 @@ around.
 
 These files **are** served over jsDelivr, at a **pinned tag** rather than
 `@latest`. As of 2026-07-28 the "Algolia Result Modifiers" Webflow component
-loads all four at `@v1.56.4`:
+loads the original four at `@v1.56.4` (`roles`, `companies`, `learn-categories`,
+`price-label`). `subcategories.js` is a fifth sibling: merging it does not ship
+it until that component also loads it and the pin is bumped.
 
 ```html
 <script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@v1.56.4/algolia-result-modifiers/roles.js" defer></script>
