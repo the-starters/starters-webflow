@@ -127,10 +127,24 @@ class FakePlayer {
   setMuted(m) { this.calls.push(['setMuted', m]); return Promise.resolve(m) }
   setVolume(v) { this.calls.push(['setVolume', v]); return Promise.resolve(v) }
   setLoop(l) { this.calls.push(['setLoop', l]); return Promise.resolve(l) }
-  requestFullscreen() { this.calls.push(['requestFullscreen']); return Promise.resolve() }
+  /**
+   * Set `refuseFullscreen` on an instance to reproduce the platforms that turn the
+   * request down. Vimeo really does reject this one, and the module's fallback for
+   * a refusal is plain inline playback — which can only be tested if the harness
+   * can refuse.
+   */
+  requestFullscreen() {
+    this.calls.push(['requestFullscreen'])
+    return this.refuseFullscreen ? Promise.reject(new Error('fullscreen refused')) : Promise.resolve()
+  }
   destroy() { this.calls.push(['destroy']); return Promise.resolve() }
   fire(n, d) { (this.handlers.get(n) || []).forEach((fn) => fn(d)) }
   seconds(n, duration = 2220) { this.fire('timeupdate', { seconds: n, duration, percent: n / duration }) }
+  /**
+   * Vimeo reports entering AND leaving on one event, with the direction in the
+   * payload — `fullscreen(false)` is the Done button or the back gesture.
+   */
+  fullscreen(on) { this.fire('fullscreenchange', { fullscreen: on }) }
   did(name) { return this.calls.filter((c) => c[0] === name) }
 }
 
@@ -230,8 +244,19 @@ async function setup({ member = 'out', withLib = true, hostname = 'the-starters-
     // session list is empty at this point; only a mounted controller has `gated`.
     const before = api0.status().sessions[0]
     gatedBeforeLate = before ? before.gated : null
-    if (watchClick) root.querySelector('[data-element-trigger="show-video"]').click()
-    if (watch && players[0]) watch(players[0])
+  }
+  // watchClick / watch apply to every member mode, not only late. For late they
+  // still run BEFORE the answer is released, so the tap lands on the gated frame.
+  if (watchClick) {
+    const watchEl = root.querySelector('[data-element-trigger="show-video"]')
+    if (!watchEl) throw new Error('setup({ watchClick: true }) needs a watch control')
+    watchEl.click()
+  }
+  if (watch) {
+    if (!players[0]) throw new Error('setup({ watch }) needs a mounted player')
+    watch(players[0])
+  }
+  if (member === 'late') {
     releaseLate()
     await settle(); drain(); await settle()
   }
@@ -366,6 +391,8 @@ test('a member with no player library gets NATIVE controls even on a phone', asy
   assert.equal(s.root.getAttribute('data-sv-player'), 'native', 'ugly beats unusable')
   assert.match(src(s.frame()), /controls=1/, 'Vimeo UI is the only surface here')
   assert.equal(s.api.status().sessions[0].player, 'native')
+  assert.equal(s.state().narrow, true, 'forced native must not lie about the box')
+  assert.equal(s.state().fullscreenTap, false, 'no player object, no tap-to-fullscreen')
 })
 
 test('a member with no player library still gets the full state contract', async () => {
@@ -491,6 +518,33 @@ test('the play control announces the action it will perform', async () => {
   assert.match(s.el('playPauseBtn').getAttribute('aria-label'), /Pause/)
   p.fire('pause')
   assert.match(s.el('playPauseBtn').getAttribute('aria-label'), /Play/)
+})
+
+test('the watch control names fullscreen when a tap will enter it', async () => {
+  const phone = await setup({ member: 'in', width: 375 })
+  assert.equal(phone.watch().getAttribute('aria-label'), 'Watch the session in full screen')
+
+  const desk = await setup({ member: 'in', width: 1280 })
+  assert.equal(desk.watch().getAttribute('aria-label'), 'Watch the session')
+
+  const gated = await setup({ member: 'out', width: 375 })
+  assert.equal(gated.watch().getAttribute('aria-label'), 'Watch the session')
+})
+
+test('the click overlay is a pointer-only surface, not an unnamed button', async () => {
+  // Pre-existing behaviour change: armControl used to give a null-label layer
+  // role=button and tabindex, so Space on a nameless full-bleed control could
+  // seize the screen. Keyboard users have the named watch and play controls.
+  const s = await setup({ member: 'in', width: 375 })
+  const overlay = s.el('videoClickOverlay')
+  assert.equal(overlay.hasAttribute('role'), false)
+  assert.equal(overlay.hasAttribute('tabindex'), false)
+  assert.equal(overlay.hasAttribute('aria-label'), false)
+  overlay.key(' ')
+  overlay.key('Enter')
+  assert.deepEqual(s.live().did('requestFullscreen'), [], 'keyboard must not fire on a pointer-only layer')
+  overlay.click()
+  assert.deepEqual(s.live().did('requestFullscreen'), [['requestFullscreen']], 'a tap still starts the watch')
 })
 
 test('two roots on one page do not share control listeners', async () => {
@@ -719,17 +773,18 @@ test('the module never writes an inline display on the fullscreen button', () =>
 })
 
 test('a narrow viewport gives EVERYONE the template controls, member or not', async () => {
-  // Vimeo drops its full-screen button and overflows its own control bar at phone
-  // width — verified on a bare player at 375px. Its UI is cross-origin so no CSS
-  // of ours can repair it, so below the threshold nobody gets it.
+  // Below the threshold the template UI is in charge inline (overlay + our bar).
+  // A member's iframe still carries Vimeo's bar so fullscreen has an interface;
+  // keyboard and pip stay off. A gated viewer stays controls=0.
   const m = await setup({ member: 'in', width: 375 })
   assert.equal(m.root.getAttribute('data-sv-player'), 'custom')
-  assert.match(src(m.frame()), /controls=0/)
+  assert.match(src(m.frame()), /controls=1/)
   assert.match(src(m.frame()), /keyboard=0/)
   assert.match(src(m.frame()), /pip=0/)
 
   const g = await setup({ member: 'out', width: 375 })
   assert.equal(g.root.getAttribute('data-sv-player'), 'custom')
+  assert.match(src(g.frame()), /controls=0/)
 })
 
 test('a member on a narrow screen keeps the fullscreen permission', async () => {
@@ -754,7 +809,9 @@ test('the threshold measures the player box, not the window', async () => {
   // of the box left all 66 passing. This separates the two dimensions for real.
   const s = await setup({ member: 'in', width: 1400, stageWidth: 320 })
   assert.equal(s.root.getAttribute('data-sv-player'), 'custom', 'narrow box -> template controls')
-  assert.match(src(s.frame()), /controls=0/)
+  assert.match(src(s.frame()), /controls=1/)
+  assert.match(src(s.frame()), /keyboard=0/)
+  assert.match(src(s.frame()), /pip=0/)
 })
 
 test('a narrow window with a wide box still gets native controls', async () => {
@@ -774,6 +831,22 @@ test('exactly at the threshold counts as wide', async () => {
   assert.equal(s.root.getAttribute('data-sv-player'), 'native')
 })
 
+test('status reports the width fact and whether a watch tap goes fullscreen', async () => {
+  const phone = await setup({ member: 'in', width: 375 })
+  assert.equal(phone.state().narrow, true)
+  assert.equal(phone.state().fullscreenTap, true)
+  assert.equal(phone.state().player, 'custom')
+
+  const desk = await setup({ member: 'in', width: 1280 })
+  assert.equal(desk.state().narrow, false)
+  assert.equal(desk.state().fullscreenTap, false)
+  assert.equal(desk.state().player, 'native')
+
+  const gated = await setup({ member: 'out', width: 375 })
+  assert.equal(gated.state().fullscreenTap, false, 'gated never tap-to-fullscreen')
+  assert.equal(gated.state().narrow, false, 'gated mounts do not measure; unknown until upgrade')
+})
+
 test('a member frame allows fullscreen and the button works', async () => {
   const s = await setup({ member: 'in' })
   const f = s.frame()
@@ -787,6 +860,379 @@ test('the fullscreen button does nothing for a gated viewer', async () => {
   const s = await setup()
   s.el('fullscreenBtn').click()
   assert.deepEqual(s.players[0].did('requestFullscreen'), [])
+})
+
+// ---------------------------------------------------------------------------
+// The watch tap goes straight to fullscreen for a member on a narrow player.
+//
+// On a phone the inline hero is a postage stamp and the separate fullscreen
+// button was a second step nobody took. Below the width threshold the member is
+// on OUR controls, so the tap is the only sensible route in.
+// ---------------------------------------------------------------------------
+
+/** A narrow member mid-watch in fullscreen, with the ambient position carried over. */
+async function watchingFullscreen(at = 42) {
+  const s = await setup({ member: 'in', width: 375 })
+  const p = s.live()
+  s.watch().click()
+  assert.deepEqual(p.did('requestFullscreen'), [['requestFullscreen']], 'precondition: in fullscreen')
+  p.fire('play')
+  p.seconds(at)
+  p.calls.length = 0
+  return { s, p }
+}
+
+test('a member on a narrow player enters fullscreen on the watch tap', async () => {
+  const s = await setup({ member: 'in', width: 375 })
+  const p = s.live()
+  p.seconds(6)                          // ambient loop has been running
+  p.calls.length = 0
+  s.watch().click()
+  assert.deepEqual(p.did('requestFullscreen'), [['requestFullscreen']])
+  // ...and the shipped watch transition happened anyway, unchanged: sound on, loop
+  // off, playing from the ambient position rather than restarting.
+  assert.deepEqual(p.did('setMuted'), [['setMuted', false]])
+  assert.deepEqual(p.did('setVolume'), [['setVolume', 1]])
+  assert.deepEqual(p.did('setLoop'), [['setLoop', false]])
+  assert.deepEqual(p.did('play'), [['play']])
+  assert.deepEqual(p.did('setCurrentTime'), [], 'must not seek back to 0')
+  assert.equal(s.state().position, 6)
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'visible')
+  assert.equal(s.el('muteBtn').getAttribute('data-sv-mute'), 'off')
+  assert.equal(s.state().armed, true)
+  assert.equal(s.events.filter((e) => e.type === 'session-video-preview-start').length, 1)
+})
+
+test('the fullscreen request rides the tap itself, not a later turn', async () => {
+  // Browsers only honour a fullscreen request inside the user activation, so a
+  // request deferred to a timer or a promise turn is a request that never happens.
+  // Asserted before any await: the call must already be recorded.
+  const s = await setup({ member: 'in', width: 375 })
+  const p = s.live()
+  const timersBefore = s.timers.length
+  p.calls.length = 0
+  s.watch().click()
+  assert.deepEqual(p.did('requestFullscreen'), [['requestFullscreen']], 'same tick as the tap')
+  assert.equal(s.timers.length, timersBefore, 'and never scheduled')
+  await new Promise((r) => setImmediate(r))
+  assert.equal(p.did('requestFullscreen').length, 1, 'and not repeated on a later turn')
+})
+
+test('the watch control enters fullscreen from the keyboard as well as a tap', async () => {
+  const s = await setup({ member: 'in', width: 375 })
+  const s2 = await setup({ member: 'in', width: 375 })
+  s.watch().key('Enter')
+  assert.deepEqual(s.live().did('requestFullscreen'), [['requestFullscreen']])
+  s2.watch().key(' ')
+  assert.deepEqual(s2.live().did('requestFullscreen'), [['requestFullscreen']])
+})
+
+test('a hero tap during the ambient phase enters fullscreen too, same as the watch control', async () => {
+  // #videoClickOverlay and #playPauseBtn both route through toggle(), which calls
+  // watch() while the gate is unarmed — the same physical gesture, so it must not
+  // lose the activation on the way through.
+  const viaOverlay = await setup({ member: 'in', width: 375 })
+  viaOverlay.el('videoClickOverlay').click()
+  assert.deepEqual(viaOverlay.live().did('requestFullscreen'), [['requestFullscreen']])
+  assert.equal(viaOverlay.state().armed, true)
+
+  const viaPlay = await setup({ member: 'in', width: 375 })
+  viaPlay.el('playPauseBtn').click()
+  assert.deepEqual(viaPlay.live().did('requestFullscreen'), [['requestFullscreen']])
+})
+
+test('a member on a wide player keeps today\'s inline watch, with the button as the route in', async () => {
+  const s = await setup({ member: 'in', width: 1280 })
+  const p = s.live()
+  s.watch().click()
+  assert.deepEqual(p.did('requestFullscreen'), [], 'Vimeo\'s own bar is in charge up here')
+  assert.deepEqual(p.did('play'), [['play']], 'and the watch transition still runs')
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+  s.el('fullscreenBtn').click()
+  assert.deepEqual(p.did('requestFullscreen'), [['requestFullscreen']], 'the button is unchanged')
+})
+
+test('a member on a narrow player still has the fullscreen button beside the tap path', async () => {
+  const s = await setup({ member: 'in', width: 375 })
+  const p = s.live()
+  s.watch().click()
+  s.el('fullscreenBtn').click()
+  assert.equal(p.did('requestFullscreen').length, 2, 'both routes work, neither replaces the other')
+  assert.equal(s.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'visible')
+})
+
+test('a gated viewer never gets a fullscreen request from a watch tap, at any width', async () => {
+  // Their frame is built without the permission on purpose, and the clamp is only
+  // enforceable on a surface we still control.
+  const narrow = await setup({ member: 'out', width: 375, roots: [template({ cut: '10', bg: '4' })] })
+  narrow.watch().click()
+  narrow.el('videoClickOverlay').click()
+  narrow.watch().key('Enter')
+  assert.deepEqual(narrow.players[0].did('requestFullscreen'), [])
+  // ...and the clamp and the wall are exactly as shipped.
+  narrow.players[0].seconds(10)
+  assert.equal(narrow.state().atWall, true)
+  assert.equal(narrow.state().position, 10)
+  assert.equal(narrow.trigger().clicks, 1)
+  assert.equal(narrow.el('fullscreenBtn').getAttribute('data-sv-fullscreen'), 'hidden')
+
+  const wide = await setup({ member: 'out', width: 1280 })
+  wide.watch().click()
+  assert.deepEqual(wide.players[0].did('requestFullscreen'), [])
+})
+
+test('a tap that lands before membership resolves plays inline with no fullscreen request', async () => {
+  // The early tap is the whole reason the fallback exists: the frame in front of the
+  // viewer is still the gated one, which carries no permission. Waiting for the
+  // answer would forfeit the gesture window, so the tap plays inline instead.
+  const s = await setup({ member: 'late', width: 375, watchClick: true, watch: (p) => p.seconds(4) })
+  assert.equal(s.gatedBeforeLate, true, 'the tap must have landed on the gated frame')
+  assert.deepEqual(s.players[0].did('requestFullscreen'), [], 'no request from the gated frame')
+  assert.deepEqual(s.players[0].did('play'), [['play']], 'inline watch proceeded as shipped')
+  assert.deepEqual(s.players[0].did('setMuted'), [['setMuted', false]], 'with the sound on')
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'visible')
+  // No error state either. The harness template authors no data-ms-content, so that
+  // one known warning is excluded — anything else about fullscreen here is a fault.
+  assert.deepEqual(
+    s.logs.warn.filter((m) => /fullscreen/i.test(m) && !/data-ms-content/.test(m)),
+    [],
+    'an early tap must not report a fullscreen problem',
+  )
+})
+
+test('the upgrade\'s own watch re-run never requests fullscreen', async () => {
+  // upgrade() re-runs watch() to restore the watching state after rebuilding the
+  // frame. That call is not a user gesture: a browser would refuse it anyway, and
+  // seizing a member's screen because their membership answer arrived late is not
+  // the behaviour anyone asked for. Passing the activation flag from upgrade(), or
+  // keying the request off "watch() ran", must fail this.
+  const s = await setup({ member: 'late', width: 375, watchClick: true, watch: (p) => p.seconds(4) })
+  const requests = s.players.reduce((n, p) => n + p.did('requestFullscreen').length, 0)
+  assert.equal(requests, 0, 'no player may be asked to go fullscreen without a tap')
+  // The upgrade itself still did its job: full frame, restored position, watching.
+  assert.equal(s.players.length, 2)
+  assert.equal(s.state().gated, false)
+  assert.equal(s.root.getAttribute('data-sv-player'), 'custom')
+  assert.match(src(s.frame()), /controls=1/, 'ungated narrow still carries Vimeo\'s bar for fullscreen')
+  assert.match(src(s.frame()), /keyboard=0/)
+  assert.equal(s.frame().hasAttribute('allowfullscreen'), true)
+  assert.deepEqual(s.players[1].did('setCurrentTime'), [['setCurrentTime', 4]])
+  assert.deepEqual(s.players[1].did('play'), [['play']])
+  assert.equal(s.state().armed, true)
+})
+
+test('a refused fullscreen request leaves inline playback intact and rejects nowhere', async () => {
+  // Vimeo rejects this call on platforms that will not grant it. A refusal is the
+  // designed fallback, not an error: the transition has already run, so the member
+  // simply watches inline with the sound on and the controls up.
+  const s = await setup({ member: 'in', width: 375 })
+  const p = s.live()
+  p.refuseFullscreen = true
+  const unhandled = []
+  const onUnhandled = (e) => unhandled.push(e)
+  process.on('unhandledRejection', onUnhandled)
+  try {
+    s.watch().click()
+    assert.deepEqual(p.did('requestFullscreen'), [['requestFullscreen']])
+    p.fire('play')
+    await new Promise((r) => setImmediate(r))
+    await new Promise((r) => setTimeout(r, 0))
+  } finally {
+    process.off('unhandledRejection', onUnhandled)
+  }
+  assert.deepEqual(unhandled, [], 'nothing may reject into the page')
+  assert.equal(s.state().armed, true)
+  assert.equal(s.state().playing, true)
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'visible')
+  assert.equal(s.el('muteBtn').getAttribute('data-sv-mute'), 'off')
+  assert.deepEqual(p.did('setLoop'), [['setLoop', false]])
+})
+
+// ---------------------------------------------------------------------------
+// Leaving fullscreen pauses; the next watch tap goes back in.
+//
+// An exit reads as "I'm done for now", not as "keep the audio going in a
+// postage stamp". The pause shape is the template's shipped one, reached by
+// pausing the player rather than by painting a second copy of it here.
+// ---------------------------------------------------------------------------
+
+test('leaving fullscreen pauses the video and brings the hero back, position kept', async () => {
+  const { s, p } = await watchingFullscreen(42)
+  p.fullscreen(false)
+  assert.deepEqual(p.did('pause'), [['pause']], 'the exit pauses through the player')
+  p.fire('pause')                       // the player confirms, as it does for any pause
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'visible')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'hidden')
+  assert.equal(s.el('playPauseBtn').getAttribute('data-sv-play'), 'paused')
+  assert.equal(s.state().playing, false)
+  assert.equal(s.state().position, 42, 'the position is pinned, not rewound')
+  assert.deepEqual(p.did('setCurrentTime'), [], 'and nothing seeks')
+  assert.equal(s.state().armed, true, 'still watching, just paused')
+  assert.equal(s.state().atWall, false)
+})
+
+test('entering fullscreen is not mistaken for leaving it', async () => {
+  // One event carries both directions. Acting on the enter would pause the video
+  // the instant it went fullscreen.
+  const { p } = await watchingFullscreen()
+  p.fullscreen(true)
+  assert.deepEqual(p.did('pause'), [], 'entering must never pause')
+})
+
+test('leaving fullscreen during the ambient phase does not freeze the muted loop', async () => {
+  // Confirmed member, narrow, never tapped watch: still ambient. An OS or
+  // browser fullscreenchange(false) must not pause() — onPause returns early
+  // on !armed, timeupdates stop, and the hero loop freezes.
+  const s = await setup({ member: 'in', width: 375 })
+  const p = s.live()
+  p.seconds(3)
+  p.calls.length = 0
+  p.fullscreen(false)
+  assert.deepEqual(p.did('pause'), [], 'ambient exit must not pause')
+  assert.equal(s.state().armed, false)
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'visible', 'overlay still covering')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'hidden')
+})
+
+test('a fullscreen-change with no usable direction is ignored', async () => {
+  // Defensive: if a platform emits the event bare, the failure mode must be "no
+  // pause on exit", never a pause at the wrong moment and never a throw.
+  const { s, p } = await watchingFullscreen()
+  p.fire('fullscreenchange')
+  p.fire('fullscreenchange', {})
+  assert.deepEqual(p.did('pause'), [])
+  assert.equal(s.state().playing, true)
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+})
+
+test('the next watch tap re-enters fullscreen from the kept position', async () => {
+  const { s, p } = await watchingFullscreen(42)
+  p.fullscreen(false)
+  p.fire('pause')
+  p.calls.length = 0
+  s.watch().click()
+  assert.deepEqual(p.did('requestFullscreen'), [['requestFullscreen']], 'resume is one tap, same as starting')
+  assert.deepEqual(p.did('play'), [['play']])
+  assert.deepEqual(p.did('setCurrentTime'), [], 'resumes where it stopped, no seek needed')
+  assert.equal(s.state().position, 42)
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+  assert.equal(s.el('video-controls').getAttribute('data-sv-controls'), 'visible')
+  assert.equal(s.events.filter((e) => e.type === 'session-video-preview-start').length, 1, 'and never re-counts the funnel')
+})
+
+test('every exit and resume cycle behaves the same', async () => {
+  // The armed branch of the watch control is what makes this repeatable; a
+  // first-tap-only implementation passes the entry test and fails here.
+  const s = await setup({ member: 'in', width: 375 })
+  const p = s.live()
+  for (let i = 1; i <= 3; i += 1) {
+    s.watch().click()
+    assert.equal(p.did('requestFullscreen').length, i, 'tap ' + i + ' must enter fullscreen')
+    assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+    p.fire('play')
+    p.seconds(60 * i)
+    p.fullscreen(false)
+    assert.equal(p.did('pause').length, i, 'exit ' + i + ' must pause')
+    p.fire('pause')
+    assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'visible')
+    assert.equal(s.state().position, 60 * i, 'each cycle keeps its own position')
+  }
+})
+
+test('the play control is not a fullscreen route', async () => {
+  // After an exit the overlay is up, so the watch control is the surface the member
+  // is looking at. #playPauseBtn stays plain play/pause.
+  const { s, p } = await watchingFullscreen()
+  p.fullscreen(false)
+  p.fire('pause')
+  p.calls.length = 0
+  s.el('playPauseBtn').click()
+  assert.deepEqual(p.did('play'), [['play']], 'it still plays')
+  assert.deepEqual(p.did('requestFullscreen'), [], 'but it does not go fullscreen')
+  s.el('videoClickOverlay').click()
+  assert.deepEqual(p.did('requestFullscreen'), [], 'nor does the click layer once armed')
+})
+
+test('a member on a wide player sees no change from the fullscreen-change handling', async () => {
+  // Up here fullscreen is Vimeo's own UI or the button, and an exit must leave
+  // playback exactly as it is today.
+  const s = await setup({ member: 'in', width: 1280 })
+  const p = s.live()
+  s.watch().click()
+  s.el('fullscreenBtn').click()
+  p.fire('play')
+  p.seconds(30)
+  p.calls.length = 0
+  p.fullscreen(false)
+  assert.deepEqual(p.did('pause'), [], 'no pause-on-exit for a wide player')
+  assert.equal(s.state().playing, true)
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+  s.watch().click()
+  assert.deepEqual(p.did('requestFullscreen'), [], 'and no re-entry on a resume tap either')
+})
+
+test('a gated viewer\'s fullscreen-change is inert, and the clamp is untouched', async () => {
+  const s = await setup({ member: 'out', width: 375, roots: [template({ cut: '10', bg: '4' })] })
+  const p = s.players[0]
+  s.watch().click()
+  p.fire('play')
+  p.seconds(5)
+  p.calls.length = 0
+  p.fullscreen(false)                   // cannot happen, and must do nothing if it does
+  assert.deepEqual(p.did('pause'), [])
+  assert.equal(s.state().playing, true)
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'hidden')
+  p.seconds(10)
+  assert.equal(s.state().atWall, true)
+  assert.equal(s.state().position, 10)
+  assert.equal(s.trigger().clicks, 1)
+})
+
+test('a gated tap at the wall opens the wall and nothing else', async () => {
+  // The wall check has to stay ahead of everything the armed branch does.
+  const s = await setup({ member: 'out', width: 375, roots: [template({ cut: '10', bg: '4' })] })
+  const p = s.players[0]
+  s.watch().click()
+  p.seconds(10)
+  assert.equal(s.trigger().clicks, 1)
+  p.calls.length = 0
+  s.watch().click()
+  assert.equal(s.trigger().clicks, 2)
+  assert.deepEqual(p.did('requestFullscreen'), [])
+  assert.deepEqual(p.did('play'), [], 'a frozen frame must not be played')
+})
+
+test('the fullscreen handling survives the upgrade remount', async () => {
+  // upgrade() rebuilds the frame and constructs a NEW player, so the
+  // fullscreen-change listener has to be registered where the other player events
+  // are. Registering it outside mount() leaves a late-confirmed member with a
+  // fullscreen they can enter and never exit cleanly.
+  const s = await setup({ member: 'late', width: 375, watchClick: true, watch: (p) => p.seconds(4) })
+  const p = s.live()
+  assert.equal(s.state().gated, false)
+  assert.equal(s.state().armed, true)
+  p.calls.length = 0
+  s.watch().click()
+  assert.deepEqual(p.did('requestFullscreen'), [['requestFullscreen']], 'the rebuilt player takes the tap')
+  p.fire('play')
+  p.fullscreen(false)
+  assert.deepEqual(p.did('pause'), [['pause']], 'and the rebuilt player is listened to')
+  p.fire('pause')
+  assert.equal(s.overlay().getAttribute('data-sv-overlay'), 'visible')
+  assert.equal(s.state().position, 4, 'with the position carried through the upgrade')
+})
+
+test('neither watch branch hardcodes the activation flag', () => {
+  // Both branches must forward the caller's flag. There is no gestureless caller of
+  // the ARMED branch to catch a hardcoded `true` from the outside — upgrade() enters
+  // through the unarmed one — so the source is what pins it, in the same spirit as
+  // the late-watcher count test above.
+  assert.doesNotMatch(source, /enterFullscreen\(\s*(?:true|1)\s*\)/)
+  assert.doesNotMatch(source, /self\.watch\(true\)/)
+  assert.doesNotMatch(source, /self\.toggle\(true\)/)
 })
 
 // ---------------------------------------------------------------------------
