@@ -2436,7 +2436,7 @@ test('contract signing panel reducer allows either party to sign first', async (
   assert.equal(reduce({ ...base, contract_status: 'declined' }, 'brand').state, 'attention')
 })
 
-test('contract signing panel reducer covers the release lifecycle matrix', async () => {
+test('brand and starter contract panels cover the release lifecycle matrix', async () => {
   const bridge = await loadBridge(async () => response({}))
   const reduce = bridge.window.Opp30.projectContractPanelState
   const base = {
@@ -2462,12 +2462,12 @@ test('contract signing panel reducer covers the release lifecycle matrix', async
     },
     {
       name: 'partial',
-      project: {
+      project: (role) => ({
         ...base,
         lifecycle_state: 'signature_partial',
         contract_status: 'partial',
-        starter_signed_at: '2026-08-12T01:01:00Z',
-      },
+        [`${role === 'brand' ? 'starter' : 'brand'}_signed_at`]: '2026-08-12T01:01:00Z',
+      }),
       expected: { visible: true, state: 'action', action: 'sign' },
     },
     {
@@ -2497,13 +2497,15 @@ test('contract signing panel reducer covers the release lifecycle matrix', async
     },
   ]
 
-  matrix.forEach(({ name, project, expected }) => {
-    const state = reduce(project, 'brand')
-    assert.deepEqual(
-      { visible: state.visible, state: state.state, action: state.action },
-      expected,
-      name,
-    )
+  ;['brand', 'starter'].forEach((role) => {
+    matrix.forEach(({ name, project, expected }) => {
+      const state = reduce(typeof project === 'function' ? project(role) : project, role)
+      assert.deepEqual(
+        { visible: state.visible, state: state.state, action: state.action },
+        expected,
+        `${role}: ${name}`,
+      )
+    })
   })
 })
 
