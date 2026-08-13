@@ -629,6 +629,7 @@
   }
 
   function showSuccess(form, result, documentObject) {
+    lockForm(form, false)
     setStatus(form, 'success', '')
     var current = formState(form)
     current.key = ''

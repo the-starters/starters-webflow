@@ -35,7 +35,10 @@ class Element {
     this.parentElement = null
     this.resetCount = 0
   }
-  setAttribute(name, value) { this.attrs[name] = String(value) }
+  setAttribute(name, value) {
+    this.attrs[name] = String(value)
+    if (this.onAttributeChange) this.onAttributeChange(name, String(value))
+  }
   getAttribute(name) { return this.attrs[name] ?? null }
   removeAttribute(name) { delete this.attrs[name] }
   dispatchEvent(event) {
@@ -663,6 +666,14 @@ test('submission reports the canonical project and contract-first success state'
     noDocument: true,
     counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
   })
+  const renderedBrand = new Element()
+  loaded.wrapper.success.preview.onAttributeChange = (name, value) => {
+    if (name === 'aria-hidden' && value === 'false') {
+      renderedBrand.textContent = loaded.form.fields.company.disabled
+        ? ''
+        : loaded.form.fields.company.value
+    }
+  }
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.equal(loaded.calls.submit.length, 1)
@@ -682,6 +693,7 @@ test('submission reports the canonical project and contract-first success state'
   )
   assert.equal(loaded.context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
   assert.equal(loaded.wrapper.success.preview.getAttribute('aria-hidden'), 'false')
+  assert.equal(renderedBrand.textContent, 'Brand')
 })
 
 test('Own Contract submission reports immediate activation', async () => {
