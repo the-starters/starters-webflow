@@ -90,7 +90,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/build-profile/field-counters.js` — provenance-locked Build Profile field counters
 - `v3/build-profile/bio-editor.js` — provenance-locked Build Profile bio editor
 - `v3/build-profile/grouped-selects.js` — provenance-locked Build Profile grouped-select controller
-- `v3/build-profile/submit-diagnostics.js` — observer-only Build Profile submit outcome diagnostics; it does not read or change the coupled writer
+- `v3/build-profile/submit-diagnostics.js` — Build Profile submit outcome observer; it keeps diagnostics in the console, leaves the coupled writer unchanged, and routes an authored success to `/starter-onboarding`
 - `v3/starter-edit-profile/` — source-controlled Starter Edit Profile browser controllers; the authoritative extraction scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md)
 - `v3/starter-edit-profile/portfolio-crud.js` — provenance-locked Edit Profile portfolio mutation controller
 - `v3/starter-edit-profile/portfolio-list.js` — provenance-locked Edit Profile portfolio list controller
