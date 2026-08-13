@@ -279,6 +279,35 @@ test('omits marketing consent while the native Designer checkbox is absent', asy
   assert.equal(Object.hasOwn(payload, 'marketing_email_consent'), false)
 })
 
+test('snapshots application fields and consent when submission starts', async () => {
+  const calls = []
+  const diagnostics = deferred()
+  const checkbox = { checked: true }
+  const entries = FULL_ENTRIES.concat([['marketing-email-consent', 'on']])
+  const { listeners } = load({
+    fetchImpl: (url, options) => {
+      calls.push({ url, options })
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 46 }) })
+    },
+    workflowDiagnostics: false,
+    workflowDiagnosticsReady: diagnostics.promise,
+  })
+  const form = makeForm(entries, {}, {}, undefined, {
+    'input[type="checkbox"][name="marketing-email-consent"]': checkbox,
+  })
+
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+  entries.find(([key]) => key === 'email')[1] = 'changed@example.com'
+  checkbox.checked = false
+  diagnostics.resolve(null)
+  await tick()
+  await tick()
+
+  const payload = JSON.parse(calls[0].options.body)
+  assert.equal(payload.email, 'jane@example.com')
+  assert.equal(payload.marketing_email_consent, true)
+})
+
 test('consult-only coalesces the consult role/rate pair', async () => {
   const calls = []
   const { listeners } = load({

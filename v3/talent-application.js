@@ -260,21 +260,21 @@
     var responseStatus = null
     var failureCode = 'NETWORK_ERROR'
 
+    var payload = fieldMap(new FormData(form))
+    var consent = marketingEmailConsent(form)
+    delete payload.answers['marketing-email-consent']
+    if (consent !== null) payload.marketing_email_consent = consent
+    var countryText = selectText(form, 'country')
+    var cityText = selectText(form, 'city')
+    var stateText = selectText(form, 'state')
+    if (countryText) payload.country = countryText
+    if (cityText) payload.city = cityText
+    if (stateText) payload.answers.state = stateText
+    if (countryText) payload.answers.country = countryText
+    if (cityText) payload.answers.city = cityText
+
     var startRequest = function () {
       diagnosticStart(form)
-      var payload = fieldMap(new FormData(form))
-      var consent = marketingEmailConsent(form)
-      delete payload.answers['marketing-email-consent']
-      if (consent !== null) payload.marketing_email_consent = consent
-      var countryText = selectText(form, 'country')
-      var cityText = selectText(form, 'city')
-      var stateText = selectText(form, 'state')
-      if (countryText) payload.country = countryText
-      if (cityText) payload.city = cityText
-      if (stateText) payload.answers.state = stateText
-      if (countryText) payload.answers.country = countryText
-      if (cityText) payload.answers.city = cityText
-
       return fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
