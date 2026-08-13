@@ -188,11 +188,12 @@
  * write, unless a stale marker was already present at load and this page's own
  * signup re-raised it while that retry's member read was still in flight.
  *
- * V3 lead-entry registration. On an exact production Collection or Learn CMS
- * item route, the same unambiguous logged-out to logged-in transition also
- * snapshots one pending lead-entry event before Memberstack redirects. The
- * next page retries the authenticated Xano registration if navigation cut the
- * first request off. The browser never calls Mailchimp. Xano endpoint
+ * V3 lead-entry registration. On an exact production Collection, Learn, or
+ * Starter CMS item route, the same unambiguous logged-out to logged-in
+ * transition also snapshots one pending lead-entry event before Memberstack
+ * redirects. The next page retries the authenticated Xano registration if
+ * navigation cut the first request off. The browser never calls Mailchimp.
+ * Xano endpoint
  * `lead_email/register/v3` owns identity, Brand Free eligibility, route and CMS
  * collection allowlists, suppression, and idempotency. Unsupported routes and
  * non-production hosts fail closed. The accepted event is reported to PostHog

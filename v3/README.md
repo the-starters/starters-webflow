@@ -837,7 +837,7 @@ and captures `v3_lead_entry_registered` only after the real PostHog SDK is ready
 The current page retries on a short bounded schedule, and a same-tab page reload
 resumes the same snapshot. It records the capture at most once per accepted event
 and CMS resource. Missing analytics never affects registration. Properties
-contain only the track, intent, route, collection ID, and payload version. They
+contain only the track, intent, collection ID, and payload version. They
 contain no name, email, or member ID. The Xano payload can include only
 `utm_source`, `utm_campaign`, `utm_adset`, `utm_content`, `signup_source`,
 `signup_referrer`, and `signup_trigger`, plus the fixed
