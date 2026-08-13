@@ -1270,8 +1270,8 @@ test('submits once through Opp30 auth, keeps the retry key, and emits safe succe
   assert.equal(form.style.display, 'none')
   assert.equal(form.wrapper.success.style.display, 'block')
   assert.equal(form.wrapper.success.legacySuccessTitle.textContent, 'Project successfully created')
-  assert.match(form.wrapper.success.legacySuccessMessage.textContent, /^Your contract is queued for generation\. You will receive a signing email after processing succeeds\. Diagnostic ID: SPF-/)
-  assert.equal(form.wrapper.success.legacySuccessMessage.getAttribute('data-project-diagnostic-copy'), '')
+  assert.equal(form.wrapper.success.legacySuccessMessage.textContent, 'Your contract is queued for generation. You will receive a signing email after processing succeeds.')
+  assert.equal(form.wrapper.success.legacySuccessMessage.getAttribute('data-project-diagnostic-copy'), null)
   assert.equal(document.event.type, 'starters:project-created')
   assert.equal(document.event.detail.project_id, 669)
   assert.equal(document.event.detail.replayed, false)
@@ -1288,7 +1288,8 @@ test('does not promise PandaDoc generation or email for an own-contract project'
 
   assert.equal(await api.submit(form, window, document), true)
   assert.equal(form.wrapper.success.successTitle.textContent, 'Project successfully created')
-  assert.match(form.wrapper.success.successMessage.textContent, /^You can manage this project from your dashboard\. Diagnostic ID: SPF-/)
+  assert.equal(form.wrapper.success.successMessage.textContent, 'You can manage this project from your dashboard.')
+  assert.equal(form.wrapper.success.successMessage.getAttribute('data-project-diagnostic-copy'), null)
 })
 
 test('uses the authored external Starter identity and internal retry state without new inputs', async () => {
@@ -1600,8 +1601,8 @@ test('records a safe request failure without raw server data or form content', a
   assert.doesNotMatch(formatted, /raw server detail/)
   assert.doesNotMatch(formatted, /Build and optimize/)
   assert.doesNotMatch(formatted, /mem_starter_123/)
-  assert.match(loaded.form.error.textContent, /Diagnostic ID: SPF-/)
-  assert.equal(loaded.form.error.getAttribute('data-project-diagnostic-copy'), '')
+  assert.equal(loaded.form.error.textContent, 'This project is not available for your Brand account.')
+  assert.equal(loaded.form.error.getAttribute('data-project-diagnostic-copy'), null)
   assert.equal(loaded.trackCalls.some((entry) => entry.name === 'project_form_submit_failed'), true)
 })
 
@@ -1617,8 +1618,8 @@ test('records browser validation without issuing a project request', async () =>
   assert.equal(receipt.stage, 'validation')
   assert.equal(receipt.error_code, 'BROWSER_VALIDATION_FAILED')
   assert.equal(receipt.request_started, false)
-  assert.match(form.error.textContent, /Diagnostic ID: SPF-/)
-  assert.equal(form.error.getAttribute('data-project-diagnostic-copy'), '')
+  assert.equal(form.error.textContent, 'Review the highlighted fields and try again.')
+  assert.equal(form.error.getAttribute('data-project-diagnostic-copy'), null)
   assert.equal(loaded.trackCalls.some((entry) => entry.name === 'project_form_validation_failed'), true)
 })
 
@@ -1643,7 +1644,7 @@ test('records one receipt when native validation blocks the submit event', async
   assert.equal(loaded.trackCalls.filter((entry) => entry.name === 'project_form_validation_failed').length, 2)
 })
 
-test('copies the current diagnostic from the authored message click and keyboard action', async () => {
+test('keeps authored messages inert while the console helper can copy the current diagnostic', async () => {
   const loaded = load({ reject: 422 })
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), false)
   const formatted = loaded.window.StartersProjectDiagnostics.formatLast()
@@ -1651,17 +1652,11 @@ test('copies the current diagnostic from the authored message click and keyboard
   loaded.form.error.form = loaded.form
   loaded.document.listeners.click.handler({ target: loaded.form.error })
   await Promise.resolve()
-  assert.deepEqual(loaded.clipboardWrites, [formatted])
+  assert.deepEqual(loaded.clipboardWrites, [])
 
-  let prevented = false
-  loaded.document.listeners.keydown.handler({
-    target: loaded.form.error,
-    key: 'Enter',
-    preventDefault() { prevented = true },
-  })
+  await loaded.window.copyProjectDiagnostic()
   await Promise.resolve()
-  assert.equal(prevented, true)
-  assert.deepEqual(loaded.clipboardWrites, [formatted, formatted])
+  assert.deepEqual(loaded.clipboardWrites, [formatted])
 })
 
 test('diagnostics degrade safely when storage or clipboard is unavailable', async () => {

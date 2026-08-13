@@ -38,7 +38,7 @@ have just finished with, which is navigation, not authorization.
 | That wrapper's success block mutates again | Nothing — the observer disconnected on the first hit |
 | A `PATCH` attempt fails or times out | Retry at roughly 1s and 3s, re-trading the token between attempts |
 | All attempts fail | Warn on staging, then redirect anyway — a member behind a hidden form must never be stranded |
-| The completion attempt settles | Record a privacy-safe receipt that distinguishes whether any auth or status request started; decorate the authored success/error message when it remains visible |
+| The completion attempt settles | Record a privacy-safe receipt that distinguishes whether any auth or status request started; keep diagnostic data and copy behavior out of authored messages |
 | No `[data-page-spinner]` element on the page | Nothing; the rest of the sequence runs unchanged |
 | A success block is already visible when the module boots | Leave it alone — only a transition *into* the done state is a submit |
 | Logged out (no Memberstack session) | Write nothing and redirect nowhere: put the loader back down and the form back up, leaving the page as authored |
@@ -287,8 +287,8 @@ form and redirects, retrieve the retained receipt on the dashboard with:
 copyWorkflowDiagnostic('starter_onboarding_completion')
 ```
 
-The logged-out path restores the authored form state, whose existing message
-also carries the diagnostic ID and copy action. A receipt with
+The logged-out path restores the authored form state without adding diagnostic
+data or copy behavior to its message. A receipt with
 `request_started: false` means no authenticated workflow request attempt began;
 it must not be read as a failed attempted PATCH.
 

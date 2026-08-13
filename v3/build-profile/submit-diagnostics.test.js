@@ -93,7 +93,7 @@ function boot({ delayHelper = false } = {}) {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve))
 
-test('human click plus authored success records a copyable terminal receipt', async () => {
+test('human click plus authored success records a terminal receipt without page diagnostics', async () => {
   const page = boot()
   page.trigger.dispatch('click')
   await tick()
@@ -107,11 +107,8 @@ test('human click plus authored success records a copyable terminal receipt', as
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(receipt.resource_type, 'talent_profile')
-  assert.equal(
-    page.success.getAttribute('data-workflow-diagnostic-copy'),
-    'build_profile_submit',
-  )
-  assert.match(page.success.textContent || '', /Diagnostic ID:/)
+  assert.equal(page.success.getAttribute('data-workflow-diagnostic-copy'), null)
+  assert.doesNotMatch(page.success.textContent || '', /Diagnostic ID:/)
 })
 
 test('authored error records a stable failure without form data', async () => {

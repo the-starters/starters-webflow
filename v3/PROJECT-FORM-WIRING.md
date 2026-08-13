@@ -323,10 +323,10 @@ Every form open with a usable Starter identity, validation failure, submit
 start, request failure, and accepted project writes an allowlisted
 `project_form_diagnostic_v1` receipt.
 Missing Starter identity and unavailable bridge failures also write a receipt
-before any request starts. Error and success messages show the receipt's
-`SPF-...` diagnostic ID; clicking the existing authored message copies the full
-receipt. The console fallback is `copyProjectDiagnostic()`. The latest receipt
-is also retained in `sessionStorage` for the current tab.
+before any request starts. Error and success messages stay user-facing and do
+not show receipt data or become copy actions. Use `copyProjectDiagnostic()` in
+the browser console when support needs the full receipt. The latest receipt is
+also retained in `sessionStorage` for the current tab.
 
 Receipts contain only the diagnostic ID, UTC time, controller version, host,
 workflow stage, safe error code or HTTP status, duration, request-attempted
@@ -398,6 +398,8 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    PandaDoc generation or email claim.
 10. Without issuing a project request, open the form and trigger authored and
     browser validation failures. Confirm each action emits the matching PostHog
-    event, the authored message shows an `SPF-...` ID, and click or keyboard copy
-    returns only the allowlisted receipt fields above. Confirm the receipt has no
-    form values, identity values, credentials, request body, or response body.
+    event and leaves the authored success and error messages free of diagnostic
+    IDs, receipt data, and copy interactions. In the browser console, confirm
+    `copyProjectDiagnostic()` returns the latest receipt with only the allowlisted
+    fields above and no form values, identity values, credentials, request body,
+    or response body.

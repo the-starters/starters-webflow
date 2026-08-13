@@ -175,9 +175,9 @@ Webflow contract:
   off it to intercept the final step before the multistep library submits.
 - Keep the form inside its `.w-form` wrapper with a `.w-form-fail` block. A
   submit stopped by native constraint validation, or a failed request, reveals
-  that block with a privacy-safe diagnostic ID; a failed request also re-enables
-  the submit control for retry. The shared receipt allowlist and console-copy
-  fallback are documented in
+  that block with only the authored user-facing error. A failed request also
+  re-enables the submit control for retry. The shared receipt allowlist and
+  console-only diagnostics are documented in
   [`../README.md`](../README.md#current-scripts).
 - Set the form's `data-redirect` to `/freelancer-application/step-2`. The
   script also accepts `redirect` and otherwise defaults to that path.

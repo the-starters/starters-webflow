@@ -2,7 +2,7 @@
 
 Scope: user-facing forms that create or change an account, profile, opportunity, application, project, review, or invoice. Search/filter controls and internal test pages are not workflow forms. Availability, booking, scheduling, and paid-call payment are excluded while Elvin owns them.
 
-| Workflow / Webflow surface | Mutation owner | Browser-code owner | Copyable diagnostic status | Inline Webflow application logic |
+| Workflow / Webflow surface | Mutation owner | Browser-code owner | Console diagnostic status | Inline Webflow application logic |
 | --- | --- | --- | --- | --- |
 | Brand/Talent login, `/login` and `/starter-login` | Memberstack | GitHub: `brand-account-controller.js`, `native-form-diagnostics.js`, `auth-route.js`, `password-recovery.js` | Native-form observer in this PR | No page-specific writer found |
 | Brand signup, `/sign-up`, Quiz signup, and allowlisted Collection/Learn CMS signup | Memberstack, then Xano webhook or lead-email outbox | GitHub: `brand-account-controller.js`, `native-form-diagnostics.js`, `signup-attribution.js`, Quiz controllers; the Collection/Learn contract lives in [`README.md`](README.md#v3-collection-and-learn-lead-entry-registration) | Native-form observer in this PR | No page-specific writer found |

@@ -134,9 +134,9 @@ A helper load failure does not block the existing account workflow. Validation
 failures remain distinct from attempted requests through the receipt's
 `request_started` field.
 
-When an authored success or failure state is available, its existing message
-shows the diagnostic ID and becomes the copy action. The latest receipts remain
-available in the current tab through
+Authored success and failure messages stay user-facing and do not show receipt
+data or become copy actions. The latest receipts remain available from the
+browser console through
 `copyWorkflowDiagnostic('brand_account_build')`,
 `copyWorkflowDiagnostic('brand_account_email')`, or
 `copyWorkflowDiagnostic('talent_account_email')`. Do not add identity fields or

@@ -459,7 +459,7 @@ test('Build Account refuses an email write after the signed-in member changes', 
   assert.deepEqual(environment.redirects, [])
 })
 
-test('Build Account success records and exposes a privacy-safe copyable receipt', async () => {
+test('Build Account success records a privacy-safe console receipt without page diagnostics', async () => {
   const buildForm = makeForm('build', { email: 'private@example.com' })
   const environment = loadController({ buildForm, diagnostics: true })
 
@@ -472,11 +472,8 @@ test('Build Account success records and exposes a privacy-safe copyable receipt'
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
   assert.equal(Object.hasOwn(receipt, 'firstName'), false)
-  assert.match(buildForm.wrapper.done.textContent, /Diagnostic ID: WFD-/)
-  assert.equal(
-    buildForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'),
-    'brand_account_build',
-  )
+  assert.equal(buildForm.wrapper.done.textContent, 'Your account was updated.')
+  assert.equal(buildForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.ok(environment.tracked.some((event) => event.name === 'workflow_form_submit_succeeded'))
 })
 
@@ -494,7 +491,8 @@ test('Build Account validation receipt truthfully records that no request starte
   assert.equal(receipt.error_code, 'FORM_VALIDATION')
   assert.equal(receipt.request_started, false)
   assert.equal(environment.calls.length, 0)
-  assert.match(buildForm.wrapper.failText.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(buildForm.wrapper.failText.textContent, 'First name is required.')
+  assert.equal(buildForm.wrapper.failText.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 
 test('Build Account setup failure records that no Memberstack request started', async () => {
@@ -1092,7 +1090,8 @@ test('Talent Account Security success exposes no email in its diagnostic receipt
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
   assert.equal(Object.hasOwn(receipt, 'member_id'), false)
-  assert.match(securityForm.wrapper.done.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(securityForm.wrapper.done.textContent, 'Your account was updated.')
+  assert.equal(securityForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 
 test('visible Starter Edit Profile changes Memberstack email before replaying the authored submit', async () => {
