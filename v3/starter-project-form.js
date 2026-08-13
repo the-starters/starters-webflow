@@ -247,8 +247,8 @@
     var company = clean(option && option.company_name)
     var manager = clean(option && option.manager_name)
     var values = {
-      full_name: company || manager,
-      professional_headline: manager ? 'Hiring manager: ' + manager : '',
+      full_name: manager || company,
+      professional_headline: manager && company && manager.toLowerCase() !== company.toLowerCase() ? company : '',
       profile_photo: '',
       role_name: '',
       list_roles: '',
