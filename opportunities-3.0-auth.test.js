@@ -2489,7 +2489,7 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
       },
     },
     {
-      name: 'partial',
+      name: 'partial with counterparty signed first',
       project: (role) => ({
         ...base,
         lifecycle_state: 'signature_partial',
@@ -2504,6 +2504,42 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
         action: 'sign',
         actionLabel: 'Review & Sign Contract',
       }),
+    },
+    {
+      name: 'partial with viewer signed first',
+      project: (role) => ({
+        ...base,
+        lifecycle_state: 'signature_partial',
+        contract_status: 'partial',
+        [`${role}_signed_at`]: '2026-08-12T01:01:00Z',
+      }),
+      expected: (role) => ({
+        visible: true,
+        state: 'waiting',
+        title: 'Waiting for ' + (role === 'brand' ? 'Taylor' : 'Acme') + ' to sign',
+        body: 'Your signature is complete. We will notify you when ' +
+          (role === 'brand' ? 'Taylor' : 'Acme') + ' signs.',
+        action: 'view',
+        actionLabel: 'View Contract',
+      }),
+    },
+    {
+      name: 'partial with both signatures recorded',
+      project: {
+        ...base,
+        lifecycle_state: 'signature_partial',
+        contract_status: 'partial',
+        brand_signed_at: '2026-08-12T01:00:00Z',
+        starter_signed_at: '2026-08-12T01:01:00Z',
+      },
+      expected: {
+        visible: true,
+        state: 'processing',
+        title: 'Both parties have signed',
+        body: 'The project is being activated. This status will update automatically.',
+        action: null,
+        actionLabel: '',
+      },
     },
     {
       name: 'active',
@@ -2547,8 +2583,13 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
       },
     },
     {
-      name: 'terminated',
-      project: { ...base, lifecycle_state: 'terminated', contract_status: 'completed' },
+      name: 'terminated and incomplete',
+      project: {
+        ...base,
+        lifecycle_state: 'terminated',
+        status: 'incomplete',
+        contract_status: 'completed',
+      },
       expected: {
         visible: false,
         state: 'hidden',
