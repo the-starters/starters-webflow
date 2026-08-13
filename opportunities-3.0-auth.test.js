@@ -3129,6 +3129,130 @@ test('review success survives a failed projection refresh', async () => {
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /review projection refresh failed/)
 })
 
+test('call-review email deep link validates the booking before opening and submits once', async () => {
+  const rating = el('input', { name: 'Call-Rating' })
+  rating.value = '5'
+  const feedback = el('textarea', { name: 'Public-Feedback' })
+  feedback.value = 'Excellent advice after the completed call.'
+  const submit = el('button', { type: 'submit' })
+  const form = el('form', {}, [rating, feedback, submit])
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = 'Rate your call with [Starter Name]'
+  const done = el('div', { class: 'w-form-done' })
+  const fail = el('div', { class: 'w-form-fail' })
+  const modal = el(
+    'dialog',
+    { 'data-modal-target': 'rate-starter-call' },
+    [starterName, form, done, fail],
+  )
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [modal])
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) return response({ items: [] })
+      if (url.includes('/brand/call-reviews/eligibility/v3')) {
+        requests.push({ type: 'eligibility', url, body: JSON.parse(init.body) })
+        return response({
+          booking_id: 'booking/email 42',
+          eligible: true,
+          already_reviewed: false,
+          starter_name: 'Brian',
+        })
+      }
+      if (url.includes('/brand/call-reviews/submit/v3')) {
+        requests.push({ type: 'submit', url, body: JSON.parse(init.body) })
+        return response({ review_id: 42, booking_id: 'booking/email 42', created: true })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_booking=booking%2Femail%2042&utm_source=mandrill',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => modal.getAttribute('open') === ''))
+  assert.equal(starterName.textContent, 'Rate your call with Brian')
+  assert.deepEqual(requests[0].body, { booking_id: 'booking/email 42' })
+  assert.match(requests[0].url, /api:KZf7nFnk\/brand\/call-reviews\/eligibility\/v3$/)
+
+  bridge.dispatchDocument('submit', {
+    target: form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+
+  assert.ok(await waitFor(() => requests.filter((request) => request.type === 'submit').length === 1))
+  const submitted = requests.find((request) => request.type === 'submit')
+  assert.equal(submitted.body.booking_id, 'booking/email 42')
+  assert.equal(submitted.body.rating, 5)
+  assert.equal(submitted.body.review_text, feedback.value)
+  assert.match(submitted.body.idempotency_key, /^review-ui:call:booking\/email 42:/)
+  assert.equal(form.style.display, 'none')
+  assert.equal(done.style.display, 'block')
+
+  bridge.dispatchDocument('submit', {
+    target: form,
+    preventDefault() {},
+    stopPropagation() {},
+  })
+  await new Promise(setImmediate)
+  assert.equal(requests.filter((request) => request.type === 'submit').length, 1)
+})
+
+test('call-review email deep link fails closed when Xano says the booking is ineligible', async () => {
+  const form = el('form')
+  form.reset = () => {}
+  const starterName = el('p')
+  starterName.textContent = '[Starter Name]'
+  const modal = el('dialog', { 'data-modal-target': 'rate-starter-call' }, [starterName, form])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [modal])
+  let eligibilityRequests = 0
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) return response({ items: [] })
+      if (url.includes('/brand/call-reviews/eligibility/v3')) {
+        eligibilityRequests += 1
+        return response({
+          booking_id: 'booking-closed',
+          eligible: false,
+          already_reviewed: true,
+          starter_name: 'Brian',
+        })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      search: '?review_booking=booking-closed&utm_source=mandrill',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => eligibilityRequests === 1))
+  assert.equal(modal.getAttribute('open'), null)
+  assert.equal(starterName.textContent, '[Starter Name]')
+  bridge.dispatchWindow('focus')
+  await new Promise(setImmediate)
+  assert.equal(eligibilityRequests, 1)
+})
+
 test('review submission enforces rating and feedback rules and locks duplicate submits', async () => {
   const review = el('a', { 'wf-xano-link': 'review_starter', href: '/messages' })
   const reviewWrap = el('div', { class: 'button_main-wrap' }, [review])

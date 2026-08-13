@@ -980,6 +980,20 @@ is discarded. Closing the dialog clears the painted name and pending project
 context. The submit adapter accepts the live `Feedback` field and the legacy
 `Public-Feedback` field during the authored surface transition.
 
+Post-call review emails use the same authored modal through a separate,
+fail-closed booking contract. Their CTA opens
+`/brand-dashboard?review_booking=<encoded booking id>` with the stable Mandrill
+UTM values and `#calls-section`. After the paid-Brand gate passes, the controller
+posts only that booking ID to authenticated
+`brand/call-reviews/eligibility/v3`. Xano must confirm that the signed-in Brand
+owns the completed booking, that payment is reconciled when required, and that
+no review exists before the modal opens. The eligibility response supplies only
+the Starter's first name for the authored placeholder. A valid call review posts
+a 1–5 rating and 10–2,000 character public review to
+`brand/call-reviews/submit/v3` with a retry-stable idempotency key. Ineligible,
+already-reviewed, missing, oversized, or cross-Brand booking values fail closed
+without opening the modal or creating a review.
+
 All project-action listeners, cached rows, and pending review context are
 discarded when the signed-in Memberstack account changes. The new account must
 pass the exact route and stable plan-role gate before the workflow can bind

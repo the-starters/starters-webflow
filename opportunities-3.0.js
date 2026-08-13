@@ -149,6 +149,7 @@
 
   const XANO_AUTH_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh' // WMX group: trade-token
   const XANO_OPP_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30' // Opportunities 3.0 group
+  const XANO_V3_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk' // V3.0 Starters group
   const XANO_TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   const ROUTE_GUARD_HANDOFF_TIMEOUT_MS = 2000
   const MEMBER_ROLE_HYDRATION_TIMEOUT_MS = 2000
@@ -346,6 +347,8 @@
     'starter/applications/cancel': { workflow: 'application_withdraw', resource_type: 'application' },
     'projects/action/v3': { workflow: 'project_lifecycle', resource_type: 'project' },
     'brand/reviews/submit': { workflow: 'project_review', resource_type: 'review' },
+    'brand/call-reviews/eligibility/v3': { workflow: 'call_review', resource_type: 'booking' },
+    'brand/call-reviews/submit/v3': { workflow: 'call_review', resource_type: 'review' },
     'invoices/create/v3': { workflow: 'generate_invoice', resource_type: 'invoice' },
   }
   const responseDiagnostics = new WeakMap()
@@ -428,7 +431,7 @@
     }))
   }
 
-  async function call(path, { method = 'POST', body } = {}) {
+  async function call(path, { method = 'POST', body, base = XANO_OPP_BASE } = {}) {
     const generation = _memberScopeGeneration
     const startedAt = Date.now()
     let diagnostic = null
@@ -441,7 +444,7 @@
       const token = await ensureXanoToken(generation)
       assertMemberScopeGeneration(generation)
       requestStarted = true
-      const res = await fetch(`${XANO_OPP_BASE}/${path}`, {
+      const res = await fetch(`${base}/${path}`, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -525,6 +528,13 @@
     contractLink: (project_id) => call('contracts/link/v3', { body: { project_id } }),
     projectAction: (payload) => call('projects/action/v3', { body: payload }),
     brandReviewSubmit: (payload) => call('brand/reviews/submit', { body: payload }),
+    callReviewEligibility: (booking_id) =>
+      call('brand/call-reviews/eligibility/v3', {
+        body: { booking_id },
+        base: XANO_V3_BASE,
+      }),
+    callReviewSubmit: (payload) =>
+      call('brand/call-reviews/submit/v3', { body: payload, base: XANO_V3_BASE }),
     invoiceCreate: (payload) => call('invoices/create/v3', { body: payload }),
     // starter / talent
     starterProfile: () => call('starter/profile/me', { body: {} }),
@@ -2157,8 +2167,10 @@
   let projectWorkflowFeedbackTimer = null
   const projectActionFeedbackTimers = new WeakMap()
   let activeReviewProject = null
+  let activeCallReviewBooking = null
   let activeReviewModal = null
   let projectReviewOpenGeneration = 0
+  let callReviewDeepLinkGeneration = -1
   let reviewSubmitting = false
 
   function normalizedDashboardPath() {
@@ -3232,6 +3244,7 @@
 
   function clearProjectReviewContext(modal = activeReviewModal, resetForm = false) {
     activeReviewProject = null
+    activeCallReviewBooking = null
     activeReviewModal = null
     if (!modal) return
     $$('[data-project-review-starter-name]', modal).forEach((target) => {
@@ -3295,6 +3308,61 @@
     return true
   }
 
+  function prepareCallReview(eligibility) {
+    if (reviewSubmitting) return false
+    clearProjectReviewContext(activeReviewModal, true)
+    const modal = projectReviewModal()
+    const bookingId = String(eligibility && eligibility.booking_id || '').trim()
+    const starterName = String(eligibility && eligibility.starter_name || '').trim()
+    if (!modal || !bookingId || !starterName || !eligibility.eligible || eligibility.already_reviewed) {
+      return false
+    }
+    if (!paintProjectReviewStarterName(modal, starterName)) return false
+    activeCallReviewBooking = { booking_id: bookingId }
+    activeReviewModal = modal
+    const form = $('form', modal)
+    const done = $('.w-form-done', modal)
+    const fail = $('.w-form-fail', modal)
+    if (form) {
+      form.reset()
+      form.style.display = ''
+    }
+    if (done) done.style.display = ''
+    if (fail) fail.style.display = ''
+    showProjectModal(PROJECT_REVIEW_MODAL_ID, modal)
+    return true
+  }
+
+  async function openCallReviewFromEmail() {
+    if (projectWorkflowRole !== 'brand') return false
+    const bookingId = String(urlParam('review_booking') || '').trim()
+    if (!bookingId || bookingId.length > 255) return false
+    if (callReviewDeepLinkGeneration === _memberScopeGeneration) return false
+    callReviewDeepLinkGeneration = _memberScopeGeneration
+    try {
+      const eligibility = await API.callReviewEligibility(bookingId)
+      if (!prepareCallReview(eligibility)) {
+        showProjectLifecycleFeedback(
+          '',
+          eligibility && eligibility.already_reviewed
+            ? 'This call already has a review.'
+            : 'This call is not ready for a review.',
+          true,
+        )
+        return false
+      }
+      return true
+    } catch (error) {
+      showProjectLifecycleFeedback(
+        '',
+        projectActionErrorMessage(error, 'Review is not available yet.'),
+        true,
+        diagnosticForError(error),
+      )
+      return false
+    }
+  }
+
   async function openProjectReview(action, card) {
     const requestGeneration = ++projectReviewOpenGeneration
     const project = await currentProjectContext(card)
@@ -3309,7 +3377,8 @@
     event.stopPropagation()
     if (reviewSubmitting) return
     const project = activeReviewProject
-    if (!project || modal !== activeReviewModal || projectWorkflowRole !== 'brand') {
+    const callBooking = activeCallReviewBooking
+    if ((!project && !callBooking) || modal !== activeReviewModal || projectWorkflowRole !== 'brand') {
       reviewError(
         modal,
         'Open Review Starter from the project you want to review.',
@@ -3330,10 +3399,11 @@
       )
       return
     }
-    if (reviewText.length < 10 || reviewText.length > 4000) {
+    const maximumReviewLength = callBooking ? 2000 : 4000
+    if (reviewText.length < 10 || reviewText.length > maximumReviewLength) {
       reviewError(
         modal,
-        'Write between 10 and 4,000 characters.',
+        'Write between 10 and ' + maximumReviewLength.toLocaleString('en-US') + ' characters.',
         validationDiagnostic('project_review', 'review', 'INVALID_REVIEW_LENGTH'),
       )
       return
@@ -3343,12 +3413,24 @@
     const pending = projectActionWrap(submit)
     setOpportunityActionPending(pending, true)
     try {
-      const result = await API.brandReviewSubmit({
-        project_id: project.id || project.project_id,
-        rating,
-        review_text: reviewText,
-        idempotency_key: reviewSubmissionKey(form, project, rating, reviewText),
-      })
+      const result = callBooking
+        ? await API.callReviewSubmit({
+            booking_id: callBooking.booking_id,
+            rating,
+            review_text: reviewText,
+            idempotency_key: reviewSubmissionKey(
+              form,
+              { id: 'call:' + callBooking.booking_id },
+              rating,
+              reviewText,
+            ),
+          })
+        : await API.brandReviewSubmit({
+            project_id: project.id || project.project_id,
+            rating,
+            review_text: reviewText,
+            idempotency_key: reviewSubmissionKey(form, project, rating, reviewText),
+          })
       clearReviewSubmissionKey(form)
       form.style.display = 'none'
       const done = $('.w-form-done', modal)
@@ -3359,7 +3441,8 @@
         if (message && receipt) decorateWorkflowMessage(message, message.textContent, receipt)
       }
       activeReviewProject = null
-      await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'review')
+      activeCallReviewBooking = null
+      if (project) await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'review')
     } catch (error) {
       reviewError(
         modal,
@@ -3409,8 +3492,10 @@
       projectWorkflowFeedbackElement.removeAttribute('data-project-action-result')
     }
     activeReviewProject = null
+    activeCallReviewBooking = null
     activeReviewModal = null
     reviewSubmitting = false
+    callReviewDeepLinkGeneration = -1
     const reviewModal = projectReviewModal()
     clearProjectReviewContext(reviewModal, true)
     if (projectWorkflowObserver) projectWorkflowObserver.disconnect()
@@ -3537,6 +3622,7 @@
     observeProjectCards()
     try {
       await refreshProjectWorkflow(role)
+      if (role === 'brand') await openCallReviewFromEmail()
       return true
     } catch (error) {
       console.error('[opp30:project-action] failed to load project action context', error)
