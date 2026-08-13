@@ -3,6 +3,7 @@
  *
  * Loaded by Webflow after intl-tel-input and Quill. Keep the page footer thin;
  * GitHub and jsDelivr are the source and delivery path for this browser code.
+ * Each section must initialize whether this script runs before or after DOMContentLoaded.
  */
 
 (() => {
