@@ -914,11 +914,14 @@ The panel is limited to canonical V3 Standard Contracts: `sync_origin` must be
 request, completed, terminated, or canceled lifecycle states hide it. Each
 visible panel shows exactly one Brand badge and one Starter badge from the
 canonical `brand_signed_at` and `starter_signed_at` values. Either party can sign
-first. Each unsigned party receives Review & Sign Contract. A party that already
+first. Each unsigned party receives `Review & Sign Contract`. A party that already
 signed receives View Contract while waiting for the other signature. A partial
 provider state without either canonical signer timestamp shows an attention
-state without an action. Draft or queued state shows preparation status, and provider
-failure states show the help message without an action. After both signatures,
+state without an action. Draft or queued state shows preparation status. Declined,
+expired, and voided states identify the exact terminal condition and explain that
+the contract cannot be signed. Failed, invalid, exception, and error states use
+`Contract needs attention`. All attention states direct the member to contact The
+Starters and expose no action. After both signatures,
 the panel shows activation processing without another signing action.
 
 Both sign and view request a fresh recipient-scoped URL from authenticated Xano
