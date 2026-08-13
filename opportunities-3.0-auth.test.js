@@ -2400,7 +2400,7 @@ test('contract signing panel reducer allows either party to sign first', async (
     starter_name: 'Taylor',
   }
 
-  assert.equal(reduce({ ...base, contract_source: 'own' }, 'brand').visible, false)
+  assert.equal(reduce({ ...base, contract_source: 'own_contract' }, 'brand').visible, false)
   assert.equal(reduce({ ...base, sync_origin: 'v2' }, 'brand').visible, false)
   assert.equal(reduce(base, 'brand').action, 'sign')
   assert.equal(reduce(base, 'starter').action, 'sign')
@@ -2455,12 +2455,38 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
     {
       name: 'draft',
       project: { ...base, lifecycle_state: 'contract_draft', contract_status: 'draft' },
-      expected: { visible: true, state: 'processing', action: null },
+      expected: {
+        visible: true,
+        state: 'processing',
+        title: 'Preparing the contract',
+        body: 'The contract is being prepared. This status will update automatically.',
+        action: null,
+        actionLabel: '',
+      },
     },
     {
       name: 'sent',
       project: base,
-      expected: { visible: true, state: 'action', action: 'sign' },
+      expected: {
+        visible: true,
+        state: 'action',
+        title: 'Your signature is required',
+        body: 'Review and sign the contract. The project starts after both parties sign.',
+        action: 'sign',
+        actionLabel: 'Review & Sign Contract',
+      },
+    },
+    {
+      name: 'viewed',
+      project: { ...base, contract_status: 'viewed' },
+      expected: {
+        visible: true,
+        state: 'action',
+        title: 'Your signature is required',
+        body: 'Review and sign the contract. The project starts after both parties sign.',
+        action: 'sign',
+        actionLabel: 'Review & Sign Contract',
+      },
     },
     {
       name: 'partial',
@@ -2470,7 +2496,14 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
         contract_status: 'partial',
         [`${role === 'brand' ? 'starter' : 'brand'}_signed_at`]: '2026-08-12T01:01:00Z',
       }),
-      expected: { visible: true, state: 'action', action: 'sign' },
+      expected: (role) => ({
+        visible: true,
+        state: 'action',
+        title: (role === 'brand' ? 'Taylor' : 'Acme') + ' has signed',
+        body: 'Your signature is required to activate this project.',
+        action: 'sign',
+        actionLabel: 'Review & Sign Contract',
+      }),
     },
     {
       name: 'active',
@@ -2478,43 +2511,134 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
       expected: { visible: false, state: 'hidden', action: null },
     },
     {
+      name: 'completion requested',
+      project: { ...base, lifecycle_state: 'completion_requested', contract_status: 'completed' },
+      expected: {
+        visible: false,
+        state: 'hidden',
+        title: '',
+        body: '',
+        action: null,
+        actionLabel: '',
+      },
+    },
+    {
+      name: 'termination requested',
+      project: { ...base, lifecycle_state: 'termination_requested', contract_status: 'completed' },
+      expected: {
+        visible: false,
+        state: 'hidden',
+        title: '',
+        body: '',
+        action: null,
+        actionLabel: '',
+      },
+    },
+    {
       name: 'completed',
       project: { ...base, lifecycle_state: 'completed', contract_status: 'completed' },
-      expected: { visible: false, state: 'hidden', action: null },
+      expected: {
+        visible: false,
+        state: 'hidden',
+        title: '',
+        body: '',
+        action: null,
+        actionLabel: '',
+      },
+    },
+    {
+      name: 'terminated',
+      project: { ...base, lifecycle_state: 'terminated', contract_status: 'completed' },
+      expected: {
+        visible: false,
+        state: 'hidden',
+        title: '',
+        body: '',
+        action: null,
+        actionLabel: '',
+      },
     },
     {
       name: 'declined',
       project: { ...base, lifecycle_state: 'contract_declined', contract_status: 'declined' },
-      expected: { visible: true, state: 'attention', action: null },
+      expected: {
+        visible: true,
+        state: 'attention',
+        title: 'Contract declined',
+        body: 'This contract was declined and cannot be signed. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      },
+    },
+    {
+      name: 'expired',
+      project: { ...base, lifecycle_state: 'contract_expired', contract_status: 'expired' },
+      expected: {
+        visible: true,
+        state: 'attention',
+        title: 'Contract expired',
+        body: 'This contract has expired and cannot be signed. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      },
     },
     {
       name: 'voided',
       project: { ...base, lifecycle_state: 'contract_voided', contract_status: 'voided' },
-      expected: { visible: true, state: 'attention', action: null },
+      expected: {
+        visible: true,
+        state: 'attention',
+        title: 'Contract voided',
+        body: 'This contract was voided and cannot be signed. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      },
     },
     {
       name: 'error',
       project: { ...base, lifecycle_state: 'contract_sent', contract_status: 'error' },
-      expected: { visible: true, state: 'attention', action: null },
+      expected: {
+        visible: true,
+        state: 'attention',
+        title: 'Contract needs attention',
+        body: 'The contract cannot be signed right now. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      },
     },
     {
       name: 'failed',
       project: { ...base, lifecycle_state: 'contract_sent', contract_status: 'failed' },
-      expected: { visible: true, state: 'attention', action: null },
+      expected: {
+        visible: true,
+        state: 'attention',
+        title: 'Contract needs attention',
+        body: 'The contract cannot be signed right now. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      },
     },
     {
       name: 'invalid',
       project: { ...base, lifecycle_state: 'contract_sent', contract_status: 'invalid' },
-      expected: { visible: true, state: 'attention', action: null },
+      expected: {
+        visible: true,
+        state: 'attention',
+        title: 'Contract needs attention',
+        body: 'The contract cannot be signed right now. Please contact The Starters for help.',
+        action: null,
+        actionLabel: '',
+      },
     },
   ]
 
   ;['brand', 'starter'].forEach((role) => {
     matrix.forEach(({ name, project, expected }) => {
       const state = reduce(typeof project === 'function' ? project(role) : project, role)
+      const expectedState = typeof expected === 'function' ? expected(role) : expected
       assert.deepEqual(
-        { visible: state.visible, state: state.state, action: state.action },
-        expected,
+        Object.fromEntries(Object.keys(expectedState).map((key) => [key, state[key]])),
+        expectedState,
         `${role}: ${name}`,
       )
     })

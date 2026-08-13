@@ -2141,7 +2141,8 @@
     'not_requested', 'create_pending', 'uploaded', 'draft',
   ])
   const PROJECT_CONTRACT_ATTENTION_STATES = new Set([
-    'declined', 'expired', 'exception', 'error', 'contract_declined', 'contract_expired',
+    'declined', 'expired', 'voided', 'failed', 'invalid', 'exception', 'error',
+    'contract_declined', 'contract_expired', 'contract_voided', 'contract_failed',
   ])
   const PROJECT_CONTRACT_HIDDEN_LIFECYCLES = new Set([
     'active', 'completion_requested', 'termination_requested',
@@ -2595,6 +2596,32 @@
     return Boolean(documentId) && PROJECT_VIEWABLE_CONTRACT_STATES.has(contractStatus)
   }
 
+  function projectContractAttentionCopy(lifecycle, contractStatus) {
+    const states = new Set([lifecycle, contractStatus])
+    if (states.has('declined') || states.has('contract_declined')) {
+      return {
+        title: 'Contract declined',
+        body: 'This contract was declined and cannot be signed. Please contact The Starters for help.',
+      }
+    }
+    if (states.has('expired') || states.has('contract_expired')) {
+      return {
+        title: 'Contract expired',
+        body: 'This contract has expired and cannot be signed. Please contact The Starters for help.',
+      }
+    }
+    if (states.has('voided') || states.has('contract_voided')) {
+      return {
+        title: 'Contract voided',
+        body: 'This contract was voided and cannot be signed. Please contact The Starters for help.',
+      }
+    }
+    return {
+      title: 'Contract needs attention',
+      body: 'The contract cannot be signed right now. Please contact The Starters for help.',
+    }
+  }
+
   function projectContractPanelState(project, role) {
     const hidden = {
       visible: false,
@@ -2629,11 +2656,12 @@
       PROJECT_CONTRACT_ATTENTION_STATES.has(lifecycle) ||
       PROJECT_CONTRACT_ATTENTION_STATES.has(contractStatus)
     ) {
+      const copy = projectContractAttentionCopy(lifecycle, contractStatus)
       return {
         ...base,
         state: 'attention',
-        title: 'Contract needs attention',
-        body: 'The contract cannot be signed right now. Please contact The Starters for help.',
+        title: copy.title,
+        body: copy.body,
         action: null,
         actionLabel: '',
       }
