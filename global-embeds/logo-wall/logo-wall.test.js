@@ -316,6 +316,13 @@ function load(page, options) {
       observers.forEach((ro) => ro.callback([]))
       flush()
     },
+    /**
+     * Fire the wrapper's ResizeObserver and stop there, leaving the debounce
+     * pending — the only way to express two notifications inside one window.
+     */
+    notifyResize: () => {
+      observers.forEach((ro) => ro.callback([]))
+    },
     /** Fire a window resize, then run whatever it scheduled. */
     resize: () => {
       ;(listeners.resize || []).forEach((fn) => fn())
@@ -630,6 +637,26 @@ test('a size notification that does not change the width rebuilds nothing', () =
 
   resize()
   assert.equal(clonesOf(track).length, 0, 'and so did the window-resize fallback')
+})
+
+test('a width that changes and changes back inside the debounce rebuilds nothing', () => {
+  // A window drag, a transitioning sidebar or an accordion that closes and
+  // reopens lands back on the armed width. Rebuilding there restarts every
+  // band from centre for no visible reason.
+  const page = fillingPage()
+  const { notifyResize, flush } = load(page)
+
+  const track = tracksOf(page.wrapper)[0]
+  clonesOf(track).forEach((clone) => clone.remove())
+
+  const armed = page.wrapper.clientWidth
+  page.wrapper.clientWidth = armed - 100
+  notifyResize()
+  page.wrapper.clientWidth = armed
+  notifyResize()
+  flush()
+
+  assert.equal(clonesOf(track).length, 0, 'the pending re-arm was cancelled')
 })
 
 test('without ResizeObserver the window listener still re-arms on a real change', () => {

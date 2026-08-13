@@ -478,9 +478,10 @@
     var timer = 0;
     function onGeometryChange() {
       if (state.armWidth == null) return; // never armed; the first arm is coming
-      if ((state.wrapper.clientWidth || 0) === state.armWidth) return;
       window.clearTimeout(timer);
+      if ((state.wrapper.clientWidth || 0) === state.armWidth) return;
       timer = window.setTimeout(function resizeArm() {
+        if ((state.wrapper.clientWidth || 0) === state.armWidth) return;
         state.reduceMotion = prefersReducedMotion();
         armLoops(state);
       }, RESIZE_MS);
