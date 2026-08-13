@@ -687,6 +687,11 @@ Unknown elements and incomplete service tags write nothing (staging warning).
 Logged-in clicks are ignored so Hire/Message/Book keep their member flows.
 Last tagged click wins until signup (72h cookie). The hire template also needs
 `form[data-ms-form="signup"]` in that dialog, same contract as `/all-starters`.
+For V3 lead email registration, the current-page CTA click is also the required
+intent proof. `hire` and `message` register the Starter Connect track;
+`book-call`, `service:Free Call`, and `service:Paid Consulting Call` register the
+Starter Booking track. An untagged, stale, overridden, or unknown CTA value does
+not create a lead event, even when the signup itself succeeds.
 
 The guard exists because neither script can actually see a signup. What they see
 is a logged-out to logged-in transition on a page that has a signup form, and a
@@ -781,11 +786,11 @@ markup nobody would think of as a change. Widening the veto costs at most a miss
 attribution, while narrowing it would cost a false `CompleteRegistration` on every
 login on such a page, which is the failure the veto exists to prevent.
 
-### V3 Collection and Learn lead-entry registration
+### V3 Collection, Learn, and Starter lead-entry registration
 
-The sitewide attribution controller also registers the non-quiz Collection and
-Learn entry event after a real production signup. This path is V3 production
-only. It requires all three conditions:
+The sitewide attribution controller also registers the non-quiz Collection,
+Learn, Starter Booking, and Starter Connect entry event after a real production
+signup. This path is V3 production only. It requires all three conditions:
 
 1. The host is exactly `thestarters.com` or `www.thestarters.com`.
 2. The current path is one CMS item route in the Xano `lead_email/register/v3`
@@ -810,6 +815,15 @@ create a lead-entry event.
 | Learn gated | `/learn/playbooks-frameworks/` | `69e1e416f6476e12f572b39b` | `69e1e417f6476e12f572b468` | `learn_unlock` |
 | Learn ungated | `/learn/interviews-analyses/` | `69dca9df095d2fbcf34e255b` | `69dca9df095d2fbcf34e2575` | `learn_signup` |
 | Learn session | `/learn/sessions/` | `69e08554183023227aa46c1e` | `69e08554183023227aa46c24` | `session_signup` |
+| Starter Connect | `/hire/` | `69f241ec147b71addb6f1531` | `69f241ed147b71addb6f153d` | `hire` or `message` |
+| Starter Booking | `/hire/` | `69f241ec147b71addb6f1531` | `69f241ed147b71addb6f153d` | `booking`, `booking_free`, or `booking_paid` |
+
+On an ungated Learn item, a confirmed logged-out click on the normal
+`a[href="/quiz"]` Get Started link opens the page's existing native
+`signup-modal` instead of leaving for the quiz. The script does not create or
+replace form HTML. Logged-in visitors keep the normal link route. On a Hire
+profile, the supported CTA click must occur on the same page before the signup
+submit; a 72-hour attribution cookie alone is not enough to register the lead.
 
 Before Memberstack redirects, the script stores a member-scoped pending snapshot
 in `sessionStorage`. The current page attempts the authenticated Xano request;

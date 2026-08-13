@@ -8,7 +8,7 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.210'
+const RELEASE = 'v1.59.231'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -472,7 +472,18 @@ function boot(options = {}) {
                     return null
                 },
                 closest(selector) {
-                    if (selector === '[data-signup-trigger-element]') return this
+                    if (
+                        selector === '[data-signup-trigger-element]' &&
+                        attrs.element !== undefined
+                    ) {
+                        return this
+                    }
+                    if (
+                        selector === 'a[href="/quiz"]' &&
+                        attrs.href === '/quiz'
+                    ) {
+                        return this
+                    }
                     return null
                 },
             }
@@ -945,6 +956,122 @@ test('every V3 Xano Collection and Learn route produces its exact observable con
         assert.equal(body.source_resource_slug, 'example', route)
         assert.equal(body.intent_subtype, intentSubtype, route)
     }
+})
+
+test('each production Hire CTA registers the correct Booking or Connect lead entry', async () => {
+    const cases = [
+        [{ element: 'hire' }, 'hire', 'starter_connect'],
+        [{ element: 'message' }, 'message', 'starter_connect'],
+        [{ element: 'book-call' }, 'booking', 'starter_booking'],
+        [{ element: 'service', value: 'Free Call' }, 'booking_free', 'starter_booking'],
+        [
+            { element: 'service', value: 'Paid Consulting Call' },
+            'booking_paid',
+            'starter_booking',
+        ],
+    ]
+
+    for (const [trigger, intentSubtype, trackKey] of cases) {
+        const harness = boot({
+            hostname: 'thestarters.com',
+            pathname: '/hire/thebrianchung',
+            pageId: '69f241ed147b71addb6f153d',
+            forms: ['signup'],
+            member: null,
+            cookies: { event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+            fetchHandler: async (url) =>
+                String(url).includes('/auth/trade-token/v3')
+                    ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                    : { ok: true, status: 200, json: async () => ({ ok: true }) },
+        })
+        await harness.settle()
+        harness.clickTrigger(trigger)
+        harness.submitSignup()
+        harness.authHandlers[0](loggedInMember)
+        await harness.settle()
+        await harness.settle()
+        await harness.settle()
+
+        const registration = harness.fetchCalls.find((call) =>
+            /lead_email\/register\/v3$/.test(call.url),
+        )
+        assert.ok(registration, JSON.stringify(trigger))
+        assert.deepEqual(JSON.parse(registration.init.body), {
+            source_event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+            source_route: '/hire/thebrianchung',
+            source_collection_id: '69f241ec147b71addb6f1531',
+            source_resource_slug: 'thebrianchung',
+            intent_subtype: intentSubtype,
+            properties: Object.assign(
+                {
+                    client_payload_version: 'lead_entry_browser_v1',
+                    signup_source: '/hire/thebrianchung',
+                },
+                trigger.element === 'service'
+                    ? { signup_trigger: `service:${trigger.value}` }
+                    : { signup_trigger: trigger.element },
+            ),
+        })
+        assert.equal(harness.posthogCalls[0].properties.track_key, trackKey)
+    }
+})
+
+test('a Hire signup without a supported CTA intent fails closed', async () => {
+    for (const trigger of [null, { element: 'service', value: 'Unknown Service' }]) {
+        const harness = boot({
+            hostname: 'thestarters.com',
+            pathname: '/hire/thebrianchung',
+            pageId: '69f241ed147b71addb6f153d',
+            forms: ['signup'],
+            member: null,
+        })
+        await harness.settle()
+        if (trigger) harness.clickTrigger(trigger)
+        harness.submitSignup()
+        harness.authHandlers[0](loggedInMember)
+        await harness.settle()
+        await harness.settle()
+
+        assert.equal(
+            harness.fetchCalls.filter((call) => /lead_email\/register\/v3$/.test(call.url))
+                .length,
+            0,
+        )
+        assert.equal(harness.pendingLeadEntry(), undefined)
+    }
+})
+
+test('the normal ungated Learn Get Started link opens the existing signup modal', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analyses/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+    })
+    await harness.settle()
+
+    const event = harness.clickTrigger({ href: '/quiz' })
+
+    assert.equal(event.defaultPrevented, true)
+    assert.equal(event.propagationStopped, true)
+    assert.equal(harness.openedSignup.length, 1)
+})
+
+test('the ungated Learn Get Started link keeps its normal route for logged-in viewers', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analyses/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: loggedInMember,
+    })
+    await harness.settle()
+
+    const event = harness.clickTrigger({ href: '/quiz' })
+
+    assert.equal(event.defaultPrevented, false)
+    assert.deepEqual(harness.openedSignup, [])
 })
 
 test('a real production CMS signup registers one authenticated V3 lead entry', async () => {
