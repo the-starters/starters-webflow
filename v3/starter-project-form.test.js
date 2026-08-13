@@ -110,6 +110,10 @@ class Element {
     if (selector === '[data-project-form-state="error"]' || selector === '.w-form-fail') return this.error || null
     if (selector === '[data-project-form-state="success"]' || selector === '.w-form-done') return this.success || null
     if (selector === '[data-project-success-message]') return this.successMessage || null
+    if (selector === '.generate-contract_success-layout > p:not(.generate-contract_success-text)') return this.successMessage || null
+    if (selector === '.generate-contract_success') return this.preview || null
+    if (selector === '.generate-contract_success a.clickable_link') return this.successLink || null
+    if (selector === '.w-form-done a.clickable_link') return this.successLink || null
     if (selector === 'form') return this.form || null
     return null
   }
@@ -120,6 +124,8 @@ class Element {
     }
     if (selector === '[data-project-success-title], .generate-contract_success-text') return this.successTitles || []
     if (selector === '[data-project-bind], [element]') return this.profileTargets || []
+    if (selector === 'p, label, span') return this.copyTargets || []
+    if (selector === '.generate-contract_success a.clickable_link, .w-form-done a.clickable_link') return this.successLinks || []
     if (selector === '#brand-name-contract, #brand-name, #freeName, #FreeEmail, #pushMemID') return this.cmsOnly || []
     return []
   }
@@ -150,6 +156,27 @@ function formFixture() {
   wrapper.success = new Element({ hidden: true })
   wrapper.success.successTitles = [new Element(), new Element()]
   wrapper.success.successMessage = new Element()
+  wrapper.success.preview = new Element()
+  const successLink = new Element({ href: '/brand-dashboard', tagName: 'a' })
+  wrapper.success.successLink = successLink
+  context.successLinks = [successLink]
+  context.profileTargets = [
+    new Element({ tagName: 'img', element: 'profile_photo' }),
+    new Element({ element: 'full_name', textContent: 'Full Name' }),
+    new Element({ element: 'professional_headline', textContent: 'Headline' }),
+    new Element({ element: 'list_roles' }),
+    new Element({ element: 'role_name' }),
+    new Element({ element: 'freelancer_infromation', textContent: 'Freelancer information' }),
+  ]
+  context.copyTargets = [
+    new Element({ tagName: 'p', textContent: 'Selected Freelancer:' }),
+    new Element({ tagName: 'p', textContent: 'Starting a project is how you hire talent on The Starters' }),
+    new Element({ tagName: 'p', textContent: "This is where you'll define scope, set milestones, and get to work. Once a project is created, you can document the engagement, sign a contract, and pay your Starter all in one place." }),
+    new Element({ tagName: 'label', textContent: 'Add project scope for the freelancer' }),
+    new Element({ tagName: 'p', textContent: "The share of the total you'll pay the freelancer before work begins (0–100%)." }),
+    new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
+    new Element({ tagName: 'p', textContent: 'The contract will continue until the project is ended by you or the Starter' }),
+  ]
   form.controls = Object.values(form.fields)
   return { context, form, wrapper }
 }
@@ -418,7 +445,7 @@ test('disables every target when no modal has the native V3 form contract', () =
 })
 
 test('selecting a Brand stores its ID and clears stale sample email', () => {
-  const { api, form } = load({ noDocument: true })
+  const { api, context, form } = load({ noDocument: true })
   const selected = { id: 12, label: 'Acme — Jai', company_name: 'Acme', manager_name: 'Jai' }
   assert.equal(api.selectBrand(form, selected), true)
   assert.equal(form.fields.brandId.value, '12')
@@ -426,6 +453,28 @@ test('selecting a Brand stores its ID and clears stale sample email', () => {
   assert.equal(form.fields.company.value, 'Acme')
   assert.equal(form.fields.manager.value, 'Jai')
   assert.equal(form.fields.email.value, '')
+  assert.equal(context.profileTargets[0].hidden, true)
+  assert.equal(context.profileTargets[1].textContent, 'Acme')
+  assert.equal(context.profileTargets[2].textContent, 'Hiring manager: Jai')
+  assert.equal(context.profileTargets[3].hidden, true)
+  assert.equal(context.profileTargets[5].hidden, true)
+})
+
+test('prepares Starter-specific copy and dashboard destination without changing native markup', () => {
+  const { api, context, form } = load({ noDocument: true })
+
+  assert.equal(api.prepareStarterContext(form), true)
+
+  assert.deepEqual(context.copyTargets.map((element) => element.textContent), [
+    'Selected Brand:',
+    'Starting a project lets you work with a Brand on The Starters',
+    'Define the scope, agree on terms, and get to work. After the project is created, both parties can review and sign the contract.',
+    'Add the project scope you agreed with the Brand',
+    'The share of the total project cost the Brand will pay before work begins (0–100%).',
+    'The contract will continue until you or the Brand ends the project',
+    'The contract will continue until you or the Brand ends the project',
+  ])
+  assert.equal(context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
 })
 
 test('auto-selection and user selection use native select behavior without re-entry', async () => {
@@ -631,6 +680,8 @@ test('submission reports the canonical project and contract-first success state'
     loaded.wrapper.success.querySelector('[data-project-success-message]').textContent,
     'Your contract is being prepared. You and the Brand can sign when it is ready.',
   )
+  assert.equal(loaded.context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
+  assert.equal(loaded.wrapper.success.preview.getAttribute('aria-hidden'), 'false')
 })
 
 test('Own Contract submission reports immediate activation', async () => {

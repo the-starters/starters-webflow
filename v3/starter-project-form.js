@@ -2,7 +2,7 @@
  * V3 Starter Dashboard Contract Generation controller.
  *
  * Webflow owns the detached shared modal and all form markup. This controller
- * replaces copied CMS profile values with the authenticated Starter, binds the
+ * projects the selected Brand into the authored counterparty rail, binds the
  * native Brand select to Xano-authorized options, reuses the shared commercial
  * serializer from v3/project-form.js, and creates the canonical project.
  */
@@ -24,6 +24,9 @@
   var EMAIL_SELECTOR = '#brand-email, #Email-Address'
   var ERROR_SELECTOR = '[data-project-form-state="error"], .w-form-fail'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"], .w-form-done'
+  var LEGACY_SUCCESS_MESSAGE_SELECTOR = '.generate-contract_success-layout > p:not(.generate-contract_success-text)'
+  var SUCCESS_LINK_SELECTOR = '.generate-contract_success a.clickable_link, .w-form-done a.clickable_link'
+  var SUCCESS_PREVIEW_SELECTOR = '.generate-contract_success'
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
   var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
   var PROFILE_BIND_SELECTOR = '[data-project-bind]'
@@ -204,6 +207,66 @@
     return Boolean(targets.length)
   }
 
+  function setElementVisibility(element, visible) {
+    if (!element) return
+    element.hidden = !visible
+    if (element.style) element.style.display = visible ? '' : 'none'
+  }
+
+  function replaceExactText(root, before, after) {
+    if (!root || !root.querySelectorAll) return false
+    var candidates = root.querySelectorAll('p, label, span')
+    var replaced = false
+    for (var i = 0; i < candidates.length; i += 1) {
+      if (clean(candidates[i].textContent) !== before) continue
+      candidates[i].textContent = after
+      replaced = true
+    }
+    return replaced
+  }
+
+  function applyStarterCopy(form) {
+    var root = formContext(form)
+    if (!root) return false
+    replaceExactText(root, 'Selected Freelancer:', 'Selected Brand:')
+    replaceExactText(root, 'Starting a project is how you hire talent on The Starters', 'Starting a project lets you work with a Brand on The Starters')
+    replaceExactText(root, "This is where you'll define scope, set milestones, and get to work. Once a project is created, you can document the engagement, sign a contract, and pay your Starter all in one place.", 'Define the scope, agree on terms, and get to work. After the project is created, both parties can review and sign the contract.')
+    replaceExactText(root, 'Add project scope for the freelancer', 'Add the project scope you agreed with the Brand')
+    replaceExactText(root, "The share of the total you'll pay the freelancer before work begins (0–100%).", 'The share of the total project cost the Brand will pay before work begins (0–100%).')
+    replaceExactText(root, 'The contract will continue until the project is ended by you or the Starter', 'The contract will continue until you or the Brand ends the project')
+    return true
+  }
+
+  function renderCounterparty(form, option) {
+    var root = formContext(form)
+    if (!root || !root.querySelectorAll) return false
+    var company = clean(option && option.company_name)
+    var manager = clean(option && option.manager_name)
+    var values = {
+      full_name: company || manager,
+      professional_headline: manager ? 'Hiring manager: ' + manager : '',
+      profile_photo: '',
+      role_name: '',
+      list_roles: '',
+      freelancer_information: '',
+    }
+    var targets = Array.prototype.slice.call(root.querySelectorAll(PROFILE_BIND_SELECTOR + ', ' + LEGACY_PROFILE_BIND_SELECTOR))
+    targets.forEach(function (element) {
+      var name = canonicalBindName(element)
+      if (!Object.prototype.hasOwnProperty.call(values, name)) return
+      var value = values[name]
+      if (name === 'profile_photo' && clean(element.tagName).toLowerCase() === 'img') {
+        element.removeAttribute('src')
+        element.removeAttribute('srcset')
+        element.setAttribute('alt', '')
+      } else {
+        element.textContent = value
+      }
+      setElementVisibility(element, Boolean(value))
+    })
+    return Boolean(targets.length)
+  }
+
   function invalidateProfile(form) {
     var current = formState(form)
     current.profileGeneration += 1
@@ -307,6 +370,12 @@
       brandSelect.setAttribute('required', '')
       brandSelect.setAttribute('data-project-field', 'brand_id')
     }
+    applyStarterCopy(form)
+    var root = formContext(form)
+    var successLinks = root && root.querySelectorAll ? root.querySelectorAll(SUCCESS_LINK_SELECTOR) : []
+    Array.prototype.forEach.call(successLinks, function (link) {
+      if (link && link.setAttribute) link.setAttribute('href', '/starter-dashboard#projects')
+    })
     return true
   }
 
@@ -321,6 +390,7 @@
     // The V3 options response intentionally omits Brand email. Clear any stale
     // sample or previous selection value already present in the authored form.
     writeField(field(form, EMAIL_SELECTOR), '')
+    renderCounterparty(form, option)
     return true
   }
 
@@ -331,6 +401,7 @@
     writeField(field(form, MANAGER_NAME_SELECTOR), '')
     writeField(field(form, COMPANY_NAME_SELECTOR), '')
     writeField(field(form, EMAIL_SELECTOR), '')
+    renderCounterparty(form, null)
   }
 
   function clearRenderedOptions(form) {
@@ -569,15 +640,25 @@
     if (success) {
       var titles = success.querySelectorAll ? success.querySelectorAll('[data-project-success-title], .generate-contract_success-text') : []
       Array.prototype.forEach.call(titles, function (title) { title.textContent = 'Project successfully created' })
-      var message = success.querySelector && success.querySelector('[data-project-success-message]')
+      var message = success.querySelector && (
+        success.querySelector('[data-project-success-message]') ||
+        success.querySelector(LEGACY_SUCCESS_MESSAGE_SELECTOR)
+      )
       if (message) {
         message.textContent = isActive
           ? 'Your project is now active.'
           : 'Your contract is being prepared. You and the Brand can sign when it is ready.'
       }
+      var successLink = success.querySelector && success.querySelector(SUCCESS_LINK_SELECTOR)
+      if (successLink && successLink.setAttribute) successLink.setAttribute('href', '/starter-dashboard#projects')
       success.hidden = false
       if (success.style) success.style.display = 'block'
       if (form.style) form.style.display = 'none'
+      var preview = success.querySelector && success.querySelector(SUCCESS_PREVIEW_SELECTOR)
+      if (preview && preview.setAttribute) {
+        preview.setAttribute('aria-hidden', 'true')
+        Promise.resolve().then(function () { preview.setAttribute('aria-hidden', 'false') })
+      }
     }
     if (typeof global.CustomEvent === 'function' && documentObject && documentObject.dispatchEvent) {
       documentObject.dispatchEvent(new global.CustomEvent('starters:project-created', {
@@ -704,7 +785,6 @@
         var form = documentObject.querySelector(FORM_SELECTOR)
         if (form) {
           prepareOpen(form, documentObject, globalObject)
-          loadProfile(form, globalObject, true)
           loadOptions(form, globalObject, true)
         }
         return
@@ -745,6 +825,8 @@
     normalizeOptions: normalizeOptions,
     normalizeProfile: normalizeProfile,
     renderProfile: renderProfile,
+    renderCounterparty: renderCounterparty,
+    applyStarterCopy: applyStarterCopy,
     loadProfile: loadProfile,
     prepareStarterContext: prepareStarterContext,
     selectBrand: selectBrand,
