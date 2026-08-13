@@ -359,7 +359,10 @@
     state.loops.forEach(function (tl, i) {
       if (!tl) return;
       var hovered = state.pauseOnHover && state.hoverIndex === i;
-      if (shouldPlay && !hovered) tl.play();
+      // resume(), never play(): play() means "play FORWARD" and clears the
+      // reversed state horizontalLoop set for even Tracks, so every sync tick
+      // (init, hover leave, IO transition) used to flip them back to RTL.
+      if (shouldPlay && !hovered) tl.resume();
       else tl.pause();
     });
   }
