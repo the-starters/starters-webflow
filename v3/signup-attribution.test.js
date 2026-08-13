@@ -8,10 +8,11 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.199'
+const RELEASE = 'v1.59.209'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
+const LEAD_ENTRY_PENDING_KEY = 'startersLeadEntryPendingV1'
 
 // Cookie name to Memberstack custom-field ID: the literals both this file and
 // quiz-results.js are pinned to. All eleven are verified to exist in the Memberstack
@@ -244,6 +245,11 @@ function boot(options = {}) {
         options.forms,
         options.referrer,
     )
+    document.documentElement = {
+        getAttribute(name) {
+            return name === 'data-wf-page' ? options.pageId || null : null
+        },
+    }
     // A DOM the script cannot query at all: an old engine with no
     // querySelectorAll, or one that raises on the call.
     if (options.noQuerySelectorAll) delete document.querySelectorAll
@@ -257,6 +263,8 @@ function boot(options = {}) {
     const warnings = []
     const authHandlers = []
     const updateCalls = []
+    const fetchCalls = []
+    const posthogCalls = []
     const memberReads = []
     let releaseMember = () => {}
 
@@ -279,6 +287,7 @@ function boot(options = {}) {
     // withholds it from `window`, so `attachMemberstack()` can hand the same
     // double over later as a late-loading Memberstack.
     const memberstack = {
+        getMemberCookie: async () => options.memberCookie || 'memberstack-cookie',
         getCurrentMember: async () => {
             if (options.memberThrows) throw new Error('no session')
             memberReads.push(true)
@@ -370,6 +379,14 @@ function boot(options = {}) {
         crypto: options.noRandomUuid
             ? {}
             : { randomUUID: () => options.uuid || 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+        fetch: async (url, init) => {
+            fetchCalls.push({ url: String(url), init: init || {} })
+            if (options.fetchHandler) return options.fetchHandler(url, init || {})
+            throw new Error('unexpected fetch')
+        },
+        posthog: {
+            capture: (name, properties) => posthogCalls.push({ name, properties }),
+        },
     }
     if (!options.noFbq) {
         window.fbq = (...args) => fbqCalls.push(args)
@@ -418,6 +435,8 @@ function boot(options = {}) {
         memberReads,
         session,
         updateCalls,
+        fetchCalls,
+        posthogCalls,
         warnings,
         window,
         openedSignup,
@@ -466,6 +485,17 @@ function boot(options = {}) {
             }
             return event
         },
+        submitSignup: () => {
+            const target = {
+                getAttribute(name) {
+                    return name === 'data-ms-form' ? 'signup' : null
+                },
+            }
+            const event = { target }
+            const handlers = document.listeners.filter(([name]) => name === 'submit')
+            for (const entry of handlers) entry[1](event)
+            return event
+        },
         rerun: () => vm.runInNewContext(source, context),
         settle: () => new Promise((resolve) => setImmediate(resolve)),
         writesFor: (name) =>
@@ -473,6 +503,10 @@ function boot(options = {}) {
         pendingSave: () => session.get(PENDING_SAVE_FLAG),
         pendingFields: () => {
             const raw = session.get(PENDING_FIELDS_KEY)
+            return raw === undefined ? undefined : JSON.parse(raw)
+        },
+        pendingLeadEntry: () => {
+            const raw = session.get(LEAD_ENTRY_PENDING_KEY)
             return raw === undefined ? undefined : JSON.parse(raw)
         },
         releaseMember: () => releaseMember(),
@@ -830,6 +864,206 @@ test('the two form selectors keep their deliberate asymmetry', () => {
         /var LOGIN_FORM_SELECTOR = '\[data-ms-form="login"\]'/,
         'LOGIN_FORM_SELECTOR must match the marker on any element',
     )
+})
+
+test('every V3 Xano Collection and Learn route produces its exact observable contract', async () => {
+    const cases = [
+        ['/skills/example', '69cccee53fd01363c8d406f3', '69cccee53fd01363c8d406f9', 'collection_signup'],
+        ['/tools/example', '69ccce82af83f16acf711e18', '69ccce82af83f16acf711e1e', 'collection_signup'],
+        ['/industries/example', '69cccd9d0354a390eb378509', '69cccd9e0354a390eb37855c', 'collection_signup'],
+        ['/companies/example', '69f23440f1e67c01bcd642ca', '69f23440f1e67c01bcd642d0', 'collection_signup'],
+        ['/categories/example', '69f2329d4f5bacf6765c1ca1', '69f2329e4f5bacf6765c1cc6', 'collection_signup'],
+        ['/subcategories/example', '69f233f6f3e97748419e3a3d', '69f233f7f3e97748419e3a43', 'collection_signup'],
+        ['/learn/playbooks-frameworks/example', '69e1e416f6476e12f572b39b', '69e1e417f6476e12f572b468', 'learn_unlock'],
+        ['/learn/interviews-analyses/example', '69dca9df095d2fbcf34e255b', '69dca9df095d2fbcf34e2575', 'learn_signup'],
+        ['/learn/sessions/example', '69e08554183023227aa46c1e', '69e08554183023227aa46c24', 'session_signup'],
+    ]
+
+    for (const [route, collectionId, pageId, intentSubtype] of cases) {
+        const harness = boot({
+            hostname: 'www.thestarters.com',
+            pathname: route,
+            pageId,
+            forms: ['signup'],
+            member: null,
+            cookies: { event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+            fetchHandler: async (url) =>
+                String(url).includes('/auth/trade-token/v3')
+                    ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                    : { ok: true, status: 200, json: async () => ({ ok: true }) },
+        })
+        await harness.settle()
+        harness.submitSignup()
+        harness.authHandlers[0](loggedInMember)
+        await harness.settle()
+        await harness.settle()
+        await harness.settle()
+
+        const body = JSON.parse(harness.fetchCalls[1].init.body)
+        assert.equal(body.source_route, route, route)
+        assert.equal(body.source_collection_id, collectionId, route)
+        assert.equal(body.source_resource_slug, 'example', route)
+        assert.equal(body.intent_subtype, intentSubtype, route)
+    }
+})
+
+test('a real production CMS signup registers one authenticated V3 lead entry', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/skills/growth-marketing',
+        pageId: '69cccee53fd01363c8d406f9',
+        forms: ['signup'],
+        member: null,
+        cookies: {
+            event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+            utm_source: 'linkedin',
+            utm_campaign: 'operator-growth',
+        },
+        fetchHandler: async (url) => {
+            if (String(url).includes('/auth/trade-token/v3')) {
+                return { ok: true, status: 200, json: async () => ({ authToken: 'xano-token' }) }
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true, replayed: false, status: 'pending' }),
+            }
+        },
+    })
+    await harness.settle()
+
+    harness.submitSignup()
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fetchCalls.length, 2)
+    assert.match(harness.fetchCalls[0].url, /auth\/trade-token\/v3\?token=/)
+    assert.match(harness.fetchCalls[1].url, /lead_email\/register\/v3$/)
+    assert.equal(harness.fetchCalls[1].init.headers.Authorization, 'Bearer xano-token')
+    assert.deepEqual(JSON.parse(harness.fetchCalls[1].init.body), {
+        source_event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        source_route: '/skills/growth-marketing',
+        source_collection_id: '69cccee53fd01363c8d406f3',
+        source_resource_slug: 'growth-marketing',
+        intent_subtype: 'collection_signup',
+        properties: {
+            client_payload_version: 'lead_entry_browser_v1',
+            utm_source: 'linkedin',
+            utm_campaign: 'operator-growth',
+            signup_source: '/skills/growth-marketing',
+        },
+    })
+    assert.equal(harness.pendingLeadEntry(), undefined)
+    assert.deepEqual(plain(harness.posthogCalls), [
+        {
+            name: 'v3_lead_entry_registered',
+            properties: {
+                track_key: 'collection',
+                intent_subtype: 'collection_signup',
+                source_route: '/skills/growth-marketing',
+                source_collection_id: '69cccee53fd01363c8d406f3',
+                payload_version: 'lead_entry_browser_v1',
+            },
+        },
+    ])
+})
+
+test('a CMS login without a signup-form submit never registers a lead entry', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/playbooks-frameworks/growth-loop',
+        pageId: '69e1e417f6476e12f572b468',
+        forms: ['signup'],
+        member: null,
+    })
+    await harness.settle()
+
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fetchCalls.length, 0)
+    assert.equal(harness.pendingLeadEntry(), undefined)
+})
+
+test('staging and unsupported CMS routes fail closed even after a signup submit', async () => {
+    for (const options of [
+        {
+            hostname: 'the-starters-3-0.webflow.io',
+            pathname: '/skills/growth-marketing',
+            pageId: '69cccee53fd01363c8d406f9',
+        },
+        { hostname: 'thestarters.com', pathname: '/skills', pageId: '69cccee53fd01363c8d406f9' },
+        { hostname: 'thestarters.com', pathname: '/skills/a/nested', pageId: '69cccee53fd01363c8d406f9' },
+        { hostname: 'thestarters.com', pathname: '/learn/webinars/something', pageId: '69e1e417f6476e12f572b468' },
+        { hostname: 'thestarters.com', pathname: '/skills/growth-marketing', pageId: '69d533cae257d435b84a3e6b' },
+    ]) {
+        const harness = boot(Object.assign({ forms: ['signup'], member: null }, options))
+        await harness.settle()
+        harness.submitSignup()
+        harness.authHandlers[0](loggedInMember)
+        await harness.settle()
+        assert.equal(harness.fetchCalls.length, 0, options.pathname)
+        assert.equal(harness.pendingLeadEntry(), undefined, options.pathname)
+    }
+})
+
+test('a redirect retry is member-scoped and clears only after Xano accepts it', async () => {
+    const pending = {
+        expected_member_id: 'mem_123',
+        source_event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        source_route: '/learn/sessions/operator-session',
+        source_collection_id: '69e08554183023227aa46c1e',
+        source_resource_slug: 'operator-session',
+        intent_subtype: 'session_signup',
+        track_key: 'learn_session',
+        properties: { client_payload_version: 'lead_entry_browser_v1' },
+        captured_at: Date.now(),
+    }
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/brand-dashboard',
+        member: loggedInMember,
+        session: { [LEAD_ENTRY_PENDING_KEY]: JSON.stringify(pending) },
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true, replayed: true }) },
+    })
+    await harness.settle()
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fetchCalls.length, 2)
+    assert.equal(harness.pendingLeadEntry(), undefined)
+    assert.equal(harness.posthogCalls.length, 1)
+})
+
+test('a pending lead entry cannot move to a different Memberstack member', async () => {
+    const pending = {
+        expected_member_id: 'mem_original',
+        source_event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+        source_route: '/tools/example',
+        source_collection_id: '69ccce82af83f16acf711e18',
+        source_resource_slug: 'example',
+        intent_subtype: 'collection_signup',
+        track_key: 'collection',
+        properties: {},
+        captured_at: Date.now(),
+    }
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/brand-dashboard',
+        member: loggedInMember,
+        session: { [LEAD_ENTRY_PENDING_KEY]: JSON.stringify(pending) },
+    })
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fetchCalls.length, 0)
+    assert.equal(harness.pendingLeadEntry(), undefined)
 })
 
 test('the header and README document all eleven contract field IDs', () => {
