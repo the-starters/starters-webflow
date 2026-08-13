@@ -383,10 +383,14 @@ test('leaves a roles hook on the same card alone', () => {
 })
 
 test('does not arm when the page has no subcategory hook', () => {
-  const page = buildPage({ includeTemplateHook: false, includeInjected: false })
+  const page = buildPage({ includeTemplateHook: false })
+  page.seed.removeAttribute('wf-algolia-text')
   const mod = loadModule({ page })
-  assert.deepEqual(mod.listeners, {}, 'marker gate must bail before touching WfAlgolia')
-  assert.deepEqual(mod.observed, [])
+  mod.flushTimers()
+  assert.deepEqual(tagText(page.card), [
+    'Paid Media > Performance Creative Strategy',
+  ])
+  assert.deepEqual(mod.dispatched, [])
 })
 
 test('clones inherit the seed class and drop the hook', () => {
@@ -430,13 +434,19 @@ test('boots only once even if the file loads twice', () => {
     joinedPaths: 'Paid Media > Performance Creative Strategy,Creative > Video & Production',
   })
   const mod = loadModule({ page })
-  assert.equal((mod.listeners.results || []).length, 1)
-  mod.reevaluate()
-  assert.equal((mod.listeners.results || []).length, 1)
+  mod.flushTimers()
   assert.deepEqual(tagText(page.card), [
     'Performance Creative Strategy',
     'Video & Production',
   ])
+  assert.deepEqual(mod.dispatched, ['expert-cards:relayout'])
+  mod.reevaluate()
+  mod.flushTimers()
+  assert.deepEqual(tagText(page.card), [
+    'Performance Creative Strategy',
+    'Video & Production',
+  ])
+  assert.deepEqual(mod.dispatched, ['expert-cards:relayout'])
 })
 
 test('warns on staging when no browse or results container exists', () => {
