@@ -31,8 +31,12 @@
  *      the designed outcome, not an error.
  *      LEAVING fullscreen pauses: the shipped pause shape returns (overlay back,
  *      controls hidden) with the position pinned, and the next watch tap re-enters
- *      fullscreen from there, cycle after cycle. See onFullscreenChange(). The
- *      play/pause control is not a fullscreen route; the watch control is.
+ *      fullscreen from there, cycle after cycle. See onFullscreenChange().
+ *      BEFORE THE GATE ARMS, any tap that starts the watch is that member's route
+ *      into fullscreen — the watch control, #videoClickOverlay and #playPauseBtn
+ *      all run the same transition through watch(), so all three enter. ONCE
+ *      ARMED, only the watch control re-enters; the other two are back to being
+ *      plain play/pause.
  *
  * WHY THE BACKGROUND PHASE MUST NOT ARM THE GATE. An ambient loop left running
  * would eventually cross the cut point on its own and throw the signup wall at
@@ -618,6 +622,20 @@
   }
 
   /**
+   * Is fullscreen THIS module's to drive for this viewer? Three things at once: a
+   * confirmed member (a gated frame is built without the permission), a player box
+   * too narrow for Vimeo's own bar, and a player object to send the request to.
+   *
+   * One predicate, both directions, so entry and exit can never drift apart: the
+   * same viewer whose watch tap opens fullscreen is the one whose exit from it
+   * pauses. A wide member drives fullscreen through Vimeo's own UI and is not our
+   * business in either direction.
+   */
+  Controller.prototype.watchDrivesFullscreen = function () {
+    return !this.gated && !!this.narrow && !!this.player
+  }
+
+  /**
    * Straight into the device's own fullscreen player, for a confirmed member whose
    * player box is too narrow for Vimeo's bar, fired inside the tap that asked for
    * it. On a phone the inline hero is a postage stamp with our minimal controls,
@@ -633,11 +651,12 @@
    * trade a member's restored playback for a console error — and hijacking the
    * whole screen because a membership answer arrived late is nobody's request.
    *
-   * NARROW ONLY: at or above the threshold Vimeo's own bar is in charge and already
-   * carries its own fullscreen button, which is the desktop behaviour members have
-   * today. GATED NEVER: that frame is deliberately built without the permission, so
-   * the request could only fail, and the clamp is only enforceable on a surface we
-   * still control.
+   * Who qualifies is watchDrivesFullscreen()'s answer — narrow only, because at or
+   * above the threshold Vimeo's own bar is in charge and already carries its own
+   * fullscreen button, which is the desktop behaviour members have today; and never
+   * gated, because that frame is deliberately built without the permission, so the
+   * request could only fail, and the clamp is only enforceable on a surface we still
+   * control.
    *
    * A refusal needs no handling. Inline playback with the sound on and the controls
    * up IS the fallback — the whole watch transition has already run by the time this
@@ -645,7 +664,7 @@
    */
   Controller.prototype.enterFullscreen = function (byGesture) {
     if (byGesture !== true) return
-    if (this.gated || !this.narrow || !this.player) return
+    if (!this.watchDrivesFullscreen()) return
     if (typeof this.player.requestFullscreen !== 'function') return
     safe(this.player.requestFullscreen())
     info('member on a narrow player: requested fullscreen from the watch tap')
@@ -670,10 +689,11 @@
       this.showControls(true)
       safe(this.player.play())
       // Resume means the same thing as start on a narrow player: back into
-      // fullscreen, from the position the exit left pinned. The watch control is
-      // the only surface that does this — #playPauseBtn stays plain play/pause,
-      // because after an exit-pause the overlay is up and the watch control is what
-      // the member is looking at.
+      // fullscreen, from the position the exit left pinned. Once armed, the watch
+      // control is the ONLY surface that does this — #playPauseBtn and the click
+      // layer reach toggle()'s play/pause branch instead of this one, because after
+      // an exit-pause the overlay is up and the watch control is what the member is
+      // looking at.
       this.enterFullscreen(byGesture)
       return
     }
@@ -792,14 +812,15 @@
    * with no usable data at all, is ignored. If some platform never emits it the
    * failure mode is "no pause on exit", never an error or a stuck frame.
    *
-   * MEMBER ON A NARROW PLAYER ONLY, matching who the tap-to-fullscreen path is for.
-   * A wide member enters fullscreen through Vimeo's own UI and keeps today's
-   * behaviour untouched; a gated viewer has no fullscreen to leave.
+   * SAME VIEWER AS THE ENTRY PATH, by the same predicate: whoever's watch tap opens
+   * fullscreen is whoever's exit from it pauses. A wide member enters fullscreen
+   * through Vimeo's own UI and keeps today's behaviour untouched; a gated viewer has
+   * no fullscreen to leave.
    */
   Controller.prototype.onFullscreenChange = function (d) {
     if (!d || typeof d.fullscreen === 'undefined') return
     if (d.fullscreen) return
-    if (this.gated || !this.narrow || !this.player) return
+    if (!this.watchDrivesFullscreen()) return
     safe(this.player.pause())
     info('left fullscreen at ' + this.position.toFixed(1) + 's; pausing')
   }

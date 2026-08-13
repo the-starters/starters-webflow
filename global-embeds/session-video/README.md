@@ -50,8 +50,15 @@ no permission, so it plays inline exactly as it always did and the full-screen
 button is the second chance once the upgrade lands; a request the browser refuses
 degrades the same way, with no error state either time. Members at or above the
 threshold keep today's inline watch with Vimeo's own bar and its own full-screen
-button, gated viewers are untouched at every width, and the play/pause control is
-never a full-screen route.
+button, and gated viewers are untouched at every width.
+
+Which control counts as "the watch tap" depends on whether the gate has armed yet.
+**Before it arms, any tap that starts the watch is a route into full screen** for
+that member: the watch control, `#videoClickOverlay` and `#playPauseBtn` all run
+the same watch transition (see the table above), so all three enter full screen.
+**Once armed, only the watch control re-enters** — the click layer and the play
+button are back to plain play/pause, because after an exit the overlay is up and
+the watch control is the surface the member is looking at.
 
 **Why the background phase must not arm the gate.** An ambient loop left running
 would eventually cross the cut point on its own and throw the signup wall at
