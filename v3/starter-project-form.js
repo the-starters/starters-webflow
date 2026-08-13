@@ -105,6 +105,7 @@
       lockedControls: null,
       generation: 0,
       optionsGeneration: 0,
+      profileGeneration: 0,
     }
   }
 
@@ -204,29 +205,36 @@
     return Boolean(targets.length)
   }
 
+  function invalidateProfile(form) {
+    var current = formState(form)
+    current.profileGeneration += 1
+    current.profileRequest = null
+    current.profile = null
+    current.profileLoaded = false
+    renderProfile(form, normalizeProfile(null))
+  }
+
   function loadProfile(form, globalObject, forceRefresh) {
     var current = formState(form)
-    if (forceRefresh) {
-      current.profileRequest = null
-      current.profile = null
-      current.profileLoaded = false
-    }
+    if (forceRefresh) invalidateProfile(form)
     if (current.profileRequest) return current.profileRequest
     if (current.profileLoaded) return Promise.resolve(current.profile)
+    if (!forceRefresh) invalidateProfile(form)
     var generation = current.generation
+    var profileGeneration = current.profileGeneration
     var request = projectApi(globalObject, 'starterProfile')
     if (!request) return Promise.resolve(null)
     var profileRequest = Promise.resolve()
       .then(function () { return request() })
       .then(function (response) {
-        if (generation !== current.generation) return null
+        if (generation !== current.generation || profileGeneration !== current.profileGeneration) return null
         current.profile = normalizeProfile(response)
         current.profileLoaded = true
         renderProfile(form, current.profile)
         return current.profile
       })
       .catch(function () {
-        if (generation !== current.generation) return null
+        if (generation !== current.generation || profileGeneration !== current.profileGeneration) return null
         current.profile = null
         current.profileLoaded = false
         return null
@@ -528,8 +536,7 @@
     current.submitRequest = null
     current.options = []
     current.optionsLoaded = false
-    current.profile = null
-    current.profileLoaded = false
+    invalidateProfile(form)
     current.selected = null
     current.key = ''
     current.keyPayload = ''
@@ -688,7 +695,10 @@
       if (link && link.setAttribute) link.setAttribute('href', '#start-project')
     })
     var canonicalForm = canonical && canonical.querySelector ? canonical.querySelector('form') : null
-    if (canonicalForm) prepareStarterContext(canonicalForm)
+    if (canonicalForm) {
+      prepareStarterContext(canonicalForm)
+      invalidateProfile(canonicalForm)
+    }
     return Boolean(canonicalForm)
   }
 

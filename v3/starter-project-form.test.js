@@ -252,6 +252,76 @@ test('normalizes and renders the authenticated Starter profile into scoped bindi
   assert.equal(summary.textContent, 'Builds & improves retention.')
 })
 
+test('profile loading clears authored identity and stays clear on failure', async () => {
+  let rejectProfile
+  const loaded = load({
+    noDocument: true,
+    starterProfile: () => new Promise((resolve, reject) => { rejectProfile = reject }),
+  })
+  const photo = new Element({
+    tagName: 'img',
+    element: 'profile_photo',
+    src: 'https://example.com/authored.jpg',
+    srcset: 'https://example.com/authored-2x.jpg 2x',
+    alt: 'Authored Starter',
+  })
+  const name = new Element({ element: 'full_name', textContent: 'Authored Starter' })
+  const role = new Element({ element: 'role_name', textContent: 'Authored role' })
+  const headline = new Element({ element: 'professional_headline', textContent: 'Authored headline' })
+  const summary = new Element({ element: 'freelancer_infromation', textContent: 'Authored summary' })
+  loaded.context.profileTargets = [photo, name, role, headline, summary]
+
+  const request = loaded.api.loadProfile(loaded.form, loaded.window)
+
+  assert.equal(photo.getAttribute('src'), null)
+  assert.equal(photo.getAttribute('srcset'), null)
+  assert.equal(photo.getAttribute('alt'), '')
+  assert.equal(name.textContent, '')
+  assert.equal(role.textContent, '')
+  assert.equal(headline.textContent, '')
+  assert.equal(summary.textContent, '')
+
+  await Promise.resolve()
+  rejectProfile(new Error('profile unavailable'))
+  assert.equal(await request, null)
+  assert.equal(name.textContent, '')
+  assert.equal(photo.getAttribute('src'), null)
+})
+
+test('member reset clears profile identity and rejects stale profile responses', async () => {
+  let resolveFirst
+  let requestNumber = 0
+  const loaded = load({
+    starterProfile: () => {
+      requestNumber += 1
+      if (requestNumber === 1) return new Promise((resolve) => { resolveFirst = resolve })
+      return Promise.reject(new Error('member B profile unavailable'))
+    },
+  })
+  const photo = new Element({ tagName: 'img', element: 'profile_photo' })
+  const name = new Element({ element: 'full_name' })
+  loaded.context.profileTargets = [photo, name]
+  loaded.api.renderProfile(loaded.form, {
+    full_name: 'Member A',
+    profile_photo: 'https://example.com/member-a.jpg',
+  })
+
+  const firstRequest = loaded.api.loadProfile(loaded.form, loaded.window, true)
+  await Promise.resolve()
+  loaded.window.listeners['opp30:member-scope-reset']({ detail: { memberId: 'member-b' } })
+
+  assert.equal(name.textContent, '')
+  assert.equal(photo.getAttribute('src'), null)
+
+  resolveFirst({ full_name: 'Member A', profile_photo: 'https://example.com/member-a.jpg' })
+  assert.equal(await firstRequest, null)
+  assert.equal(name.textContent, '')
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window), null)
+  assert.equal(name.textContent, '')
+  assert.equal(photo.getAttribute('src'), null)
+})
+
 test('promotes the detached shared Contract Generation form into Starter context', () => {
   const { api } = load({ noDocument: true })
   const old = new Element({ tagName: 'dialog', 'data-modal-target': 'start-project' })
