@@ -2369,8 +2369,10 @@ test('View Contract is limited to recipient-viewable canonical document states',
     'partial',
     'completed',
     'declined',
+    'voided',
     'expired',
     'error',
+    'invalid',
   ]
 
   canonicalStates.forEach((contractStatus) => {
@@ -2493,6 +2495,16 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
     {
       name: 'error',
       project: { ...base, lifecycle_state: 'contract_sent', contract_status: 'error' },
+      expected: { visible: true, state: 'attention', action: null },
+    },
+    {
+      name: 'failed',
+      project: { ...base, lifecycle_state: 'contract_sent', contract_status: 'failed' },
+      expected: { visible: true, state: 'attention', action: null },
+    },
+    {
+      name: 'invalid',
+      project: { ...base, lifecycle_state: 'contract_sent', contract_status: 'invalid' },
       expected: { visible: true, state: 'attention', action: null },
     },
   ]
