@@ -93,6 +93,9 @@ class Element {
     if (selector === '[data-starter-project-brand-option]') {
       return this.getAttribute('data-starter-project-brand-option') ? this : null
     }
+    if (selector === '[dx-button="review"]') {
+      return this.getAttribute('dx-button') === 'review' ? this : null
+    }
     return null
   }
   querySelector(selector) {
@@ -123,6 +126,7 @@ class Element {
   }
   querySelectorAll(selector) {
     if (selector === 'input, select, textarea, button') return this.controls || []
+    if (selector === 'input, select, textarea') return this.controls || []
     if (selector === '[data-set-current-date-inited="true"]') {
       return (this.controls || []).filter((control) => control.getAttribute('data-set-current-date-inited') === 'true')
     }
@@ -204,7 +208,11 @@ function load(options = {}) {
   }
   const document = {
     listeners: {},
-    addEventListener(name, handler) { this.listeners[name] = handler },
+    captureListeners: {},
+    addEventListener(name, handler, capture) {
+      if (capture === true) this.captureListeners[name] = handler
+      else this.listeners[name] = handler
+    },
     querySelector(selector) {
       if (selector === '[data-project-form-v3="starter"]') return context
       return selector.includes('start-project') || selector.includes('data-project-form-v3') ? form : null
@@ -694,6 +702,35 @@ test('submission reports the canonical project and contract-first success state'
   assert.equal(loaded.context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
   assert.equal(loaded.wrapper.success.getAttribute('aria-hidden'), 'false')
   assert.equal(renderedBrand.textContent, 'Brand')
+})
+
+test('Review then submit restores preview fields without enabling authored disabled fields', async () => {
+  const loaded = load({
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+  })
+  const review = new Element({ 'dx-button': 'review', tagName: 'button' })
+  review.form = loaded.form
+  const renderedBrand = new Element()
+  loaded.wrapper.success.onAttributeChange = (name, value) => {
+    if (name === 'aria-hidden' && value === 'false') {
+      renderedBrand.textContent = loaded.form.fields.company.disabled
+        ? ''
+        : loaded.form.fields.company.value
+    }
+  }
+
+  loaded.api.prepareStarterContext(loaded.form)
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(loaded.form.fields.company.disabled, false)
+  assert.equal(loaded.form.fields.email.disabled, true)
+
+  loaded.document.captureListeners.click({ target: review })
+  loaded.form.controls.forEach((control) => { control.disabled = true })
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(renderedBrand.textContent, 'Brand')
+  assert.equal(loaded.form.fields.company.disabled, false)
+  assert.equal(loaded.form.fields.email.disabled, true)
 })
 
 test('Own Contract submission reports immediate activation', async () => {

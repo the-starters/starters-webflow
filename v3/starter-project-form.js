@@ -28,6 +28,8 @@
   var SUCCESS_LINK_SELECTOR = '.generate-contract_success a.clickable_link, .w-form-done a.clickable_link'
   var SUCCESS_PREVIEW_SELECTOR = '.generate-contract_success'
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
+  var REVIEW_CONTROL_SELECTOR = 'input, select, textarea'
+  var REVIEW_TRIGGER_SELECTOR = '[dx-button="review"]'
   var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
   var PROFILE_BIND_SELECTOR = '[data-project-bind]'
   var LEGACY_PROFILE_BIND_SELECTOR = '[element]'
@@ -105,6 +107,7 @@
       key: '',
       keyPayload: '',
       lockedControls: null,
+      reviewControls: null,
       generation: 0,
       optionsGeneration: 0,
       profileGeneration: 0,
@@ -578,6 +581,22 @@
     current.lockedControls = null
   }
 
+  function captureReviewControls(form) {
+    var current = formState(form)
+    if (current.reviewControls) return
+    var controls = form.querySelectorAll ? form.querySelectorAll(REVIEW_CONTROL_SELECTOR) : []
+    current.reviewControls = Array.prototype.map.call(controls, function (control) {
+      return { control: control, disabled: Boolean(control.disabled) }
+    })
+  }
+
+  function restoreReviewControls(form) {
+    var current = formState(form)
+    if (!current.reviewControls) return
+    current.reviewControls.forEach(function (entry) { entry.control.disabled = entry.disabled })
+    current.reviewControls = null
+  }
+
   function resetPresentation(form, resetValues) {
     if (resetValues && typeof form.reset === 'function') {
       form.reset()
@@ -615,6 +634,7 @@
     current.key = ''
     current.keyPayload = ''
     current.lockedControls = null
+    current.reviewControls = null
     resetPresentation(form, true)
     clearRenderedOptions(form)
     setSelectState(form, 'Choose a Brand', true)
@@ -630,6 +650,7 @@
 
   function showSuccess(form, result, documentObject) {
     lockForm(form, false)
+    restoreReviewControls(form)
     setStatus(form, 'success', '')
     var current = formState(form)
     current.key = ''
@@ -780,6 +801,11 @@
     // the legacy nested navigation link and duplicate modal target first so a
     // navbar click opens only the canonical Contract Generation form.
     normalizeModalMarkup(documentObject)
+    documentObject.addEventListener('click', function (event) {
+      var review = event.target && event.target.closest ? event.target.closest(REVIEW_TRIGGER_SELECTOR) : null
+      var form = review && formFromTarget(review)
+      if (form) captureReviewControls(form)
+    }, true)
     documentObject.addEventListener('click', function (event) {
       var clickedForm = formFromTarget(event.target)
       if (clickedForm) syncCommercialForm(clickedForm, documentObject, globalObject)
