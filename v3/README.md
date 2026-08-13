@@ -170,6 +170,11 @@ Webflow contract:
 - Keep the existing `country`, `state`, and `city` selects. The UI controller
   populates them from the published locations asset and adds the searchable
   custom-select presentation beside each native select.
+- Author the optional marketing consent as a native Webflow checkbox named
+  `marketing-email-consent`. It must be unchecked by default and use this exact
+  label: “Send me hiring tips, expert recommendations, and product updates from
+  The Starters by email. I can unsubscribe at any time.” JavaScript reads the
+  installed checkbox but does not generate its HTML.
 - Keep the multistep Complete control's `data-form="submit-btn"` (or
   `data-form-ms="submit-btn"`) attribute. The capture-phase click listener keys
   off it to intercept the final step before the multistep library submits.
@@ -196,6 +201,12 @@ indexes, the request resolves the selected `country`, `state`, and `city`
 options to their visible text. The top-level `country` and `city` fields and
 their entries in `answers` use that text; `state` is recorded in `answers`.
 Empty placeholder options do not override the raw empty form values.
+When the native `marketing-email-consent` checkbox exists, the request sends
+its checked state as the explicit Boolean `marketing_email_consent` and removes
+the form field from `answers`. When the checkbox is absent, the request omits
+`marketing_email_consent`; it does not infer consent or refusal. This intake
+only records the choice. Application review does not subscribe the applicant,
+start a Journey, or send email.
 
 Any successful HTTP response containing an application `id` continues to the
 redirect, including Xano's successful response for a duplicate open

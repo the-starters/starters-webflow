@@ -37,6 +37,33 @@ page exactly as authored.
 A member never reaches the third phase and gets the whole video, full screen
 included.
 
+**On a narrow player the watch control means full screen for a member.** Below the
+`data-session-video-native-min` threshold the inline hero is a postage stamp
+carrying the template's minimal controls, so a confirmed member's watch tap asks
+the player for full screen as well, fired inside that tap's own gesture — only
+ever a real tap or keyboard activation, never automatically. On iPhone that is
+the device's own player; on Android and narrow desktop the browser fullscreens
+our iframe, which carries Vimeo's bar so the full-screen surface has pause,
+scrub, volume and a visible exit. Leaving full screen (Done, or the back
+gesture) is treated as a pause: the overlay returns, the control bar goes with
+it, and the position is pinned, so the next watch tap goes straight back in from
+where they stopped, cycle after cycle. A tap that arrives before membership has
+resolved is still looking at the gated frame, which carries no permission, so it
+plays inline exactly as it always did and the full-screen button is the second
+chance once the upgrade lands; a request the browser refuses degrades the same
+way, with no error state either time. Members at or above the threshold — as
+measured once at mount; a later rotation does not rebuild the frame — keep
+today's inline watch with Vimeo's own bar and its own full-screen button, and
+gated viewers are untouched at every width.
+
+Which control counts as "the watch tap" depends on whether the gate has armed yet.
+**Before it arms, any tap that starts the watch is a route into full screen** for
+that member: the watch control, `#videoClickOverlay` and `#playPauseBtn` all run
+the same watch transition (see the table above), so all three enter full screen.
+**Once armed, only the watch control re-enters** — the click layer and the play
+button are back to plain play/pause, because after an exit the overlay is up and
+the watch control is the surface the member is looking at.
+
 **Why the background phase must not arm the gate.** An ambient loop left running
 would eventually cross the cut point on its own and throw the signup wall at
 somebody who never asked to watch anything — possibly while they were reading
@@ -142,15 +169,22 @@ is why the split is by width and not by membership alone.
   playback. A viewer keeps what they got until something remounts — `upgrade()`
   does recompute, so a rotation before a late membership answer can change it.
 - **Controls and full-screen permission are separate.** A member on a narrow
-  screen drives full screen through the template's own button and the Vimeo API,
-  so that frame still carries `allowfullscreen`.
+  screen drives full screen through the Vimeo API — from the watch tap described
+  above, and from the template's own button — so that frame still carries
+  `allowfullscreen`.
 
 Frames are built rather than authored so that `controls`, `keyboard` and `pip`
-are correct *at load* for this particular viewer. Those three follow the **native**
-decision — all off whenever the template's controls are in charge, which is every
-gated viewer and any member on a narrow screen. The full-screen attributes follow
-the **gated** decision instead: a gated frame gets `allow="autoplay"`, an ungated
-one gets `allow="autoplay; fullscreen"` plus `allowfullscreen`.
+are correct *at load* for this particular viewer. `keyboard` and `pip` follow
+the **native** decision — both off whenever the template's controls are in
+charge, which is every gated viewer and any member on a narrow screen.
+`controls` follows **gated** instead: an ungated frame always carries Vimeo's
+bar, even a narrow one. Inline the template UI is still in charge
+(`data-sv-player="custom"`, the overlay intercepts taps so Vimeo's bar idles);
+the enabled bar exists so that when the browser fullscreens the iframe,
+fullscreen has pause, scrub, volume and a visible exit. Gated frames stay
+`controls=0`. The full-screen attributes follow the **gated** decision too: a
+gated frame gets `allow="autoplay"`, an ungated one gets
+`allow="autoplay; fullscreen"` plus `allowfullscreen`.
 
 Turning off `keyboard` and `pip` closes two bypass routes deliberately, not
 incidentally: arrow keys seek, and a picture-in-picture window ships its own
@@ -177,7 +211,7 @@ Authored for this module:
 | `data-session-video-id` | root | Vimeo ID, CMS-bound to the `id-video-for-waching` field. A root without one is skipped and the page is left as authored. |
 | `data-session-video-cut` | root | Optional seconds before the wall. Empty or unusable falls back to 180. |
 | `data-session-video-bg` | root | Optional ambient-loop length in seconds. Empty or unusable falls back to 20. |
-| `data-session-video-native-min` | root | Optional minimum player width in px for Vimeo's own controls. Falls back to 768. |
+| `data-session-video-native-min` | root | Optional minimum player width in px (default 768). Below it the template's UI is in charge (not Vimeo's), a confirmed member's watch tap goes fullscreen, and leaving fullscreen pauses. Read once at mount. |
 | `data-session-video="stage"` | inside root | The iframe is built in here. Without it nothing mounts. |
 | `data-session-video="signup-trigger"` | inside root, hidden | The element the module clicks to open the wall. Carries `modal.js`'s own `data-modal-trigger`. |
 
@@ -205,7 +239,10 @@ API and which modal opens stays an authoring decision. A test pins that.
 The template's controls are `<div>`s, so the module gives them button semantics
 itself rather than requiring a Designer change: `role="button"`, a `tabindex`, an
 `aria-label` that names the action the next press performs, and both click and
-Enter/Space handling.
+Enter/Space handling. `#videoClickOverlay` is the exception — a pointer-only
+surface with no role or tabindex, because keyboard users have the named watch
+and play controls. The watch control's label becomes "Watch the session in full
+screen" when a tap will enter fullscreen.
 
 ## State attributes
 
