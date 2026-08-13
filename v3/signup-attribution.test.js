@@ -373,9 +373,24 @@ function boot(options = {}) {
             },
         },
         sessionStorage: {
-            getItem: (key) => (session.has(key) ? session.get(key) : null),
-            setItem: (key, value) => session.set(key, String(value)),
-            removeItem: (key) => session.delete(key),
+            getItem: (key) => {
+                if (options.posthogStorageThrows && String(key).includes('Posthog')) {
+                    throw new Error('analytics storage blocked')
+                }
+                return session.has(key) ? session.get(key) : null
+            },
+            setItem: (key, value) => {
+                if (options.posthogStorageThrows && String(key).includes('Posthog')) {
+                    throw new Error('analytics storage blocked')
+                }
+                session.set(key, String(value))
+            },
+            removeItem: (key) => {
+                if (options.posthogStorageThrows && String(key).includes('Posthog')) {
+                    throw new Error('analytics storage blocked')
+                }
+                session.delete(key)
+            },
         },
         crypto: options.noRandomUuid
             ? {}
@@ -1044,6 +1059,35 @@ test('an accepted lead entry retries PostHog after the real SDK loads', async ()
     })
     await third.settle()
     assert.equal(third.posthogCalls.length, 0)
+})
+
+test('blocked PostHog storage cannot retry an accepted Xano registration', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/skills/growth-marketing',
+        pageId: '69cccee53fd01363c8d406f9',
+        forms: ['signup'],
+        member: null,
+        posthogStorageThrows: true,
+        runClockForward: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+    harness.submitSignup()
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(
+        harness.fetchCalls.filter((call) => /lead_email\/register\/v3$/.test(call.url)).length,
+        1,
+    )
+    assert.equal(harness.pendingLeadEntry(), undefined)
+    assert.equal(harness.posthogCalls.length, 0)
 })
 
 test('a CMS login without a signup-form submit never registers a lead entry', async () => {

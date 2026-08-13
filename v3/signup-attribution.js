@@ -877,6 +877,48 @@
     }
 
     /**
+     * @returns {object|null}
+     */
+    var readQueuedLeadEntryPosthog = function () {
+        try {
+            var storage = window.sessionStorage
+            var raw = storage && storage.getItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+            if (!raw) return null
+
+            var snapshot
+            try {
+                snapshot = JSON.parse(raw)
+            } catch (error) {
+                storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+                return null
+            }
+
+            if (
+                !snapshot ||
+                Date.now() - Number(snapshot.captured_at || 0) >
+                    LEAD_ENTRY_MAX_AGE_MS
+            ) {
+                storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+                return null
+            }
+
+            return snapshot
+        } catch (error) {
+            return null
+        }
+    }
+
+    /**
+     * @returns {void}
+     */
+    var clearQueuedLeadEntryPosthog = function () {
+        try {
+            var storage = window.sessionStorage
+            if (storage) storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+        } catch (error) {}
+    }
+
+    /**
      * Retries the safe analytics snapshot only until the real PostHog SDK is
      * ready. Page reloads resume the same snapshot from sessionStorage.
      *
@@ -884,62 +926,48 @@
      * @returns {Promise<boolean>}
      */
     var retryLeadEntryPosthog = function (pending) {
-        if (pending && captureLeadEntryPosthog(pending)) {
-            return Promise.resolve(true)
-        }
-        if (pending) queueLeadEntryPosthog(pending)
-        if (leadEntryPosthogRetryInFlight) return leadEntryPosthogRetryInFlight
+        try {
+            if (pending && captureLeadEntryPosthog(pending)) {
+                return Promise.resolve(true)
+            }
+            if (pending) queueLeadEntryPosthog(pending)
+            if (leadEntryPosthogRetryInFlight) return leadEntryPosthogRetryInFlight
+            if (!readQueuedLeadEntryPosthog()) return Promise.resolve(false)
 
-        var initialStorage = window.sessionStorage
-        if (
-            !initialStorage ||
-            !initialStorage.getItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
-        ) {
+            leadEntryPosthogRetryInFlight = (async function () {
+                for (
+                    var attempt = 0;
+                    attempt < LEAD_ENTRY_POSTHOG_RETRY_DELAYS.length;
+                    attempt += 1
+                ) {
+                    if (LEAD_ENTRY_POSTHOG_RETRY_DELAYS[attempt]) {
+                        await wait(LEAD_ENTRY_POSTHOG_RETRY_DELAYS[attempt])
+                    }
+
+                    var snapshot = readQueuedLeadEntryPosthog()
+                    if (!snapshot) return false
+
+                    if (captureLeadEntryPosthog(snapshot)) {
+                        clearQueuedLeadEntryPosthog()
+                        return true
+                    }
+                }
+                return false
+            })().then(
+                function (result) {
+                    leadEntryPosthogRetryInFlight = null
+                    return result
+                },
+                function () {
+                    leadEntryPosthogRetryInFlight = null
+                    return false
+                },
+            )
+
+            return leadEntryPosthogRetryInFlight
+        } catch (error) {
             return Promise.resolve(false)
         }
-
-        leadEntryPosthogRetryInFlight = (async function () {
-            for (
-                var attempt = 0;
-                attempt < LEAD_ENTRY_POSTHOG_RETRY_DELAYS.length;
-                attempt += 1
-            ) {
-                if (LEAD_ENTRY_POSTHOG_RETRY_DELAYS[attempt]) {
-                    await wait(LEAD_ENTRY_POSTHOG_RETRY_DELAYS[attempt])
-                }
-
-                var storage = window.sessionStorage
-                var raw = storage && storage.getItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
-                if (!raw) return false
-
-                var snapshot
-                try {
-                    snapshot = JSON.parse(raw)
-                } catch (error) {
-                    storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
-                    return false
-                }
-
-                if (
-                    !snapshot ||
-                    Date.now() - Number(snapshot.captured_at || 0) >
-                        LEAD_ENTRY_MAX_AGE_MS
-                ) {
-                    storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
-                    return false
-                }
-
-                if (captureLeadEntryPosthog(snapshot)) {
-                    storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
-                    return true
-                }
-            }
-            return false
-        })().finally(function () {
-            leadEntryPosthogRetryInFlight = null
-        })
-
-        return leadEntryPosthogRetryInFlight
     }
 
     /**
