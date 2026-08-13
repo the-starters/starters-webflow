@@ -23,8 +23,10 @@
   var FORM_SELECTOR = 'form[application-form]'
   var MULTISTEP_SUBMIT_SELECTOR =
     '[data-form="submit-btn"], [data-form-ms="submit-btn"]'
+  var MARKETING_CONSENT_SELECTOR =
+    'input[type="checkbox"][name="marketing-email-consent"]'
   var DEFAULT_REDIRECT = '/freelancer-application/step-2'
-  var CONTROLLER_VERSION = 'talent-application-v1'
+  var CONTROLLER_VERSION = 'talent-application-v2'
   var WORKFLOW = 'talent_application'
   var workflowDiagnosticsControllerScript = document.currentScript
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
@@ -155,6 +157,16 @@
     }
   }
 
+  // Native checkbox contract for /freelancer-application/step-1. An unchecked
+  // checkbox is omitted from FormData, so read the live control directly and
+  // send an explicit Boolean. When the Designer field is not installed yet,
+  // omit the value rather than fabricating consent or a refusal.
+  function marketingEmailConsent(form) {
+    var checkbox = form.querySelector(MARKETING_CONSENT_SELECTOR)
+    if (!checkbox) return null
+    return checkbox.checked === true
+  }
+
   function showFail(form, receipt) {
     var wrapper = form.closest('.w-form') || form.parentElement
     var fail = wrapper ? wrapper.querySelector('.w-form-fail') : null
@@ -248,18 +260,21 @@
     var responseStatus = null
     var failureCode = 'NETWORK_ERROR'
 
+    var payload = fieldMap(new FormData(form))
+    var consent = marketingEmailConsent(form)
+    delete payload.answers['marketing-email-consent']
+    if (consent !== null) payload.marketing_email_consent = consent
+    var countryText = selectText(form, 'country')
+    var cityText = selectText(form, 'city')
+    var stateText = selectText(form, 'state')
+    if (countryText) payload.country = countryText
+    if (cityText) payload.city = cityText
+    if (stateText) payload.answers.state = stateText
+    if (countryText) payload.answers.country = countryText
+    if (cityText) payload.answers.city = cityText
+
     var startRequest = function () {
       diagnosticStart(form)
-      var payload = fieldMap(new FormData(form))
-      var countryText = selectText(form, 'country')
-      var cityText = selectText(form, 'city')
-      var stateText = selectText(form, 'state')
-      if (countryText) payload.country = countryText
-      if (cityText) payload.city = cityText
-      if (stateText) payload.answers.state = stateText
-      if (countryText) payload.answers.country = countryText
-      if (cityText) payload.answers.city = cityText
-
       return fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
