@@ -293,7 +293,7 @@ test('smart-fill mutates only the form that owns the clicked preset', () => {
   const second = projectForm()
   const firstFee = nativeField('Fee-Structure', '', {
     tagName: 'SELECT',
-    options: [{ value: '', textContent: 'Select one...' }, { value: 'flat_fee', textContent: 'Flat Fee' }],
+    options: [{ value: '', textContent: 'Select one...' }, { value: 'monthly', textContent: 'Monthly Recurring' }],
   })
   const secondFee = nativeField('Fee-Structure', '', {
     tagName: 'SELECT',
@@ -307,18 +307,55 @@ test('smart-fill mutates only the form that owns the clicked preset', () => {
   second.querySelectorAll = (selector) => selector === '[data-sp-fill="input"]' ? [secondFee] : secondQueryAll(selector)
 
   const preset = new Element({ 'data-sp-fill': 'button' })
-  preset.form = second
+  preset.querySelectorAll = (selector) => selector === '[data-sp-fill-category]'
+    ? [new Element({ 'data-sp-fill-category': 'fee-structure', 'data-sp-fill-value': 'monthly' })]
+    : []
+  const owner = new Element()
+  const modal = new Element({ 'data-modal-target': 'generate-contract', tagName: 'DIALOG' })
+  preset.parentElement = owner
+  modal.parentElement = owner
+  second.parentElement = modal
+  owner.querySelector = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? second : null
+  owner.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [second] : []
+  const clicked = new Element()
+  clicked.closest = (selector) => selector === '[data-sp-fill="button"]' ? preset : null
+  const document = documentFixture(first)
+  document.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [first, second] : []
+  const { api } = load({ form: first, document })
+
+  assert.equal(api.handleSmartFill({ target: clicked }, document), true)
+  assert.equal(firstFee.value, '')
+  assert.equal(secondFee.value, 'monthly')
+})
+
+test('smart-fill fails closed when duplicate forms have no unique owner', () => {
+  const first = projectForm()
+  const second = projectForm()
+  const firstFee = nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [{ value: '', textContent: 'Select one...' }, { value: 'monthly', textContent: 'Monthly Recurring' }],
+  })
+  const secondFee = nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [{ value: '', textContent: 'Select one...' }, { value: 'monthly', textContent: 'Monthly Recurring' }],
+  })
+  first.children.push(firstFee)
+  second.children.push(secondFee)
+
+  const preset = new Element({ 'data-sp-fill': 'button' })
   preset.querySelectorAll = (selector) => selector === '[data-sp-fill-category]'
     ? [new Element({ 'data-sp-fill-category': 'fee-structure', 'data-sp-fill-value': 'monthly' })]
     : []
   const clicked = new Element()
   clicked.closest = (selector) => selector === '[data-sp-fill="button"]' ? preset : null
   const document = documentFixture(first)
+  preset.parentElement = document
+  document.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [first, second] : []
   const { api } = load({ form: first, document })
 
-  assert.equal(api.handleSmartFill({ target: clicked }, document), true)
+  assert.equal(api.handleSmartFill({ target: clicked }, document), false)
   assert.equal(firstFee.value, '')
-  assert.equal(secondFee.value, 'monthly')
+  assert.equal(secondFee.value, '')
 })
 
 test('prefills the hiring-manager field whatever the Designer label casing', async () => {

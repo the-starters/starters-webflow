@@ -568,9 +568,10 @@
       ? event.target.closest(SMART_FILL_TRIGGER_SELECTOR)
       : null
     if (!trigger) return false
-    var form = trigger.closest ? trigger.closest(FORM_SELECTOR) : null
+    var form = formForTrigger(trigger, documentObject)
+    if (!form) return false
     collectSmartFillPairs(trigger).forEach(function (pair) {
-      applySmartFill(form || documentObject, pair.category, pair.value)
+      applySmartFill(form, pair.category, pair.value)
     })
     return true
   }
