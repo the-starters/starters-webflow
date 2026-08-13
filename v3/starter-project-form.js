@@ -658,30 +658,15 @@
 
   function normalizeModalMarkup(documentObject) {
     if (!documentObject || !documentObject.querySelectorAll) return false
-    var context = documentObject.querySelector && documentObject.querySelector(STARTER_CONTEXT_SELECTOR)
-    if (!context && documentObject.querySelector) {
-      // The Starter Dashboard uses a detached copy of the shared /hire/<slug>
-      // Contract Generation component. Its authored profile markers distinguish
-      // it from the Brand form without relying on CMS bindings or page IDs.
-      var detached = documentObject.querySelector(
-        'dialog[data-modal-target="generate-contract"] [element="profile_photo"]'
-      )
-      context = detached && detached.closest ? detached.closest('dialog') : null
-      if (context && context.setAttribute) context.setAttribute('data-project-form-v3', 'starter')
-    }
+    var detached = documentObject.querySelector && documentObject.querySelector(
+      'dialog[data-modal-target="generate-contract"] [element="profile_photo"]'
+    )
+    var context = detached && detached.closest ? detached.closest('dialog') : null
+    if (context && context.setAttribute) context.setAttribute('data-project-form-v3', 'starter')
     var canonical = context && clean(context.tagName).toLowerCase() === 'dialog'
       ? context
       : context && context.closest ? context.closest('dialog') : null
     var dialogs = Array.prototype.slice.call(documentObject.querySelectorAll(LEGACY_MODAL_SELECTOR))
-    if (!canonical) canonical = dialogs.find(function (dialog) {
-      if (!dialog || !dialog.querySelector) return false
-      var form = dialog.querySelector('form')
-      return form &&
-        form.querySelector(BRAND_SELECT_SELECTOR) &&
-        form.querySelector(BRAND_ID_SELECTOR) &&
-        form.querySelector(MANAGER_NAME_SELECTOR) &&
-        form.querySelector(COMPANY_NAME_SELECTOR)
-    }) || null
     if (canonical && canonical.setAttribute) canonical.setAttribute('data-modal-target', 'start-project')
     dialogs = Array.prototype.slice.call(documentObject.querySelectorAll(LEGACY_MODAL_SELECTOR))
     var duplicateNumber = 0

@@ -375,24 +375,26 @@ test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', ()
   assert.equal(Object.prototype.hasOwnProperty.call(options[0], 'email'), false)
 })
 
-test('normalizes the navbar trigger and disables duplicate Start a Project modals', () => {
+test('keeps every legacy Start a Project modal disabled without the shared marker', () => {
   const { api } = load({ noDocument: true })
   const legacy = new Element({ 'data-modal-target': 'start-project' })
   legacy.form = new Element()
-  const canonical = new Element({ 'data-modal-target': 'start-project' })
-  canonical.form = formFixture().form
+  const legacyWithNativeForm = new Element({ 'data-modal-target': 'start-project' })
+  legacyWithNativeForm.form = formFixture().form
+  legacyWithNativeForm.setAttribute('data-project-form-v3', 'starter')
   const nestedLink = new Element({ href: '/opportunities-freelancer-view', className: 'clickable_link' })
   const document = {
+    querySelector() { return null },
     querySelectorAll(selector) {
-      if (selector === 'dialog[data-modal-target="start-project"]') return [legacy, canonical]
+      if (selector === 'dialog[data-modal-target="start-project"]') return [legacy, legacyWithNativeForm]
       if (selector === '[data-modal-trigger="start-project"] a.clickable_link') return [nestedLink]
       return []
     },
   }
 
-  assert.equal(api.normalizeModalMarkup(document), true)
-  assert.equal(canonical.getAttribute('data-modal-target'), 'start-project')
+  assert.equal(api.normalizeModalMarkup(document), false)
   assert.equal(legacy.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
+  assert.equal(legacyWithNativeForm.getAttribute('data-modal-target'), 'start-project-legacy-disabled-2')
   assert.equal(nestedLink.getAttribute('href'), '#start-project')
 })
 
