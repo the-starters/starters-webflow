@@ -296,8 +296,10 @@ function buildItemTemplate() {
   return template
 }
 
-function buildSectionDom() {
+function buildSectionDom(options = {}) {
   const root = new El('div', { 'data-availability-element': 'section' })
+
+  const loadingSection = new El('div', { 'data-availability-element': 'loading-section' })
 
   const connectWrapper = new El('div', { 'data-availability-element': 'connect-wrapper' })
   const labelGroup = new El('div', {
@@ -334,16 +336,14 @@ function buildSectionDom() {
   connectWrapper.appendChild(connectBtnWrapper)
 
   const mainWrapper = new El('div', { 'data-availability-element': 'main-wrapper' })
-  const listWrapper = new El('div')
+  const listWrapper = new El('div', { 'data-availability-element': 'list-wrapper' })
   const list = new El('div', { 'data-availability-element': 'list' })
-  const loadingSettings = new El('div', { 'data-availability-element': 'loading-settings' })
   const itemTemplate = buildItemTemplate()
-  list.appendChild(loadingSettings)
   list.appendChild(itemTemplate)
   listWrapper.appendChild(list)
 
   const createCard = new El('div')
-  const createBtn = new El('div', { 'data-availability-action': 'availability-create' })
+  const createBtn = new El('div', options.omitCreateAction ? {} : { 'data-availability-action': 'availability-create' })
   createBtn.textContent = 'Add availability window'
   createCard.appendChild(createBtn)
 
@@ -355,17 +355,20 @@ function buildSectionDom() {
   mainWrapper.appendChild(createCard)
   mainWrapper.appendChild(slotsWrapper)
 
+  root.appendChild(loadingSection)
   root.appendChild(connectWrapper)
   root.appendChild(mainWrapper)
 
   return {
     root,
+    loadingSection,
+    connectWrapper,
     connectBtnWrapper,
     labelGroup,
     connectInfoWrapper,
     mainWrapper,
+    listWrapper,
     list,
-    loadingSettings,
     loadingSlots,
     slotsWrapper,
     createBtn,
@@ -455,7 +458,7 @@ function buildStatefulRoutes(initialState) {
 }
 
 function loadSection(options = {}) {
-  const dom = buildSectionDom()
+  const dom = buildSectionDom(options.dom)
   const body = new El('body')
   body.appendChild(dom.root)
   const { postRoutes, getRoutes } = buildStatefulRoutes(options.serverState)
@@ -653,16 +656,30 @@ test('getUpcomingTimeSlots returns an empty array without grantId/configId', asy
 /* Tests: connection-state -> visibility                               */
 /* ------------------------------------------------------------------ */
 
-test('boots into disconnected state: main-wrapper hidden, connect + google visible, disconnect hidden', async () => {
+test('boots into disconnected state: connect + google visible, disconnect hidden', async () => {
   const { dom, window } = loadSection()
   await settle()
 
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'disconnected')
-  assert.equal(dom.mainWrapper.style.display, 'none')
   assert.equal(dom.connectInfoWrapper.style.display, '')
   assert.notEqual(dom.connectBtnWrapper.children[0].style.display, 'none') // connect-platform
   assert.notEqual(dom.connectBtnWrapper.children[1].style.display, 'none') // connect-google
   assert.equal(dom.connectBtnWrapper.children[2].style.display, 'none') // disconnect-google
+})
+
+test('the first load reveals connect-wrapper (flex) and main-wrapper (grid) and hides loading-section, regardless of connection state', async () => {
+  const { dom } = loadSection()
+
+  // Nothing is revealed yet — the wrappers are hidden by the site's own CSS
+  // and the script must never touch that itself, only reveal them once ready.
+  assert.notEqual(dom.connectWrapper.style.display, 'flex')
+  assert.notEqual(dom.mainWrapper.style.display, 'grid')
+
+  await settle()
+
+  assert.equal(dom.loadingSection.style.display, 'none')
+  assert.equal(dom.connectWrapper.style.display, 'flex')
+  assert.equal(dom.mainWrapper.style.display, 'grid')
 })
 
 test('clicking the ordinal connect-platform button (no data-availability-action yet) connects and flips visibility', async () => {
@@ -673,7 +690,6 @@ test('clicking the ordinal connect-platform button (no data-availability-action 
   await settle()
 
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
-  assert.notEqual(dom.mainWrapper.style.display, 'none')
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
   assert.equal(dom.connectBtnWrapper.children[0].style.display, 'none') // now on platform
   assert.notEqual(dom.connectBtnWrapper.children[1].style.display, 'none') // can still switch to Google
@@ -732,7 +748,6 @@ test('boots directly into connected state when the starter already has a grant/c
   await settle()
 
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
-  assert.notEqual(dom.mainWrapper.style.display, 'none')
   assert.equal(dom.connectBtnWrapper.children[2].style.display, '') // disconnect-google visible
 })
 
@@ -912,8 +927,8 @@ test('populateItemForm marks selected day checkboxes with the Webflow checked-sk
   ;[0, 2, 4, 5, 6].forEach((i) => assert.ok(!isChecked(i)))
 })
 
-test('the explicit [data-availability-action="availability-create"] trigger creates a new item without a text-fallback warning', async () => {
-  const { dom, warnings } = loadSection()
+test('the explicit [data-availability-action="availability-create"] trigger creates a new item', async () => {
+  const { dom } = loadSection()
   await settle()
   const before = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card').length
 
@@ -922,7 +937,20 @@ test('the explicit [data-availability-action="availability-create"] trigger crea
 
   const after = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card').length
   assert.equal(after, before + 1)
-  assert.ok(!warnings.some((w) => w.includes('availability-create')))
+})
+
+test('without the [data-availability-action="availability-create"] attribute, the create trigger is never bound (no text-matching fallback)', async () => {
+  const { dom } = loadSection({ dom: { omitCreateAction: true } })
+  await settle()
+  const before = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card').length
+
+  // dom.createBtn still exists and still reads "Add availability window",
+  // but carries no [data-availability-action] — clicking it must do nothing.
+  dom.createBtn.click()
+  await settle()
+
+  const after = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card').length
+  assert.equal(after, before)
 })
 
 test('initInputPickers scopes to the freshly rendered list on a full render, and to just the new card on create', async () => {
