@@ -35,7 +35,7 @@
   // modal's existing Code Embed on published pages. It is not present as a
   // selectable native Designer field, so scope the established ID to this
   // modal rather than editing the separate start-project embed.
-  var SELECTED_STARTER_SELECTOR = 'dialog[data-modal-target="generate-contract"] #pushMemID'
+  var SELECTED_STARTER_SELECTOR = '#pushMemID'
   var CONTRACT_CHOICE_SELECTOR = '[data-project-contract-choice]'
   var PAYLOAD_CONTROL_SELECTOR = '[' + FIELD_ATTR + '], ' + CONTRACT_CHOICE_SELECTOR + ', [name], [type="submit"]'
   var CONTAINER_SELECTOR = '[data-project-form-container]'
@@ -398,19 +398,21 @@
   // every other named control in this module is: case- and separator-insensitively.
   // Only blank targets are returned, so an already-filled form never pays for
   // another Memberstack read or restarts the poll chain.
-  function memberNameTargets(documentObject) {
-    var tagged = documentObject.querySelectorAll(MEMBER_NAME_SELECTOR)
+  function memberNameTargets(documentObject, scopedForm) {
+    var tagged = scopedForm && scopedForm.querySelectorAll
+      ? scopedForm.querySelectorAll('[data-mscustom-fullname]')
+      : documentObject.querySelectorAll(MEMBER_NAME_SELECTOR)
     var targets = tagged ? Array.prototype.slice.call(tagged) : []
-    var form = documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
+    var form = scopedForm || (documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR))
     namedControls(form, MEMBER_NAME_FIELD).forEach(function (field) {
       if (targets.indexOf(field) === -1) targets.push(field)
     })
     return targets.filter(function (target) { return !clean(target.value) })
   }
 
-  function fillMemberName(documentObject, globalObject, tries) {
+  function fillMemberName(documentObject, globalObject, tries, scopedForm) {
     if (!documentObject || !documentObject.querySelectorAll) return Promise.resolve(false)
-    var targets = memberNameTargets(documentObject)
+    var targets = memberNameTargets(documentObject, scopedForm)
     if (!targets.length) return Promise.resolve(false)
     var memberstack = globalObject && globalObject.$memberstackDom
     if (!memberstack || typeof memberstack.getCurrentMember !== 'function') {
@@ -419,7 +421,7 @@
       }
       return new Promise(function (resolve) {
         globalObject.setTimeout(function () {
-          resolve(fillMemberName(documentObject, globalObject, (tries || 0) + 1))
+          resolve(fillMemberName(documentObject, globalObject, (tries || 0) + 1, scopedForm))
         }, MEMBERSTACK_POLL_MS)
       })
     }
@@ -454,7 +456,9 @@
   function smartFillTarget(documentObject, category) {
     if (!documentObject || !documentObject.querySelectorAll) return null
     var normalized = normalizedName(category)
-    var form = documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
+    var form = documentObject.matches && documentObject.matches(FORM_SELECTOR)
+      ? documentObject
+      : documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
     if (form) {
       // Prefer the authored control the serializer reads, but never let an
       // unresolvable one swallow a correctly tagged field.
@@ -463,7 +467,12 @@
         : null
       if (native) return native
     }
-    var candidates = documentObject.querySelectorAll(FORM_SELECTOR + ' ' + SMART_FILL_INPUT_SELECTOR)
+    var candidates = form && form.querySelectorAll
+      ? form.querySelectorAll(SMART_FILL_INPUT_SELECTOR)
+      : documentObject.querySelectorAll(FORM_SELECTOR + ' ' + SMART_FILL_INPUT_SELECTOR)
+    if ((!candidates || !candidates.length) && form !== documentObject) {
+      candidates = documentObject.querySelectorAll(FORM_SELECTOR + ' ' + SMART_FILL_INPUT_SELECTOR)
+    }
     var exact = Array.prototype.find.call(candidates, function (field) {
       return clean(field.getAttribute && field.getAttribute('data-sp-fill-category')) === category
     })
@@ -485,9 +494,12 @@
   // currently checked. Widen to the whole group before matching, or a preset
   // for any other option can never find its radio.
   function radioGroup(documentObject, field) {
-    var form = documentObject && documentObject.querySelector
-      ? documentObject.querySelector(FORM_SELECTOR)
-      : null
+    var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
+    if (!form && documentObject) {
+      form = documentObject.matches && documentObject.matches(FORM_SELECTOR)
+        ? documentObject
+        : documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
+    }
     var group = namedControls(form, field.getAttribute && field.getAttribute('name'))
     return group.length ? group : [field]
   }
@@ -556,8 +568,9 @@
       ? event.target.closest(SMART_FILL_TRIGGER_SELECTOR)
       : null
     if (!trigger) return false
+    var form = trigger.closest ? trigger.closest(FORM_SELECTOR) : null
     collectSmartFillPairs(trigger).forEach(function (pair) {
-      applySmartFill(documentObject, pair.category, pair.value)
+      applySmartFill(form || documentObject, pair.category, pair.value)
     })
     return true
   }
@@ -1116,8 +1129,8 @@
 
     // Reuse the target modal's existing CMS-bound Starter identity control
     // instead of duplicating its CMS binding or generating a hidden field.
-    if (!clean(payload.starter_memberstack_id) && documentObject && documentObject.querySelector) {
-      payload.starter_memberstack_id = fieldValue(documentObject.querySelector(SELECTED_STARTER_SELECTOR))
+    if (!clean(payload.starter_memberstack_id)) {
+      payload.starter_memberstack_id = fieldValue(selectedStarterField(form, documentObject))
     }
 
     payload.engagement_type = canonicalEngagement(payload.engagement_type)
@@ -1258,8 +1271,41 @@
     return 'The project could not be created. Please retry.'
   }
 
+  function projectForms(root) {
+    if (!root) return []
+    var forms = root.querySelectorAll
+      ? Array.prototype.slice.call(root.querySelectorAll(FORM_SELECTOR) || [])
+      : []
+    if (!forms.length && root.querySelector) {
+      var first = root.querySelector(FORM_SELECTOR)
+      if (first) forms.push(first)
+    }
+    return forms
+  }
+
   function formForTrigger(trigger, documentObject) {
-    return documentObject.querySelector(FORM_SELECTOR)
+    var node = trigger
+    while (node && node !== documentObject) {
+      var local = projectForms(node)
+      if (local.length === 1) return local[0]
+      node = node.parentElement
+    }
+    var pageForms = projectForms(documentObject)
+    return pageForms.length === 1 ? pageForms[0] : null
+  }
+
+  function selectedStarterField(form, documentObject) {
+    var node = form
+    while (node && node !== documentObject) {
+      if (node.getAttribute && clean(node.getAttribute('data-modal-target')) === 'generate-contract') {
+        return node.querySelector ? node.querySelector(SELECTED_STARTER_SELECTOR) : null
+      }
+      node = node.parentElement
+    }
+    var pageForms = projectForms(documentObject)
+    return pageForms.length === 1 && documentObject && documentObject.querySelector
+      ? documentObject.querySelector('dialog[data-modal-target="generate-contract"] ' + SELECTED_STARTER_SELECTOR)
+      : null
   }
 
   function formContainer(form) {
@@ -1286,8 +1332,8 @@
     syncDurationFields(form)
     syncActiveRequired(form)
     fillCurrentDates(form, global)
-    fillMemberName(documentObject, global, 0)
-    if (!fieldValue(documentObject.querySelector(SELECTED_STARTER_SELECTOR))) {
+    fillMemberName(documentObject, globalObject, 0, form)
+    if (!fieldValue(formField(form, 'starter_memberstack_id')) && !fieldValue(selectedStarterField(form, documentObject))) {
       var identityDiagnostic = createDiagnostic(globalObject, null, {
         result: 'error',
         stage: 'identity',
@@ -1514,11 +1560,12 @@
       submit(form, globalObject, documentObject)
     }, true)
 
-    var initialForm = documentObject.querySelector && documentObject.querySelector(FORM_SELECTOR)
+    var initialForms = projectForms(documentObject)
+    var initialForm = initialForms.length === 1 ? initialForms[0] : null
     if (initialForm) {
       syncDurationFields(initialForm)
       fillCurrentDates(initialForm, globalObject)
-      fillMemberName(documentObject, globalObject, 0)
+      fillMemberName(documentObject, globalObject, 0, initialForm)
     }
   }
 

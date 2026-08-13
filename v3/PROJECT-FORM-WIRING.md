@@ -357,13 +357,22 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
 
 ## Release verification
 
-1. Verify exactly one target form exists inside `data-modal-target="generate-contract"`.
-2. Open it from every responsive Hire trigger and confirm the selected Starter
+1. Verify each `data-modal-target="generate-contract"` instance contains exactly
+   one target form. A CMS or responsive duplicate can place more than one modal
+   on the page. The adapter resolves the nearest trigger-owned modal and fails
+   closed if a duplicate page has no unique local form. It never falls back to
+   the first document-wide form or `#pushMemID` in that case.
+2. With two modal instances present, open each responsive Hire trigger and
+   confirm only its own form changes. Confirm Standard Contract hides,
+   disables, unrequires, and clears that form's `confirm-contract` row while
+   the other form and selected Starter remain unchanged. Also confirm a CMS
+   smart-fill preset changes only the form that owns the clicked preset.
+3. Open it from every responsive Hire trigger and confirm the selected Starter
    identity is present before review, that the hiring-manager name arrives
    prefilled, that a CMS preset card fills only its own fields, and that the
    authored current-date control defaults to today and keeps a Brand's edit when
    the modal is reopened.
-3. Exercise Flat Fee; fixed and ongoing Hourly with the Entire project, Per
+4. Exercise Flat Fee; fixed and ongoing Hourly with the Entire project, Per
    week, and Per month hours caps; fixed and ongoing Monthly; fixed and ongoing
    Weekly; Standard Contract; and My Own Contract validation without issuing a
    request for invalid inputs. Confirm each Hours Cap Period option leaves
@@ -373,7 +382,7 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    against the legacy panel attributes and again after the Designer cutover to
    the canonical values in the Fee Structure table above; both must behave
    identically.
-4. Confirm Standard Contract requires an invoice frequency and serializes it
+5. Confirm Standard Contract requires an invoice frequency and serializes it
    independently of the hourly Hours Cap Period, that My Own Contract hides
    the select and omits `invoice_frequency` from the payload, and that
    switching back to Standard Contract restores the previous selection. Confirm
@@ -382,10 +391,10 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    `confirm-contract`, while Standard Contract hides the complete label row and
    disables, unrequires, and clears the input without changing any conditional
    fee panel.
-5. With the approved production canary and PandaDoc create worker #33 held
+6. With the approved production canary and PandaDoc create worker #33 held
    inactive, verify exactly one authenticated `projects/create-direct/v3`
    request and no Airtable/Make/PandaDoc browser request or browser secret.
-6. Read Xano back and verify `creation_context=direct_hire`, null opportunity
+7. Read Xano back and verify `creation_context=direct_hire`, null opportunity
    and application IDs, exact Brand/Starter IDs, lifecycle event, and one
    PandaDoc outbox item.
 7. Verify no PandaDoc document ID or document exists during the no-send canary.
