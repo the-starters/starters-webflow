@@ -639,6 +639,25 @@
     form.setAttribute('data-starter-identity-bound', 'true')
     var busy = false
     var ownsSubmission = false
+    var profileEmailInput = form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
+    var profileEmailBaseline = trim(profileEmailInput && profileEmailInput.value).toLowerCase()
+    var profileEmailChanged = false
+
+    function rememberProfileEmail(value) {
+      profileEmailBaseline = trim(value).toLowerCase()
+      profileEmailChanged = false
+    }
+
+    if (profileEmailInput && typeof profileEmailInput.addEventListener === 'function') {
+      profileEmailInput.addEventListener('input', function (event) {
+        var nextEmail = trim(profileEmailInput.value).toLowerCase()
+        if (event && event.isTrusted === false) {
+          if (!profileEmailChanged) profileEmailBaseline = nextEmail
+          return
+        }
+        profileEmailChanged = !profileEmailBaseline || nextEmail !== profileEmailBaseline
+      })
+    }
 
     // Native constraint validation prevents the form's submit event from
     // firing when an unrelated required profile field is incomplete. The
@@ -658,9 +677,10 @@
             (typeof submit.contains === 'function' && submit.contains(event.target)) ||
             event.target === submit.parentElement)
         if (!clickedSubmit || busy) return
+        if (!profileEmailChanged) return
         if (typeof form.checkValidity !== 'function' || form.checkValidity()) return
 
-        var emailInput = form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
+        var emailInput = profileEmailInput || form.querySelector(STARTER_PROFILE_EMAIL_SELECTOR)
         if (
           !emailInput ||
           typeof emailInput.checkValidity !== 'function' ||
@@ -685,7 +705,10 @@
             if (!guard || typeof guard.memberRole !== 'function') return false
             var member = await currentMember(memberstack())
             if (guard.memberRole(member) !== 'talent') return false
-            if (memberEmail(member) === email) return false
+            if (memberEmail(member) === email) {
+              rememberProfileEmail(email)
+              return false
+            }
 
             ownsSubmission = true
             setBusy(form, true)
@@ -693,6 +716,7 @@
             await workflowDiagnosticsReady
             diagnosticStart(form, 'starter/account/email')
             await submitSecurity(form, member, email)
+            rememberProfileEmail(email)
             var receipt = diagnosticComplete(form, {
               result: 'success',
               stage: 'response',
@@ -761,6 +785,7 @@
             await workflowDiagnosticsReady
             diagnosticStart(form, 'starter/account/email')
             await submitSecurity(form, member, email)
+            rememberProfileEmail(email)
             diagnosticComplete(form, {
               result: 'success',
               stage: 'response',
