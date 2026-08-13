@@ -2,7 +2,7 @@
  * Session video gate — the Learn Sessions hero player, with a free preview for
  * logged-out visitors and the signup wall after it.
  *
- * @release v1.59.227
+ * @release v1.59.229
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with `defer` in the Learn
  * Sessions template's before-</body> code. It REPLACES the template's inline
@@ -27,7 +27,9 @@
  *      fired inside that gesture. On iPhone that is the device's own player; on
  *      Android and narrow desktop the browser fullscreens our iframe, which
  *      carries Vimeo's bar so fullscreen has pause, scrub, volume and exit.
- *      Inline, the template UI stays in charge. Only on a genuine activation
+ *      iPhone stays controls=0 on that narrow frame so the muted ambient loop
+ *      does not paint Vimeo's Unmute chip. Inline, the template UI stays in
+ *      charge. Only on a genuine activation
  *      (see enterFullscreen), never for a gated viewer, and never above the
  *      threshold as measured at mount, where Vimeo's own bar already carries
  *      the button. An early tap on a not-yet-upgraded frame, or a refused
@@ -94,8 +96,13 @@
  *                                          means the watch tap goes fullscreen
  *                                          and leaving fullscreen pauses. The
  *                                          iframe still carries Vimeo's bar
- *                                          (controls=1) so fullscreen has an
- *                                          interface; keyboard and pip stay off.
+ *                                          (controls=1) so Android/desktop
+ *                                          iframe-fullscreen has an interface.
+ *                                          iPhone uses the OS player, so a
+ *                                          narrow iOS frame stays controls=0
+ *                                          and does not paint Vimeo's Unmute
+ *                                          chip on the muted ambient loop.
+ *                                          keyboard and pip stay off.
  *   [data-session-video="stage"]           the iframe is built in here
  *   [data-session-video="signup-trigger"]  hidden; carries data-modal-trigger
  *
@@ -138,7 +145,7 @@
   if (window.__startersSessionVideoBooted) return
   window.__startersSessionVideoBooted = true
 
-  var RELEASE = 'v1.59.227'
+  var RELEASE = 'v1.59.229'
   var LIB_SRC = 'https://player.vimeo.com/api/player.js'
   var DEFAULT_CUT_SECONDS = 180
   var DEFAULT_BG_SECONDS = 20
@@ -150,8 +157,10 @@
   // full screen, no quality, and `scrollWidth > clientWidth` on the bar itself.
   // Its native UI is cross-origin, so no CSS of ours can repair it. Below this
   // width EVERYONE gets the template's own controls in charge, member or not.
-  // Ungated frames still load Vimeo's bar (see showsVimeoControls) so a
-  // fullscreen of the iframe has an interface.
+  // Ungated non-iOS frames still load Vimeo's bar (see showsVimeoControls) so
+  // a fullscreen of the iframe has an interface. iPhone does not: the OS
+  // player covers fullscreen, and controls=1 on a muted ambient loop paints
+  // Vimeo's Unmute chip over the site header.
   var NATIVE_MIN_WIDTH = 768
 
   var ROOT_SELECTOR = '[data-session-video="root"]'
@@ -318,17 +327,34 @@
   }
 
   /**
-   * Vimeo's control bar is ON for every ungated frame, even a narrow one.
-   * `player.requestFullscreen()` fullscreens the iframe; with controls=0 that
-   * is a bare video filling the screen — no pause, scrub, volume, or visible
-   * exit — on Android Chrome and narrow desktop. iPhone masks this via the OS
-   * player. Inline, the template UI stays in charge (`data-sv-player=custom`,
-   * #videoClickOverlay intercepts taps so Vimeo's bar idles). The enabled bar
-   * exists so FULLSCREEN has an interface. Gated frames stay controls=0: a
-   * scrubber would advertise the full runtime and make the wall look abrupt.
+   * iPhone / iPad / iPod, including iPadOS that reports as Mac.
+   * iPhone fullscreen is the OS player, so a muted ambient iframe with
+   * controls=1 only adds Vimeo's Unmute chip — it does not add a useful bar.
    */
-  function showsVimeoControls(gated) {
-    return !gated
+  function isIos() {
+    var nav = window.navigator
+    if (!nav) return false
+    var ua = nav.userAgent || ''
+    if (/iPad|iPhone|iPod/.test(ua)) return true
+    return nav.platform === 'MacIntel' && Number(nav.maxTouchPoints) > 1
+  }
+
+  /**
+   * Vimeo's control bar is ON for an ungated frame that is not a narrow iOS
+   * player. `player.requestFullscreen()` fullscreens the iframe; with
+   * controls=0 that is a bare video filling the screen — no pause, scrub,
+   * volume, or visible exit — on Android Chrome and narrow desktop. iPhone
+   * masks this via the OS player, so a custom/narrow iOS frame stays
+   * controls=0 and does not paint Vimeo's Unmute chip on the muted ambient
+   * loop. Wide iOS still uses Vimeo's native UI. Inline, the template UI
+   * stays in charge (`data-sv-player=custom`, #videoClickOverlay intercepts
+   * taps). Gated frames stay controls=0: a scrubber would advertise the full
+   * runtime and make the wall look abrupt.
+   */
+  function showsVimeoControls(gated, native) {
+    if (gated) return false
+    if (isIos() && !native) return false
+    return true
   }
 
   /**
@@ -337,22 +363,24 @@
    * a gated viewer and a member get different native UI, per the split below.
    */
   function buildFrame(videoId, gated, native) {
-    // `native` decides keyboard, pip, and which UI is in charge. `gated` decides
-    // the full-screen permission AND Vimeo's control bar (see showsVimeoControls).
-    // They are separate because a member on a narrow screen keeps the template's
-    // overlay in charge inline, but the iframe still carries Vimeo's bar so a
-    // fullscreen of that iframe has an interface.
+    // `native` decides keyboard, pip, and which UI is in charge. `gated` and
+    // iOS together decide Vimeo's control bar (see showsVimeoControls). They
+    // are separate because a member on a narrow Android/desktop screen keeps
+    // the template's overlay in charge inline, but the iframe still carries
+    // Vimeo's bar so a fullscreen of that iframe has an interface. A narrow
+    // iPhone does not need that bar: fullscreen is the OS player, and the bar
+    // would only show Unmute on the muted ambient loop.
     //
     // keyboard and pip stay off on every non-native frame: no keyboard seeking
     // and no picture-in-picture window carrying its own scrubber. Gated frames
     // also omit the control bar. The clamp catches seeks anyway, so a scrubber
-    // was never a bypass — it only makes the wall look abrupt and advertises the
-    // full runtime.
+    // was never a bypass — it only makes the wall look abrupt and advertises
+    // the full runtime.
     var params = [
       'autoplay=1',
       'muted=1',
       'loop=1',
-      'controls=' + (showsVimeoControls(gated) ? '1' : '0'),
+      'controls=' + (showsVimeoControls(gated, native) ? '1' : '0'),
       'keyboard=' + (native ? '1' : '0'),
       'pip=' + (native ? '1' : '0'),
       'title=0',
