@@ -125,8 +125,7 @@ Do not discard local changes unless the user explicitly asks.
   `v3/brand-account-controller.js` must load first with
   `guardSecurityForm: 'identity'`; it alone writes a changed Memberstack login
   email, then replays this controller's Xano profile save.
-  It uses the shared diagnostic receipt contract above and decorates the existing
-  success/error modal copy when available.
+  It uses the shared diagnostic receipt contract above.
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero

@@ -27,15 +27,26 @@ class Element {
   closest() { return null }
 }
 
-function boot({ delayHelper = false, helperUnavailable = false } = {}) {
+function boot({ delayHelper = false, helperUnavailable = false, legacyMutatingHelper = false } = {}) {
   const form = new Element({ 'build-profile-form': '' })
   const trigger = new Element({ 'form-submit': '' })
   const success = new Element({ 'build-profile-success': '' })
   const error = new Element({ 'build-profile-error': '' })
+  const successInner = new Element()
+  const successHeading = new Element()
+  const successBody = new Element()
+  const successLink = new Element()
+  successHeading.textContent = 'Thanks John'
+  successBody.textContent = 'Your profile is now live on The Starters. Complete onboarding to access your dashboard.'
+  successLink.textContent = 'Start onboarding'
+  successInner.children = [successHeading, successBody, successLink]
+  successInner.textContent = 'Authored success structure'
   success.style.display = 'none'
   error.style.display = 'none'
   form.querySelector = (selector) => selector === '[form-submit]' ? trigger : null
-  success.querySelector = () => null
+  success.querySelector = (selector) => (
+    selector === '[data-workflow-diagnostic-message], p, div' ? successInner : null
+  )
   error.querySelector = () => null
   form.parentElement = new Element()
   const observers = []
@@ -87,10 +98,18 @@ function boot({ delayHelper = false, helperUnavailable = false } = {}) {
     window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => { resolveHelper = resolve })
   } else {
     new vm.Script(helperSource).runInContext(context)
+    if (legacyMutatingHelper) {
+      window.StartersWorkflowDiagnostics.message = () => ({ diagnostic_id: 'structured-success' })
+      window.StartersWorkflowDiagnostics.decorate = (element) => {
+        element.textContent = 'Diagnostic ID: structured-success'
+        return true
+      }
+    }
   }
   new vm.Script(source).runInContext(context)
   return {
-    error, form, observers, redirects, success, trigger, window,
+    error, form, observers, redirects, success, successInner, successHeading,
+    successBody, successLink, trigger, window,
     resolveHelper: delayHelper ? () => {
       new vm.Script(helperSource).runInContext(context)
       resolveHelper(window.StartersWorkflowDiagnostics)
@@ -114,8 +133,36 @@ test('human click plus authored success records a terminal receipt without page 
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.request_started, true)
   assert.equal(receipt.resource_type, 'talent_profile')
+  assert.equal(page.successInner.textContent, 'Authored success structure')
+  assert.deepEqual(
+    page.successInner.children.map((element) => element.textContent),
+    [
+      'Thanks John',
+      'Your profile is now live on The Starters. Complete onboarding to access your dashboard.',
+      'Start onboarding',
+    ],
+  )
   assert.equal(page.success.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.doesNotMatch(page.success.textContent || '', /Diagnostic ID:/)
+})
+
+test('structured-success stays authored when an older helper exposes DOM decoration', async () => {
+  const page = boot({ legacyMutatingHelper: true })
+  page.trigger.dispatch('click')
+  await tick()
+  page.success.style.display = 'block'
+  page.observers[0].callback()
+
+  assert.equal(page.successInner.textContent, 'Authored success structure')
+  assert.deepEqual(
+    page.successInner.children.map((element) => element.textContent),
+    [
+      'Thanks John',
+      'Your profile is now live on The Starters. Complete onboarding to access your dashboard.',
+      'Start onboarding',
+    ],
+  )
+  assert.doesNotMatch(page.successInner.textContent, /Diagnostic ID:|\[object Object\]/)
 })
 
 test('authored success routes to Starter Onboarding after the clean success state', async () => {

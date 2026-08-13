@@ -547,7 +547,7 @@ test('opportunity failures keep diagnostics out of the authored native failure s
 
   assert.equal(bridge.window.Opp30.showOpportunityError(button, 'Request failed.', receipt), true)
   assert.equal(fail.style.display, 'block')
-  assert.equal(message.textContent, 'Request failed.')
+  assert.equal(message.textContent, 'Something went wrong.')
   assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.equal(listeners.has('click'), false)
   assert.equal(bridge.copiedDiagnostics.length, 0)
