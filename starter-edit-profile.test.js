@@ -35,6 +35,7 @@ function createEnvironment(fetchImpl, {
   workflowDiagnostics = false,
   workflowDiagnosticsReady = null,
   setTimeoutImpl = () => 1,
+  documentReadyState = 'loading',
 } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
@@ -91,6 +92,7 @@ function createEnvironment(fetchImpl, {
   errorModal.addEventListener('click', () => { modalEvents.error += 1 })
 
   const document = {
+    readyState: documentReadyState,
     addEventListener(type, listener) {
       if (type === 'DOMContentLoaded') domReady.push(listener)
     },
@@ -178,6 +180,7 @@ function createEnvironment(fetchImpl, {
     Math,
     Uint32Array,
     setInterval: () => 1,
+    setTimeout: setTimeoutImpl,
     clearInterval() {},
   }
   if (browserGlobal) {
@@ -189,7 +192,7 @@ function createEnvironment(fetchImpl, {
     new vm.Script(diagnosticSource, { filename: 'workflow-diagnostics.js' }).runInContext(context)
   }
   new vm.Script(source, { filename: 'starter-edit-profile.js' }).runInContext(context)
-  domReady[0]()
+  if (documentReadyState === 'loading') domReady[0]()
 
   return {
     button,
@@ -242,6 +245,19 @@ async function testSuccess() {
   assert.equal(environment.button.style.pointerEvents, '')
   assert.equal(environment.button.style.opacity, '')
   assert.equal(environment.memberAuthUpdates.length, 0)
+}
+
+async function testLateLoadInitializesImmediately() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), { documentReadyState: 'complete' })
+
+  await submit(environment)
+
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+  assert.deepEqual(environment.modalApiCalls, ['edit-form-success'])
 }
 
 async function testNon2xx() {
@@ -409,6 +425,7 @@ async function testAuthSwitchAfterPatchDoesNotProjectToNewSession() {
 
 Promise.all([
   testSuccess(),
+  testLateLoadInitializesImmediately(),
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
   testRejectedFetch(),

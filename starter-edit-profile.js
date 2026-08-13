@@ -8,6 +8,13 @@
 (() => {
 const qs = (selector, scope = document) => (scope || document).querySelector(selector);
 const qsa = (selector, scope = document) => Array.from((scope || document).querySelectorAll(selector));
+const onDomReady = (callback) => {
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', callback, { once: true });
+		return;
+	}
+	callback();
+};
 const PROFILE_WORKFLOW = 'starter_profile_edit';
 const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v1';
 const workflowDiagnosticsControllerScript = document.currentScript;
@@ -232,7 +239,7 @@ function handleCustomSelects() {
 }
 
 // Inline block 1
-document.addEventListener('DOMContentLoaded', function () {
+onDomReady(function () {
 		const form = qs('[build-profile-form]');
 		if (!form) return;
 
@@ -840,7 +847,7 @@ function counterFields(wrapper = null) {
 	counterFields();
 
 // Inline block 3
-document.addEventListener('DOMContentLoaded', () => {
+onDomReady(() => {
 		const outputPlain = qs('#bio-plain');
 		const outputHtml = qs('#bio-html');
 		if (!outputHtml || !outputPlain) return;
@@ -1118,7 +1125,7 @@ document.addEventListener('DOMContentLoaded', () => {
 	});
 
 // Inline block 4
-document.addEventListener('DOMContentLoaded', function () {
+onDomReady(function () {
 		window.FinsweetAttributes ||= [];
 		window.FinsweetAttributes.push([
 			'list',
@@ -1214,7 +1221,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	});
 
 // Inline block 5
-document.addEventListener('DOMContentLoaded', function () {
+onDomReady(function () {
 		function groupDropdownOptions() {
 			$('[ms-code-select-wrapper="multi"][data-grouped-select="with-category"]').each(function () {
 				const $wrapper = $(this);
@@ -1258,7 +1265,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	});
 
 // Inline block 6
-document.addEventListener('DOMContentLoaded', () => {
+onDomReady(() => {
 		const retainerDesc = qs('[data-monthly-retainers-description]');
 		const retainerRate = qs('[data-monthly-retainers-rate]');
 
