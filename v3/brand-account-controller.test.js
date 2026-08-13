@@ -160,6 +160,13 @@ function makeForm(kind = 'build', values = {}) {
       record.listener(event)
       return { event, capture: record.capture }
     },
+    inputEmail(value, isTrusted = true) {
+      const input = inputs.get('input[type="email"]')
+      if (!input) throw new Error('email input not found')
+      input.value = value
+      const listener = input.listeners.get('input')
+      if (listener) listener({ isTrusted })
+    },
     submitEvent() {
       if (values.nativeSubmitNeedsMacrotask) {
         nativeSubmitReady = false
@@ -1126,7 +1133,7 @@ test('visible Starter Edit Profile changes Memberstack email before replaying th
 
 test('visible Starter Edit Profile changes email independently when unrelated required fields are invalid', async () => {
   const starterProfileForm = makeForm('starter-profile', {
-    email: 'talent-next@example.com',
+    email: 'talent-old@example.com',
     valid: false,
   })
   const environment = loadController({
@@ -1138,6 +1145,7 @@ test('visible Starter Edit Profile changes email independently when unrelated re
     routeGuard: { memberRole: () => 'talent' },
   })
 
+  starterProfileForm.inputEmail('talent-next@example.com')
   const click = starterProfileForm.clickSubmit()
   await settle()
 
@@ -1154,7 +1162,7 @@ test('visible Starter Edit Profile changes email independently when unrelated re
 
 test('independent Starter email accepts a click from nested submit content', async () => {
   const starterProfileForm = makeForm('starter-profile', {
-    email: 'talent-next@example.com',
+    email: 'talent-old@example.com',
     valid: false,
   })
   const nestedSubmitContent = {}
@@ -1168,6 +1176,7 @@ test('independent Starter email accepts a click from nested submit content', asy
     routeGuard: { memberRole: () => 'talent' },
   })
 
+  starterProfileForm.inputEmail('talent-next@example.com')
   const click = starterProfileForm.clickSubmit(nestedSubmitContent)
   await settle()
 
@@ -1183,7 +1192,7 @@ test('independent Starter email accepts a click from nested submit content', asy
 
 test('independent Starter email accepts the disabled authored submit wrapper click', async () => {
   const starterProfileForm = makeForm('starter-profile', {
-    email: 'talent-next@example.com',
+    email: 'talent-old@example.com',
     valid: false,
   })
   starterProfileForm.inputs.delete('[type="submit"]')
@@ -1203,6 +1212,7 @@ test('independent Starter email accepts the disabled authored submit wrapper cli
     routeGuard: { memberRole: () => 'talent' },
   })
 
+  starterProfileForm.inputEmail('talent-next@example.com')
   const click = starterProfileForm.clickSubmit(disabledSubmitWrapper)
   await settle()
 
@@ -1247,7 +1257,7 @@ test('independent Starter email ignores ancestors outside the submit wrapper', a
 
 test('independent Starter email change preserves its validated click-time snapshot', async () => {
   const values = {
-    email: 'validated@example.com',
+    email: 'talent-old@example.com',
     valid: false,
   }
   const starterProfileForm = makeForm('starter-profile', values)
@@ -1265,6 +1275,7 @@ test('independent Starter email change preserves its validated click-time snapsh
     routeGuard: { memberRole: () => 'talent' },
   })
 
+  starterProfileForm.inputEmail('validated@example.com')
   starterProfileForm.clickSubmit()
   await flush()
   starterProfileForm.inputs.get('input[type="email"]').value = 'blocked@example.com'
@@ -1368,12 +1379,38 @@ test('invalid Starter profile preserves native validation when email is unchange
     routeGuard: { memberRole: () => 'talent' },
   })
 
-  starterProfileForm.clickSubmit()
+  const click = starterProfileForm.clickSubmit()
   await settle()
 
-  assert.deepEqual(environment.calls.map((call) => call.method), ['getCurrentMember'])
+  assert.equal(click.event.prevented, false)
+  assert.equal(click.event.stopped, false)
+  assert.deepEqual(environment.calls, [])
   assert.equal(starterProfileForm.nativeSubmits, 0)
-  assert.equal(starterProfileForm.validityReports, 1)
+  assert.equal(starterProfileForm.validityReports, 0)
+})
+
+test('programmatic Starter profile prefill does not activate email security interception', async () => {
+  const starterProfileForm = makeForm('starter-profile', {
+    email: 'stale@example.com',
+    valid: false,
+  })
+  const environment = loadController({
+    buildForm: null,
+    starterProfileForm,
+    currentEmail: 'talent@example.com',
+    pathname: '/starter-edit-profile',
+    config: { guardSecurityForm: 'identity' },
+    routeGuard: { memberRole: () => 'talent' },
+  })
+
+  starterProfileForm.inputEmail('talent@example.com', false)
+  const click = starterProfileForm.clickSubmit()
+  await settle()
+
+  assert.equal(click.event.prevented, false)
+  assert.equal(click.event.stopped, false)
+  assert.deepEqual(environment.calls, [])
+  assert.equal(starterProfileForm.validityReports, 0)
 })
 
 test('visible Starter Edit Profile replays after reset password email failure', async () => {
