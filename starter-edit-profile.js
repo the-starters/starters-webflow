@@ -22,6 +22,7 @@ const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
 let observedMemberstackClient = null;
+let observedMemberstackMemberId = '';
 
 function memberFromResult(result) {
 	return result?.data || result?.member || result || null;
@@ -36,8 +37,12 @@ function memberScopeChangedError() {
 function observeMemberstackAuth(client) {
 	if (observedMemberstackClient === client) return;
 	observedMemberstackClient = client;
+	observedMemberstackMemberId = memberFromResult(window.MEMBER)?.id || '';
 	if (typeof client?.onAuthChange === 'function') {
-		client.onAuthChange(() => {
+		client.onAuthChange((result) => {
+			const nextMemberId = memberFromResult(result)?.id || '';
+			if (!nextMemberId || nextMemberId === observedMemberstackMemberId) return;
+			observedMemberstackMemberId = nextMemberId;
 			memberAuthGeneration += 1;
 		});
 	}
