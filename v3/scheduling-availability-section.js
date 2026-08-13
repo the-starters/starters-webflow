@@ -72,6 +72,7 @@
   let connectionError = false
   let connectBusy = false
   let cachedItemTemplate = null
+  let creatingDraft = false
   const oauthCallback = captureOAuthCallback()
 
   /* ------------------------------------------------------------------ */
@@ -518,11 +519,13 @@
   // the scheduler config with empty open hours, and nobody could ever book a
   // slot. Seed a Mon-Fri 09:00-18:00 default so the connection is usable
   // right away; the member can edit it or add overrides afterward. Never
-  // touches an already-existing `general` item.
+  // touches an already-existing `general` item. Returns whether it actually
+  // seeded anything, so callers can tell whether a persist is needed.
   function ensureDefaultAvailability() {
-    if (!availability || availability.items.general) return
+    if (!availability || availability.items.general) return false
     const days = [1, 2, 3, 4, 5]
     availability.items.general = { days: days, start: '09:00', end: '18:00', defaultDays: days }
+    return true
   }
 
   // Days already claimed by OTHER override items (never `general`, never
@@ -641,13 +644,13 @@
     }
   }
 
-  // Every rendered item form clones the same `#price` hidden input
-  // (`data-rate="150"` in the current Designer template), so any one of them
-  // is representative of the paid-call rate.
+  // `#price` is a single hidden input living directly in
+  // `[data-availability-element="list"]` (not cloned per item form) —
+  // populated once at bootstrap from the starter's own `Paid_Call_Rate`.
   function resolvePaidRate() {
-    const priceInput = qs(elSel('availability-form') + ' #price')
+    const priceInput = qs('#price')
     if (priceInput) {
-      const rate = Number(priceInput.dataset.rate || priceInput.value || 0)
+      const rate = Number(priceInput.value || priceInput.dataset.rate || 0)
       if (rate > 0) return rate
     }
     try {
@@ -885,8 +888,16 @@
       grantEmail = null
       grantCalendarId = null
       configs = []
-      if (availability.manager !== null) {
-        availability.manager = null
+      const hadManager = availability.manager !== null
+      availability.manager = null
+      // A member with no availability saved yet (manager already null, so
+      // the branch above alone would never persist anything) has no
+      // canonical availability row in Xano at all — refreshCanonicalConnectionState()'s
+      // strict isAvailability() check throws on that, aborting the redirect
+      // before the member ever reaches Google. Seed the same first-connect
+      // default used elsewhere and persist whenever anything actually changed.
+      const seededDefault = ensureDefaultAvailability()
+      if (hadManager || seededDefault) {
         await updateAvail()
       }
       await refreshCanonicalConnectionState()
@@ -1288,8 +1299,12 @@
     }
     bindActionGroup(buttonRow, ['item-form-close', 'item-form-submit'], function (action, target) {
       if (action === 'item-form-close') {
-        if (availability.items[id]) closeItemForm(card)
-        else card.remove()
+        if (availability.items[id]) {
+          closeItemForm(card)
+        } else {
+          card.remove()
+          setCreateTriggerBusy(false)
+        }
       } else if (action === 'item-form-submit') {
         setItemSubmitLoading(card, target, true)
         availFormHandler(card, id)
@@ -1316,6 +1331,10 @@
       console.warn('[scheduling-section] item template/list missing')
       return
     }
+
+    // A full render always reflects saved-canonical items only — any draft
+    // in progress gets wiped below, so the create trigger is safe to re-enable.
+    setCreateTriggerBusy(false)
 
     // Guard against `template.style.display` already being 'none' from a
     // previous render of this same (never-restored) master template —
@@ -1402,6 +1421,20 @@
     list.appendChild(card)
     initInputPickers(card)
     openItemForm(card, id)
+    setCreateTriggerBusy(true)
+  }
+
+  // Only one unsaved draft can exist at a time — dims/disables the create
+  // trigger while one is open so repeated clicks can't stack more of them.
+  // Cleared by renderAvailabilityItems() (any full re-render, including a
+  // successful save, means no draft survives) and by discarding a draft via
+  // its own close/cancel button.
+  function setCreateTriggerBusy(busy) {
+    creatingDraft = busy
+    const trigger = qs('[' + ACTION + '="availability-create"]')
+    if (!trigger) return
+    trigger.style.opacity = busy ? '0.6' : '1'
+    trigger.style.pointerEvents = busy ? 'none' : 'auto'
   }
 
   function bindCreateTrigger() {
@@ -1409,6 +1442,7 @@
     if (!trigger) return
     trigger.addEventListener('click', function (e) {
       if (e && typeof e.preventDefault === 'function') e.preventDefault()
+      if (creatingDraft) return
       handleCreateAvailability()
     })
   }
@@ -1687,9 +1721,12 @@
       bindCreateTrigger()
       renderAvailabilityItems()
 
-      const priceInput = qs(elSel('availability-form') + ' #price')
+      // Populated once here from the canonical starter record — not from the
+      // Designer's static `data-rate` placeholder — since `readStarterRecord()`
+      // already carries the freelancer's own `Paid_Call_Rate`.
+      const priceInput = qs('#price')
       if (priceInput) {
-        const rate = Number(priceInput.dataset.rate || 0)
+        const rate = Number((starterRecord && starterRecord.Paid_Call_Rate) || 0)
         priceInput.value = rate
         try {
           window.localStorage.setItem(PAID_RATE_STORAGE_KEY, rate)

@@ -275,9 +275,7 @@ function buildItemTemplate() {
   })
   timepickerGroup.appendChild(startInput)
   timepickerGroup.appendChild(endInput)
-  const priceInput = new El('input', { type: 'hidden', id: 'price', name: 'price', 'data-rate': '150' })
   form.appendChild(timepickerGroup)
-  form.appendChild(priceInput)
   formOuter.appendChild(form)
   const buttonRow = new El('div')
   const cancelBtn = new El('div', { 'data-availability-action': 'item-form-close' })
@@ -339,7 +337,11 @@ function buildSectionDom(options = {}) {
   const listWrapper = new El('div', { 'data-availability-element': 'list-wrapper' })
   const list = new El('div', { 'data-availability-element': 'list' })
   const itemTemplate = buildItemTemplate()
+  // Lives directly in `list` now (a single instance, not cloned per item
+  // form) — populated once at bootstrap from the starter's Paid_Call_Rate.
+  const priceInput = new El('input', { type: 'hidden', id: 'price', name: 'price', 'data-rate': '150' })
   list.appendChild(itemTemplate)
+  list.appendChild(priceInput)
   listWrapper.appendChild(list)
 
   const createCard = new El('div')
@@ -369,6 +371,7 @@ function buildSectionDom(options = {}) {
     mainWrapper,
     listWrapper,
     list,
+    priceInput,
     loadingSlots,
     slotsWrapper,
     createBtn,
@@ -385,6 +388,7 @@ function buildStatefulRoutes(initialState) {
       grantId: null,
       grantEmail: null,
       calendarId: null,
+      Paid_Call_Rate: 150,
       availability: {
         items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
         manager: null,
@@ -407,6 +411,7 @@ function buildStatefulRoutes(initialState) {
         nylas_grant_id: state.grantId,
         nylas_grant_email: state.grantEmail,
         nylas_calendar_id: state.calendarId,
+        Paid_Call_Rate: state.Paid_Call_Rate,
       },
     }),
     '/starter/set_timezone/v3': () => ({ status: 200, body: { timezone: 'Asia/Manila' } }),
@@ -682,6 +687,25 @@ test('the first load reveals connect-wrapper (flex) and main-wrapper (grid) and 
   assert.equal(dom.mainWrapper.style.display, 'grid')
 })
 
+test('#price is populated once at bootstrap from the starter record\'s Paid_Call_Rate, not the Designer data-rate placeholder', async () => {
+  const { dom } = loadSection({
+    serverState: { Paid_Call_Rate: 275 },
+  })
+  await settle()
+
+  assert.equal(dom.priceInput.value, 275)
+  assert.equal(dom.priceInput.dataset.rate, '150') // untouched Designer placeholder
+})
+
+test('#price falls back to 0 when the starter has no Paid_Call_Rate on record', async () => {
+  const { dom } = loadSection({
+    serverState: { Paid_Call_Rate: null },
+  })
+  await settle()
+
+  assert.equal(dom.priceInput.value, 0)
+})
+
 test('clicking the ordinal connect-platform button (no data-availability-action yet) connects and flips visibility', async () => {
   const { dom, window, warnings } = loadSection()
   await settle()
@@ -731,6 +755,25 @@ test('connecting for the first time (no items at all) seeds a default Mon-Fri 09
   assert.deepEqual(configCall.body.in_availability.availability_rules.default_open_hours, [
     { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
   ])
+})
+
+test('connect-google succeeds on a brand-new starter with no availability row yet', async () => {
+  // Reproduces the reported bug: a starter who has never saved any
+  // availability has no canonical availability row in Xano at all (not even
+  // the empty {items:{}, manager:null} shape) — refreshCanonicalConnectionState()'s
+  // strict isAvailability() check used to throw here and block the redirect
+  // before the member ever reached Google.
+  const { dom, assigned, warnings } = loadSection({
+    serverState: { availability: null },
+  })
+  await settle()
+
+  dom.connectBtnWrapper.children[1].click() // connect-google
+  await settle()
+
+  assert.equal(assigned.length, 1, 'the OAuth redirect actually happened')
+  assert.ok(assigned[0].includes('nylas.example/oauth'))
+  assert.ok(!warnings.some((w) => w.includes('connect-google failed')))
 })
 
 test('boots directly into connected state when the starter already has a grant/calendar/config', async () => {
@@ -937,6 +980,70 @@ test('the explicit [data-availability-action="availability-create"] trigger crea
 
   const after = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card').length
   assert.equal(after, before + 1)
+})
+
+test('the create trigger is disabled while a draft is open, and re-enabled after the draft is cancelled', async () => {
+  const { dom } = loadSection()
+  await settle()
+
+  assert.notEqual(dom.createBtn.style.pointerEvents, 'none')
+
+  dom.createBtn.click() // opens a draft
+  await settle()
+
+  assert.equal(dom.createBtn.style.pointerEvents, 'none')
+  assert.equal(dom.createBtn.style.opacity, '0.6')
+
+  const before = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card').length
+  dom.createBtn.click() // must be a no-op — one draft at a time
+  await settle()
+  const afterSecondClick = dom.list.children.filter(
+    (el) => el.getAttribute('data-availability-element') === 'item-card',
+  ).length
+  assert.equal(afterSecondClick, before)
+
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const formWrapper = draftCard.children[2]
+  const buttonRow = formWrapper.children[0].children[1]
+  buttonRow.children[0].click() // item-form-close — discards the unsaved draft
+  await settle()
+
+  assert.notEqual(dom.createBtn.style.pointerEvents, 'none')
+  assert.notEqual(dom.createBtn.style.opacity, '0.6')
+
+  dom.createBtn.click() // a new draft is allowed again
+  await settle()
+  const afterCancelAndRecreate = dom.list.children.filter(
+    (el) => el.getAttribute('data-availability-element') === 'item-card',
+  ).length
+  // `before` already counted the first draft (general + draft = 2) — cancel
+  // removes it, recreate adds a new one back, netting the same count.
+  assert.equal(afterCancelAndRecreate, before)
+})
+
+test('the create trigger re-enables once a draft is saved', async () => {
+  const { dom } = loadSection()
+  await settle()
+
+  dom.createBtn.click()
+  await settle()
+  assert.equal(dom.createBtn.style.pointerEvents, 'none')
+
+  const draftCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[0].children[1].checked = true // Sunday
+  form.querySelector('[name=start-time]').value = '09:00'
+  form.querySelector('[name=end-time]').value = '10:00'
+  const buttonRow = formWrapper.children[0].children[1]
+  buttonRow.children[1].click() // item-form-submit
+  await settle()
+
+  assert.notEqual(dom.createBtn.style.pointerEvents, 'none')
 })
 
 test('without the [data-availability-action="availability-create"] attribute, the create trigger is never bound (no text-matching fallback)', async () => {
