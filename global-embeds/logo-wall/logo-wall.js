@@ -31,6 +31,12 @@
  * odd Tracks run RTL.
  * Hover pauses that Track. Off-screen wrappers pause. prefers-reduced-motion
  * freezes the bands.
+ *
+ * SELF-DEFENSE: the companion stylesheet (logo-wall.css) is required. If a
+ * Track does not compute as a flex row, the stylesheet did not load — the wall
+ * is left as a static row of the original logos, with no clones and no
+ * animation, plus one dev-gated warning. Re-checked on every re-arm, so a
+ * late-arriving stylesheet recovers without a reload.
  */
 (function () {
   if (window.__startersLogoWallInit) return;
@@ -367,8 +373,33 @@
     });
   }
 
+  /**
+   * Evidence that the companion stylesheet actually applied: our Track rule is
+   * the only thing making a Track a flex row. If it did not load, the Track is
+   * a block, every item is full-width on its own line, and the fill target can
+   * never be reached — which is how one 404 turned 22 logos into ~550 nodes.
+   */
+  function tracksAreFlexRows(state) {
+    return state.tracks.every(function (entry) {
+      var cs = window.getComputedStyle(entry.track);
+      return !!cs && cs.display === 'flex';
+    });
+  }
+
   function armLoops(state) {
     killLoops(state);
+    if (!tracksAreFlexRows(state)) {
+      // Static, sane and visible: the originals, no clones, no animation. Also
+      // strips clones from an earlier healthy arm so none are left stranded.
+      state.tracks.forEach(function (entry) {
+        removeClones(entry.track);
+      });
+      if (!state.warnedMissingCss) {
+        state.warnedMissingCss = true;
+        devWarn('structural CSS missing; wall left static', state.wrapper);
+      }
+      return;
+    }
     state.tracks.forEach(function (entry) {
       fillTrack(entry.track, entry.originals, state.wrapper);
     });
@@ -510,6 +541,7 @@
       reduceMotion: prefersReducedMotion(),
       inView: true,
       hoverIndex: -1,
+      warnedMissingCss: false,
     };
 
     bindHover(state);

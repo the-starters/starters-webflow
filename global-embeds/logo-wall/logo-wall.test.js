@@ -202,35 +202,51 @@ function makePage(options) {
   wrapper.clientWidth = o.wrapperWidth == null ? 0 : o.wrapperWidth
   if (o.tracks != null) wrapper.setAttribute('data-logo-wall-tracks', String(o.tracks))
 
+  // What a Track computes as. 'flex' is the companion stylesheet applied;
+  // 'block' is the stylesheet 404. Mutable, so a test can load the CSS late.
+  const page = { html, body, section, wrapper, items: [], trackDisplay: o.trackDisplay || 'flex' }
+
   html.appendChild(body)
   body.appendChild(section)
   section.appendChild(wrapper)
 
-  const items = []
   const width = o.itemWidth == null ? 100 : o.itemWidth
   for (let i = 0; i < (o.items || 0); i++) {
     const el = logoItem(i, width)
     wrapper.appendChild(el)
-    items.push(el)
+    page.items.push(el)
   }
 
-  return { html, body, section, wrapper, items }
+  return page
 }
 
 /** Run the script for real against a page, in a fresh sandbox. */
 function load(page, options) {
   const o = options || {}
   const warnings = []
+  const warnArgs = []
+  const listeners = {}
+  const timers = new Map()
+  let nextTimer = 1
 
   const sandbox = {
     console: {
       warn(...args) {
-        warnings.push(args.map(String).join(' '))
+        warnArgs.push(args)
+        warnings.push(args.filter((a) => typeof a === 'string').join(' '))
       },
       log() {},
     },
-    setTimeout: () => 0,
-    clearTimeout: () => {},
+    // Manual-flush timers: the resize re-arm is debounced by 150ms, and a test
+    // that has to wait 150 real milliseconds is a test that flakes.
+    setTimeout(fn) {
+      const id = nextTimer++
+      timers.set(id, fn)
+      return id
+    },
+    clearTimeout(id) {
+      timers.delete(id)
+    },
     parseInt,
     parseFloat,
     isFinite,
@@ -246,14 +262,17 @@ function load(page, options) {
   sandbox.location = { hostname: o.hostname || 'www.thestarters.com' }
   sandbox.window.location = sandbox.location
   sandbox.window.innerWidth = page.html.clientWidth
-  sandbox.window.addEventListener = () => {}
+  if (o.debug !== undefined) sandbox.window.STARTERS_DEBUG = o.debug
+  sandbox.window.addEventListener = (type, fn) => {
+    ;(listeners[type] = listeners[type] || []).push(fn)
+  }
   sandbox.window.matchMedia = () => ({ matches: false, addEventListener() {} })
   // columnGap/display are what the script reads. The overflow keys are here so
   // the "ancestors are untouched" test has teeth: the retired bleed walk read
   // them to decide which ancestors to rewrite.
   sandbox.window.getComputedStyle = (el) => ({
     columnGap: '0px',
-    display: 'flex',
+    display: el.getAttribute(ITEM) === 'track' ? page.trackDisplay : 'flex',
     overflowX: el === page.section ? 'hidden' : 'visible',
     overflowY: 'visible',
   })
@@ -276,7 +295,24 @@ function load(page, options) {
   vm.createContext(sandbox)
   new vm.Script(source).runInContext(sandbox)
 
-  return { warnings, window: sandbox.window }
+  const flush = () => {
+    const pending = Array.from(timers.entries())
+    timers.clear()
+    pending.forEach(([, fn]) => fn())
+  }
+
+  return {
+    warnings,
+    warnArgs,
+    window: sandbox.window,
+    listeners,
+    flush,
+    /** Fire the debounced resize re-arm the way a real viewport change would. */
+    resize: () => {
+      ;(listeners.resize || []).forEach((fn) => fn())
+      flush()
+    },
+  }
 }
 
 /* ------------------------------ readers ------------------------------ */
@@ -431,6 +467,73 @@ test('the Designer canvas is left alone', () => {
   assert.equal(tracksOf(page.wrapper).length, 0)
   assert.equal(page.wrapper.getAttribute('data-logo-wall-inited'), null)
   assert.equal(page.wrapper.children.length, 4, 'the authored items are still the authored items')
+})
+
+/* --------------------------- the missing-CSS guard ----------------------- */
+
+/** A wall wide enough that a healthy arm always clones. */
+function fillingPage(extra) {
+  return makePage(
+    Object.assign({ items: 4, itemWidth: 100, wrapperWidth: 1000, tracks: 1 }, extra || {})
+  )
+}
+
+test('a Track that is not a flex row leaves the logos static and uncloned', () => {
+  // The homepage incident: the stylesheet URL 404d, the Track laid out as a
+  // block, the fill target became unreachable and 22 items became ~550 nodes.
+  const page = fillingPage({ trackDisplay: 'block' })
+  const { warnings, warnArgs } = load(page, { debug: true })
+
+  const track = tracksOf(page.wrapper)[0]
+  assert.equal(clonesOf(track).length, 0, 'no clones at all, not merely fewer')
+  assert.equal(track.children.length, 4, 'the Track holds the originals and nothing else')
+  assert.deepEqual(indexesOf(originalsOf(track)), [0, 1, 2, 3], 'untouched and in order')
+  track.children.forEach((child) => {
+    assert.equal(inlineStyle(child), '', 'nothing is transformed or positioned')
+  })
+
+  assert.equal(warnings.length, 1, 'exactly one warning: ' + JSON.stringify(warnings))
+  assert.match(warnings[0], /\[logo-wall\].*structural CSS missing/)
+  assert.ok(warnArgs[0].includes(page.wrapper), 'the warning points at the offending wrapper')
+})
+
+test('the missing-CSS warning stays silent in production', () => {
+  const page = fillingPage({ trackDisplay: 'block' })
+  const { warnings } = load(page, { hostname: 'www.thestarters.com' })
+  assert.deepEqual(warnings, [], 'visitors never see console noise')
+  assert.equal(clonesOf(tracksOf(page.wrapper)[0]).length, 0, 'but the guard still holds')
+})
+
+test('late-loading CSS recovers on the next re-arm, without a second warning', () => {
+  const page = fillingPage({ trackDisplay: 'block' })
+  const { warnings, resize } = load(page, { debug: true })
+
+  const track = tracksOf(page.wrapper)[0]
+  assert.equal(clonesOf(track).length, 0, 'static while the stylesheet is missing')
+
+  page.trackDisplay = 'flex' // the stylesheet finally arrives
+  resize()
+
+  assert.ok(clonesOf(track).length > 0, 'the fill runs on re-arm, no reload needed')
+  assert.equal(warnings.length, 1, 'the warning is once per wrapper, the recovery is not')
+})
+
+test('losing the stylesheet on a re-arm strips the clones it already made', () => {
+  // A re-arm from a healthy state must not leave stale clones stranded in a
+  // Track that can no longer lay them out.
+  const page = fillingPage()
+  const { resize, warnings } = load(page, { debug: true })
+
+  const track = tracksOf(page.wrapper)[0]
+  assert.ok(clonesOf(track).length > 0, 'healthy first arm')
+  assert.deepEqual(warnings, [], 'and no warning while the CSS is present')
+
+  page.trackDisplay = 'block'
+  resize()
+
+  assert.equal(clonesOf(track).length, 0)
+  assert.deepEqual(indexesOf(originalsOf(track)), [0, 1, 2, 3], 'the originals survive')
+  assert.equal(warnings.length, 1)
 })
 
 /* ------------------------------- drift guard ----------------------------- */
