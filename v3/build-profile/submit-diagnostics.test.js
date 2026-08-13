@@ -44,7 +44,9 @@ function boot({ delayHelper = false, helperUnavailable = false } = {}) {
   success.style.display = 'none'
   error.style.display = 'none'
   form.querySelector = (selector) => selector === '[form-submit]' ? trigger : null
-  success.querySelector = (selector) => selector === 'div' ? successInner : null
+  success.querySelector = (selector) => (
+    selector === '[data-workflow-diagnostic-message], p, div' ? successInner : null
+  )
   error.querySelector = () => null
   form.parentElement = new Element()
   const observers = []

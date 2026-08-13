@@ -406,8 +406,6 @@
   }
 
   function decorateWorkflowMessage(element, message, receipt) {
-    if (!element) return message
-    element.textContent = message
     return message
   }
 

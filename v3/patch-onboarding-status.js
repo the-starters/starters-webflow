@@ -173,8 +173,18 @@
   }
 
   function decorateOnboardingReceipt(wrapper, receipt, kind) {
-    // Diagnostics are console-only. The authored success/error state owns its DOM.
-    return Boolean(wrapper && receipt && kind)
+    return Boolean(receipt)
+  }
+
+  function showLoggedOutFailure(wrapper) {
+    if (!wrapper || typeof wrapper.querySelector !== 'function') return false
+    var done = wrapper.querySelector(DONE_SELECTOR)
+    var fail = wrapper.querySelector('.w-form-fail')
+    if (!fail) return false
+    if (done && done.style) done.style.display = 'none'
+    fail.textContent = 'We could not confirm your member session. Please log in and try again.'
+    if (fail.style) fail.style.display = 'block'
+    return true
   }
 
   /* ------------------------------ environment ------------------------------ */
@@ -567,6 +577,7 @@
         // marked on a later visit.
         if (outcome && outcome.code === 'logged-out') {
           note('no member session; restoring the page instead of redirecting.')
+          showLoggedOutFailure(wrapper)
           restorePage(loader, wrapper)
           return
         }
