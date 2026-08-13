@@ -409,6 +409,8 @@ test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', ()
     { counterparty_id: 4, company_name: 'Alpha', hiring_manager_name: 'Amy', email: 'not-returned@example.com' },
     { counterparty_id: 9, company_name: 'Duplicate' },
     { counterparty_id: 0, company_name: 'Invalid' },
+    { counterparty_id: 6, company_name: 'Missing manager' },
+    { counterparty_id: 7, hiring_manager_name: 'Missing company' },
   ] })
   assert.deepEqual(JSON.parse(JSON.stringify(options)), [
     { id: 4, label: 'Alpha — Amy', company_name: 'Alpha', manager_name: 'Amy' },
@@ -468,8 +470,8 @@ test('selecting a Brand stores its ID and clears stale sample email', () => {
   assert.equal(form.fields.manager.value, 'Jai')
   assert.equal(form.fields.email.value, '')
   assert.equal(context.profileTargets[0].hidden, true)
-  assert.equal(context.profileTargets[1].textContent, 'Acme')
-  assert.equal(context.profileTargets[2].textContent, 'Hiring manager: Jai')
+  assert.equal(context.profileTargets[1].textContent, 'Jai')
+  assert.equal(context.profileTargets[2].textContent, 'Acme')
   assert.equal(context.profileTargets[3].hidden, true)
   assert.equal(context.profileTargets[5].hidden, true)
 })
@@ -529,8 +531,8 @@ test('no eligible Brands produces a blocked, non-submittable state', async () =>
 test('multiple eligible Brands render as native select options and require a choice', async () => {
   const loaded = load({
     counterparties: [
-      { counterparty_id: 21, company_name: 'Alpha' },
-      { counterparty_id: 22, company_name: 'Beta' },
+      { counterparty_id: 21, company_name: 'Alpha', hiring_manager_name: 'Alice' },
+      { counterparty_id: 22, company_name: 'Beta', hiring_manager_name: 'Bob' },
     ],
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -540,7 +542,7 @@ test('multiple eligible Brands render as native select options and require a cho
   assert.equal(loaded.form.fields.select.options[0].textContent, 'Choose a Brand')
   assert.deepEqual(
     loaded.form.fields.select.options.slice(1).map((option) => [option.value, option.textContent]),
-    [['21', 'Alpha'], ['22', 'Beta']],
+    [['21', 'Alpha — Alice'], ['22', 'Beta — Bob']],
   )
   assert.equal(loaded.form.fields.brandId.value, '')
 
@@ -552,7 +554,7 @@ test('multiple eligible Brands render as native select options and require a cho
 
 test('Starter payload reuses commercial fields and omits connection type and Starter identity', () => {
   const { api, form, document, window } = load({ noDocument: true })
-  api.selectBrand(form, { id: 22, label: 'Brand', company_name: 'Brand', manager_name: '' })
+  api.selectBrand(form, { id: 22, label: 'Brand — Manager', company_name: 'Brand', manager_name: 'Manager' })
   const serialized = api.starterPayload(form, document, window)
   assert.equal(serialized.payload.brand_id, 22)
   assert.equal(serialized.payload.title, 'Retention launch')
@@ -570,13 +572,13 @@ test('member scope reset clears cached Brands and ignores the prior in-flight re
     projectOptions: () => {
       requestNumber += 1
       if (requestNumber === 1) return new Promise((resolve) => { resolveFirst = resolve })
-      return Promise.resolve({ counterparties: [{ counterparty_id: 52, company_name: 'Member B Brand' }] })
+      return Promise.resolve({ counterparties: [{ counterparty_id: 52, company_name: 'Member B Brand', hiring_manager_name: 'Member B' }] })
     },
   })
   const firstRequest = loaded.api.loadOptions(loaded.form, loaded.window)
   await Promise.resolve()
   loaded.window.listeners['opp30:member-scope-reset']({ detail: { memberId: 'member-b' } })
-  resolveFirst({ counterparties: [{ counterparty_id: 51, company_name: 'Member A Brand' }] })
+  resolveFirst({ counterparties: [{ counterparty_id: 51, company_name: 'Member A Brand', hiring_manager_name: 'Member A' }] })
   assert.equal((await firstRequest).length, 0)
 
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -592,7 +594,7 @@ test('opening the modal refreshes authorized Brands for the same member', async 
       requestNumber += 1
       return { counterparties: requestNumber === 1
         ? []
-        : [{ counterparty_id: 53, company_name: 'Newly Eligible Brand' }] }
+        : [{ counterparty_id: 53, company_name: 'Newly Eligible Brand', hiring_manager_name: 'New Member' }] }
     },
   })
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -616,7 +618,7 @@ test('authorization refresh clears the prior Brand label before new options load
     projectOptions: () => {
       requestNumber += 1
       if (requestNumber === 1) {
-        return Promise.resolve({ counterparties: [{ counterparty_id: 56, company_name: 'Prior Brand' }] })
+        return Promise.resolve({ counterparties: [{ counterparty_id: 56, company_name: 'Prior Brand', hiring_manager_name: 'Prior Member' }] })
       }
       return new Promise((resolve) => { resolveRefresh = resolve })
     },
@@ -630,8 +632,8 @@ test('authorization refresh clears the prior Brand label before new options load
   assert.equal(loaded.form.fields.brandId.value, '')
 
   resolveRefresh({ counterparties: [
-    { counterparty_id: 57, company_name: 'Current One' },
-    { counterparty_id: 58, company_name: 'Current Two' },
+    { counterparty_id: 57, company_name: 'Current One', hiring_manager_name: 'Member One' },
+    { counterparty_id: 58, company_name: 'Current Two', hiring_manager_name: 'Member Two' },
   ] })
   await refresh
   assert.equal(loaded.form.fields.select.value, '')
@@ -661,11 +663,11 @@ test('reopening during an options request supersedes its stale response', async 
   await Promise.resolve()
   assert.equal(requestNumber, 2)
 
-  resolveFirst({ counterparties: [{ counterparty_id: 54, company_name: 'Stale Brand' }] })
+  resolveFirst({ counterparties: [{ counterparty_id: 54, company_name: 'Stale Brand', hiring_manager_name: 'Stale Member' }] })
   await Promise.resolve()
   assert.equal(loaded.form.fields.brandId.value, '')
 
-  resolveSecond({ counterparties: [{ counterparty_id: 55, company_name: 'Current Brand' }] })
+  resolveSecond({ counterparties: [{ counterparty_id: 55, company_name: 'Current Brand', hiring_manager_name: 'Current Member' }] })
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(loaded.form.fields.brandId.value, '55')
   assert.equal(loaded.form.fields.select.value, '55')
@@ -675,7 +677,7 @@ test('reopening during an options request supersedes its stale response', async 
 test('submission reports the canonical project and contract-first success state', async () => {
   const loaded = load({
     noDocument: true,
-    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
   })
   const renderedBrand = new Element()
   loaded.wrapper.success.onAttributeChange = (name, value) => {
@@ -709,7 +711,7 @@ test('submission reports the canonical project and contract-first success state'
 
 test('Review then submit restores preview fields without enabling authored disabled fields', async () => {
   const loaded = load({
-    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
   })
   const review = new Element({ 'dx-button': 'review', tagName: 'button' })
   review.form = loaded.form
@@ -738,7 +740,7 @@ test('Review then submit restores preview fields without enabling authored disab
 
 test('Review Edit fee change refreshes preview controls and preserves authored disabled fields', async () => {
   const loaded = load({
-    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
   })
   const review = new Element({ 'dx-button': 'review', tagName: 'button' })
   const edit = new Element({ 'dx-button': 'edit', tagName: 'button' })
@@ -783,7 +785,7 @@ test('Own Contract submission reports immediate activation', async () => {
   let loaded
   loaded = load({
     noDocument: true,
-    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
     projectSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
       return { project: { id: 82, lifecycle_state: 'active' }, replayed: false }
@@ -798,7 +800,7 @@ test('Own Contract submission reports immediate activation', async () => {
 })
 
 test('opening the modal after success restores the form and hides success state', async () => {
-  const loaded = load({ counterparties: [{ counterparty_id: 61, company_name: 'Brand' }] })
+  const loaded = load({ counterparties: [{ counterparty_id: 61, company_name: 'Brand', hiring_manager_name: 'Brand Member' }] })
   await loaded.api.loadOptions(loaded.form, loaded.window)
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.equal(loaded.form.style.display, 'none')
@@ -818,7 +820,7 @@ test('opening the modal after success restores the form and hides success state'
 test('reopening during submission cannot let an options refresh replace success', async () => {
   let resolveSubmit
   const loaded = load({
-    counterparties: [{ counterparty_id: 63, company_name: 'Brand' }],
+    counterparties: [{ counterparty_id: 63, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
     projectSubmit: (payload) => {
       loaded.calls.submit.push(payload)
       return new Promise((resolve) => { resolveSubmit = resolve })
@@ -857,7 +859,7 @@ test('opening after success reinitializes reset current-date fields', async () =
   let fillCalls = 0
   const loaded = load({
     fixture,
-    counterparties: [{ counterparty_id: 62, company_name: 'Brand' }],
+    counterparties: [{ counterparty_id: 62, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
     fillCurrentDates: (form) => {
       fillCalls += 1
       if (!date.getAttribute('data-set-current-date-inited') && !date.value) {
@@ -882,7 +884,7 @@ test('failed retry keeps the same idempotency key', async () => {
   let attempt = 0
   const loaded = load({
     noDocument: true,
-    counterparties: [{ counterparty_id: 41, company_name: 'Brand' }],
+    counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
     projectSubmit: async (payload) => {
       submitted.push({ ...payload })
       attempt += 1
@@ -906,7 +908,7 @@ test('malformed project responses fail and preserve the retry key', async () => 
   ]
   const loaded = load({
     noDocument: true,
-    counterparties: [{ counterparty_id: 41, company_name: 'Brand' }],
+    counterparties: [{ counterparty_id: 41, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
     projectSubmit: async (payload) => {
       submitted.push({ ...payload })
       return responses.shift()
@@ -937,8 +939,8 @@ test('a rejected Brand authorization is invalidated before another submit', asyn
     projectOptions: async () => {
       optionsRequest += 1
       return { counterparties: optionsRequest === 1
-        ? [{ counterparty_id: 42, company_name: 'Revoked Brand' }]
-        : [{ counterparty_id: 43, company_name: 'Current Brand' }] }
+        ? [{ counterparty_id: 42, company_name: 'Revoked Brand', hiring_manager_name: 'Revoked Member' }]
+        : [{ counterparty_id: 43, company_name: 'Current Brand', hiring_manager_name: 'Current Member' }] }
     },
     projectSubmit: async (payload) => {
       loaded.calls.submit.push(payload)
