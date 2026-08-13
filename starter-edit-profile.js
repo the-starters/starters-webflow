@@ -126,6 +126,16 @@ function decorateProfileFeedback(modalName, receipt) {
 	return receipt;
 }
 
+function openProfileFeedback(modalName, trigger) {
+	const modalApi = window.lumos?.modal;
+	if (typeof modalApi?.open === 'function') {
+		modalApi.open(modalName);
+		return;
+	}
+
+	trigger?.dispatchEvent(new Event('click', { bubbles: true }));
+}
+
 function waitProfileData(callback) {
 	if (typeof window.waitProfileData === 'function') {
 		return window.waitProfileData(callback);
@@ -427,7 +437,7 @@ document.addEventListener('DOMContentLoaded', function () {
 					request_started: false,
 				});
 				decorateProfileFeedback('edit-form-error', diagnostic);
-				openErrorModal?.dispatchEvent(new Event('click', { bubbles: true }));
+				openProfileFeedback('edit-form-error', openErrorModal);
 				setSubmitLoading(submitButton, false);
 				return;
 			}
@@ -529,7 +539,7 @@ document.addEventListener('DOMContentLoaded', function () {
 					request_started: false,
 				});
 				decorateProfileFeedback('edit-form-error', diagnostic);
-				openErrorModal?.dispatchEvent(new Event('click', { bubbles: true }));
+				openProfileFeedback('edit-form-error', openErrorModal);
 				setSubmitLoading(submitButton, false);
 				return;
 			}
@@ -581,7 +591,7 @@ document.addEventListener('DOMContentLoaded', function () {
 					resource_id: result?.id || result?.profile_id || window.activeProfile?.id || '',
 				});
 				decorateProfileFeedback('edit-form-success', diagnostic);
-				openSuccessModal?.dispatchEvent(new Event('click', { bubbles: true }));
+				openProfileFeedback('edit-form-success', openSuccessModal);
 			} catch (error) {
 				const authChanged = error?.code === 'MEMBER_SCOPE_CHANGED';
 				diagnostic = recordProfileDiagnostic(diagnostic, {
@@ -593,7 +603,7 @@ document.addEventListener('DOMContentLoaded', function () {
 					request_started: requestStarted,
 				});
 				decorateProfileFeedback('edit-form-error', diagnostic);
-				openErrorModal?.dispatchEvent(new Event('click', { bubbles: true }));
+				openProfileFeedback('edit-form-error', openErrorModal);
 				console.error(`[starter-edit-profile] step ${stepIndex} submit failed`, {
 					diagnostic_id: diagnostic?.diagnostic_id || '',
 					error_code: diagnostic?.error_code || 'WORKFLOW_ERROR',
