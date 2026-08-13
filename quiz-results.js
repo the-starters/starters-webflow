@@ -2187,13 +2187,15 @@
         'project-rate',
         'projectRate',
     ]
-    const subcategoryFieldNames = [
-        'roles',
-        'roles-concatenate',
-        'categories.lvl1',
-        'subcategories',
-        'subcategory',
-    ]
+
+    /**
+     * Subcategories come from the record's own hierarchical paths and nothing
+     * else. `roles` is deliberately excluded: every hit carries it, so it used
+     * to win this list and paint role slugs into the Subcategory chips. There
+     * is no flattened Subcategory attribute on the index either — `categories`
+     * is the only Subcategory source `attributesToRetrieve` requests.
+     */
+    const subcategoryFieldNames = ['categories.lvl1']
     const maxDisplayedSubcategories = 3
 
     /**
@@ -3512,7 +3514,9 @@
     /**
      * Reduces hierarchical facet values to their leaf subcategory labels.
      *
-     * Hierarchical values such as "Design > Branding" become "Branding".
+     * Hierarchical values such as "Design > Branding" become "Branding". A
+     * value carrying no ">" is a bare Category (or a leftover slug), not a
+     * Subcategory, so it yields nothing rather than promoting itself to a chip.
      *
      * @param {unknown} value Raw facet value from Algolia.
      * @returns {string[]} Leaf subcategory labels.
@@ -3531,7 +3535,7 @@
                     .map(normalize)
                     .filter(Boolean)
 
-                return segments[segments.length - 1] || ''
+                return segments.length > 1 ? segments[segments.length - 1] : ''
             })
             .filter(Boolean)
     }
@@ -5029,6 +5033,11 @@
                 // surfaced it: prefer the record subcategory equal to the matched
                 // selection, then the record's primary subcategory, and only fall
                 // back to the matched selection when the record carries none.
+                //
+                // Printed as stored, without formatSlugTitle: these labels come
+                // from categories.lvl1, which already holds display case, and
+                // the formatter splits on [-_\s]+ — it would flatten
+                // "E-Commerce Management" into "E Commerce Management".
                 const subcategories = Array.isArray(freelancer.subcategories)
                     ? freelancer.subcategories
                     : []
@@ -5039,10 +5048,7 @@
                 )
                 const subcategory =
                     normalize(ownMatch) || normalize(subcategories[0]) || matched
-                const shown = setCardText(
-                    element,
-                    subcategory ? formatSlugTitle(subcategory) : '',
-                )
+                const shown = setCardText(element, subcategory)
                 if (!shown) failIfRequired(element)
                 return
             }
