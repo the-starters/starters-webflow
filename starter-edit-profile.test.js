@@ -37,6 +37,7 @@ function createEnvironment(fetchImpl, {
   workflowDiagnosticsReady = null,
   setTimeoutImpl = () => 1,
   documentReadyState = 'loading',
+  notifyCurrentMemberOnAuthSubscribe = false,
 } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
@@ -159,7 +160,13 @@ function createEnvironment(fetchImpl, {
     intlTelInput: Object.assign(() => ({}), { getInstance: () => null }),
     $memberstackDom: {
       async getCurrentMember() { return { data: currentMember } },
-      onAuthChange(listener) { authChangeListeners.push(listener) },
+      onAuthChange(listener) {
+        authChangeListeners.push(listener)
+        if (notifyCurrentMemberOnAuthSubscribe) {
+          const subscribedMember = currentMember
+          Promise.resolve().then(() => listener({ data: subscribedMember }))
+        }
+      },
       async updateMember(payload) { memberUpdates.push(payload) },
       async updateMemberAuth(payload) { memberAuthUpdates.push(payload) },
     },
@@ -285,6 +292,19 @@ async function testLateLoadInitializesImmediately() {
 
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
   assert.deepEqual(environment.modalApiCalls, ['edit-form-success'])
+}
+
+async function testInitialSameMemberAuthNotificationDoesNotRejectSave() {
+  let requests = 0
+  const environment = createEnvironment(async () => {
+    requests += 1
+    return { ok: true, status: 200, json: async () => ({ saved: true }) }
+  }, { notifyCurrentMemberOnAuthSubscribe: true })
+
+  await submit(environment)
+
+  assert.equal(requests, 1)
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
 }
 
 async function testEarlyLoadInitializesCountersAfterParsing() {
@@ -461,9 +481,27 @@ async function testAuthSwitchAfterPatchDoesNotProjectToNewSession() {
   assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
 }
 
+async function testLogoutAndSameMemberReauthenticationInvalidatesSave() {
+  const request = deferred()
+  const environment = createEnvironment(() => request.promise)
+  const originalMember = environment.window.MEMBER
+  originalMember.customFields.phone = ''
+  const submission = submit(environment)
+  await new Promise(setImmediate)
+
+  environment.switchMember(null)
+  environment.switchMember(originalMember)
+  request.resolve({ ok: true, status: 200, json: async () => ({ saved: true }) })
+  await submission
+
+  assert.equal(environment.memberUpdates.length, 0)
+  assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+}
+
 Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
+  testInitialSameMemberAuthNotificationDoesNotRejectSave(),
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
@@ -474,6 +512,7 @@ Promise.all([
   testStalledDiagnosticsFailOpen(),
   testAuthSwitchDuringDiagnosticsDoesNotWrite(),
   testAuthSwitchAfterPatchDoesNotProjectToNewSession(),
+  testLogoutAndSameMemberReauthenticationInvalidatesSave(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {

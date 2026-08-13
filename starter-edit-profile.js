@@ -22,6 +22,7 @@ const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
 let observedMemberstackClient = null;
+let observedMemberstackMemberId = '';
 
 function memberFromResult(result) {
 	return result?.data || result?.member || result || null;
@@ -33,11 +34,22 @@ function memberScopeChangedError() {
 	return error;
 }
 
+// Memberstack immediately replays the current member when this listener subscribes.
+// Ignore only that same-member replay; every later notification invalidates in-flight work,
+// including logout followed by reauthentication as the same member.
 function observeMemberstackAuth(client) {
 	if (observedMemberstackClient === client) return;
 	observedMemberstackClient = client;
+	observedMemberstackMemberId = memberFromResult(window.MEMBER)?.id || '';
+	let awaitingInitialNotification = true;
 	if (typeof client?.onAuthChange === 'function') {
-		client.onAuthChange(() => {
+		client.onAuthChange((result) => {
+			const nextMemberId = memberFromResult(result)?.id || '';
+			if (awaitingInitialNotification) {
+				awaitingInitialNotification = false;
+				if (nextMemberId && nextMemberId === observedMemberstackMemberId) return;
+			}
+			observedMemberstackMemberId = nextMemberId;
 			memberAuthGeneration += 1;
 		});
 	}
