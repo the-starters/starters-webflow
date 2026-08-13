@@ -845,7 +845,7 @@ test('item-form-open toggles the item form open and closed via display', async (
   assert.equal(formWrapper.style.display, 'block')
 })
 
-test('general item shows an edit button but hides remove; a newly created draft hides both until saved', async () => {
+test('general item shows an edit button but hides remove; a newly created draft hides both (and the headline) until saved', async () => {
   const { dom } = loadSection()
   await settle()
 
@@ -861,9 +861,12 @@ test('general item shows an edit button but hides remove; a newly created draft 
     (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
   )
   const draftButtons = draftCard.children[0].children[2]
+  const draftHeadline = draftCard.children[1]
   // A draft that doesn't exist server-side yet opens straight into its edit
-  // form — edit/remove don't apply until it's actually saved.
+  // form — edit/remove and the days/time headline don't apply until it's
+  // actually saved.
   assert.equal(draftButtons.style.display, 'none')
+  assert.equal(draftHeadline.style.display, 'none')
 
   const formWrapper = draftCard.children[2]
   const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
@@ -880,6 +883,7 @@ test('general item shows an edit button but hides remove; a newly created draft 
   const savedButtons = savedCard.children[0].children[2]
   assert.notEqual(savedButtons.children[0].style.display, 'none') // edit
   assert.notEqual(savedButtons.children[1].style.display, 'none') // remove
+  assert.notEqual(savedCard.children[1].style.display, 'none') // headline back
 })
 
 test('populateItemForm marks selected day checkboxes with the Webflow checked-skin class', async () => {

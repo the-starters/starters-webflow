@@ -1421,11 +1421,14 @@
     applyItemTag(card, id)
     applyItemActionVisibility(card, id)
     // A freshly created item is a draft that doesn't exist server-side yet
-    // and opens straight into its edit form — edit/remove don't apply until
-    // it's actually saved, at which point renderAvailabilityItems() re-runs
-    // applyItemActionVisibility() and restores them normally.
+    // and opens straight into its edit form — edit/remove and the days/time
+    // headline (there's nothing saved to summarize) don't apply until it's
+    // actually saved, at which point renderAvailabilityItems() re-runs and
+    // restores them normally.
     const buttonGroup = qs(elSel('item-button-group'), card)
     if (buttonGroup) buttonGroup.style.display = 'none'
+    const headline = qs(elSel('item-headline'), card)
+    if (headline) headline.style.display = 'none'
     applyDayBadges(card, [])
     applyItemTimeText(card, { start: '', end: '' })
     closeItemForm(card)
