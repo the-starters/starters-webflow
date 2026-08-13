@@ -288,6 +288,76 @@ test('smart-fill resolves fee structure and invoice frequency by native name', (
   assert.deepEqual(invoice.events, ['input', 'change'])
 })
 
+test('smart-fill mutates only the form that owns the clicked preset', () => {
+  const first = projectForm()
+  const second = projectForm()
+  const firstFee = nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [{ value: '', textContent: 'Select one...' }, { value: 'monthly', textContent: 'Monthly Recurring' }],
+  })
+  const secondFee = nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [{ value: '', textContent: 'Select one...' }, { value: 'monthly', textContent: 'Monthly Recurring' }],
+  })
+  first.children.push(firstFee)
+  second.children.push(secondFee)
+  const firstQueryAll = first.querySelectorAll.bind(first)
+  const secondQueryAll = second.querySelectorAll.bind(second)
+  first.querySelectorAll = (selector) => selector === '[data-sp-fill="input"]' ? [firstFee] : firstQueryAll(selector)
+  second.querySelectorAll = (selector) => selector === '[data-sp-fill="input"]' ? [secondFee] : secondQueryAll(selector)
+
+  const preset = new Element({ 'data-sp-fill': 'button' })
+  preset.querySelectorAll = (selector) => selector === '[data-sp-fill-category]'
+    ? [new Element({ 'data-sp-fill-category': 'fee-structure', 'data-sp-fill-value': 'monthly' })]
+    : []
+  const owner = new Element()
+  const modal = new Element({ 'data-modal-target': 'generate-contract', tagName: 'DIALOG' })
+  preset.parentElement = owner
+  modal.parentElement = owner
+  second.parentElement = modal
+  owner.querySelector = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? second : null
+  owner.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [second] : []
+  const clicked = new Element()
+  clicked.closest = (selector) => selector === '[data-sp-fill="button"]' ? preset : null
+  const document = documentFixture(first)
+  document.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [first, second] : []
+  const { api } = load({ form: first, document })
+
+  assert.equal(api.handleSmartFill({ target: clicked }, document), true)
+  assert.equal(firstFee.value, '')
+  assert.equal(secondFee.value, 'monthly')
+})
+
+test('smart-fill fails closed when duplicate forms have no unique owner', () => {
+  const first = projectForm()
+  const second = projectForm()
+  const firstFee = nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [{ value: '', textContent: 'Select one...' }, { value: 'monthly', textContent: 'Monthly Recurring' }],
+  })
+  const secondFee = nativeField('Fee-Structure', '', {
+    tagName: 'SELECT',
+    options: [{ value: '', textContent: 'Select one...' }, { value: 'monthly', textContent: 'Monthly Recurring' }],
+  })
+  first.children.push(firstFee)
+  second.children.push(secondFee)
+
+  const preset = new Element({ 'data-sp-fill': 'button' })
+  preset.querySelectorAll = (selector) => selector === '[data-sp-fill-category]'
+    ? [new Element({ 'data-sp-fill-category': 'fee-structure', 'data-sp-fill-value': 'monthly' })]
+    : []
+  const clicked = new Element()
+  clicked.closest = (selector) => selector === '[data-sp-fill="button"]' ? preset : null
+  const document = documentFixture(first)
+  preset.parentElement = document
+  document.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [first, second] : []
+  const { api } = load({ form: first, document })
+
+  assert.equal(api.handleSmartFill({ target: clicked }, document), false)
+  assert.equal(firstFee.value, '')
+  assert.equal(secondFee.value, '')
+})
+
 test('prefills the hiring-manager field whatever the Designer label casing', async () => {
   const form = projectForm()
   const manager = nativeField('Hiring-manager-name', '')
@@ -1242,6 +1312,67 @@ test('binds the existing Hire trigger when the selected Starter identity is pres
   assert.equal(api.bindTrigger(trigger, document, window), true)
   assert.equal(form.getAttribute('data-project-form-status'), 'ready')
   assert.equal(trackCalls.some((entry) => entry.name === 'project_form_opened'), true)
+})
+
+test('binds only the clicked Starter modal when duplicate Contract Generation instances are open', () => {
+  const first = projectForm({ starter_memberstack_id: '' })
+  const second = projectForm({ starter_memberstack_id: '' })
+  first.contractChoice.value = 'My own contract'
+  second.contractChoice.value = 'Standard contract'
+
+  const firstConfirmation = requiredConfirmation(first, { visible: true, name: 'confirm-contract' })
+  const secondConfirmation = requiredConfirmation(second, { visible: true, name: 'confirm-contract' })
+  firstConfirmation.checked = true
+  secondConfirmation.checked = true
+
+  function modalFixture(form, starterId) {
+    const modal = new Element({ 'data-modal-target': 'generate-contract', tagName: 'DIALOG' })
+    const owner = new Element({
+      'data-input-filter-item': 'My own contract',
+      class: 'w-checkbox modal-form_checkbox-field',
+      tagName: 'LABEL',
+    })
+    const confirmation = form === first ? firstConfirmation : secondConfirmation
+    owner.controls = [confirmation]
+    owner.parentElement = form
+    confirmation.parentElement = owner
+    modal.form = form
+    modal.selectedStarter = new Element({ id: 'pushMemID', value: starterId })
+    form.parentElement = modal
+    modal.querySelector = (selector) => {
+      if (selector === '#pushMemID') return modal.selectedStarter
+      if (selector.includes('[data-project-form-v3="brand"] form')) return form
+      return null
+    }
+    modal.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [form] : []
+    return modal
+  }
+
+  const firstModal = modalFixture(first, 'mem_wrong_starter')
+  const secondModal = modalFixture(second, 'mem_selected_starter')
+  const firstTrigger = new Element({ 'data-modal-trigger': 'generate-contract' })
+  const secondTrigger = new Element({ 'data-modal-trigger': 'generate-contract' })
+  firstTrigger.parentElement = firstModal
+  secondTrigger.parentElement = secondModal
+
+  const document = documentFixture(first)
+  document.querySelector = (selector) => {
+    if (selector === 'dialog[data-modal-target="generate-contract"] #pushMemID') return firstModal.selectedStarter
+    return selector.includes('[data-project-form-v3="brand"] form') ? first : null
+  }
+  document.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [first, second] : []
+  const { api } = load({ form: first, document })
+
+  assert.equal(api.bindTrigger(secondTrigger, document), true)
+  assert.equal(first.getAttribute('data-project-form-status'), null)
+  assert.equal(firstConfirmation.checked, true)
+  assert.equal(firstConfirmation.hidden, false)
+  assert.equal(firstConfirmation.disabled, false)
+  assert.equal(second.getAttribute('data-project-form-status'), 'ready')
+  assert.equal(secondConfirmation.checked, false)
+  assert.equal(secondConfirmation.hidden, true)
+  assert.equal(secondConfirmation.disabled, true)
+  assert.equal(api.serialize(second, document).payload.starter_memberstack_id, 'mem_selected_starter')
 })
 
 test('fails closed when the Hire form has no selected Starter identity', async () => {
