@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.210
+ * @release v1.59.231
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
  * one funnel, which is why it lives here in `v3/` alongside the other standalone
@@ -188,11 +188,12 @@
  * write, unless a stale marker was already present at load and this page's own
  * signup re-raised it while that retry's member read was still in flight.
  *
- * V3 lead-entry registration. On an exact production Collection or Learn CMS
- * item route, the same unambiguous logged-out to logged-in transition also
- * snapshots one pending lead-entry event before Memberstack redirects. The
- * next page retries the authenticated Xano registration if navigation cut the
- * first request off. The browser never calls Mailchimp. Xano endpoint
+ * V3 lead-entry registration. On an exact production Collection, Learn, or
+ * Starter CMS item route, the same unambiguous logged-out to logged-in
+ * transition also snapshots one pending lead-entry event before Memberstack
+ * redirects. The next page retries the authenticated Xano registration if
+ * navigation cut the first request off. The browser never calls Mailchimp.
+ * Xano endpoint
  * `lead_email/register/v3` owns identity, Brand Free eligibility, route and CMS
  * collection allowlists, suppression, and idempotency. Unsupported routes and
  * non-production hosts fail closed. The accepted event is reported to PostHog
@@ -213,7 +214,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.210'
+    var RELEASE = 'v1.59.231'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -247,6 +248,7 @@
     var SIGNUP_TRIGGER_ELEMENT_ATTR = 'data-signup-trigger-element'
     var SIGNUP_TRIGGER_VALUE_ATTR = 'data-signup-trigger-value'
     var SIGNUP_TRIGGER_SELECTOR = '[' + SIGNUP_TRIGGER_ELEMENT_ATTR + ']'
+    var UNGATED_LEARN_SIGNUP_LINK_SELECTOR = 'a[href="/quiz"]'
     var SIGNUP_MODAL_ID = 'signup-modal'
     var ALLOWED_TRIGGER_ELEMENTS = {
         hire: true,
@@ -398,6 +400,12 @@
             intentSubtype: 'session_signup',
             trackKey: 'learn_session',
         },
+        {
+            prefix: '/hire/',
+            collectionId: '69f241ec147b71addb6f1531',
+            pageId: '69f241ed147b71addb6f153d',
+            intentFromSignupTrigger: true,
+        },
     ]
 
     var MEMBERSTACK_POLL_MS = 100
@@ -407,6 +415,7 @@
     var leadEntryPosthogRetryInFlight = null
     var leadEntryPendingFromThisPage = false
     var leadEntrySignupSubmitted = false
+    var leadEntryIntentFromThisPage = null
 
     var STAGING_HOSTS = ['localhost', '127.0.0.1']
     var STAGING_HOST_SUFFIXES = ['webflow.io', 'trycloudflare.com']
@@ -644,6 +653,26 @@
      * @param {string} pathname
      * @returns {object | null}
      */
+    var leadEntryIntentForSignupTrigger = function (raw) {
+        var value = String(raw || '').trim().toLowerCase()
+        if (value === 'hire') {
+            return { intent_subtype: 'hire', track_key: 'starter_connect' }
+        }
+        if (value === 'message') {
+            return { intent_subtype: 'message', track_key: 'starter_connect' }
+        }
+        if (value === 'book-call') {
+            return { intent_subtype: 'booking', track_key: 'starter_booking' }
+        }
+        if (value === 'service:free call') {
+            return { intent_subtype: 'booking_free', track_key: 'starter_booking' }
+        }
+        if (value === 'service:paid consulting call') {
+            return { intent_subtype: 'booking_paid', track_key: 'starter_booking' }
+        }
+        return null
+    }
+
     var leadEntryContextForPath = function (pathname) {
         try {
             var hostname =
@@ -673,12 +702,20 @@
                     return null
                 }
 
+                var intent = policy.intentFromSignupTrigger
+                    ? leadEntryIntentFromThisPage
+                    : {
+                          intent_subtype: policy.intentSubtype,
+                          track_key: policy.trackKey,
+                      }
+                if (!intent) return null
+
                 return {
                     source_route: route,
                     source_collection_id: policy.collectionId,
                     source_resource_slug: slug,
-                    intent_subtype: policy.intentSubtype,
-                    track_key: policy.trackKey,
+                    intent_subtype: intent.intent_subtype,
+                    track_key: intent.track_key,
                 }
             }
         } catch (error) {
@@ -832,7 +869,6 @@
             window.posthog.capture('v3_lead_entry_registered', {
                 track_key: pending.track_key,
                 intent_subtype: pending.intent_subtype,
-                source_route: pending.source_route,
                 source_collection_id: pending.source_collection_id,
                 payload_version: 'lead_entry_browser_v1',
             })
@@ -1346,10 +1382,22 @@
             var target = event && event.target
             if (!target || typeof target.closest !== 'function') return
             var node = target.closest(SIGNUP_TRIGGER_SELECTOR)
-            if (!node) return
-
-            var value = signupTriggerValueFrom(node)
-            if (!value) return
+            var value = node ? signupTriggerValueFrom(node) : null
+            var isUngatedLearnSignup = false
+            if (!node) {
+                var learnLink = target.closest(UNGATED_LEARN_SIGNUP_LINK_SELECTOR)
+                var learnContext = leadEntryContextForPath(
+                    (window.location && window.location.pathname) || '',
+                )
+                isUngatedLearnSignup = Boolean(
+                    learnLink &&
+                        learnContext &&
+                        learnContext.track_key === 'learn_ungated',
+                )
+                if (!isUngatedLearnSignup) return
+            } else if (!value) {
+                return
+            }
             var entry = signupModalEntry()
             if (!entry || typeof entry.open !== 'function') {
                 warn('signup modal not found, tagged CTA did not open signup')
@@ -1361,7 +1409,10 @@
             if (typeof event.stopImmediatePropagation === 'function') {
                 event.stopImmediatePropagation()
             }
-            writeCookie(SIGNUP_TRIGGER_COOKIE, value)
+            if (node) {
+                writeCookie(SIGNUP_TRIGGER_COOKIE, value)
+                leadEntryIntentFromThisPage = leadEntryIntentForSignupTrigger(value)
+            }
             if (entry.el && entry.el.open) return
             entry.open()
         } catch (error) {
