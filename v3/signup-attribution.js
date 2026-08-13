@@ -804,7 +804,7 @@
 
     /**
      * @param {object} pending
-     * @returns {void}
+     * @returns {boolean} Whether this browser session completed the capture.
      */
     var captureLeadEntryPosthog = function (pending) {
         var key

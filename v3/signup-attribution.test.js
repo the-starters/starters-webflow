@@ -421,7 +421,7 @@ function boot(options = {}) {
         console: { warn: (message) => warnings.push(message) },
         document,
         setTimeout: options.parkTimers
-            ? (handler) => parkedTimers.push(handler)
+            ? (handler, delay) => parkedTimers.push({ handler, delay: Number(delay) || 0 })
             : setTimeout,
         window,
     }
@@ -542,6 +542,12 @@ function boot(options = {}) {
         pendingLeadEntryPosthog: () => {
             const raw = session.get(LEAD_ENTRY_POSTHOG_PENDING_KEY)
             return raw === undefined ? undefined : JSON.parse(raw)
+        },
+        parkedTimerDelays: () => parkedTimers.map((timer) => timer.delay),
+        runNextParkedTimer: () => {
+            const timer = parkedTimers.shift()
+            if (timer) timer.handler()
+            return timer && timer.delay
         },
         releaseMember: () => releaseMember(),
         savedFields: () => plain(updateCalls.map((call) => call.customFields)),
@@ -1059,6 +1065,79 @@ test('an accepted lead entry retries PostHog after the real SDK loads', async ()
     })
     await third.settle()
     assert.equal(third.posthogCalls.length, 0)
+})
+
+test('an accepted lead entry uses the bounded same-page PostHog retry schedule', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/skills/growth-marketing',
+        pageId: '69cccee53fd01363c8d406f9',
+        forms: ['signup'],
+        member: null,
+        posthogLoaded: false,
+        parkTimers: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+    harness.submitSignup()
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.parkedTimerDelays(), [250])
+    assert.equal(harness.posthogCalls.length, 0)
+
+    for (const expectedDelay of [250, 1000, 3000, 7500]) {
+        assert.equal(harness.runNextParkedTimer(), expectedDelay)
+        await harness.settle()
+    }
+
+    assert.deepEqual(harness.parkedTimerDelays(), [])
+    assert.equal(harness.posthogCalls.length, 0)
+    assert.equal(harness.pendingLeadEntryPosthog().source_route, '/skills/growth-marketing')
+})
+
+test('the same-page retry captures once when PostHog finishes loading', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analyses/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+        posthogLoaded: false,
+        parkTimers: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+    harness.submitSignup()
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    harness.window.posthog.__loaded = true
+    assert.equal(harness.runNextParkedTimer(), 250)
+    await harness.settle()
+
+    assert.deepEqual(plain(harness.posthogCalls), [
+        {
+            name: 'v3_lead_entry_registered',
+            properties: {
+                track_key: 'learn_ungated',
+                intent_subtype: 'learn_signup',
+                source_route: '/learn/interviews-analyses/operator-story',
+                source_collection_id: '69dca9df095d2fbcf34e255b',
+                payload_version: 'lead_entry_browser_v1',
+            },
+        },
+    ])
+    assert.deepEqual(harness.parkedTimerDelays(), [])
+    assert.equal(harness.pendingLeadEntryPosthog(), undefined)
 })
 
 test('blocked PostHog storage cannot retry an accepted Xano registration', async () => {
