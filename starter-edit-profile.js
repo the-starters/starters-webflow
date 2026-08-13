@@ -38,10 +38,14 @@ function observeMemberstackAuth(client) {
 	if (observedMemberstackClient === client) return;
 	observedMemberstackClient = client;
 	observedMemberstackMemberId = memberFromResult(window.MEMBER)?.id || '';
+	let awaitingInitialNotification = true;
 	if (typeof client?.onAuthChange === 'function') {
 		client.onAuthChange((result) => {
 			const nextMemberId = memberFromResult(result)?.id || '';
-			if (!nextMemberId || nextMemberId === observedMemberstackMemberId) return;
+			if (awaitingInitialNotification) {
+				awaitingInitialNotification = false;
+				if (nextMemberId && nextMemberId === observedMemberstackMemberId) return;
+			}
 			observedMemberstackMemberId = nextMemberId;
 			memberAuthGeneration += 1;
 		});
