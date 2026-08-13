@@ -805,6 +805,19 @@ test('a narrow iPhone member does not load Vimeo\'s bar, so ambient stays chip-f
   assert.match(src(s.frame()), /muted=1/)
 })
 
+test('a narrow iPhone member still enters fullscreen on the watch tap', async () => {
+  // Turning Vimeo's bar off must not drop the OS-player request. Same tap,
+  // same gesture, same API call — only the Unmute chip is gone.
+  const s = await setup({
+    member: 'in',
+    width: 375,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+  })
+  s.watch().click()
+  assert.equal(s.live().did('requestFullscreen').length, 1)
+  assert.equal(s.state().armed, true)
+})
+
 test('a gated iPhone visitor still has no scrubber', async () => {
   const s = await setup({
     member: 'out',
