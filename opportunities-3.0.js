@@ -2209,6 +2209,7 @@
   let projectWorkflowActionLocks = new Map()
   let projectWorkflowFeedbackElement = null
   let projectWorkflowFeedbackTimer = null
+  const projectContractObjectUrls = new Map()
   const projectActionFeedbackTimers = new WeakMap()
   let activeReviewProject = null
   let activeCallReviewBooking = null
@@ -3172,6 +3173,7 @@
     projectWorkflowActionLocks.set(projectId, 'contract')
     setProjectContractPending(projectId, true, action)
     let contractWindow = null
+    let releaseObjectUrl = null
     try {
       const project = await currentProjectContext(card, true)
       if (!project) {
@@ -3200,18 +3202,24 @@
           throw new Error('Completed contract cannot be opened')
         }
         url = objectUrlOwner.createObjectURL(blob)
+        releaseObjectUrl = trackProjectContractObjectUrl(objectUrlOwner, url)
       } else {
         const result = await API.contractLink(project.id || project.project_id)
         url = String(result && result.url || '').trim()
         if (!url) throw new Error('Contract link was not returned')
       }
       if (contractWindow && !contractWindow.closed) {
+        if (releaseObjectUrl && typeof contractWindow.addEventListener === 'function') {
+          contractWindow.addEventListener('load', releaseObjectUrl, { once: true })
+        }
         contractWindow.opener = null
         contractWindow.location.href = url
       } else {
+        if (releaseObjectUrl) window.addEventListener('pagehide', releaseObjectUrl, { once: true })
         window.location.href = url
       }
     } catch (error) {
+      if (releaseObjectUrl) releaseObjectUrl()
       if (contractWindow && !contractWindow.closed) contractWindow.close()
       showProjectContractFeedback(
         projectId,
@@ -3584,6 +3592,25 @@
     )
   }
 
+  function trackProjectContractObjectUrl(owner, url) {
+    let timer = null
+    let released = false
+    const release = () => {
+      if (released) return
+      released = true
+      projectContractObjectUrls.delete(url)
+      if (timer !== null) window.clearTimeout(timer)
+      if (typeof owner.revokeObjectURL === 'function') owner.revokeObjectURL(url)
+    }
+    projectContractObjectUrls.set(url, release)
+    timer = window.setTimeout(release, 60000)
+    return release
+  }
+
+  function revokeProjectContractObjectUrls() {
+    for (const release of projectContractObjectUrls.values()) release()
+  }
+
   function unwireProjectDashboardWorkflow() {
     projectReviewOpenGeneration += 1
     const binding = projectWorkflowBinding
@@ -3603,6 +3630,7 @@
     projectWorkflowProjectionUnsubscribe = null
     projectWorkflowProjectionInstance = null
     projectWorkflowActionLocks = new Map()
+    revokeProjectContractObjectUrls()
     window.clearTimeout(projectWorkflowFeedbackTimer)
     projectWorkflowFeedbackTimer = null
     if (projectWorkflowFeedbackElement) {

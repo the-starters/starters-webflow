@@ -3012,9 +3012,21 @@ test('completed Standard Contracts use the protected-PDF route and never mint a 
       routeGuard: true,
     },
   )
-  const contractWindow = { closed: false, location: {}, opener: bridge.window }
+  let contractLoaded
+  const contractWindow = {
+    closed: false,
+    location: {},
+    opener: bridge.window,
+    addEventListener(type, listener) {
+      if (type === 'load') contractLoaded = listener
+    },
+  }
+  const revokedUrls = []
   bridge.window.open = () => contractWindow
-  bridge.window.URL = { createObjectURL: () => 'blob:signed-contract-715' }
+  bridge.window.URL = {
+    createObjectURL: () => 'blob:signed-contract-715',
+    revokeObjectURL: (url) => revokedUrls.push(url),
+  }
   assert.ok(await waitFor(() => wrap.style.display === ''))
   assert.equal(label.textContent, 'View Signed Contract')
 
@@ -3024,6 +3036,11 @@ test('completed Standard Contracts use the protected-PDF route and never mint a 
   assert.deepEqual(requests, ['https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/contracts/download/v3'])
   assert.equal(requests.some((url) => url.includes('/contracts/link/v3')), false)
   assert.equal(contractWindow.opener, null)
+  assert.deepEqual(revokedUrls, [])
+
+  contractLoaded()
+
+  assert.deepEqual(revokedUrls, ['blob:signed-contract-715'])
 })
 
 test('View Contract closes its blank popup and reports a safe error when Xano returns no URL', async () => {
