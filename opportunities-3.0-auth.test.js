@@ -2981,7 +2981,7 @@ test('completed Standard Contracts use the protected-PDF route and never mint a 
   const requests = []
   const pdf = new Blob(['signed-contract'], { type: 'application/pdf' })
   const bridge = await loadBridge(
-    async (input) => {
+    async (input, init = {}) => {
       const url = String(input)
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
       if (url.includes('/brand/projects/mine')) {
@@ -2998,7 +2998,7 @@ test('completed Standard Contracts use the protected-PDF route and never mint a 
           }],
         })
       }
-      requests.push(url)
+      requests.push({ url, init })
       if (url.includes('/contracts/download/v3')) return binaryResponse(pdf)
       throw new Error(`Unexpected request: ${url}`)
     },
@@ -3033,14 +3033,97 @@ test('completed Standard Contracts use the protected-PDF route and never mint a 
   bridge.dispatchDocument('click', clickEvent(contract).event)
 
   assert.ok(await waitFor(() => contractWindow.location.href === 'blob:signed-contract-715'))
-  assert.deepEqual(requests, ['https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/contracts/download/v3'])
-  assert.equal(requests.some((url) => url.includes('/contracts/link/v3')), false)
+  assert.deepEqual(requests.map(({ url }) => url), [
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/contracts/download/v3',
+  ])
+  assert.equal(requests.some(({ url }) => url.includes('/contracts/link/v3')), false)
+  assert.equal(requests[0].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[0].init.body), { project_id: 715 })
   assert.equal(contractWindow.opener, null)
   assert.deepEqual(revokedUrls, [])
 
   contractLoaded()
 
   assert.deepEqual(revokedUrls, ['blob:signed-contract-715'])
+})
+
+test('completed contract access fails closed when Xano rejects owner or environment', async () => {
+  for (const rejection of [
+    { name: 'wrong owner', status: 403 },
+    { name: 'wrong environment', status: 404 },
+  ]) {
+    const contract = el('a', { href: '#contract' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'View Contract'
+    const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '715' }, [wrap])
+    const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+    const requests = []
+    const bridge = await loadBridge(
+      async (input) => {
+        const url = String(input)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+        if (url.includes('/brand/projects/mine')) {
+          return response({
+            items: [{
+              id: 715,
+              sync_origin: 'v3',
+              contract_source: 'standard',
+              lifecycle_state: 'active',
+              contract_status: 'completed',
+              pandadoc_document_id: 'doc-715',
+            }],
+          })
+        }
+        requests.push(url)
+        if (url.includes('/contracts/download/v3')) {
+          return response({ message: rejection.name }, false, rejection.status)
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      },
+      {
+        member: paidBrandMember,
+        pathname: '/brand-dashboard',
+        querySelector: (selector) =>
+          selectorMatches(root, selector) ? root : root.querySelector(selector),
+        querySelectorAll: (selector) =>
+          [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+        routeGuard: true,
+      },
+    )
+    const originalHref = bridge.location.href
+    const contractWindow = {
+      closed: false,
+      close() { this.closed = true },
+      location: {},
+      opener: bridge.window,
+    }
+    let objectUrlsCreated = 0
+    bridge.window.open = () => contractWindow
+    bridge.window.URL = {
+      createObjectURL() {
+        objectUrlsCreated += 1
+        return 'blob:must-not-open'
+      },
+      revokeObjectURL() {},
+    }
+    assert.ok(await waitFor(() => wrap.style.display === ''), rejection.name)
+
+    bridge.dispatchDocument('click', clickEvent(contract).event)
+
+    assert.ok(
+      await waitFor(() => wrap.getAttribute('data-project-action-result') === 'error'),
+      rejection.name,
+    )
+    assert.deepEqual(requests, [
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/contracts/download/v3',
+    ], rejection.name)
+    assert.equal(contractWindow.closed, true, rejection.name)
+    assert.deepEqual(contractWindow.location, {}, rejection.name)
+    assert.equal(bridge.location.href, originalHref, rejection.name)
+    assert.equal(objectUrlsCreated, 0, rejection.name)
+    assert.equal(label.textContent, 'Contract is unavailable. Please try again.', rejection.name)
+  }
 })
 
 test('View Contract closes its blank popup and reports a safe error when Xano returns no URL', async () => {
