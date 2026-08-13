@@ -96,6 +96,9 @@ class Element {
     if (selector === '[dx-button="review"]') {
       return this.getAttribute('dx-button') === 'review' ? this : null
     }
+    if (selector === '[dx-button="edit"]') {
+      return this.getAttribute('dx-button') === 'edit' ? this : null
+    }
     return null
   }
   querySelector(selector) {
@@ -730,6 +733,49 @@ test('Review then submit restores preview fields without enabling authored disab
   assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
   assert.equal(renderedBrand.textContent, 'Brand')
   assert.equal(loaded.form.fields.company.disabled, false)
+  assert.equal(loaded.form.fields.email.disabled, true)
+})
+
+test('Review Edit fee change refreshes preview controls and preserves authored disabled fields', async () => {
+  const loaded = load({
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
+  })
+  const review = new Element({ 'dx-button': 'review', tagName: 'button' })
+  const edit = new Element({ 'dx-button': 'edit', tagName: 'button' })
+  review.form = loaded.form
+  edit.form = loaded.form
+  const flatCost = new Element({ value: '1000' })
+  const monthlyRate = new Element({ value: '3200', disabled: true })
+  flatCost.form = loaded.form
+  monthlyRate.form = loaded.form
+  loaded.form.controls.push(flatCost, monthlyRate)
+  let renderedMonthlyRate = ''
+  loaded.wrapper.success.onAttributeChange = (name, value) => {
+    if (name === 'aria-hidden' && value === 'false') {
+      renderedMonthlyRate = monthlyRate.disabled ? '' : monthlyRate.value
+    }
+  }
+
+  loaded.api.prepareStarterContext(loaded.form)
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  loaded.document.captureListeners.click({ target: review })
+  loaded.form.controls.forEach((control) => { control.disabled = true })
+
+  // The legacy Edit handler enables all controls before the document listener
+  // reapplies Starter identity state and the selected fee branch changes.
+  loaded.form.controls.forEach((control) => { control.disabled = false })
+  loaded.document.listeners.click({ target: edit })
+  flatCost.disabled = true
+  monthlyRate.disabled = false
+
+  loaded.document.captureListeners.click({ target: review })
+  loaded.form.controls.forEach((control) => { control.disabled = true })
+
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(renderedMonthlyRate, '3200')
+  assert.equal(flatCost.disabled, true)
+  assert.equal(monthlyRate.disabled, false)
   assert.equal(loaded.form.fields.email.disabled, true)
 })
 

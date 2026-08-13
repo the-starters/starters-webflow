@@ -30,6 +30,7 @@
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
   var REVIEW_CONTROL_SELECTOR = 'input, select, textarea'
   var REVIEW_TRIGGER_SELECTOR = '[dx-button="review"]'
+  var EDIT_TRIGGER_SELECTOR = '[dx-button="edit"]'
   var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
   var PROFILE_BIND_SELECTOR = '[data-project-bind]'
   var LEGACY_PROFILE_BIND_SELECTOR = '[element]'
@@ -583,7 +584,6 @@
 
   function captureReviewControls(form) {
     var current = formState(form)
-    if (current.reviewControls) return
     var controls = form.querySelectorAll ? form.querySelectorAll(REVIEW_CONTROL_SELECTOR) : []
     current.reviewControls = Array.prototype.map.call(controls, function (control) {
       return { control: control, disabled: Boolean(control.disabled) }
@@ -808,6 +808,10 @@
     }, true)
     documentObject.addEventListener('click', function (event) {
       var clickedForm = formFromTarget(event.target)
+      var edit = event.target && event.target.closest ? event.target.closest(EDIT_TRIGGER_SELECTOR) : null
+      // The legacy Edit handler enables every control. Reapply the authored
+      // Starter-only identity state before the next Review snapshot is taken.
+      if (clickedForm && edit) prepareStarterContext(clickedForm)
       if (clickedForm) syncCommercialForm(clickedForm, documentObject, globalObject)
       var trigger = event.target && event.target.closest ? event.target.closest(TRIGGER_SELECTOR) : null
       if (trigger) {
