@@ -27,6 +27,7 @@
   var startedAt = 0
   var pendingStart = false
   var pendingOutcome = null
+  var awaitingAuthoredOutcome = false
   var successRedirectScheduled = false
 
   function allowed() {
@@ -173,7 +174,6 @@
       )
       api.decorate(textTarget, receipt)
     }
-    if (result === 'success') scheduleSuccessRedirect()
     return receipt
   }
 
@@ -190,6 +190,10 @@
   }
 
   function observeOutcome(result, errorCode, target) {
+    if (awaitingAuthoredOutcome) {
+      awaitingAuthoredOutcome = false
+      if (result === 'success') scheduleSuccessRedirect()
+    }
     pendingOutcome = { result: result, errorCode: errorCode, target: target }
     if (window.StartersWorkflowDiagnostics) {
       flushPending()
@@ -210,6 +214,7 @@
 
     trigger.addEventListener('click', function () {
       if (disabled(trigger)) return
+      awaitingAuthoredOutcome = true
       pendingStart = true
       if (window.StartersWorkflowDiagnostics) {
         flushPending()

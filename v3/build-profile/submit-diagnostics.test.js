@@ -27,7 +27,7 @@ class Element {
   closest() { return null }
 }
 
-function boot({ delayHelper = false } = {}) {
+function boot({ delayHelper = false, helperUnavailable = false } = {}) {
   const form = new Element({ 'build-profile-form': '' })
   const trigger = new Element({ 'form-submit': '' })
   const success = new Element({ 'build-profile-success': '' })
@@ -81,7 +81,9 @@ function boot({ delayHelper = false } = {}) {
     console: window.console, document, setTimeout, window,
   })
   let resolveHelper = null
-  if (delayHelper) {
+  if (helperUnavailable) {
+    window.__startersWorkflowDiagnosticsReady = Promise.resolve(null)
+  } else if (delayHelper) {
     window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => { resolveHelper = resolve })
   } else {
     new vm.Script(helperSource).runInContext(context)
@@ -128,6 +130,24 @@ test('authored success routes to Starter Onboarding after the clean success stat
   page.observers[0].callback()
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.deepEqual(page.redirects, ['/starter-onboarding'])
+})
+
+test('authored success still routes when diagnostics are unavailable', async () => {
+  const page = boot({ helperUnavailable: true })
+  page.trigger.dispatch('click')
+  await tick()
+  page.success.style.display = 'block'
+  page.observers[0].callback()
+  await new Promise((resolve) => setTimeout(resolve, 1250))
+  assert.deepEqual(page.redirects, ['/starter-onboarding'])
+})
+
+test('success state without an authored submit does not route', async () => {
+  const page = boot({ helperUnavailable: true })
+  page.success.style.display = 'block'
+  page.observers[0].callback()
+  await new Promise((resolve) => setTimeout(resolve, 1250))
+  assert.deepEqual(page.redirects, [])
 })
 
 test('authored error records a stable failure without form data', async () => {
