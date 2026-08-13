@@ -770,6 +770,65 @@ markup nobody would think of as a change. Widening the veto costs at most a miss
 attribution, while narrowing it would cost a false `CompleteRegistration` on every
 login on such a page, which is the failure the veto exists to prevent.
 
+### V3 Collection and Learn lead-entry registration
+
+The sitewide attribution controller also registers the non-quiz Collection and
+Learn entry event after a real production signup. This path is V3 production
+only. It requires all three conditions:
+
+1. The host is exactly `thestarters.com` or `www.thestarters.com`.
+2. The current path is one CMS item route in the Xano `lead_email/register/v3`
+   allowlist, and the rendered `data-wf-page` is that collection's published
+   Webflow template page. A 404 with a valid-looking URL fails closed.
+3. The browser observed `submit` on `form[data-ms-form="signup"]` before the
+   logged-out to logged-in Memberstack transition.
+
+The submit requirement is separate from the broader attribution watch. A CMS
+modal can later swap to an "already have an account" login. That login can still
+look like an auth transition, but it did not submit the signup form, so it cannot
+create a lead-entry event.
+
+| Track | Exact route prefix | Webflow collection ID | Template page ID | Intent subtype |
+| --- | --- | --- | --- | --- |
+| Collection | `/skills/` | `69cccee53fd01363c8d406f3` | `69cccee53fd01363c8d406f9` | `collection_signup` |
+| Collection | `/tools/` | `69ccce82af83f16acf711e18` | `69ccce82af83f16acf711e1e` | `collection_signup` |
+| Collection | `/industries/` | `69cccd9d0354a390eb378509` | `69cccd9e0354a390eb37855c` | `collection_signup` |
+| Collection | `/companies/` | `69f23440f1e67c01bcd642ca` | `69f23440f1e67c01bcd642d0` | `collection_signup` |
+| Collection | `/categories/` | `69f2329d4f5bacf6765c1ca1` | `69f2329e4f5bacf6765c1cc6` | `collection_signup` |
+| Collection | `/subcategories/` | `69f233f6f3e97748419e3a3d` | `69f233f7f3e97748419e3a43` | `collection_signup` |
+| Learn gated | `/learn/playbooks-frameworks/` | `69e1e416f6476e12f572b39b` | `69e1e417f6476e12f572b468` | `learn_unlock` |
+| Learn ungated | `/learn/interviews-analyses/` | `69dca9df095d2fbcf34e255b` | `69dca9df095d2fbcf34e2575` | `learn_signup` |
+| Learn session | `/learn/sessions/` | `69e08554183023227aa46c1e` | `69e08554183023227aa46c24` | `session_signup` |
+
+Before Memberstack redirects, the script stores a member-scoped pending snapshot
+in `sessionStorage`. The current page attempts the authenticated Xano request;
+the destination page retries it if navigation interrupted the first request.
+The snapshot expires after 24 hours and cannot move to another Memberstack
+member. Xano owns the stable idempotency key, current Brand Free plan check,
+suppression, and provider worker. The browser never calls Mailchimp.
+
+After Xano accepts the row, the script makes one best-effort PostHog capture of
+`v3_lead_entry_registered` and records it at most once per accepted event and
+CMS resource in the browser session. Missing analytics never affects
+registration and is not retried after Xano has accepted the row. Properties
+contain only the track, intent, route, collection ID, and payload version. They
+contain no name, email, or member ID. The Xano payload can include only
+`utm_source`, `utm_campaign`, `utm_adset`, `utm_content`, `signup_source`,
+`signup_referrer`, and `signup_trigger`, plus the fixed
+`client_payload_version`. Each optional value is trimmed, limited to 300
+characters, and omitted if empty or if it contains `<` or `>`. Canonical first
+name is resolved server-side.
+
+Run the focused contract suite with:
+
+```sh
+node --test v3/signup-attribution.test.js
+```
+
+The suite pins every path and collection ID to the Xano allowlist, proves the
+signup-submit gate, exact production-host gate, member-scoped redirect retry,
+authenticated request body, and PostHog payload.
+
 The scan runs once at `DOMContentLoaded`. `window.StartersAttribution.rearm()` re-runs
 it for a caller that injects a signup form later, the same shape as
 `window.StartersMsRedirect.apply()` in `starters-ms-redirect.js`. It returns whether
@@ -777,9 +836,10 @@ the watch is armed and is a no-op once it is, because a second `onAuthChange` li
 would fire `CompleteRegistration` twice.
 
 The script binds a capture-phase `click` listener for Signup Trigger
-(`data-signup-trigger-element`). It does not bind form or submit listeners. It
-reads the DOM to decide whether to watch, and stamps a trigger only when a
-confirmed logged-out visitor clicks a tagged CTA (opening the signup modal).
+(`data-signup-trigger-element`) and a delegated capture-phase `submit` listener
+for the V3 lead-entry gate. It reads the DOM to decide whether to watch, and
+stamps a trigger only when a confirmed logged-out visitor clicks a tagged CTA
+(opening the signup modal).
 
 ### CompleteRegistration
 

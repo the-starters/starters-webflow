@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.199
+ * @release v1.59.209
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
  * one funnel, which is why it lives here in `v3/` alongside the other standalone
@@ -188,6 +188,17 @@
  * write, unless a stale marker was already present at load and this page's own
  * signup re-raised it while that retry's member read was still in flight.
  *
+ * V3 lead-entry registration. On an exact production Collection or Learn CMS
+ * item route, the same unambiguous logged-out to logged-in transition also
+ * snapshots one pending lead-entry event before Memberstack redirects. The
+ * next page retries the authenticated Xano registration if navigation cut the
+ * first request off. The browser never calls Mailchimp. Xano endpoint
+ * `lead_email/register/v3` owns identity, Brand Free eligibility, route and CMS
+ * collection allowlists, suppression, and idempotency. Unsupported routes and
+ * non-production hosts fail closed. The accepted event is reported to PostHog
+ * at most once per event and CMS resource in the browser session, without
+ * member IDs or email addresses.
+ *
  * Debug: `window.StartersAttribution.getParams()` returns the current cookie
  * values, and `window.StartersAttribution.rearm()` reports (and, if a signup form
  * has appeared since load, starts) the signup watch. Diagnostics are staging-only
@@ -202,7 +213,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.199'
+    var RELEASE = 'v1.59.209'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -309,8 +320,90 @@
     var PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
     var PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 
+    var LEAD_ENTRY_PENDING_KEY = 'startersLeadEntryPendingV1'
+    var LEAD_ENTRY_POSTHOG_PREFIX = 'startersLeadEntryPosthogV1:'
+    var LEAD_ENTRY_AUTH_BASE =
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
+    var LEAD_ENTRY_API_URL =
+        'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/lead_email/register/v3'
+    var LEAD_ENTRY_RETRY_DELAYS = [0, 750, 2000, 5000]
+    var LEAD_ENTRY_MAX_AGE_MS = 24 * 60 * 60 * 1000
+    var LEAD_ENTRY_PRODUCTION_HOSTS = {
+        'thestarters.com': true,
+        'www.thestarters.com': true,
+    }
+    var LEAD_ENTRY_PATH_POLICIES = [
+        {
+            prefix: '/skills/',
+            collectionId: '69cccee53fd01363c8d406f3',
+            pageId: '69cccee53fd01363c8d406f9',
+            intentSubtype: 'collection_signup',
+            trackKey: 'collection',
+        },
+        {
+            prefix: '/tools/',
+            collectionId: '69ccce82af83f16acf711e18',
+            pageId: '69ccce82af83f16acf711e1e',
+            intentSubtype: 'collection_signup',
+            trackKey: 'collection',
+        },
+        {
+            prefix: '/industries/',
+            collectionId: '69cccd9d0354a390eb378509',
+            pageId: '69cccd9e0354a390eb37855c',
+            intentSubtype: 'collection_signup',
+            trackKey: 'collection',
+        },
+        {
+            prefix: '/companies/',
+            collectionId: '69f23440f1e67c01bcd642ca',
+            pageId: '69f23440f1e67c01bcd642d0',
+            intentSubtype: 'collection_signup',
+            trackKey: 'collection',
+        },
+        {
+            prefix: '/categories/',
+            collectionId: '69f2329d4f5bacf6765c1ca1',
+            pageId: '69f2329e4f5bacf6765c1cc6',
+            intentSubtype: 'collection_signup',
+            trackKey: 'collection',
+        },
+        {
+            prefix: '/subcategories/',
+            collectionId: '69f233f6f3e97748419e3a3d',
+            pageId: '69f233f7f3e97748419e3a43',
+            intentSubtype: 'collection_signup',
+            trackKey: 'collection',
+        },
+        {
+            prefix: '/learn/playbooks-frameworks/',
+            collectionId: '69e1e416f6476e12f572b39b',
+            pageId: '69e1e417f6476e12f572b468',
+            intentSubtype: 'learn_unlock',
+            trackKey: 'learn_gated',
+        },
+        {
+            prefix: '/learn/interviews-analyses/',
+            collectionId: '69dca9df095d2fbcf34e255b',
+            pageId: '69dca9df095d2fbcf34e2575',
+            intentSubtype: 'learn_signup',
+            trackKey: 'learn_ungated',
+        },
+        {
+            prefix: '/learn/sessions/',
+            collectionId: '69e08554183023227aa46c1e',
+            pageId: '69e08554183023227aa46c24',
+            intentSubtype: 'session_signup',
+            trackKey: 'learn_session',
+        },
+    ]
+
     var MEMBERSTACK_POLL_MS = 100
     var MEMBERSTACK_MAX_WAIT_MS = 10000
+
+    var leadEntryRegistrationInFlight = null
+    var leadEntryPendingFromThisPage = false
+    var leadEntrySignupSubmitted = false
 
     var STAGING_HOSTS = ['localhost', '127.0.0.1']
     var STAGING_HOST_SUFFIXES = ['webflow.io', 'trycloudflare.com']
@@ -538,6 +631,395 @@
             path = path.slice(0, -1)
         }
         return path
+    }
+
+    /**
+     * Resolves one exact V3 production CMS item route to the allowlisted Xano
+     * lead-entry contract. A list page, nested path, query string, unsupported
+     * host, or malformed slug returns null.
+     *
+     * @param {string} pathname
+     * @returns {object | null}
+     */
+    var leadEntryContextForPath = function (pathname) {
+        try {
+            var hostname =
+                (window.location && window.location.hostname || '').toLowerCase()
+            if (!LEAD_ENTRY_PRODUCTION_HOSTS[hostname]) return null
+
+            var route = normalizePath(pathname)
+            for (var index = 0; index < LEAD_ENTRY_PATH_POLICIES.length; index += 1) {
+                var policy = LEAD_ENTRY_PATH_POLICIES[index]
+                if (route.indexOf(policy.prefix) !== 0) continue
+
+                var renderedPageId =
+                    document &&
+                    document.documentElement &&
+                    typeof document.documentElement.getAttribute === 'function'
+                        ? trimmed(document.documentElement.getAttribute('data-wf-page'))
+                        : ''
+                if (!renderedPageId || renderedPageId !== policy.pageId) return null
+
+                var slug = route.slice(policy.prefix.length)
+                if (
+                    !slug ||
+                    slug.length > 160 ||
+                    slug.indexOf('/') !== -1 ||
+                    !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(slug)
+                ) {
+                    return null
+                }
+
+                return {
+                    source_route: route,
+                    source_collection_id: policy.collectionId,
+                    source_resource_slug: slug,
+                    intent_subtype: policy.intentSubtype,
+                    track_key: policy.trackKey,
+                }
+            }
+        } catch (error) {
+            /* unsupported or unreadable routes fail closed */
+        }
+        return null
+    }
+
+    /**
+     * @param {string} value
+     * @param {number} limit
+     * @returns {string | null}
+     */
+    var safeLeadEntryProperty = function (value, limit) {
+        var normalized = trimmed(value)
+        if (!normalized || normalized.indexOf('<') !== -1 || normalized.indexOf('>') !== -1) {
+            return null
+        }
+        return normalized.slice(0, limit)
+    }
+
+    /**
+     * Provider-visible properties are an explicit, non-PII allowlist. Xano adds
+     * the canonical first name server-side and never trusts a browser name.
+     *
+     * @returns {object}
+     */
+    var leadEntryProperties = function () {
+        var properties = { client_payload_version: 'lead_entry_browser_v1' }
+        ;[
+            'utm_source',
+            'utm_campaign',
+            'utm_adset',
+            'utm_content',
+            'signup_source',
+            'signup_referrer',
+            'signup_trigger',
+        ].forEach(function (name) {
+            var value = safeLeadEntryProperty(readCookie(name), 300)
+            if (value) properties[name] = value
+        })
+        return properties
+    }
+
+    /**
+     * @returns {object | null}
+     */
+    var readPendingLeadEntry = function () {
+        try {
+            var storage = window.sessionStorage
+            if (!storage) return null
+            var raw = storage.getItem(LEAD_ENTRY_PENDING_KEY)
+            if (!raw) return null
+            var pending = JSON.parse(raw)
+            if (!pending || typeof pending !== 'object' || Array.isArray(pending)) {
+                return null
+            }
+            return pending
+        } catch (error) {
+            return null
+        }
+    }
+
+    /**
+     * @param {object} pending
+     * @returns {void}
+     */
+    var writePendingLeadEntry = function (pending) {
+        try {
+            var storage = window.sessionStorage
+            if (!storage) return
+            storage.setItem(LEAD_ENTRY_PENDING_KEY, JSON.stringify(pending))
+        } catch (error) {
+            /* blocked storage fails closed because registration reads this snapshot */
+        }
+    }
+
+    /** @returns {void} */
+    var clearPendingLeadEntry = function () {
+        try {
+            var storage = window.sessionStorage
+            if (storage) storage.removeItem(LEAD_ENTRY_PENDING_KEY)
+        } catch (error) {
+            /* an uncleared snapshot remains safe because Xano is idempotent */
+        }
+    }
+
+    /**
+     * @param {number} delay
+     * @returns {Promise<void>}
+     */
+    var wait = function (delay) {
+        return new Promise(function (resolve) {
+            setTimeout(resolve, delay)
+        })
+    }
+
+    /**
+     * @param {object} memberstack
+     * @returns {Promise<string>}
+     */
+    var tradeLeadEntryToken = async function (memberstack) {
+        if (!memberstack || typeof memberstack.getMemberCookie !== 'function') {
+            throw new Error('Memberstack session unavailable')
+        }
+        var memberstackToken = await memberstack.getMemberCookie()
+        if (!memberstackToken) throw new Error('Memberstack session unavailable')
+
+        var response = await window.fetch(
+            LEAD_ENTRY_AUTH_BASE +
+                '/auth/trade-token/v3?token=' +
+                encodeURIComponent(memberstackToken),
+            { method: 'GET', credentials: 'omit' },
+        )
+        var body = await response.json().catch(function () {
+            return null
+        })
+        var token =
+            typeof body === 'string' ? body : body && (body.authToken || body.token)
+        if (!response.ok || !token) throw new Error('V3 session exchange failed')
+        return token
+    }
+
+    /**
+     * @param {object} pending
+     * @returns {void}
+     */
+    var captureLeadEntryPosthog = function (pending) {
+        try {
+            var key =
+                LEAD_ENTRY_POSTHOG_PREFIX +
+                pending.source_event_id + ':' +
+                pending.source_collection_id + ':' +
+                pending.source_resource_slug
+            var storage = window.sessionStorage
+            if (storage && storage.getItem(key) === 'true') return
+            if (!window.posthog || typeof window.posthog.capture !== 'function') return
+
+            window.posthog.capture('v3_lead_entry_registered', {
+                track_key: pending.track_key,
+                intent_subtype: pending.intent_subtype,
+                source_route: pending.source_route,
+                source_collection_id: pending.source_collection_id,
+                payload_version: 'lead_entry_browser_v1',
+            })
+            if (storage) storage.setItem(key, 'true')
+        } catch (error) {
+            /* analytics must never affect registration */
+        }
+    }
+
+    /**
+     * @param {object} memberstack
+     * @param {object} member
+     * @returns {Promise<boolean>}
+     */
+    var registerPendingLeadEntry = async function (memberstack, member) {
+        if (leadEntryRegistrationInFlight) return leadEntryRegistrationInFlight
+
+        leadEntryRegistrationInFlight = (async function () {
+            var pending = readPendingLeadEntry()
+            if (!pending) return false
+
+            var currentMember = getMemberData(member)
+            if (!currentMember && memberstack && typeof memberstack.getCurrentMember === 'function') {
+                currentMember = getMemberData(await memberstack.getCurrentMember())
+            }
+            if (!isLoggedInMember(currentMember)) return false
+
+            var currentMemberId = trimmed(currentMember.id || currentMember._id)
+            if (!currentMemberId || currentMemberId !== pending.expected_member_id) {
+                clearPendingLeadEntry()
+                return false
+            }
+
+            if (
+                !LEAD_ENTRY_PRODUCTION_HOSTS[
+                    ((window.location && window.location.hostname) || '').toLowerCase()
+                ] ||
+                Date.now() - Number(pending.captured_at || 0) > LEAD_ENTRY_MAX_AGE_MS
+            ) {
+                clearPendingLeadEntry()
+                return false
+            }
+
+            for (var attempt = 0; attempt < LEAD_ENTRY_RETRY_DELAYS.length; attempt += 1) {
+                if (LEAD_ENTRY_RETRY_DELAYS[attempt]) {
+                    await wait(LEAD_ENTRY_RETRY_DELAYS[attempt])
+                }
+                try {
+                    var token = await tradeLeadEntryToken(memberstack)
+                    var response = await window.fetch(LEAD_ENTRY_API_URL, {
+                        method: 'POST',
+                        credentials: 'omit',
+                        headers: {
+                            Authorization: 'Bearer ' + token,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            source_event_id: pending.source_event_id,
+                            source_route: pending.source_route,
+                            source_collection_id: pending.source_collection_id,
+                            source_resource_slug: pending.source_resource_slug,
+                            intent_subtype: pending.intent_subtype,
+                            properties: pending.properties,
+                        }),
+                    })
+                    var body = await response.json().catch(function () {
+                        return null
+                    })
+                    if (response.ok && body && body.ok === true) {
+                        clearPendingLeadEntry()
+                        captureLeadEntryPosthog(pending)
+                        return true
+                    }
+                    if (
+                        response.status >= 400 &&
+                        response.status < 500 &&
+                        response.status !== 401 &&
+                        response.status !== 408 &&
+                        response.status !== 429
+                    ) {
+                        clearPendingLeadEntry()
+                        warn('lead-entry registration rejected by its V3 contract')
+                        return false
+                    }
+                } catch (error) {
+                    /* the bounded retry loop owns transient failures */
+                }
+            }
+
+            warn('lead-entry registration deferred to the next page load')
+            return false
+        })()
+
+        try {
+            return await leadEntryRegistrationInFlight
+        } finally {
+            leadEntryRegistrationInFlight = null
+        }
+    }
+
+    /**
+     * Snapshot before the signup redirect, then start the best-effort current
+     * page attempt. The next V3 production page repeats it if navigation wins.
+     *
+     * @param {object} memberstack
+     * @param {object} member
+     * @returns {void}
+     */
+    var persistLeadEntryAfterSignup = function (memberstack, member) {
+        try {
+            if (!leadEntrySignupSubmitted) return
+            var context = leadEntryContextForPath(
+                (window.location && window.location.pathname) || '',
+            )
+            var currentMember = getMemberData(member)
+            var memberId = trimmed(currentMember && (currentMember.id || currentMember._id))
+            if (!context || !memberId) return
+
+            var sourceEventId = ensureEventId()
+            if (!sourceEventId || sourceEventId.indexOf(EVENT_ID_PREFIX) !== 0) return
+
+            leadEntryPendingFromThisPage = true
+            var pending = {
+                expected_member_id: memberId,
+                source_event_id: sourceEventId,
+                source_route: context.source_route,
+                source_collection_id: context.source_collection_id,
+                source_resource_slug: context.source_resource_slug,
+                intent_subtype: context.intent_subtype,
+                track_key: context.track_key,
+                properties: leadEntryProperties(),
+                captured_at: Date.now(),
+            }
+            writePendingLeadEntry(pending)
+            leadEntrySignupSubmitted = false
+            runSafely(function () {
+                return registerPendingLeadEntry(memberstack, currentMember)
+            }, 'lead-entry registration failed')
+        } catch (error) {
+            /* a missed lead event must never break signup */
+        }
+    }
+
+    /**
+     * @returns {Promise<void>}
+     */
+    var retryPendingLeadEntry = async function () {
+        if (!readPendingLeadEntry()) return
+
+        var memberstack = await waitForMemberstack()
+        if (!memberstack) return
+        var member = null
+        try {
+            member = getMemberData(await memberstack.getCurrentMember())
+        } catch (error) {
+            return
+        }
+        if (!isLoggedInMember(member)) {
+            if (!leadEntryPendingFromThisPage) clearPendingLeadEntry()
+            return
+        }
+        await registerPendingLeadEntry(memberstack, member)
+    }
+
+    /**
+     * A CMS page can also expose an "already have an account" login inside the
+     * same modal after initial DOM detection. Requiring the actual signup form's
+     * submit event keeps that login from creating a lead-entry event.
+     *
+     * @param {Event} event
+     * @returns {void}
+     */
+    var onLeadEntrySignupSubmit = function (event) {
+        try {
+            if (
+                !leadEntryContextForPath(
+                    (window.location && window.location.pathname) || '',
+                )
+            ) {
+                return
+            }
+            var target = event && event.target
+            if (!target || typeof target.getAttribute !== 'function') return
+            var formKind = target.getAttribute('data-ms-form')
+            if (formKind === 'login') {
+                leadEntrySignupSubmitted = false
+                return
+            }
+            if (formKind === 'signup') leadEntrySignupSubmitted = true
+        } catch (error) {
+            /* an unreadable form fails closed */
+        }
+    }
+
+    /** @returns {void} */
+    var bindLeadEntrySignupSubmit = function () {
+        try {
+            if (!document || typeof document.addEventListener !== 'function') return
+            document.addEventListener('submit', onLeadEntrySignupSubmit, true)
+        } catch (error) {
+            /* a page that cannot listen never registers a lead entry */
+        }
     }
 
     /**
@@ -1421,6 +1903,7 @@
                     // they stand when it is called.
                     captureSignupSource()
                     captureSignupReferrer()
+                    persistLeadEntryAfterSignup(memberstack, getMemberData(payload))
                     // /quiz is excluded: quiz-results.js writes these fields as
                     // part of its own single quiz save.
                     if (policy.directSave) {
@@ -1527,12 +2010,14 @@
         // later.
         armSignupWatch()
         bindSignupTriggerClicks()
+        bindLeadEntrySignupSubmit()
         if (!signupWatchArmed && hasElementMatching(SIGNUP_TRIGGER_SELECTOR)) {
             runSafely(probeViewerLoggedOut, 'viewer probe for signup trigger failed')
         }
         // Sitewide, not just on the signup pages: this is the step that finishes a
         // direct save that the signup form's own redirect cut short.
         runSafely(retryPendingSave, 'pending attribution save failed')
+        runSafely(retryPendingLeadEntry, 'pending lead-entry registration failed')
     }
 
     window.StartersAttribution = {
