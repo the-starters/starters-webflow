@@ -980,11 +980,11 @@ is discarded. Closing the dialog clears the painted name and pending project
 context. The submit adapter accepts the live `Feedback` field and the legacy
 `Public-Feedback` field during the authored surface transition.
 
-Post-call review emails use the same authored modal through a separate,
-fail-closed booking contract. Their CTA opens
+The V3 post-call review email contract targets the same authored modal through
+a separate, fail-closed booking contract. Its CTA opens
 `/brand-dashboard?review_booking=<encoded booking id>` with the stable Mandrill
 UTM values and `#calls-section`. The versioned sender, first-name personalization,
-CTA, and UTM contract is
+CTA, UTM, and release-mode contract is
 [`v3/email-automation/post-call-review-v1.json`](v3/email-automation/post-call-review-v1.json).
 After the paid-Brand gate passes, the controller
 posts only that booking ID to authenticated
