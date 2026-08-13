@@ -2436,6 +2436,77 @@ test('contract signing panel reducer allows either party to sign first', async (
   assert.equal(reduce({ ...base, contract_status: 'declined' }, 'brand').state, 'attention')
 })
 
+test('contract signing panel reducer covers the release lifecycle matrix', async () => {
+  const bridge = await loadBridge(async () => response({}))
+  const reduce = bridge.window.Opp30.projectContractPanelState
+  const base = {
+    id: 708,
+    sync_origin: 'v3',
+    contract_source: 'standard',
+    lifecycle_state: 'contract_sent',
+    contract_status: 'sent',
+    pandadoc_document_id: 'doc-708',
+    company_name: 'Acme',
+    starter_name: 'Taylor',
+  }
+  const matrix = [
+    {
+      name: 'draft',
+      project: { ...base, lifecycle_state: 'contract_draft', contract_status: 'draft' },
+      expected: { visible: true, state: 'processing', action: null },
+    },
+    {
+      name: 'sent',
+      project: base,
+      expected: { visible: true, state: 'action', action: 'sign' },
+    },
+    {
+      name: 'partial',
+      project: {
+        ...base,
+        lifecycle_state: 'signature_partial',
+        contract_status: 'partial',
+        starter_signed_at: '2026-08-12T01:01:00Z',
+      },
+      expected: { visible: true, state: 'action', action: 'sign' },
+    },
+    {
+      name: 'active',
+      project: { ...base, lifecycle_state: 'active', contract_status: 'completed' },
+      expected: { visible: false, state: 'hidden', action: null },
+    },
+    {
+      name: 'completed',
+      project: { ...base, lifecycle_state: 'completed', contract_status: 'completed' },
+      expected: { visible: false, state: 'hidden', action: null },
+    },
+    {
+      name: 'declined',
+      project: { ...base, lifecycle_state: 'contract_declined', contract_status: 'declined' },
+      expected: { visible: true, state: 'attention', action: null },
+    },
+    {
+      name: 'voided',
+      project: { ...base, lifecycle_state: 'contract_voided', contract_status: 'voided' },
+      expected: { visible: true, state: 'attention', action: null },
+    },
+    {
+      name: 'error',
+      project: { ...base, lifecycle_state: 'contract_sent', contract_status: 'error' },
+      expected: { visible: true, state: 'attention', action: null },
+    },
+  ]
+
+  matrix.forEach(({ name, project, expected }) => {
+    const state = reduce(project, 'brand')
+    assert.deepEqual(
+      { visible: state.visible, state: state.state, action: state.action },
+      expected,
+      name,
+    )
+  })
+})
+
 test('contract panel paints one badge per party and only the authorized role action', async () => {
   const topAction = el('a', { href: '#contract' })
   const topLabel = el('div', { class: 'button_main-text' })
