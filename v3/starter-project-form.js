@@ -655,7 +655,9 @@
       success.hidden = false
       if (success.style) success.style.display = 'block'
       if (form.style) form.style.display = 'none'
-      var preview = success.querySelector && success.querySelector(SUCCESS_PREVIEW_SELECTOR)
+      var preview = success.matches && success.matches(SUCCESS_PREVIEW_SELECTOR)
+        ? success
+        : success.querySelector && success.querySelector(SUCCESS_PREVIEW_SELECTOR)
       if (preview && preview.setAttribute) {
         preview.setAttribute('aria-hidden', 'true')
         Promise.resolve().then(function () { preview.setAttribute('aria-hidden', 'false') })

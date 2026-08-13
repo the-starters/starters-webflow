@@ -81,6 +81,7 @@ class Element {
   matches(selector) {
     if (selector === '#Brand' || selector.includes('#Brand')) return this.attrs.id === 'Brand'
     if (selector === '[data-project-form-v3="starter"]') return this.getAttribute('data-project-form-v3') === 'starter'
+    if (selector === '.generate-contract_success') return this.classList.contains('generate-contract_success')
     return false
   }
   closest(selector) {
@@ -156,10 +157,9 @@ function formFixture() {
   Object.values(form.fields).forEach((element) => { element.context = context })
   form.wrapper = wrapper
   wrapper.error = new Element()
-  wrapper.success = new Element({ hidden: true })
+  wrapper.success = new Element({ hidden: true, className: 'generate-contract_success' })
   wrapper.success.successTitles = [new Element(), new Element()]
   wrapper.success.successMessage = new Element()
-  wrapper.success.preview = new Element()
   const successLink = new Element({ href: '/brand-dashboard', tagName: 'a' })
   wrapper.success.successLink = successLink
   context.successLinks = [successLink]
@@ -667,7 +667,7 @@ test('submission reports the canonical project and contract-first success state'
     counterparties: [{ counterparty_id: 31, company_name: 'Brand' }],
   })
   const renderedBrand = new Element()
-  loaded.wrapper.success.preview.onAttributeChange = (name, value) => {
+  loaded.wrapper.success.onAttributeChange = (name, value) => {
     if (name === 'aria-hidden' && value === 'false') {
       renderedBrand.textContent = loaded.form.fields.company.disabled
         ? ''
@@ -692,7 +692,7 @@ test('submission reports the canonical project and contract-first success state'
     'Your contract is being prepared. You and the Brand can sign when it is ready.',
   )
   assert.equal(loaded.context.successLinks[0].getAttribute('href'), '/starter-dashboard#projects')
-  assert.equal(loaded.wrapper.success.preview.getAttribute('aria-hidden'), 'false')
+  assert.equal(loaded.wrapper.success.getAttribute('aria-hidden'), 'false')
   assert.equal(renderedBrand.textContent, 'Brand')
 })
 
