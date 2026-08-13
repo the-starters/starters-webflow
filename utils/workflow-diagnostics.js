@@ -232,29 +232,13 @@
   }
 
   function message(value, receipt) {
-    var base = clean(value, 500)
-    if (!receipt || !receipt.diagnostic_id) return base
-    return base + ' Diagnostic ID: ' + receipt.diagnostic_id + '. Click this message to copy the diagnostic log.'
+    return clean(value, 500)
   }
 
   function decorate(element, receipt) {
-    if (!element || !receipt) return false
-    element.setAttribute('data-workflow-diagnostic-copy', receipt.workflow)
-    element.setAttribute('data-workflow-diagnostic-id', receipt.diagnostic_id)
-    element.setAttribute('role', element.getAttribute('role') || 'button')
-    if (!element.getAttribute('tabindex')) element.setAttribute('tabindex', '0')
-    element.setAttribute('title', 'Copy diagnostic log')
-    element.__startersWorkflowDiagnosticReceipt = receipt
-    if (element.__startersWorkflowDiagnosticBound || typeof element.addEventListener !== 'function') return true
-    element.__startersWorkflowDiagnosticBound = true
-    var activate = function (event) {
-      if (event && event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return
-      if (event && event.type === 'keydown' && event.preventDefault) event.preventDefault()
-      copy(element.__startersWorkflowDiagnosticReceipt)
-    }
-    element.addEventListener('click', activate)
-    element.addEventListener('keydown', activate)
-    return true
+    // Diagnostics are support data, not page content or interactive UI.
+    // record() writes each receipt to the console and keeps the console helper.
+    return false
   }
 
   global.StartersWorkflowDiagnostics = {

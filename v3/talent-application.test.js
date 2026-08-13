@@ -257,8 +257,8 @@ test('failure shows the fail block and allows retry', async () => {
   assert.equal(assigned.length, 0)
   assert.equal(form.failEl.style.display, 'block')
   assert.equal(form.__startersSubmitting, false)
-  assert.match(form.messageEl.textContent, /Diagnostic ID: WFD-/)
-  assert.equal(form.messageEl.getAttribute('data-workflow-diagnostic-copy'), 'talent_application')
+  assert.equal(form.messageEl.textContent, 'Something went wrong.')
+  assert.equal(form.messageEl.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.deepEqual(
     tracked.map((event) => event.name),
     ['workflow_form_submit_started', 'workflow_form_submit_failed'],
@@ -329,7 +329,7 @@ test('a helper loaded after diagnostics timeout does not fabricate a receipt', a
   assert.deepEqual(environment.assigned, ['/freelancer-application/step-2'])
 })
 
-test('visible validation failure records no request and gives a copyable id', () => {
+test('visible validation failure records no request without page diagnostics', () => {
   const invalid = makeField({ valid: false, visible: true })
   const { listeners, tracked } = load({ fetchImpl: () => Promise.reject(new Error('must not fetch')) })
   const form = makeForm(FULL_ENTRIES, {}, {}, [invalid])
@@ -339,7 +339,8 @@ test('visible validation failure records no request and gives a copyable id', ()
   assert.equal(tracked[0].name, 'workflow_form_validation_failed')
   assert.equal(form.__startersDiagnostic.request_started, false)
   assert.equal(form.__startersDiagnostic.error_code, 'NATIVE_VALIDATION')
-  assert.match(form.messageEl.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(form.messageEl.textContent, 'Something went wrong.')
+  assert.equal(form.messageEl.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 
 test('resolves country/state select indexes to option text', async () => {

@@ -408,7 +408,7 @@ test('a Webflow success PATCHes the status endpoint with a bearer token', async 
   assert.ok(urlsOf(fetchCalls)[0].startsWith(TRADE_URL + '?token='))
 })
 
-test('a successful onboarding PATCH records a privacy-safe copyable receipt', async () => {
+test('a successful onboarding PATCH records a privacy-safe console receipt', async () => {
   const fixture = formWrapper()
   const { location } = loadModule({ wrappers: [fixture], diagnostics: true })
   await flush()
@@ -425,11 +425,8 @@ test('a successful onboarding PATCH records a privacy-safe copyable receipt', as
   assert.equal(receipt.replayed, false)
   assert.equal(Object.hasOwn(receipt, 'memberstack_token'), false)
   assert.equal(Object.hasOwn(receipt, 'authorization'), false)
-  assert.match(fixture.done.textContent, /Diagnostic ID: WFD-/)
-  assert.equal(
-    fixture.done.getAttribute('data-workflow-diagnostic-copy'),
-    'starter_onboarding_completion',
-  )
+  assert.equal(fixture.done.textContent, 'Your onboarding details were saved.')
+  assert.equal(fixture.done.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.equal(location.replaced, DASHBOARD)
 })
 
@@ -741,7 +738,7 @@ test('a logged-out submit never reaches Xano, is not retried, and is left in pla
   assert.equal(fixture.wrapper.style.display, '', 'the form goes back to its authored display')
 })
 
-test('a logged-out onboarding completion leaves a visible copyable failure receipt', async () => {
+test('a logged-out onboarding completion leaves a clean user-facing failure message', async () => {
   const fixture = formWrapper()
   const { fetchCalls } = loadModule({
     loggedOut: true,
@@ -760,7 +757,8 @@ test('a logged-out onboarding completion leaves a visible copyable failure recei
   assert.equal(receipt.error_code, 'MEMBER_LOGGED_OUT')
   assert.equal(receipt.request_started, true)
   assert.match(fixture.done.textContent, /could not confirm your member session/i)
-  assert.match(fixture.done.textContent, /Diagnostic ID: WFD-/)
+  assert.doesNotMatch(fixture.done.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(fixture.done.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 
 // --- Scope gates --------------------------------------------------------------

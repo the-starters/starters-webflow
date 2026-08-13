@@ -287,8 +287,8 @@ form and redirects, retrieve the retained receipt on the dashboard with:
 copyWorkflowDiagnostic('starter_onboarding_completion')
 ```
 
-The logged-out path restores the authored form state, whose existing message
-also carries the diagnostic ID and copy action. A receipt with
+The logged-out path restores the authored form state without adding diagnostic
+data or copy behavior to its message. A receipt with
 `request_started: false` means no authenticated workflow request attempt began;
 it must not be read as a failed attempted PATCH.
 

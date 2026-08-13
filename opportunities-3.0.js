@@ -5207,10 +5207,7 @@
   function showOpportunityError(btn, message, receipt) {
     const fail = opportunityErrorElement(btn)
     if (!fail) {
-      const suffix = receipt && receipt.diagnostic_id
-        ? ' Diagnostic ID: ' + receipt.diagnostic_id + '.'
-        : ''
-      alert(message + suffix)
+      alert(message)
       return false
     }
     fail.style.display = 'block'

@@ -499,7 +499,7 @@ test('a stalled shared diagnostics loader fails open before an opportunity mutat
   assert.equal(calls.some((url) => url.includes('/brand/opportunities/create')), true)
 })
 
-test('opportunity failures decorate the authored native failure state for copying', async () => {
+test('opportunity failures keep diagnostics out of the authored native failure state', async () => {
   const message = el('p')
   message.textContent = 'Something went wrong.'
   const listeners = new Map()
@@ -524,14 +524,13 @@ test('opportunity failures decorate the authored native failure state for copyin
 
   assert.equal(bridge.window.Opp30.showOpportunityError(button, 'Request failed.', receipt), true)
   assert.equal(fail.style.display, 'block')
-  assert.match(message.textContent, /Diagnostic ID: WFD-/)
-  assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), 'opportunity_application')
-  listeners.get('click')({ type: 'click' })
-  await Promise.resolve()
-  assert.match(bridge.copiedDiagnostics[0], /Workflow: opportunity_application/)
+  assert.equal(message.textContent, 'Request failed.')
+  assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), null)
+  assert.equal(listeners.has('click'), false)
+  assert.equal(bridge.copiedDiagnostics.length, 0)
 })
 
-test('withdraw success decorates the visible authored confirmation state', async () => {
+test('withdraw success keeps diagnostics out of the visible authored confirmation state', async () => {
   const message = el('p')
   message.textContent = 'Your application was withdrawn.'
   const listeners = new Map()
@@ -556,11 +555,10 @@ test('withdraw success decorates the visible authored confirmation state', async
 
   bridge.window.Opp30.showCancelSuccess(result)
 
-  assert.match(message.textContent, /Diagnostic ID: WFD-/)
-  assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), 'application_withdraw')
-  listeners.get('click')({ type: 'click' })
-  await Promise.resolve()
-  assert.match(bridge.copiedDiagnostics[0], /Workflow: application_withdraw/)
+  assert.equal(message.textContent, 'Your application was withdrawn.')
+  assert.equal(message.getAttribute('data-workflow-diagnostic-copy'), null)
+  assert.equal(listeners.has('click'), false)
+  assert.equal(bridge.copiedDiagnostics.length, 0)
 })
 
 test('project dashboard actions use the authenticated canonical endpoints', async () => {

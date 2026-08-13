@@ -65,7 +65,6 @@
   var CONTROLLER_VERSION = '1.59.190'
   var DIAGNOSTIC_SCHEMA = 'project_form_diagnostic_v1'
   var DIAGNOSTIC_STORAGE_KEY = 'starters.projectForm.lastDiagnostic.v1'
-  var DIAGNOSTIC_COPY_ATTR = 'data-project-diagnostic-copy'
   var stateByForm = typeof WeakMap === 'function' ? new WeakMap() : null
 
   var ENGAGEMENT_TYPES = {
@@ -300,24 +299,8 @@
     return Promise.resolve(clipboard.writeText(text)).then(function () { return true }).catch(function () { return false })
   }
 
-  function decorateDiagnosticMessage(element, receipt) {
-    if (!element || !element.setAttribute) return
-    if (!receipt) {
-      element.removeAttribute(DIAGNOSTIC_COPY_ATTR)
-      element.removeAttribute('data-project-diagnostic-id')
-      element.removeAttribute('tabindex')
-      element.removeAttribute('title')
-      return
-    }
-    element.setAttribute(DIAGNOSTIC_COPY_ATTR, '')
-    element.setAttribute('data-project-diagnostic-id', receipt.diagnostic_id)
-    element.setAttribute('tabindex', '0')
-    element.setAttribute('title', 'Copy diagnostic log')
-  }
-
   function diagnosticMessage(message, receipt) {
-    if (!receipt) return message
-    return message + ' Diagnostic ID: ' + receipt.diagnostic_id + '. Click this message to copy the diagnostic log.'
+    return message
   }
 
   function positiveId(value) {
@@ -1258,7 +1241,6 @@
       error.hidden = status !== 'error'
       error.style.display = status === 'error' ? 'block' : 'none'
       if (error.setAttribute) error.setAttribute('role', 'alert')
-      decorateDiagnosticMessage(error, status === 'error' ? receipt : null)
     }
     var submitters = form.querySelectorAll('[type="submit"], [data-project-submit]')
     Array.prototype.forEach.call(submitters, function (button) {
@@ -1354,7 +1336,6 @@
           ? 'Your contract is queued for generation. You will receive a signing email after processing succeeds.'
           : 'You can manage this project from your dashboard.'
         successMessage.textContent = diagnosticMessage(message, receipt)
-        decorateDiagnosticMessage(successMessage, receipt)
       }
       success.hidden = false
       success.style.display = 'block'
@@ -1482,13 +1463,6 @@
   function install(documentObject, globalObject) {
     if (!documentObject || !documentObject.addEventListener) return
     documentObject.addEventListener('click', function (event) {
-      var diagnosticTarget = event.target && event.target.closest
-        ? event.target.closest('[' + DIAGNOSTIC_COPY_ATTR + ']')
-        : null
-      if (diagnosticTarget) {
-        copyLastDiagnostic(globalObject)
-        return
-      }
       handleSmartFill(event, documentObject)
       var target = event.target
       var trigger = target && target.closest ? target.closest(OPEN_SELECTOR) : null
@@ -1504,15 +1478,6 @@
         syncDurationFields(clickedForm)
         syncActiveRequired(clickedForm)
       }
-    })
-    documentObject.addEventListener('keydown', function (event) {
-      if (event.key !== 'Enter' && event.key !== ' ') return
-      var diagnosticTarget = event.target && event.target.closest
-        ? event.target.closest('[' + DIAGNOSTIC_COPY_ATTR + ']')
-        : null
-      if (!diagnosticTarget) return
-      if (event.preventDefault) event.preventDefault()
-      copyLastDiagnostic(globalObject)
     })
     documentObject.addEventListener('change', function (event) {
       // Switching fee structure or contract type swaps which conditional panel

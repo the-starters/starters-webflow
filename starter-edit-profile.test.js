@@ -277,7 +277,8 @@ async function testPrivacySafeDiagnostics() {
   assert.equal(receipt.result, 'failed')
   assert.equal(receipt.error_code, 'HTTP_ERROR')
   assert.equal(receipt.http_status, 422)
-  assert.match(environment.errorFeedback.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(environment.errorFeedback.textContent, 'Your profile could not be saved.')
+  assert.equal(environment.errorFeedback.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.doesNotMatch(JSON.stringify(receipt), /private@example\.com|new@example\.com|\+15555555555/)
   assert.deepEqual(
     environment.tracked.map((event) => event.name),

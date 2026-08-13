@@ -323,10 +323,10 @@ Every form open with a usable Starter identity, validation failure, submit
 start, request failure, and accepted project writes an allowlisted
 `project_form_diagnostic_v1` receipt.
 Missing Starter identity and unavailable bridge failures also write a receipt
-before any request starts. Error and success messages show the receipt's
-`SPF-...` diagnostic ID; clicking the existing authored message copies the full
-receipt. The console fallback is `copyProjectDiagnostic()`. The latest receipt
-is also retained in `sessionStorage` for the current tab.
+before any request starts. Error and success messages stay user-facing and do
+not show receipt data or become copy actions. Use `copyProjectDiagnostic()` in
+the browser console when support needs the full receipt. The latest receipt is
+also retained in `sessionStorage` for the current tab.
 
 Receipts contain only the diagnostic ID, UTC time, controller version, host,
 workflow stage, safe error code or HTTP status, duration, request-attempted

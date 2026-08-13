@@ -184,10 +184,11 @@ test('pause and cancel are diagnosed as request intake, not membership mutations
   assert.equal(receipt.stage, 'request_accepted')
   assert.equal(receipt.resource_type, 'support_request')
   assert.equal(receipt.resource_id, '')
-  assert.match(page.done.textContent, /Diagnostic ID:/)
+  assert.doesNotMatch(page.done.textContent, /Diagnostic ID:/)
+  assert.equal(page.done.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 
-test('native Account Profile save decorates its authored Memberstack status', async () => {
+test('native Account Profile save keeps diagnostics out of its authored Memberstack status', async () => {
   const page = boot({ kind: 'profile', id: 'wf-form-Account-Profile' })
   page.form.dispatch('submit')
   await tick()
@@ -196,11 +197,8 @@ test('native Account Profile save decorates its authored Memberstack status', as
   const receipt = page.window.StartersWorkflowDiagnostics.latest('account_profile')
   assert.equal(receipt.result, 'success')
   assert.equal(receipt.resource_type, 'member_account')
-  assert.equal(
-    page.memberstackDone.getAttribute('data-workflow-diagnostic-copy'),
-    'account_profile',
-  )
-  assert.match(page.memberstackDone.textContent, /Diagnostic ID:/)
+  assert.equal(page.memberstackDone.getAttribute('data-workflow-diagnostic-copy'), null)
+  assert.doesNotMatch(page.memberstackDone.textContent, /Diagnostic ID:/)
 })
 
 test('a valid human submit records only a started receipt until an observed outcome', async () => {
@@ -225,7 +223,7 @@ test('native invalid events record truthful no-request validation failures', asy
   assert.equal(receipt.request_started, false)
 })
 
-test('an existing Webflow error becomes a copy target without creating markup', async () => {
+test('an existing Webflow error stays free of diagnostic copy behavior', async () => {
   const page = boot({ kind: 'forgot-password', pathname: '/forgot-password' })
   page.form.dispatch('submit')
   await tick()
@@ -234,7 +232,8 @@ test('an existing Webflow error becomes a copy target without creating markup', 
   const receipt = page.window.StartersWorkflowDiagnostics.latest('password_forgot')
   assert.equal(receipt.result, 'failure')
   assert.equal(receipt.request_started, true)
-  assert.equal(page.fail.getAttribute('data-workflow-diagnostic-copy'), 'password_forgot')
+  assert.equal(page.fail.getAttribute('data-workflow-diagnostic-copy'), null)
+  assert.doesNotMatch(page.fail.textContent, /Diagnostic ID:/)
 })
 
 test('a logged-out to logged-in transition completes the pending login once', async () => {
