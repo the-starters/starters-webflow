@@ -36,6 +36,7 @@ function createEnvironment(fetchImpl, {
 } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
+  const modalApiCalls = []
   const memberAuthUpdates = []
   const memberUpdates = []
   const authChangeListeners = []
@@ -145,6 +146,15 @@ function createEnvironment(fetchImpl, {
     StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
     console,
   }
+  window.lumos = {
+    modal: {
+      open(name) {
+        modalApiCalls.push(name)
+        if (name === 'edit-form-success') modalEvents.success += 1
+        if (name === 'edit-form-error') modalEvents.error += 1
+      },
+    },
+  }
   if (workflowDiagnosticsReady) {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
@@ -177,6 +187,7 @@ function createEnvironment(fetchImpl, {
   return {
     button,
     modalEvents,
+    modalApiCalls,
     memberAuthUpdates,
     memberUpdates,
     tracked,
@@ -220,6 +231,7 @@ async function testSuccess() {
   await submission
 
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+  assert.deepEqual(environment.modalApiCalls, ['edit-form-success'])
   assert.equal(environment.button.style.pointerEvents, '')
   assert.equal(environment.button.style.opacity, '')
   assert.equal(environment.memberAuthUpdates.length, 0)
