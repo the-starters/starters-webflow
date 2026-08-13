@@ -913,35 +913,43 @@ or action markup. The compact project-row control may remain
 keeps its label and action synchronized with the panel.
 
 The panel is limited to canonical V3 Standard Contracts: `sync_origin` must be
-`v3` and `contract_source` must be `standard`. Own-contract rows and active,
-request, completed, terminated, or canceled lifecycle states hide it. Each
-visible panel shows exactly one Brand badge and one Starter badge from the
-canonical `brand_signed_at` and `starter_signed_at` values. Either party can sign
-first. Each unsigned party receives `Review & Sign Contract`. A party that already
-signed receives View Contract while waiting for the other signature. A partial
-provider state without either canonical signer timestamp shows an attention
-state without an action. Draft or queued state shows preparation status. Declined,
-expired, and voided states identify the exact terminal condition and explain that
-the contract cannot be signed. Failed, invalid, exception, and error states use
-`Contract needs attention`. All attention states direct the member to contact The
-Starters and expose no action. After both signatures,
-the panel shows activation processing without another signing action.
+`v3` and `contract_source` must be `standard`. Own-contract, legacy, and canceled
+rows hide it. Each visible panel shows exactly one Brand badge and one Starter
+badge from the canonical `brand_signed_at` and `starter_signed_at` values. Either
+party can sign first. Each unsigned party receives `Review & Sign Contract`. A
+party that already signed receives View Contract while waiting for the other
+signature. A partial provider state without either canonical signer timestamp
+shows an attention state without an action. Draft or queued state shows
+preparation status. Declined, expired, and voided states identify the exact
+terminal condition and explain that the contract cannot be signed. Failed,
+invalid, exception, and error states use `Contract needs attention`. All
+attention states direct the member to contact The Starters and expose no action.
+After both signatures, the panel shows activation processing until the contract
+status is `completed`. A completed contract exposes `View Signed Contract` while
+the project lifecycle is `active`, `completion_requested`,
+`termination_requested`, `completed`, or `terminated`.
 
-Both sign and view request a fresh recipient-scoped URL from authenticated Xano
-`contracts/link/v3`. The URL opens in a new tab when the browser permits it and
-falls back to the current tab. No PandaDoc credential or stored contract URL is
-exposed in the page. Xano rechecks project ownership, environment, canonical
-contract state, and the live PandaDoc document status before minting the one-hour
-session. A completed document offers no recipient-session action; protected-PDF
-delivery still requires a separate authenticated endpoint.
+Sign and pre-completion view actions request a fresh recipient-scoped URL from
+authenticated Xano `contracts/link/v3`; this route is limited to `sent`,
+`viewed`, and `partial` contract states. `View Signed Contract` instead requests
+the completed PDF from the separate authenticated Xano
+`contracts/download/v3` route and opens the returned PDF through a temporary
+browser object URL. Both paths open in a new tab when the browser permits it and
+fall back to the current tab. No PandaDoc credential or stored contract URL is
+exposed in the page. Xano rechecks Brand or Starter project ownership,
+environment, canonical V3 Standard Contract state, and the live PandaDoc
+document status before returning either a one-hour recipient session or a
+completed PDF. Missing projects, own-contract or legacy rows, non-completed PDF
+requests, wrong owners, and wrong-environment rows fail closed. Neither browser
+path creates, sends, signs, or mutates a PandaDoc document.
 Immediately before a click, the controller must refresh canonical project state;
 a failed or inconsistent refresh does not fall back to cached authorization. A
-missing or rejected session closes the pre-opened blank tab and shows only the
-generic `Contract is unavailable. Please try again.` message. Returning from
-PandaDoc refreshes the loaded project page range on `pageshow`, window `focus`,
-or when the page becomes visible. The `focus` path covers a separate PandaDoc
-window that never hides the dashboard. The panel repaints from canonical
-signature state without discarding pagination.
+missing or rejected contract response closes the pre-opened blank tab and shows
+only the generic `Contract is unavailable. Please try again.` message.
+Returning from PandaDoc refreshes the loaded project page range on `pageshow`,
+window `focus`, or when the page becomes visible. The `focus` path covers a
+separate PandaDoc window that never hides the dashboard. The panel repaints from
+canonical signature state without discarding pagination.
 
 The Webflow-authored panel and compact action fail closed from dashboard boot:
 they stay hidden while Memberstack resolves, while the project list is pending or
