@@ -186,6 +186,25 @@
     }
   }
 
+  // A cloned item-card carries over the item-template's own timepicker
+  // markup verbatim: the master template sits inside `[data-availability-
+  // element="list"]` (just hidden, never removed), so the very first
+  // initInputPickers(list) call also scans and marks IT initialized —
+  // meaning every later clone inherits `data-input-timepicker-
+  // initialized="true"` on `[data-input-timepicker-group]` and bails out of
+  // global-embeds/form-embeds/timepicker/timepicker.js's initGroup() guard
+  // before ever wiring up. Cloned `[data-input-timepicker]` inputs also
+  // duplicate the template's `id`. Strip both right after cloning, before
+  // initInputPickers() runs on the clone.
+  function resetTimepickerMarkup(card) {
+    qsa('[data-input-timepicker-group]', card).forEach(function (el) {
+      el.removeAttribute('data-input-timepicker-initialized')
+    })
+    qsa('[data-input-timepicker]', card).forEach(function (el) {
+      el.removeAttribute('id')
+    })
+  }
+
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
   }
@@ -493,6 +512,18 @@
       })
     }
     return availabilityArray
+  }
+
+  // A member connecting a calendar for the first time (platform or Google)
+  // has no `general` item yet — left as-is, createConfigPair() would build
+  // the scheduler config with empty open hours, and nobody could ever book a
+  // slot. Seed a Mon-Fri 09:00-18:00 default so the connection is usable
+  // right away; the member can edit it or add overrides afterward. Never
+  // touches an already-existing `general` item.
+  function ensureDefaultAvailability() {
+    if (!availability || availability.items.general) return
+    const days = [1, 2, 3, 4, 5]
+    availability.items.general = { days: days, start: '09:00', end: '18:00', defaultDays: days }
   }
 
   // Days already claimed by OTHER override items (never `general`, never
@@ -829,6 +860,7 @@
       grantId = virtual.grant_id
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
+      ensureDefaultAvailability()
       await createConfigPair()
       availability.manager = 'platform'
       await updateAvail()
@@ -892,6 +924,7 @@
       grantId = virtual.grant_id
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
+      ensureDefaultAvailability()
       await createConfigPair()
       availability.manager = 'platform'
       await updateAvail()
@@ -965,6 +998,7 @@
       // switch must be persisted here, not just left for the caller — this is
       // the only place that observes the freshly-added Google grant.
       availability.manager = 'calendar'
+      ensureDefaultAvailability()
       await updateAvail()
       clearOAuthIntent(memberId)
       clearOAuthCallback()
@@ -1028,7 +1062,12 @@
   /* Connection chrome (connect-wrapper / main-wrapper)                  */
   /* ------------------------------------------------------------------ */
 
+  // 'loading' means the request is still in flight — leave the label as
+  // whatever it already showed until a real (non-loading) state arrives, so
+  // clicking connect/reconnect/disconnect doesn't flash the "disconnected"
+  // label before the request even resolves.
   function applyConnectLabels(state) {
+    if (state === 'loading') return
     const group = qs(elSel('connect-label-group'))
     if (!group || !group.children) return
     const connected = state === 'connected' || state === 'reconnect'
@@ -1057,7 +1096,10 @@
     })
   }
 
+  // Same "wait for the real response" rule as applyConnectLabels — skip the
+  // transient 'loading' state entirely.
   function applyConnectInfoVisibility(state) {
+    if (state === 'loading') return
     setElementVisible('connect-info-wrapper', state !== 'connected' && state !== 'reconnect')
   }
 
@@ -1225,6 +1267,19 @@
   // `[loading-hide]` (the default icon) hides — while the whole item-card
   // (not just the button) dims and stops accepting clicks until the
   // save/remove request settles either way.
+  // Drives the item-remove button's own pending-state markup — swaps
+  // `[text-element]` to "Removing...", and dims/disables the whole
+  // item-card until the removal request settles either way.
+  function setItemRemoveLoading(card, target, loading) {
+    if (!target) return
+    const textEl = qs('[text-element]', target)
+    if (textEl) textEl.textContent = loading ? 'Removing...' : 'Remove'
+    if (card) {
+      card.style.opacity = loading ? '0.6' : '1'
+      card.style.pointerEvents = loading ? 'none' : 'auto'
+    }
+  }
+
   function setItemSubmitLoading(card, target, loading) {
     if (!target) return
     const textEl = qs('[text-element]', target)
@@ -1241,7 +1296,7 @@
 
   function bindItemActions(card, id) {
     const buttonGroup = qs(elSel('item-button-group'), card)
-    bindActionGroup(buttonGroup, ['item-form-open', 'item-remove'], function (action) {
+    bindActionGroup(buttonGroup, ['item-form-open', 'item-remove'], function (action, target) {
       if (action === 'item-form-open') {
         // Opening/closing the form is a pure UI toggle — it doesn't change
         // availability data, so it must not disturb the slots preview.
@@ -1250,7 +1305,12 @@
         // Wait for the mutation to actually land before refreshing slots —
         // firing them concurrently could render a slots list computed from
         // the availability that's about to be replaced.
-        handleAvailabilityRemove(card, id).then(renderSlotsPreview)
+        setItemRemoveLoading(card, target, true)
+        handleAvailabilityRemove(card, id)
+          .then(renderSlotsPreview)
+          .finally(function () {
+            setItemRemoveLoading(card, target, false)
+          })
       }
     })
 
@@ -1317,6 +1377,7 @@
       card.setAttribute(EL, 'item-card')
       card.dataset.id = id
       card.setAttribute('data-id', id)
+      resetTimepickerMarkup(card)
 
       const titleEl = qs(elSel('item-title'), card)
       if (titleEl) {
@@ -1352,12 +1413,22 @@
     card.setAttribute(EL, 'item-card')
     card.dataset.id = id
     card.setAttribute('data-id', id)
+    resetTimepickerMarkup(card)
 
     const titleEl = qs(elSel('item-title'), card)
     if (titleEl) titleEl.textContent = 'New availability window'
 
     applyItemTag(card, id)
     applyItemActionVisibility(card, id)
+    // A freshly created item is a draft that doesn't exist server-side yet
+    // and opens straight into its edit form — edit/remove and the days/time
+    // headline (there's nothing saved to summarize) don't apply until it's
+    // actually saved, at which point renderAvailabilityItems() re-runs and
+    // restores them normally.
+    const buttonGroup = qs(elSel('item-button-group'), card)
+    if (buttonGroup) buttonGroup.style.display = 'none'
+    const headline = qs(elSel('item-headline'), card)
+    if (headline) headline.style.display = 'none'
     applyDayBadges(card, [])
     applyItemTimeText(card, { start: '', end: '' })
     closeItemForm(card)
