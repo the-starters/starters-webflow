@@ -1,0 +1,23 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/logo-wall
+ *
+ * CDN-served. Load in Head (same jsDelivr ref as logo-wall.js). Not a paste embed.
+ */
+
+[data-logo-wall-element='wrapper'] {
+  display: flex;
+  flex-flow: column nowrap;
+  overflow: hidden;
+}
+
+[data-logo-wall-element='track'] {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  column-gap: inherit;
+  width: max-content;
+}
+
+[data-logo-wall-element='item'],
+[data-logo-wall-element='track'] > [data-logo-wall-clone] {
+  flex: none;
+}
