@@ -355,6 +355,7 @@ test('promotes the detached shared Contract Generation form into Starter context
   assert.equal(shared.getAttribute('data-project-form-v3'), 'starter')
   assert.equal(shared.getAttribute('data-modal-target'), 'start-project')
   assert.equal(old.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
+  assert.equal(shared.form.getAttribute('data-starters-turnstile-fix'), 'true')
   assert.equal(shared.form.fields.select.required, true)
   assert.equal(shared.form.fields.select.getAttribute('data-project-field'), 'brand_id')
   assert.equal(nestedLink.getAttribute('href'), '#start-project')
