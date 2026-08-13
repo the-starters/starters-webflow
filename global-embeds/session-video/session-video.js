@@ -21,6 +21,14 @@
  *      seconds (default 180) and the signup trigger is clicked. Dismissing the
  *      modal leaves the frame frozen; any play attempt reopens it.
  *   4. A member gets the whole video, fullscreen included, and never sees a wall.
+ *   5. A confirmed member whose player box is NARROWER than the native-controls
+ *      threshold goes straight to the device's own fullscreen player on the watch
+ *      tap — the same tap, plus a fullscreen request fired inside that gesture.
+ *      Only on a genuine activation (see enterFullscreen), never for a gated
+ *      viewer, and never above the threshold, where Vimeo's own bar already
+ *      carries the button. An early tap on a not-yet-upgraded frame, or a refused
+ *      request, plays inline exactly as (3) and (4) describe — that fallback is
+ *      the designed outcome, not an error.
  *
  * WHY THE BACKGROUND PHASE MUST NOT ARM THE GATE. An ambient loop left running
  * would eventually cross the cut point on its own and throw the signup wall at
@@ -370,6 +378,10 @@
     this.bound = false
     this.ready = false
     this.native = false
+    // Is the player box too narrow for Vimeo's own bar? Width only, no membership
+    // in it. For a member that box is the one where a watch tap goes straight to
+    // the device's fullscreen player. Set by mount().
+    this.narrow = false
   }
 
   /**
@@ -496,7 +508,16 @@
   }
 
   Controller.prototype.mount = function (gated) {
-    this.native = !gated && wideEnough(this.root)
+    // One measurement, two answers. `narrow` is a fact about the box and nothing
+    // else — membership is checked separately at the point of use, so dropping
+    // either half of that test is visible in the tests rather than covered for by
+    // the other. Read here rather than per tap for the reason wideEnough() gives:
+    // the frame's `controls` parameter is fixed at load, so a re-measure mid-gesture
+    // could disagree with the UI the viewer is actually looking at. upgrade() calls
+    // mount() again, so a late member gets both recomputed.
+    var wide = wideEnough(this.root)
+    this.native = !gated && wide
+    this.narrow = !wide
     var self = this
     if (!window.Vimeo || typeof window.Vimeo.Player !== 'function') {
       warn('mount called without the Vimeo Player API; refusing to build a frame')
@@ -560,12 +581,16 @@
     this.bound = true
     var self = this
 
+    // `true` marks these as USER ACTIVATIONS. armControl only ever calls back from a
+    // click or an Enter/Space keydown, so every route through here is a real gesture
+    // — which is what licenses the fullscreen request in watch(). upgrade() calls
+    // watch() with no argument, and must keep doing so.
     var watch = this.el('watch')
-    if (watch) armControl(watch, 'Watch the session', function () { self.watch() })
+    if (watch) armControl(watch, 'Watch the session', function () { self.watch(true) })
     else warn('no [data-element-trigger="show-video"] inside the root')
 
-    armControl(this.el('play'), 'Play or pause the session video', function () { self.toggle() })
-    armControl(this.el('click'), null, function () { self.toggle() })
+    armControl(this.el('play'), 'Play or pause the session video', function () { self.toggle(true) })
+    armControl(this.el('click'), null, function () { self.toggle(true) })
 
     armControl(this.el('mute'), 'Mute or unmute the session video', function () {
       if (!self.player) return
@@ -583,8 +608,43 @@
     })
   }
 
-  /** The watch control: first press starts for real, later presses resume. */
-  Controller.prototype.watch = function () {
+  /**
+   * Straight into the device's own fullscreen player, for a confirmed member whose
+   * player box is too narrow for Vimeo's bar, fired inside the tap that asked for
+   * it. On a phone the inline hero is a postage stamp with our minimal controls,
+   * and finding the separate fullscreen button was a second step nobody took.
+   *
+   * ONLY ON A REAL USER ACTIVATION. upgrade() re-runs watch() to restore the
+   * watching state after rebuilding the frame, and that is not a gesture: browsers
+   * only honour a fullscreen request inside one, so attempting it there would
+   * trade a member's restored playback for a console error — and hijacking the
+   * whole screen because a membership answer arrived late is nobody's request.
+   *
+   * NARROW ONLY: at or above the threshold Vimeo's own bar is in charge and already
+   * carries its own fullscreen button, which is the desktop behaviour members have
+   * today. GATED NEVER: that frame is deliberately built without the permission, so
+   * the request could only fail, and the clamp is only enforceable on a surface we
+   * still control.
+   *
+   * A refusal needs no handling. Inline playback with the sound on and the controls
+   * up IS the fallback — the whole watch transition has already run by the time this
+   * is called — so the rejection dies in safe() and no state is written either way.
+   */
+  Controller.prototype.enterFullscreen = function (byGesture) {
+    if (byGesture !== true) return
+    if (this.gated || !this.narrow || !this.player) return
+    if (typeof this.player.requestFullscreen !== 'function') return
+    safe(this.player.requestFullscreen())
+    info('member on a narrow player: requested fullscreen from the watch tap')
+  }
+
+  /**
+   * The watch control: first press starts for real, later presses resume.
+   *
+   * `byGesture` is true only when a user activation routed here (see bind()); it
+   * licenses the fullscreen request and nothing else.
+   */
+  Controller.prototype.watch = function (byGesture) {
     if (!this.player) return
     if (this.armed) {
       if (this.gated && this.atWall) {
@@ -611,16 +671,24 @@
       this.startEmitted = true
       emit('session-video-preview-start', this.detail())
     }
+    // LAST, and still inside the tap's own synchronous task. Nothing above may
+    // depend on the fullscreen outcome: the transition — overlay down, controls up,
+    // sound on, loop off, playing from the ambient position — is the shipped
+    // behaviour for everybody and stays that way whether the request is granted,
+    // refused, or never made at all.
+    this.enterFullscreen(byGesture)
   }
 
-  Controller.prototype.toggle = function () {
+  Controller.prototype.toggle = function (byGesture) {
     if (!this.player) return
     if (this.gated && this.atWall) {
       this.openWall()
       return
     }
     if (!this.armed) {
-      this.watch()
+      // A tap on the hero during the ambient phase IS the watch gesture, so carry
+      // the activation through rather than dropping it here.
+      this.watch(byGesture)
       return
     }
     if (this.playing) safe(this.player.pause())
