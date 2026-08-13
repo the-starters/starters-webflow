@@ -8,11 +8,12 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.209'
+const RELEASE = 'v1.59.210'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
 const LEAD_ENTRY_PENDING_KEY = 'startersLeadEntryPendingV1'
+const LEAD_ENTRY_POSTHOG_PENDING_KEY = 'startersLeadEntryPosthogPendingV1'
 
 // Cookie name to Memberstack custom-field ID: the literals both this file and
 // quiz-results.js are pinned to. All eleven are verified to exist in the Memberstack
@@ -372,9 +373,24 @@ function boot(options = {}) {
             },
         },
         sessionStorage: {
-            getItem: (key) => (session.has(key) ? session.get(key) : null),
-            setItem: (key, value) => session.set(key, String(value)),
-            removeItem: (key) => session.delete(key),
+            getItem: (key) => {
+                if (options.posthogStorageThrows && String(key).includes('Posthog')) {
+                    throw new Error('analytics storage blocked')
+                }
+                return session.has(key) ? session.get(key) : null
+            },
+            setItem: (key, value) => {
+                if (options.posthogStorageThrows && String(key).includes('Posthog')) {
+                    throw new Error('analytics storage blocked')
+                }
+                session.set(key, String(value))
+            },
+            removeItem: (key) => {
+                if (options.posthogStorageThrows && String(key).includes('Posthog')) {
+                    throw new Error('analytics storage blocked')
+                }
+                session.delete(key)
+            },
         },
         crypto: options.noRandomUuid
             ? {}
@@ -384,9 +400,12 @@ function boot(options = {}) {
             if (options.fetchHandler) return options.fetchHandler(url, init || {})
             throw new Error('unexpected fetch')
         },
-        posthog: {
-            capture: (name, properties) => posthogCalls.push({ name, properties }),
-        },
+        posthog: options.noPosthog
+            ? undefined
+            : {
+                  __loaded: options.posthogLoaded !== false,
+                  capture: (name, properties) => posthogCalls.push({ name, properties }),
+              },
     }
     if (!options.noFbq) {
         window.fbq = (...args) => fbqCalls.push(args)
@@ -402,7 +421,7 @@ function boot(options = {}) {
         console: { warn: (message) => warnings.push(message) },
         document,
         setTimeout: options.parkTimers
-            ? (handler) => parkedTimers.push(handler)
+            ? (handler, delay) => parkedTimers.push({ handler, delay: Number(delay) || 0 })
             : setTimeout,
         window,
     }
@@ -519,6 +538,16 @@ function boot(options = {}) {
         pendingLeadEntry: () => {
             const raw = session.get(LEAD_ENTRY_PENDING_KEY)
             return raw === undefined ? undefined : JSON.parse(raw)
+        },
+        pendingLeadEntryPosthog: () => {
+            const raw = session.get(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+            return raw === undefined ? undefined : JSON.parse(raw)
+        },
+        parkedTimerDelays: () => parkedTimers.map((timer) => timer.delay),
+        runNextParkedTimer: () => {
+            const timer = parkedTimers.shift()
+            if (timer) timer.handler()
+            return timer && timer.delay
         },
         releaseMember: () => releaseMember(),
         savedFields: () => plain(updateCalls.map((call) => call.customFields)),
@@ -979,6 +1008,165 @@ test('a real production CMS signup registers one authenticated V3 lead entry', a
             },
         },
     ])
+})
+
+test('an accepted lead entry retries PostHog after the real SDK loads', async () => {
+    const first = boot({
+        hostname: 'thestarters.com',
+        pathname: '/skills/growth-marketing',
+        pageId: '69cccee53fd01363c8d406f9',
+        forms: ['signup'],
+        member: null,
+        posthogLoaded: false,
+        parkTimers: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await first.settle()
+    first.submitSignup()
+    first.authHandlers[0](loggedInMember)
+    await first.settle()
+    await first.settle()
+
+    assert.equal(first.posthogCalls.length, 0)
+    assert.equal(first.pendingLeadEntryPosthog().source_route, '/skills/growth-marketing')
+
+    const second = boot({
+        hostname: 'thestarters.com',
+        pathname: '/quiz',
+        forms: [],
+        member: loggedInMember,
+        session: Object.fromEntries(first.session),
+    })
+    await second.settle()
+
+    assert.deepEqual(plain(second.posthogCalls), [
+        {
+            name: 'v3_lead_entry_registered',
+            properties: {
+                track_key: 'collection',
+                intent_subtype: 'collection_signup',
+                source_route: '/skills/growth-marketing',
+                source_collection_id: '69cccee53fd01363c8d406f3',
+                payload_version: 'lead_entry_browser_v1',
+            },
+        },
+    ])
+    assert.equal(second.pendingLeadEntryPosthog(), undefined)
+
+    const third = boot({
+        hostname: 'thestarters.com',
+        pathname: '/quiz',
+        forms: [],
+        member: loggedInMember,
+        session: Object.fromEntries(second.session),
+    })
+    await third.settle()
+    assert.equal(third.posthogCalls.length, 0)
+})
+
+test('an accepted lead entry uses the bounded same-page PostHog retry schedule', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/skills/growth-marketing',
+        pageId: '69cccee53fd01363c8d406f9',
+        forms: ['signup'],
+        member: null,
+        posthogLoaded: false,
+        parkTimers: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+    harness.submitSignup()
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.deepEqual(harness.parkedTimerDelays(), [250])
+    assert.equal(harness.posthogCalls.length, 0)
+
+    for (const expectedDelay of [250, 1000, 3000, 7500]) {
+        assert.equal(harness.runNextParkedTimer(), expectedDelay)
+        await harness.settle()
+    }
+
+    assert.deepEqual(harness.parkedTimerDelays(), [])
+    assert.equal(harness.posthogCalls.length, 0)
+    assert.equal(harness.pendingLeadEntryPosthog().source_route, '/skills/growth-marketing')
+})
+
+test('the same-page retry captures once when PostHog finishes loading', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/interviews-analyses/operator-story',
+        pageId: '69dca9df095d2fbcf34e2575',
+        forms: ['signup'],
+        member: null,
+        posthogLoaded: false,
+        parkTimers: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+    harness.submitSignup()
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    harness.window.posthog.__loaded = true
+    assert.equal(harness.runNextParkedTimer(), 250)
+    await harness.settle()
+
+    assert.deepEqual(plain(harness.posthogCalls), [
+        {
+            name: 'v3_lead_entry_registered',
+            properties: {
+                track_key: 'learn_ungated',
+                intent_subtype: 'learn_signup',
+                source_route: '/learn/interviews-analyses/operator-story',
+                source_collection_id: '69dca9df095d2fbcf34e255b',
+                payload_version: 'lead_entry_browser_v1',
+            },
+        },
+    ])
+    assert.deepEqual(harness.parkedTimerDelays(), [])
+    assert.equal(harness.pendingLeadEntryPosthog(), undefined)
+})
+
+test('blocked PostHog storage cannot retry an accepted Xano registration', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/skills/growth-marketing',
+        pageId: '69cccee53fd01363c8d406f9',
+        forms: ['signup'],
+        member: null,
+        posthogStorageThrows: true,
+        runClockForward: true,
+        fetchHandler: async (url) =>
+            String(url).includes('/auth/trade-token/v3')
+                ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                : { ok: true, status: 200, json: async () => ({ ok: true }) },
+    })
+    await harness.settle()
+    harness.submitSignup()
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(
+        harness.fetchCalls.filter((call) => /lead_email\/register\/v3$/.test(call.url)).length,
+        1,
+    )
+    assert.equal(harness.pendingLeadEntry(), undefined)
+    assert.equal(harness.posthogCalls.length, 0)
 })
 
 test('a CMS login without a signup-form submit never registers a lead entry', async () => {

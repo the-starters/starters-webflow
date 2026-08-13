@@ -807,10 +807,11 @@ The snapshot expires after 24 hours and cannot move to another Memberstack
 member. Xano owns the stable idempotency key, current Brand Free plan check,
 suppression, and provider worker. The browser never calls Mailchimp.
 
-After Xano accepts the row, the script makes one best-effort PostHog capture of
-`v3_lead_entry_registered` and records it at most once per accepted event and
-CMS resource in the browser session. Missing analytics never affects
-registration and is not retried after Xano has accepted the row. Properties
+After Xano accepts the row, the script stores a non-PII browser-session snapshot
+and captures `v3_lead_entry_registered` only after the real PostHog SDK is ready.
+The current page retries on a short bounded schedule, and a same-tab page reload
+resumes the same snapshot. It records the capture at most once per accepted event
+and CMS resource. Missing analytics never affects registration. Properties
 contain only the track, intent, route, collection ID, and payload version. They
 contain no name, email, or member ID. The Xano payload can include only
 `utm_source`, `utm_campaign`, `utm_adset`, `utm_content`, `signup_source`,

@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.209
+ * @release v1.59.210
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
  * one funnel, which is why it lives here in `v3/` alongside the other standalone
@@ -213,7 +213,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.209'
+    var RELEASE = 'v1.59.210'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -321,12 +321,14 @@
     var PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 
     var LEAD_ENTRY_PENDING_KEY = 'startersLeadEntryPendingV1'
+    var LEAD_ENTRY_POSTHOG_PENDING_KEY = 'startersLeadEntryPosthogPendingV1'
     var LEAD_ENTRY_POSTHOG_PREFIX = 'startersLeadEntryPosthogV1:'
     var LEAD_ENTRY_AUTH_BASE =
         'https://x08a-5ko8-jj1r.n7c.xano.io/api:g1vmSLWh'
     var LEAD_ENTRY_API_URL =
         'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/lead_email/register/v3'
     var LEAD_ENTRY_RETRY_DELAYS = [0, 750, 2000, 5000]
+    var LEAD_ENTRY_POSTHOG_RETRY_DELAYS = [0, 250, 1000, 3000, 7500]
     var LEAD_ENTRY_MAX_AGE_MS = 24 * 60 * 60 * 1000
     var LEAD_ENTRY_PRODUCTION_HOSTS = {
         'thestarters.com': true,
@@ -402,6 +404,7 @@
     var MEMBERSTACK_MAX_WAIT_MS = 10000
 
     var leadEntryRegistrationInFlight = null
+    var leadEntryPosthogRetryInFlight = null
     var leadEntryPendingFromThisPage = false
     var leadEntrySignupSubmitted = false
 
@@ -801,19 +804,31 @@
 
     /**
      * @param {object} pending
-     * @returns {void}
+     * @returns {boolean} Whether this browser session completed the capture.
      */
     var captureLeadEntryPosthog = function (pending) {
+        var key
+        var storage
         try {
-            var key =
+            key =
                 LEAD_ENTRY_POSTHOG_PREFIX +
                 pending.source_event_id + ':' +
                 pending.source_collection_id + ':' +
                 pending.source_resource_slug
-            var storage = window.sessionStorage
-            if (storage && storage.getItem(key) === 'true') return
-            if (!window.posthog || typeof window.posthog.capture !== 'function') return
+            storage = window.sessionStorage
+            if (storage && storage.getItem(key) === 'true') return true
+            if (
+                !window.posthog ||
+                window.posthog.__loaded !== true ||
+                typeof window.posthog.capture !== 'function'
+            ) {
+                return false
+            }
 
+            // Mark before capture so a page rerun cannot enqueue the same
+            // analytics event twice. A synchronous capture failure releases the
+            // marker and leaves the safe pending snapshot available for retry.
+            if (storage) storage.setItem(key, 'true')
             window.posthog.capture('v3_lead_entry_registered', {
                 track_key: pending.track_key,
                 intent_subtype: pending.intent_subtype,
@@ -821,9 +836,137 @@
                 source_collection_id: pending.source_collection_id,
                 payload_version: 'lead_entry_browser_v1',
             })
-            if (storage) storage.setItem(key, 'true')
+            return true
         } catch (error) {
+            try {
+                if (storage && key) storage.removeItem(key)
+            } catch (storageError) {
+                /* analytics storage must never affect registration */
+            }
             /* analytics must never affect registration */
+            return false
+        }
+    }
+
+    /**
+     * Persists only the non-PII fields needed to retry PostHog after the SDK has
+     * loaded. The canonical Xano event is already accepted at this point.
+     *
+     * @param {object} pending
+     * @returns {void}
+     */
+    var queueLeadEntryPosthog = function (pending) {
+        try {
+            var storage = window.sessionStorage
+            if (!storage || !pending) return
+            storage.setItem(
+                LEAD_ENTRY_POSTHOG_PENDING_KEY,
+                JSON.stringify({
+                    source_event_id: pending.source_event_id,
+                    source_collection_id: pending.source_collection_id,
+                    source_resource_slug: pending.source_resource_slug,
+                    track_key: pending.track_key,
+                    intent_subtype: pending.intent_subtype,
+                    source_route: pending.source_route,
+                    captured_at: Number(pending.captured_at || Date.now()),
+                }),
+            )
+        } catch (error) {
+            /* analytics storage must never affect registration */
+        }
+    }
+
+    /**
+     * @returns {object|null}
+     */
+    var readQueuedLeadEntryPosthog = function () {
+        try {
+            var storage = window.sessionStorage
+            var raw = storage && storage.getItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+            if (!raw) return null
+
+            var snapshot
+            try {
+                snapshot = JSON.parse(raw)
+            } catch (error) {
+                storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+                return null
+            }
+
+            if (
+                !snapshot ||
+                Date.now() - Number(snapshot.captured_at || 0) >
+                    LEAD_ENTRY_MAX_AGE_MS
+            ) {
+                storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+                return null
+            }
+
+            return snapshot
+        } catch (error) {
+            return null
+        }
+    }
+
+    /**
+     * @returns {void}
+     */
+    var clearQueuedLeadEntryPosthog = function () {
+        try {
+            var storage = window.sessionStorage
+            if (storage) storage.removeItem(LEAD_ENTRY_POSTHOG_PENDING_KEY)
+        } catch (error) {}
+    }
+
+    /**
+     * Retries the safe analytics snapshot only until the real PostHog SDK is
+     * ready. Page reloads resume the same snapshot from sessionStorage.
+     *
+     * @param {object} [pending]
+     * @returns {Promise<boolean>}
+     */
+    var retryLeadEntryPosthog = function (pending) {
+        try {
+            if (pending && captureLeadEntryPosthog(pending)) {
+                return Promise.resolve(true)
+            }
+            if (pending) queueLeadEntryPosthog(pending)
+            if (leadEntryPosthogRetryInFlight) return leadEntryPosthogRetryInFlight
+            if (!readQueuedLeadEntryPosthog()) return Promise.resolve(false)
+
+            leadEntryPosthogRetryInFlight = (async function () {
+                for (
+                    var attempt = 0;
+                    attempt < LEAD_ENTRY_POSTHOG_RETRY_DELAYS.length;
+                    attempt += 1
+                ) {
+                    if (LEAD_ENTRY_POSTHOG_RETRY_DELAYS[attempt]) {
+                        await wait(LEAD_ENTRY_POSTHOG_RETRY_DELAYS[attempt])
+                    }
+
+                    var snapshot = readQueuedLeadEntryPosthog()
+                    if (!snapshot) return false
+
+                    if (captureLeadEntryPosthog(snapshot)) {
+                        clearQueuedLeadEntryPosthog()
+                        return true
+                    }
+                }
+                return false
+            })().then(
+                function (result) {
+                    leadEntryPosthogRetryInFlight = null
+                    return result
+                },
+                function () {
+                    leadEntryPosthogRetryInFlight = null
+                    return false
+                },
+            )
+
+            return leadEntryPosthogRetryInFlight
+        } catch (error) {
+            return Promise.resolve(false)
         }
     }
 
@@ -888,7 +1031,7 @@
                     })
                     if (response.ok && body && body.ok === true) {
                         clearPendingLeadEntry()
-                        captureLeadEntryPosthog(pending)
+                        retryLeadEntryPosthog(pending)
                         return true
                     }
                     if (
@@ -2005,6 +2148,10 @@
         } catch (error) {
             warn('capture failed')
         }
+
+        runSafely(function () {
+            return retryLeadEntryPosthog()
+        }, 'lead-entry PostHog retry failed')
 
         // One scan of the DOM as it stands now; rearm() covers a form injected
         // later.
