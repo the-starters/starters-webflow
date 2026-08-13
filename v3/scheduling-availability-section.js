@@ -72,7 +72,6 @@
   let connectionError = false
   let connectBusy = false
   let cachedItemTemplate = null
-  let mainWrapperShown = false
   const oauthCallback = captureOAuthCallback()
 
   /* ------------------------------------------------------------------ */
@@ -1044,22 +1043,8 @@
     })
   }
 
-  function findByText(root, pattern) {
-    if (!root) return null
-    const all = qsa('*', root)
-    let best = null
-    for (let i = 0; i < all.length; i++) {
-      const el = all[i]
-      const text = el.textContent || ''
-      if (pattern.test(text) && (!best || text.length < (best.textContent || '').length)) {
-        best = el
-      }
-    }
-    return best
-  }
-
   /* ------------------------------------------------------------------ */
-  /* Connection chrome (connect-wrapper / main-wrapper)                  */
+  /* Connection chrome (labels / buttons / connect-info-wrapper)         */
   /* ------------------------------------------------------------------ */
 
   // 'loading' means the request is still in flight — leave the label as
@@ -1103,26 +1088,7 @@
     setElementVisible('connect-info-wrapper', state !== 'connected' && state !== 'reconnect')
   }
 
-  // Sticky show: once main-wrapper is revealed for a real connection, it
-  // stays up through the transient 'loading'/'error' states that save/
-  // delete/add and connect/disconnect actions round-trip through — only a
-  // definitive 'disconnected' state hides it again. On page load it's hidden
-  // by the site's own CSS, so this only ever needs to force it open via an
-  // explicit `display: grid` (clearing to '' would just fall back to that
-  // same CSS-hidden default).
-  function updateMainWrapperVisibility(state) {
-    if (state === 'connected' || state === 'reconnect') {
-      mainWrapperShown = true
-    } else if (state === 'disconnected') {
-      mainWrapperShown = false
-    }
-    qsa(elSel('main-wrapper')).forEach(function (el) {
-      el.style.display = mainWrapperShown ? 'grid' : 'none'
-    })
-  }
-
   function repaintConnectionUI(state) {
-    updateMainWrapperVisibility(state)
     applyConnectLabels(state)
     applyConnectButtonVisibility()
     applyConnectInfoVisibility(state)
@@ -1359,8 +1325,8 @@
     template.setAttribute('aria-hidden', 'true')
     template.style.display = 'none'
 
-    // Clear only previously rendered clones, keeping the loading spinner and
-    // the (now hidden) template intact — both are siblings inside `list`.
+    // Clear only previously rendered clones, keeping the (now hidden)
+    // template intact — it stays a sibling inside `list`.
     qsa(elSel('item-card'), list).forEach(function (el) {
       el.remove()
     })
@@ -1395,7 +1361,6 @@
     }
 
     initInputPickers(list)
-    setElementVisible('loading-settings', false)
   }
 
   function handleCreateAvailability() {
@@ -1440,16 +1405,7 @@
   }
 
   function bindCreateTrigger() {
-    const mainWrapper = qs(elSel('main-wrapper'))
-    let trigger = qs('[' + ACTION + '="availability-create"]')
-    if (!trigger && mainWrapper) {
-      trigger = findByText(mainWrapper, /add availability/i)
-      if (trigger) {
-        console.warn(
-          '[scheduling-section] missing [' + ACTION + '="availability-create"]; matched "Add availability window" by text as a fallback',
-        )
-      }
-    }
+    const trigger = qs('[' + ACTION + '="availability-create"]')
     if (!trigger) return
     trigger.addEventListener('click', function (e) {
       if (e && typeof e.preventDefault === 'function') e.preventDefault()
@@ -1665,6 +1621,22 @@
   /* Bootstrap                                                           */
   /* ------------------------------------------------------------------ */
 
+  // `connect-wrapper` and `main-wrapper` (which itself contains
+  // `list-wrapper` and `slots-wrapper`) are hidden by the site's own CSS
+  // until the first load resolves — the script never hides them, it only
+  // ever reveals them once via an explicit `display` value (clearing to ''
+  // would just fall back to that same CSS-hidden default). `loading-section`
+  // is the single spinner shown in their place until then.
+  function revealSection() {
+    setElementVisible('loading-section', false)
+    qsa(elSel('connect-wrapper')).forEach(function (el) {
+      el.style.display = 'flex'
+    })
+    qsa(elSel('main-wrapper')).forEach(function (el) {
+      el.style.display = 'grid'
+    })
+  }
+
   async function initialize() {
     const root = qs(elSel('section'))
     if (!root) {
@@ -1731,13 +1703,14 @@
       renderSlotsPreview()
 
       publishCalendarConnectionState(state)
+      revealSection()
       setStatus('ready')
       emit('starterSchedulingSectionReady', { memberId: sessionMemberId })
       return 'ready'
     } catch (error) {
       publishCalendarConnectionError()
       setStatus('error')
-      setElementVisible('loading-settings', false)
+      setElementVisible('loading-section', false)
       setElementVisible('loading-slots', false)
       console.warn('[scheduling-section] initialization failed:', error && error.message)
       return null
