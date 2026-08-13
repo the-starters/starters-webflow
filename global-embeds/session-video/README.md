@@ -37,6 +37,22 @@ page exactly as authored.
 A member never reaches the third phase and gets the whole video, full screen
 included.
 
+**On a narrow player the watch control means full screen for a member.** Below the
+`data-session-video-native-min` threshold the inline hero is a postage stamp
+carrying the template's minimal controls, so a confirmed member's watch tap asks
+the player for native full screen as well, fired inside that tap's own gesture —
+only ever a real tap or keyboard activation, never automatically. Leaving full
+screen (Done, or the back gesture) is treated as a pause: the overlay returns, the
+control bar goes with it, and the position is pinned, so the next watch tap goes
+straight back in from where they stopped, cycle after cycle. A tap that arrives
+before membership has resolved is still looking at the gated frame, which carries
+no permission, so it plays inline exactly as it always did and the full-screen
+button is the second chance once the upgrade lands; a request the browser refuses
+degrades the same way, with no error state either time. Members at or above the
+threshold keep today's inline watch with Vimeo's own bar and its own full-screen
+button, gated viewers are untouched at every width, and the play/pause control is
+never a full-screen route.
+
 **Why the background phase must not arm the gate.** An ambient loop left running
 would eventually cross the cut point on its own and throw the signup wall at
 somebody who never asked to watch anything — possibly while they were reading
@@ -142,8 +158,9 @@ is why the split is by width and not by membership alone.
   playback. A viewer keeps what they got until something remounts — `upgrade()`
   does recompute, so a rotation before a late membership answer can change it.
 - **Controls and full-screen permission are separate.** A member on a narrow
-  screen drives full screen through the template's own button and the Vimeo API,
-  so that frame still carries `allowfullscreen`.
+  screen drives full screen through the Vimeo API — from the watch tap described
+  above, and from the template's own button — so that frame still carries
+  `allowfullscreen`.
 
 Frames are built rather than authored so that `controls`, `keyboard` and `pip`
 are correct *at load* for this particular viewer. Those three follow the **native**
