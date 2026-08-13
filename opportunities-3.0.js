@@ -527,6 +527,7 @@
     brandReviewSubmit: (payload) => call('brand/reviews/submit', { body: payload }),
     invoiceCreate: (payload) => call('invoices/create/v3', { body: payload }),
     // starter / talent
+    starterProfile: () => call('starter/profile/me', { body: {} }),
     starterMatchContext: () => call('starter/profile/match-context', { body: {} }),
     starterOppList: (tab, page = 1, per_page = 20, options = {}) =>
       call('starter/opportunities/list', { body: { tab, page, per_page, ...options } }),

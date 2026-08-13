@@ -22,6 +22,9 @@ class Element {
     this.textContent = attrs.textContent || ''
     this.hidden = Boolean(attrs.hidden)
     this.disabled = Boolean(attrs.disabled)
+    this.required = Boolean(attrs.required)
+    this.readOnly = Boolean(attrs.readOnly)
+    this.tagName = String(attrs.tagName || 'div').toUpperCase()
     this.style = { display: '', opacity: '', pointerEvents: '' }
     this.classList = new ClassList((attrs.className || '').split(/\s+/).filter(Boolean))
     this.children = []
@@ -29,6 +32,7 @@ class Element {
     this.ownerDocument = null
     this.events = []
     this.parent = null
+    this.parentElement = null
     this.resetCount = 0
   }
   setAttribute(name, value) { this.attrs[name] = String(value) }
@@ -57,6 +61,7 @@ class Element {
   }
   appendChild(element) {
     element.parent = this
+    element.parentElement = this
     this.children.push(element)
     if (this.options) this.options.push(element)
   }
@@ -71,12 +76,16 @@ class Element {
   }
   reset() { this.resetCount += 1 }
   matches(selector) {
-    if (selector === '#Brand') return this.attrs.id === 'Brand'
+    if (selector === '#Brand' || selector.includes('#Brand')) return this.attrs.id === 'Brand'
+    if (selector === '[data-project-form-v3="starter"]') return this.getAttribute('data-project-form-v3') === 'starter'
     return false
   }
   closest(selector) {
     if (selector === '.w-form') return this.wrapper || null
     if (selector.includes('dialog[data-modal-target="start-project"] form')) return this.form || null
+    if (selector.includes('[data-project-form-v3="starter"] form')) return this.form || null
+    if (selector === '[data-project-form-v3="starter"]') return this.context || (this.matches(selector) ? this : null)
+    if (selector === 'dialog') return this.dialog || null
     if (selector === '[data-starter-project-brand-option]') {
       return this.getAttribute('data-starter-project-brand-option') ? this : null
     }
@@ -93,8 +102,11 @@ class Element {
     if (selector === '#Brand') return this.fields && this.fields.select
     if (selector === '#brand-contract') return this.fields && this.fields.brandId
     if (selector === '#hiring-manager-name') return this.fields && this.fields.manager
+    if (selector === '#Hiring-Manager-Name') return this.fields && this.fields.manager
     if (selector === '#brand-company-name') return this.fields && this.fields.company
+    if (selector === '#Company-Name') return this.fields && this.fields.company
     if (selector === '#brand-email') return this.fields && this.fields.email
+    if (selector === '#Email-Address') return this.fields && this.fields.email
     if (selector === '[data-project-form-state="error"]' || selector === '.w-form-fail') return this.error || null
     if (selector === '[data-project-form-state="success"]' || selector === '.w-form-done') return this.success || null
     if (selector === '[data-project-success-message]') return this.successMessage || null
@@ -107,13 +119,19 @@ class Element {
       return (this.controls || []).filter((control) => control.getAttribute('data-set-current-date-inited') === 'true')
     }
     if (selector === '[data-project-success-title], .generate-contract_success-text') return this.successTitles || []
+    if (selector === '[data-project-bind], [element]') return this.profileTargets || []
+    if (selector === '#brand-name-contract, #brand-name, #freeName, #FreeEmail, #pushMemID') return this.cmsOnly || []
     return []
   }
 }
 
 function formFixture() {
-  const form = new Element()
+  const form = new Element({ tagName: 'form' })
   const wrapper = new Element()
+  const context = new Element({ tagName: 'dialog', 'data-project-form-v3': 'starter' })
+  context.form = form
+  form.context = context
+  form.dialog = context
   const select = new Element({ id: 'Brand', name: 'Brand', tagName: 'select' })
   const placeholder = new Element({ value: '', textContent: 'Choose a Brand', tagName: 'option' })
   select.ownerDocument = { createElement: (tagName) => new Element({ tagName }) }
@@ -126,18 +144,19 @@ function formFixture() {
     email: new Element({ id: 'brand-email', value: 'sample@example.com' }),
   }
   Object.values(form.fields).forEach((element) => { element.form = form })
+  Object.values(form.fields).forEach((element) => { element.context = context })
   form.wrapper = wrapper
   wrapper.error = new Element()
   wrapper.success = new Element({ hidden: true })
   wrapper.success.successTitles = [new Element(), new Element()]
   wrapper.success.successMessage = new Element()
   form.controls = Object.values(form.fields)
-  return { form, wrapper }
+  return { context, form, wrapper }
 }
 
 function load(options = {}) {
-  const { form, wrapper } = options.fixture || formFixture()
-  const calls = { options: [], submit: [] }
+  const { context, form, wrapper } = options.fixture || formFixture()
+  const calls = { options: [], profile: [], submit: [] }
   const events = []
   const tracks = []
   const serializedPayload = {
@@ -156,7 +175,10 @@ function load(options = {}) {
   const document = {
     listeners: {},
     addEventListener(name, handler) { this.listeners[name] = handler },
-    querySelector(selector) { return selector.includes('start-project') ? form : null },
+    querySelector(selector) {
+      if (selector === '[data-project-form-v3="starter"]') return context
+      return selector.includes('start-project') || selector.includes('data-project-form-v3') ? form : null
+    },
     dispatchEvent(event) { events.push(event) },
   }
   Object.values(form.fields).forEach((element) => { element.eventDocument = document })
@@ -178,6 +200,16 @@ function load(options = {}) {
       fillCurrentDates: options.fillCurrentDates,
     },
     Opp30: { API: {
+      starterProfile: options.starterProfile || (async () => {
+        calls.profile.push({})
+        return options.profile || {
+          full_name: 'Starter Person',
+          role_name: 'Retention',
+          professional_headline: 'Growth strategist',
+          profile_photo: 'https://example.com/starter.jpg',
+          freelancer_information: 'Builds durable growth systems.',
+        }
+      }),
       projectOptions: options.projectOptions || (async (payload) => {
         calls.options.push(payload)
         return { counterparties: options.counterparties || [] }
@@ -189,8 +221,144 @@ function load(options = {}) {
     } },
   }
   vm.runInNewContext(SOURCE, { window, WeakMap, Number, String, JSON, Object, Array, Promise }, { filename: 'starter-project-form.js' })
-  return { api: window.StartersStarterProjectFormV3, calls, document, events, form, tracks, window, wrapper }
+  return { api: window.StartersStarterProjectFormV3, calls, context, document, events, form, tracks, window, wrapper }
 }
+
+test('normalizes and renders the authenticated Starter profile into scoped bindings', async () => {
+  const loaded = load({ noDocument: true, profile: {
+    first_name: 'Starter',
+    last_name: 'Person',
+    role_name: 'Lifecycle Marketing',
+    professional_headline: 'Retention lead',
+    profile_photo: 'https://example.com/photo.jpg',
+    freelancer_information: '<p>Builds &amp; improves retention.</p>',
+  } })
+  const photo = new Element({ tagName: 'img', 'data-project-bind': 'starter.profile_photo' })
+  const name = new Element({ 'data-project-bind': 'starter.full_name' })
+  const headline = new Element({ 'data-project-bind': 'starter.professional_headline', 'data-project-bind-empty': 'hide' })
+  const role = new Element({ element: 'role_name' })
+  const summary = new Element({ element: 'freelancer_infromation' })
+  loaded.context.profileTargets = [photo, name, role, headline, summary]
+
+  const profile = await loaded.api.loadProfile(loaded.form, loaded.window)
+
+  assert.equal(loaded.calls.profile.length, 1)
+  assert.equal(profile.full_name, 'Starter Person')
+  assert.equal(photo.getAttribute('src'), 'https://example.com/photo.jpg')
+  assert.equal(photo.getAttribute('alt'), 'Starter Person profile photo')
+  assert.equal(name.textContent, 'Starter Person')
+  assert.equal(role.textContent, 'Lifecycle Marketing')
+  assert.equal(headline.textContent, 'Retention lead')
+  assert.equal(summary.textContent, 'Builds & improves retention.')
+})
+
+test('profile loading clears authored identity and stays clear on failure', async () => {
+  let rejectProfile
+  const loaded = load({
+    noDocument: true,
+    starterProfile: () => new Promise((resolve, reject) => { rejectProfile = reject }),
+  })
+  const photo = new Element({
+    tagName: 'img',
+    element: 'profile_photo',
+    src: 'https://example.com/authored.jpg',
+    srcset: 'https://example.com/authored-2x.jpg 2x',
+    alt: 'Authored Starter',
+  })
+  const name = new Element({ element: 'full_name', textContent: 'Authored Starter' })
+  const role = new Element({ element: 'role_name', textContent: 'Authored role' })
+  const headline = new Element({ element: 'professional_headline', textContent: 'Authored headline' })
+  const summary = new Element({ element: 'freelancer_infromation', textContent: 'Authored summary' })
+  loaded.context.profileTargets = [photo, name, role, headline, summary]
+
+  const request = loaded.api.loadProfile(loaded.form, loaded.window)
+
+  assert.equal(photo.getAttribute('src'), null)
+  assert.equal(photo.getAttribute('srcset'), null)
+  assert.equal(photo.getAttribute('alt'), '')
+  assert.equal(name.textContent, '')
+  assert.equal(role.textContent, '')
+  assert.equal(headline.textContent, '')
+  assert.equal(summary.textContent, '')
+
+  await Promise.resolve()
+  rejectProfile(new Error('profile unavailable'))
+  assert.equal(await request, null)
+  assert.equal(name.textContent, '')
+  assert.equal(photo.getAttribute('src'), null)
+})
+
+test('member reset clears profile identity and rejects stale profile responses', async () => {
+  let resolveFirst
+  let requestNumber = 0
+  const loaded = load({
+    starterProfile: () => {
+      requestNumber += 1
+      if (requestNumber === 1) return new Promise((resolve) => { resolveFirst = resolve })
+      return Promise.reject(new Error('member B profile unavailable'))
+    },
+  })
+  const photo = new Element({ tagName: 'img', element: 'profile_photo' })
+  const name = new Element({ element: 'full_name' })
+  loaded.context.profileTargets = [photo, name]
+  loaded.api.renderProfile(loaded.form, {
+    full_name: 'Member A',
+    profile_photo: 'https://example.com/member-a.jpg',
+  })
+
+  const firstRequest = loaded.api.loadProfile(loaded.form, loaded.window, true)
+  await Promise.resolve()
+  loaded.window.listeners['opp30:member-scope-reset']({ detail: { memberId: 'member-b' } })
+
+  assert.equal(name.textContent, '')
+  assert.equal(photo.getAttribute('src'), null)
+
+  resolveFirst({ full_name: 'Member A', profile_photo: 'https://example.com/member-a.jpg' })
+  assert.equal(await firstRequest, null)
+  assert.equal(name.textContent, '')
+
+  assert.equal(await loaded.api.loadProfile(loaded.form, loaded.window), null)
+  assert.equal(name.textContent, '')
+  assert.equal(photo.getAttribute('src'), null)
+})
+
+test('promotes the detached shared Contract Generation form into Starter context', () => {
+  const { api } = load({ noDocument: true })
+  const old = new Element({ tagName: 'dialog', 'data-modal-target': 'start-project' })
+  old.form = new Element({ tagName: 'form' })
+  const shared = new Element({ tagName: 'dialog', 'data-modal-target': 'generate-contract' })
+  shared.form = formFixture().form
+  shared.form.dialog = shared
+  shared.form.context = shared
+  const marker = new Element({ tagName: 'img', element: 'profile_photo' })
+  marker.dialog = shared
+  const nestedLink = new Element({ href: '/opportunities-freelancer-view', className: 'clickable_link' })
+  const dialogs = [old, shared]
+  const document = {
+    querySelector(selector) {
+      if (selector === '[data-project-form-v3="starter"]') {
+        return dialogs.find((dialog) => dialog.getAttribute('data-project-form-v3') === 'starter') || null
+      }
+      if (selector.includes('dialog[data-modal-target="generate-contract"]')) return marker
+      return null
+    },
+    querySelectorAll(selector) {
+      if (selector === 'dialog[data-modal-target="start-project"]') {
+        return dialogs.filter((dialog) => dialog.getAttribute('data-modal-target') === 'start-project')
+      }
+      if (selector === '[data-modal-trigger="start-project"] a.clickable_link') return [nestedLink]
+      return []
+    },
+  }
+
+  assert.equal(api.normalizeModalMarkup(document), true)
+  assert.equal(shared.getAttribute('data-project-form-v3'), 'starter')
+  assert.equal(shared.getAttribute('data-modal-target'), 'start-project')
+  assert.equal(old.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
+  assert.equal(shared.form.fields.select.required, true)
+  assert.equal(shared.form.fields.select.getAttribute('data-project-field'), 'brand_id')
+  assert.equal(nestedLink.getAttribute('href'), '#start-project')
+})
 
 test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', () => {
   const { api } = load({ noDocument: true })
@@ -207,24 +375,26 @@ test('normalizes, deduplicates, and sorts eligible Brands by stable Xano ID', ()
   assert.equal(Object.prototype.hasOwnProperty.call(options[0], 'email'), false)
 })
 
-test('normalizes the navbar trigger and disables duplicate Start a Project modals', () => {
+test('keeps every legacy Start a Project modal disabled without the shared marker', () => {
   const { api } = load({ noDocument: true })
   const legacy = new Element({ 'data-modal-target': 'start-project' })
   legacy.form = new Element()
-  const canonical = new Element({ 'data-modal-target': 'start-project' })
-  canonical.form = formFixture().form
+  const legacyWithNativeForm = new Element({ 'data-modal-target': 'start-project' })
+  legacyWithNativeForm.form = formFixture().form
+  legacyWithNativeForm.setAttribute('data-project-form-v3', 'starter')
   const nestedLink = new Element({ href: '/opportunities-freelancer-view', className: 'clickable_link' })
   const document = {
+    querySelector() { return null },
     querySelectorAll(selector) {
-      if (selector === 'dialog[data-modal-target="start-project"]') return [legacy, canonical]
+      if (selector === 'dialog[data-modal-target="start-project"]') return [legacy, legacyWithNativeForm]
       if (selector === '[data-modal-trigger="start-project"] a.clickable_link') return [nestedLink]
       return []
     },
   }
 
-  assert.equal(api.normalizeModalMarkup(document), true)
-  assert.equal(canonical.getAttribute('data-modal-target'), 'start-project')
+  assert.equal(api.normalizeModalMarkup(document), false)
   assert.equal(legacy.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
+  assert.equal(legacyWithNativeForm.getAttribute('data-modal-target'), 'start-project-legacy-disabled-2')
   assert.equal(nestedLink.getAttribute('href'), '#start-project')
 })
 

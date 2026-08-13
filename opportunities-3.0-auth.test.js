@@ -324,6 +324,29 @@ test('project options and canonical Starter submission use authenticated V3 rout
   assert.deepEqual(JSON.parse(requests[2].init.body), payload)
 })
 
+test('authenticated Starter profile uses the V3 self-profile route', async () => {
+  const requests = []
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      requests.push({ url, init })
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/starter/profile/me')) {
+        return response({ full_name: 'Starter Person', profile_photo: 'https://example.com/photo.jpg' })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: talentMember },
+  )
+
+  const profile = await bridge.API.starterProfile()
+
+  assert.equal(profile.full_name, 'Starter Person')
+  assert.equal(requests[1].url, 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/starter/profile/me')
+  assert.equal(requests[1].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[1].init.body), {})
+})
+
 test('superseded proposal controller retains its authenticated decision route', async () => {
   const requests = []
   const bridge = await loadBridge(
