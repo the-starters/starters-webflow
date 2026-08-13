@@ -507,3 +507,37 @@ test('relayouts when blanking a raw value, because hiding that text changes heig
   flushTimers()
   assert.deepEqual(dispatched, ['expert-cards:relayout'])
 })
+
+test('rewrites injected cards in every browse list on the page', () => {
+  const page = buildPage({
+    joinedPaths: 'Paid Media > Performance Creative Strategy',
+  })
+  const premium = new El('div')
+  premium.setAttribute('wf-algolia-element', 'browse')
+  const premiumCard = new El('div')
+  premiumCard.setAttribute('class', 'wf-algolia-injected')
+  premiumCard.appendChild(
+    paragraph(
+      { 'wf-algolia-text': 'categories.lvl1', class: 'subcategory-tag' },
+      'Creative > Video & Production',
+    ),
+  )
+  premium.appendChild(premiumCard)
+  page.documentEl.appendChild(premium)
+
+  loadModule({ page })
+  assert.deepEqual(tagText(page.card), ['Performance Creative Strategy'])
+  assert.deepEqual(tagText(premiumCard), ['Video & Production'])
+})
+
+test('gives up waiting for WfAlgolia and still rewrites the card', () => {
+  const page = buildPage({
+    joinedPaths: 'Paid Media > Performance Creative Strategy',
+  })
+  const mod = loadModule({ page, withEngine: false })
+  assert.deepEqual(tagText(page.card), [
+    'Paid Media > Performance Creative Strategy',
+  ])
+  for (let i = 0; i < 20; i += 1) mod.flushTimers()
+  assert.deepEqual(tagText(page.card), ['Performance Creative Strategy'])
+})

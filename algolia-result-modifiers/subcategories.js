@@ -42,7 +42,7 @@
         const raw = String(text || '').trim();
         if (!raw) return [];
 
-        const parts = raw.split(/\s*>\s*/).map((part) => part.trim());
+        const parts = raw.split(' > ').map((part) => part.trim());
         if (parts.length === 1) {
           return /^[,>\s]*$/.test(parts[0]) ? [] : [parts[0]];
         }
