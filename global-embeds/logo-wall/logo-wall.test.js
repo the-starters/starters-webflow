@@ -4,6 +4,7 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./logo-wall.js'), 'utf8')
+const stylesheet = fs.readFileSync(require.resolve('./logo-wall.css'), 'utf8')
 
 /* ------------------------------ mini DOM ------------------------------ *
  * The script is a closed IIFE that exports nothing, so the only seam is the
@@ -107,11 +108,6 @@ class El {
     return child
   }
 
-  /** Alias used by the fixtures; the script only ever calls appendChild. */
-  append(child) {
-    return this.appendChild(child)
-  }
-
   insertBefore(child, reference) {
     if (child.parentNode) child.parentNode.removeChild(child)
     const at = reference ? this.children.indexOf(reference) : -1
@@ -142,10 +138,6 @@ class El {
     if (this.complete !== undefined) copy.complete = this.complete
     if (deep) this.children.forEach((child) => copy.appendChild(child.cloneNode(true)))
     return copy
-  }
-
-  getBoundingClientRect() {
-    return { left: 0, top: 0, right: 0, bottom: 0, width: this.scrollWidth, height: 0 }
   }
 
   addEventListener() {}
@@ -188,8 +180,8 @@ function logoItem(index, width) {
 }
 
 /**
- * html > body > section > wrapper > items — a padded ancestor chain, so a test
- * can prove the script leaves everything above the wrapper alone.
+ * html > body > section > wrapper > items — an ancestor chain deep enough that
+ * a test can prove the script leaves everything above the wrapper alone.
  */
 function makePage(options) {
   const o = options || {}
@@ -220,25 +212,30 @@ function makePage(options) {
   return page
 }
 
+/** The string part of one captured console.warn call. */
+function warnText(args) {
+  return args.filter((a) => typeof a === 'string').join(' ')
+}
+
 /** Run the script for real against a page, in a fresh sandbox. */
 function load(page, options) {
   const o = options || {}
+  /** Raw console.warn argument lists, newest last. */
   const warnings = []
-  const warnArgs = []
   const listeners = {}
+  const observers = []
   const timers = new Map()
   let nextTimer = 1
 
   const sandbox = {
     console: {
       warn(...args) {
-        warnArgs.push(args)
-        warnings.push(args.filter((a) => typeof a === 'string').join(' '))
+        warnings.push(args)
       },
       log() {},
     },
-    // Manual-flush timers: the resize re-arm is debounced by 150ms, and a test
-    // that has to wait 150 real milliseconds is a test that flakes.
+    // Manual-flush timers: the re-arm is debounced by 150ms, and a test that
+    // has to wait 150 real milliseconds is a test that flakes.
     setTimeout(fn) {
       const id = nextTimer++
       timers.set(id, fn)
@@ -247,26 +244,32 @@ function load(page, options) {
     clearTimeout(id) {
       timers.delete(id)
     },
-    parseInt,
-    parseFloat,
-    isFinite,
-    Number,
-    String,
-    Math,
-    RegExp,
-    Object,
-    Array,
   }
 
   sandbox.window = sandbox
   sandbox.location = { hostname: o.hostname || 'www.thestarters.com' }
   sandbox.window.location = sandbox.location
-  sandbox.window.innerWidth = page.html.clientWidth
   if (o.debug !== undefined) sandbox.window.STARTERS_DEBUG = o.debug
+  if (!o.noResizeObserver) {
+    sandbox.ResizeObserver = function ResizeObserver(callback) {
+      this.callback = callback
+      this.observe = (el) => {
+        this.observed = el
+      }
+      this.disconnect = () => {}
+      observers.push(this)
+    }
+  }
   sandbox.window.addEventListener = (type, fn) => {
     ;(listeners[type] = listeners[type] || []).push(fn)
   }
-  sandbox.window.matchMedia = () => ({ matches: false, addEventListener() {} })
+  const motionHandlers = []
+  sandbox.window.matchMedia = () => ({
+    matches: false,
+    addEventListener(type, fn) {
+      motionHandlers.push(fn)
+    },
+  })
   // columnGap/display are what the script reads. The overflow keys are here so
   // the "ancestors are untouched" test has teeth: the retired bleed walk read
   // them to decide which ancestors to rewrite.
@@ -303,13 +306,27 @@ function load(page, options) {
 
   return {
     warnings,
-    warnArgs,
     window: sandbox.window,
     listeners,
     flush,
-    /** Fire the debounced resize re-arm the way a real viewport change would. */
+    /** Every element handed to ResizeObserver.observe(). */
+    observed: () => observers.map((ro) => ro.observed),
+    /** Fire the wrapper's ResizeObserver, then run whatever it scheduled. */
+    observeResize: () => {
+      observers.forEach((ro) => ro.callback([]))
+      flush()
+    },
+    /** Fire a window resize, then run whatever it scheduled. */
     resize: () => {
       ;(listeners.resize || []).forEach((fn) => fn())
+      flush()
+    },
+    /**
+     * Fire the reduced-motion change handler — the one re-arm path that is
+     * unconditional, because it is a preference change and not geometry.
+     */
+    rearm: () => {
+      motionHandlers.forEach((fn) => fn())
       flush()
     },
   }
@@ -482,7 +499,7 @@ test('a Track that is not a flex row leaves the logos static and uncloned', () =
   // The homepage incident: the stylesheet URL 404d, the Track laid out as a
   // block, the fill target became unreachable and 22 items became ~550 nodes.
   const page = fillingPage({ trackDisplay: 'block' })
-  const { warnings, warnArgs } = load(page, { debug: true })
+  const { warnings } = load(page, { debug: true })
 
   const track = tracksOf(page.wrapper)[0]
   assert.equal(clonesOf(track).length, 0, 'no clones at all, not merely fewer')
@@ -492,9 +509,20 @@ test('a Track that is not a flex row leaves the logos static and uncloned', () =
     assert.equal(inlineStyle(child), '', 'nothing is transformed or positioned')
   })
 
-  assert.equal(warnings.length, 1, 'exactly one warning: ' + JSON.stringify(warnings))
-  assert.match(warnings[0], /\[logo-wall\].*structural CSS missing/)
-  assert.ok(warnArgs[0].includes(page.wrapper), 'the warning points at the offending wrapper')
+  assert.equal(warnings.length, 1, 'exactly one warning')
+  assert.match(warnText(warnings[0]), /\[logo-wall\].*structural CSS missing/)
+  assert.ok(warnings[0].includes(page.wrapper), 'the warning points at the offending wrapper')
+})
+
+test('an inline-flex Track is a row too, and passes the guard', () => {
+  // The Track rule says `display: flex`, but a site rule may legitimately win
+  // with `inline-flex`. That still lays out as a row, so bailing would be a
+  // false alarm that silently kills the wall.
+  const page = fillingPage({ trackDisplay: 'inline-flex' })
+  const { warnings } = load(page, { debug: true })
+
+  assert.ok(clonesOf(tracksOf(page.wrapper)[0]).length > 0, 'the fill ran')
+  assert.deepEqual(warnings, [], 'and nothing was reported as broken')
 })
 
 test('the missing-CSS warning stays silent in production', () => {
@@ -504,43 +532,133 @@ test('the missing-CSS warning stays silent in production', () => {
   assert.equal(clonesOf(tracksOf(page.wrapper)[0]).length, 0, 'but the guard still holds')
 })
 
-test('late-loading CSS recovers on the next re-arm, without a second warning', () => {
+test('the guard is re-evaluated on every re-arm, and still warns only once', () => {
+  // Defense in depth, not a deploy path: under the documented Head-<link> plus
+  // deferred-script install a failed stylesheet is already resolved and never
+  // retried. This pins that the decision is not latched at first arm.
   const page = fillingPage({ trackDisplay: 'block' })
-  const { warnings, resize } = load(page, { debug: true })
+  const { warnings, rearm } = load(page, { debug: true })
 
   const track = tracksOf(page.wrapper)[0]
-  assert.equal(clonesOf(track).length, 0, 'static while the stylesheet is missing')
+  assert.equal(clonesOf(track).length, 0, 'static while the Track is not a row')
 
-  page.trackDisplay = 'flex' // the stylesheet finally arrives
-  resize()
+  page.trackDisplay = 'flex'
+  rearm()
 
-  assert.ok(clonesOf(track).length > 0, 'the fill runs on re-arm, no reload needed')
-  assert.equal(warnings.length, 1, 'the warning is once per wrapper, the recovery is not')
+  assert.ok(clonesOf(track).length > 0, 'the fill runs once the Track is a row')
+  assert.equal(warnings.length, 1, 'the warning is once per wrapper; the recovery is not')
 })
 
 test('losing the stylesheet on a re-arm strips the clones it already made', () => {
   // A re-arm from a healthy state must not leave stale clones stranded in a
   // Track that can no longer lay them out.
   const page = fillingPage()
-  const { resize, warnings } = load(page, { debug: true })
+  const { rearm, warnings } = load(page, { debug: true })
 
   const track = tracksOf(page.wrapper)[0]
   assert.ok(clonesOf(track).length > 0, 'healthy first arm')
   assert.deepEqual(warnings, [], 'and no warning while the CSS is present')
 
   page.trackDisplay = 'block'
-  resize()
+  rearm()
 
   assert.equal(clonesOf(track).length, 0)
   assert.deepEqual(indexesOf(originalsOf(track)), [0, 1, 2, 3], 'the originals survive')
   assert.equal(warnings.length, 1)
 })
 
+/* --------------------------- arming and re-arming ------------------------ */
+
+test('a wrapper with no width arms nothing at all', () => {
+  // A display:none ancestor still computes as flex, so the stylesheet guard
+  // cannot see this state — only the width can. Filling against 0 would clone
+  // to the cap, and horizontalLoop would divide by it.
+  const page = makePage({ items: 4, itemWidth: 100, wrapperWidth: 0, tracks: 1 })
+  const { warnings } = load(page, { debug: true })
+
+  const track = tracksOf(page.wrapper)[0]
+  assert.equal(clonesOf(track).length, 0)
+  assert.deepEqual(indexesOf(originalsOf(track)), [0, 1, 2, 3])
+  assert.deepEqual(warnings, [], 'hidden is not an authoring error')
+})
+
+test('a wrapper that loses its width keeps the DOM it already built', () => {
+  // Collapsing to 0 (a tab hidden, an accordion closed) must not tear the band
+  // down — nothing is visible to tear down, and the rebuild on reveal is free.
+  const page = fillingPage()
+  const { resize } = load(page)
+
+  const track = tracksOf(page.wrapper)[0]
+  const before = track.children.length
+  assert.ok(clonesOf(track).length > 0, 'healthy first arm')
+
+  // A real width change, so the re-arm is not short-circuited: this reaches
+  // armLoops and has to bail there, before anything strips the clones.
+  page.wrapper.clientWidth = 0
+  resize()
+
+  assert.equal(track.children.length, before, 'left exactly as it was')
+  assert.ok(clonesOf(track).length > 0, 'the clones are not stripped')
+})
+
+test('the wrapper is watched for its own size changes, not just the window', () => {
+  const page = fillingPage()
+  const { observed, observeResize } = load(page)
+
+  assert.deepEqual(observed(), [page.wrapper], 'ResizeObserver watches the wrapper')
+
+  const track = tracksOf(page.wrapper)[0]
+  clonesOf(track).forEach((clone) => clone.remove())
+
+  page.wrapper.clientWidth = 2000 // revealed, or the column widened
+  observeResize()
+
+  assert.ok(clonesOf(track).length > 0, 're-armed on a width change the window never saw')
+})
+
+test('a size notification that does not change the width rebuilds nothing', () => {
+  // iOS fires resize when it collapses the URL bar, with the wrapper untouched.
+  // Rebuilding there is pure churn — and it restarts every animation.
+  const page = fillingPage()
+  const { observeResize, resize } = load(page)
+
+  const track = tracksOf(page.wrapper)[0]
+  clonesOf(track).forEach((clone) => clone.remove())
+
+  observeResize()
+  assert.equal(clonesOf(track).length, 0, 'ResizeObserver short-circuited')
+
+  resize()
+  assert.equal(clonesOf(track).length, 0, 'and so did the window-resize fallback')
+})
+
+test('without ResizeObserver the window listener still re-arms on a real change', () => {
+  const page = fillingPage()
+  const { observed, resize } = load(page, { noResizeObserver: true })
+
+  assert.deepEqual(observed(), [], 'nothing to observe with')
+
+  const track = tracksOf(page.wrapper)[0]
+  clonesOf(track).forEach((clone) => clone.remove())
+
+  page.wrapper.clientWidth = 2000
+  resize()
+
+  assert.ok(clonesOf(track).length > 0, 'the fallback path carries older browsers')
+})
+
 /* ------------------------------- drift guard ----------------------------- */
 
-test('the header @release marker matches the exposed release string', () => {
+test('the script, the stylesheet and the exposed release string all agree', () => {
+  // The two files ship as one unit and are referenced by a single pinned
+  // jsDelivr ref. A mixed pin is the failure this catches at test time.
   const marker = source.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
   assert.ok(marker, 'no "@release vX.Y.Z" line in the logo-wall.js header')
+
+  const cssMarker = stylesheet.match(/^ \* @release (v\d+\.\d+\.\d+)$/m)
+  assert.ok(cssMarker, 'no "@release vX.Y.Z" line in the logo-wall.css header')
+  assert.equal(cssMarker[1], marker[1], 'the stylesheet is pinned to another release')
+
   const page = makePage({ items: 2, itemWidth: 100, wrapperWidth: 100, tracks: 1 })
   const { window } = load(page)
   assert.equal(window.__startersLogoWall.release, marker[1])

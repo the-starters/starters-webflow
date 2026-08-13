@@ -33,10 +33,13 @@
  * freezes the bands.
  *
  * SELF-DEFENSE: the companion stylesheet (logo-wall.css) is required. If a
- * Track does not compute as a flex row, the stylesheet did not load — the wall
- * is left as a static row of the original logos, with no clones and no
- * animation, plus one dev-gated warning. Re-checked on every re-arm, so a
- * late-arriving stylesheet recovers without a reload.
+ * Track does not compute as a flex row, the stylesheet did not load. The
+ * original logos are left in place and visible but UNSTYLED — without the Track
+ * rule that is typically a vertical stack, not a row — with no clones and no
+ * animation, plus one dev-gated warning. The check re-runs on every re-arm as
+ * defense in depth; it is not a recovery path, since under the documented
+ * deploy (stylesheet <link> in Head, script deferred) a failed stylesheet has
+ * already resolved before this script runs and is never retried.
  */
 (function () {
   if (window.__startersLogoWallInit) return;
@@ -212,13 +215,12 @@
     });
   }
 
-  function fillTrack(track, originals, wrapper) {
+  /** `wrapW` is measured once per arm by armLoops — never re-read here. */
+  function fillTrack(track, originals, wrapW) {
     removeClones(track);
     if (!originals.length) return;
-    var viewW = wrapper.clientWidth || 0;
-    if (viewW <= 0) return;
     var copies = 0;
-    while (track.scrollWidth < viewW * FILL_TIMES && copies < MAX_CLONES) {
+    while (track.scrollWidth < wrapW * FILL_TIMES && copies < MAX_CLONES) {
       appendCloneSet(track, originals);
       copies += 1;
       if (track.scrollWidth <= 0) break;
@@ -378,19 +380,34 @@
    * the only thing making a Track a flex row. If it did not load, the Track is
    * a block, every item is full-width on its own line, and the fill target can
    * never be reached — which is how one 404 turned 22 logos into ~550 nodes.
+   * Substring match so `inline-flex` (a legitimate override) still counts.
    */
   function tracksAreFlexRows(state) {
     return state.tracks.every(function (entry) {
       var cs = window.getComputedStyle(entry.track);
-      return !!cs && cs.display === 'flex';
+      return !!cs && String(cs.display).indexOf('flex') !== -1;
     });
   }
 
   function armLoops(state) {
+    // Measured ONCE, before anything mutates the DOM. Re-reading it per Track
+    // lets an earlier Track's clones inflate the wrapper and skew later ones.
+    var wrapW = state.wrapper.clientWidth || 0;
+    state.armWidth = wrapW;
     killLoops(state);
+
+    // No width means the wrapper (or an ancestor) is hidden or collapsed. A
+    // display:none ancestor still computes as flex, so the stylesheet guard
+    // below cannot see this. Filling against 0 clones to the cap, and
+    // horizontalLoop divides by the measured width — NaN transforms. Leave the
+    // DOM exactly as it is; the ResizeObserver re-arms when it gains width.
+    if (wrapW <= 0) return;
+
     if (!tracksAreFlexRows(state)) {
-      // Static, sane and visible: the originals, no clones, no animation. Also
-      // strips clones from an earlier healthy arm so none are left stranded.
+      // The originals stay in the DOM and visible, just unstyled — without the
+      // Track rule that is typically a vertical stack, not a row. No clones, no
+      // animation. Also strips clones from an earlier healthy arm so none are
+      // left stranded in a Track that can no longer lay them out.
       state.tracks.forEach(function (entry) {
         removeClones(entry.track);
       });
@@ -401,7 +418,7 @@
       return;
     }
     state.tracks.forEach(function (entry) {
-      fillTrack(entry.track, entry.originals, state.wrapper);
+      fillTrack(entry.track, entry.originals, wrapW);
     });
     if (state.reduceMotion || typeof window.gsap === 'undefined') return;
     state.loops = state.tracks.map(function (entry, index) {
@@ -449,17 +466,34 @@
     state.io = io;
   }
 
+  /**
+   * Re-arm when the WRAPPER's width changes — which is not the same event as a
+   * window resize. A wrapper can be revealed from display:none, expand out of a
+   * collapsed parent, or reflow inside a tab, all without the window moving; a
+   * window resize can equally leave the wrapper untouched (iOS collapsing its
+   * URL bar fires resize with the wrapper width unchanged). Both paths funnel
+   * through the same width comparison, so nothing rebuilds for free.
+   */
   function bindResize(state) {
     var timer = 0;
-    function onResize() {
+    function onGeometryChange() {
+      if (state.armWidth == null) return; // never armed; the first arm is coming
+      if ((state.wrapper.clientWidth || 0) === state.armWidth) return;
       window.clearTimeout(timer);
       timer = window.setTimeout(function resizeArm() {
         state.reduceMotion = prefersReducedMotion();
         armLoops(state);
       }, RESIZE_MS);
     }
-    window.addEventListener('resize', onResize);
-    state.onResize = onResize;
+
+    if (typeof ResizeObserver === 'function') {
+      var ro = new ResizeObserver(onGeometryChange);
+      ro.observe(state.wrapper);
+      state.ro = ro;
+    }
+    // Kept for browsers without ResizeObserver; harmless alongside it.
+    window.addEventListener('resize', onGeometryChange);
+    state.onResize = onGeometryChange;
   }
 
   function bindReducedMotion(state) {
@@ -542,6 +576,8 @@
       inView: true,
       hoverIndex: -1,
       warnedMissingCss: false,
+      /** Wrapper width used by the last arm; null until the first one runs. */
+      armWidth: null,
     };
 
     bindHover(state);

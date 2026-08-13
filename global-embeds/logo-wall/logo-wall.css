@@ -1,5 +1,7 @@
 /* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/logo-wall
  *
+ * @release v1.59.230
+ *
  * CDN-served. Load in Head (same jsDelivr ref as logo-wall.js). Not a paste embed.
  *
  * The wrapper is the mask: it clips its Tracks at whatever width the Designer
@@ -13,6 +15,12 @@
   align-items: center;
   overflow: hidden;
   box-sizing: border-box;
+  /* overflow:hidden clips what PAINTS; it does not cap what the wrapper
+   * CONTRIBUTES to intrinsic sizing. In a shrink-to-fit or flex-shrink:0
+   * parent the wrapper would otherwise grow to the full cloned band and push
+   * the page wide. A cap only — deliberately no width and no margins, which is
+   * what the retired viewport bleed was made of. */
+  max-width: 100%;
 }
 
 [data-logo-wall-element='track'] {
