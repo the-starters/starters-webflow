@@ -1216,6 +1216,15 @@ window and never repopulate the member's own draft. Any authored draft restore
 must therefore run inside the guard's `waitForMember` gate — exposed both as
 `window.waitForMember` and as `window.__TS_BUILD_PROFILE_DRAFT_GUARD__.waitForMember`:
 
+Before the authored callback runs, the guard also seeds or repairs the fixed
+route's profile identity while preserving the member-scoped draft's captured
+`data` fields:
+
+- `/build-profile/consult`: `type: consult`, `type_id: ca6ff4250b7d01b49e83433432af3686`
+- `/build-profile/full-profile`: `type: full`, `type_id: a52dcf2c568fa40bf96cd67e4f8c6186`
+
+Routes outside this pair do not create or rewrite a Build Profile draft.
+
 ```js
 waitForMember(function (member) {
   // identity has resolved; the legacy read now returns the member-scoped draft

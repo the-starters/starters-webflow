@@ -9,7 +9,12 @@ const source = fs.readFileSync(
   'utf8',
 )
 
-function createEnvironment({ memberId, sharedValues = new Map(), pendingMember = false }) {
+function createEnvironment({
+  memberId,
+  sharedValues = new Map(),
+  pendingMember = false,
+  pathname = '/unrelated-page',
+}) {
   class FakeStorage {
     getItem(key) {
       return sharedValues.has(String(key)) ? sharedValues.get(String(key)) : null
@@ -35,6 +40,7 @@ function createEnvironment({ memberId, sharedValues = new Map(), pendingMember =
   const window = {
     Storage: FakeStorage,
     localStorage: new FakeStorage(),
+    location: { pathname },
     $memberstackDom: {
       getCurrentMember: () => memberPromise,
     },
@@ -62,6 +68,102 @@ function createEnvironment({ memberId, sharedValues = new Map(), pendingMember =
     window,
   }
 }
+
+test('seeds the Consult type before the authored draft callback reads an empty member scope', async () => {
+  const environment = createEnvironment({
+    memberId: 'mem_consult',
+    pathname: '/build-profile/consult',
+  })
+
+  await environment.guard.whenReady()
+  const draft = JSON.parse(environment.localStorage.getItem('build_profile'))
+
+  assert.equal(draft.type, 'consult')
+  assert.equal(draft.type_id, 'ca6ff4250b7d01b49e83433432af3686')
+  assert.deepEqual(draft.data, {})
+  assert.equal(typeof draft.last_update, 'number')
+})
+
+test('repairs a stale Full draft on the Consult page without dropping captured fields', async () => {
+  const sharedValues = new Map([
+    [
+      'ts:build_profile:member:mem_consult',
+      JSON.stringify({
+        type: 'full',
+        type_id: 'a52dcf2c568fa40bf96cd67e4f8c6186',
+        last_update: 100,
+        data: { step_1: { city: 'Los Angeles' } },
+      }),
+    ],
+  ])
+  const environment = createEnvironment({
+    memberId: 'mem_consult',
+    pathname: '/build-profile/consult/',
+    sharedValues,
+  })
+
+  await environment.guard.whenReady()
+  const draft = JSON.parse(environment.localStorage.getItem('build_profile'))
+
+  assert.equal(draft.type, 'consult')
+  assert.equal(draft.type_id, 'ca6ff4250b7d01b49e83433432af3686')
+  assert.deepEqual(draft.data, { step_1: { city: 'Los Angeles' } })
+  assert.ok(draft.last_update > 100)
+})
+
+test('normalizes an early authored draft write to the fixed page type after identity resolves', async () => {
+  const environment = createEnvironment({
+    memberId: 'mem_consult',
+    pendingMember: true,
+    pathname: '/build-profile/consult',
+  })
+
+  environment.localStorage.setItem(
+    'build_profile',
+    JSON.stringify({ type: 'full', type_id: 'full-id', data: { step_2: { tagline: 'QA' } } }),
+  )
+  environment.resolveMember({ data: { id: 'mem_consult' } })
+  await environment.guard.whenReady()
+  const draft = JSON.parse(environment.localStorage.getItem('build_profile'))
+
+  assert.equal(draft.type, 'consult')
+  assert.equal(draft.type_id, 'ca6ff4250b7d01b49e83433432af3686')
+  assert.deepEqual(draft.data, { step_2: { tagline: 'QA' } })
+})
+
+test('repairs a stale Consult draft on the Full Profile page', async () => {
+  const sharedValues = new Map([
+    [
+      'ts:build_profile:member:mem_full',
+      JSON.stringify({
+        type: 'consult',
+        type_id: 'ca6ff4250b7d01b49e83433432af3686',
+        data: { step_1: { city: 'Austin' } },
+      }),
+    ],
+  ])
+  const environment = createEnvironment({
+    memberId: 'mem_full',
+    pathname: '/build-profile/full-profile',
+    sharedValues,
+  })
+
+  await environment.guard.whenReady()
+  const draft = JSON.parse(environment.localStorage.getItem('build_profile'))
+
+  assert.equal(draft.type, 'full')
+  assert.equal(draft.type_id, 'a52dcf2c568fa40bf96cd67e4f8c6186')
+  assert.deepEqual(draft.data, { step_1: { city: 'Austin' } })
+})
+
+test('does not create or rewrite a build-profile draft outside the owned routes', async () => {
+  const environment = createEnvironment({ memberId: 'mem_other' })
+
+  await environment.guard.whenReady()
+
+  assert.equal(environment.localStorage.getItem('build_profile'), null)
+  assert.equal(environment.sharedValues.size, 0)
+})
 
 test('drops an unowned legacy draft and exposes no draft before identity resolves', async () => {
   const sharedValues = new Map([['build_profile', 'previous-member-draft']])

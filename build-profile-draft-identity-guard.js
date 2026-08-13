@@ -14,6 +14,10 @@
  * completes, so the first legacy read inside it already sees the member-scoped
  * draft and never races the resolving window.
  *
+ * Each fixed build-profile route also owns its profile type. The guard seeds or
+ * repairs that type before the authored callback reads the draft, which prevents
+ * a clean Consult session from falling through the legacy Full default.
+ *
  * Load synchronously in the page head, before the authored form scripts.
  */
 ;(function installBuildProfileDraftIdentityGuard(window) {
@@ -21,12 +25,22 @@
 
   if (!window || window.__TS_BUILD_PROFILE_DRAFT_GUARD__) return
 
-  const VERSION = '1.0.0'
+  const VERSION = '1.1.0'
   const LEGACY_KEY = 'build_profile'
   const SCOPED_PREFIX = 'ts:build_profile:member:'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const StorageConstructor = window.Storage
   const localStorage = window.localStorage
+  const PROFILE_TYPES_BY_PATH = Object.freeze({
+    '/build-profile/consult': Object.freeze({
+      type: 'consult',
+      typeId: 'ca6ff4250b7d01b49e83433432af3686',
+    }),
+    '/build-profile/full-profile': Object.freeze({
+      type: 'full',
+      typeId: 'a52dcf2c568fa40bf96cd67e4f8c6186',
+    }),
+  })
 
   if (!StorageConstructor || !localStorage) return
 
@@ -48,6 +62,36 @@
 
   function isLegacyDraftAccess(storage, key) {
     return storage === localStorage && String(key) === LEGACY_KEY
+  }
+
+  function pageProfileType() {
+    const pathname = String(window.location?.pathname || '').replace(/\/+$/, '') || '/'
+    return PROFILE_TYPES_BY_PATH[pathname] || null
+  }
+
+  function normalizeDraftForPage(value) {
+    const expected = pageProfileType()
+    if (!expected) return value
+
+    let draft = {}
+    if (typeof value === 'string' && value.trim()) {
+      try {
+        const parsed = JSON.parse(value)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) draft = parsed
+      } catch {
+        // Replace a malformed draft with a safe page-owned draft below.
+      }
+    }
+
+    if (draft.type === expected.type && draft.type_id === expected.typeId) return value
+
+    return JSON.stringify({
+      ...draft,
+      type: expected.type,
+      type_id: expected.typeId,
+      last_update: Date.now(),
+      data: draft.data && typeof draft.data === 'object' ? draft.data : {},
+    })
   }
 
   function finish(nextStatus) {
@@ -211,8 +255,13 @@
 
       if (pendingRemoval) {
         nativeRemoveItem.call(localStorage, scopedKey)
-      } else if (pendingValue !== null) {
-        nativeSetItem.call(localStorage, scopedKey, pendingValue)
+      } else {
+        const currentValue =
+          pendingValue !== null ? pendingValue : nativeGetItem.call(localStorage, scopedKey)
+        const normalizedValue = normalizeDraftForPage(currentValue)
+        if (normalizedValue !== null) {
+          nativeSetItem.call(localStorage, scopedKey, normalizedValue)
+        }
       }
 
       pendingValue = null
