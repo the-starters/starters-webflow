@@ -30,7 +30,7 @@ test('post-call review email contract produces the stable CTA', () => {
   assert.equal(
     url.href,
     'https://www.thestarters.com/brand-dashboard?review_booking=booking%2Femail+42' +
-      '&utm_source=mandrill&utm_medium=email&utm_campaign=v3_post_call_review' +
-      '&utm_content=review_call_cta#calls-section',
+      '&utm_source=mandrill&utm_medium=email&utm_campaign=v3_call_scheduling' +
+      '&utm_content=post_call_review#calls-section',
   )
 })

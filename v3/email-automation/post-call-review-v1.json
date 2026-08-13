@@ -18,8 +18,8 @@
     "utm": {
       "utm_source": "mandrill",
       "utm_medium": "email",
-      "utm_campaign": "v3_post_call_review",
-      "utm_content": "review_call_cta"
+      "utm_campaign": "v3_call_scheduling",
+      "utm_content": "post_call_review"
     }
   }
 }
