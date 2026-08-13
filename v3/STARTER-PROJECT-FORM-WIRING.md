@@ -1,14 +1,18 @@
 # V3 Starter project form wiring
 
-`v3/starter-project-form.js` connects the existing V3 Starter Dashboard
-**Start a Project** modal to the authenticated V3 project endpoints.
+`v3/starter-project-form.js` connects the detached Starter Dashboard copy of the
+shared **Contract Generation** component to the authenticated V3 project endpoints.
 V2 is a behavior reference only. This controller does not call a V2 route,
 Airtable, Make, or a legacy TalkJS table.
 
 ## Phase 1 scope
 
-- Reuse `dialog[data-modal-target="start-project"]` and its existing native form.
-- Use the Designer-authored native Brand select `select#Brand[name="Brand"]`.
+- Reuse the detached `/hire/<slug>` **Contract Generation** form. Do not maintain
+  a second Starter-only commercial form.
+- Identify the detached Starter copy by its authored profile marker
+  `[element="profile_photo"]`; the controller promotes that dialog to
+  `data-project-form-v3="starter"` and `data-modal-target="start-project"`.
+- Use its Designer-authored native Brand select `select#Brand[name="Brand"]`.
 - Keep `#Project-Name` and the existing commercial fields.
 - Do not add or send Connection Type.
 - Do not show opportunity choices or prefill Project Scope yet.
@@ -45,16 +49,25 @@ A Standard Contract creates one PandaDoc outbox job. An Own Contract uses the
 existing active-project branch and creates no PandaDoc job. The endpoint must
 not create a proposal row or require a later approval action.
 
-## Existing Designer contract
+## Shared Designer contract
 
 The controller binds these existing elements:
 
-- modal: `dialog[data-modal-target="start-project"]`;
+- source modal: the detached `dialog[data-modal-target="generate-contract"]`
+  containing `[element="profile_photo"]`;
+- runtime modal: `dialog[data-project-form-v3="starter"][data-modal-target="start-project"]`;
 - form: the native form inside that dialog;
 - Brand select: `select#Brand[name="Brand"]`, labeled **Select a Brand**, with one
   authored empty placeholder option labeled **Choose a Brand**;
 - stable selected Brand ID: `#brand-contract`;
-- Brand display fields: `#brand-company-name` and `#hiring-manager-name`;
+- Brand display fields: `#Company-Name` and `#Hiring-Manager-Name` (legacy
+  lowercase Starter IDs remain supported during rollback);
+- the Brand email input is disabled and hidden because the options endpoint does
+  not expose it;
+- authenticated Starter display bindings: `profile_photo`, `full_name`,
+  `role_name`, `professional_headline`, and `freelancer_infromation` through the
+  existing `element` attributes. New markup should use
+  `data-project-bind="starter.<field>"`;
 - shared commercial fields: serialized and validated by `v3/project-form.js`.
 
 Webflow owns the native select and placeholder. JavaScript binds the authorized
@@ -63,14 +76,20 @@ One eligible Brand is selected automatically. Multiple eligible Brands keep the
 placeholder selected and require the Starter to choose. Zero eligible Brands
 disable the select and show **No eligible Brands yet**.
 
-The canonical modal is the first `start-project` dialog whose form contains
-`#Brand`, `#brand-contract`, `#hiring-manager-name`, and `#brand-company-name`.
-Before the shared modal initializer runs, the controller changes every other
+The canonical modal is the detached shared Contract Generation dialog with the
+Starter profile marker. Before the shared modal initializer runs, the controller
+changes every other
 `start-project` dialog target to `start-project-legacy-disabled-N`. If no dialog
 matches the native V3 form contract, it disables every `start-project` dialog
 target. It also changes the nested `a.clickable_link` in each `start-project`
 trigger to `href="#start-project"`, so the Navbar control cannot follow its
 legacy opportunities URL.
+
+The copied CMS-only identity inputs remain compatibility markup only. The
+controller disables them, removes Starter Memberstack bindings from the Brand
+display fields, and submits only the authenticated Starter plus the selected
+server-authorized Brand ID. JavaScript binds behavior and values; it does not
+generate form HTML.
 
 ## Script order
 
@@ -83,8 +102,8 @@ Load the existing data and form scripts first, then the Starter adapter:
 ```
 
 Do not add the last loader until both V3 endpoints exist and pass backend tests.
-After release, install it on the reusable V3 **Start a Project** component so
-the existing Navbar action opens the same modal wherever that component renders.
+After release, install it on the Starter Dashboard so the existing Navbar action
+opens the detached shared Contract Generation form.
 The deferred Starter adapter must execute before `global-embeds/modal/modal.js`
 initializes the shared modal registry, because it normalizes duplicate targets
 and the Navbar link during boot.

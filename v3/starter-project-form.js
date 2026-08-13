@@ -13,19 +13,23 @@
   if (!global || global.__startersV3StarterProjectFormBooted) return
   global.__startersV3StarterProjectFormBooted = true
 
-  var FORM_SELECTOR = 'dialog[data-modal-target="start-project"] form'
-  var MODAL_SELECTOR = 'dialog[data-modal-target="start-project"]'
+  var STARTER_CONTEXT_SELECTOR = '[data-project-form-v3="starter"]'
+  var FORM_SELECTOR = STARTER_CONTEXT_SELECTOR + ' form'
+  var LEGACY_MODAL_SELECTOR = 'dialog[data-modal-target="start-project"]'
   var TRIGGER_SELECTOR = '[data-modal-trigger="start-project"]'
   var TRIGGER_LINK_SELECTOR = TRIGGER_SELECTOR + ' a.clickable_link'
-  var BRAND_SELECT_SELECTOR = '#Brand'
+  var BRAND_SELECT_SELECTOR = '[data-project-field="brand_id"], #Brand'
   var BRAND_ID_SELECTOR = '#brand-contract'
-  var MANAGER_NAME_SELECTOR = '#hiring-manager-name'
-  var COMPANY_NAME_SELECTOR = '#brand-company-name'
-  var EMAIL_SELECTOR = '#brand-email'
+  var MANAGER_NAME_SELECTOR = '#hiring-manager-name, #Hiring-Manager-Name'
+  var COMPANY_NAME_SELECTOR = '#brand-company-name, #Company-Name'
+  var EMAIL_SELECTOR = '#brand-email, #Email-Address'
   var ERROR_SELECTOR = '[data-project-form-state="error"], .w-form-fail'
   var SUCCESS_SELECTOR = '[data-project-form-state="success"], .w-form-done'
   var PAYLOAD_CONTROL_SELECTOR = 'input, select, textarea, button'
   var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
+  var PROFILE_BIND_SELECTOR = '[data-project-bind]'
+  var LEGACY_PROFILE_BIND_SELECTOR = '[element]'
+  var CMS_ONLY_IDENTITY_SELECTOR = '#brand-name-contract, #brand-name, #freeName, #FreeEmail, #pushMemID'
   var CREATED_PROJECT_STATES = {
     contract_create_pending: true,
     contract_draft: true,
@@ -89,9 +93,12 @@
   function defaultState() {
     return {
       optionsRequest: null,
+      profileRequest: null,
       submitRequest: null,
       options: [],
       optionsLoaded: false,
+      profile: null,
+      profileLoaded: false,
       selected: null,
       key: '',
       keyPayload: '',
@@ -127,6 +134,110 @@
     })
   }
 
+  function plainText(value) {
+    return clean(value)
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  function normalizeProfile(response) {
+    var firstName = clean(response && response.first_name)
+    var lastName = clean(response && response.last_name)
+    return {
+      full_name: clean(response && response.full_name) || [firstName, lastName].filter(Boolean).join(' '),
+      role_name: clean(response && response.role_name),
+      professional_headline: clean(response && response.professional_headline),
+      profile_photo: clean(response && response.profile_photo),
+      freelancer_information: plainText(response && response.freelancer_information),
+    }
+  }
+
+  function formContext(form) {
+    if (!form || !form.closest) return form
+    return form.closest(STARTER_CONTEXT_SELECTOR) || form.closest('dialog') || form
+  }
+
+  function canonicalBindName(element) {
+    var value = clean(element && element.getAttribute && (
+      element.getAttribute('data-project-bind') || element.getAttribute('element')
+    )).toLowerCase()
+    if (value.indexOf('starter.') === 0) value = value.slice(8)
+    if (value === 'freelancer_infromation') return 'freelancer_information'
+    return value
+  }
+
+  function setBoundVisibility(element, visible) {
+    if (!element) return
+    var hideEmpty = clean(element.getAttribute && element.getAttribute('data-project-bind-empty')).toLowerCase() === 'hide'
+    if (!hideEmpty) return
+    element.hidden = !visible
+    if (element.style) element.style.display = visible ? '' : 'none'
+  }
+
+  function renderProfile(form, profile) {
+    var root = formContext(form)
+    if (!root || !root.querySelectorAll) return false
+    var targets = Array.prototype.slice.call(root.querySelectorAll(PROFILE_BIND_SELECTOR + ', ' + LEGACY_PROFILE_BIND_SELECTOR))
+    targets.forEach(function (element) {
+      var name = canonicalBindName(element)
+      if (!Object.prototype.hasOwnProperty.call(profile || {}, name)) return
+      var value = clean(profile[name])
+      if (name === 'profile_photo' && clean(element.tagName).toLowerCase() === 'img') {
+        if (value) {
+          element.setAttribute('src', value)
+          element.removeAttribute('srcset')
+          element.setAttribute('alt', profile.full_name ? profile.full_name + ' profile photo' : 'Starter profile photo')
+        } else {
+          element.removeAttribute('src')
+          element.removeAttribute('srcset')
+          element.setAttribute('alt', '')
+        }
+      } else {
+        element.textContent = value
+      }
+      setBoundVisibility(element, Boolean(value))
+    })
+    return Boolean(targets.length)
+  }
+
+  function loadProfile(form, globalObject, forceRefresh) {
+    var current = formState(form)
+    if (forceRefresh) {
+      current.profileRequest = null
+      current.profile = null
+      current.profileLoaded = false
+    }
+    if (current.profileRequest) return current.profileRequest
+    if (current.profileLoaded) return Promise.resolve(current.profile)
+    var generation = current.generation
+    var request = projectApi(globalObject, 'starterProfile')
+    if (!request) return Promise.resolve(null)
+    var profileRequest = Promise.resolve()
+      .then(function () { return request() })
+      .then(function (response) {
+        if (generation !== current.generation) return null
+        current.profile = normalizeProfile(response)
+        current.profileLoaded = true
+        renderProfile(form, current.profile)
+        return current.profile
+      })
+      .catch(function () {
+        if (generation !== current.generation) return null
+        current.profile = null
+        current.profileLoaded = false
+        return null
+      })
+      .finally(function () {
+        if (current.profileRequest === profileRequest) current.profileRequest = null
+      })
+    current.profileRequest = profileRequest
+    return profileRequest
+  }
+
   function field(form, selector) {
     return form && form.querySelector ? form.querySelector(selector) : null
   }
@@ -151,6 +262,41 @@
   function writeSelectValue(form, value) {
     var select = field(form, BRAND_SELECT_SELECTOR)
     if (select) select.value = clean(value)
+  }
+
+  function prepareStarterContext(form) {
+    if (!form || !form.querySelectorAll) return false
+    var cmsOnly = form.querySelectorAll(CMS_ONLY_IDENTITY_SELECTOR)
+    Array.prototype.forEach.call(cmsOnly, function (control) {
+      control.disabled = true
+      control.required = false
+      if (control.removeAttribute) control.removeAttribute('required')
+    })
+    ;[field(form, MANAGER_NAME_SELECTOR), field(form, COMPANY_NAME_SELECTOR)].forEach(function (control) {
+      if (!control) return
+      control.readOnly = true
+      control.setAttribute('aria-readonly', 'true')
+      control.removeAttribute('data-ms-member')
+    })
+    var email = field(form, EMAIL_SELECTOR)
+    if (email) {
+      email.disabled = true
+      email.required = false
+      email.removeAttribute('required')
+      email.removeAttribute('data-ms-member')
+      var emailGroup = email.parentElement
+      if (emailGroup) {
+        emailGroup.hidden = true
+        if (emailGroup.style) emailGroup.style.display = 'none'
+      }
+    }
+    var brandSelect = field(form, BRAND_SELECT_SELECTOR)
+    if (brandSelect) {
+      brandSelect.required = true
+      brandSelect.setAttribute('required', '')
+      brandSelect.setAttribute('data-project-field', 'brand_id')
+    }
+    return true
   }
 
   function selectBrand(form, option) {
@@ -378,9 +524,12 @@
     lockForm(form, false)
     current.generation += 1
     current.optionsRequest = null
+    current.profileRequest = null
     current.submitRequest = null
     current.options = []
     current.optionsLoaded = false
+    current.profile = null
+    current.profileLoaded = false
     current.selected = null
     current.key = ''
     current.keyPayload = ''
@@ -394,6 +543,7 @@
   function prepareOpen(form, documentObject, globalObject) {
     var wasSuccessful = form.getAttribute && form.getAttribute('data-starter-project-status') === 'success'
     resetPresentation(form, wasSuccessful)
+    prepareStarterContext(form)
     syncCommercialForm(form, documentObject, globalObject)
   }
 
@@ -501,8 +651,22 @@
 
   function normalizeModalMarkup(documentObject) {
     if (!documentObject || !documentObject.querySelectorAll) return false
-    var dialogs = Array.prototype.slice.call(documentObject.querySelectorAll(MODAL_SELECTOR))
-    var canonical = dialogs.find(function (dialog) {
+    var context = documentObject.querySelector && documentObject.querySelector(STARTER_CONTEXT_SELECTOR)
+    if (!context && documentObject.querySelector) {
+      // The Starter Dashboard uses a detached copy of the shared /hire/<slug>
+      // Contract Generation component. Its authored profile markers distinguish
+      // it from the Brand form without relying on CMS bindings or page IDs.
+      var detached = documentObject.querySelector(
+        'dialog[data-modal-target="generate-contract"] [element="profile_photo"]'
+      )
+      context = detached && detached.closest ? detached.closest('dialog') : null
+      if (context && context.setAttribute) context.setAttribute('data-project-form-v3', 'starter')
+    }
+    var canonical = context && clean(context.tagName).toLowerCase() === 'dialog'
+      ? context
+      : context && context.closest ? context.closest('dialog') : null
+    var dialogs = Array.prototype.slice.call(documentObject.querySelectorAll(LEGACY_MODAL_SELECTOR))
+    if (!canonical) canonical = dialogs.find(function (dialog) {
       if (!dialog || !dialog.querySelector) return false
       var form = dialog.querySelector('form')
       return form &&
@@ -510,7 +674,9 @@
         form.querySelector(BRAND_ID_SELECTOR) &&
         form.querySelector(MANAGER_NAME_SELECTOR) &&
         form.querySelector(COMPANY_NAME_SELECTOR)
-    })
+    }) || null
+    if (canonical && canonical.setAttribute) canonical.setAttribute('data-modal-target', 'start-project')
+    dialogs = Array.prototype.slice.call(documentObject.querySelectorAll(LEGACY_MODAL_SELECTOR))
     var duplicateNumber = 0
     dialogs.forEach(function (dialog) {
       if (!dialog || dialog === canonical || !dialog.setAttribute) return
@@ -521,7 +687,9 @@
     Array.prototype.forEach.call(triggerLinks, function (link) {
       if (link && link.setAttribute) link.setAttribute('href', '#start-project')
     })
-    return Boolean(canonical)
+    var canonicalForm = canonical && canonical.querySelector ? canonical.querySelector('form') : null
+    if (canonicalForm) prepareStarterContext(canonicalForm)
+    return Boolean(canonicalForm)
   }
 
   function bind(documentObject, globalObject) {
@@ -538,6 +706,7 @@
         var form = documentObject.querySelector(FORM_SELECTOR)
         if (form) {
           prepareOpen(form, documentObject, globalObject)
+          loadProfile(form, globalObject, true)
           loadOptions(form, globalObject, true)
         }
         return
@@ -576,6 +745,10 @@
   var api = {
     positiveId: positiveId,
     normalizeOptions: normalizeOptions,
+    normalizeProfile: normalizeProfile,
+    renderProfile: renderProfile,
+    loadProfile: loadProfile,
+    prepareStarterContext: prepareStarterContext,
     selectBrand: selectBrand,
     clearSelectedBrand: clearSelectedBrand,
     renderOptions: renderOptions,
