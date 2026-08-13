@@ -80,8 +80,8 @@ The canonical modal is the detached shared Contract Generation dialog with the
 Starter profile marker. Before the shared modal initializer runs, the controller
 changes every other
 `start-project` dialog target to `start-project-legacy-disabled-N`. If no dialog
-matches the native V3 form contract, it disables every `start-project` dialog
-target. It also changes the nested `a.clickable_link` in each `start-project`
+contains the authored Starter profile marker, it disables every `start-project`
+dialog target. It also changes the nested `a.clickable_link` in each `start-project`
 trigger to `href="#start-project"`, so the Navbar control cannot follow its
 legacy opportunities URL.
 
@@ -117,6 +117,10 @@ one project and one `project.created` event for each submission, exactly one
 PandaDoc outbox job for a Standard Contract, and no PandaDoc outbox job for an Own
 Contract. Stop at the first mismatch and do not treat prior frontend evidence as
 backend acceptance.
+
+For this release, validation is staging-only and must use PandaDoc DEV routing.
+Production must retain PandaDoc live routing, but this release does not authorize
+a production project, PandaDoc document, signature, or email canary.
 
 ## User states
 

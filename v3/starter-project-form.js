@@ -1,11 +1,10 @@
 /**
- * V3 Starter "Start a Project" controller.
+ * V3 Starter Dashboard Contract Generation controller.
  *
- * Webflow owns the modal and all form markup. This controller binds the
- * existing native Brand select to Xano-authorized options, reuses the
- * shared commercial serializer from v3/project-form.js, and creates the
- * canonical project. Standard Contract signatures replace a separate Brand
- * approval step.
+ * Webflow owns the detached shared modal and all form markup. This controller
+ * replaces copied CMS profile values with the authenticated Starter, binds the
+ * native Brand select to Xano-authorized options, reuses the shared commercial
+ * serializer from v3/project-form.js, and creates the canonical project.
  */
 ;(function (global) {
   'use strict'
@@ -691,7 +690,7 @@
     if (!documentObject || !documentObject.addEventListener) return false
     // This deferred head script runs before the shared modal initializer. Fix
     // the legacy nested navigation link and duplicate modal target first so a
-    // navbar click opens only the canonical Start a Project form.
+    // navbar click opens only the canonical Contract Generation form.
     normalizeModalMarkup(documentObject)
     documentObject.addEventListener('click', function (event) {
       var clickedForm = formFromTarget(event.target)
