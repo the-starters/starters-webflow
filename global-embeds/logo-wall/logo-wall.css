@@ -6,7 +6,15 @@
 [data-logo-wall-element='wrapper'] {
   display: flex;
   flex-flow: column nowrap;
+  align-items: center;
   overflow: hidden;
+  box-sizing: border-box;
+  padding-left: 0;
+  padding-right: 0;
+  width: 100vw;
+  max-width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
 }
 
 [data-logo-wall-element='track'] {

@@ -17,9 +17,13 @@
  *   data-logo-wall-pause-on-hover    default on; "false" opts out
  *
  * Unique logos are dealt round-robin across Tracks. Each Track clones its own
- * items until it overflows (including reduced-motion freeze). Then GSAP's
- * horizontalLoop helper seamless-loops them. Odd Tracks run RTL. Hover pauses
- * that Track. Off-screen wrappers pause. prefers-reduced-motion freezes the bands.
+ * items on both sides until it overflows (including reduced-motion freeze), so
+ * the unique set starts centered. The wrapper bleeds to the viewport so bands
+ * roll device-edge to device-edge (not clipped to a padded container). Then
+ * GSAP's horizontalLoop helper seamless-loops them. Even Tracks run LTR
+ * (logos travel toward the right); odd Tracks run RTL.
+ * Hover pauses that Track. Off-screen wrappers pause. prefers-reduced-motion
+ * freezes the bands.
  */
 (function () {
   if (window.__startersLogoWallInit) return;
@@ -169,25 +173,70 @@
     });
   }
 
-  function fillTrack(track, originals, viewport) {
+  function cloneItem(item) {
+    var clone = item.cloneNode(true);
+    clone.removeAttribute('data-logo-wall-element');
+    clone.setAttribute(CLONE_ATTR, '');
+    Array.prototype.forEach.call(clone.querySelectorAll('img'), function (img) {
+      img.loading = 'eager';
+    });
+    return clone;
+  }
+
+  function appendCloneSet(track, originals) {
+    originals.forEach(function (item) {
+      track.appendChild(cloneItem(item));
+    });
+  }
+
+  function prependCloneSet(track, originals) {
+    var first = originals[0];
+    originals.forEach(function (item) {
+      track.insertBefore(cloneItem(item), first);
+    });
+  }
+
+  function viewportWidth() {
+    return document.documentElement.clientWidth || window.innerWidth || 0;
+  }
+
+  function unclipBleedAncestors(wrapper) {
+    var el = wrapper.parentElement;
+    while (el && el !== document.body && el !== document.documentElement) {
+      var cs = window.getComputedStyle(el);
+      var ox = cs.overflowX;
+      if (ox === 'hidden' || ox === 'auto' || ox === 'scroll' || ox === 'clip') {
+        el.style.overflowX = 'visible';
+        el.style.overflowY = 'visible';
+      }
+      el = el.parentElement;
+    }
+  }
+
+  function bleedToViewport(wrapper) {
+    unclipBleedAncestors(wrapper);
+    var vw = viewportWidth();
+    wrapper.style.width = vw + 'px';
+    wrapper.style.maxWidth = vw + 'px';
+    wrapper.style.marginLeft = '0px';
+    wrapper.style.marginRight = '0px';
+    var left = wrapper.getBoundingClientRect().left;
+    if (left) wrapper.style.marginLeft = -left + 'px';
+  }
+
+  function fillTrack(track, originals) {
     removeClones(track);
     if (!originals.length) return;
-    var viewW = viewport.clientWidth || 0;
+    var viewW = viewportWidth();
     if (viewW <= 0) return;
     var copies = 0;
     while (track.scrollWidth < viewW * FILL_TIMES && copies < MAX_CLONES) {
-      originals.forEach(function (item) {
-        var clone = item.cloneNode(true);
-        clone.removeAttribute('data-logo-wall-element');
-        clone.setAttribute(CLONE_ATTR, '');
-        Array.prototype.forEach.call(clone.querySelectorAll('img'), function (img) {
-          img.loading = 'eager';
-        });
-        track.appendChild(clone);
-      });
+      appendCloneSet(track, originals);
       copies += 1;
       if (track.scrollWidth <= 0) break;
     }
+    var i;
+    for (i = 0; i < copies; i++) prependCloneSet(track, originals);
   }
 
   /**
@@ -335,8 +384,9 @@
 
   function armLoops(state) {
     killLoops(state);
+    bleedToViewport(state.wrapper);
     state.tracks.forEach(function (entry) {
-      fillTrack(entry.track, entry.originals, state.wrapper);
+      fillTrack(entry.track, entry.originals);
     });
     if (state.reduceMotion || typeof window.gsap === 'undefined') return;
     state.loops = state.tracks.map(function (entry, index) {
@@ -345,7 +395,7 @@
       return horizontalLoop(kids, {
         repeat: -1,
         speed: state.speed,
-        reversed: index % 2 === 1,
+        reversed: index % 2 === 0,
         paddingRight: columnGapPx(entry.track),
         paused: true,
       });
