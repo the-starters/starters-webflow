@@ -514,6 +514,18 @@
     return availabilityArray
   }
 
+  // A member connecting a calendar for the first time (platform or Google)
+  // has no `general` item yet — left as-is, createConfigPair() would build
+  // the scheduler config with empty open hours, and nobody could ever book a
+  // slot. Seed a Mon-Fri 09:00-18:00 default so the connection is usable
+  // right away; the member can edit it or add overrides afterward. Never
+  // touches an already-existing `general` item.
+  function ensureDefaultAvailability() {
+    if (!availability || availability.items.general) return
+    const days = [1, 2, 3, 4, 5]
+    availability.items.general = { days: days, start: '09:00', end: '18:00', defaultDays: days }
+  }
+
   // Days already claimed by OTHER override items (never `general`, never
   // `excludeId`) — used to block a day from being double-assigned to two
   // custom windows at once.
@@ -848,6 +860,7 @@
       grantId = virtual.grant_id
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
+      ensureDefaultAvailability()
       await createConfigPair()
       availability.manager = 'platform'
       await updateAvail()
@@ -911,6 +924,7 @@
       grantId = virtual.grant_id
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
+      ensureDefaultAvailability()
       await createConfigPair()
       availability.manager = 'platform'
       await updateAvail()
@@ -984,6 +998,7 @@
       // switch must be persisted here, not just left for the caller — this is
       // the only place that observes the freshly-added Google grant.
       availability.manager = 'calendar'
+      ensureDefaultAvailability()
       await updateAvail()
       clearOAuthIntent(memberId)
       clearOAuthCallback()
@@ -1405,6 +1420,12 @@
 
     applyItemTag(card, id)
     applyItemActionVisibility(card, id)
+    // A freshly created item is a draft that doesn't exist server-side yet
+    // and opens straight into its edit form — edit/remove don't apply until
+    // it's actually saved, at which point renderAvailabilityItems() re-runs
+    // applyItemActionVisibility() and restores them normally.
+    const buttonGroup = qs(elSel('item-button-group'), card)
+    if (buttonGroup) buttonGroup.style.display = 'none'
     applyDayBadges(card, [])
     applyItemTimeText(card, { start: '', end: '' })
     closeItemForm(card)

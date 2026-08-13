@@ -681,6 +681,42 @@ test('clicking the ordinal connect-platform button (no data-availability-action 
   assert.ok(warnings.some((w) => w.includes('using ordinal position')))
 })
 
+test('connecting for the first time (no items at all) seeds a default Mon-Fri 09:00-18:00 General item', async () => {
+  const { dom, calls } = loadSection({
+    serverState: {
+      availability: { items: {}, manager: null },
+    },
+  })
+  await settle()
+
+  const before = dom.list.children.filter((el) => el.getAttribute('data-availability-element') === 'item-card')
+  assert.equal(before.length, 0, 'no items before the first connect')
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform
+  await settle()
+
+  const generalCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id === 'general',
+  )
+  assert.ok(generalCard, 'a general item was created automatically on first connect')
+
+  const updateCall = calls.filter((c) => c.path === '/starter/update_availability/v3').pop()
+  assert.deepEqual(updateCall.body.availability.items.general, {
+    days: [1, 2, 3, 4, 5],
+    start: '09:00',
+    end: '18:00',
+    defaultDays: [1, 2, 3, 4, 5],
+  })
+
+  // The scheduler config must actually carry those hours — otherwise the
+  // freshly connected calendar would have zero open hours and be unbookable.
+  const configCall = calls.find((c) => c.path === '/scheduler/configurations/create/v3')
+  assert.ok(configCall)
+  assert.deepEqual(configCall.body.in_availability.availability_rules.default_open_hours, [
+    { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' },
+  ])
+})
+
 test('boots directly into connected state when the starter already has a grant/calendar/config', async () => {
   const { dom, window } = loadSection({
     serverState: {
@@ -809,7 +845,7 @@ test('item-form-open toggles the item form open and closed via display', async (
   assert.equal(formWrapper.style.display, 'block')
 })
 
-test('general item shows an edit button but hides remove; a created override item shows both', async () => {
+test('general item shows an edit button but hides remove; a newly created draft hides both until saved', async () => {
   const { dom } = loadSection()
   await settle()
 
@@ -821,12 +857,29 @@ test('general item shows an edit button but hides remove; a created override ite
   dom.createBtn.click()
   await settle()
 
-  const overrideCard = dom.list.children.find(
+  const draftCard = dom.list.children.find(
     (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
   )
-  const overrideButtons = overrideCard.children[0].children[2]
-  assert.notEqual(overrideButtons.children[0].style.display, 'none') // edit
-  assert.notEqual(overrideButtons.children[1].style.display, 'none') // remove
+  const draftButtons = draftCard.children[0].children[2]
+  // A draft that doesn't exist server-side yet opens straight into its edit
+  // form — edit/remove don't apply until it's actually saved.
+  assert.equal(draftButtons.style.display, 'none')
+
+  const formWrapper = draftCard.children[2]
+  const form = formWrapper.querySelector('[data-availability-element="availability-form"]')
+  form.children[0].children[1].checked = true // Sunday
+  form.querySelector('[name=start-time]').value = '09:00'
+  form.querySelector('[name=end-time]').value = '10:00'
+  const buttonRow = formWrapper.children[0].children[1]
+  buttonRow.children[1].click() // item-form-submit
+  await settle()
+
+  const savedCard = dom.list.children.find(
+    (el) => el.getAttribute('data-availability-element') === 'item-card' && el.dataset.id !== 'general',
+  )
+  const savedButtons = savedCard.children[0].children[2]
+  assert.notEqual(savedButtons.children[0].style.display, 'none') // edit
+  assert.notEqual(savedButtons.children[1].style.display, 'none') // remove
 })
 
 test('populateItemForm marks selected day checkboxes with the Webflow checked-skin class', async () => {
