@@ -34,6 +34,9 @@ function memberScopeChangedError() {
 	return error;
 }
 
+// Memberstack immediately replays the current member when this listener subscribes.
+// Ignore only that same-member replay; every later notification invalidates in-flight work,
+// including logout followed by reauthentication as the same member.
 function observeMemberstackAuth(client) {
 	if (observedMemberstackClient === client) return;
 	observedMemberstackClient = client;
