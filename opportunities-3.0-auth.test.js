@@ -22,6 +22,17 @@ function response(data, ok = true, status = 200) {
   return { ok, status, json: async () => data }
 }
 
+function binaryResponse(data, ok = true, status = 200) {
+  return {
+    ok,
+    status,
+    blob: async () => data,
+    json: async () => {
+      throw new Error('Binary response is not JSON')
+    },
+  }
+}
+
 async function waitForRequestCount(requests, count) {
   for (let attempt = 0; attempt < 20 && requests.length < count; attempt += 1) {
     await new Promise(setImmediate)
@@ -2356,9 +2367,10 @@ test('View Contract fails closed when a project card renders after dashboard boo
   assert.equal(wrap.getAttribute('aria-hidden'), 'false')
 })
 
-test('View Contract is limited to recipient-viewable canonical document states', async () => {
+test('contract access separates recipient sessions from completed protected PDFs', async () => {
   const bridge = await loadBridge(async () => response({}))
   const isViewable = bridge.window.Opp30.projectContractIsViewable
+  const isDownloadable = bridge.window.Opp30.projectContractIsDownloadable
   const canonicalStates = [
     'not_requested',
     'create_pending',
@@ -2384,6 +2396,15 @@ test('View Contract is limited to recipient-viewable canonical document states',
   })
   assert.equal(isViewable({ contract_status: 'completed' }), false)
   assert.equal(isViewable({ pandadoc_document_id: 'doc-675' }), false)
+  assert.equal(
+    isDownloadable({ pandadoc_document_id: 'doc-675', contract_status: 'completed' }),
+    true,
+  )
+  assert.equal(
+    isDownloadable({ pandadoc_document_id: 'doc-675', contract_status: 'sent' }),
+    false,
+  )
+  assert.equal(isDownloadable({ contract_status: 'completed' }), false)
 })
 
 test('contract signing panel reducer allows either party to sign first', async () => {
@@ -2544,42 +2565,49 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
     {
       name: 'active',
       project: { ...base, lifecycle_state: 'active', contract_status: 'completed' },
-      expected: { visible: false, state: 'hidden', action: null },
+      expected: {
+        visible: true,
+        state: 'complete',
+        title: 'Contract signed',
+        body: 'Both parties signed the contract. You can view the completed copy at any time.',
+        action: 'view',
+        actionLabel: 'View Signed Contract',
+      },
     },
     {
       name: 'completion requested',
       project: { ...base, lifecycle_state: 'completion_requested', contract_status: 'completed' },
       expected: {
-        visible: false,
-        state: 'hidden',
-        title: '',
-        body: '',
-        action: null,
-        actionLabel: '',
+        visible: true,
+        state: 'complete',
+        title: 'Contract signed',
+        body: 'Both parties signed the contract. You can view the completed copy at any time.',
+        action: 'view',
+        actionLabel: 'View Signed Contract',
       },
     },
     {
       name: 'termination requested',
       project: { ...base, lifecycle_state: 'termination_requested', contract_status: 'completed' },
       expected: {
-        visible: false,
-        state: 'hidden',
-        title: '',
-        body: '',
-        action: null,
-        actionLabel: '',
+        visible: true,
+        state: 'complete',
+        title: 'Contract signed',
+        body: 'Both parties signed the contract. You can view the completed copy at any time.',
+        action: 'view',
+        actionLabel: 'View Signed Contract',
       },
     },
     {
       name: 'completed',
       project: { ...base, lifecycle_state: 'completed', contract_status: 'completed' },
       expected: {
-        visible: false,
-        state: 'hidden',
-        title: '',
-        body: '',
-        action: null,
-        actionLabel: '',
+        visible: true,
+        state: 'complete',
+        title: 'Contract signed',
+        body: 'Both parties signed the contract. You can view the completed copy at any time.',
+        action: 'view',
+        actionLabel: 'View Signed Contract',
       },
     },
     {
@@ -2591,12 +2619,12 @@ test('brand and starter contract panels cover the release lifecycle matrix', asy
         contract_status: 'completed',
       },
       expected: {
-        visible: false,
-        state: 'hidden',
-        title: '',
-        body: '',
-        action: null,
-        actionLabel: '',
+        visible: true,
+        state: 'complete',
+        title: 'Contract signed',
+        body: 'Both parties signed the contract. You can view the completed copy at any time.',
+        action: 'view',
+        actionLabel: 'View Signed Contract',
       },
     },
     {
@@ -2941,6 +2969,161 @@ test('View Contract fails closed when the canonical refresh transiently fails', 
   assert.equal(wrap.style.display, 'none')
   assert.equal(wrap.getAttribute('aria-hidden'), 'true')
   assert.equal(label.textContent, 'Contract is unavailable. Please try again.')
+})
+
+test('completed Standard Contracts use the protected-PDF route and never mint a signing session', async () => {
+  const contract = el('a', { href: '#contract' })
+  const label = el('div', { class: 'button_main-text' })
+  label.textContent = 'View Contract'
+  const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '715' }, [wrap])
+  const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+  const requests = []
+  const pdf = new Blob(['signed-contract'], { type: 'application/pdf' })
+  const bridge = await loadBridge(
+    async (input, init = {}) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/projects/mine')) {
+        return response({
+          items: [{
+            id: 715,
+            sync_origin: 'v3',
+            contract_source: 'standard',
+            lifecycle_state: 'active',
+            contract_status: 'completed',
+            pandadoc_document_id: 'doc-715',
+            brand_signed_at: '2026-08-13T01:00:00Z',
+            starter_signed_at: '2026-08-13T01:01:00Z',
+          }],
+        })
+      }
+      requests.push({ url, init })
+      if (url.includes('/contracts/download/v3')) return binaryResponse(pdf)
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      querySelector: (selector) =>
+        selectorMatches(root, selector) ? root : root.querySelector(selector),
+      querySelectorAll: (selector) =>
+        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+      routeGuard: true,
+    },
+  )
+  let contractLoaded
+  const contractWindow = {
+    closed: false,
+    location: {},
+    opener: bridge.window,
+    addEventListener(type, listener) {
+      if (type === 'load') contractLoaded = listener
+    },
+  }
+  const revokedUrls = []
+  bridge.window.open = () => contractWindow
+  bridge.window.URL = {
+    createObjectURL: () => 'blob:signed-contract-715',
+    revokeObjectURL: (url) => revokedUrls.push(url),
+  }
+  assert.ok(await waitFor(() => wrap.style.display === ''))
+  assert.equal(label.textContent, 'View Signed Contract')
+
+  bridge.dispatchDocument('click', clickEvent(contract).event)
+
+  assert.ok(await waitFor(() => contractWindow.location.href === 'blob:signed-contract-715'))
+  assert.deepEqual(requests.map(({ url }) => url), [
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/contracts/download/v3',
+  ])
+  assert.equal(requests.some(({ url }) => url.includes('/contracts/link/v3')), false)
+  assert.equal(requests[0].init.headers.Authorization, 'Bearer xano-token')
+  assert.deepEqual(JSON.parse(requests[0].init.body), { project_id: 715 })
+  assert.equal(contractWindow.opener, null)
+  assert.deepEqual(revokedUrls, [])
+
+  contractLoaded()
+
+  assert.deepEqual(revokedUrls, ['blob:signed-contract-715'])
+})
+
+test('completed contract access fails closed when Xano rejects owner or environment', async () => {
+  for (const rejection of [
+    { name: 'wrong owner', status: 403 },
+    { name: 'wrong environment', status: 404 },
+  ]) {
+    const contract = el('a', { href: '#contract' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'View Contract'
+    const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '715' }, [wrap])
+    const root = el('div', { 'wf-xano-instance': 'dash-brand-projects' }, [card])
+    const requests = []
+    const bridge = await loadBridge(
+      async (input) => {
+        const url = String(input)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+        if (url.includes('/brand/projects/mine')) {
+          return response({
+            items: [{
+              id: 715,
+              sync_origin: 'v3',
+              contract_source: 'standard',
+              lifecycle_state: 'active',
+              contract_status: 'completed',
+              pandadoc_document_id: 'doc-715',
+            }],
+          })
+        }
+        requests.push(url)
+        if (url.includes('/contracts/download/v3')) {
+          return response({ message: rejection.name }, false, rejection.status)
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      },
+      {
+        member: paidBrandMember,
+        pathname: '/brand-dashboard',
+        querySelector: (selector) =>
+          selectorMatches(root, selector) ? root : root.querySelector(selector),
+        querySelectorAll: (selector) =>
+          [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+        routeGuard: true,
+      },
+    )
+    const originalHref = bridge.location.href
+    const contractWindow = {
+      closed: false,
+      close() { this.closed = true },
+      location: {},
+      opener: bridge.window,
+    }
+    let objectUrlsCreated = 0
+    bridge.window.open = () => contractWindow
+    bridge.window.URL = {
+      createObjectURL() {
+        objectUrlsCreated += 1
+        return 'blob:must-not-open'
+      },
+      revokeObjectURL() {},
+    }
+    assert.ok(await waitFor(() => wrap.style.display === ''), rejection.name)
+
+    bridge.dispatchDocument('click', clickEvent(contract).event)
+
+    assert.ok(
+      await waitFor(() => wrap.getAttribute('data-project-action-result') === 'error'),
+      rejection.name,
+    )
+    assert.deepEqual(requests, [
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30/contracts/download/v3',
+    ], rejection.name)
+    assert.equal(contractWindow.closed, true, rejection.name)
+    assert.deepEqual(contractWindow.location, {}, rejection.name)
+    assert.equal(bridge.location.href, originalHref, rejection.name)
+    assert.equal(objectUrlsCreated, 0, rejection.name)
+    assert.equal(label.textContent, 'Contract is unavailable. Please try again.', rejection.name)
+  }
 })
 
 test('View Contract closes its blank popup and reports a safe error when Xano returns no URL', async () => {
