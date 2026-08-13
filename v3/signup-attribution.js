@@ -890,7 +890,13 @@
                         captureLeadEntryPosthog(pending)
                         return true
                     }
-                    if (response.status >= 400 && response.status < 500 && response.status !== 401) {
+                    if (
+                        response.status >= 400 &&
+                        response.status < 500 &&
+                        response.status !== 401 &&
+                        response.status !== 408 &&
+                        response.status !== 429
+                    ) {
                         clearPendingLeadEntry()
                         warn('lead-entry registration rejected by its V3 contract')
                         return false
@@ -994,8 +1000,12 @@
             }
             var target = event && event.target
             if (!target || typeof target.getAttribute !== 'function') return
-            if (target.getAttribute('data-ms-form') !== 'signup') return
-            leadEntrySignupSubmitted = true
+            var formKind = target.getAttribute('data-ms-form')
+            if (formKind === 'login') {
+                leadEntrySignupSubmitted = false
+                return
+            }
+            if (formKind === 'signup') leadEntrySignupSubmitted = true
         } catch (error) {
             /* an unreadable form fails closed */
         }

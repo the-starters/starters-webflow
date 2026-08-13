@@ -485,6 +485,17 @@ function boot(options = {}) {
             }
             return event
         },
+        submitAuth: (kind) => {
+            const target = {
+                getAttribute(name) {
+                    return name === 'data-ms-form' ? kind : null
+                },
+            }
+            const event = { target }
+            const handlers = document.listeners.filter(([name]) => name === 'submit')
+            for (const entry of handlers) entry[1](event)
+            return event
+        },
         submitSignup: () => {
             const target = {
                 getAttribute(name) {
@@ -986,6 +997,59 @@ test('a CMS login without a signup-form submit never registers a lead entry', as
 
     assert.equal(harness.fetchCalls.length, 0)
     assert.equal(harness.pendingLeadEntry(), undefined)
+})
+
+test('a login submit cancels stale signup intent before the auth transition', async () => {
+    const harness = boot({
+        hostname: 'thestarters.com',
+        pathname: '/learn/playbooks-frameworks/growth-loop',
+        pageId: '69e1e417f6476e12f572b468',
+        forms: ['signup'],
+        member: null,
+    })
+    await harness.settle()
+
+    harness.submitAuth('signup')
+    harness.submitAuth('login')
+    harness.authHandlers[0](loggedInMember)
+    await harness.settle()
+    await harness.settle()
+
+    assert.equal(harness.fetchCalls.length, 0)
+    assert.equal(harness.pendingLeadEntry(), undefined)
+})
+
+test('request timeout and rate limit responses keep lead entry pending', async () => {
+    for (const status of [408, 429]) {
+        const harness = boot({
+            hostname: 'thestarters.com',
+            pathname: '/skills/growth-marketing',
+            pageId: '69cccee53fd01363c8d406f9',
+            forms: ['signup'],
+            member: null,
+            runClockForward: true,
+            cookies: { event_id: 'evt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+            fetchHandler: async (url) =>
+                String(url).includes('/auth/trade-token/v3')
+                    ? { ok: true, status: 200, json: async () => ({ token: 'xano-token' }) }
+                    : { ok: false, status, json: async () => ({ ok: false }) },
+        })
+        await harness.settle()
+
+        harness.submitSignup()
+        harness.authHandlers[0](loggedInMember)
+        await harness.settle()
+        await harness.settle()
+        await harness.settle()
+
+        assert.equal(
+            harness.fetchCalls.filter((call) => /lead_email\/register\/v3$/.test(call.url)).length,
+            4,
+            String(status),
+        )
+        assert.equal(harness.pendingLeadEntry().expected_member_id, 'mem_123', String(status))
+        assert.equal(harness.posthogCalls.length, 0, String(status))
+    }
 })
 
 test('staging and unsupported CMS routes fail closed even after a signup submit', async () => {
