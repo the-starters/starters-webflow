@@ -27,7 +27,7 @@ class Element {
   closest() { return null }
 }
 
-function boot({ delayHelper = false, helperUnavailable = false } = {}) {
+function boot({ delayHelper = false, helperUnavailable = false, legacyMutatingHelper = false } = {}) {
   const form = new Element({ 'build-profile-form': '' })
   const trigger = new Element({ 'form-submit': '' })
   const success = new Element({ 'build-profile-success': '' })
@@ -98,6 +98,13 @@ function boot({ delayHelper = false, helperUnavailable = false } = {}) {
     window.__startersWorkflowDiagnosticsReady = new Promise((resolve) => { resolveHelper = resolve })
   } else {
     new vm.Script(helperSource).runInContext(context)
+    if (legacyMutatingHelper) {
+      window.StartersWorkflowDiagnostics.message = () => ({ diagnostic_id: 'structured-success' })
+      window.StartersWorkflowDiagnostics.decorate = (element) => {
+        element.textContent = 'Diagnostic ID: structured-success'
+        return true
+      }
+    }
   }
   new vm.Script(source).runInContext(context)
   return {
@@ -137,6 +144,25 @@ test('human click plus authored success records a terminal receipt without page 
   )
   assert.equal(page.success.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.doesNotMatch(page.success.textContent || '', /Diagnostic ID:/)
+})
+
+test('structured-success stays authored when an older helper exposes DOM decoration', async () => {
+  const page = boot({ legacyMutatingHelper: true })
+  page.trigger.dispatch('click')
+  await tick()
+  page.success.style.display = 'block'
+  page.observers[0].callback()
+
+  assert.equal(page.successInner.textContent, 'Authored success structure')
+  assert.deepEqual(
+    page.successInner.children.map((element) => element.textContent),
+    [
+      'Thanks John',
+      'Your profile is now live on The Starters. Complete onboarding to access your dashboard.',
+      'Start onboarding',
+    ],
+  )
+  assert.doesNotMatch(page.successInner.textContent, /Diagnostic ID:|\[object Object\]/)
 })
 
 test('authored success routes to Starter Onboarding after the clean success state', async () => {
