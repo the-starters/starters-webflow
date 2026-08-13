@@ -30,6 +30,8 @@ class Target {
 
 function createEnvironment(fetchImpl, {
   browserGlobal = false,
+  modalApi = true,
+  stepIndex = 1,
   workflowDiagnostics = false,
   workflowDiagnosticsReady = null,
   setTimeoutImpl = () => 1,
@@ -58,7 +60,7 @@ function createEnvironment(fetchImpl, {
   }
   const buttonText = { textContent: 'Submit' }
   const button = new Target()
-  const step = Object.assign(new Target(), { dataset: { index: '1' } })
+  const step = Object.assign(new Target(), { dataset: { index: String(stepIndex) } })
   const form = new Target()
 
   button.closest = () => step
@@ -72,6 +74,9 @@ function createEnvironment(fetchImpl, {
   form.formValues = [
     ['email', fields.email.value],
     ['phone', fields.phone.value],
+    ...(stepIndex === 2 ? [['tagline', 'Product strategist']] : []),
+    ...(stepIndex === 5 ? [['skill-option', 'Research']] : []),
+    ...(stepIndex === 6 ? [['rate', '125']] : []),
   ]
 
   const successModal = new Target()
@@ -97,7 +102,7 @@ function createEnvironment(fetchImpl, {
       if (selector === '[data-modal-target="edit-form-error"]') return errorTarget
       if (selector === '#email') return fields.email
       if (selector === '#phone' || selector === 'input[name="phone"]') return fields.phone
-      if (selector === '[data-form="step"][data-index="1"]') return step
+      if (selector === `[data-form="step"][data-index="${stepIndex}"]`) return step
       return null
     },
     querySelectorAll(selector) {
@@ -146,14 +151,16 @@ function createEnvironment(fetchImpl, {
     StartersTrack: { track: (name, properties) => tracked.push({ name, properties }) },
     console,
   }
-  window.lumos = {
-    modal: {
-      open(name) {
-        modalApiCalls.push(name)
-        if (name === 'edit-form-success') modalEvents.success += 1
-        if (name === 'edit-form-error') modalEvents.error += 1
+  if (modalApi) {
+    window.lumos = {
+      modal: {
+        open(name) {
+          modalApiCalls.push(name)
+          if (name === 'edit-form-success') modalEvents.success += 1
+          if (name === 'edit-form-error') modalEvents.error += 1
+        },
       },
-    },
+    }
   }
   if (workflowDiagnosticsReady) {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
@@ -247,8 +254,24 @@ async function testNon2xx() {
   await submit(environment)
 
   assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.deepEqual(environment.modalApiCalls, ['edit-form-error'])
   assert.equal(environment.button.style.pointerEvents, '')
   assert.equal(environment.button.style.opacity, '')
+}
+
+async function testEveryOwnedSectionOpensSuccessModal() {
+  for (const stepIndex of [2, 5, 6]) {
+    const environment = createEnvironment(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ saved: true }),
+    }), { stepIndex })
+
+    await submit(environment)
+
+    assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+    assert.deepEqual(environment.modalApiCalls, ['edit-form-success'])
+  }
 }
 
 async function testRejectedFetch() {
@@ -259,6 +282,7 @@ async function testRejectedFetch() {
   await submit(environment)
 
   assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.deepEqual(environment.modalApiCalls, ['edit-form-error'])
   assert.equal(environment.button.style.pointerEvents, '')
   assert.equal(environment.button.style.opacity, '')
 }
@@ -273,6 +297,29 @@ async function testBrowserGlobalDoesNotRecurse() {
   await submit(environment)
 
   assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
+  assert.deepEqual(environment.modalApiCalls, ['edit-form-error'])
+}
+
+async function testHiddenTriggerFallback() {
+  const successEnvironment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), { modalApi: false })
+  await submit(successEnvironment)
+
+  assert.deepEqual(successEnvironment.modalEvents, { success: 1, error: 0 })
+  assert.deepEqual(successEnvironment.modalApiCalls, [])
+
+  const errorEnvironment = createEnvironment(async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ message: 'failed' }),
+  }), { modalApi: false })
+  await submit(errorEnvironment)
+
+  assert.deepEqual(errorEnvironment.modalEvents, { success: 0, error: 1 })
+  assert.deepEqual(errorEnvironment.modalApiCalls, [])
 }
 
 async function testPrivacySafeDiagnostics() {
@@ -363,8 +410,10 @@ async function testAuthSwitchAfterPatchDoesNotProjectToNewSession() {
 Promise.all([
   testSuccess(),
   testNon2xx(),
+  testEveryOwnedSectionOpensSuccessModal(),
   testRejectedFetch(),
   testBrowserGlobalDoesNotRecurse(),
+  testHiddenTriggerFallback(),
   testPrivacySafeDiagnostics(),
   testStalledDiagnosticsFailOpen(),
   testAuthSwitchDuringDiagnosticsDoesNotWrite(),

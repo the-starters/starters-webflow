@@ -111,8 +111,10 @@ Do not discard local changes unless the user explicitly asks.
   and blocks known edit mutations on non-Live hosts
 - `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior
   migrated from the legacy Webflow footer. It keeps the existing Designer form
-  contract, shows success only after a confirmed 2xx Xano response, and shows the
-  error state for rejected or failed profile updates. Each submit captures the
+  and modal markup, opens the existing success or error modal through the Lumos
+  API, and uses its hidden modal triggers only when that API is unavailable. It
+  shows success only after a confirmed 2xx Xano response and shows the error
+  state for rejected or failed profile updates. Each submit captures the
   current Memberstack member, revalidates that same identity before the Xano
   PATCH, and binds the request URL to the captured member ID. It revalidates
   again before its Memberstack custom-field projection, so an account change
