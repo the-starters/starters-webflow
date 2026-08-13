@@ -38,14 +38,18 @@
       // (the leaf) and starts the next parent. A fragment with no comma is a
       // deeper level of the same path and is not emitted until the last
       // segment — so "A > B > C" becomes "C".
+      //
+      // A value carrying no " > " has no leaf: it is a bare parent Category (or
+      // separator noise), never a Subcategory, so it yields nothing and the node
+      // is blanked rather than rendering a Category label as a Subcategory tag.
+      const BLANKISH = /^[,>\s]*$/;
+
       function subcategoryLeaves(text) {
         const raw = String(text || '').trim();
         if (!raw) return [];
 
         const parts = raw.split(' > ').map((part) => part.trim());
-        if (parts.length === 1) {
-          return /^[,>\s]*$/.test(parts[0]) ? [] : [parts[0]];
-        }
+        if (parts.length === 1) return [];
 
         const leaves = [];
         for (let i = 1; i < parts.length; i += 1) {
@@ -60,7 +64,7 @@
           const leaf = fragment.slice(0, commaAt).trim();
           if (leaf) leaves.push(leaf);
         }
-        return leaves.filter(Boolean);
+        return leaves.filter((leaf) => leaf && !BLANKISH.test(leaf));
       }
 
       // Returns true only when the node was actually rewritten, so relayout is

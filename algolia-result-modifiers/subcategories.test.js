@@ -247,7 +247,7 @@ function loadModule({
         this.callback = callback
       }
       observe(target, options) {
-        observed.push({ target, options })
+        observed.push({ target, options, observer: this })
       }
       disconnect() {}
     },
@@ -330,14 +330,24 @@ test('cleans a single path in place and strips the hook', () => {
   assert.equal(page.seed.getAttribute('class'), 'subcategory-tag')
 })
 
-test('a path with no > displays as the whole string', () => {
-  const { page } = render({ joinedPaths: 'Performance Creative Strategy' })
-  assert.deepEqual(tagText(page.card), ['Performance Creative Strategy'])
+test('blanks a value with no > instead of rendering the parent Category', () => {
+  const { page } = render({ joinedPaths: 'Influencer, Affiliate & PR' })
+  assert.equal(page.card.childNodes.length, 1)
+  assert.deepEqual(tagText(page.card), [''])
+  assert.equal(page.seed.hasAttribute('wf-algolia-text'), false)
 })
 
-test('a hyphenated leaf with no > is not treated as punctuation', () => {
-  const { page } = render({ joinedPaths: 'CRO-Experimentation' })
+test('a hyphenated leaf is not treated as punctuation', () => {
+  const { page } = render({
+    joinedPaths: 'Analytics & Experimentation > CRO-Experimentation',
+  })
   assert.deepEqual(tagText(page.card), ['CRO-Experimentation'])
+})
+
+test('blanks a >-only leaf inside a path', () => {
+  const { page } = render({ joinedPaths: 'Paid Media > >' })
+  assert.deepEqual(tagText(page.card), [''])
+  assert.equal(page.seed.hasAttribute('wf-algolia-text'), false)
 })
 
 test('a three-level path displays only the last segment', () => {
@@ -391,6 +401,15 @@ test('does not arm when the page has no subcategory hook', () => {
     'Paid Media > Performance Creative Strategy',
   ])
   assert.deepEqual(mod.dispatched, [])
+
+  page.seed.setAttribute('wf-algolia-text', 'categories.lvl1')
+  mod.emitResults()
+  mod.flushTimers()
+  assert.deepEqual(tagText(page.card), [
+    'Paid Media > Performance Creative Strategy',
+  ])
+  assert.equal(page.seed.getAttribute('wf-algolia-text'), 'categories.lvl1')
+  assert.deepEqual(mod.dispatched, [])
 })
 
 test('clones inherit the seed class and drop the hook', () => {
@@ -431,22 +450,30 @@ test('does not read the results payload — federated shape with no hits still r
 
 test('boots only once even if the file loads twice', () => {
   const page = buildPage({
-    joinedPaths: 'Paid Media > Performance Creative Strategy,Creative > Video & Production',
+    joinedPaths: 'Paid Media > Performance Creative Strategy',
   })
   const mod = loadModule({ page })
   mod.flushTimers()
-  assert.deepEqual(tagText(page.card), [
-    'Performance Creative Strategy',
-    'Video & Production',
-  ])
+  assert.deepEqual(tagText(page.card), ['Performance Creative Strategy'])
   assert.deepEqual(mod.dispatched, ['expert-cards:relayout'])
+
+  // Re-seed a live hook, then load the file a second time. A second boot would
+  // sweep the DOM as it arms and rewrite this immediately; the guard means
+  // nothing happens until the first boot's own results listener fires.
+  page.seed.setAttribute('wf-algolia-text', 'categories.lvl1')
+  page.seed.textContent = 'Creative > Video & Production'
   mod.reevaluate()
   mod.flushTimers()
-  assert.deepEqual(tagText(page.card), [
-    'Performance Creative Strategy',
-    'Video & Production',
-  ])
+  assert.deepEqual(tagText(page.card), ['Creative > Video & Production'])
   assert.deepEqual(mod.dispatched, ['expert-cards:relayout'])
+
+  mod.emitResults()
+  mod.flushTimers()
+  assert.deepEqual(tagText(page.card), ['Video & Production'])
+  assert.deepEqual(mod.dispatched, [
+    'expert-cards:relayout',
+    'expert-cards:relayout',
+  ])
 })
 
 test('warns on staging when no browse or results container exists', () => {
@@ -538,6 +565,50 @@ test('rewrites injected cards in every browse list on the page', () => {
   loadModule({ page })
   assert.deepEqual(tagText(page.card), ['Performance Creative Strategy'])
   assert.deepEqual(tagText(premiumCard), ['Video & Production'])
+})
+
+test('observes every browse and results container, not just the first', () => {
+  const page = buildPage({
+    joinedPaths: 'Paid Media > Performance Creative Strategy',
+  })
+  const premium = new El('div')
+  premium.setAttribute('wf-algolia-element', 'browse')
+  page.documentEl.appendChild(premium)
+
+  const mod = loadModule({ page })
+  const targets = mod.observed.map((entry) => entry.target)
+  assert.equal(targets.length, 3)
+  assert.ok(targets.includes(page.browse))
+  assert.ok(targets.includes(page.results))
+  assert.ok(targets.includes(premium))
+  mod.observed.forEach((entry) => {
+    assert.equal(entry.options.childList, true)
+    assert.equal(entry.options.subtree, true)
+    assert.equal(entry.options.attributes, undefined)
+  })
+})
+
+test('a container mutation re-runs the sweep on a late-injected card', () => {
+  const page = buildPage({
+    joinedPaths: 'Paid Media > Performance Creative Strategy',
+  })
+  const mod = loadModule({ page })
+  mod.flushTimers()
+
+  const late = new El('div')
+  late.setAttribute('class', 'wf-algolia-injected')
+  const lateSeed = paragraph(
+    { 'wf-algolia-text': 'categories.lvl1', class: 'subcategory-tag' },
+    'Creative > Video & Production',
+  )
+  late.appendChild(lateSeed)
+  page.results.appendChild(late)
+
+  const watcher = mod.observed.find((entry) => entry.target === page.results)
+  assert.ok(watcher, 'results container is observed')
+  watcher.observer.callback([], watcher.observer)
+  mod.flushTimers()
+  assert.deepEqual(tagText(late), ['Video & Production'])
 })
 
 test('gives up waiting for WfAlgolia and still rewrites the card', () => {
