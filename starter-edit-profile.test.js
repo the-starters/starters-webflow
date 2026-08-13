@@ -26,6 +26,7 @@ class Target {
 
   setAttribute(name, value) { this.attributes.set(name, String(value)) }
   getAttribute(name) { return this.attributes.get(name) ?? null }
+  hasAttribute(name) { return this.attributes.has(name) }
 }
 
 function createEnvironment(fetchImpl, {
@@ -63,6 +64,21 @@ function createEnvironment(fetchImpl, {
   const button = new Target()
   const step = Object.assign(new Target(), { dataset: { index: String(stepIndex) } })
   const form = new Target()
+  const counter = new Target()
+  const counterInput = Object.assign(new Target(), {
+    value: 'Profile',
+    maxLength: 80,
+    selectionStart: 7,
+    selectionEnd: 7,
+    classList: {
+      values: new Set(),
+      add(value) { this.values.add(value) },
+      contains(value) { return this.values.has(value) },
+    },
+  })
+  const counterWrapper = new Target()
+  counterWrapper.querySelector = (selector) => selector === '.count-input' ? counter : null
+  counterInput.closest = (selector) => selector === '.form_input-wr' ? counterWrapper : null
 
   button.closest = () => step
   button.querySelectorAll = (selector) => selector === '.button_main-text' ? [buttonText] : []
@@ -91,6 +107,7 @@ function createEnvironment(fetchImpl, {
   successModal.addEventListener('click', () => { modalEvents.success += 1 })
   errorModal.addEventListener('click', () => { modalEvents.error += 1 })
 
+  let domParsed = documentReadyState !== 'loading'
   const document = {
     readyState: documentReadyState,
     addEventListener(type, listener) {
@@ -109,6 +126,9 @@ function createEnvironment(fetchImpl, {
     },
     querySelectorAll(selector) {
       if (selector === '[data-form="step"][data-index]') return [step]
+      if (selector === 'input.with-count:not(.initialized), textarea.with-count:not(.initialized)') {
+        return domParsed ? [counterInput] : []
+      }
       return []
     },
   }
@@ -168,6 +188,7 @@ function createEnvironment(fetchImpl, {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
   }
 
+  const dollar = () => ({ each() {} })
   const sandbox = {
     window,
     document,
@@ -182,6 +203,7 @@ function createEnvironment(fetchImpl, {
     setInterval: () => 1,
     setTimeout: setTimeoutImpl,
     clearInterval() {},
+    $: dollar,
   }
   if (browserGlobal) {
     Object.assign(window, sandbox)
@@ -192,7 +214,10 @@ function createEnvironment(fetchImpl, {
     new vm.Script(diagnosticSource, { filename: 'workflow-diagnostics.js' }).runInContext(context)
   }
   new vm.Script(source, { filename: 'starter-edit-profile.js' }).runInContext(context)
-  if (documentReadyState === 'loading') domReady[0]()
+  if (documentReadyState === 'loading') {
+    domParsed = true
+    domReady.forEach((listener) => listener())
+  }
 
   return {
     button,
@@ -204,6 +229,8 @@ function createEnvironment(fetchImpl, {
     copied,
     successFeedback,
     errorFeedback,
+    counter,
+    counterInput,
     window,
     switchMember(member) {
       currentMember = member
@@ -258,6 +285,17 @@ async function testLateLoadInitializesImmediately() {
 
   assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
   assert.deepEqual(environment.modalApiCalls, ['edit-form-success'])
+}
+
+async function testEarlyLoadInitializesCountersAfterParsing() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+
+  assert.equal(environment.counterInput.classList.contains('initialized'), true)
+  assert.equal(environment.counter.textContent, '07')
 }
 
 async function testNon2xx() {
@@ -426,6 +464,7 @@ async function testAuthSwitchAfterPatchDoesNotProjectToNewSession() {
 Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
+  testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
   testRejectedFetch(),

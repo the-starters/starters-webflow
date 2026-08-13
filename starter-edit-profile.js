@@ -844,7 +844,7 @@ function counterFields(wrapper = null) {
 		});
 	}
 
-	counterFields();
+	onDomReady(() => counterFields());
 
 // Inline block 3
 onDomReady(() => {
