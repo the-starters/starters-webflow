@@ -65,4 +65,5 @@ This exclusion is a release boundary, not proof that the remaining inline code i
 4. Recapture both pages and replace only a block whose script position, character count, and SHA-256 match `live-body-provenance.json`.
 5. Publish staging first, then use human-like clicks for photo, portfolio, work history, counters, bio, and grouped selects without submitting the full profile.
 6. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
-7. Scan both published domains for Airtable, Make, and PAT exposure patterns.
+7. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request, clean authored success copy for 1.2 seconds, and routing to `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
+8. Scan both published domains for Airtable, Make, and PAT exposure patterns.
