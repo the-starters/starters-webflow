@@ -153,7 +153,7 @@ class FakePlayer {
  *   'out' reproduces the real site exactly: memberReady resolves {} (truthy!)
  *   while getCurrentMember returns { data: null }.
  */
-async function setup({ member = 'out', withLib = true, hostname = 'the-starters-3-0.webflow.io', roots = [template()], watch = null, watchClick = false, width = 1280, stageWidth = null } = {}) {
+async function setup({ member = 'out', withLib = true, hostname = 'the-starters-3-0.webflow.io', roots = [template()], watch = null, watchClick = false, width = 1280, stageWidth = null, userAgent = '', platform = '', maxTouchPoints = 0 } = {}) {
   const body = h('body', {})
   roots.forEach((r) => body.append(r))
   // Register ids by walking the finished tree. Doing it in the Element
@@ -184,6 +184,7 @@ async function setup({ member = 'out', withLib = true, hostname = 'the-starters-
   const windowObj = {
     location: { hostname, pathname: '/learn/sessions/x' },
     innerWidth: width,
+    navigator: { userAgent, platform, maxTouchPoints },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length },
     dispatchEvent: (e) => events.push(e),
     CustomEvent: class { constructor(t, i) { this.type = t; this.detail = i && i.detail } },
@@ -785,6 +786,68 @@ test('a narrow viewport gives EVERYONE the template controls, member or not', as
   const g = await setup({ member: 'out', width: 375 })
   assert.equal(g.root.getAttribute('data-sv-player'), 'custom')
   assert.match(src(g.frame()), /controls=0/)
+})
+
+test('a narrow iPhone member does not load Vimeo\'s bar, so ambient stays chip-free', async () => {
+  // iPhone fullscreen is the OS player. controls=1 on a muted autoplay iframe
+  // only paints Vimeo's Unmute pill on top of the site header. Android/desktop
+  // keep the bar (test above). Fullscreen permission is unchanged.
+  const s = await setup({
+    member: 'in',
+    width: 375,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+  })
+  assert.equal(s.root.getAttribute('data-sv-player'), 'custom')
+  assert.match(src(s.frame()), /controls=0/)
+  assert.match(src(s.frame()), /keyboard=0/)
+  assert.match(src(s.frame()), /pip=0/)
+  assert.equal(s.frame().hasAttribute('allowfullscreen'), true)
+  assert.match(src(s.frame()), /muted=1/)
+})
+
+test('a narrow iPhone member still enters fullscreen on the watch tap', async () => {
+  // Turning Vimeo's bar off must not drop the OS-player request. Same tap,
+  // same gesture, same API call — only the Unmute chip is gone.
+  const s = await setup({
+    member: 'in',
+    width: 375,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+  })
+  s.watch().click()
+  assert.equal(s.live().did('requestFullscreen').length, 1)
+  assert.equal(s.state().armed, true)
+})
+
+test('a gated iPhone visitor still has no scrubber', async () => {
+  const s = await setup({
+    member: 'out',
+    width: 375,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+  })
+  assert.match(src(s.frame()), /controls=0/)
+})
+
+test('a wide iPhone member still gets Vimeo\'s native bar', async () => {
+  // Landscape / large iOS where the template already hands the iframe to Vimeo.
+  const s = await setup({
+    member: 'in',
+    width: 1280,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)',
+  })
+  assert.equal(s.root.getAttribute('data-sv-player'), 'native')
+  assert.match(src(s.frame()), /controls=1/)
+})
+
+test('iPadOS-as-Mac still hides the bar on a narrow box', async () => {
+  const s = await setup({
+    member: 'in',
+    width: 375,
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    platform: 'MacIntel',
+    maxTouchPoints: 5,
+  })
+  assert.equal(s.root.getAttribute('data-sv-player'), 'custom')
+  assert.match(src(s.frame()), /controls=0/)
 })
 
 test('a member on a narrow screen keeps the fullscreen permission', async () => {

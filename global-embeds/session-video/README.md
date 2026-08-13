@@ -42,10 +42,11 @@ included.
 carrying the template's minimal controls, so a confirmed member's watch tap asks
 the player for full screen as well, fired inside that tap's own gesture — only
 ever a real tap or keyboard activation, never automatically. On iPhone that is
-the device's own player; on Android and narrow desktop the browser fullscreens
-our iframe, which carries Vimeo's bar so the full-screen surface has pause,
-scrub, volume and a visible exit. Leaving full screen (Done, or the back
-gesture) is treated as a pause: the overlay returns, the control bar goes with
+the device's own player, so that narrow iframe stays `controls=0` and does not
+paint Vimeo's Unmute chip on the muted ambient loop; on Android and narrow
+desktop the browser fullscreens our iframe, which carries Vimeo's bar so the
+full-screen surface has pause, scrub, volume and a visible exit. Leaving full
+screen (Done, or the back gesture) is treated as a pause: the overlay returns, the control bar goes with
 it, and the position is pinned, so the next watch tap goes straight back in from
 where they stopped, cycle after cycle. A tap that arrives before membership has
 resolved is still looking at the gated frame, which carries no permission, so it
@@ -177,13 +178,16 @@ Frames are built rather than authored so that `controls`, `keyboard` and `pip`
 are correct *at load* for this particular viewer. `keyboard` and `pip` follow
 the **native** decision — both off whenever the template's controls are in
 charge, which is every gated viewer and any member on a narrow screen.
-`controls` follows **gated** instead: an ungated frame always carries Vimeo's
-bar, even a narrow one. Inline the template UI is still in charge
-(`data-sv-player="custom"`, the overlay intercepts taps so Vimeo's bar idles);
-the enabled bar exists so that when the browser fullscreens the iframe,
-fullscreen has pause, scrub, volume and a visible exit. Gated frames stay
-`controls=0`. The full-screen attributes follow the **gated** decision too: a
-gated frame gets `allow="autoplay"`, an ungated one gets
+`controls` follows **gated**, with an iOS exception: an ungated frame
+carries Vimeo's bar, even a narrow one, **except** a custom/narrow iOS
+player. Inline the template UI is still in charge (`data-sv-player="custom"`,
+the overlay intercepts taps so Vimeo's bar idles); the enabled bar exists so
+that when the browser fullscreens the iframe, fullscreen has pause, scrub,
+volume and a visible exit. iPhone fullscreen is the OS player, so that bar
+would only paint Vimeo's Unmute chip on the muted ambient loop — a narrow
+iOS frame stays `controls=0`. Wide iOS still uses Vimeo's native UI. Gated
+frames stay `controls=0`. The full-screen attributes follow the **gated**
+decision too: a gated frame gets `allow="autoplay"`, an ungated one gets
 `allow="autoplay; fullscreen"` plus `allowfullscreen`.
 
 Turning off `keyboard` and `pip` closes two bypass routes deliberately, not
