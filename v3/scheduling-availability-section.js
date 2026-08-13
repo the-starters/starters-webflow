@@ -72,6 +72,7 @@
   let connectionError = false
   let connectBusy = false
   let cachedItemTemplate = null
+  let mainWrapperShown = false
   const oauthCallback = captureOAuthCallback()
 
   /* ------------------------------------------------------------------ */
@@ -960,6 +961,11 @@
       else grantPayload.in_grant_id = oauthGrantId
       const grant = await xanoPost('/grants/add/v3', grantPayload)
       if (!(grant && grant.grant_id)) throw new Error('grants/add/v3 returned no grant')
+      // Mirror activatePlatformManager/disconnectGoogleManager: the manager
+      // switch must be persisted here, not just left for the caller — this is
+      // the only place that observes the freshly-added Google grant.
+      availability.manager = 'calendar'
+      await updateAvail()
       clearOAuthIntent(memberId)
       clearOAuthCallback()
       await refreshCanonicalConnectionState()
@@ -1025,22 +1031,25 @@
   function applyConnectLabels(state) {
     const group = qs(elSel('connect-label-group'))
     if (!group || !group.children) return
-    const connected = state === 'connected'
+    const connected = state === 'connected' || state === 'reconnect'
     if (group.children[0]) group.children[0].style.display = connected ? 'none' : ''
     if (group.children[1]) group.children[1].style.display = connected ? '' : 'none'
   }
 
   // Platform can't be disconnected outright — only switched away from by
   // connecting Google. So: not-on-platform shows "Connect Platform"; not-on-
-  // Google shows "Connect Google"; only on-Google shows "Disconnect Google".
+  // Google shows "Connect Google"; only on-Google shows "Disconnect Google" —
+  // connect-platform is redundant there since disconnect-google already
+  // reverts to platform on its own.
   function applyConnectButtonVisibility() {
     const wrapper = qs(elSel('connect-btn-wrapper'))
     if (!wrapper) return
     const manager = availability && availability.manager
+    const onGoogle = manager === 'calendar'
     const rules = [
-      ['connect-platform', manager !== 'platform'],
-      ['connect-google', manager !== 'calendar'],
-      ['disconnect-google', manager === 'calendar'],
+      ['connect-platform', manager !== 'platform' && !onGoogle],
+      ['connect-google', !onGoogle],
+      ['disconnect-google', onGoogle],
     ]
     rules.forEach(function (rule, i) {
       const target = resolveActionTarget(wrapper, rule[0], i)
@@ -1049,11 +1058,29 @@
   }
 
   function applyConnectInfoVisibility(state) {
-    setElementVisible('connect-info-wrapper', state !== 'connected')
+    setElementVisible('connect-info-wrapper', state !== 'connected' && state !== 'reconnect')
+  }
+
+  // Sticky show: once main-wrapper is revealed for a real connection, it
+  // stays up through the transient 'loading'/'error' states that save/
+  // delete/add and connect/disconnect actions round-trip through — only a
+  // definitive 'disconnected' state hides it again. On page load it's hidden
+  // by the site's own CSS, so this only ever needs to force it open via an
+  // explicit `display: grid` (clearing to '' would just fall back to that
+  // same CSS-hidden default).
+  function updateMainWrapperVisibility(state) {
+    if (state === 'connected' || state === 'reconnect') {
+      mainWrapperShown = true
+    } else if (state === 'disconnected') {
+      mainWrapperShown = false
+    }
+    qsa(elSel('main-wrapper')).forEach(function (el) {
+      el.style.display = mainWrapperShown ? 'grid' : 'none'
+    })
   }
 
   function repaintConnectionUI(state) {
-    setElementVisible('main-wrapper', state === 'connected' || state === 'reconnect')
+    updateMainWrapperVisibility(state)
     applyConnectLabels(state)
     applyConnectButtonVisibility()
     applyConnectInfoVisibility(state)
@@ -1193,6 +1220,25 @@
     else openItemForm(card, id)
   }
 
+  // Drives the item-form-submit button's own pending-state markup —
+  // `[text-element]` swaps to "Loading...", `[loading-spinner]` shows,
+  // `[loading-hide]` (the default icon) hides — while the whole item-card
+  // (not just the button) dims and stops accepting clicks until the
+  // save/remove request settles either way.
+  function setItemSubmitLoading(card, target, loading) {
+    if (!target) return
+    const textEl = qs('[text-element]', target)
+    if (textEl) textEl.textContent = loading ? 'Loading...' : 'Save availability'
+    const spinner = qs('[loading-spinner]', target)
+    if (spinner) spinner.style.display = loading ? 'flex' : 'none'
+    const hideIcon = qs('[loading-hide]', target)
+    if (hideIcon) hideIcon.style.display = loading ? 'none' : ''
+    if (card) {
+      card.style.opacity = loading ? '0.6' : '1'
+      card.style.pointerEvents = loading ? 'none' : 'auto'
+    }
+  }
+
   function bindItemActions(card, id) {
     const buttonGroup = qs(elSel('item-button-group'), card)
     bindActionGroup(buttonGroup, ['item-form-open', 'item-remove'], function (action) {
@@ -1214,12 +1260,17 @@
         e.preventDefault()
       })
     }
-    bindActionGroup(buttonRow, ['item-form-close', 'item-form-submit'], function (action) {
+    bindActionGroup(buttonRow, ['item-form-close', 'item-form-submit'], function (action, target) {
       if (action === 'item-form-close') {
         if (availability.items[id]) closeItemForm(card)
         else card.remove()
       } else if (action === 'item-form-submit') {
-        availFormHandler(card, id).then(renderSlotsPreview)
+        setItemSubmitLoading(card, target, true)
+        availFormHandler(card, id)
+          .then(renderSlotsPreview)
+          .finally(function () {
+            setItemSubmitLoading(card, target, false)
+          })
       }
     })
   }
