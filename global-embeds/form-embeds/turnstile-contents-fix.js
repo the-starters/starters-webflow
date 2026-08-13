@@ -52,10 +52,11 @@
  * (leaked fields, misplaced buttons), and it would be a styling fix for a
  * measurement bug.
  *
- * OPT-IN ONLY. A form is a candidate solely because someone marked it
- * `data-starters-turnstile-fix` in the Designer. There is no detection, no heuristic,
- * and no "looks broken so let's help" — an unmarked form is invisible to this script
- * even when it is a textbook case of the bug. That is the whole point: this thing
+ * OPT-IN ONLY. A form is a candidate solely because its owning component marked it
+ * `data-starters-turnstile-fix`, either in the Designer or in its controller before
+ * this script scans the page. There is no detection, no heuristic, and no "looks
+ * broken so let's help" — an unmarked form is invisible to this script even when it
+ * is a textbook case of the bug. That is the whole point: this thing
  * reaches into another library's private state (`jQuery.data(form, '.w-form')`) and
  * appends a node inside a form it does not own, and the blast radius of getting that
  * wrong on an unrelated form is a broken submit on a page nobody was testing. An
@@ -86,7 +87,7 @@
  *
  * ATTRIBUTE GRAMMAR
  *
- * Authored in the Designer, on the `<form>` element:
+ * Set by the owning component in the Designer or at runtime, on the `<form>` element:
  *
  *   data-starters-turnstile-fix            arm this form (presence is the whole
  *                                          contract — any value, including empty,

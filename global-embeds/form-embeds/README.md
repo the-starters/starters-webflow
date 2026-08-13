@@ -74,12 +74,12 @@ doomed submit through.
 
 ### Opt-in only
 
-A form is a candidate solely because someone marked it
-`data-starters-turnstile-fix` on the `<form>` in the Designer. **Presence is the
-whole contract** — any value, including empty, means the same thing, so there is
-nothing to spell wrong in a value. There is no detection and no heuristic: an
-unmarked form is invisible to this script even when it is a textbook case of the
-bug.
+A form is a candidate solely because its owning component marked the `<form>`
+with `data-starters-turnstile-fix`, either in the Designer or in its controller
+before this script scans the page. **Presence is the whole contract** — any value,
+including empty, means the same thing, so there is nothing to spell wrong in a
+value. There is no detection and no heuristic: an unmarked form is invisible to
+this script even when it is a textbook case of the bug.
 
 That is the point. This script reaches into another library's private state and
 appends a node inside a form it does not own; the blast radius of getting that
@@ -194,7 +194,7 @@ retried up to twice at 2s intervals before the form is left in that posture.
 
 ### Attribute grammar
 
-Authored in the Designer, on the `<form>` element:
+Set by the owning component in the Designer or at runtime, on the `<form>` element:
 
 | Attribute | Meaning |
 | --- | --- |

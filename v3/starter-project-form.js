@@ -273,6 +273,10 @@
 
   function prepareStarterContext(form) {
     if (!form || !form.querySelectorAll) return false
+    // The shared Contract Generation component is reused outside its CMS page.
+    // Mark the native form (not its visual wrapper) so the sitewide Turnstile
+    // repair can restore Webflow's form contents before any submit attempt.
+    form.setAttribute('data-starters-turnstile-fix', 'true')
     var cmsOnly = form.querySelectorAll(CMS_ONLY_IDENTITY_SELECTOR)
     Array.prototype.forEach.call(cmsOnly, function (control) {
       control.disabled = true

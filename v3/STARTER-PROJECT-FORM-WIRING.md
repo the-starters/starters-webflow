@@ -57,6 +57,9 @@ The controller binds these existing elements:
   containing `[element="profile_photo"]`;
 - runtime modal: `dialog[data-project-form-v3="starter"][data-modal-target="start-project"]`;
 - form: the native form inside that dialog;
+- the controller adds `data-starters-turnstile-fix="true"` to that native form
+  during boot so the sitewide Turnstile repair targets the form, not a visual
+  wrapper;
 - Brand select: `select#Brand[name="Brand"]`, labeled **Select a Brand**, with one
   authored empty placeholder option labeled **Choose a Brand**;
 - stable selected Brand ID: `#brand-contract`;
