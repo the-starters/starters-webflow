@@ -463,19 +463,6 @@
       var text = failure.querySelector('div')
       if (text && message) text.textContent = message
     }
-    var target = kind === 'success' ? success : kind === 'error' ? failure : null
-    var api = window.StartersWorkflowDiagnostics
-    if (!target || !api || !receipt) return
-    var textTarget = target.querySelector && target.querySelector('[data-workflow-diagnostic-message], div, p') || target
-    if (textTarget.__startersWorkflowDiagnosticBaseText === undefined) {
-      textTarget.__startersWorkflowDiagnosticBaseText =
-        textTarget.textContent || (kind === 'success' ? 'Your account was updated.' : message)
-    }
-    textTarget.textContent = api.message(
-      kind === 'error' && message ? message : textTarget.__startersWorkflowDiagnosticBaseText,
-      receipt,
-    )
-    api.decorate(textTarget, receipt)
   }
 
   function setBusy(form, busy) {

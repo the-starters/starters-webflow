@@ -52,6 +52,7 @@ function makeElement(value = '') {
 
 function makeWrapper() {
   const done = makeElement()
+  done.textContent = 'Your authored success message.'
   const fail = makeElement()
   const failText = makeElement()
   failText.textContent = 'Original failure'
@@ -472,7 +473,7 @@ test('Build Account success records a privacy-safe console receipt without page 
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
   assert.equal(Object.hasOwn(receipt, 'firstName'), false)
-  assert.equal(buildForm.wrapper.done.textContent, 'Your account was updated.')
+  assert.equal(buildForm.wrapper.done.textContent, 'Your authored success message.')
   assert.equal(buildForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'), null)
   assert.ok(environment.tracked.some((event) => event.name === 'workflow_form_submit_succeeded'))
 })
@@ -1090,7 +1091,7 @@ test('Talent Account Security success exposes no email in its diagnostic receipt
   assert.equal(receipt.request_started, true)
   assert.equal(Object.hasOwn(receipt, 'email'), false)
   assert.equal(Object.hasOwn(receipt, 'member_id'), false)
-  assert.equal(securityForm.wrapper.done.textContent, 'Your account was updated.')
+  assert.equal(securityForm.wrapper.done.textContent, 'Your authored success message.')
   assert.equal(securityForm.wrapper.done.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 

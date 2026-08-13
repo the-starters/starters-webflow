@@ -1,9 +1,10 @@
 /**
- * Privacy-safe outcome diagnostics for the coupled Build Profile writer.
+ * Privacy-safe outcome diagnostics and success routing for Build Profile.
  *
  * Elvin's inline writer remains the sole mutation owner. This controller only
  * observes the authored submit click plus authored success/error states. It
- * never reads fields, intercepts the click, or sends a request.
+ * never reads fields, intercepts the click, or sends a request. After the
+ * authored success state appears, it sends the member to Starter Onboarding.
  */
 ;(function () {
   'use strict'
@@ -17,13 +18,17 @@
     'www.thestarters.com',
   ]
   var ALLOWED_PATHS = ['/build-profile/consult', '/build-profile/full-profile']
-  var CONTROLLER_VERSION = 'build-profile-submit-diagnostics-v1'
+  var CONTROLLER_VERSION = 'build-profile-submit-outcome-v2'
   var HELPER_TIMEOUT_MS = 2000
+  var SUCCESS_REDIRECT_PATH = '/starter-onboarding'
+  var SUCCESS_REDIRECT_DELAY_MS = 1200
   var controllerScript = document.currentScript
   var receipt = null
   var startedAt = 0
   var pendingStart = false
   var pendingOutcome = null
+  var awaitingAuthoredOutcome = false
+  var successRedirectScheduled = false
 
   function allowed() {
     var location = window.location || {}
@@ -133,7 +138,20 @@
     return receipt
   }
 
-  function complete(result, errorCode, target) {
+  function scheduleSuccessRedirect() {
+    if (successRedirectScheduled) return
+    successRedirectScheduled = true
+    window.setTimeout(function () {
+      if (!allowed()) return
+      if (window.location && typeof window.location.replace === 'function') {
+        window.location.replace(SUCCESS_REDIRECT_PATH)
+        return
+      }
+      window.location.href = SUCCESS_REDIRECT_PATH
+    }, SUCCESS_REDIRECT_DELAY_MS)
+  }
+
+  function complete(result, errorCode) {
     var api = window.StartersWorkflowDiagnostics
     if (!api || !receipt || receipt.result !== 'started') return receipt
     receipt = api.record(api.complete(receipt, {
@@ -143,19 +161,6 @@
       duration_ms: Date.now() - startedAt,
       request_started: true,
     }))
-    if (target) {
-      var textTarget = target.querySelector && target.querySelector(
-        '[data-workflow-diagnostic-message], p, div',
-      ) || target
-      if (textTarget.__startersWorkflowDiagnosticBaseText === undefined) {
-        textTarget.__startersWorkflowDiagnosticBaseText = textTarget.textContent || ''
-      }
-      textTarget.textContent = api.message(
-        textTarget.__startersWorkflowDiagnosticBaseText,
-        receipt,
-      )
-      api.decorate(textTarget, receipt)
-    }
     return receipt
   }
 
@@ -167,11 +172,15 @@
     if (pendingOutcome) {
       var outcome = pendingOutcome
       pendingOutcome = null
-      complete(outcome.result, outcome.errorCode, outcome.target)
+      complete(outcome.result, outcome.errorCode)
     }
   }
 
   function observeOutcome(result, errorCode, target) {
+    if (awaitingAuthoredOutcome) {
+      awaitingAuthoredOutcome = false
+      if (result === 'success') scheduleSuccessRedirect()
+    }
     pendingOutcome = { result: result, errorCode: errorCode, target: target }
     if (window.StartersWorkflowDiagnostics) {
       flushPending()
@@ -192,6 +201,7 @@
 
     trigger.addEventListener('click', function () {
       if (disabled(trigger)) return
+      awaitingAuthoredOutcome = true
       pendingStart = true
       if (window.StartersWorkflowDiagnostics) {
         flushPending()

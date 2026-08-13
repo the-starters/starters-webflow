@@ -736,9 +736,12 @@ test('a logged-out submit never reaches Xano, is not retried, and is left in pla
   // Left on the page means left on a usable page, not behind a spinner.
   assert.equal(loader.style.display, 'none', 'the loader is taken back down')
   assert.equal(fixture.wrapper.style.display, '', 'the form goes back to its authored display')
+  assert.equal(fixture.done.style.display, 'none')
+  assert.equal(fixture.fail.style.display, 'block')
+  assert.match(fixture.fail.textContent, /could not confirm your member session/i)
 })
 
-test('a logged-out onboarding completion leaves a clean user-facing failure message', async () => {
+test('a logged-out onboarding completion shows a clean user-facing failure', async () => {
   const fixture = formWrapper()
   const { fetchCalls } = loadModule({
     loggedOut: true,
@@ -756,9 +759,11 @@ test('a logged-out onboarding completion leaves a clean user-facing failure mess
   assert.equal(receipt.result, 'failed')
   assert.equal(receipt.error_code, 'MEMBER_LOGGED_OUT')
   assert.equal(receipt.request_started, true)
-  assert.match(fixture.done.textContent, /could not confirm your member session/i)
-  assert.doesNotMatch(fixture.done.textContent, /Diagnostic ID: WFD-/)
-  assert.equal(fixture.done.getAttribute('data-workflow-diagnostic-copy'), null)
+  assert.equal(fixture.done.textContent, 'Your onboarding details were saved.')
+  assert.equal(fixture.done.style.display, 'none')
+  assert.match(fixture.fail.textContent, /could not confirm your member session/i)
+  assert.doesNotMatch(fixture.fail.textContent, /Diagnostic ID: WFD-/)
+  assert.equal(fixture.fail.getAttribute('data-workflow-diagnostic-copy'), null)
 })
 
 // --- Scope gates --------------------------------------------------------------

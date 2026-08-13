@@ -122,17 +122,8 @@ function recordProfileDiagnostic(receipt, fields) {
 }
 
 function decorateProfileFeedback(modalName, receipt) {
-	const api = workflowDiagnostics();
-	if (!api || !receipt) return;
-	const modal = qs(`[data-modal-target="${modalName}"]`);
-	if (!modal) return;
-	const target = qs('[data-workflow-diagnostic-message]', modal) || qs('p', modal) || modal;
-	if (target.__startersWorkflowDiagnosticBaseText === undefined) {
-		target.__startersWorkflowDiagnosticBaseText = target.textContent ||
-			(receipt.result === 'success' ? 'Your profile was saved.' : 'Your profile could not be saved.');
-	}
-	target.textContent = api.message(target.__startersWorkflowDiagnosticBaseText, receipt);
-	api.decorate(target, receipt);
+	// Diagnostics are console-only. The authored modal owns its message and markup.
+	return receipt;
 }
 
 function waitProfileData(callback) {

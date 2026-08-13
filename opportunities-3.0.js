@@ -406,12 +406,7 @@
   }
 
   function decorateWorkflowMessage(element, message, receipt) {
-    const api = workflowDiagnostics()
-    if (!element || !api || !receipt) return message
-    const rendered = api.message(message, receipt)
-    element.textContent = rendered
-    api.decorate(element, receipt)
-    return rendered
+    return message
   }
 
   function workflowDiagnosticMessage(message, receipt) {
@@ -1836,7 +1831,6 @@
       const receipt = diagnosticForResponse(result)
       const message = done.querySelector ? $('[data-workflow-diagnostic-message]', done) : null
       if (message && receipt) decorateWorkflowMessage(message, message.textContent, receipt)
-      else if (receipt && workflowDiagnostics()) workflowDiagnostics().decorate(done, receipt)
     }
     invoiceBind(modal, 'brand', context.brand)
     invoiceBind(modal, 'project', context.title)
@@ -3362,7 +3356,6 @@
         const receipt = diagnosticForResponse(result)
         const message = done.querySelector ? $('[data-workflow-diagnostic-message]', done) : null
         if (message && receipt) decorateWorkflowMessage(message, message.textContent, receipt)
-        else if (receipt && workflowDiagnostics()) workflowDiagnostics().decorate(done, receipt)
       }
       activeReviewProject = null
       await refreshProjectWorkflowBestEffort(projectWorkflowRole, 'review')
@@ -4777,7 +4770,6 @@
             const receipt = diagnosticForResponse(result)
             const message = done.querySelector ? $('[data-workflow-diagnostic-message]', done) : null
             if (message && receipt) decorateWorkflowMessage(message, message.textContent, receipt)
-            else if (receipt && workflowDiagnostics()) workflowDiagnostics().decorate(done, receipt)
             say('')
             // Reset the submit state so a follow-up create (after the modal is
             // reopened and rewound to the form) works, and clear the spinner.
@@ -5040,7 +5032,6 @@
             const receipt = diagnosticForResponse(updatedOpportunity)
             const message = done.querySelector ? $('[data-workflow-diagnostic-message]', done) : null
             if (message && receipt) decorateWorkflowMessage(message, message.textContent, receipt)
-            else if (receipt && workflowDiagnostics()) workflowDiagnostics().decorate(done, receipt)
           } else {
             location.reload()
           }
@@ -5241,7 +5232,6 @@
     const receipt = diagnosticForResponse(result)
     const message = done.querySelector ? $('[data-workflow-diagnostic-message]', done) : null
     if (message && receipt) decorateWorkflowMessage(message, message.textContent, receipt)
-    else if (receipt && workflowDiagnostics()) workflowDiagnostics().decorate(done, receipt)
     // Repaint the page behind the modal so closing it (any path) never shows
     // stale content: flip the state blocks and re-run the wf-xano application
     // card (fresh message after an edit) without a full reload.
@@ -5293,8 +5283,6 @@
         message.__startersWorkflowDiagnosticBaseText = message.textContent
       }
       decorateWorkflowMessage(message, message.__startersWorkflowDiagnosticBaseText, receipt)
-    } else if (visibleStep && receipt && workflowDiagnostics()) {
-      workflowDiagnostics().decorate(visibleStep, receipt)
     }
   }
 
