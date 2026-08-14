@@ -2158,9 +2158,9 @@
      * index uses different attribute names. Dot paths (such as
      * categories.lvl1) are supported for nested fields.
      *
-     * Confirmed for the Freelancers3.0-dev index: hourly rate is `rate`,
-     * project rate is `average-project-size`, and category/subcategory data
-     * is also present under `categories.lvl0` / `categories.lvl1`.
+     * The host-resolved Starter indexes use `rate` for hourly rate,
+     * `average-project-size` for project rate, and `categories.lvl0` /
+     * `categories.lvl1` for category and subcategory data.
      */
     const hourlyRateFieldNames = ['rate', 'hourly-rate', 'hourlyRate']
     const projectRateFieldNames = [

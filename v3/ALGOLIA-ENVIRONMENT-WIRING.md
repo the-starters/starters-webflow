@@ -23,6 +23,33 @@ index. The resolver rejects any index mapping that differs from the table,
 shared managed indexes, and any managed index name that contains a `dev`
 segment.
 
+## Public configuration contract
+
+Load a GitHub-owned public configuration before the resolver. Use this shape;
+the two index values in each environment must match the exact host table above.
+
+```html
+<script>
+  window.__startersV3AlgoliaConfig = {
+    test: {
+      appId: '<public Algolia application ID>',
+      searchKey: '<restricted TEST search-only key>',
+      startersIndex: '<TEST Starter index from the host table>',
+      opportunitiesIndex: '<TEST Opportunity index from the host table>',
+    },
+    production: {
+      appId: '<public Algolia application ID>',
+      searchKey: '<restricted production search-only key>',
+      startersIndex: '<production Starter index from the host table>',
+      opportunitiesIndex: '<production Opportunity index from the host table>',
+    },
+  }
+</script>
+```
+
+Do not derive any value in this object from browser input. Keep write keys and
+admin keys out of browser configuration.
+
 ## Required markup
 
 Mark the one wf-algolia client script:
