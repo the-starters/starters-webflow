@@ -25,7 +25,10 @@ class Element {
   getAttribute(name) { return this.attrs[name] ?? null }
   querySelector(selector) { return this.children[selector] || null }
   querySelectorAll(selector) { return this.matches[selector] || [] }
-  closest(selector) { return selector === 'form[data-review-form-v3]' ? this : null }
+  closest(selector) {
+    if (this.closestMap && this.closestMap[selector]) return this.closestMap[selector]
+    return selector === 'form[data-review-form-v3]' ? this : null
+  }
   appendChild(element) { this.childNodes.push(element); return element }
   replaceChildren(...elements) { this.childNodes = elements }
 }
@@ -36,6 +39,10 @@ function documentFixture() {
   const count = new Element()
   const summaryAverage = new Element()
   const summaryCount = new Element()
+  const summaryBlockEl = new Element()
+  summaryAverage.closestMap = {
+    '[data-reviews-v3-summary-block], .profile-hero_card-progress': summaryBlockEl,
+  }
   const legacySummaryAverage = new Element()
   const legacySummaryCount = new Element()
   const list = new Element({ 'data-reviews-v3-list': 'reviews' })
@@ -50,6 +57,7 @@ function documentFixture() {
     count,
     summaryAverage,
     summaryCount,
+    summaryBlockEl,
     legacySummaryAverage,
     legacySummaryCount,
     list,
@@ -168,6 +176,8 @@ test('paints approved aggregate and reveals the authored section', () => {
   assert.equal(fixture.summaryCount.textContent, '12')
   assert.equal(fixture.legacySummaryAverage.textContent, '4.8')
   assert.equal(fixture.legacySummaryCount.textContent, '12')
+  assert.equal(fixture.summaryBlockEl.hidden, false)
+  assert.equal(fixture.summaryBlockEl.style.display, '')
   assert.equal(fixture.list.childNodes.length, 2)
   assert.equal(fixture.outsideList.childNodes.length, 0)
   assert.equal(fixture.root.hidden, false)
@@ -186,8 +196,21 @@ test('keeps an empty authored reviews section hidden', () => {
   assert.equal(fixture.summaryCount.textContent, '0')
   assert.equal(fixture.legacySummaryAverage.textContent, '0')
   assert.equal(fixture.legacySummaryCount.textContent, '0')
+  assert.equal(fixture.summaryBlockEl.hidden, true)
+  assert.equal(fixture.summaryBlockEl.style.display, 'none')
   assert.equal(fixture.root.hidden, true)
   assert.equal(fixture.root.style.display, 'none')
+})
+
+test('renders a whole-number average with one decimal', () => {
+  const fixture = documentFixture()
+  const { api } = load({ document: fixture })
+  api.paintProfile(fixture, fixture.root, {
+    raw: { reviews: [{ review_id: 42, rating: 5 }], aggregate: { review_count: 2, average_rating: 5 } },
+  })
+  assert.equal(fixture.summaryAverage.textContent, '5.0')
+  assert.equal(fixture.summaryCount.textContent, '2')
+  assert.equal(fixture.summaryBlockEl.hidden, false)
 })
 
 test('replaces the legacy projection with sanitized Xano review cards', () => {
