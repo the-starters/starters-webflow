@@ -55,7 +55,10 @@
   var SECURITY_FORM_SELECTOR = '#wf-form-Account-Security'
   var STARTER_PROFILE_FORM_SELECTOR = '#wf-form-Build-Form-Full-Profile'
   var STARTER_PROFILE_EMAIL_SELECTOR = 'input[type="email"]'
-  var BRAND_SIGNUP_FORM_SELECTOR = '#wf-form-Brand-Signup'
+  var BRAND_SIGNUP_FORM_SELECTOR = [
+    '#wf-form-Brand-Signup',
+    '[data-quiz-form="signup"][data-ms-form="signup"]',
+  ].join(', ')
   var LIVE_BRAND_PLAN_ID = 'pln_free-plan-f6kn0dxz'
   var TEST_BRAND_PLAN_ID = 'pln_dorxata-test-brand-plan-777r02pa'
   var OP_TIMEOUT_MS = 15000
@@ -220,10 +223,14 @@
   }
 
   function configureBrandSignupPlan(hostname) {
-    var form = document.querySelector(BRAND_SIGNUP_FORM_SELECTOR)
-    if (!form || form.getAttribute('data-ms-form') !== 'signup') return false
-    form.setAttribute('data-ms-plan:add', signupPlanForHost(hostname))
-    return true
+    var forms = document.querySelectorAll(BRAND_SIGNUP_FORM_SELECTOR)
+    var configured = false
+    Array.prototype.forEach.call(forms, function (form) {
+      if (form.getAttribute('data-ms-form') !== 'signup') return
+      form.setAttribute('data-ms-plan:add', signupPlanForHost(hostname))
+      configured = true
+    })
+    return configured
   }
 
   function trim(value) {
