@@ -2580,8 +2580,12 @@ When Xano reports `refreshing`, or a nominally ready payload lacks a rank/cohort
 the position is withheld and both the overall-rank and primary-role cards are
 hidden. The `ineligible` and `quarantined` statuses likewise hide both cards and
 reveal their matching Designer-authored state blocks. Missing primary roles keep
-the overall-rank card and reveal the authored setup state inside the role card.
-No state renders raw `N/A`.
+the overall-rank card and reveal the authored setup state inside the role card,
+except when Xano returns `consult_only: true`. Consult-only profiles have no
+primary role by design, so they show the overall rank as their single rank and
+hide both the role card and missing-role guidance. An absent `consult_only`
+value defaults to `false` for compatibility with cached responses. No state
+renders raw `N/A`.
 
 All state containers, links, and styling live in Webflow. The controller does
 not create markup or inject state sentences. For ready ranks it combines the
@@ -2593,7 +2597,8 @@ labels hidden. Xano tie counts remain part of the read model and rank semantics;
 only the compact presentation omits the word “Tied”. The root preserves those
 semantics as `data-overall-tied="true|false"` and
 `data-role-tied="true|false"` for diagnostics without restoring visible tie
-copy.
+copy. It also reflects Xano's consult-only classification as
+`data-consult-only="true|false"` for Designer styling.
 
 Each root reflects its resolved state onto `data-points-status`
 (`loading`, `ready`, `refreshing`, `ineligible`, `quarantined`, or `error`) so
