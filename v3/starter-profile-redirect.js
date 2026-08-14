@@ -71,8 +71,9 @@
  * left up on go.
  *
  * Install: one deferred page-level tag on each in-scope page, AFTER
- * v3/route-guard.js. Diagnostics are staging-only. Wiring:
- * v3/STARTER-PROFILE-REDIRECT-WIRING.md.
+ * v3/route-guard.js. Diagnostics are staging-only (`*.webflow.io`,
+ * localhost, 127.0.0.1, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`);
+ * production is silent. Wiring: v3/STARTER-PROFILE-REDIRECT-WIRING.md.
  */
 ;(function () {
   'use strict'
@@ -427,6 +428,8 @@
   }
 
   window.StartersStarterProfileRedirect = {
+    // Keep in sync with the @release line in this file's header comment; the
+    // v3/starter-profile-redirect.test.js drift guard asserts they match.
     release: 'vX.Y.Z',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
