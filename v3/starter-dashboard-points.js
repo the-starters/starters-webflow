@@ -73,9 +73,11 @@
   function viewModel(summary) {
     const totalPoints = number(summary && summary.total_points) || 0
     const status = String((summary && summary.rank_status) || 'refreshing')
+    const consultOnly = Boolean(summary && summary.consult_only)
     const model = {
       totalPoints: totalPoints.toLocaleString(),
       status,
+      consultOnly,
       overallRank: '',
       overallCohortSize: '',
       overallTied: false,
@@ -107,6 +109,10 @@
         model.roleLabel = String(role.label || 'Primary role')
         model.roleCohortSize = number(role.cohort_size).toLocaleString()
         model.roleTied = number(role.tie_count) > 1
+      } else if (consultOnly) {
+        // Consult-only profiles have no primary role by design. The overall
+        // rank is their single rank; never prompt them to set a role.
+        model.showRoleCard = false
       } else {
         model.stateElement = 'state-missing-role'
       }
@@ -187,6 +193,7 @@
     subline(root, 'overall-cohort-size', 'Starters Overall')
     subline(root, 'role-cohort-size', model.roleLabel)
     root.setAttribute('data-points-status', model.status)
+    root.setAttribute('data-consult-only', String(model.consultOnly))
     root.setAttribute('data-overall-tied', String(model.overallTied))
     root.setAttribute('data-role-tied', String(model.roleTied))
     root.setAttribute(

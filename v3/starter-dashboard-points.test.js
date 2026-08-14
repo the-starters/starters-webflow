@@ -306,6 +306,63 @@ test('missing primary role keeps overall rank and shows setup guidance', () => {
   )
 })
 
+test('consult-only profile shows overall rank only, without role guidance', () => {
+  const { root, elements } = tile()
+  elements['state-missing-role'].textContent =
+    'Choose a primary role to see your role rank.'
+
+  api.render(root, {
+    total_points: 0,
+    rank_status: 'ready',
+    overall_rank: 538,
+    overall_cohort_size: 713,
+    primary_role: null,
+    consult_only: true,
+  })
+
+  assert.equal(root.getAttribute('data-points-status'), 'ready')
+  assert.equal(root.getAttribute('data-points-view'), 'ready')
+  assert.equal(root.getAttribute('data-consult-only'), 'true')
+  assert.equal(elements['overall-rank'].textContent, '538th/713')
+  assert.equal(elements['overall-card'].style.display, '')
+  assert.equal(elements['role-card'].style.display, 'none')
+  assert.equal(elements['state-missing-role'].style.display, 'none')
+})
+
+test('consult-only flag does not change the other rank states', () => {
+  const { root, elements } = tile()
+
+  api.render(root, {
+    total_points: 250,
+    rank_status: 'refreshing',
+    consult_only: true,
+  })
+
+  assert.equal(root.getAttribute('data-points-status'), 'refreshing')
+  assert.equal(root.getAttribute('data-consult-only'), 'true')
+  assert.equal(elements['state-refreshing'].style.display, '')
+  assert.equal(elements['role-card'].style.display, 'none')
+})
+
+test('non-consult profile without a role keeps the setup guidance', () => {
+  const { root, elements } = tile()
+  elements['state-missing-role'].textContent =
+    'Choose a primary role to see your role rank.'
+
+  api.render(root, {
+    total_points: 0,
+    rank_status: 'ready',
+    overall_rank: 600,
+    overall_cohort_size: 680,
+    primary_role: null,
+    consult_only: false,
+  })
+
+  assert.equal(root.getAttribute('data-points-view'), 'missing-role')
+  assert.equal(root.getAttribute('data-consult-only'), 'false')
+  assert.equal(elements['state-missing-role'].style.display, '')
+})
+
 test('error state hides content and reveals Designer-owned error markup', () => {
   const { root, elements } = tile()
 
