@@ -16,6 +16,60 @@ const DRAFT_IDENTITY_GUARD_SRC_RE =
 
 const AUTHORITATIVE_ENDPOINT_RE = /build_profile\/starter\/update/
 
+const SUCCESS_STATE_RE = /<(\w+)\b[^>]*\bbuild-profile-success\b[^>]*>/i
+const ONBOARDING_PATH = '/starter-onboarding'
+// The hosts these pages are actually served from. An href resolving anywhere
+// else is not a way forward through the funnel, whatever its path says.
+const STARTERS_ORIGINS = [
+  'https://www.thestarters.com',
+  'https://thestarters.com',
+  'https://the-starters-3-0.webflow.io',
+]
+
+/**
+ * The outer HTML of the element whose opening tag starts at `startIndex`,
+ * matched by nesting depth. Falls back to the rest of the document when the
+ * close tag is missing, which can only make the CTA check more permissive.
+ */
+function elementHtml(html, tagName, startIndex) {
+  const re = new RegExp(`<${tagName}\\b|</${tagName}\\s*>`, 'gi')
+  re.lastIndex = startIndex
+  let depth = 0
+  let match
+  while ((match = re.exec(html))) {
+    if (match[0][1] === '/') {
+      depth -= 1
+      if (depth === 0) return html.slice(startIndex, re.lastIndex)
+    } else {
+      depth += 1
+    }
+  }
+  return html.slice(startIndex)
+}
+
+function resolvesToOnboarding(href, pagePath) {
+  if (!href) return false
+  const hosts = STARTERS_ORIGINS.map((origin) => new URL(origin).host)
+  for (const origin of STARTERS_ORIGINS) {
+    let url
+    try {
+      url = new URL(href, origin + pagePath)
+    } catch {
+      continue
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') continue
+    if (!hosts.includes(url.host)) continue
+    const path = url.pathname.length > 1 ? url.pathname.replace(/\/$/, '') : url.pathname
+    if (path === ONBOARDING_PATH) return true
+  }
+  return false
+}
+
+function hasOnboardingCta(successHtml, pagePath) {
+  const anchors = [...successHtml.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']*)["'][^>]*>/gi)]
+  return anchors.some((anchor) => resolvesToOnboarding(anchor[1], pagePath))
+}
+
 const FORM_SUBMIT_SELECTOR_RE =
   /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*(?:querySelector(?:All)?|\bqs)\(\s*['"`]\s*\[form-submit\]/g
 
@@ -154,6 +208,20 @@ function auditBuildProfileHtml(pagePath, html) {
   if (!hasDirectClickOwner) {
     findings.push(
       'authoritative Xano submit must be owned by the [form-submit] click path, not only a native submit event',
+    )
+  }
+
+  // Since v1.59.245 nothing auto-redirects after a successful submit: the
+  // authored CTA inside the success state is the member's only way forward, so
+  // its absence strands them on a finished form.
+  const successMatch = SUCCESS_STATE_RE.exec(html)
+  if (!successMatch) {
+    findings.push('[build-profile-success] state is missing')
+  } else if (
+    !hasOnboardingCta(elementHtml(html, successMatch[1], successMatch.index), pagePath)
+  ) {
+    findings.push(
+      `[build-profile-success] must contain a link to ${ONBOARDING_PATH}; it is the only way out of a successful submit`,
     )
   }
 

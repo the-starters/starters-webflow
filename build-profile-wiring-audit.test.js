@@ -12,7 +12,21 @@ const pinnedEngine =
 const pinnedDraftGuard =
   '<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@abcdef1234567890/build-profile-draft-identity-guard.js"></script>'
 
-function pageHtml({ engines = pinnedEngine, guard = pinnedDraftGuard, submitOwner = 'click' } = {}) {
+// The authored success state. Its CTA is the only way forward after a successful
+// submit, so the audit treats a missing one as a finding.
+const successState = `
+    <div build-profile-success class="w-form-done">
+      <h3>Thanks</h3>
+      <a href="/starter-onboarding" class="button">Start onboarding</a>
+    </div>
+  `
+
+function pageHtml({
+  engines = pinnedEngine,
+  guard = pinnedDraftGuard,
+  submitOwner = 'click',
+  success = successState,
+} = {}) {
   const handler =
     submitOwner === 'click'
       ? `
@@ -35,6 +49,7 @@ function pageHtml({ engines = pinnedEngine, guard = pinnedDraftGuard, submitOwne
     <form build-profile-form>
       <a form-submit="" href="#">Submit your profile</a>
     </form>
+    ${success}
     <script>
       const ENDPOINT_URL = 'https://example.test/build_profile/starter/update'
       ${handler}
@@ -107,6 +122,7 @@ test('an unrelated [form-submit] click handler plus a native-submit-only Xano wr
     <form build-profile-form>
       <a form-submit="" href="#">Submit your profile</a>
     </form>
+    ${successState}
     <script>
       const ENDPOINT_URL = 'https://example.test/build_profile/starter/update'
       const formSubmit = form.querySelector('[form-submit]')
@@ -132,6 +148,7 @@ test('a renamed control and endpoint variable still pass when co-located', () =>
     <form build-profile-form>
       <a form-submit="" href="#">Submit your profile</a>
     </form>
+    ${successState}
     <script>
       const saveUrl = 'https://example.test/build_profile/starter/update'
       const submitControl = form.querySelector('[form-submit]')
@@ -153,6 +170,7 @@ test('the published qs helper and delegated click writer pass the audit', () => 
     <form build-profile-form>
       <a form-submit="" href="#">Submit your profile</a>
     </form>
+    ${successState}
     <script>
       const formSubmit = form ? qs('[form-submit]', form) : null
       formSubmit.addEventListener('click', async (event) => {
@@ -168,6 +186,87 @@ test('the published qs helper and delegated click writer pass the audit', () => 
   const result = auditBuildProfileHtml('/build-profile/full-profile', html)
 
   assert.equal(result.ok, true, result.findings.join('; '))
+})
+
+test('a success state with no onboarding CTA fails the audit', () => {
+  const missing = auditBuildProfileHtml('/build-profile/consult', pageHtml({ success: '' }))
+  assert.equal(missing.ok, false)
+  assert.match(missing.findings.join('\n'), /\[build-profile-success\] state is missing/)
+
+  // Present, but the member is stranded on it.
+  const noCta = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success: '<div build-profile-success class="w-form-done"><h3>Thanks</h3></div>',
+    }),
+  )
+  assert.equal(noCta.ok, false)
+  assert.match(noCta.findings.join('\n'), /must contain a link to \/starter-onboarding/)
+
+  // A link that goes somewhere else is not the CTA either.
+  const wrongTarget = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success:
+        '<div build-profile-success><a href="/starter-dashboard">Dashboard</a></div>',
+    }),
+  )
+  assert.equal(wrongTarget.ok, false)
+  assert.match(wrongTarget.findings.join('\n'), /must contain a link to \/starter-onboarding/)
+})
+
+test('the onboarding CTA is accepted in every href shape the pages author', () => {
+  for (const href of [
+    '/starter-onboarding',
+    '/starter-onboarding/',
+    '/starter-onboarding?ref=cta',
+    '../starter-onboarding',
+    'https://www.thestarters.com/starter-onboarding',
+    'https://the-starters-3-0.webflow.io/starter-onboarding',
+  ]) {
+    const result = auditBuildProfileHtml(
+      '/build-profile/consult',
+      pageHtml({ success: `<div build-profile-success><a href="${href}">Go</a></div>` }),
+    )
+    assert.equal(result.ok, true, `${href}: ${result.findings.join('; ')}`)
+  }
+
+  // Off-site, and a nested CTA inside the real success markup shape.
+  const offSite = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success: '<div build-profile-success><a href="https://evil.example/starter-onboarding">Go</a></div>',
+    }),
+  )
+  assert.equal(offSite.ok, false)
+
+  const nested = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success: `
+        <div build-profile-success class="w-form-done">
+          <div class="inner"><div dashboard-button-wrap>
+            <a href="/starter-onboarding" class="button">Start onboarding</a>
+          </div></div>
+        </div>
+      `,
+    }),
+  )
+  assert.equal(nested.ok, true, nested.findings.join('; '))
+})
+
+test('the CTA search is scoped to the success state, not the whole page', () => {
+  // A link to onboarding elsewhere on the page does not rescue an empty success
+  // state — the member never sees it from there.
+  const result = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success:
+        '<div build-profile-success><h3>Thanks</h3></div><a href="/starter-onboarding">elsewhere</a>',
+    }),
+  )
+  assert.equal(result.ok, false)
+  assert.match(result.findings.join('\n'), /must contain a link to \/starter-onboarding/)
 })
 
 test('the no-op failover probe is allowed when exactly one pinned engine is present', () => {
