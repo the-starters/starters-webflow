@@ -62,7 +62,8 @@ admin keys out of browser configuration.
 
 ## Required markup
 
-Mark the one wf-algolia client script:
+Mark exactly one wf-algolia client script. The resolver blocks all clients if
+another script carries `data-app-id` or `data-search-key`:
 
 ```html
 <script
@@ -91,9 +92,12 @@ only the resource attribute:
 ></div>
 ```
 
-Do not mark or rename the shared `LearnContent` index. wf-algolia version 1.0.4
-creates one runtime client from the first `script[data-app-id]`, so each
-host-owned search key must also have search-only access to `LearnContent`.
+Do not mark or rename the four shared indexes. Every unmarked
+`wf-algolia-index` must match `LearnContent`, `cancelled-consult-1`,
+`cancelled-consult-2`, or `cancelled-hire-1` exactly. Any other unmarked index
+blocks all clients. wf-algolia version 1.0.4 creates one runtime client from the
+first `script[data-app-id]`, so each host-owned search key must also have
+search-only access to the shared indexes.
 Managed quiz code reads the exact `LearnContent` index through
 `getSharedSearchConfig('learnContent')`; it does not accept a legacy window or
 DOM override while the resolver is active.

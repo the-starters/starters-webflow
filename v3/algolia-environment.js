@@ -24,9 +24,17 @@
     'www.thestarters.com': 'production',
   }
   var CLIENT_SELECTOR = 'script[data-starters-v3-algolia-client]'
+  var CREDENTIAL_CLIENT_SELECTOR = 'script[data-app-id], script[data-search-key]'
   var RESOURCE_SELECTOR = '[data-starters-v3-algolia-resource]'
+  var INDEX_SELECTOR = '[wf-algolia-index]'
   var SORT_SELECTOR = '[wf-algolia-sort-index]'
   var LEARN_CONTENT_INDEX = 'LearnContent'
+  var SHARED_INDEXES = [
+    LEARN_CONTENT_INDEX,
+    'cancelled-consult-1',
+    'cancelled-consult-2',
+    'cancelled-hire-1',
+  ]
   var STARTER_SORT_REPLICAS = [
     'name-AtoZ',
     'rate_asc',
@@ -153,9 +161,45 @@
     Array.prototype.forEach.call(elements || [], callback)
   }
 
+  function elements(documentObject, selector) {
+    if (!documentObject || !documentObject.querySelectorAll) return []
+    return Array.prototype.slice.call(documentObject.querySelectorAll(selector) || [])
+  }
+
+  function sharedIndex(indexName) {
+    return SHARED_INDEXES.indexOf(String(indexName || '')) !== -1
+  }
+
+  function validateDocument(documentObject) {
+    var managedClients = elements(documentObject, CLIENT_SELECTOR)
+    if (managedClients.length !== 1) {
+      return { ok: false, reason: 'unexpected_client_count' }
+    }
+    var credentialClients = elements(documentObject, CREDENTIAL_CLIENT_SELECTOR)
+    for (var clientIndex = 0; clientIndex < credentialClients.length; clientIndex += 1) {
+      if (credentialClients[clientIndex] !== managedClients[0]) {
+        return { ok: false, reason: 'unexpected_client' }
+      }
+    }
+    var indexedElements = elements(documentObject, INDEX_SELECTOR)
+    for (var index = 0; index < indexedElements.length; index += 1) {
+      var element = indexedElements[index]
+      var resource = clean(element.getAttribute('data-starters-v3-algolia-resource'))
+      if (resource === 'starters' || resource === 'opportunities') continue
+      if (!resource && sharedIndex(element.getAttribute('wf-algolia-index'))) continue
+      return { ok: false, reason: 'unexpected_index_resource' }
+    }
+    return { ok: true }
+  }
+
   function block(documentObject, reason) {
     activeResolution = null
     each(documentObject, CLIENT_SELECTOR, function (element) {
+      element.removeAttribute('data-app-id')
+      element.removeAttribute('data-search-key')
+      element.setAttribute('data-starters-v3-algolia-blocked', reason)
+    })
+    each(documentObject, CREDENTIAL_CLIENT_SELECTOR, function (element) {
       element.removeAttribute('data-app-id')
       element.removeAttribute('data-search-key')
       element.setAttribute('data-starters-v3-algolia-blocked', reason)
@@ -168,6 +212,12 @@
       element.removeAttribute('wf-algolia-sort-index')
       element.setAttribute('data-starters-v3-algolia-blocked', reason)
     })
+    each(documentObject, INDEX_SELECTOR, function (element) {
+      var resource = clean(element.getAttribute('data-starters-v3-algolia-resource'))
+      if (!resource && sharedIndex(element.getAttribute('wf-algolia-index'))) return
+      element.removeAttribute('wf-algolia-index')
+      element.setAttribute('data-starters-v3-algolia-blocked', reason)
+    })
     if (documentObject && documentObject.documentElement) {
       documentObject.documentElement.setAttribute('data-v3-algolia-status', 'blocked')
       documentObject.documentElement.setAttribute('data-v3-algolia-block-reason', reason)
@@ -175,6 +225,11 @@
   }
 
   function apply(documentObject, resolution) {
+    var documentValidation = validateDocument(documentObject)
+    if (!documentValidation.ok) {
+      block(documentObject, documentValidation.reason)
+      return false
+    }
     var invalidResource = false
     each(documentObject, CLIENT_SELECTOR, function (element) {
       element.setAttribute('data-app-id', resolution.settings.appId)
@@ -279,10 +334,13 @@
       return resolution
     }
     if (!apply(document, resolution)) {
+      var reason = document && document.documentElement
+        ? clean(document.documentElement.getAttribute('data-v3-algolia-block-reason'))
+        : ''
       var blocked = {
         ok: false,
         environment: resolution.environment,
-        reason: 'unknown_resource_or_sort_index',
+        reason: reason || 'unknown_resource_or_sort_index',
       }
       dispatch(BLOCKED_EVENT, blocked)
       return blocked

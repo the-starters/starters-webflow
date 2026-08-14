@@ -54,7 +54,25 @@ function load(options = {}) {
     'data-starters-v3-algolia-resource': 'opportunities',
     'wf-algolia-index': 'opportunities_v3_dev',
   })
-  const unmanaged = element({ 'wf-algolia-index': 'LearnContent' })
+  const sharedIndexes = [
+    'LearnContent',
+    'cancelled-consult-1',
+    'cancelled-consult-2',
+    'cancelled-hire-1',
+  ].map((indexName) => element({ 'wf-algolia-index': indexName }))
+  const unmanaged = sharedIndexes[0]
+  const unexpectedIndex = options.unexpectedIndex
+    ? element({ 'wf-algolia-index': options.unexpectedIndex })
+    : null
+  const competingClient = options.competingClient
+    ? element({
+        'data-app-id': 'browser-selected-app',
+        'data-search-key': 'browser-selected-key',
+      })
+    : null
+  const extraManagedClient = options.extraManagedClient
+    ? element({ 'data-starters-v3-algolia-client': '' })
+    : null
   const sortItems = [
     element({ 'wf-algolia-sort-index': '' }),
     element({ 'wf-algolia-sort-index': 'name-AtoZ' }),
@@ -75,9 +93,24 @@ function load(options = {}) {
   const document = {
     documentElement: root,
     querySelectorAll(selector) {
-      if (selector === 'script[data-starters-v3-algolia-client]') return [client]
+      if (selector === 'script[data-starters-v3-algolia-client]') {
+        if (options.noManagedClient) return []
+        return [client, ...(extraManagedClient ? [extraManagedClient] : [])]
+      }
+      if (selector === 'script[data-app-id], script[data-search-key]') {
+        return [client, ...(competingClient ? [competingClient] : [])]
+      }
       if (selector === '[data-starters-v3-algolia-resource]') {
         return [starters, opportunities, ...(extra ? [extra] : [])]
+      }
+      if (selector === '[wf-algolia-index]') {
+        return [
+          starters,
+          opportunities,
+          ...sharedIndexes,
+          ...(unexpectedIndex ? [unexpectedIndex] : []),
+          ...(extra ? [extra] : []),
+        ].filter((item) => item.getAttribute('wf-algolia-index') !== null)
       }
       if (selector === '[wf-algolia-sort-index]') return sortItems
       return []
@@ -110,12 +143,15 @@ function load(options = {}) {
   return {
     api: window.StartersV3AlgoliaEnvironment,
     client,
+    competingClient,
     document,
     events,
     opportunities,
     root,
     sortItems,
+    sharedIndexes,
     starters,
+    unexpectedIndex,
     unmanaged,
     window,
   }
@@ -270,8 +306,38 @@ test('unknown managed resources block the whole managed Algolia surface', () => 
   assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)
   assert.equal(
     runtime.root.getAttribute('data-v3-algolia-block-reason'),
-    'unknown_resource_or_sort_index',
+    'unexpected_index_resource',
   )
+})
+
+test('an unmarked unexpected index blocks every Algolia client', () => {
+  const runtime = load({ unexpectedIndex: 'Freelancers3.0-dev' })
+  assert.equal(runtime.client.getAttribute('data-search-key'), null)
+  assert.equal(runtime.unexpectedIndex.getAttribute('wf-algolia-index'), null)
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'unexpected_index_resource')
+  assert.deepEqual(
+    runtime.sharedIndexes.map((item) => item.getAttribute('wf-algolia-index')),
+    ['LearnContent', 'cancelled-consult-1', 'cancelled-consult-2', 'cancelled-hire-1'],
+  )
+  assert.equal(runtime.events.at(-1).detail.reason, 'unexpected_index_resource')
+})
+
+test('a competing credentialed client is stripped before boot can become ready', () => {
+  const runtime = load({ competingClient: true })
+  assert.equal(runtime.client.getAttribute('data-app-id'), null)
+  assert.equal(runtime.client.getAttribute('data-search-key'), null)
+  assert.equal(runtime.competingClient.getAttribute('data-app-id'), null)
+  assert.equal(runtime.competingClient.getAttribute('data-search-key'), null)
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'unexpected_client')
+  assert.equal(runtime.events.at(-1).name, 'starters:algolia-environment-blocked')
+})
+
+test('the resolver requires exactly one marked client', () => {
+  for (const options of [{ noManagedClient: true }, { extraManagedClient: true }]) {
+    const runtime = load(options)
+    assert.equal(runtime.client.getAttribute('data-search-key'), null)
+    assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'unexpected_client_count')
+  }
 })
 
 test('unknown sort indexes block the whole managed Algolia surface', () => {
@@ -296,7 +362,10 @@ test('replica mapping is idempotent', () => {
 
 test('unmanaged Algolia sections are not changed', () => {
   const runtime = load()
-  assert.equal(runtime.unmanaged.getAttribute('wf-algolia-index'), 'LearnContent')
+  assert.deepEqual(
+    runtime.sharedIndexes.map((item) => item.getAttribute('wf-algolia-index')),
+    ['LearnContent', 'cancelled-consult-1', 'cancelled-consult-2', 'cancelled-hire-1'],
+  )
   assert.equal(
     runtime.api.getSharedSearchConfig('learnContent').searchKey,
     'test-public-search-key',
