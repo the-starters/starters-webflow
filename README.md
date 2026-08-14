@@ -356,7 +356,10 @@ maps to the matching `starter_1_image_url`, `starter_2_image_url`, or
 fallbacks. Recommendations cached before these review fields were added refresh
 before enrollment without changing the quiz revision. When no Learn record is
 available, it sends the safe `/learn` fallback instead of leaving the email
-empty.
+empty. Learn interview links use the live V3
+`/learn/interviews-analyses/<slug>` CMS route; legacy
+`/learn/interviews/<slug>` records are normalized to that route while keeping
+their query parameters and fragment.
 The Memberstack session exchange accepts every response shape used by the
 shared V3 trade-token endpoint: a raw string, `{authToken}`, or `{token}`.
 
