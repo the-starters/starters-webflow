@@ -1961,7 +1961,7 @@
     const debugLogPrefix = '[Starter Quiz Funnel]'
     const algoliaDefaultAppId = 'PKVW6M9OPZ'
     const algoliaDefaultIndexName = 'Freelancers3.0-dev'
-    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v19'
+    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v20'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
     // Pool gathered per category before featured picks are drawn off the top,
@@ -2173,9 +2173,9 @@
 
     /**
      * Algolia field names checked, in order, for each displayed value. The
-     * first present, non-empty field wins. Edit these if the index uses
-     * different attribute names. Dot paths (such as categories.lvl1) are
-     * supported for nested fields.
+     * first present, non-empty field wins. Edit the rate lists below if the
+     * index uses different attribute names. Dot paths (such as
+     * categories.lvl1) are supported for nested fields.
      *
      * Confirmed for the Freelancers3.0-dev index: hourly rate is `rate`,
      * project rate is `average-project-size`, and category/subcategory data
@@ -2194,6 +2194,11 @@
      * to win this list and paint role slugs into the Subcategory chips. There
      * is no flattened Subcategory attribute on the index either — `categories`
      * is the only Subcategory source `attributesToRetrieve` requests.
+     *
+     * Do not add a flat attribute name here hoping to widen the source. Only
+     * hierarchical "Parent > Child" values survive toSubcategoryLabels now, so
+     * a flat field would resolve and then be discarded, looking like a silent
+     * no-op. A new source has to carry the delimiter to be usable.
      */
     const subcategoryFieldNames = ['categories.lvl1']
     const maxDisplayedSubcategories = 3
@@ -3558,6 +3563,57 @@
         return []
     }
 
+    let hasWarnedAboutEmptySubcategories = false
+
+    /**
+     * Warns once per page load when hits carry a `categories` object yet no
+     * Subcategory label resolves from any of them.
+     *
+     * The Consult card's chips now hang entirely on the nested dot-walk for
+     * `categories.lvl1`. If the index is ever reshaped (flattened, renamed, or
+     * dropped from attributesToRetrieve) the chips just go blank, which looks
+     * like a styling problem rather than a data one. This is the only signal
+     * that distinguishes "this Starter genuinely has no Subcategories" from
+     * "the field moved". Staging-only, matching the gate in
+     * algolia-result-modifiers/subcategories.js, so production stays silent.
+     *
+     * @param {object[]} candidates Normalized recommendation candidates.
+     * @returns {void}
+     */
+    function warnWhenSubcategoriesResolveEmpty(candidates) {
+        if (hasWarnedAboutEmptySubcategories || !candidates.length) return
+
+        const isDiagnosticHost =
+            /webflow\.io$|^localhost$|trycloudflare\.com$/.test(
+                window.location.hostname,
+            ) || window.STARTERS_DEBUG
+
+        if (!isDiagnosticHost && !isDebugLoggingEnabled()) return
+
+        // Nothing to report when the attribute is absent altogether: that is
+        // either a query change or an index without categories, and the warning
+        // below would be guesswork.
+        const withCategories = candidates.filter(
+            (candidate) =>
+                candidate.categories && typeof candidate.categories === 'object',
+        )
+        if (!withCategories.length) return
+        if (candidates.some((candidate) => candidate.subcategories.length)) return
+
+        hasWarnedAboutEmptySubcategories = true
+        console.warn(
+            '[Starter Quiz Funnel]',
+            '[results]',
+            'hits carry `categories` but no Subcategory label resolved from ' +
+                'categories.lvl1 — Consult chips will render blank',
+            {
+                fieldNames: subcategoryFieldNames,
+                hitsWithCategories: withCategories.length,
+                sampleCategories: withCategories[0].categories,
+            },
+        )
+    }
+
     /**
      * Formats a rate value for display, leaving non-numeric values as-is.
      *
@@ -4169,7 +4225,7 @@
         const matchedSubcategorySummary =
             getMatchedSelectionSummary(matchedSubcategory)
 
-        return hits
+        const candidates = hits
             .filter((hit) => {
                 const objectId = normalize(hit?.objectID)
                 if (!objectId || seenObjectIds.has(objectId)) return false
@@ -4207,6 +4263,10 @@
                 availability: normalize(hit.availability),
                 rankingPoints: getRankingPoints(hit['ranking-points']),
             }))
+
+        warnWhenSubcategoriesResolveEmpty(candidates)
+
+        return candidates
     }
 
     /**
@@ -4766,6 +4826,12 @@
                     freelancer.matchedCategory?.id
                 )
             case 'matched-subcategory':
+            // Naming trap: this is the BRAND'S QUIZ SELECTION, not the
+            // Starter's own Subcategory. The record's own leaf (from
+            // categories.lvl1) is only reachable through the `rank-role`
+            // binding. Card markup that wants "what this Starter does" must
+            // keep using rank-role; data-quiz-text="subcategory" prints the
+            // same selected label on every card in the group.
             case 'subcategory':
                 return (
                     freelancer.matchedSubcategory?.label ||
@@ -5033,6 +5099,12 @@
                 // surfaced it: prefer the record subcategory equal to the matched
                 // selection, then the record's primary subcategory, and only fall
                 // back to the matched selection when the record carries none.
+                //
+                // Naming trap: the sibling field `subcategory` in
+                // getCardFieldValue returns the quiz selection instead, which is
+                // identical on every card in a group. This branch is the only
+                // one that speaks for the record, so keep record-own markup on
+                // rank-role.
                 //
                 // Printed as stored, without formatSlugTitle: these labels come
                 // from categories.lvl1, which already holds display case, and

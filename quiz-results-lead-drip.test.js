@@ -8,7 +8,18 @@ const workflowDiagnosticsSource = fs.readFileSync(
     require.resolve('./utils/workflow-diagnostics.js'),
     'utf8',
 )
-const recommendationVersion = 'category-subcategory-pairs-v19'
+// Read from the controller rather than hardcoded: this constant is bumped
+// whenever the shape of a cached recommendation changes, and a stale literal
+// here silently sends every fixture down the refresh path instead of the
+// cached one it means to exercise.
+const recommendationVersion = source.match(
+    /const recommendationAlgorithmVersion = '([^']+)'/,
+)?.[1]
+
+assert.ok(
+    recommendationVersion,
+    'could not read recommendationAlgorithmVersion from the controller source',
+)
 const evidence = {}
 
 test.after(() => {

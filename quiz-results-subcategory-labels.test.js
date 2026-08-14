@@ -22,6 +22,29 @@ function sliceSource(startText, endText) {
     return source.slice(start, end)
 }
 
+/**
+ * Slices as sliceSource(), but fails when the start marker is ambiguous.
+ *
+ * Plain indexOf silently takes the first of several matches, which is how a
+ * slice can end up testing a different block than the one it names.
+ *
+ * @param {string} startText Literal text the slice starts at, expected once.
+ * @param {string} endText Literal text the slice stops before.
+ * @returns {string} The sliced source.
+ */
+function sliceSourceOnce(startText, endText) {
+    const first = source.indexOf(startText)
+
+    assert.notEqual(first, -1, `missing source start: ${startText}`)
+    assert.equal(
+        source.indexOf(startText, first + 1),
+        -1,
+        `ambiguous source start, matches more than once: ${startText}`,
+    )
+
+    return sliceSource(startText, endText)
+}
+
 // The real helper, not a stand-in: production normalize() only accepts strings,
 // and the subcategory split leans on its trimming at every segment boundary.
 const normalizeSource = [
@@ -46,6 +69,9 @@ const subcategoryHelpersSource = sliceSource(
     '/**\n     * Formats a rate value for display',
 )
 
+// Kept in the rank-role sandbox on purpose even though the branch no longer
+// calls it: if anyone re-wraps the value, the test fails with a readable text
+// diff instead of a ReferenceError that hides what actually broke.
 const formatSlugTitleSource = sliceSource(
     'function formatSlugTitle(slug)',
     '/**\n     * Display-name overrides for role slugs',
@@ -69,10 +95,19 @@ const rankRoleSource = sliceSource(
 )
 
 // The chip cap lives in the fallback card builder, where the deduped leaves are
-// sliced to maxDisplayedSubcategories before rendering.
-const subcategoryRenderSource = sliceSource(
-    'const subcategories = Array.isArray(freelancer.subcategories)',
+// sliced to maxDisplayedSubcategories before rendering. The array guard this
+// starts at is duplicated verbatim in the rank-role branch, so the marker is
+// pinned by the card builder's 8-space indentation and the slice is then
+// checked for the class name only that block writes.
+const subcategoryRenderSource = sliceSourceOnce(
+    '\n        const subcategories = Array.isArray(freelancer.subcategories)',
     'const hourlyRateText = formatRateValue(freelancer.hourlyRate)',
+)
+
+assert.match(
+    subcategoryRenderSource,
+    /quiz-result-freelancer-subcategory/,
+    'the render slice must be the card builder block, not the rank-role branch',
 )
 
 /**
@@ -165,8 +200,9 @@ function renderSubcategoryParagraph(subcategories) {
         },
     }
 
+    // No normalizeSource: this block only slices and joins already-clean labels.
     vm.runInNewContext(
-        [normalizeSource, maxDisplayedSource, subcategoryRenderSource].join('\n'),
+        [maxDisplayedSource, subcategoryRenderSource].join('\n'),
         context,
     )
 
@@ -178,6 +214,36 @@ test('subcategories come from categories.lvl1 and nothing else', () => {
         fieldNamesSource,
         /^const subcategoryFieldNames = \[\s*'categories\.lvl1',?\s*\]/,
         'roles, roles-concatenate and the two dead flat fields must be gone',
+    )
+})
+
+// Without this the helper could be perfect and the cards still wrong: nothing
+// else pins getSubcategoryLabels to the candidate the cards actually bind.
+test('candidates carry subcategories off the raw hit', () => {
+    const normalizationSource = sliceSource(
+        'function getRecommendedFreelancerCandidates(',
+        'function getUniqueRecommendedFreelancerCandidates',
+    )
+
+    assert.match(
+        normalizationSource,
+        /subcategories: getSubcategoryLabels\(hit\),/,
+        'card subcategories must be normalized from the hit, not left raw',
+    )
+})
+
+// A cached quiz payload stores normalized freelancers and rebinds them without
+// re-normalizing, so a change to the shape above only reaches existing members
+// once this constant moves.
+test('the recommendation cache version was bumped past v19', () => {
+    const versionMatch = source.match(
+        /const recommendationAlgorithmVersion = 'category-subcategory-pairs-v(\d+)'/,
+    )
+
+    assert.ok(versionMatch, 'recommendationAlgorithmVersion must stay greppable')
+    assert.ok(
+        Number(versionMatch[1]) >= 20,
+        'stale caches would keep binding roles-derived subcategories',
     )
 })
 
@@ -216,6 +282,19 @@ test('a value with no > delimiter yields no label', () => {
             categories: { lvl1: ['Paid Media', 'Paid Media > Paid Search'] },
         }),
         ['Paid Search'],
+    )
+})
+
+// Intended, not incidental: a path missing a non-empty parent is not a valid
+// "Parent > Child", so a stray delimiter cannot smuggle a leaf through.
+test('a path with a blank parent or blank leaf yields no label', () => {
+    assert.deepEqual(
+        getSubcategoryLabels({ categories: { lvl1: ['> Branding'] } }),
+        [],
+    )
+    assert.deepEqual(
+        getSubcategoryLabels({ categories: { lvl1: ['Design > '] } }),
+        [],
     )
 })
 
@@ -293,30 +372,34 @@ test('rank-role prints the record leaf as stored, not slug-formatted', () => {
     )
 })
 
+// Every arm below is anchored on a hyphenated label so that re-wrapping the
+// output in formatSlugTitle fails all three, not just the own-match one.
+// "Paid Search" and the like pass through the formatter unchanged and would
+// have left these arms silently unguarded.
 test('rank-role prefers the record leaf matching the quiz selection', () => {
     assert.deepEqual(
         renderRankRole({
-            subcategories: ['Paid Search', 'CRO & Experimentation'],
-            matchedSubcategory: { label: 'CRO & Experimentation' },
+            subcategories: ['Paid Search', 'E-Commerce Management'],
+            matchedSubcategory: { label: 'E-Commerce Management' },
         }),
-        { textContent: 'CRO & Experimentation', hidden: false },
+        { textContent: 'E-Commerce Management', hidden: false },
     )
 })
 
 test('rank-role falls back to the primary leaf, then the quiz selection', () => {
     assert.deepEqual(
         renderRankRole({
-            subcategories: ['Paid Search', 'Paid Social'],
+            subcategories: ['E-Commerce Management', 'Paid Social'],
             matchedSubcategory: { label: 'Email Marketing' },
         }),
-        { textContent: 'Paid Search', hidden: false },
+        { textContent: 'E-Commerce Management', hidden: false },
     )
     assert.deepEqual(
         renderRankRole({
             subcategories: [],
-            matchedSubcategory: { label: 'Email Marketing' },
+            matchedSubcategory: { label: 'E-Commerce Management' },
         }),
-        { textContent: 'Email Marketing', hidden: false },
+        { textContent: 'E-Commerce Management', hidden: false },
     )
 })
 
