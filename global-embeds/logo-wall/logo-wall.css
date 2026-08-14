@@ -51,10 +51,16 @@
   max-width: 100%;
 }
 
-/* The armed wall: a column of Tracks, each centered on the cross axis. */
+/* The armed wall: a column of Tracks, each centered on the cross axis.
+ * `justify-content: center` here deliberately mirrors the base rule's
+ * `align-items: center` across the axis flip: the row state centres vertically
+ * through align-items, the column state through justify-content. Leaving this
+ * at `normal` would pack the Tracks at the top, so a wrapper taller than its
+ * content — exactly the min-height reservation documented above — would jump
+ * the band upwards at arm. On a content-sized wrapper it is a no-op. */
 [data-logo-wall-element='wrapper'][data-logo-wall-inited='true'] {
   flex-flow: column nowrap;
-  justify-content: normal;
+  justify-content: center;
 }
 
 /* Webflow's CMS chain, before the script removes it. Depth-independent on
