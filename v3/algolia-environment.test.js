@@ -84,7 +84,14 @@ function load(options = {}) {
     dispatchEvent(event) {
       events.push(event)
     },
-    location: { hostname: options.hostname || 'the-starters-3-0.webflow.io' },
+    location: {
+      hostname: options.hostname || 'the-starters-3-0.webflow.io',
+      search: options.search || '',
+      hash: options.hash || '',
+    },
+    localStorage: options.localStorage,
+    starterQuizAlgoliaConfig: options.starterQuizAlgoliaConfig,
+    __startersV3AlgoliaEnvironment: options.requestedEnvironment,
   }
 
   vm.runInNewContext(source, { document, window })
@@ -116,6 +123,30 @@ test('staging selects only TEST credentials and indexes', () => {
     indexName: 'Freelancers3.0-staging-test',
     environment: 'test',
   })
+})
+
+test('browser-controlled inputs cannot select the environment', () => {
+  const runtime = load({
+    search: '?environment=production&index=Freelancers3.0-production',
+    hash: '#algolia-environment=production',
+    requestedEnvironment: 'production',
+    starterQuizAlgoliaConfig: {
+      appId: 'PRODAPP',
+      searchKey: 'production-public-search-key',
+      indexName: 'Freelancers3.0-production',
+    },
+    localStorage: {
+      getItem() {
+        return 'production'
+      },
+    },
+  })
+
+  assert.equal(runtime.window.__startersV3AlgoliaEnvironment, 'test')
+  assert.equal(runtime.client.getAttribute('data-app-id'), 'TESTAPP')
+  assert.equal(runtime.client.getAttribute('data-search-key'), 'test-public-search-key')
+  assert.equal(runtime.starters.getAttribute('wf-algolia-index'), 'Freelancers3.0-staging-test')
+  assert.equal(runtime.opportunities.getAttribute('wf-algolia-index'), 'opportunities_v3_test')
 })
 
 for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
