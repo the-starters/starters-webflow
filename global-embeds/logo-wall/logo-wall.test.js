@@ -58,6 +58,7 @@ class El {
     this.layoutWidth = null
     this.clientWidth = 0
 
+    this._listeners = Object.create(null)
     this._classes = new Set()
     this.classList = {
       add: (name) => this._classes.add(name),
@@ -81,6 +82,21 @@ class El {
   get scrollWidth() {
     if (this.layoutWidth != null) return this.layoutWidth
     return this.children.reduce((sum, child) => sum + child.scrollWidth, 0)
+  }
+
+  get offsetWidth() {
+    return this.scrollWidth
+  }
+
+  /** A flex row: everything before me in my parent, laid end to end. */
+  get offsetLeft() {
+    if (!this.parentNode) return 0
+    let x = 0
+    for (const child of this.parentNode.children) {
+      if (child === this) break
+      x += child.offsetWidth
+    }
+    return x
   }
 
   setAttribute(name, value) {
@@ -140,7 +156,14 @@ class El {
     return copy
   }
 
-  addEventListener() {}
+  addEventListener(type, fn) {
+    ;(this._listeners[type] = this._listeners[type] || []).push(fn)
+  }
+
+  /** Fire what the script bound, the way a pointer would. */
+  dispatch(type) {
+    ;(this._listeners[type] || []).forEach((fn) => fn())
+  }
 
   /** Depth-first self-and-descendants. */
   walk(out) {
@@ -212,6 +235,92 @@ function makePage(options) {
   return page
 }
 
+/* -------------------------------- gsap --------------------------------- *
+ * Just enough GSAP for the vendored horizontalLoop helper to run for real:
+ * a timeline recorder plus the handful of utils the helper reads. Nothing
+ * here models time — no tween ever advances. What IS modelled faithfully is
+ * direction: reverse() flips the timeline, resume() leaves the direction
+ * alone, play() forces it forward. That distinction is the thing under test,
+ * so a play() where the script means resume() has to be visible here.
+ * ----------------------------------------------------------------------- */
+function makeGsap(created) {
+  function timeline(vars) {
+    const v = vars || {}
+    let paused = v.paused === true
+    let reversed = false
+    /** Latest end time any tween lands on — a plausible duration(), no more. */
+    let end = 0
+    const at = (position, config) => {
+      end = Math.max(end, (position || 0) + ((config && config.duration) || 0))
+      return tl
+    }
+    const tl = {
+      vars: v,
+      /** Playback calls in order, so a test can name the one that was used. */
+      calls: [],
+      paused: () => paused,
+      reversed: () => reversed,
+      to: (target, config, position) => at(position, config),
+      fromTo: (target, from, config, position) => at(position, config),
+      add: () => tl,
+      progress: () => tl,
+      totalTime: () => tl,
+      duration: () => end,
+      time: () => 0,
+      rawTime: () => 0,
+      reverse() {
+        reversed = true
+        paused = false
+        tl.calls.push('reverse')
+        return tl
+      },
+      resume() {
+        paused = false
+        tl.calls.push('resume')
+        return tl
+      },
+      play() {
+        reversed = false
+        paused = false
+        tl.calls.push('play')
+        return tl
+      },
+      pause() {
+        paused = true
+        tl.calls.push('pause')
+        return tl
+      },
+      kill() {
+        tl.killed = true
+        return tl
+      },
+    }
+    created.push(tl)
+    return tl
+  }
+
+  return {
+    timeline,
+    /** Only the function-valued props matter: the helper measures inside them. */
+    set(targets, vars) {
+      const list = Array.isArray(targets) ? targets : Array.from(targets || [])
+      Object.keys(vars).forEach((name) => {
+        if (typeof vars[name] !== 'function') return
+        list.forEach((el, index) => vars[name](index, el))
+      })
+    },
+    getProperty(el, prop) {
+      if (prop === 'width') return el.offsetWidth
+      if (prop === 'scaleX') return 1
+      return 0 // x and xPercent: nothing is pre-transformed
+    },
+    utils: {
+      toArray: (value) => (Array.isArray(value) ? value : Array.from(value || [])),
+      snap: (increment) => (value) => Math.round(value / increment) * increment,
+    },
+  }
+}
+
 /** The string part of one captured console.warn call. */
 function warnText(args) {
   return args.filter((a) => typeof a === 'string').join(' ')
@@ -247,6 +356,9 @@ function load(page, options) {
   }
 
   sandbox.window = sandbox
+  /** Timelines handed out by the stub, in creation order. */
+  const timelines = []
+  if (o.gsap) sandbox.gsap = makeGsap(timelines)
   sandbox.location = { hostname: o.hostname || 'www.thestarters.com' }
   sandbox.window.location = sandbox.location
   if (o.debug !== undefined) sandbox.window.STARTERS_DEBUG = o.debug
@@ -308,6 +420,7 @@ function load(page, options) {
     warnings,
     window: sandbox.window,
     listeners,
+    timelines,
     flush,
     /** Every element handed to ResizeObserver.observe(). */
     observed: () => observers.map((ro) => ro.observed),
@@ -672,6 +785,58 @@ test('without ResizeObserver the window listener still re-arms on a real change'
   resize()
 
   assert.ok(clonesOf(track).length > 0, 'the fallback path carries older browsers')
+})
+
+/* ------------------------------ the playback ----------------------------- */
+
+/** Two tracks wide enough to fill, with GSAP on the page. */
+function animatedPage() {
+  return makePage({ items: 4, itemWidth: 100, wrapperWidth: 1000, tracks: 2 })
+}
+
+test('even tracks travel left to right, and starting them keeps them there', () => {
+  // horizontalLoop reverses the even Tracks; the first sync tick then has to
+  // start them WITHOUT re-asserting a direction. play() means "play forward",
+  // which would silently flip every even band back to RTL.
+  const page = animatedPage()
+  const { timelines } = load(page, { gsap: true })
+
+  assert.equal(timelines.length, 2, 'one timeline per track')
+  assert.equal(timelines[0].reversed(), true, 'the even track runs LTR')
+  assert.equal(timelines[1].reversed(), false, 'the odd track runs RTL')
+  timelines.forEach((tl) => assert.equal(tl.paused(), false, 'both bands are running'))
+  assert.deepEqual(timelines[0].calls, ['reverse', 'resume'], 'started with resume(), not play()')
+  assert.deepEqual(timelines[1].calls, ['resume'])
+})
+
+test('hover pauses only the hovered track, and leaving it restores its direction', () => {
+  const page = animatedPage()
+  const { timelines } = load(page, { gsap: true })
+  const tracks = tracksOf(page.wrapper)
+
+  tracks[0].dispatch('mouseenter')
+  assert.equal(timelines[0].paused(), true, 'the hovered band stops')
+  assert.equal(timelines[1].paused(), false, 'its neighbour keeps running')
+
+  tracks[0].dispatch('mouseleave')
+  assert.equal(timelines[0].paused(), false, 'it starts again on leave')
+  assert.equal(timelines[0].reversed(), true, 'still travelling left to right')
+  assert.equal(timelines[1].reversed(), false, 'and the odd track never changed either')
+})
+
+test('a re-arm kills the old timelines and builds them the same way round', () => {
+  const page = animatedPage()
+  const { timelines, rearm } = load(page, { gsap: true })
+
+  const first = timelines.slice()
+  page.wrapper.clientWidth = 2000
+  rearm()
+
+  first.forEach((tl) => assert.equal(tl.killed, true, 'the previous bands are killed'))
+  const rebuilt = timelines.slice(first.length)
+  assert.equal(rebuilt.length, 2, 'and rebuilt one per track')
+  assert.equal(rebuilt[0].reversed(), true)
+  assert.equal(rebuilt[1].reversed(), false)
 })
 
 /* ------------------------------- drift guard ----------------------------- */

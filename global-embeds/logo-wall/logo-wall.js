@@ -2,7 +2,7 @@
 /**
  * Logo Wall — attribute-driven looping tracks of CMS logos.
  *
- * @release v1.59.230
+ * @release v1.59.233
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. GSAP is assumed
  * as a page global (already on the V3 site). Without GSAP the tracks still
@@ -45,7 +45,7 @@
   if (window.__startersLogoWallInit) return;
   window.__startersLogoWallInit = true;
 
-  var RELEASE = 'v1.59.230';
+  var RELEASE = 'v1.59.233';
   window.__startersLogoWall = { release: RELEASE };
 
   var WRAPPER_SEL = '[data-logo-wall-element="wrapper"]';
@@ -399,8 +399,9 @@
     // No width means the wrapper (or an ancestor) is hidden or collapsed. A
     // display:none ancestor still computes as flex, so the stylesheet guard
     // below cannot see this. Filling against 0 clones to the cap, and
-    // horizontalLoop divides by the measured width — NaN transforms. Leave the
-    // DOM exactly as it is; the ResizeObserver re-arms when it gains width.
+    // horizontalLoop divides by the measured width — NaN transforms. The clones
+    // stay in place; killLoops above has already dropped the timelines and
+    // cleared their inline transforms. The ResizeObserver re-arms on width.
     if (wrapW <= 0) return;
 
     if (!tracksAreFlexRows(state)) {
