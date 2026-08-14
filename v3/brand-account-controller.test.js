@@ -203,6 +203,7 @@ function loadController(options = {}) {
   const tracked = []
   const redirects = []
   let longTimer = 0
+  const mutationObservers = []
 
   const member = options.member || {
     id: 'mem_sb_brand',
@@ -287,10 +288,32 @@ function loadController(options = {}) {
       return setImmediate(fn)
     },
     clearTimeout() {},
+    MutationObserver: options.mutationObserver === false
+      ? undefined
+      : class {
+          constructor(callback) {
+            this.callback = callback
+            this.connected = false
+            this.observeOptions = null
+            mutationObservers.push(this)
+          }
+          observe(target, observeOptions) {
+            this.connected = true
+            this.target = target
+            this.observeOptions = observeOptions
+          }
+          disconnect() {
+            this.connected = false
+          }
+          trigger() {
+            this.callback([])
+          }
+        },
   }
   if (options.diagnosticsReady) window.__startersWorkflowDiagnosticsReady = options.diagnosticsReady
   const document = {
     readyState: 'complete',
+    documentElement: makeElement(),
     querySelector(selector) {
       if (selector === '#wf-form-Complete-Profile-Form') return buildForm
       if (selector === '#wf-form-Account-Security') return securityForm
@@ -299,10 +322,13 @@ function loadController(options = {}) {
       return null
     },
     querySelectorAll(selector) {
-      if (selector !== '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
-        return []
+      if (selector === '[data-quiz-form="signup"][data-ms-form="signup"]') {
+        return [quizSignupForm].filter(Boolean)
       }
-      return [signupForm, quizSignupForm].filter(Boolean)
+      if (selector === '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
+        return [signupForm, quizSignupForm].filter(Boolean)
+      }
+      return []
     },
     addEventListener() {},
   }
@@ -348,8 +374,10 @@ function loadController(options = {}) {
     buildForm,
     calls,
     context,
+    document,
     member,
     memberstack,
+    mutationObservers,
     redirects,
     securityForm,
     starterProfileForm,
@@ -396,6 +424,45 @@ test('Quiz email signup receives the live Brand Free plan', () => {
   loadController({ buildForm: null, hostname: 'thestarters.com', quizSignupForm })
 
   assert.equal(quizSignupForm.getAttribute('data-ms-plan:add'), 'pln_free-plan-f6kn0dxz')
+})
+
+test('Late quiz signup receives Brand Free after a standard signup is configured', () => {
+  const signupForm = makeElement()
+  signupForm.setAttribute('data-ms-form', 'signup')
+  const environment = loadController({
+    buildForm: null,
+    hostname: 'thestarters.com',
+    pathname: '/quiz',
+    signupForm,
+  })
+
+  assert.equal(signupForm.getAttribute('data-ms-plan:add'), 'pln_free-plan-f6kn0dxz')
+  assert.equal(environment.mutationObservers.length, 1)
+  assert.equal(environment.mutationObservers[0].connected, true)
+  environment.mutationObservers[0].trigger()
+  assert.equal(environment.mutationObservers[0].connected, true)
+
+  const quizSignupForm = makeElement()
+  quizSignupForm.setAttribute('data-ms-form', 'signup')
+  environment.document.querySelectorAll = (selector) => {
+    if (selector === '[data-quiz-form="signup"][data-ms-form="signup"]') {
+      return [quizSignupForm]
+    }
+    if (selector === '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
+      return [signupForm, quizSignupForm]
+    }
+    return []
+  }
+
+  assert.deepEqual(plain(environment.mutationObservers[0].observeOptions), {
+    childList: true,
+    subtree: true,
+  })
+
+  environment.mutationObservers[0].trigger()
+
+  assert.equal(quizSignupForm.getAttribute('data-ms-plan:add'), 'pln_free-plan-f6kn0dxz')
+  assert.equal(environment.mutationObservers[0].connected, false)
 })
 
 test('All Brand signup forms on a page receive the matching plan', () => {

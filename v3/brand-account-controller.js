@@ -55,9 +55,10 @@
   var SECURITY_FORM_SELECTOR = '#wf-form-Account-Security'
   var STARTER_PROFILE_FORM_SELECTOR = '#wf-form-Build-Form-Full-Profile'
   var STARTER_PROFILE_EMAIL_SELECTOR = 'input[type="email"]'
+  var QUIZ_SIGNUP_FORM_SELECTOR = '[data-quiz-form="signup"][data-ms-form="signup"]'
   var BRAND_SIGNUP_FORM_SELECTOR = [
     '#wf-form-Brand-Signup',
-    '[data-quiz-form="signup"][data-ms-form="signup"]',
+    QUIZ_SIGNUP_FORM_SELECTOR,
   ].join(', ')
   var LIVE_BRAND_PLAN_ID = 'pln_free-plan-f6kn0dxz'
   var TEST_BRAND_PLAN_ID = 'pln_dorxata-test-brand-plan-777r02pa'
@@ -75,6 +76,7 @@
   var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
   var workflowDiagnosticsControllerScript = document.currentScript
+  var brandSignupPlanObserver = null
 
   function boundedWorkflowDiagnostics(promise) {
     return new Promise(function (resolve) {
@@ -222,8 +224,8 @@
       : LIVE_BRAND_PLAN_ID
   }
 
-  function configureBrandSignupPlan(hostname) {
-    var forms = document.querySelectorAll(BRAND_SIGNUP_FORM_SELECTOR)
+  function configureBrandSignupPlan(hostname, selector) {
+    var forms = document.querySelectorAll(selector || BRAND_SIGNUP_FORM_SELECTOR)
     var configured = false
     Array.prototype.forEach.call(forms, function (form) {
       if (form.getAttribute('data-ms-form') !== 'signup') return
@@ -231,6 +233,22 @@
       configured = true
     })
     return configured
+  }
+
+  function watchForBrandSignupPlan(hostname) {
+    if (brandSignupPlanObserver || !window.MutationObserver || !document.documentElement) {
+      return false
+    }
+    brandSignupPlanObserver = new window.MutationObserver(function () {
+      if (!configureBrandSignupPlan(hostname, QUIZ_SIGNUP_FORM_SELECTOR)) return
+      brandSignupPlanObserver.disconnect()
+      brandSignupPlanObserver = null
+    })
+    brandSignupPlanObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    })
+    return true
   }
 
   function trim(value) {
@@ -916,6 +934,12 @@
     // live fallback, but align the plan before Memberstack handles signup.
     loadNativeFormDiagnostics()
     var bound = configureBrandSignupPlan(location.hostname || '')
+    if (
+      location.pathname === '/quiz' &&
+      !configureBrandSignupPlan(location.hostname || '', QUIZ_SIGNUP_FORM_SELECTOR)
+    ) {
+      bound = watchForBrandSignupPlan(location.hostname || '') || bound
+    }
     var buildForm = document.querySelector(BUILD_FORM_SELECTOR)
     if (buildForm) {
       bound = bindForm(buildForm, 'brand/account/build', submitBuild, true) || bound
