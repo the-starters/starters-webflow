@@ -125,8 +125,9 @@ function buildDom(sections, navbar, hash = '', extraElements = []) {
                     allElements.find((element) => element.id === id) || null
                 )
             },
-            addEventListener(type, handler) {
+            addEventListener(type, handler, capture) {
                 listeners[type] = handler
+                listeners[`${type}Capture`] = capture === true
             },
         },
         window: {
@@ -203,14 +204,22 @@ test('TOC link click scrolls with the sticky navbar offset', () => {
     context.result.syncTocAnchorNavigation()
 
     let prevented = false
+    let stopped = false
     listeners.click({
         target: link,
         preventDefault() {
             prevented = true
         },
+        stopPropagation() {
+            stopped = true
+        },
     })
 
     assert.equal(prevented, true)
+    // Capture + stopPropagation keep Webflow.js's own document-level anchor
+    // smooth scroll from re-scrolling the target under the sticky navbar.
+    assert.equal(stopped, true)
+    assert.equal(listeners.clickCapture, true)
     // 500 (rect top) + 100 (scrollY) - 66 (navbar) - 16 (breathing room)
     assert.equal(scrolls.length, 1)
     assert.equal(scrolls[0].top, 518)
@@ -234,14 +243,19 @@ test('clicks fall through when the matching id was not stamped', () => {
     context.result.syncTocAnchorNavigation()
 
     let prevented = false
+    let stopped = false
     listeners.click({
         target: link,
         preventDefault() {
             prevented = true
         },
+        stopPropagation() {
+            stopped = true
+        },
     })
 
     assert.equal(prevented, false)
+    assert.equal(stopped, false)
     assert.equal(scrolls.length, 0)
 })
 

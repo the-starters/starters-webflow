@@ -3338,20 +3338,29 @@
         if (tocAnchorClicksBound) return
         tocAnchorClicksBound = true
 
-        document.addEventListener('click', (event) => {
-            const link = event.target?.closest?.(
-                '[data-toc-algolia-link] a[href^="#"]',
-            )
-            if (!link) return
+        // Capture phase + stopPropagation: Webflow.js binds its own
+        // document-level smooth scroll to a[href^="#"] clicks, which would
+        // run after this handler and re-scroll the anchor to the viewport
+        // top, under the sticky navbar. preventDefault alone cannot stop it.
+        document.addEventListener(
+            'click',
+            (event) => {
+                const link = event.target?.closest?.(
+                    '[data-toc-algolia-link] a[href^="#"]',
+                )
+                if (!link) return
 
-            const slug = slugify(link.getAttribute('href'))
-            const target = slug ? stampedTocAnchors.get(slug) : null
-            if (!target) return
+                const slug = slugify(link.getAttribute('href'))
+                const target = slug ? stampedTocAnchors.get(slug) : null
+                if (!target) return
 
-            event.preventDefault()
-            scrollToTocTarget(target)
-            window.history?.pushState?.(null, '', `#${slug}`)
-        })
+                event.preventDefault()
+                event.stopPropagation()
+                scrollToTocTarget(target)
+                window.history?.pushState?.(null, '', `#${slug}`)
+            },
+            true,
+        )
     }
 
     /**
