@@ -108,7 +108,12 @@ function getLearnContentTaxonomyApi() {
     )
 }
 
-function runQuizResultsController({ fetch, sharedConfig }) {
+function runQuizResultsController({
+    fetch,
+    sharedConfig,
+    resolver = undefined,
+    legacyConfig,
+}) {
     const template = {
         classList: { add() {}, contains() { return false }, remove() {} },
         cloneNode() { return this },
@@ -165,13 +170,15 @@ function runQuizResultsController({ fetch, sharedConfig }) {
                 : null
         },
     }
+    const defaultResolver = {
+        getSharedSearchConfig(resource) {
+            assert.equal(resource, 'learnContent')
+            return sharedConfig
+        }
+    }
     const window = {
-        StartersV3AlgoliaEnvironment: {
-            getSharedSearchConfig(resource) {
-                assert.equal(resource, 'learnContent')
-                return sharedConfig
-            },
-        },
+        StartersV3AlgoliaEnvironment:
+            resolver === undefined ? defaultResolver : resolver,
         WfAlgolia: {
             on() {},
             setFilter() {},
@@ -183,6 +190,7 @@ function runQuizResultsController({ fetch, sharedConfig }) {
         location: { hostname: 'the-starters-3-0.webflow.io', search: '' },
         localStorage: storage,
         sessionStorage: storage,
+        starterQuizLearnContentAlgoliaConfig: legacyConfig,
         setInterval() { return 1 },
         setTimeout(callback) {
             queueMicrotask(callback)
@@ -440,6 +448,28 @@ test('managed Algolia keeps LearnContent on the exact shared index', async () =>
             'TESTAPP',
         )
     })
+})
+
+test('LearnContent fails closed when the host resolver is unavailable', async () => {
+    const calls = []
+    runQuizResultsController({
+        fetch: async (url, options) => {
+            calls.push({ url, options })
+            return { ok: true, async json() { return { hits: [] } } }
+        },
+        resolver: null,
+        legacyConfig: {
+            appId: 'LEGACYAPP',
+            searchKey: 'legacy-browser-search-key',
+            indexName: 'LegacyLearnContent-dev',
+        },
+    })
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+        await new Promise(setImmediate)
+    }
+
+    assert.deepEqual(calls, [])
 })
 
 test('saved rename and merge aliases become canonical selections', () => {

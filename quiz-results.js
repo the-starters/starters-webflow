@@ -44,7 +44,6 @@
     const learnContentResultsSelector =
         learnContentSectionSelector + ' [wf-algolia-element="results"]'
     const learnContentDefaultFilterField = 'categories'
-    const learnContentDefaultAppId = 'PKVW6M9OPZ'
     const learnContentDefaultIndexName = 'LearnContent'
     const learnContentDefaultHitsPerPage = 4
     const learnContentFilterWaitAttempts = 40
@@ -1037,65 +1036,20 @@
         }
     }
 
-    function getLearnContentSearchConfig(learnContentSection) {
-        const resolver = window.StartersV3AlgoliaEnvironment
-        const managedResolverActive = Boolean(resolver)
-        if (managedResolverActive) {
-            const resolved = resolver.getSharedSearchConfig?.('learnContent')
-            return {
-                appId: normalizeLearnContentValue(resolved?.appId),
-                searchKey: normalizeLearnContentValue(resolved?.searchKey),
-                indexName:
-                    normalizeLearnContentValue(resolved?.indexName) ===
-                    learnContentDefaultIndexName
-                        ? learnContentDefaultIndexName
-                        : '',
-            }
-        }
-        const windowConfig =
-            window.starterQuizLearnContentAlgoliaConfig ||
-            window.starterQuizAlgoliaConfig ||
-            {}
-        const explicitElement = document.querySelector(
-            '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
-        )
-        const wfAlgoliaScript = document.querySelector(
-            'script[data-app-id][data-search-key]',
-        )
+    function getLearnContentSearchConfig() {
+        const resolved =
+            window.StartersV3AlgoliaEnvironment?.getSharedSearchConfig?.(
+                'learnContent',
+            )
 
         return {
-            appId:
-                normalizeLearnContentValue(windowConfig.appId) ||
-                normalizeLearnContentValue(
-                    explicitElement?.dataset.starterQuizAlgoliaAppId,
-                ) ||
-                normalizeLearnContentValue(explicitElement?.dataset.algoliaAppId) ||
-                normalizeLearnContentValue(
-                    wfAlgoliaScript?.getAttribute('data-app-id'),
-                ) ||
-                learnContentDefaultAppId,
-            searchKey:
-                normalizeLearnContentValue(windowConfig.searchKey) ||
-                normalizeLearnContentValue(
-                    explicitElement?.dataset.starterQuizAlgoliaSearchKey,
-                ) ||
-                normalizeLearnContentValue(
-                    explicitElement?.dataset.algoliaSearchKey,
-                ) ||
-                normalizeLearnContentValue(
-                    wfAlgoliaScript?.getAttribute('data-search-key'),
-                ),
+            appId: normalizeLearnContentValue(resolved?.appId),
+            searchKey: normalizeLearnContentValue(resolved?.searchKey),
             indexName:
-                normalizeLearnContentValue(
-                    learnContentSection?.getAttribute('wf-algolia-index'),
-                ) ||
-                normalizeLearnContentValue(
-                    learnContentSection?.getAttribute(
-                        'data-quiz-learn-index-name',
-                    ),
-                ) ||
-                normalizeLearnContentValue(windowConfig.indexName) ||
-                learnContentDefaultIndexName,
+                normalizeLearnContentValue(resolved?.indexName) ===
+                learnContentDefaultIndexName
+                    ? learnContentDefaultIndexName
+                    : '',
         }
     }
 
