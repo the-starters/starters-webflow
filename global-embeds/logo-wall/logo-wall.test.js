@@ -691,8 +691,10 @@ test('losing the stylesheet on a re-arm strips the clones it already made', () =
 
 test('a wrapper with no width arms nothing at all', () => {
   // A display:none ancestor still computes as flex, so the stylesheet guard
-  // cannot see this state — only the width can. Filling against 0 would clone
-  // to the cap, and horizontalLoop would divide by it.
+  // cannot see this state — only the width can. The fill itself is harmless
+  // against 0: the target is 0, so the while condition is false immediately and
+  // no clone is added. The risk is horizontalLoop arming over zero-width items
+  // and dividing by them, which the arm-level bail prevents.
   const page = makePage({ items: 4, itemWidth: 100, wrapperWidth: 0, tracks: 1 })
   const { warnings } = load(page, { debug: true })
 
