@@ -2,7 +2,7 @@
 /**
  * Logo Wall — attribute-driven looping tracks of CMS logos.
  *
- * @release v1.59.241
+ * @release v1.59.244
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. GSAP is assumed
  * as a page global (already on the V3 site). Without GSAP the tracks still
@@ -48,7 +48,7 @@
   if (window.__startersLogoWallInit) return;
   window.__startersLogoWallInit = true;
 
-  var RELEASE = 'v1.59.241';
+  var RELEASE = 'v1.59.244';
   window.__startersLogoWall = { release: RELEASE };
 
   var WRAPPER_SEL = '[data-logo-wall-element="wrapper"]';
@@ -61,6 +61,9 @@
   var MAX_CLONES = 24;
   var RESIZE_MS = 150;
   var IMAGES_READY_TIMEOUT_MS = 3000;
+
+  /** Wrappers already put through initWrapper, successfully or not. */
+  var seenWrappers = new WeakSet();
 
   function isDevHost() {
     try {
@@ -584,8 +587,12 @@
   }
 
   function initWrapper(wrapper) {
-    if (wrapper.getAttribute(INIT_ATTR) === 'true') return;
-    wrapper.setAttribute(INIT_ATTR, 'true');
+    // Re-entry is guarded separately from INIT_ATTR, because INIT_ATTR is not
+    // bookkeeping: the stylesheet keys the armed COLUMN layout off it, so it
+    // may only appear once the Tracks it describes exist. A wrapper that bails
+    // below therefore keeps the pre-init row and never snaps into a stack.
+    if (seenWrappers.has(wrapper)) return;
+    seenWrappers.add(wrapper);
 
     flattenDisplayContents(wrapper);
     removeCMSList(wrapper);
@@ -611,6 +618,11 @@
       devWarn('no tracks built; skipped', wrapper);
       return;
     }
+
+    // The build succeeded, so the armed layout is now true. Same synchronous
+    // task as the rebuild above, so the browser never paints one without the
+    // other. See logo-wall.css for the two-state contract this drives.
+    wrapper.setAttribute(INIT_ATTR, 'true');
 
     var state = {
       wrapper: wrapper,

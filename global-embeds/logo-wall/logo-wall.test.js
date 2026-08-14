@@ -971,35 +971,153 @@ test('a straggler that lands after the early arm triggers exactly one re-arm', (
   assert.equal(timelines.length, 2, 'the corrective arm is the last one')
 })
 
-/* --------------------------- the pre-init contract ----------------------- */
+/* ----------------------------- the CMS chain ----------------------------- */
 
-test('the inited attribute is set while the authored markup is still in place', () => {
-  // The stylesheet paints the wrapper as a centered ROW until
-  // data-logo-wall-inited="true" flips it to the Track column. That flip is
-  // only safe because the script marks the wrapper and restructures it inside
-  // ONE synchronous task — if a paint could land between the two, the flipped
-  // column layout would be applied to the authored items and stack them, which
-  // is the exact defect the pre-init rules exist to remove.
-  const page = fillingPage()
-  let markedWhile = null
+/**
+ * What Webflow actually ships, and what the homepage paints before the script
+ * touches it:
+ *
+ *   wrapper > .u-display-contents > .w-dyn-list > .w-dyn-items
+ *           > .w-dyn-item > [data-logo-wall-element="item"] > img
+ *
+ * flattenDisplayContents lifts the helper away, then removeCMSList hoists each
+ * item out and deletes the list. Nothing else in the suite exercised either.
+ */
+function cmsPage(options) {
+  const o = options || {}
+  const page = makePage(Object.assign({ items: 0, wrapperWidth: 1000, tracks: 1 }, o))
+  const helper = new El('div')
+  helper.classList.add('u-display-contents')
+  const list = new El('div')
+  list.classList.add('w-dyn-list')
+  const items = new El('div')
+  items.classList.add('w-dyn-items')
 
-  const realSetAttribute = page.wrapper.setAttribute.bind(page.wrapper)
-  page.wrapper.setAttribute = (name, value) => {
-    if (name === 'data-logo-wall-inited' && markedWhile === null) {
-      markedWhile = page.wrapper.children.slice()
+  page.wrapper.appendChild(helper)
+  helper.appendChild(list)
+  list.appendChild(items)
+
+  const count = o.cmsItems == null ? 4 : o.cmsItems
+  for (let i = 0; i < count; i++) {
+    const cell = new El('div')
+    cell.classList.add('w-dyn-item')
+    // Webflow leaves conditionally-hidden siblings in the DOM; the real item is
+    // the first child that is not one of them.
+    if (o.withHidden && i === 0) {
+      const hidden = new El('div')
+      hidden.classList.add('w-condition-invisible')
+      cell.appendChild(hidden)
     }
-    return realSetAttribute(name, value)
+    const item = logoItem(i, o.itemWidth == null ? 100 : o.itemWidth)
+    cell.appendChild(item)
+    items.appendChild(cell)
+    page.items.push(item)
   }
+
+  page.cms = { helper, list, items }
+  return page
+}
+
+test('the CMS chain is flattened away and its items become the Track', () => {
+  const page = cmsPage()
+  load(page)
+
+  const tracks = tracksOf(page.wrapper)
+  assert.equal(tracks.length, 1)
+  assert.deepEqual(
+    indexesOf(originalsOf(tracks[0])),
+    [0, 1, 2, 3],
+    'the authored items, in order, directly inside the Track'
+  )
+
+  for (const cls of ['u-display-contents', 'w-dyn-list', 'w-dyn-items', 'w-dyn-item']) {
+    assert.equal(
+      page.wrapper.querySelectorAll('.' + cls).length,
+      0,
+      '.' + cls + ' should be gone from the wrapper'
+    )
+  }
+  assert.equal(page.cms.list.parentNode, null, 'the list was detached, not just emptied')
+})
+
+test('a conditionally-hidden sibling is not mistaken for the logo', () => {
+  const page = cmsPage({ withHidden: true })
+  load(page)
+
+  const originals = originalsOf(tracksOf(page.wrapper)[0])
+  assert.deepEqual(indexesOf(originals), [0, 1, 2, 3], 'every cell yielded its visible child')
+  assert.equal(
+    page.wrapper.querySelectorAll('.w-condition-invisible').length,
+    0,
+    'and the hidden one was dropped with the list'
+  )
+})
+
+test('the CMS wrapper is marked as inited only after its chain is gone', () => {
+  // The mutation this closes: moving the mark to before flatten/removeCMSList
+  // still passes a static-markup test, because there is nothing to flatten.
+  const page = cmsPage()
+  const marked = watchInitMark(page.wrapper)
 
   load(page)
 
-  assert.ok(markedWhile, 'the wrapper was marked at all')
-  assert.deepEqual(
-    indexesOf(markedWhile),
-    [0, 1, 2, 3],
-    'the authored items were still the wrapper\'s children when it was marked'
+  assert.equal(marked.calls, 1)
+  assert.ok(
+    marked.children.every((child) => child.getAttribute(ITEM) === 'track'),
+    'no CMS node was still in the wrapper when it was marked'
   )
-  assert.equal(tracksOf(page.wrapper).length, 1, 'and the rebuild finished in the same task')
+})
+
+/* --------------------------- the pre-init contract ----------------------- */
+
+/** Capture the wrapper's children at the moment it is marked as inited. */
+function watchInitMark(wrapper) {
+  const seen = { children: null, calls: 0 }
+  const realSetAttribute = wrapper.setAttribute.bind(wrapper)
+  wrapper.setAttribute = (name, value) => {
+    if (name === 'data-logo-wall-inited') {
+      seen.calls += 1
+      if (seen.children === null) seen.children = wrapper.children.slice()
+    }
+    return realSetAttribute(name, value)
+  }
+  return seen
+}
+
+test('the wrapper is marked as inited only once the Tracks exist', () => {
+  // The stylesheet paints the wrapper as a centered ROW until
+  // data-logo-wall-inited="true" flips it to the Track column, so the attribute
+  // is a claim that the Tracks are there. It must therefore be written AFTER
+  // the rebuild — and in the same synchronous task, so no paint can land
+  // between the two and apply the column layout to the authored markup.
+  const page = fillingPage()
+  const marked = watchInitMark(page.wrapper)
+
+  load(page)
+
+  assert.equal(marked.calls, 1, 'marked exactly once')
+  assert.ok(marked.children, 'and marked at all')
+  assert.ok(
+    marked.children.every((child) => child.getAttribute(ITEM) === 'track'),
+    'the wrapper already held Tracks when it was marked, not the authored items'
+  )
+  assert.equal(page.wrapper.getAttribute('data-logo-wall-inited'), 'true')
+})
+
+test('a wrapper the script bails on is never marked as inited', () => {
+  // Marking it would flip the stylesheet to the Track column over markup that
+  // has no Tracks — a clipped row snapping into a tall stack. Staying unmarked
+  // leaves the pre-init row, which is what the visitor should keep seeing.
+  const page = makePage({ items: 4, itemWidth: 100, wrapperWidth: 1000, tracks: 1 })
+  page.wrapper.appendChild(new El('div')) // an unmarked Designer element
+  load(page, { debug: true })
+
+  assert.equal(tracksOf(page.wrapper).length, 0, 'nothing was built')
+  assert.equal(
+    page.wrapper.getAttribute('data-logo-wall-inited'),
+    null,
+    'so the armed layout is never claimed'
+  )
 })
 
 /* ------------------------------- drift guard ----------------------------- */

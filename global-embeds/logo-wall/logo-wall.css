@@ -1,6 +1,6 @@
 /* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/logo-wall
  *
- * @release v1.59.241
+ * @release v1.59.244
  *
  * CDN-served. Load in Head (same jsDelivr ref as logo-wall.js). Not a paste embed.
  *
@@ -17,14 +17,22 @@
  *   PRE-INIT   the wrapper is a centered ROW, and the CMS chain inside it is
  *              flattened into that row by the .w-dyn-* rules below.
  *   POST-INIT  `data-logo-wall-inited="true"` flips the wrapper to a COLUMN of
- *              script-built Tracks. The script sets that attribute and
- *              restructures the DOM in ONE synchronous task (initWrapper marks
- *              the wrapper, then flattens/rebuilds immediately), so the browser
- *              never paints the flipped layout against the old markup.
+ *              script-built Tracks. initWrapper writes that attribute only
+ *              AFTER it has built them, in the same synchronous task, so the
+ *              browser never paints the column layout against the authored
+ *              markup — and a wrapper the script bails on (stray children, no
+ *              items) keeps the pre-init row instead of snapping to a stack.
  *
  * Both states keep overflow:hidden and max-width:100% on the wrapper, and both
  * centre a too-wide row inside it — pre-init on the main axis, post-init on the
  * cross axis. The .w-dyn-* rules go inert once removeCMSList deletes those nodes.
+ *
+ * HEIGHT ACROSS THE FLIP. A single-band wall (data-logo-wall-tracks="1", what
+ * the homepage uses) is pixel-identical either side of it: one row before, one
+ * Track after. A MULTI-band wall is NOT — pre-init is still a single row, and
+ * arming adds the other N-1 Track rows plus their gaps, so the wrapper grows
+ * once and the content below shifts down. CSS cannot derive that height from
+ * the track count; reserve it with a min-height on the wrapper in Designer.
  */
 
 [data-logo-wall-element='wrapper'] {
@@ -62,11 +70,25 @@
   align-items: center;
   column-gap: inherit;
   flex: none;
-  min-width: 0;
 }
 
 [data-logo-wall-element='wrapper'] .w-dyn-item {
   flex: none;
+}
+
+/* GAP RELAY. `column-gap: inherit` copies the DIRECT parent's computed value,
+ * and a display:contents helper between the wrapper and the list computes
+ * `normal` — which is 0, so the pre-init logos sat flush together and the strip
+ * jumped horizontally at arm. Each helper level has to re-inherit the wrapper's
+ * gap for the chain to survive. Selecting on computed display is not possible
+ * in CSS, so this is keyed on the two helper classes the script itself knows
+ * (see isContentsHelper); do NOT give them a display, that would destroy the
+ * display:contents they exist for. A custom helper class outside this list
+ * breaks the chain pre-init only — arming rebuilds the Tracks and restores the
+ * gap either way. */
+[data-logo-wall-element='wrapper'] .u-display-contents,
+[data-logo-wall-element='wrapper'] .display-contents {
+  column-gap: inherit;
 }
 
 [data-logo-wall-element='track'] {
