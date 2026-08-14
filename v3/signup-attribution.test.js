@@ -1018,9 +1018,7 @@ test('each production Hire CTA registers the correct Booking or Connect lead ent
                 properties: {
                     track_key: trackKey,
                     intent_subtype: intentSubtype,
-                    source_route: '/hire/thebrianchung',
                     source_collection_id: '69f241ec147b71addb6f1531',
-                    source_resource_slug: 'thebrianchung',
                     payload_version: 'lead_entry_browser_v1',
                 },
             },

@@ -343,6 +343,7 @@
             pageId: '69cccee53fd01363c8d406f9',
             intentSubtype: 'collection_signup',
             trackKey: 'collection',
+            posthogSourceContext: true,
         },
         {
             prefix: '/tools/',
@@ -350,6 +351,7 @@
             pageId: '69ccce82af83f16acf711e1e',
             intentSubtype: 'collection_signup',
             trackKey: 'collection',
+            posthogSourceContext: true,
         },
         {
             prefix: '/industries/',
@@ -357,6 +359,7 @@
             pageId: '69cccd9e0354a390eb37855c',
             intentSubtype: 'collection_signup',
             trackKey: 'collection',
+            posthogSourceContext: true,
         },
         {
             prefix: '/companies/',
@@ -364,6 +367,7 @@
             pageId: '69f23440f1e67c01bcd642d0',
             intentSubtype: 'collection_signup',
             trackKey: 'collection',
+            posthogSourceContext: true,
         },
         {
             prefix: '/categories/',
@@ -371,6 +375,7 @@
             pageId: '69f2329e4f5bacf6765c1cc6',
             intentSubtype: 'collection_signup',
             trackKey: 'collection',
+            posthogSourceContext: true,
         },
         {
             prefix: '/subcategories/',
@@ -378,6 +383,7 @@
             pageId: '69f233f7f3e97748419e3a43',
             intentSubtype: 'collection_signup',
             trackKey: 'collection',
+            posthogSourceContext: true,
         },
         {
             prefix: '/learn/playbooks-frameworks/',
@@ -385,6 +391,7 @@
             pageId: '69e1e417f6476e12f572b468',
             intentSubtype: 'learn_unlock',
             trackKey: 'learn_gated',
+            posthogSourceContext: true,
         },
         {
             prefix: '/learn/interviews-analyses/',
@@ -392,6 +399,7 @@
             pageId: '69dca9df095d2fbcf34e2575',
             intentSubtype: 'learn_signup',
             trackKey: 'learn_ungated',
+            posthogSourceContext: true,
         },
         {
             prefix: '/learn/sessions/',
@@ -399,6 +407,7 @@
             pageId: '69e08554183023227aa46c24',
             intentSubtype: 'session_signup',
             trackKey: 'learn_session',
+            posthogSourceContext: true,
         },
         {
             prefix: '/hire/',
@@ -716,6 +725,7 @@
                     source_resource_slug: slug,
                     intent_subtype: intent.intent_subtype,
                     track_key: intent.track_key,
+                    posthog_source_context: policy.posthogSourceContext === true,
                 }
             }
         } catch (error) {
@@ -866,14 +876,17 @@
             // analytics event twice. A synchronous capture failure releases the
             // marker and leaves the safe pending snapshot available for retry.
             if (storage) storage.setItem(key, 'true')
-            window.posthog.capture('v3_lead_entry_registered', {
+            var properties = {
                 track_key: pending.track_key,
                 intent_subtype: pending.intent_subtype,
-                source_route: pending.source_route,
                 source_collection_id: pending.source_collection_id,
-                source_resource_slug: pending.source_resource_slug,
                 payload_version: 'lead_entry_browser_v1',
-            })
+            }
+            if (pending.posthog_source_context === true) {
+                properties.source_route = pending.source_route
+                properties.source_resource_slug = pending.source_resource_slug
+            }
+            window.posthog.capture('v3_lead_entry_registered', properties)
             return true
         } catch (error) {
             try {
@@ -906,6 +919,7 @@
                     track_key: pending.track_key,
                     intent_subtype: pending.intent_subtype,
                     source_route: pending.source_route,
+                    posthog_source_context: pending.posthog_source_context === true,
                     captured_at: Number(pending.captured_at || Date.now()),
                 }),
             )
@@ -1129,6 +1143,7 @@
                 source_resource_slug: context.source_resource_slug,
                 intent_subtype: context.intent_subtype,
                 track_key: context.track_key,
+                posthog_source_context: context.posthog_source_context,
                 properties: leadEntryProperties(),
                 captured_at: Date.now(),
             }
