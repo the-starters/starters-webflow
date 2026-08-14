@@ -1,7 +1,7 @@
 /**
  * Talent platform pages — the inbound half of the Starter funnel.
  *
- * @release vX.Y.Z
+ * @release v1.59.243
  *
  * ONE job: a signed-in Talent member whose Xano funnel is not finished is sent
  * forward with `location.replace()`, so a Starter who abandoned Build-profile
@@ -437,7 +437,7 @@
   window.StartersStarterProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/starter-profile-redirect.test.js drift guard asserts they match.
-    release: 'vX.Y.Z',
+    release: 'v1.59.243',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isGuardedPath: isGuardedPath,

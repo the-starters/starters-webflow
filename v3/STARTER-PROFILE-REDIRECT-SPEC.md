@@ -1,7 +1,6 @@
 # Starter Profile Redirect — Spec
 
-Status: **Built** in git (tickets 01–05). Ticket 06 (staging paste) is
-ready-for-human and is not this round.
+Status: **Tagged v1.59.243.** Ticket 06 (staging paste) is ready-for-human.
 
 Grill: 2026-08-14. Product decisions below are Jerico's. Mechanical defaults
 are called out at the end so they can still be vetoed.
