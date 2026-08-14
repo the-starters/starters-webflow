@@ -2,7 +2,7 @@
 /**
  * Logo Wall — attribute-driven looping tracks of CMS logos.
  *
- * @release v1.59.239
+ * @release v1.59.240
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. GSAP is assumed
  * as a page global (already on the V3 site). Without GSAP the tracks still
@@ -48,7 +48,7 @@
   if (window.__startersLogoWallInit) return;
   window.__startersLogoWallInit = true;
 
-  var RELEASE = 'v1.59.239';
+  var RELEASE = 'v1.59.240';
   window.__startersLogoWall = { release: RELEASE };
 
   var WRAPPER_SEL = '[data-logo-wall-element="wrapper"]';
@@ -162,7 +162,7 @@
   /**
    * A marquee needs every logo whatever part of the strip it currently sits in,
    * so none of them may be deferred. See whenImagesReady for what lazy loading
-   * did to arming before v1.59.239.
+   * did to arming before v1.59.240.
    */
   function forceEagerImages(root) {
     Array.prototype.forEach.call(root.querySelectorAll('img'), function (img) {
@@ -633,7 +633,7 @@
 
     // Must happen before the readiness count is taken: Webflow ships CMS images
     // lazy, and the logos parked outside the clip are how the wall never armed
-    // at all before v1.59.239.
+    // at all before v1.59.240.
     forceEagerImages(wrapper);
 
     // May run twice — an early arm on the timeout, then a corrective one when
