@@ -108,6 +108,27 @@ function getLearnContentTaxonomyApi() {
     )
 }
 
+function getLearnContentSearchConfigApi({ window, document }) {
+    const configSource = sliceSource(
+        resultsSource,
+        'function getLearnContentSearchConfig(',
+        'function getLearnContentFilterField(',
+    )
+
+    return vm.runInNewContext(
+        [
+            'function normalizeLearnContentValue(value) {',
+            "  return String(value || '').trim()",
+            '}',
+            "const learnContentDefaultAppId = ''",
+            "const learnContentDefaultIndexName = 'LearnContent'",
+            configSource,
+            'getLearnContentSearchConfig',
+        ].join('\n'),
+        { document, window },
+    )
+}
+
 function runMainSubcategoryRestore({ subcategoryItems, categoryInputs, savedSubcategoryIds }) {
     const getCheckboxInputSource = sliceSource(
         mainSource,
@@ -303,6 +324,55 @@ test('LearnContent filters preserve current categories without invented aliases'
             },
         ],
     )
+})
+
+test('managed Algolia keeps LearnContent on its independent shared credentials', () => {
+    const managedClient = {
+        getAttribute(name) {
+            return {
+                'data-app-id': 'TESTAPP',
+                'data-search-key': 'test-managed-key',
+            }[name]
+        },
+    }
+    const window = {
+        StartersV3AlgoliaEnvironment: {},
+        starterQuizAlgoliaConfig: {
+            appId: 'TESTAPP',
+            searchKey: 'test-managed-key',
+            indexName: 'Freelancers3.0-staging-test',
+        },
+        starterQuizLearnContentAlgoliaConfig: {
+            appId: 'SHAREDAPP',
+            searchKey: 'shared-learn-key',
+            indexName: 'LearnContent',
+        },
+    }
+    const document = {
+        querySelector(selector) {
+            if (selector === 'script[data-app-id][data-search-key]') {
+                return managedClient
+            }
+            return null
+        },
+    }
+    const learnContentSection = {
+        getAttribute(name) {
+            return name === 'wf-algolia-index' ? 'LearnContent' : null
+        },
+    }
+
+    const getLearnContentSearchConfig = getLearnContentSearchConfigApi({
+        document,
+        window,
+    })
+    const resolved = getLearnContentSearchConfig(learnContentSection)
+
+    assert.deepEqual({ ...resolved }, {
+        appId: 'SHAREDAPP',
+        searchKey: 'shared-learn-key',
+        indexName: 'LearnContent',
+    })
 })
 
 test('saved rename and merge aliases become canonical selections', () => {

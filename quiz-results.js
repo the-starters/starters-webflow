@@ -1038,16 +1038,19 @@
     }
 
     function getLearnContentSearchConfig(learnContentSection) {
+        const managedResolverActive = Boolean(
+            window.StartersV3AlgoliaEnvironment,
+        )
         const windowConfig =
             window.starterQuizLearnContentAlgoliaConfig ||
-            window.starterQuizAlgoliaConfig ||
+            (!managedResolverActive && window.starterQuizAlgoliaConfig) ||
             {}
         const explicitElement = document.querySelector(
             '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
         )
-        const wfAlgoliaScript = document.querySelector(
-            'script[data-app-id][data-search-key]',
-        )
+        const wfAlgoliaScript = managedResolverActive
+            ? null
+            : document.querySelector('script[data-app-id][data-search-key]')
 
         return {
             appId:

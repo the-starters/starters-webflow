@@ -24,6 +24,7 @@
   }
   var CLIENT_SELECTOR = 'script[data-starters-v3-algolia-client]'
   var RESOURCE_SELECTOR = '[data-starters-v3-algolia-resource]'
+  var LEARN_CONTENT_INDEX = 'LearnContent'
   var READY_EVENT = 'starters:algolia-environment-ready'
   var BLOCKED_EVENT = 'starters:algolia-environment-blocked'
   var activeResolution = null
@@ -106,6 +107,29 @@
     Array.prototype.forEach.call(elements || [], callback)
   }
 
+  function preserveSharedLearnContentConfig(documentObject) {
+    var existing = window.starterQuizLearnContentAlgoliaConfig || {}
+    if (clean(existing.appId) && clean(existing.searchKey)) {
+      return existing
+    }
+
+    var sharedClient = null
+    each(documentObject, CLIENT_SELECTOR, function (element) {
+      if (!sharedClient) sharedClient = element
+    })
+    var appId = clean(sharedClient && sharedClient.getAttribute('data-app-id'))
+    var searchKey = clean(sharedClient && sharedClient.getAttribute('data-search-key'))
+    if (!appId || !searchKey) return null
+
+    var preserved = {
+      appId: appId,
+      searchKey: searchKey,
+      indexName: LEARN_CONTENT_INDEX,
+    }
+    window.starterQuizLearnContentAlgoliaConfig = preserved
+    return preserved
+  }
+
   function block(documentObject, reason) {
     activeResolution = null
     each(documentObject, CLIENT_SELECTOR, function (element) {
@@ -182,6 +206,7 @@
   }
 
   function boot(config) {
+    preserveSharedLearnContentConfig(document)
     var resolution = resolve(window.location && window.location.hostname, config)
     if (!resolution.ok) {
       block(document, resolution.reason)
@@ -217,6 +242,7 @@
     boot: boot,
     environmentForHost: environmentForHost,
     getManagedSearchConfig: getManagedSearchConfig,
+    preserveSharedLearnContentConfig: preserveSharedLearnContentConfig,
     resolve: resolve,
     validateConfig: validateConfig,
   }

@@ -123,6 +123,11 @@ test('staging selects only TEST credentials and indexes', () => {
     indexName: 'Freelancers3.0-staging-test',
     environment: 'test',
   })
+  assert.deepEqual({ ...runtime.window.starterQuizLearnContentAlgoliaConfig }, {
+    appId: 'shared-app',
+    searchKey: 'shared-key',
+    indexName: 'LearnContent',
+  })
 })
 
 test('browser-controlled inputs cannot select the environment', () => {
@@ -169,6 +174,11 @@ test('unknown hosts remove existing Algolia access and indexes', () => {
   assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'blocked')
   assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'unknown_host')
   assert.equal(runtime.events.at(-1).name, 'starters:algolia-environment-blocked')
+  assert.deepEqual({ ...runtime.window.starterQuizLearnContentAlgoliaConfig }, {
+    appId: 'shared-app',
+    searchKey: 'shared-key',
+    indexName: 'LearnContent',
+  })
 })
 
 test('missing configuration fails closed on an approved host', () => {
@@ -212,4 +222,5 @@ test('unknown managed resources block the whole managed Algolia surface', () => 
 test('unmanaged Algolia sections are not changed', () => {
   const runtime = load()
   assert.equal(runtime.unmanaged.getAttribute('wf-algolia-index'), 'LearnContent')
+  assert.equal(runtime.window.starterQuizLearnContentAlgoliaConfig.searchKey, 'shared-key')
 })
