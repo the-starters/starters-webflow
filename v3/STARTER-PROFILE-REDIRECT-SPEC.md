@@ -1,7 +1,7 @@
 # Starter Profile Redirect — Spec
 
-Status: **Accepted.** Implementing tickets 01–05 (Jerico `/implement` 2026-08-14).
-Ticket 06 (staging paste) is ready-for-human and is not this round.
+Status: **Built** in git (tickets 01–05). Ticket 06 (staging paste) is
+ready-for-human and is not this round.
 
 Grill: 2026-08-14. Product decisions below are Jerico's. Mechanical defaults
 are called out at the end so they can still be vetoed.
@@ -161,11 +161,11 @@ Do not install this module on `/starter-onboarding` or `/build-profile/*`.
 - Does not replace `auth-route.js`'s login hop; it covers the arrivals login
   never sees.
 
-## Install (when built, not now)
+## Install (ticket 06 — Jerico pastes)
 
 One deferred page-level tag per in-scope page, **after** sitewide
 `route-guard.js`. `@latest` on staging, matching the Brand twin; pin at the
-deferred prod publish. Jerico pastes in Designer.
+deferred prod publish. Wiring owns the checklist.
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-profile-redirect.js"></script>

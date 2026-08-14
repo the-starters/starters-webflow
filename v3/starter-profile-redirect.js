@@ -138,6 +138,8 @@
     return /^\/opportunities\/[^/]+\/?$/.test(path)
   }
 
+  // STARTERS_DEBUG belongs here and not in stagingHost(): it may turn logging on
+  // in production, but it must never make the module run on an unapproved host.
   function diagnosticsEnabled() {
     if (window.STARTERS_DEBUG === true) return true
     return stagingHost((window.location && window.location.hostname) || '')
@@ -184,6 +186,8 @@
     }
   }
 
+  // Webflow ships hidden elements as an inline `display:none`, sometimes
+  // alongside the `hidden` attribute, so both are cleared.
   function showLoader() {
     var loader = findLoader()
     if (!loader) {
@@ -200,6 +204,9 @@
     return true
   }
 
+  // Back to the inline `display:none` Webflow authored it with. Silent when
+  // there is no element: showLoader() has already said so once, and this runs on
+  // every load.
   function hideLoader() {
     var loader = findLoader()
     if (!loader) return false
