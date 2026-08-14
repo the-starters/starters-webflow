@@ -103,14 +103,20 @@
       window.addEventListener('resize', handler)
     }
 
-    /** When the input lives in a modal, reparent the shared picker div so it isn't clipped. */
-    var moveTimepickerIntoModal = function ($, input) {
+    /**
+     * Position the shared picker against its input and keep it glued while
+     * scrolling/resizing. When the input lives in a modal, first reparent
+     * the picker div into that modal so it isn't clipped by the modal's own
+     * overflow — outside a modal the picker already lives in <body> (jQuery
+     * UI's default), so positioning/tracking runs the same way without a
+     * reparent.
+     */
+    var positionAndTrackPicker = function ($, input) {
       var $modal = $(input).closest(MODAL_SELECTOR)
       if (!$modal.length) $modal = $(input).closest('.modal_dialog')
-      if (!$modal.length) return
 
       setTimeout(function () {
-        $('#ui-datepicker-div').appendTo($modal)
+        if ($modal.length) $('#ui-datepicker-div').appendTo($modal)
         positionPicker(input)
         trackPicker(input)
       }, 0)
@@ -125,7 +131,7 @@
         stepHour: parseInt(getOpt(inputEl, 'step-hour', '1'), 10) || 1,
         stepMinute: parseInt(getOpt(inputEl, 'step', '5'), 10) || 5,
         beforeShow: function (input) {
-          moveTimepickerIntoModal($, input)
+          positionAndTrackPicker($, input)
         },
         onClose: function () {
           stopTracking()

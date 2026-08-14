@@ -82,24 +82,28 @@
       window.addEventListener('resize', handler)
     }
 
-    /** When the input lives in a modal, reparent the shared picker div so it isn't clipped. */
-    var moveDatepickerIntoModal = function ($, input) {
+    /**
+     * Position the shared picker against its input and keep it glued while
+     * scrolling/resizing. When the input lives in a modal, first reparent
+     * the picker div into that modal so it isn't clipped by the modal's own
+     * overflow. Outside a modal, move the picker back to <body> if a
+     * previous open left it parented inside some other (possibly hidden)
+     * modal, then position/track it the same way as the modal case — this
+     * isn't modal-only behavior.
+     */
+    var positionAndTrackPicker = function ($, input) {
       var $modal = $(input).closest(MODAL_SELECTOR)
       if (!$modal.length) $modal = $(input).closest('.modal_dialog')
 
       if (!$modal.length) {
-        // Not in a modal — if a previous open left the shared picker parented
-        // inside some modal, move it back before jQuery UI positions it,
-        // otherwise it renders relative to that (possibly hidden) modal.
         var dp = document.getElementById('ui-datepicker-div')
         if (dp && dp.parentNode !== document.body) {
           document.body.appendChild(dp)
         }
-        return
       }
 
       setTimeout(function () {
-        $('#ui-datepicker-div').appendTo($modal)
+        if ($modal.length) $('#ui-datepicker-div').appendTo($modal)
         positionPicker(input)
         trackPicker(input)
       }, 0)
@@ -111,7 +115,7 @@
         numberOfMonths: parseInt(getOpt(inputEl, 'months', '1'), 10) || 1,
         dateFormat: getOpt(inputEl, 'format', inputEl.dataset.format || 'mm/dd/yy'),
         beforeShow: function (input) {
-          moveDatepickerIntoModal($, input)
+          positionAndTrackPicker($, input)
         },
         onClose: function () {
           stopTracking()
