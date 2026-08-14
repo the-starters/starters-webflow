@@ -78,11 +78,17 @@ Renders the header at the top of the chatbox panel.
   outline-offset: 2px;
 }
 
+/* The 3.0 reskin block in GlobalCSS used to restate this selector with a 1px
+   bottom border. This component's copy comes later in the compiled sheet and
+   has the same specificity, so it won and the 1px never painted; the duplicate
+   is now gone and the value that was actually rendering lives here alone.
+   `background` rather than `background-color` keeps the shorthand's reset of
+   the other background longhands, which the GlobalCSS copy was performing. */
 .header {
   display: flex;
   align-items: center;
   height: 5.25rem;
-  background-color: #fff;
+  background: #fff;
   border-bottom: 2px solid #eee;
   flex-shrink: 0;
 }

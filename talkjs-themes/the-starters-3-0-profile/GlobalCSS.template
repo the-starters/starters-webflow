@@ -190,8 +190,9 @@ html, body, .talkjs, button, input, textarea {
 }
 .NoChatsScreen__no-chats p { color: var(--ts-olive); }
 
-/* chat header */
-.ChatHeader__header { background: #fff; border-bottom: 1px solid var(--ts-silver); }
+/* chat header — the .ChatHeader__header rule that used to sit here was dead
+   (ChatHeader.template restates the selector later in the sheet and won); its
+   surviving values now live in that component. */
 .ChatHeader__title { font-weight: 600; font-size: 15px; color: var(--ts-black-olive); }
 .ChatHeader__subtitle { font-size: 13px; color: var(--ts-olive); }
 

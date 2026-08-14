@@ -56,6 +56,27 @@ This is a subcomponent used by UserMessage and SystemMessage.
     padding: 0.25rem .5rem;
     white-space: pre-wrap;
 }
+
+/* Chat bubbles (UserMessage passes floatTimestamp="auto") pin the timestamp and
+   ticks to the bubble's bottom-right corner rather than floating them to
+   wherever the last line of text happens to leave off. The bottom padding
+   reserves the band the timestamp sits in, so text can never run under it on a
+   short, wrapped or grouped message; the min-width keeps a very short message
+   wide enough to hold the timestamp, which no longer widens the bubble itself
+   now that it is out of flow. System messages pass "right" and are untouched. */
+.text.timestamp-float-auto {
+    position: relative;
+    padding-bottom: 1.25rem;
+    min-width: 5rem;
+}
+.text.timestamp-float-auto > .timestamp-float {
+    position: absolute;
+    right: 0.5rem;
+    bottom: 0.25rem;
+    float: none;
+    margin: 0;
+    line-height: 1;
+}
 .text a {
     color: currentColor;
 }
