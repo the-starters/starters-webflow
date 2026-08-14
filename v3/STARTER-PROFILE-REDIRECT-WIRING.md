@@ -1,11 +1,10 @@
 # Starter Profile Redirect Wiring
 
-Status: Built in git, not yet released — no tag, no Webflow embed. `@release`
-and the exported `release` property carry `vX.Y.Z` until the tag stamps them.
+Status: Tagged **v1.59.243**. No Webflow embed yet — ticket 06 is the paste.
 Tickets: `.scratch/starter-profile-redirect/issues/`. Spec:
 [STARTER-PROFILE-REDIRECT-SPEC.md](STARTER-PROFILE-REDIRECT-SPEC.md).
 The Layer 3 funnel map lives in workspace-root `REDIRECT-STRATEGIES.md` (outside
-this git repo by design; already updated to BUILT, not yet embedded).
+this git repo by design; already updated for the v1.59.243 tag, not yet embedded).
 
 `v3/starter-profile-redirect.js` is the inbound half of the Talent funnel. A
 signed-in Talent whose Xano funnel is unfinished is sent forward with
@@ -94,6 +93,6 @@ Prefix: `[starters starter-profile-redirect]`. Staging is chatty, production sil
 
 - `node --test v3/starter-profile-redirect.test.js`
 - `node --check v3/starter-profile-redirect.js`
-- Stamp the real tag into both `@release` and `release`.
+- Header and export stamped **v1.59.243**.
 - Walk QA, do not skip step 5.
 - Ticket 06 is the paste + headed QA; this file does not ship the embeds.
