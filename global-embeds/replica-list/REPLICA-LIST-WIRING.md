@@ -86,8 +86,13 @@ These rules are approved and apply to every curated list.
    rename is a Designer change on every page that uses it.
 2. **Standard replicas, not virtual.** Curated ranking is the point, and a
    standard replica owns its own ranking rules and custom ranking outright.
-3. **One source index.** All curated replicas hang off `Freelancers3.0-dev`, so
-   every list is drawing from the same records the rest of the site indexes.
+3. **Legacy-only source.** Existing curated replicas hang off
+   `Freelancers3.0-dev`. They are not approved resources for the V3
+   host-resolved Algolia client and must not share a page with
+   `v3/algolia-environment.js`; that resolver intentionally blocks unexpected
+   indexes. See
+   [`v3/ALGOLIA-ENVIRONMENT-WIRING.md`](../../v3/ALGOLIA-ENVIRONMENT-WIRING.md)
+   for its exact resource contract.
 4. **Curation happens in the Algolia dashboard.** Jerico owns the ranking. No
    ordering logic lives in Webflow or in this repo.
 5. **Ranking only, not filtering.** A replica reorders the same records the
@@ -106,8 +111,9 @@ curl -sS -X POST "https://PKVW6M9OPZ-dsn.algolia.net/1/indexes/top-consultants/q
 ```
 
 A healthy replica returns `nbHits` plus the first hits in curated order. The
-app id and key above are the site's public search-only credentials, the same
-pair served in every page's HTML.
+app id and key above are the legacy public search-only credentials for these
+curated replicas; the V3 host-resolved client uses separate TEST and production
+keys.
 
 ## Relayout companion
 
