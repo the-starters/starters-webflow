@@ -112,6 +112,7 @@ async function runController({
     waitUntil,
     tradeTokenResponse = { authToken: 'xano-token' },
     algoliaHits = null,
+    learnSelection = null,
     enableDiagnostics = false,
 }) {
     const documentListeners = new Map()
@@ -197,6 +198,7 @@ async function runController({
             searchKey: 'test-search-key',
             indexName: 'test-index',
         },
+        __starterQuizLeadDripLearnSelection: learnSelection,
     }
     window.Date = Date
     window.crypto = {
@@ -281,6 +283,30 @@ test('completed quiz posts current matches with safe email properties', async ()
         'https://thestarters.com/learn?source=quiz-results-email',
     )
     evidence.completed_quiz_enrollment = payload
+})
+
+test('email payload rewrites the legacy interview path to the live V3 CMS route', async () => {
+    const storage = createStorage(
+        completedQuiz({ memberstackSavedAt: '2026-08-11T04:01:00.000Z' }),
+    )
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        learnSelection: {
+            name: 'Paid Social 101: A Guide to Growing E-Commerce Brands',
+            url: '/learn/interviews/paid-social-101-a-guide-to-growing-e-commerce-brands',
+        },
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.learn_count, '1')
+    assert.equal(
+        payload.properties.learn_url,
+        'https://thestarters.com/learn/interviews-analyses/paid-social-101-a-guide-to-growing-e-commerce-brands',
+    )
 })
 
 test('email payload maps three canonical Algolia profile photos for enrollment', async () => {

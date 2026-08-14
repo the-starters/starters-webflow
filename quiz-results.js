@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.238
+ * @release v1.59.245
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -280,6 +280,22 @@
         }
     }
 
+    function getQuizLeadDripLearnUrl(value) {
+        const normalizedUrl = getQuizLeadDripUrl(value, '/learn/')
+        if (!normalizedUrl) return ''
+
+        const url = new URL(normalizedUrl)
+        const legacyInterviewPrefix = '/learn/interviews/'
+        if (url.pathname.startsWith(legacyInterviewPrefix)) {
+            url.pathname = url.pathname.replace(
+                legacyInterviewPrefix,
+                '/learn/interviews-analyses/',
+            )
+        }
+
+        return url.toString()
+    }
+
     function normalizeQuizLeadDripStarter(record) {
         const slug = normalizeQuizLeadDripText(
             getQuizLeadDripValue(record, [
@@ -412,10 +428,9 @@
             getQuizLeadDripValue(hit, ['slug', 'objectID']),
             160,
         )
-        const url = getQuizLeadDripUrl(
+        const url = getQuizLeadDripLearnUrl(
             getQuizLeadDripValue(hit, ['url', 'link']) ||
                 (slug ? `/learn/${encodeURIComponent(slug)}` : ''),
-            '/learn/',
         )
         const title = normalizeQuizLeadDripText(
             getQuizLeadDripValue(hit, ['name', 'title']),
