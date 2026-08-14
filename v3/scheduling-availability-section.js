@@ -20,9 +20,10 @@
   // before capturing the callback when this section's root is present, to
   // avoid both scripts racing to redeem the same one-time code.
   //
-  // Real result popups (create/edit/remove/connect/disconnect) are
-  // deliberately deferred — every action logs its outcome to the console
-  // instead.
+  // Save/remove/connect/disconnect results surface through the shared
+  // "Availability - Notifications" modal (`[data-modal-target=
+  // "availability-notification"]`) — see the "Notification modal" section
+  // below. Every action also still logs its outcome to the console.
 
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const STAGING_OAUTH_PATH = '/starter-dashboard---availability-stage'
@@ -52,6 +53,23 @@
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
 
+  // Shared "Availability - Notifications" modal (`[data-modal-target=
+  // "availability-notification"]`), driven by global-embeds/modal/modal.js.
+  // One instance covers every open-*/confirm action below by switching which
+  // `[notification-type]` step is visible before/while opening it.
+  const NOTIFICATION_ATTR = 'notification-type'
+  const NOTIFICATION_MODAL_ID = 'availability-notification'
+  const ERROR_TEXT_ITEM_SAVE =
+    "We couldn't save this availability window. Please try again or contact support."
+  const ERROR_TEXT_ITEM_REMOVE =
+    "We couldn't remove this availability window. Please try again or contact support."
+  const ERROR_TEXT_CONNECT_PLATFORM =
+    "We couldn't connect your platform calendar. Please try again or contact support."
+  const ERROR_TEXT_CONNECT_GOOGLE =
+    "We couldn't connect your Google calendar. Please try again or contact support."
+  const ERROR_TEXT_DISCONNECT_GOOGLE =
+    "We couldn't disconnect your Google calendar. Please try again or contact support."
+
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
   const isStagingHost = window.location.hostname === STAGING_HOST
   const isApprovedProductionPath =
@@ -73,6 +91,9 @@
   let connectBusy = false
   let cachedItemTemplate = null
   let creatingDraft = false
+  // Set by the per-item "open-item-remove" trigger, consumed by the
+  // notification modal's "item-remove" confirm button.
+  let pendingRemoveId = null
   const oauthCallback = captureOAuthCallback()
 
   /* ------------------------------------------------------------------ */
@@ -893,9 +914,11 @@
       renderAvailabilityItems()
       renderSlotsPreview()
       console.log('[scheduling-section] connected to platform calendar')
+      return true
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] connect-platform failed:', error && error.message)
+      return false
     } finally {
       connectBusy = false
       setRequestBusy(false)
@@ -931,11 +954,13 @@
       await handlePreRedirect()
       // On success handlePreRedirect navigates away, so connectBusy is
       // intentionally left set; a fresh page load resets module state.
+      return true
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] connect-google failed:', error && error.message)
       connectBusy = false
       setRequestBusy(false)
+      return false
     }
   }
 
@@ -970,9 +995,11 @@
       renderAvailabilityItems()
       renderSlotsPreview()
       console.log('[scheduling-section] disconnected Google Calendar, reverted to platform')
+      return true
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] disconnect-google failed:', error && error.message)
+      return false
     } finally {
       connectBusy = false
       setRequestBusy(false)
@@ -1049,6 +1076,115 @@
       if (error && error.code === 'OAUTH_CALLBACK_INVALID') clearOAuthCallback()
       console.warn('[scheduling-section] OAuth grant save failed:', error && error.message)
     }
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Notification modal (Availability - Notifications)                   */
+  /* ------------------------------------------------------------------ */
+
+  // Cached like cachedItemTemplate elsewhere in this file — cheap to
+  // re-query on the rare miss, permanent once found.
+  let cachedNotificationModal = null
+  function notificationModal() {
+    if (!cachedNotificationModal) {
+      cachedNotificationModal = qs('[data-modal-target="' + NOTIFICATION_MODAL_ID + '"]')
+    }
+    return cachedNotificationModal
+  }
+
+  // Hides every `[notification-type]` step except the one matching `type`.
+  // Calling with a value that matches nothing (e.g. undefined) hides all of
+  // them — used at bind time so a stray/URL-triggered modal.js auto-open
+  // (`?modal-id=availability-notification`) never shows every step stacked.
+  function switchNotification(type) {
+    qsa('[' + NOTIFICATION_ATTR + ']', notificationModal()).forEach(function (el) {
+      el.style.display = el.getAttribute(NOTIFICATION_ATTR) === type ? '' : 'none'
+    })
+  }
+
+  function openNotification(type) {
+    switchNotification(type)
+    if (window.lumos && window.lumos.modal) window.lumos.modal.open(NOTIFICATION_MODAL_ID)
+  }
+
+  // Also used for failures discovered before any open-* trigger ran in this
+  // page load (e.g. consumeOAuthCallback on the post-redirect return), where
+  // the modal isn't open yet — `dialog.open` is the live, browser-maintained
+  // flag for that, so this only calls modal.open() when it's actually
+  // needed (calling showModal() on an already-open <dialog> throws).
+  function showNotificationError(text) {
+    const modal = notificationModal()
+    const errorEl = modal && qs('[error-text-element]', modal)
+    if (errorEl) errorEl.textContent = text
+    switchNotification('request-error')
+    if (modal && !modal.open && window.lumos && window.lumos.modal) {
+      window.lumos.modal.open(NOTIFICATION_MODAL_ID)
+    }
+  }
+
+  // Disables the whole Close/confirm button row (not just the clicked
+  // button) so a member can't dismiss the modal mid-request while a
+  // remove/disconnect call is in flight — mirrors setRequestBusy's
+  // pointer-events/opacity toggle elsewhere in this file.
+  function setNotificationBusy(target, busy) {
+    const group = target && target.closest('.call-sched_button-group')
+    if (!group) return
+    group.style.pointerEvents = busy ? 'none' : ''
+    group.style.opacity = busy ? '0.6' : ''
+  }
+
+  // Binds every `[data-availability-action]` element living inside the
+  // shared notification modal — the open-* triggers live elsewhere
+  // (bindConnectButtons/bindItemActions) and only call openNotification();
+  // this handles the confirm/continue actions that live inside the modal
+  // itself and actually run the underlying request.
+  function bindNotificationModalActions() {
+    const modal = notificationModal()
+    if (!modal) return
+    switchNotification(undefined)
+    qsa('[' + ACTION + ']', modal).forEach(function (target) {
+      const action = target.getAttribute(ACTION)
+      target.addEventListener('click', function (e) {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault()
+        if (action === 'connect-google') {
+          // Confirmed switching from platform — continue into the same
+          // pre-oauth step a fresh connect would show.
+          switchNotification('pre-oauth')
+        } else if (action === 'open-oauth-redirect') {
+          switchNotification('oauth-redirect')
+          activateGoogleManager().then(function (ok) {
+            if (ok === false) showNotificationError(ERROR_TEXT_CONNECT_GOOGLE)
+          })
+        } else if (action === 'disconnect-google') {
+          setNotificationBusy(target, true)
+          disconnectGoogleManager()
+            .then(function (ok) {
+              if (ok) switchNotification('calendar-disconnected')
+              else showNotificationError(ERROR_TEXT_DISCONNECT_GOOGLE)
+            })
+            .finally(function () {
+              setNotificationBusy(target, false)
+            })
+        } else if (action === 'item-remove') {
+          if (!pendingRemoveId) return
+          const id = pendingRemoveId
+          setNotificationBusy(target, true)
+          handleAvailabilityRemove(id)
+            .then(function (ok) {
+              if (!ok) {
+                showNotificationError(ERROR_TEXT_ITEM_REMOVE)
+                return
+              }
+              pendingRemoveId = null
+              switchNotification('availability-removed')
+              return renderSlotsPreview()
+            })
+            .finally(function () {
+              setNotificationBusy(target, false)
+            })
+        }
+      })
+    })
   }
 
   /* ------------------------------------------------------------------ */
@@ -1133,8 +1269,8 @@
     const onGoogle = manager === 'calendar'
     const rules = [
       ['connect-platform', manager !== 'platform' && !onGoogle],
-      ['connect-google', !onGoogle],
-      ['disconnect-google', onGoogle],
+      ['open-connect-google', !onGoogle],
+      ['open-disconnect-google', onGoogle],
     ]
     rules.forEach(function (rule, i) {
       const target = resolveActionTarget(wrapper, rule[0], i)
@@ -1172,10 +1308,22 @@
 
   function bindConnectButtons() {
     const wrapper = qs(elSel('connect-btn-wrapper'))
-    bindActionGroup(wrapper, ['connect-platform', 'connect-google', 'disconnect-google'], function (action) {
-      if (action === 'connect-platform') activatePlatformManager()
-      else if (action === 'connect-google') activateGoogleManager()
-      else if (action === 'disconnect-google') disconnectGoogleManager()
+    bindActionGroup(wrapper, ['connect-platform', 'open-connect-google', 'open-disconnect-google'], function (action) {
+      if (action === 'connect-platform') {
+        // No confirmation step for platform — open straight on the spinner
+        // and let the request itself decide success/error.
+        openNotification('virtual-connect')
+        activatePlatformManager().then(function (ok) {
+          if (ok === false) showNotificationError(ERROR_TEXT_CONNECT_PLATFORM)
+          else if (ok) switchNotification('virtual-connected')
+        })
+      } else if (action === 'open-connect-google') {
+        // Switching away from platform cancels active bookings — warn first.
+        // Starting from disconnected skips straight to the informational step.
+        openNotification(availability && availability.manager === 'platform' ? 'switch-calendar' : 'pre-oauth')
+      } else if (action === 'open-disconnect-google') {
+        openNotification('disconnect-calendar')
+      }
     })
   }
 
@@ -1244,7 +1392,7 @@
     if (!buttonGroup) return
     buttonGroup.style.display = ''
     const editBtn = resolveActionTarget(buttonGroup, 'item-form-open', 0)
-    const removeBtn = resolveActionTarget(buttonGroup, 'item-remove', 1)
+    const removeBtn = resolveActionTarget(buttonGroup, 'open-item-remove', 1)
     if (editBtn) editBtn.style.display = ''
     if (removeBtn) removeBtn.style.display = id === 'general' ? 'none' : ''
   }
@@ -1309,19 +1457,6 @@
   // `[loading-hide]` (the default icon) hides — while the whole item-card
   // (not just the button) dims and stops accepting clicks until the
   // save/remove request settles either way.
-  // Drives the item-remove button's own pending-state markup — swaps
-  // `[text-element]` to "Removing...", and dims/disables the whole
-  // item-card until the removal request settles either way.
-  function setItemRemoveLoading(card, target, loading) {
-    if (!target) return
-    const textEl = qs('[text-element]', target)
-    if (textEl) textEl.textContent = loading ? 'Removing...' : 'Remove'
-    if (card) {
-      card.style.opacity = loading ? '0.6' : '1'
-      card.style.pointerEvents = loading ? 'none' : 'auto'
-    }
-  }
-
   function setItemSubmitLoading(card, target, loading) {
     if (!target) return
     const textEl = qs('[text-element]', target)
@@ -1338,21 +1473,16 @@
 
   function bindItemActions(card, id) {
     const buttonGroup = qs(elSel('item-button-group'), card)
-    bindActionGroup(buttonGroup, ['item-form-open', 'item-remove'], function (action, target) {
+    bindActionGroup(buttonGroup, ['item-form-open', 'open-item-remove'], function (action) {
       if (action === 'item-form-open') {
         // Opening/closing the form is a pure UI toggle — it doesn't change
         // availability data, so it must not disturb the slots preview.
         toggleItemForm(card, id)
-      } else if (action === 'item-remove') {
-        // Wait for the mutation to actually land before refreshing slots —
-        // firing them concurrently could render a slots list computed from
-        // the availability that's about to be replaced.
-        setItemRemoveLoading(card, target, true)
-        handleAvailabilityRemove(card, id)
-          .then(renderSlotsPreview)
-          .finally(function () {
-            setItemRemoveLoading(card, target, false)
-          })
+      } else if (action === 'open-item-remove') {
+        // Confirmation happens in the notification modal's "item-remove"
+        // button — see bindNotificationModalActions.
+        pendingRemoveId = id
+        openNotification('availability-remove-approve')
       }
     })
 
@@ -1526,7 +1656,7 @@
     const targets = []
     const connectWrapper = qs(elSel('connect-btn-wrapper'))
     if (connectWrapper) {
-      ;['connect-platform', 'connect-google', 'disconnect-google'].forEach(function (action, i) {
+      ;['connect-platform', 'open-connect-google', 'open-disconnect-google'].forEach(function (action, i) {
         const target = resolveActionTarget(connectWrapper, action, i)
         if (target) targets.push(target)
       })
@@ -1535,7 +1665,7 @@
       const buttonGroup = qs(elSel('item-button-group'), card)
       if (buttonGroup) {
         const editBtn = resolveActionTarget(buttonGroup, 'item-form-open', 0)
-        const removeBtn = resolveActionTarget(buttonGroup, 'item-remove', 1)
+        const removeBtn = resolveActionTarget(buttonGroup, 'open-item-remove', 1)
         if (editBtn) targets.push(editBtn)
         if (removeBtn) targets.push(removeBtn)
       }
@@ -1627,22 +1757,24 @@
       await refreshCanonicalConnectionState()
       renderAvailabilityItems()
       console.log('[scheduling-section] availability saved', { id: availId, avail: avail })
+      openNotification('availability-saved')
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability save failed:', error && error.message)
+      showNotificationError(ERROR_TEXT_ITEM_SAVE)
     } finally {
       setRequestBusy(false)
     }
   }
 
-  async function handleAvailabilityRemove(card, id) {
+  async function handleAvailabilityRemove(id) {
     if (id === 'general') {
       console.warn('[scheduling-section] cannot remove the general availability window')
-      return
+      return false
     }
     const removed = availability.items[id]
     const general = availability.items.general
-    if (!removed || !general) return
+    if (!removed || !general) return false
     removed.days.forEach(function (day) {
       if (general.defaultDays && general.defaultDays.indexOf(day) > -1) {
         general.days.push(day)
@@ -1661,9 +1793,11 @@
       await refreshCanonicalConnectionState()
       renderAvailabilityItems()
       console.log('[scheduling-section] availability removed', { id: id })
+      return true
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability remove failed:', error && error.message)
+      return false
     } finally {
       setRequestBusy(false)
     }
@@ -1852,6 +1986,7 @@
       }
 
       bindConnectButtons()
+      bindNotificationModalActions()
       bindCreateTrigger()
       renderAvailabilityItems()
 
