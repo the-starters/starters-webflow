@@ -73,7 +73,7 @@ one route-level rule that page needs.
 | `/opportunities-freelancer-view` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
 | `/opportunities/<slug>` | Default quiz home | Allow | Allow | Free Brand is not allowed |
 | `/opportunities---create` | Default quiz home | Allow | Default `/starter-dashboard` | Paid Brand only |
-| `/starter-dashboard` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
+| `/starter-dashboard` | Default quiz home | Default `/brand-dashboard` | Allow, subject to the starter-profile funnel check below | Talent only; unfinished Talent is bounced to Build-profile or onboarding by `v3/starter-profile-redirect.js` (page-scoped), not this guard |
 | `/starter-edit-profile` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only |
 | `/generate-invoice` and `/generate-invoice/` | Default quiz home | Default `/brand-dashboard` | Allow | Talent only; both slash forms are guarded and are allowed Talent `next` destinations |
 | `/complete-profile` and `/complete-profile/` | Default quiz home | Stay until Xano reports `has_record === true` **and** `brand_profile_done === true`, then `/brand-dashboard`; the durable-submit session marker is a separate fast path | `/starter-dashboard` | Outside `route-guard.js` since 2026-08-03; Memberstack `restrict-pages` owns access (must be "All Members"), and `v3/complete-profile-redirect.js` owns all three role columns without a `/login` hop — see both notes below |
@@ -265,6 +265,15 @@ one route-level rule that page needs.
 > to `/build-profile/select-profile` at login and keeps them there on page entry.
 > Note that `onboarding_done` is true on zero rows today, so the
 > `/starter-dashboard` leg of both checks is unexercised by production data.
+>
+> **Starter-dashboard funnel (added 2026-08-14):** `v3/starter-profile-redirect.js`
+> replays that same `get_build_profile_status` table on page entry for the
+> Brand-twin lock net (`/starter-dashboard`, `/brand-dashboard`, `/opportunities`
+> plus detail slugs, `/all-starters`, `/messages`, `/dashboard`). Unfinished
+> Talent is sent to `/build-profile/select-profile` or `/starter-onboarding`;
+> finished Talent, Brand, unmapped, logged-out, and every failure stay. Role is
+> resolved from this guard's exported `memberRole` **before** any Xano call, so a
+> Brand is never shipped to a Talent form. There is no sessionStorage marker.
 
 > **Merged-feed plan hydration (updated 2026-07-28):** On `/opportunities` and
 > `/opportunities/`, `route-guard.js` immediately allows a mapped Talent or
