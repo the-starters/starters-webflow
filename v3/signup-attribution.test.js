@@ -8,7 +8,7 @@ const source = fs.readFileSync(require.resolve('./signup-attribution.js'), 'utf8
 const readme = fs.readFileSync(path.join(__dirname, 'README.md'), 'utf8')
 const header = source.slice(0, source.indexOf('*/') + 2)
 
-const RELEASE = 'v1.59.231'
+const RELEASE = 'v1.59.232'
 const PENDING_SAVE_FLAG = 'startersAttributionPendingSave'
 const PENDING_FIELDS_KEY = 'startersAttributionPendingFields'
 const FIRED_FLAG = 'startersCompleteRegistrationFired'
@@ -1018,7 +1018,9 @@ test('each production Hire CTA registers the correct Booking or Connect lead ent
                 properties: {
                     track_key: trackKey,
                     intent_subtype: intentSubtype,
+                    source_route: '/hire/thebrianchung',
                     source_collection_id: '69f241ec147b71addb6f1531',
+                    source_resource_slug: 'thebrianchung',
                     payload_version: 'lead_entry_browser_v1',
                 },
             },
@@ -1139,7 +1141,9 @@ test('a real production CMS signup registers one authenticated V3 lead entry', a
             properties: {
                 track_key: 'collection',
                 intent_subtype: 'collection_signup',
+                source_route: '/skills/growth-marketing',
                 source_collection_id: '69cccee53fd01363c8d406f3',
+                source_resource_slug: 'growth-marketing',
                 payload_version: 'lead_entry_browser_v1',
             },
         },
@@ -1184,7 +1188,9 @@ test('an accepted lead entry retries PostHog after the real SDK loads', async ()
             properties: {
                 track_key: 'collection',
                 intent_subtype: 'collection_signup',
+                source_route: '/skills/growth-marketing',
                 source_collection_id: '69cccee53fd01363c8d406f3',
+                source_resource_slug: 'growth-marketing',
                 payload_version: 'lead_entry_browser_v1',
             },
         },
@@ -1265,7 +1271,9 @@ test('the same-page retry captures once when PostHog finishes loading', async ()
             properties: {
                 track_key: 'learn_ungated',
                 intent_subtype: 'learn_signup',
+                source_route: '/learn/interviews-analyses/operator-story',
                 source_collection_id: '69dca9df095d2fbcf34e255b',
+                source_resource_slug: 'operator-story',
                 payload_version: 'lead_entry_browser_v1',
             },
         },

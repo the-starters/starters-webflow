@@ -1,7 +1,7 @@
 /**
  * Sitewide UTM and Meta ad attribution capture.
  *
- * @release v1.59.231
+ * @release v1.59.232
  *
  * Loaded site-wide with `defer` (Webflow site-wide custom code) rather than on
  * one funnel, which is why it lives here in `v3/` alongside the other standalone
@@ -214,7 +214,7 @@
     if (window.__startersAttributionBooted) return
     window.__startersAttributionBooted = true
 
-    var RELEASE = 'v1.59.231'
+    var RELEASE = 'v1.59.232'
     var LOG_PREFIX = '[starters attribution]'
 
     var COOKIE_TTL_HOURS = 72
@@ -869,7 +869,9 @@
             window.posthog.capture('v3_lead_entry_registered', {
                 track_key: pending.track_key,
                 intent_subtype: pending.intent_subtype,
+                source_route: pending.source_route,
                 source_collection_id: pending.source_collection_id,
+                source_resource_slug: pending.source_resource_slug,
                 payload_version: 'lead_entry_browser_v1',
             })
             return true
