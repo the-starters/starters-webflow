@@ -489,6 +489,36 @@ boolean `build_profile_done`, or a browser without `fetch` all leave the page
 exactly as authored. It needs three page-level embeds installed after the guard;
 see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md).
 
+## Starter profile redirect
+
+`starter-profile-redirect.js` is the Talent twin of `brand-profile-redirect.js`:
+the inbound half that keeps an unfinished Starter off the platform when they
+reach it from a bookmark, the back button, nav, or a stale link rather than a
+fresh login. It sits on the same six-page net as the Brand twin
+(`/starter-dashboard`, `/brand-dashboard`, `/opportunities` plus detail slugs,
+`/all-starters`, `/messages`, `/dashboard`) and replays `auth-route.js`'s Talent
+funnel table from Xano `get_build_profile_status`: `build_profile_done` false
+goes to `/build-profile/select-profile`; done but `onboarding_done` not true
+goes to `/starter-onboarding`; both done, any ambiguity, or any failure stays
+(fail-open).
+
+The role comes from the sitewide route guard's exported contract, resolved
+**before any Xano call**. Brand / unmapped / logged-out cost zero network.
+There is no sessionStorage marker — a failed onboarding PATCH bounces the
+member back to onboarding to resubmit. Flash of dashboard-before-redirect is
+accepted until Designer adds `[data-page-spinner]`; the script picks that
+element up with no code change.
+
+It needs six page-level embeds installed after the guard; see
+[STARTER-PROFILE-REDIRECT-WIRING.md](STARTER-PROFILE-REDIRECT-WIRING.md). Ticket
+06 is the paste + headed QA.
+
+Run its focused test with:
+
+```sh
+node --test v3/starter-profile-redirect.test.js
+```
+
 ## Signup redirect marker
 
 `starters-ms-redirect.js` lets a signup modal redirect back to the page it was

@@ -113,6 +113,7 @@ test('pointer-style inventory entries retain an owner-document link', () => {
     'v3/build-profile-redirect.js',
     'v3/complete-profile-redirect.js',
     'v3/brand-profile-redirect.js',
+    'v3/starter-profile-redirect.js',
     'v3/complete-profile-back.js',
     'account-settings/plan-dates.js',
     'v3/xano-grabber/xano-grabber.js',
