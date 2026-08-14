@@ -2436,11 +2436,17 @@ authored section, use
 `data-reviews-v3-average` and `data-reviews-v3-count` for the aggregate values
 for the optional aggregate projections. For the profile summary outside the
 Reviews section, use `data-reviews-v3-summary-average` and
-`data-reviews-v3-summary-count`. The adapter paints both surfaces from the same
-Xano result, including zero values. The existing `#rating` plus adjacent count
-span remains a temporary compatibility target for the current Hire template;
-new markup must use the explicit data attributes. The Xano response is the
-authority and must expose only approved reviews. Its canonical envelope is:
+`data-reviews-v3-summary-count`, and mark their shared row with
+`data-reviews-v3-summary-block`. The adapter paints both surfaces from the same
+Xano result. A positive approved review count shows the summary row and formats
+the average with one decimal, including whole-number averages such as `5.0`.
+A zero count paints the zero values, then hides the summary row. The existing
+`#rating` plus adjacent count span remains a temporary compatibility target for
+the current Hire template. Its published `.profile-hero_card-progress` ancestor
+is also a temporary summary-row fallback until Designer publishes the canonical
+data attributes. New markup must use the explicit data attributes. The Xano
+response is the authority and must expose only approved reviews. Its canonical
+envelope is:
 
 ```json
 {
