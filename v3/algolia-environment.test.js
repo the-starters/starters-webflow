@@ -229,7 +229,11 @@ for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
 }
 
 test('unknown hosts fail closed while leaving unmanaged index markup unchanged', () => {
-  const runtime = load({ hostname: 'preview.example.com' })
+  const runtime = load({
+    hostname: 'preview.example.com',
+    requestedEnvironment: 'production',
+  })
+  assert.equal(runtime.window.__startersV3AlgoliaEnvironment, '')
   assert.equal(runtime.client.getAttribute('data-app-id'), null)
   assert.equal(runtime.client.getAttribute('data-search-key'), null)
   assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)

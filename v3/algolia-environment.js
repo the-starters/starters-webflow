@@ -5,15 +5,17 @@
  *
  * Load this deferred script before the deferred wf-algolia bundle. Load a
  * GitHub-owned public configuration first as window.__startersV3AlgoliaConfig.
- * The resolver changes only elements with the explicit V3 attributes below:
+ * The resolver configures elements with the explicit V3 attributes below:
  *
  * - script[data-starters-v3-algolia-client]
  * - [data-starters-v3-algolia-resource="starters"]
  * - [data-starters-v3-algolia-resource="opportunities"]
  * - [wf-algolia-sort-index]
  *
- * Unknown hosts, missing configuration, shared search keys, shared indexes,
- * and legacy dev index names fail closed before wf-algolia can start.
+ * It also rejects and strips competing credentialed clients and unexpected
+ * index resources. Unknown hosts, missing configuration, shared search keys,
+ * shared indexes, and legacy dev index names fail closed before wf-algolia can
+ * start.
  */
 ;(function () {
   'use strict'
@@ -194,6 +196,7 @@
 
   function block(documentObject, reason) {
     activeResolution = null
+    window.__startersV3AlgoliaEnvironment = ''
     each(documentObject, CLIENT_SELECTOR, function (element) {
       element.removeAttribute('data-app-id')
       element.removeAttribute('data-search-key')

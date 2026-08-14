@@ -1,6 +1,6 @@
 # V3 Algolia environment wiring
 
-Status: Prepared, not released
+Status: Prepared for GitHub source release; not installed in Webflow
 
 `v3/algolia-environment.js` must load before the deferred wf-algolia bundle and
 `quiz-results.js`. It selects public search credentials and primary indexes
@@ -102,7 +102,12 @@ Managed quiz code reads the exact `LearnContent` index through
 `getSharedSearchConfig('learnContent')`; it does not accept a legacy window or
 DOM override while the resolver is active.
 
-## Release prerequisites
+## Webflow installation prerequisites
+
+The GitHub-backed source can be merged, tagged, and served through jsDelivr
+before these prerequisites are complete. Do not install the resolver in
+Webflow or run environment canaries until the restricted keys and matching
+Xano routes are published.
 
 - Create `opportunities_v3_test`, `Freelancers3.0-production`,
   `opportunities_v3_production`, and the five environment-specific Starter
@@ -118,10 +123,12 @@ DOM override while the resolver is active.
   readback passes.
 - Reindex the exact TEST and production cohorts separately. Reconcile stable-ID
   digests and stop on the first cross-environment record.
-- Merge, tag, purge jsDelivr, install the resolver before wf-algolia, publish
-  staging first, and verify loaded bytes and runtime attributes.
+- After the GitHub source release, purge jsDelivr and verify the served source
+  bytes. Then install the resolver before wf-algolia, publish staging first,
+  and verify loaded bytes and runtime attributes.
 
 Unknown hosts, missing values, an unknown managed resource, shared keys, shared
-indexes, and legacy dev indexes remove the client credentials and managed index
-attributes. On approved hosts, the unmarked `LearnContent` index and its UI stay
-unchanged while the host-owned key supplies its search-only access.
+indexes, and legacy dev indexes remove all client credentials and all
+non-shared index attributes. On approved hosts, the unmarked `LearnContent`
+index and its UI stay unchanged while the host-owned key supplies its
+search-only access.

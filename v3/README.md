@@ -155,12 +155,13 @@ consult/full-profile pair, inactive steps) cannot silently block Complete with
 an unshowable error. When a visible field is invalid the submission is aborted
 and the native validation UI is shown.
 
-Do not merge, tag, publish, or install this browser change until the Xano TEST
-route exists and the Talent application data model enforces its
-`data_environment` partition. Staging must never fall back to the LIVE route or
-LIVE data. After those prerequisites pass, replace the full legacy inline Code
-Embed with the UI loader below. Install both scripts on step 1 only, in this
-order:
+The GitHub-backed source can be merged, tagged, and served through jsDelivr
+before the Xano routes are ready. Do not install this browser change in Webflow
+or run a canary until the Xano TEST route exists and the Talent application data
+model enforces its `data_environment` partition. Staging must never fall back
+to the LIVE route or LIVE data. After those prerequisites pass, replace the
+full legacy inline Code Embed with the UI loader below. Install both scripts on
+step 1 only, in this order:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talent-application-ui.js"></script>
