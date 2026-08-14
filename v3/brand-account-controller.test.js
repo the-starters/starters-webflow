@@ -198,6 +198,7 @@ function loadController(options = {}) {
   const securityForm = options.securityForm || makeForm('security')
   const starterProfileForm = options.starterProfileForm || null
   const signupForm = options.signupForm || null
+  const quizSignupForm = options.quizSignupForm || null
   const calls = []
   const tracked = []
   const redirects = []
@@ -297,6 +298,12 @@ function loadController(options = {}) {
       if (selector === '#wf-form-Brand-Signup') return signupForm
       return null
     },
+    querySelectorAll(selector) {
+      if (selector !== '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
+        return []
+      }
+      return [signupForm, quizSignupForm].filter(Boolean)
+    },
     addEventListener() {},
   }
   const appendedScripts = []
@@ -347,6 +354,7 @@ function loadController(options = {}) {
     securityForm,
     starterProfileForm,
     signupForm,
+    quizSignupForm,
     storage,
     storageWrites,
     tracked,
@@ -379,6 +387,38 @@ test('Brand signup keeps the live Brand Free plan on production hostnames', () =
 
     assert.equal(signupForm.getAttribute('data-ms-plan:add'), 'pln_free-plan-f6kn0dxz')
   }
+})
+
+test('Quiz email signup receives the live Brand Free plan', () => {
+  const quizSignupForm = makeElement()
+  quizSignupForm.setAttribute('data-ms-form', 'signup')
+
+  loadController({ buildForm: null, hostname: 'thestarters.com', quizSignupForm })
+
+  assert.equal(quizSignupForm.getAttribute('data-ms-plan:add'), 'pln_free-plan-f6kn0dxz')
+})
+
+test('All Brand signup forms on a page receive the matching plan', () => {
+  const signupForm = makeElement()
+  signupForm.setAttribute('data-ms-form', 'signup')
+  const quizSignupForm = makeElement()
+  quizSignupForm.setAttribute('data-ms-form', 'signup')
+
+  loadController({
+    buildForm: null,
+    hostname: 'the-starters-3-0.webflow.io',
+    signupForm,
+    quizSignupForm,
+  })
+
+  assert.equal(
+    signupForm.getAttribute('data-ms-plan:add'),
+    'pln_dorxata-test-brand-plan-777r02pa',
+  )
+  assert.equal(
+    quizSignupForm.getAttribute('data-ms-plan:add'),
+    'pln_dorxata-test-brand-plan-777r02pa',
+  )
 })
 
 test('Brand signup plan guard ignores a form without the Memberstack signup contract', () => {
