@@ -110,6 +110,12 @@ test('staging selects only TEST credentials and indexes', () => {
   assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
   assert.equal(runtime.events.at(-1).name, 'starters:algolia-environment-ready')
   assert.equal(runtime.events.at(-1).detail.searchKey, undefined)
+  assert.deepEqual({ ...runtime.api.getManagedSearchConfig('starters') }, {
+    appId: 'TESTAPP',
+    searchKey: 'test-public-search-key',
+    indexName: 'Freelancers3.0-staging-test',
+    environment: 'test',
+  })
 })
 
 for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
@@ -153,6 +159,16 @@ test('shared or legacy dev indexes fail closed', () => {
 
   const legacy = load({ config: config({ production: { startersIndex: 'Freelancers3.0-dev' } }) })
   assert.equal(legacy.root.getAttribute('data-v3-algolia-block-reason'), 'legacy_dev_index')
+})
+
+test('cross-role shared indexes fail closed', () => {
+  const runtime = load({
+    config: config({
+      production: { opportunitiesIndex: 'Freelancers3.0-staging-test' },
+    }),
+  })
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'shared_index')
+  assert.equal(runtime.api.getManagedSearchConfig('starters'), null)
 })
 
 test('unknown managed resources block the whole managed Algolia surface', () => {

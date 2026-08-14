@@ -184,6 +184,17 @@ async function runController({
         return 1
     }
     const window = {
+        StartersV3AlgoliaEnvironment: {
+            getManagedSearchConfig(resource) {
+                assert.equal(resource, 'starters')
+                return {
+                    appId: 'resolved-test-app',
+                    searchKey: 'resolved-test-search-key',
+                    indexName: 'resolved-test-index',
+                    environment: 'test',
+                }
+            },
+        },
         $memberstackDom: memberstack,
         addEventListener() {},
         clearInterval() {},
@@ -567,6 +578,21 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
         if (!call.url.includes('-dsn.algolia.net/1/indexes/')) return false
         return JSON.parse(call.options.body).attributesToRetrieve?.length > 0
     })
+    assert.ok(recommendationCalls.length > 0)
+    assert.ok(
+        recommendationCalls.every((call) =>
+            call.url.includes(
+                'resolved-test-app-dsn.algolia.net/1/indexes/resolved-test-index/query',
+            ),
+        ),
+    )
+    assert.ok(
+        recommendationCalls.every(
+            (call) =>
+                call.options.headers['x-algolia-api-key'] ===
+                'resolved-test-search-key',
+        ),
+    )
     const payload = JSON.parse(
         enrollmentCalls(harness.fetchCalls)[0].options.body,
     )

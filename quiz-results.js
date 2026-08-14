@@ -1974,8 +1974,6 @@
     'DOMContentLoaded',
     function starterQuizResultsController() {
     const debugLogPrefix = '[Starter Quiz Funnel]'
-    const algoliaDefaultAppId = 'PKVW6M9OPZ'
-    const algoliaDefaultIndexName = 'Freelancers3.0-dev'
     const recommendationAlgorithmVersion = 'category-subcategory-pairs-v20'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
@@ -4016,56 +4014,16 @@
     }
 
     /**
-     * Reads Algolia search settings from page config.
-     *
-     * Supported sources, in priority order:
-     * - window.starterQuizAlgoliaConfig = { appId, searchKey, indexName }
-     * - dedicated elements with data-starter-quiz-algolia-* attributes
-     * - the existing wf-algolia script[data-app-id][data-search-key]
-     *
-     * Each setting resolves independently, so credentials and the index may
-     * be supplied by separate dedicated elements.
-     *
-     * Deliberately does not use an arbitrary [wf-algolia-index] element. The
-     * quiz-results page also has a LearnContent carousel, so treating the first
-     * global WF-Algolia wrapper as the freelancer index routes recommendation
-     * searches to LearnContent and produces zero Starter cards.
-     *
      * @returns {{appId: string, searchKey: string, indexName: string}} Algolia config.
      */
     function getAlgoliaSearchConfig() {
-        const windowConfig = window.starterQuizAlgoliaConfig || {}
-        const explicitCredentialsElement = document.querySelector(
-            '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
-        )
-        const explicitIndexElement = document.querySelector(
-            '[data-starter-quiz-algolia-index-name], [data-algolia-index-name]',
-        )
-        const wfAlgoliaScript = document.querySelector(
-            'script[data-app-id][data-search-key]',
-        )
+        const resolver = window.StartersV3AlgoliaEnvironment
+        const resolved = resolver?.getManagedSearchConfig?.('starters')
 
         return {
-            appId:
-                normalize(windowConfig.appId) ||
-                normalize(explicitCredentialsElement?.dataset.starterQuizAlgoliaAppId) ||
-                normalize(explicitCredentialsElement?.dataset.algoliaAppId) ||
-                normalize(wfAlgoliaScript?.getAttribute('data-app-id')) ||
-                algoliaDefaultAppId,
-            searchKey:
-                normalize(windowConfig.searchKey) ||
-                normalize(
-                    explicitCredentialsElement?.dataset.starterQuizAlgoliaSearchKey,
-                ) ||
-                normalize(explicitCredentialsElement?.dataset.algoliaSearchKey) ||
-                normalize(wfAlgoliaScript?.getAttribute('data-search-key')),
-            indexName:
-                normalize(windowConfig.indexName) ||
-                normalize(explicitIndexElement?.dataset.starterQuizAlgoliaIndexName) ||
-                normalize(explicitIndexElement?.dataset.algoliaIndexName) ||
-                normalize(wfAlgoliaScript?.getAttribute('data-index-name')) ||
-                normalize(wfAlgoliaScript?.getAttribute('data-index')) ||
-                algoliaDefaultIndexName,
+            appId: normalize(resolved?.appId),
+            searchKey: normalize(resolved?.searchKey),
+            indexName: normalize(resolved?.indexName),
         }
     }
 
@@ -4091,9 +4049,9 @@
 
         const config = getAlgoliaSearchConfig()
 
-        if (!config.searchKey) {
+        if (!config.appId || !config.searchKey || !config.indexName) {
             throw new Error(
-                'Algolia search key missing. Add data-search-key to the wf-algolia script, set window.starterQuizAlgoliaConfig.searchKey, or add data-starter-quiz-algolia-search-key.',
+                'Managed Algolia search configuration is unavailable.',
             )
         }
 
@@ -4185,7 +4143,7 @@
         if (!uniqueFacetValues.length) return null
 
         const config = getAlgoliaSearchConfig()
-        if (!config.searchKey) return null
+        if (!config.appId || !config.searchKey || !config.indexName) return null
 
         try {
             const response = await fetch(

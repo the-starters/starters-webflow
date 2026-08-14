@@ -26,6 +26,7 @@
   var RESOURCE_SELECTOR = '[data-starters-v3-algolia-resource]'
   var READY_EVENT = 'starters:algolia-environment-ready'
   var BLOCKED_EVENT = 'starters:algolia-environment-blocked'
+  var activeResolution = null
 
   function clean(value) {
     return String(value || '').trim()
@@ -62,11 +63,16 @@
     if (test.searchKey === production.searchKey) {
       return { ok: false, reason: 'shared_search_key' }
     }
-    if (
-      test.startersIndex === production.startersIndex ||
-      test.opportunitiesIndex === production.opportunitiesIndex
-    ) {
-      return { ok: false, reason: 'shared_index' }
+    var indexes = [
+      test.startersIndex,
+      test.opportunitiesIndex,
+      production.startersIndex,
+      production.opportunitiesIndex,
+    ]
+    for (var index = 0; index < indexes.length; index += 1) {
+      if (indexes.indexOf(indexes[index]) !== index) {
+        return { ok: false, reason: 'shared_index' }
+      }
     }
     if (
       legacyIndexName(test.startersIndex) ||
@@ -101,6 +107,7 @@
   }
 
   function block(documentObject, reason) {
+    activeResolution = null
     each(documentObject, CLIENT_SELECTOR, function (element) {
       element.removeAttribute('data-app-id')
       element.removeAttribute('data-search-key')
@@ -158,6 +165,22 @@
     window.dispatchEvent(new window.CustomEvent(name, { detail: detail }))
   }
 
+  function getManagedSearchConfig(resource) {
+    if (!activeResolution || !activeResolution.ok) return null
+    var indexName = resource === 'starters'
+      ? activeResolution.settings.startersIndex
+      : resource === 'opportunities'
+        ? activeResolution.settings.opportunitiesIndex
+        : ''
+    if (!indexName) return null
+    return {
+      appId: activeResolution.settings.appId,
+      searchKey: activeResolution.settings.searchKey,
+      indexName: indexName,
+      environment: activeResolution.environment,
+    }
+  }
+
   function boot(config) {
     var resolution = resolve(window.location && window.location.hostname, config)
     if (!resolution.ok) {
@@ -177,6 +200,7 @@
       dispatch(BLOCKED_EVENT, blocked)
       return blocked
     }
+    activeResolution = resolution
     window.__startersV3AlgoliaEnvironment = resolution.environment
     dispatch(READY_EVENT, {
       environment: resolution.environment,
@@ -192,6 +216,7 @@
     block: block,
     boot: boot,
     environmentForHost: environmentForHost,
+    getManagedSearchConfig: getManagedSearchConfig,
     resolve: resolve,
     validateConfig: validateConfig,
   }

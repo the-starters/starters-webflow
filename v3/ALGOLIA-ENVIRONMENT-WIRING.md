@@ -2,10 +2,12 @@
 
 Status: Prepared, not released
 
-`v3/algolia-environment.js` must load before the deferred wf-algolia bundle.
-It selects public search credentials and primary indexes from the exact host.
-It does not accept a mode or index from query parameters, local storage,
-Memberstack custom fields, page forms, or Xano responses.
+`v3/algolia-environment.js` must load before the deferred wf-algolia bundle and
+`quiz-results.js`. It selects public search credentials and primary indexes
+from the exact host. Managed clients, including quiz Starter recommendations,
+consume this resolved configuration. They do not accept a mode or index from
+query parameters, local storage, Memberstack custom fields, page forms, DOM
+attributes, page globals, or Xano responses.
 
 ## Exact host contract
 
