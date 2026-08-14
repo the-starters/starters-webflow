@@ -1,17 +1,37 @@
 /* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/logo-wall
  *
- * @release v1.59.240
+ * @release v1.59.241
  *
  * CDN-served. Load in Head (same jsDelivr ref as logo-wall.js). Not a paste embed.
  *
  * The wrapper is the mask: it clips its Tracks at whatever width the Designer
  * gives it. Nothing here sizes the wrapper — full-bleed is a Designer layout
  * choice, not a rule in this file.
+ *
+ * TWO STATES, ONE LOOK. This stylesheet lands in Head; the script is deferred
+ * and waits on parse plus the page's synchronous GSAP tags. On a slow
+ * connection that gap is visible, so FIRST PAINT MUST ALREADY BE A CLIPPED
+ * CENTERED ROW — otherwise the authored markup (Webflow's block-level CMS
+ * chain, or plain items) paints as a tall vertical stack first.
+ *
+ *   PRE-INIT   the wrapper is a centered ROW, and the CMS chain inside it is
+ *              flattened into that row by the .w-dyn-* rules below.
+ *   POST-INIT  `data-logo-wall-inited="true"` flips the wrapper to a COLUMN of
+ *              script-built Tracks. The script sets that attribute and
+ *              restructures the DOM in ONE synchronous task (initWrapper marks
+ *              the wrapper, then flattens/rebuilds immediately), so the browser
+ *              never paints the flipped layout against the old markup.
+ *
+ * Both states keep overflow:hidden and max-width:100% on the wrapper, and both
+ * centre a too-wide row inside it — pre-init on the main axis, post-init on the
+ * cross axis. The .w-dyn-* rules go inert once removeCMSList deletes those nodes.
  */
 
 [data-logo-wall-element='wrapper'] {
   display: flex;
-  flex-flow: column nowrap;
+  /* Pre-init default; the inited rule below flips it. */
+  flex-flow: row nowrap;
+  justify-content: center;
   align-items: center;
   overflow: hidden;
   box-sizing: border-box;
@@ -21,6 +41,32 @@
    * the page wide. A cap only — deliberately no width and no margins, which is
    * what the retired viewport bleed was made of. */
   max-width: 100%;
+}
+
+/* The armed wall: a column of Tracks, each centered on the cross axis. */
+[data-logo-wall-element='wrapper'][data-logo-wall-inited='true'] {
+  flex-flow: column nowrap;
+  justify-content: normal;
+}
+
+/* Webflow's CMS chain, before the script removes it. Depth-independent on
+ * purpose: display:contents helper divs may sit anywhere between the wrapper
+ * and the list, and flattenDisplayContents only deals with them at init.
+ * `flex: none` keeps the row at its natural width so the wrapper clips it
+ * rather than squeezing the logos. */
+[data-logo-wall-element='wrapper'] .w-dyn-list,
+[data-logo-wall-element='wrapper'] .w-dyn-items {
+  display: flex;
+  flex-flow: row nowrap;
+  justify-content: center;
+  align-items: center;
+  column-gap: inherit;
+  flex: none;
+  min-width: 0;
+}
+
+[data-logo-wall-element='wrapper'] .w-dyn-item {
+  flex: none;
 }
 
 [data-logo-wall-element='track'] {

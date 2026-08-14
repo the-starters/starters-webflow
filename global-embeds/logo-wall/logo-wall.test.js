@@ -971,6 +971,37 @@ test('a straggler that lands after the early arm triggers exactly one re-arm', (
   assert.equal(timelines.length, 2, 'the corrective arm is the last one')
 })
 
+/* --------------------------- the pre-init contract ----------------------- */
+
+test('the inited attribute is set while the authored markup is still in place', () => {
+  // The stylesheet paints the wrapper as a centered ROW until
+  // data-logo-wall-inited="true" flips it to the Track column. That flip is
+  // only safe because the script marks the wrapper and restructures it inside
+  // ONE synchronous task — if a paint could land between the two, the flipped
+  // column layout would be applied to the authored items and stack them, which
+  // is the exact defect the pre-init rules exist to remove.
+  const page = fillingPage()
+  let markedWhile = null
+
+  const realSetAttribute = page.wrapper.setAttribute.bind(page.wrapper)
+  page.wrapper.setAttribute = (name, value) => {
+    if (name === 'data-logo-wall-inited' && markedWhile === null) {
+      markedWhile = page.wrapper.children.slice()
+    }
+    return realSetAttribute(name, value)
+  }
+
+  load(page)
+
+  assert.ok(markedWhile, 'the wrapper was marked at all')
+  assert.deepEqual(
+    indexesOf(markedWhile),
+    [0, 1, 2, 3],
+    'the authored items were still the wrapper\'s children when it was marked'
+  )
+  assert.equal(tracksOf(page.wrapper).length, 1, 'and the rebuild finished in the same task')
+})
+
 /* ------------------------------- drift guard ----------------------------- */
 
 test('the script, the stylesheet and the exposed release string all agree', () => {
