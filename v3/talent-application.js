@@ -3,9 +3,10 @@
  *
  * Install on /freelancer-application/step-1 only. Intercepts the multistep
  * apply form's final submit and POSTs it to the Xano intake endpoint
- * (talent/application/create), which owns the authoritative application row
- * and mirrors it into the Airtable review table server-side. The native
- * Webflow submission is suppressed — Zapier is no longer the intake path.
+ * through a host-owned endpoint contract. Staging uses the TEST-only Xano
+ * route; both custom production hosts use the production route, which owns the
+ * authoritative application row and mirrors it into Airtable server-side.
+ * Unknown hosts fail closed. The native Webflow submission is suppressed.
  *
  * Contract: binds to `form[application-form]` (the form's existing custom
  * attribute). Redirects to the form's data-redirect (step-2) on success.
@@ -18,15 +19,23 @@
   if (window.__startersTalentApplicationBooted) return
   window.__startersTalentApplicationBooted = true
 
-  var ENDPOINT =
-    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/talent/application/create'
+  var XANO_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
+  var ENDPOINTS = {
+    'the-starters-3-0.webflow.io': XANO_BASE + '/talent/application/create-test',
+    'thestarters.com': XANO_BASE + '/talent/application/create',
+    'www.thestarters.com': XANO_BASE + '/talent/application/create',
+  }
+  var currentHostname = String(window.location.hostname || '')
+    .toLowerCase()
+    .replace(/\.$/, '')
+  var ENDPOINT = ENDPOINTS[currentHostname] || null
   var FORM_SELECTOR = 'form[application-form]'
   var MULTISTEP_SUBMIT_SELECTOR =
     '[data-form="submit-btn"], [data-form-ms="submit-btn"]'
   var MARKETING_CONSENT_SELECTOR =
     'input[type="checkbox"][name="marketing-email-consent"]'
   var DEFAULT_REDIRECT = '/freelancer-application/step-2'
-  var CONTROLLER_VERSION = 'talent-application-v2'
+  var CONTROLLER_VERSION = 'talent-application-v3'
   var WORKFLOW = 'talent_application'
   var workflowDiagnosticsControllerScript = document.currentScript
   var WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000
@@ -275,6 +284,10 @@
 
     var startRequest = function () {
       diagnosticStart(form)
+      if (!ENDPOINT) {
+        failureCode = 'ENVIRONMENT_UNRECOGNIZED'
+        return Promise.reject(new Error('talent application host is not registered'))
+      }
       return fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -82,6 +82,7 @@ function makeSelect(options, selectedIndex) {
 
 function load({
   fetchImpl,
+  hostname = 'thestarters.com',
   workflowDiagnostics = true,
   workflowDiagnosticsReady = null,
   setTimeoutImpl = setTimeout,
@@ -93,7 +94,7 @@ function load({
   const copied = []
   const context = {
     window: {
-      location: { assign: (url) => assigned.push(url) },
+      location: { hostname, assign: (url) => assigned.push(url) },
       console,
       Date,
       Math,
@@ -210,6 +211,10 @@ test('maps full-profile fields and redirects on success', async () => {
   await tick()
 
   const payload = JSON.parse(calls[0].options.body)
+  assert.equal(
+    calls[0].url,
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/talent/application/create',
+  )
   assert.equal(payload.email, 'jane@example.com')
   assert.equal(payload.first_name, 'Jane')
   assert.equal(payload.profile_type, 'Full Profile')
@@ -218,6 +223,66 @@ test('maps full-profile fields and redirects on success', async () => {
   assert.equal(payload.rate, '120.00')
   assert.equal(payload.answers['referral-source'], 'Google Search')
   assert.deepEqual(assigned, ['/freelancer-application/step-2'])
+})
+
+test('routes staging intake only to the TEST endpoint', async () => {
+  const calls = []
+  const { listeners } = load({
+    hostname: 'the-starters-3-0.webflow.io',
+    fetchImpl: (url, options) => {
+      calls.push({ url, options })
+      return Promise.resolve({ ok: true, status: 201, json: () => Promise.resolve({ id: 42 }) })
+    },
+  })
+  const form = makeForm(FULL_ENTRIES)
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+  await tick()
+  await tick()
+  await tick()
+  assert.equal(calls.length, 1)
+  assert.equal(
+    calls[0].url,
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/talent/application/create-test',
+  )
+})
+
+test('fails closed without a request on an unregistered host', async () => {
+  let fetched = false
+  const { listeners } = load({
+    hostname: 'preview.example.com',
+    fetchImpl: () => {
+      fetched = true
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 42 }) })
+    },
+  })
+  const form = makeForm(FULL_ENTRIES)
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+  await tick()
+  await tick()
+  await tick()
+  assert.equal(fetched, false)
+  assert.equal(form.failEl.style.display, 'block')
+})
+
+test('normalizes a trailing dot before selecting the production endpoint', async () => {
+  const calls = []
+  const { listeners } = load({
+    hostname: 'www.thestarters.com.',
+    fetchImpl: (url, options) => {
+      calls.push({ url, options })
+      return Promise.resolve({ ok: true, status: 201, json: () => Promise.resolve({ id: 42 }) })
+    },
+  })
+  const form = makeForm(FULL_ENTRIES)
+  listeners.find(({ type }) => type === 'submit').handler(submitEvent(form))
+  await tick()
+  await tick()
+  await tick()
+  assert.equal(calls.length, 1)
+  assert.equal(
+    calls[0].url,
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/talent/application/create',
+  )
 })
 
 test('sends explicit true when the native optional marketing checkbox is checked', async () => {
