@@ -46,6 +46,12 @@ without `data-ms-form="signup"` untouched. The quiz form must also keep
 `data-quiz-form="signup"`; this limits the broader attribute selector to the
 quiz signup surface.
 
+On `/quiz`, the final signup form can enter the DOM after the controller starts.
+If that quiz form is not present at startup, the controller watches only for the
+quiz signup selector above, applies the hostname-specific plan when the form
+appears, and then disconnects the observer. It does not watch for late forms on
+other paths, and the standard Brand signup form keeps its startup-only behavior.
+
 The Build Account form remains native Webflow HTML:
 
 ```html
@@ -315,12 +321,13 @@ projection.
 
 Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 
-1. On `the-starters-3-0.webflow.io`, confirm the standard and quiz signup forms
-   carry the Test Brand plan before submitting either one, then prove the new
-   Test Data member has that plan connection.
-2. On each custom domain, confirm both signup forms carry the live Brand Free
-   plan. Creating a production member requires the separate approval described
-   below.
+1. On `the-starters-3-0.webflow.io`, confirm the standard signup form carries
+   the Test Brand plan at startup. Then let the `/quiz` signup form enter the DOM
+   after page load, confirm it receives the same plan before submission, and
+   prove the new Test Data member has that plan connection.
+2. On each custom domain, confirm the standard form and the late-added `/quiz`
+   form carry the live Brand Free plan. Creating a production member requires
+   the separate approval described below.
 3. Existing incomplete Brand submits unchanged email plus ordinary fields.
 4. Read Memberstack, `user_v3`, and `brands_v3` back by Memberstack member ID.
 5. Replay the identical submission; prove one Brand row and unchanged final
