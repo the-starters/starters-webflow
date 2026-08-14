@@ -205,7 +205,7 @@ function buildItemTemplate() {
   })
   const editBtn = new El('div', { 'data-availability-action': 'item-form-open' })
   editBtn.textContent = 'Edit'
-  const removeBtn = new El('div', { 'data-availability-action': 'item-remove' })
+  const removeBtn = new El('div', { 'data-availability-action': 'open-item-remove' })
   const removeBtnText = new El('span', { 'text-element': '' })
   removeBtnText.textContent = 'Remove'
   removeBtn.appendChild(removeBtnText)
@@ -294,6 +294,63 @@ function buildItemTemplate() {
   return template
 }
 
+// Minimal stand-in for the "Availability - Notifications" component instance
+// (`[data-modal-target="availability-notification"]`) — only the
+// `[notification-type]` steps and `[data-availability-action]` confirm
+// buttons that scheduling-availability-section.js actually drives. Close/
+// Done buttons that only ever close the modal (`[data-modal-close]`, owned
+// entirely by global-embeds/modal/modal.js) are included for shape but are
+// never clicked by these tests.
+function buildNotificationModal() {
+  const modal = new El('dialog', { 'data-modal-target': 'availability-notification' })
+  const steps = {}
+
+  function closeBtn() {
+    return new El('div', { 'data-modal-close': '' })
+  }
+  function actionBtn(action) {
+    return new El('div', { 'data-availability-action': action })
+  }
+  function addStep(type, buttons) {
+    const step = new El('div', { 'notification-type': type })
+    if (buttons && buttons.length) {
+      const group = new El('div', { class: 'call-sched_button-group' })
+      buttons.forEach((b) => group.appendChild(b))
+      step.appendChild(group)
+    }
+    steps[type] = step
+    modal.appendChild(step)
+    return step
+  }
+
+  addStep('availability-saved')
+  const itemRemoveBtn = actionBtn('item-remove')
+  addStep('availability-remove-approve', [closeBtn(), itemRemoveBtn])
+  addStep('availability-removed')
+  const disconnectGoogleBtn = actionBtn('disconnect-google')
+  addStep('disconnect-calendar', [closeBtn(), disconnectGoogleBtn])
+  addStep('calendar-disconnected')
+  const switchConnectGoogleBtn = actionBtn('connect-google')
+  addStep('switch-calendar', [closeBtn(), switchConnectGoogleBtn])
+  const oauthRedirectBtn = actionBtn('open-oauth-redirect')
+  addStep('pre-oauth', [oauthRedirectBtn])
+  addStep('oauth-redirect')
+  addStep('virtual-connect')
+  addStep('virtual-connected')
+  const errorText = new El('div', { 'error-text-element': '' })
+  addStep('request-error', [closeBtn()]).appendChild(errorText)
+
+  return {
+    modal,
+    steps,
+    itemRemoveBtn,
+    disconnectGoogleBtn,
+    switchConnectGoogleBtn,
+    oauthRedirectBtn,
+    errorText,
+  }
+}
+
 function buildSectionDom(options = {}) {
   const root = new El('div', { 'data-availability-element': 'section' })
 
@@ -370,9 +427,12 @@ function buildSectionDom(options = {}) {
   mainWrapper.appendChild(createCard)
   mainWrapper.appendChild(slotsWrapper)
 
+  const notif = buildNotificationModal()
+
   root.appendChild(loadingSection)
   root.appendChild(connectWrapper)
   root.appendChild(mainWrapper)
+  root.appendChild(notif.modal)
 
   return {
     root,
@@ -388,6 +448,7 @@ function buildSectionDom(options = {}) {
     loadingSlots,
     slotsWrapper,
     createBtn,
+    notif,
   }
 }
 
@@ -724,7 +785,8 @@ test('main-wrapper stays visible through a later disconnect-google switch back t
   await settle()
   assert.equal(dom.mainWrapper.style.display, 'grid')
 
-  dom.connectBtnWrapper.children[2].click() // disconnect-google -> reverts to platform
+  dom.connectBtnWrapper.children[2].click() // open-disconnect-google -> opens the confirm modal
+  dom.notif.disconnectGoogleBtn.click() // confirm -> actually reverts to platform
   await settle()
 
   // main-wrapper must not have been hidden by the manager switch.
@@ -812,7 +874,11 @@ test('connect-google succeeds on a brand-new starter with no availability row ye
   })
   await settle()
 
-  dom.connectBtnWrapper.children[1].click() // connect-google
+  dom.connectBtnWrapper.children[1].click() // open-connect-google -> disconnected, so straight to pre-oauth
+  assert.equal(dom.notif.steps['pre-oauth'].style.display, '')
+  assert.equal(assigned.length, 0, 'no redirect yet — still waiting on the informational step')
+
+  dom.notif.oauthRedirectBtn.click() // "Done" -> the actual redirect
   await settle()
 
   assert.equal(assigned.length, 1, 'the OAuth redirect actually happened')
@@ -911,7 +977,8 @@ test('connect-label-group and connect-info-wrapper do not flash mid-request on d
   assert.equal(dom.labelGroup.children[2].style.display, '') // "Connected to calendar" shown
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
 
-  dom.connectBtnWrapper.children[2].click() // disconnect-google — publishes 'loading' synchronously
+  dom.connectBtnWrapper.children[2].click() // open-disconnect-google -> opens the confirm modal, no request yet
+  dom.notif.disconnectGoogleBtn.click() // confirm -> publishes 'loading' synchronously
 
   // The request hasn't resolved yet — all three labels must still read
   // exactly as they did before the click, not flip to a "disconnected" look.
@@ -1243,7 +1310,8 @@ test('removing an item waits for the response before refreshing slots (not fired
 
   const overrideCard = dom.list.children.find((el) => el.dataset.id === 'override1')
   const removeBtn = overrideCard.children[0].children[2].children[1]
-  removeBtn.click()
+  removeBtn.click() // open-item-remove -> opens the confirm modal, no request yet
+  dom.notif.itemRemoveBtn.click() // confirm -> the actual removal request
 
   // renderSlotsPreview is chained onto the remove request's own promise, not
   // fired alongside it — so nothing here changes until that request lands.
@@ -1256,7 +1324,7 @@ test('removing an item waits for the response before refreshing slots (not fired
   assert.notEqual(slotsList.style.display, 'none')
 })
 
-test('item-remove shows a Removing... state and dims the card while the request is in flight', async () => {
+test('open-item-remove opens the confirm modal, and confirming dims the modal buttons while the request is in flight', async () => {
   const { dom } = loadSection({
     serverState: {
       availability: {
@@ -1272,24 +1340,33 @@ test('item-remove shows a Removing... state and dims the card while the request 
 
   const overrideCard = dom.list.children.find((el) => el.dataset.id === 'override1')
   const removeBtn = overrideCard.children[0].children[2].children[1]
-  const removeBtnText = removeBtn.children[0]
-
-  assert.equal(removeBtnText.textContent, 'Remove')
 
   removeBtn.click()
 
-  assert.equal(removeBtnText.textContent, 'Removing...')
-  assert.equal(overrideCard.style.opacity, '0.6')
-  assert.equal(overrideCard.style.pointerEvents, 'none')
+  // Opens on the confirm step only — no removal has happened yet.
+  assert.equal(dom.notif.steps['availability-remove-approve'].style.display, '')
+  assert.equal(dom.notif.steps['availability-removed'].style.display, 'none')
+  assert.ok(dom.list.children.find((el) => el.dataset.id === 'override1'))
+
+  const group = dom.notif.itemRemoveBtn.closest('.call-sched_button-group')
+  assert.notEqual(group.style.pointerEvents, 'none')
+
+  dom.notif.itemRemoveBtn.click() // confirm -> the actual removal request
+
+  assert.equal(group.style.pointerEvents, 'none')
+  assert.equal(group.style.opacity, '0.6')
 
   await settle()
 
-  // Removal succeeded — override1 is gone after the re-render.
+  // Removal succeeded — override1 is gone, and the modal switched to the
+  // success step with its buttons re-enabled.
   const stillThere = dom.list.children.find((el) => el.dataset.id === 'override1')
   assert.equal(stillThere, undefined)
+  assert.equal(dom.notif.steps['availability-removed'].style.display, '')
+  assert.notEqual(group.style.pointerEvents, 'none')
 })
 
-test('item-remove reverts its loading state on failure without removing the card', async () => {
+test('open-item-remove switches to the error step on failure without removing the card', async () => {
   const { dom, warnings } = loadSection({
     serverState: {
       availability: {
@@ -1308,17 +1385,16 @@ test('item-remove reverts its loading state on failure without removing the card
 
   const overrideCard = dom.list.children.find((el) => el.dataset.id === 'override1')
   const removeBtn = overrideCard.children[0].children[2].children[1]
-  const removeBtnText = removeBtn.children[0]
 
   removeBtn.click()
-  assert.equal(removeBtnText.textContent, 'Removing...')
-  assert.equal(overrideCard.style.opacity, '0.6')
+  dom.notif.itemRemoveBtn.click()
 
   await settle()
 
-  assert.equal(removeBtnText.textContent, 'Remove')
-  assert.equal(overrideCard.style.opacity, '1')
-  assert.equal(overrideCard.style.pointerEvents, 'auto')
+  assert.equal(dom.notif.steps['request-error'].style.display, '')
+  assert.ok(dom.notif.errorText.textContent.length > 0)
+  assert.equal(dom.notif.itemRemoveBtn.closest('.call-sched_button-group').style.pointerEvents, '')
+  assert.ok(dom.list.children.find((el) => el.dataset.id === 'override1'), 'override1 was not removed')
   assert.ok(warnings.some((w) => w.includes('availability remove failed')))
 })
 
