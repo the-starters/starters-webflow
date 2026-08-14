@@ -2,7 +2,7 @@
 /**
  * Logo Wall — attribute-driven looping tracks of CMS logos.
  *
- * @release v1.59.234
+ * @release v1.59.240
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. GSAP is assumed
  * as a page global (already on the V3 site). Without GSAP the tracks still
@@ -32,6 +32,9 @@
  * Hover pauses that Track. Off-screen wrappers pause. prefers-reduced-motion
  * freezes the bands.
  *
+ * IMAGES: every logo is forced loading="eager" before arming, and arming does
+ * not wait forever — see forceEagerImages and whenImagesReady for why.
+ *
  * SELF-DEFENSE: the companion stylesheet (logo-wall.css) is required. If a
  * Track does not compute as a flex row, the stylesheet did not load. The
  * original logos are left in place and visible but UNSTYLED — without the Track
@@ -45,7 +48,7 @@
   if (window.__startersLogoWallInit) return;
   window.__startersLogoWallInit = true;
 
-  var RELEASE = 'v1.59.234';
+  var RELEASE = 'v1.59.240';
   window.__startersLogoWall = { release: RELEASE };
 
   var WRAPPER_SEL = '[data-logo-wall-element="wrapper"]';
@@ -57,6 +60,7 @@
   var FILL_TIMES = 2;
   var MAX_CLONES = 24;
   var RESIZE_MS = 150;
+  var IMAGES_READY_TIMEOUT_MS = 3000;
 
   function isDevHost() {
     try {
@@ -155,20 +159,45 @@
     });
   }
 
+  /**
+   * A marquee needs every logo whatever part of the strip it currently sits in,
+   * so none of them may be deferred. See whenImagesReady for what lazy loading
+   * did to arming before v1.59.240.
+   */
+  function forceEagerImages(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('img'), function (img) {
+      img.loading = 'eager';
+    });
+  }
+
+  /**
+   * Calls `done` when every image has settled — and, if that takes too long,
+   * once EARLY and then once more for real. No single asset gets to hold the
+   * wall hostage (a broken CDN, a blocked request, another lazy regression),
+   * but a wall armed against half-measured images would keep a mis-measured
+   * loop forever, so the stragglers still trigger one corrective pass.
+   *
+   * `done` therefore runs once in the normal case and at most twice in the
+   * degraded one. Callers must be idempotent.
+   */
   function whenImagesReady(root, done) {
     var imgs = root.querySelectorAll('img');
     var pending = 0;
-    var finished = false;
+    var settled = false;
+    var timer = 0;
 
-    function finish() {
-      if (finished) return;
-      finished = true;
+    // The real finish: everything has loaded or failed. Latched, so it is the
+    // last call `done` ever gets.
+    function settle() {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
       done();
     }
 
     function onOne() {
       pending -= 1;
-      if (pending <= 0) finish();
+      if (pending <= 0) settle();
     }
 
     Array.prototype.forEach.call(imgs, function (img) {
@@ -178,7 +207,19 @@
       img.addEventListener('error', onOne, { once: true });
     });
 
-    if (pending === 0) finish();
+    if (pending === 0) {
+      settle();
+      return;
+    }
+
+    // Arm on what we have. The listeners above stay attached and keep counting,
+    // so whichever stragglers do arrive still reach settle() and re-arm on
+    // correct measurements. Nothing here fires after settle() has run.
+    timer = window.setTimeout(function armEarly() {
+      if (settled) return;
+      devWarn('armed before all images settled; will re-arm when they do', root);
+      done();
+    }, IMAGES_READY_TIMEOUT_MS);
   }
 
   function columnGapPx(el) {
@@ -193,12 +234,11 @@
   }
 
   function cloneItem(item) {
+    // The originals were flipped to eager before arming, and `loading` is a
+    // reflected attribute, so cloneNode carries it across for free.
     var clone = item.cloneNode(true);
     clone.removeAttribute('data-logo-wall-element');
     clone.setAttribute(CLONE_ATTR, '');
-    Array.prototype.forEach.call(clone.querySelectorAll('img'), function (img) {
-      img.loading = 'eager';
-    });
     return clone;
   }
 
@@ -508,6 +548,9 @@
     }
     function onChange() {
       state.reduceMotion = prefersReducedMotion();
+      // Still record the preference, but the first arm has not happened yet —
+      // it will read the fresh value when it does.
+      if (state.armWidth == null) return;
       armLoops(state);
     }
     if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
@@ -588,6 +631,13 @@
     bindResize(state);
     bindReducedMotion(state);
 
+    // Must happen before the readiness count is taken: Webflow ships CMS images
+    // lazy, and the logos parked outside the clip are how the wall never armed
+    // at all before v1.59.240.
+    forceEagerImages(wrapper);
+
+    // May run twice — an early arm on the timeout, then a corrective one when
+    // the stragglers land. armLoops is idempotent, so both are safe.
     whenImagesReady(wrapper, function onReady() {
       armLoops(state);
     });

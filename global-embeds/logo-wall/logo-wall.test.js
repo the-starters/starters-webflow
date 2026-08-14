@@ -88,6 +88,15 @@ class El {
     return this.scrollWidth
   }
 
+  /** A reflected attribute on <img>, exactly as in the real DOM. */
+  get loading() {
+    return this.getAttribute('loading')
+  }
+
+  set loading(value) {
+    this.setAttribute('loading', value)
+  }
+
   /** A flex row: everything before me in my parent, laid end to end. */
   get offsetLeft() {
     if (!this.parentNode) return 0
@@ -191,15 +200,28 @@ const CLONE = 'data-logo-wall-clone'
 const INDEX = 'data-test-index'
 
 /** One logo cell: a marked div of a known width holding a loaded image. */
-function logoItem(index, width) {
+function logoItem(index, width, options) {
+  const o = options || {}
   const el = new El('div').setAttribute(ITEM, 'item').setAttribute(INDEX, String(index))
   el.layoutWidth = width
   const img = new El('img')
   // Already-loaded images make whenImagesReady resolve inline, so armLoops runs
   // synchronously and the test can read the finished DOM straight after load().
-  img.complete = true
+  // A `loaded: false` image models Webflow's lazy default sitting outside the
+  // clip: complete stays false until the test says otherwise, and load only
+  // fires if the test dispatches it — which is how readiness deadlocked in
+  // production, where it never fired at all.
+  img.complete = o.loaded !== false
+  img.setAttribute('loading', 'lazy')
   el.appendChild(img)
+  el.img = img
   return el
+}
+
+/** Resolve a stubbed image the way the network would. */
+function completeImage(img) {
+  img.complete = true
+  img.dispatch('load')
 }
 
 /**
@@ -226,8 +248,9 @@ function makePage(options) {
   section.appendChild(wrapper)
 
   const width = o.itemWidth == null ? 100 : o.itemWidth
+  const unloaded = o.unloaded || [] // indexes whose image never resolves
   for (let i = 0; i < (o.items || 0); i++) {
-    const el = logoItem(i, width)
+    const el = logoItem(i, width, { loaded: unloaded.indexOf(i) === -1 })
     wrapper.appendChild(el)
     page.items.push(el)
   }
@@ -422,6 +445,8 @@ function load(page, options) {
     listeners,
     timelines,
     flush,
+    /** How many timers are still scheduled — 0 means nothing is waiting. */
+    pendingTimers: () => timers.size,
     /** Every element handed to ResizeObserver.observe(). */
     observed: () => observers.map((ro) => ro.observed),
     /** Fire the wrapper's ResizeObserver, then run whatever it scheduled. */
@@ -442,12 +467,12 @@ function load(page, options) {
       flush()
     },
     /**
-     * Fire the reduced-motion change handler — the one re-arm path that is
-     * unconditional, because it is a preference change and not geometry.
+     * Fire the reduced-motion change handler — the one re-arm path not gated on
+     * geometry, because it is a preference change. It re-arms synchronously,
+     * with no debounce of its own, so nothing needs flushing afterwards.
      */
     rearm: () => {
       motionHandlers.forEach((fn) => fn())
-      flush()
     },
   }
 }
@@ -839,6 +864,111 @@ test('a re-arm kills the old timelines and builds them the same way round', () =
   assert.equal(rebuilt.length, 2, 'and rebuilt one per track')
   assert.equal(rebuilt[0].reversed(), true)
   assert.equal(rebuilt[1].reversed(), false)
+})
+
+/* ------------------------------ image readiness -------------------------- */
+
+test('a logo that never loads cannot stop the wall from arming', () => {
+  // The 2026-08-14 production incident. Webflow ships every CMS <img> as
+  // loading="lazy"; the centred strip is wider than the clip, so the logos
+  // outside the visible band never intersect the viewport, Chrome never
+  // fetches them, complete stays false and the readiness count never reaches
+  // zero. armLoops was never called at all: no clones, no motion, forever.
+  const page = fillingPage({ unloaded: [2] })
+  const { flush } = load(page)
+
+  const track = tracksOf(page.wrapper)[0]
+  assert.equal(clonesOf(track).length, 0, 'the stuck image holds the arm back at first')
+
+  flush() // the readiness timeout elapses
+
+  assert.ok(clonesOf(track).length > 0, 'and then the wall arms anyway')
+})
+
+test('the originals are forced eager, so a clipped logo still gets fetched', () => {
+  // Fixing the deadlock at its source: a marquee needs every logo regardless of
+  // where it sits, so none of them may be deferred. The clones inherit it
+  // through cloneNode rather than being flipped a second time.
+  const page = fillingPage()
+  load(page)
+
+  const images = page.wrapper.querySelectorAll('img')
+  assert.ok(images.length > 4, 'originals and clones both carry images')
+  images.forEach((img) => {
+    assert.equal(img.loading, 'eager', 'every image is eager')
+  })
+})
+
+test('images that are already loaded arm once and schedule no timer at all', () => {
+  const page = fillingPage()
+  const { flush, timelines, pendingTimers } = load(page, { gsap: true })
+
+  const track = tracksOf(page.wrapper)[0]
+  const armed = clonesOf(track).length
+  assert.ok(armed > 0, 'armed synchronously')
+  assert.equal(timelines.length, 1, 'one timeline')
+  assert.equal(pendingTimers(), 0, 'the fast path never waits on anything')
+
+  flush()
+  assert.equal(clonesOf(track).length, armed, 'the band was not rebuilt')
+  assert.equal(timelines.length, 1, 'and no second timeline was created')
+})
+
+test('images resolving before the timeout arm once and cancel the timer', () => {
+  // The timer IS scheduled here, so the cancellation is a real assertion: drop
+  // the clearTimeout and the flush below arms a second time.
+  const page = fillingPage({ unloaded: [0, 1, 2, 3] })
+  const { flush, timelines, pendingTimers } = load(page, { gsap: true })
+
+  assert.equal(timelines.length, 0, 'nothing arms while images are outstanding')
+  assert.equal(pendingTimers(), 1, 'the readiness timeout is waiting')
+
+  page.items.forEach((item) => completeImage(item.img))
+
+  assert.equal(timelines.length, 1, 'the last image to land arms the wall')
+  assert.equal(pendingTimers(), 0, 'and cancels the timeout on its way')
+
+  flush()
+  assert.equal(timelines.length, 1, 'so nothing arms a second time')
+})
+
+test('a motion-preference change before the first arm does not arm early', () => {
+  // armLoops runs when the images are ready, not when a preference flips. Going
+  // early would build the band against images that have not landed.
+  const page = fillingPage({ unloaded: [2] })
+  const { flush, timelines, rearm } = load(page, { gsap: true })
+
+  rearm()
+  assert.equal(timelines.length, 0, 'still waiting on the image')
+
+  flush()
+  assert.equal(timelines.length, 1, 'and arms on its own schedule')
+})
+
+test('a straggler that lands after the early arm triggers exactly one re-arm', () => {
+  // An early arm measures a half-loaded strip: the images that have not landed
+  // contribute no width, so the loop is built on the wrong geometry and the
+  // fill can overshoot. When the stragglers do arrive the wall must correct
+  // itself once — and only once.
+  const page = fillingPage({ unloaded: [2] })
+  const { flush, timelines, warnings } = load(page, { gsap: true, debug: true })
+
+  assert.equal(timelines.length, 0, 'the stuck image holds the arm back')
+
+  flush() // the readiness timeout elapses
+  assert.equal(timelines.length, 1, 'armed early on what had loaded')
+  assert.equal(warnings.length, 1, 'and said so on staging')
+  assert.match(warnText(warnings[0]), /armed before all images settled/)
+
+  completeImage(page.items[2].img)
+  assert.equal(timelines.length, 2, 'the straggler triggers a corrective re-arm')
+  assert.equal(timelines[0].killed, true, 'the early timeline was torn down')
+  assert.equal(warnings.length, 1, 'the warning is not repeated')
+
+  // Nothing may arm a third time: not a stray second event, not the dead timer.
+  completeImage(page.items[2].img)
+  flush()
+  assert.equal(timelines.length, 2, 'the corrective arm is the last one')
 })
 
 /* ------------------------------- drift guard ----------------------------- */
