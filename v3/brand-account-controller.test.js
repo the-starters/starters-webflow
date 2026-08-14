@@ -322,10 +322,13 @@ function loadController(options = {}) {
       return null
     },
     querySelectorAll(selector) {
-      if (selector !== '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
-        return []
+      if (selector === '[data-quiz-form="signup"][data-ms-form="signup"]') {
+        return [quizSignupForm].filter(Boolean)
       }
-      return [signupForm, quizSignupForm].filter(Boolean)
+      if (selector === '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
+        return [signupForm, quizSignupForm].filter(Boolean)
+      }
+      return []
     },
     addEventListener() {},
   }
@@ -423,21 +426,34 @@ test('Quiz email signup receives the live Brand Free plan', () => {
   assert.equal(quizSignupForm.getAttribute('data-ms-plan:add'), 'pln_free-plan-f6kn0dxz')
 })
 
-test('Quiz email signup receives Brand Free when its form is inserted after boot', () => {
+test('Late quiz signup receives Brand Free after a standard signup is configured', () => {
+  const signupForm = makeElement()
+  signupForm.setAttribute('data-ms-form', 'signup')
   const environment = loadController({
     buildForm: null,
     hostname: 'thestarters.com',
     pathname: '/quiz',
+    signupForm,
   })
+
+  assert.equal(signupForm.getAttribute('data-ms-plan:add'), 'pln_free-plan-f6kn0dxz')
+  assert.equal(environment.mutationObservers.length, 1)
+  assert.equal(environment.mutationObservers[0].connected, true)
+  environment.mutationObservers[0].trigger()
+  assert.equal(environment.mutationObservers[0].connected, true)
+
   const quizSignupForm = makeElement()
   quizSignupForm.setAttribute('data-ms-form', 'signup')
-  environment.document.querySelectorAll = (selector) => (
-    selector === '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]'
-      ? [quizSignupForm]
-      : []
-  )
+  environment.document.querySelectorAll = (selector) => {
+    if (selector === '[data-quiz-form="signup"][data-ms-form="signup"]') {
+      return [quizSignupForm]
+    }
+    if (selector === '#wf-form-Brand-Signup, [data-quiz-form="signup"][data-ms-form="signup"]') {
+      return [signupForm, quizSignupForm]
+    }
+    return []
+  }
 
-  assert.equal(environment.mutationObservers.length, 1)
   assert.deepEqual(plain(environment.mutationObservers[0].observeOptions), {
     childList: true,
     subtree: true,
