@@ -294,7 +294,7 @@ test('email payload rewrites the legacy interview path to the live V3 CMS route'
         enrollmentResponses: [],
         learnSelection: {
             name: 'Paid Social 101: A Guide to Growing E-Commerce Brands',
-            url: '/learn/interviews/paid-social-101-a-guide-to-growing-e-commerce-brands',
+            url: '/learn/interviews/paid-social-101-a-guide-to-growing-e-commerce-brands?utm_source=quiz-results&utm_campaign=lead-drip#lesson',
         },
         waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
     })
@@ -305,8 +305,13 @@ test('email payload rewrites the legacy interview path to the live V3 CMS route'
     assert.equal(payload.properties.learn_count, '1')
     assert.equal(
         payload.properties.learn_url,
-        'https://thestarters.com/learn/interviews-analyses/paid-social-101-a-guide-to-growing-e-commerce-brands',
+        'https://thestarters.com/learn/interviews-analyses/paid-social-101-a-guide-to-growing-e-commerce-brands?utm_source=quiz-results&utm_campaign=lead-drip#lesson',
     )
+    evidence.learn_cta = {
+        endpoint: enrollmentCalls(harness.fetchCalls)[0].url,
+        title: payload.properties.learn_title,
+        url: payload.properties.learn_url,
+    }
 })
 
 test('email payload maps three canonical Algolia profile photos for enrollment', async () => {
