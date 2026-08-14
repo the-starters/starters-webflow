@@ -67,6 +67,15 @@ function boot({ delayHelper = false, helperUnavailable = false, legacyMutatingHe
       return null
     },
   }
+  const location = {
+    hostname: 'the-starters-3-0.webflow.io',
+    pathname: '/build-profile/consult',
+    replace: (url) => redirects.push(url),
+  }
+  Object.defineProperty(location, 'href', {
+    get: () => 'https://the-starters-3-0.webflow.io/build-profile/consult',
+    set: (url) => { redirects.push(url) },
+  })
   const window = {
     Date,
     MutationObserver,
@@ -75,11 +84,7 @@ function boot({ delayHelper = false, helperUnavailable = false, legacyMutatingHe
     crypto: { randomUUID: () => '12345678-1234-1234-1234-123456789012' },
     document,
     getComputedStyle: (element) => ({ display: element.style.display || 'block', visibility: 'visible' }),
-    location: {
-      hostname: 'the-starters-3-0.webflow.io',
-      pathname: '/build-profile/consult',
-      replace: (url) => redirects.push(url),
-    },
+    location,
     navigator: {},
     sessionStorage: {
       getItem: (key) => session.get(key) || null,
@@ -165,7 +170,7 @@ test('structured-success stays authored when an older helper exposes DOM decorat
   assert.doesNotMatch(page.successInner.textContent, /Diagnostic ID:|\[object Object\]/)
 })
 
-test('authored success routes to Starter Onboarding after the clean success state', async () => {
+test('authored success never navigates and leaves the CTA in charge', async () => {
   const page = boot()
   page.trigger.dispatch('click')
   await tick()
@@ -173,28 +178,43 @@ test('authored success routes to Starter Onboarding after the clean success stat
   page.observers[0].callback()
   assert.deepEqual(page.redirects, [])
   await new Promise((resolve) => setTimeout(resolve, 1250))
-  assert.deepEqual(page.redirects, ['/starter-onboarding'])
+  assert.deepEqual(page.redirects, [])
   page.observers[0].callback()
   await new Promise((resolve) => setTimeout(resolve, 10))
-  assert.deepEqual(page.redirects, ['/starter-onboarding'])
+  assert.deepEqual(page.redirects, [])
+  const receipt = page.window.StartersWorkflowDiagnostics.latest('build_profile_submit')
+  assert.equal(receipt.result, 'success')
+  assert.equal(receipt.controller_version, 'build-profile-submit-outcome-v3')
 })
 
-test('authored success still routes when diagnostics are unavailable', async () => {
+test('authored success never navigates when diagnostics are unavailable', async () => {
   const page = boot({ helperUnavailable: true })
   page.trigger.dispatch('click')
   await tick()
   page.success.style.display = 'block'
   page.observers[0].callback()
   await new Promise((resolve) => setTimeout(resolve, 1250))
-  assert.deepEqual(page.redirects, ['/starter-onboarding'])
+  assert.deepEqual(page.redirects, [])
 })
 
-test('success state without an authored submit does not route', async () => {
-  const page = boot({ helperUnavailable: true })
+test('the controller exposes no navigation entry point', () => {
+  const page = boot()
+  assert.deepEqual(
+    Object.keys(page.window.StartersBuildProfileSubmitDiagnostics).sort(),
+    ['disabled', 'init', 'visible'],
+  )
+  assert.doesNotMatch(source, /location\s*\.\s*(replace|assign)\s*\(/)
+  assert.doesNotMatch(source, /location\s*\.\s*href\s*=/)
+})
+
+test('success state without an authored submit records nothing and does not navigate', async () => {
+  const page = boot()
   page.success.style.display = 'block'
   page.observers[0].callback()
+  await tick()
   await new Promise((resolve) => setTimeout(resolve, 1250))
   assert.deepEqual(page.redirects, [])
+  assert.equal(page.window.StartersWorkflowDiagnostics.latest('build_profile_submit'), null)
 })
 
 test('authored error records a stable failure without form data', async () => {
