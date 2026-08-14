@@ -268,6 +268,8 @@
     var startedAt = Date.now()
     var responseStatus = null
     var failureCode = 'NETWORK_ERROR'
+    var failureStage = 'network'
+    var requestStarted = false
 
     var payload = fieldMap(new FormData(form))
     var consent = marketingEmailConsent(form)
@@ -283,11 +285,17 @@
     if (cityText) payload.answers.city = cityText
 
     var startRequest = function () {
-      diagnosticStart(form)
       if (!ENDPOINT) {
         failureCode = 'ENVIRONMENT_UNRECOGNIZED'
+        failureStage = 'environment'
+        diagnosticStart(form, {
+          stage: failureStage,
+          request_started: requestStarted,
+        })
         return Promise.reject(new Error('talent application host is not registered'))
       }
+      diagnosticStart(form)
+      requestStarted = true
       return fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -325,11 +333,11 @@
         setSubmitting(form, false)
         var failureReceipt = diagnosticComplete(form, {
           result: 'failed',
-          stage: responseStatus === null ? 'network' : 'response',
+          stage: responseStatus === null ? failureStage : 'response',
           error_code: failureCode,
           http_status: responseStatus,
           duration_ms: Date.now() - startedAt,
-          request_started: true,
+          request_started: requestStarted,
         })
         showFail(form, failureReceipt)
         if (window.console && console.warn) {

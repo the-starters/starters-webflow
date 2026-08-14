@@ -262,6 +262,9 @@ test('fails closed without a request on an unregistered host', async () => {
   await tick()
   assert.equal(fetched, false)
   assert.equal(form.failEl.style.display, 'block')
+  assert.equal(form.__startersDiagnostic.stage, 'environment')
+  assert.equal(form.__startersDiagnostic.request_started, false)
+  assert.equal(form.__startersDiagnostic.error_code, 'ENVIRONMENT_UNRECOGNIZED')
 })
 
 test('normalizes a trailing dot before selecting the production endpoint', async () => {
