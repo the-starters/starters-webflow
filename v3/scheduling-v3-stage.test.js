@@ -520,6 +520,31 @@ test('maps every reviewed legacy route to an authenticated V3 request', async ()
   assert.equal(authenticatedRequests.length, Object.keys(routeMap).length)
 })
 
+test('routes the environment-bound Stripe Connect lookup through authenticated V3', async () => {
+  const { authenticatedRequests, window } = loadStage()
+
+  const legacy = await window.fetch(`${API_BASE}starter/get_stripe_connect_id`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ member_id: 'same-environment-starter' }),
+  })
+  const direct = await window.fetch(`${API_BASE}starter/get_stripe_connect_id/v3`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ member_id: 'same-environment-starter' }),
+  })
+
+  assert.equal(legacy.status, 200)
+  assert.equal(direct.status, 200)
+  assert.deepEqual(
+    authenticatedRequests.map((request) => new URL(request.url).pathname),
+    [
+      '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
+      '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
+    ],
+  )
+})
+
 test('the real auth bridge authorizes every mapped V3 target', async () => {
   const requests = []
   const attributes = {}
