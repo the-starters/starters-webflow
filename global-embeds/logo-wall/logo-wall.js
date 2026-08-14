@@ -2,7 +2,7 @@
 /**
  * Logo Wall — attribute-driven looping tracks of CMS logos.
  *
- * @release v1.59.234
+ * @release v1.59.239
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. GSAP is assumed
  * as a page global (already on the V3 site). Without GSAP the tracks still
@@ -32,6 +32,13 @@
  * Hover pauses that Track. Off-screen wrappers pause. prefers-reduced-motion
  * freezes the bands.
  *
+ * IMAGES: every logo is forced loading="eager" before arming. Webflow ships CMS
+ * images lazy, and the logos parked outside the clip never intersect the
+ * viewport, so they were never fetched and never fired load — which deadlocked
+ * readiness and left the wall static in production on 2026-08-14. Arming also
+ * gives up waiting after IMAGES_READY_TIMEOUT_MS, so no single dead asset can
+ * stop the band again.
+ *
  * SELF-DEFENSE: the companion stylesheet (logo-wall.css) is required. If a
  * Track does not compute as a flex row, the stylesheet did not load. The
  * original logos are left in place and visible but UNSTYLED — without the Track
@@ -45,7 +52,7 @@
   if (window.__startersLogoWallInit) return;
   window.__startersLogoWallInit = true;
 
-  var RELEASE = 'v1.59.234';
+  var RELEASE = 'v1.59.239';
   window.__startersLogoWall = { release: RELEASE };
 
   var WRAPPER_SEL = '[data-logo-wall-element="wrapper"]';
@@ -57,6 +64,7 @@
   var FILL_TIMES = 2;
   var MAX_CLONES = 24;
   var RESIZE_MS = 150;
+  var IMAGES_READY_TIMEOUT_MS = 3000;
 
   function isDevHost() {
     try {
@@ -159,10 +167,12 @@
     var imgs = root.querySelectorAll('img');
     var pending = 0;
     var finished = false;
+    var timer = 0;
 
     function finish() {
       if (finished) return;
       finished = true;
+      window.clearTimeout(timer);
       done();
     }
 
@@ -178,7 +188,15 @@
       img.addEventListener('error', onOne, { once: true });
     });
 
-    if (pending === 0) finish();
+    if (pending === 0) {
+      finish();
+      return;
+    }
+    // No single asset gets to hold the wall hostage. A broken CDN, a blocked
+    // request or another lazy-loading regression can leave an image that never
+    // fires either event; arm on the timeout instead of waiting forever. The
+    // finish() latch makes this and the last onOne mutually exclusive.
+    timer = window.setTimeout(finish, IMAGES_READY_TIMEOUT_MS);
   }
 
   function columnGapPx(el) {
@@ -587,6 +605,15 @@
     bindViewport(state);
     bindResize(state);
     bindReducedMotion(state);
+
+    // Webflow ships every CMS image as loading="lazy", and a marquee's strip is
+    // wider than the clip that hides it, so the logos parked outside the band
+    // never intersect the viewport, are never fetched, and never fire load. The
+    // readiness count below then never reaches zero and the wall never arms at
+    // all. A marquee needs every logo regardless of where it currently sits.
+    Array.prototype.forEach.call(wrapper.querySelectorAll('img'), function (img) {
+      img.loading = 'eager';
+    });
 
     whenImagesReady(wrapper, function onReady() {
       armLoops(state);

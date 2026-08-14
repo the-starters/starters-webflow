@@ -88,6 +88,15 @@ class El {
     return this.scrollWidth
   }
 
+  /** A reflected attribute on <img>, exactly as in the real DOM. */
+  get loading() {
+    return this.getAttribute('loading')
+  }
+
+  set loading(value) {
+    this.setAttribute('loading', value)
+  }
+
   /** A flex row: everything before me in my parent, laid end to end. */
   get offsetLeft() {
     if (!this.parentNode) return 0
@@ -191,15 +200,26 @@ const CLONE = 'data-logo-wall-clone'
 const INDEX = 'data-test-index'
 
 /** One logo cell: a marked div of a known width holding a loaded image. */
-function logoItem(index, width) {
+function logoItem(index, width, options) {
+  const o = options || {}
   const el = new El('div').setAttribute(ITEM, 'item').setAttribute(INDEX, String(index))
   el.layoutWidth = width
   const img = new El('img')
   // Already-loaded images make whenImagesReady resolve inline, so armLoops runs
   // synchronously and the test can read the finished DOM straight after load().
-  img.complete = true
+  // A `loaded: false` image models Webflow's lazy default sitting outside the
+  // clip: complete stays false and neither load nor error ever fires, which is
+  // exactly how the readiness count deadlocked in production.
+  img.complete = o.loaded !== false
+  img.setAttribute('loading', o.loading || 'lazy')
   el.appendChild(img)
+  el.img = img
   return el
+}
+
+/** Every <img> in the wrapper, originals and clones alike. */
+function imagesOf(wrapper) {
+  return wrapper.querySelectorAll('img')
 }
 
 /**
@@ -226,8 +246,9 @@ function makePage(options) {
   section.appendChild(wrapper)
 
   const width = o.itemWidth == null ? 100 : o.itemWidth
+  const unloaded = o.unloaded || [] // indexes whose image never resolves
   for (let i = 0; i < (o.items || 0); i++) {
-    const el = logoItem(i, width)
+    const el = logoItem(i, width, { loaded: unloaded.indexOf(i) === -1 })
     wrapper.appendChild(el)
     page.items.push(el)
   }
@@ -839,6 +860,58 @@ test('a re-arm kills the old timelines and builds them the same way round', () =
   assert.equal(rebuilt.length, 2, 'and rebuilt one per track')
   assert.equal(rebuilt[0].reversed(), true)
   assert.equal(rebuilt[1].reversed(), false)
+})
+
+/* ------------------------------ image readiness -------------------------- */
+
+test('a logo that never loads cannot stop the wall from arming', () => {
+  // The 2026-08-14 production incident. Webflow ships every CMS <img> as
+  // loading="lazy"; the centred strip is wider than the clip, so the logos
+  // outside the visible band never intersect the viewport, Chrome never
+  // fetches them, complete stays false and the readiness count never reaches
+  // zero. armLoops was never called at all: no clones, no motion, forever.
+  const page = fillingPage({ unloaded: [2] })
+  const { flush } = load(page)
+
+  const track = tracksOf(page.wrapper)[0]
+  assert.equal(clonesOf(track).length, 0, 'the stuck image holds the arm back at first')
+
+  flush() // the readiness timeout elapses
+
+  assert.ok(clonesOf(track).length > 0, 'and then the wall arms anyway')
+})
+
+test('the originals are forced eager, so a clipped logo still gets fetched', () => {
+  // Fixing the deadlock at its source: a marquee needs every logo regardless of
+  // where it sits, so none of them may be deferred.
+  const page = fillingPage()
+  load(page)
+
+  const images = imagesOf(page.wrapper)
+  assert.ok(images.length > 4, 'originals and clones both carry images')
+  images.forEach((img) => {
+    assert.equal(img.loading, 'eager', 'every image is eager')
+  })
+  page.items.forEach((item) => {
+    assert.equal(item.img.getAttribute('loading'), 'eager', 'including the authored attribute')
+  })
+})
+
+test('images that are all loaded arm once, and the timeout adds nothing', () => {
+  // The fast path must stay synchronous, and the finish() latch must make the
+  // timeout a no-op rather than a second arm that rebuilds the whole band.
+  const page = fillingPage()
+  const { flush, timelines } = load(page, { gsap: true })
+
+  const track = tracksOf(page.wrapper)[0]
+  const armed = clonesOf(track).length
+  assert.ok(armed > 0, 'armed synchronously, before any timer ran')
+  assert.equal(timelines.length, 1, 'one timeline')
+
+  flush() // the readiness timeout, if it is still pending
+
+  assert.equal(clonesOf(track).length, armed, 'the band was not rebuilt')
+  assert.equal(timelines.length, 1, 'and no second timeline was created')
 })
 
 /* ------------------------------- drift guard ----------------------------- */
