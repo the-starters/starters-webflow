@@ -130,8 +130,9 @@ The script must honor `[data-page-spinner]` whenever one exists: up before the
 read, down on stay, left up on go (navigation is in flight).
 
 **Revert path, no code change:** add that element in Designer, hidden by
-default, covering the page, outside any `.w-form` wrapper. The script only
-toggles `display`.
+default, covering the page, outside any `.w-form` wrapper. Same reveal as the
+Brand twin: `display: block` plus the `hidden` attribute cleared on show,
+`display: none` on hide. How much it covers is a styling question.
 
 Accepted cost: a visitor whose Memberstack never loads sits under the spinner
 for the full Memberstack wait (8s, matching the Brand twin) before it lowers.

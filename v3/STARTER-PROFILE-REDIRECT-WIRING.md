@@ -48,7 +48,8 @@ Role comes from `window.StartersV3RouteGuard.memberRole`. Install **after**
 bounces the member back to resubmit.
 
 Flash is accepted until Designer adds `[data-page-spinner]`. That is the revert
-path; no code change.
+path; no code change. Reveal matches the Brand twin: `display: block` and the
+`hidden` attribute cleared on show, `display: none` on hide.
 
 ## Webflow install
 
