@@ -304,12 +304,25 @@ function buildSectionDom(options = {}) {
     class: 'button-group is-secondary',
     'data-availability-element': 'connect-label-group',
   })
-  const disconnectedLabel = new El('div')
+  // Mirrors the real Designer markup: one [data-type="false"] label plus two
+  // [data-type="true"][data-manager] variants, one per manager.
+  const disconnectedLabel = new El('div', { 'data-type': 'false', 'data-availability-element': 'connect-label' })
   disconnectedLabel.textContent = 'Disonnected'
-  const connectedLabel = new El('div')
-  connectedLabel.textContent = 'Connected'
+  const connectedPlatformLabel = new El('div', {
+    'data-type': 'true',
+    'data-availability-element': 'connect-label',
+    'data-manager': 'platform',
+  })
+  connectedPlatformLabel.textContent = 'Connected to platform'
+  const connectedCalendarLabel = new El('div', {
+    'data-type': 'true',
+    'data-availability-element': 'connect-label',
+    'data-manager': 'calendar',
+  })
+  connectedCalendarLabel.textContent = 'Connected to calendar'
   labelGroup.appendChild(disconnectedLabel)
-  labelGroup.appendChild(connectedLabel)
+  labelGroup.appendChild(connectedPlatformLabel)
+  labelGroup.appendChild(connectedCalendarLabel)
 
   const connectInfoWrapper = new El('div', { 'data-availability-element': 'connect-info-wrapper' })
 
@@ -672,7 +685,7 @@ test('boots into disconnected state: connect + google visible, disconnect hidden
   assert.equal(dom.connectBtnWrapper.children[2].style.display, 'none') // disconnect-google
 })
 
-test('the first load reveals connect-wrapper (flex) and main-wrapper (grid) and hides loading-section, regardless of connection state', async () => {
+test('the first load reveals connect-wrapper (flex) and hides loading-section regardless of connection state, but keeps main-wrapper hidden until a successful connect', async () => {
   const { dom } = loadSection()
 
   // Nothing is revealed yet — the wrappers are hidden by the site's own CSS
@@ -682,8 +695,39 @@ test('the first load reveals connect-wrapper (flex) and main-wrapper (grid) and 
 
   await settle()
 
+  // Boots disconnected (see 'boots into disconnected state' above) — the
+  // connect UI must always surface once loading finishes, but the
+  // list/slots main-wrapper has nothing to show until a calendar is
+  // actually connected.
   assert.equal(dom.loadingSection.style.display, 'none')
   assert.equal(dom.connectWrapper.style.display, 'flex')
+  assert.notEqual(dom.mainWrapper.style.display, 'grid')
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform
+  await settle()
+
+  assert.equal(dom.mainWrapper.style.display, 'grid')
+})
+
+test('main-wrapper stays visible through a later disconnect-google switch back to platform', async () => {
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+  })
+  await settle()
+  assert.equal(dom.mainWrapper.style.display, 'grid')
+
+  dom.connectBtnWrapper.children[2].click() // disconnect-google -> reverts to platform
+  await settle()
+
+  // main-wrapper must not have been hidden by the manager switch.
   assert.equal(dom.mainWrapper.style.display, 'grid')
 })
 
@@ -861,25 +905,46 @@ test('connect-label-group and connect-info-wrapper do not flash mid-request on d
   })
   await settle()
 
-  // Sanity: boots into the connected look.
-  assert.equal(dom.labelGroup.children[0].style.display, 'none') // "Disconnected" label hidden
-  assert.equal(dom.labelGroup.children[1].style.display, '') // "Connected" label shown
+  // Sanity: boots into the connected-via-calendar look.
+  assert.equal(dom.labelGroup.children[0].style.display, 'none') // "Disconnected" hidden
+  assert.equal(dom.labelGroup.children[1].style.display, 'none') // "Connected to platform" hidden
+  assert.equal(dom.labelGroup.children[2].style.display, '') // "Connected to calendar" shown
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
 
   dom.connectBtnWrapper.children[2].click() // disconnect-google — publishes 'loading' synchronously
 
-  // The request hasn't resolved yet — both elements must still read exactly
-  // as they did before the click, not flip to a "disconnected" look.
+  // The request hasn't resolved yet — all three labels must still read
+  // exactly as they did before the click, not flip to a "disconnected" look.
   assert.equal(dom.labelGroup.children[0].style.display, 'none')
-  assert.equal(dom.labelGroup.children[1].style.display, '')
+  assert.equal(dom.labelGroup.children[1].style.display, 'none')
+  assert.equal(dom.labelGroup.children[2].style.display, '')
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
 
   await settle()
 
   // Disconnect reverts to the platform manager, landing back on a connected
-  // look once the real response arrives.
+  // look (now the platform label) once the real response arrives.
   assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '')
+  assert.equal(dom.labelGroup.children[2].style.display, 'none')
   assert.equal(dom.connectInfoWrapper.style.display, 'none')
+})
+
+test('connect-label shows only the variant matching the live manager (platform vs. calendar)', async () => {
+  const { dom } = loadSection()
+  await settle()
+
+  // Boots disconnected: only the [data-type="false"] label is visible.
+  assert.equal(dom.labelGroup.children[0].style.display, '')
+  assert.equal(dom.labelGroup.children[1].style.display, 'none')
+  assert.equal(dom.labelGroup.children[2].style.display, 'none')
+
+  dom.connectBtnWrapper.children[0].click() // connect-platform
+  await settle()
+
+  assert.equal(dom.labelGroup.children[0].style.display, 'none')
+  assert.equal(dom.labelGroup.children[1].style.display, '') // platform variant
+  assert.equal(dom.labelGroup.children[2].style.display, 'none')
 })
 
 /* ------------------------------------------------------------------ */
