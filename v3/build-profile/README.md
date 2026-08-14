@@ -25,7 +25,21 @@ read fields, intercept the click, or change the coupled writer. It also does not
 navigate. Once the authored success state appears it stays there, and the member
 moves on by clicking the authored success-state CTA ("Start onboarding", which
 links to `/starter-onboarding`). That CTA already exists on both pages and owns
-the navigation, so the observer only records the outcome. Errors stay on the form.
+the navigation, so the observer only records the outcome.
+
+Because nothing navigates away any more, the module owns its own teardown. The
+authored success state is terminal: once observed, the MutationObserver
+disconnects and later submit clicks are ignored, so a second click cannot re-arm
+a receipt and inherit the still-visible success state. An authored error is not
+terminal, since the member may fix the form and retry; outcomes are edge-triggered
+on a state change, so a stale visible error is never charged to the retry that
+follows it. Errors stay on the form.
+
+Because the CTA is now the only way out of a successful submit, a success state
+with no link to `/starter-onboarding` is a dead end. The module logs a staging-only
+`console.warn` in that case (`*.webflow.io`, localhost, `127.0.0.1`,
+`*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`). It is a warning only
+and never blocks init.
 
 Replace each exact inline block in place with its matching deferred loader. Do not consolidate or reorder these loaders: the untouched blocks between them still supply shared globals and form state.
 
