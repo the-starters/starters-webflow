@@ -108,25 +108,102 @@ function getLearnContentTaxonomyApi() {
     )
 }
 
-function getLearnContentSearchConfigApi({ window, document }) {
-    const configSource = sliceSource(
-        resultsSource,
-        'function getLearnContentSearchConfig(',
-        'function getLearnContentFilterField(',
-    )
+function runQuizResultsController({ fetch, learnConfig }) {
+    const template = {
+        classList: { add() {}, contains() { return false }, remove() {} },
+        cloneNode() { return this },
+        getAttribute(name) {
+            return name === 'wf-algolia-element' ? 'template' : null
+        },
+        matches() { return true },
+        querySelector() { return null },
+    }
+    const resultsElement = {
+        children: [template],
+        closest() { return null },
+        querySelector(selector) {
+            return selector === '[wf-algolia-element="template"]'
+                ? template
+                : null
+        },
+        querySelectorAll() { return [] },
+    }
+    const learnContentSection = {
+        getAttribute(name) {
+            return name === 'wf-algolia-index' ? 'LearnContent' : null
+        },
+        querySelector(selector) {
+            return selector === '[wf-algolia-element="results"]'
+                ? resultsElement
+                : null
+        },
+    }
+    const document = {
+        currentScript: null,
+        addEventListener() {},
+        querySelector(selector) {
+            if (selector === '.section_results-learn') return learnContentSection
+            if (selector === '.section_results-learn [wf-algolia-element="results"]') {
+                return resultsElement
+            }
+            return null
+        },
+        querySelectorAll() {
+            return []
+        },
+    }
+    const storage = {
+        getItem(key) {
+            return key === 'starterQuizPending'
+                ? JSON.stringify({
+                      status: 'ready',
+                      categories: [
+                          { id: 'creative', label: 'Creative' },
+                          { id: 'paid-media', label: 'Paid Media' },
+                      ],
+                  })
+                : null
+        },
+    }
+    const window = {
+        WfAlgolia: {
+            on() {},
+            setFilter() {},
+        },
+        addEventListener() {},
+        clearInterval() {},
+        clearTimeout() {},
+        dispatchEvent() {},
+        location: { hostname: 'the-starters-3-0.webflow.io', search: '' },
+        localStorage: storage,
+        sessionStorage: storage,
+        setInterval() { return 1 },
+        setTimeout(callback) {
+            queueMicrotask(callback)
+            return 1
+        },
+        starterQuizLearnContentAlgoliaConfig: learnConfig,
+    }
+    window.window = window
+    const context = vm.createContext({
+        CustomEvent: class CustomEvent {},
+        Date,
+        Map,
+        Math,
+        Promise,
+        Set,
+        Uint32Array,
+        URL,
+        URLSearchParams,
+        console: { error() {}, log() {}, warn() {} },
+        document,
+        fetch,
+        localStorage: storage,
+        sessionStorage: storage,
+        window,
+    })
 
-    return vm.runInNewContext(
-        [
-            'function normalizeLearnContentValue(value) {',
-            "  return String(value || '').trim()",
-            '}',
-            "const learnContentDefaultAppId = ''",
-            "const learnContentDefaultIndexName = 'LearnContent'",
-            configSource,
-            'getLearnContentSearchConfig',
-        ].join('\n'),
-        { document, window },
-    )
+    vm.runInContext(resultsSource, context)
 }
 
 function runMainSubcategoryRestore({ subcategoryItems, categoryInputs, savedSubcategoryIds }) {
@@ -326,52 +403,36 @@ test('LearnContent filters preserve current categories without invented aliases'
     )
 })
 
-test('managed Algolia keeps LearnContent on its independent shared credentials', () => {
-    const managedClient = {
-        getAttribute(name) {
-            return {
-                'data-app-id': 'TESTAPP',
-                'data-search-key': 'test-managed-key',
-            }[name]
+test('managed Algolia keeps LearnContent on its independent shared credentials', async () => {
+    const calls = []
+    runQuizResultsController({
+        fetch: async (url, options) => {
+            calls.push({ url, options })
+            return { ok: true, async json() { return { hits: [] } } }
         },
-    }
-    const window = {
-        StartersV3AlgoliaEnvironment: {},
-        starterQuizAlgoliaConfig: {
-            appId: 'TESTAPP',
-            searchKey: 'test-managed-key',
-            indexName: 'Freelancers3.0-staging-test',
-        },
-        starterQuizLearnContentAlgoliaConfig: {
+        learnConfig: {
             appId: 'SHAREDAPP',
             searchKey: 'shared-learn-key',
             indexName: 'LearnContent',
         },
-    }
-    const document = {
-        querySelector(selector) {
-            if (selector === 'script[data-app-id][data-search-key]') {
-                return managedClient
-            }
-            return null
-        },
-    }
-    const learnContentSection = {
-        getAttribute(name) {
-            return name === 'wf-algolia-index' ? 'LearnContent' : null
-        },
-    }
-
-    const getLearnContentSearchConfig = getLearnContentSearchConfigApi({
-        document,
-        window,
     })
-    const resolved = getLearnContentSearchConfig(learnContentSection)
-
-    assert.deepEqual({ ...resolved }, {
-        appId: 'SHAREDAPP',
-        searchKey: 'shared-learn-key',
-        indexName: 'LearnContent',
+    for (let attempt = 0; attempt < 20 && calls.length < 2; attempt += 1) {
+        await new Promise(setImmediate)
+    }
+    assert.ok(calls.length >= 2)
+    calls.forEach((call) => {
+        assert.equal(
+            call.url,
+            'https://SHAREDAPP-dsn.algolia.net/1/indexes/LearnContent/query',
+        )
+        assert.equal(
+            call.options.headers['X-Algolia-API-Key'],
+            'shared-learn-key',
+        )
+        assert.equal(
+            call.options.headers['X-Algolia-Application-Id'],
+            'SHAREDAPP',
+        )
     })
 })
 

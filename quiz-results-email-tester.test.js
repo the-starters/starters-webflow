@@ -19,22 +19,18 @@ function response({ ok = true, status = 200, data = {} } = {}) {
     }
 }
 
-function createHarness({ fetch, memberstack, query = '', savedState } = {}) {
+function createHarness({
+    fetch,
+    learnConfig,
+    managedConfig,
+    memberstack,
+    query = '',
+    savedState,
+} = {}) {
     const store = new Map()
-    const configScript = {
-        getAttribute(name) {
-            return {
-                'data-app-id': 'PKVW6M9OPZ',
-                'data-search-key': 'public-search-key',
-            }[name]
-        },
-    }
     const document = {
         readyState: 'complete',
-        querySelector(selector) {
-            if (selector === 'script[data-app-id][data-search-key]') {
-                return configScript
-            }
+        querySelector() {
             return null
         },
     }
@@ -52,11 +48,32 @@ function createHarness({ fetch, memberstack, query = '', savedState } = {}) {
     const window = {
         __STARTERS_QUIZ_EMAIL_TEST_HOOKS__: true,
         __startersQuizEmailTestSavedState: savedState,
+        StartersV3AlgoliaEnvironment: {
+            getManagedSearchConfig(resource) {
+                assert.equal(resource, 'starters')
+                return managedConfig === null
+                    ? null
+                    : managedConfig || {
+                          appId: 'MANAGEDAPP',
+                          searchKey: 'managed-search-key',
+                          indexName: 'Freelancers3.0-production',
+                          environment: 'production',
+                      }
+            },
+        },
         $memberstackDom: memberstack,
         crypto: crypto.webcrypto,
         fetch: fetch || (async () => response()),
         location: { search: query },
         setTimeout,
+        starterQuizLearnContentAlgoliaConfig:
+            learnConfig === null
+                ? null
+                : learnConfig || {
+                      appId: 'SHAREDAPP',
+                      searchKey: 'shared-learn-key',
+                      indexName: 'LearnContent',
+                  },
     }
     window.window = window
 
@@ -221,8 +238,47 @@ test('hydrates current Starter and Learn records from the expected Algolia index
     assert.match(built.html, /Starter 11/)
     assert.match(built.html, /Current Learn item/)
     assert.deepEqual(
-        calls.map((call) => new URL(call.url).pathname),
-        ['/1/indexes/*/objects', '/1/indexes/LearnContent/query'],
+        calls.map((call) => ({
+            appId: call.options.headers['x-algolia-application-id'],
+            indexPath: new URL(call.url).pathname,
+            searchKey: call.options.headers['x-algolia-api-key'],
+        })),
+        [
+            {
+                appId: 'MANAGEDAPP',
+                indexPath: '/1/indexes/*/objects',
+                searchKey: 'managed-search-key',
+            },
+            {
+                appId: 'SHAREDAPP',
+                indexPath: '/1/indexes/LearnContent/query',
+                searchKey: 'shared-learn-key',
+            },
+        ],
+    )
+    const peopleRequest = JSON.parse(calls[0].options.body)
+    assert.deepEqual(
+        peopleRequest.requests.map((request) => request.indexName),
+        [
+            'Freelancers3.0-production',
+            'Freelancers3.0-production',
+            'Freelancers3.0-production',
+        ],
+    )
+})
+
+test('fails closed without resolved managed and LearnContent configuration', async () => {
+    const quiz = {
+        categories: [{ id: 'creative', label: 'Creative' }],
+        featuredFreelancerIds: ['11', '22', '33'],
+    }
+    await assert.rejects(
+        createHarness({ managedConfig: null }).hooks.buildMessage(quiz),
+        /Managed Algolia search configuration is unavailable/,
+    )
+    await assert.rejects(
+        createHarness({ learnConfig: null }).hooks.buildMessage(quiz),
+        /LearnContent Algolia search configuration is unavailable/,
     )
 })
 

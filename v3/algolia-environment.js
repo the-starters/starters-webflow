@@ -23,8 +23,19 @@
     'www.thestarters.com': 'production',
   }
   var CLIENT_SELECTOR = 'script[data-starters-v3-algolia-client]'
+  var SHARED_CLIENT_SELECTOR = 'script[data-starters-shared-algolia-client]'
   var RESOURCE_SELECTOR = '[data-starters-v3-algolia-resource]'
   var LEARN_CONTENT_INDEX = 'LearnContent'
+  var EXPECTED_INDEXES = {
+    test: {
+      startersIndex: 'Freelancers3.0-staging-test',
+      opportunitiesIndex: 'opportunities_v3_test',
+    },
+    production: {
+      startersIndex: 'Freelancers3.0-production',
+      opportunitiesIndex: 'opportunities_v3_production',
+    },
+  }
   var READY_EVENT = 'starters:algolia-environment-ready'
   var BLOCKED_EVENT = 'starters:algolia-environment-blocked'
   var activeResolution = null
@@ -83,6 +94,14 @@
     ) {
       return { ok: false, reason: 'legacy_dev_index' }
     }
+    if (
+      test.startersIndex !== EXPECTED_INDEXES.test.startersIndex ||
+      test.opportunitiesIndex !== EXPECTED_INDEXES.test.opportunitiesIndex ||
+      production.startersIndex !== EXPECTED_INDEXES.production.startersIndex ||
+      production.opportunitiesIndex !== EXPECTED_INDEXES.production.opportunitiesIndex
+    ) {
+      return { ok: false, reason: 'unexpected_index_mapping' }
+    }
     return { ok: true, test: test, production: production }
   }
 
@@ -109,12 +128,21 @@
 
   function preserveSharedLearnContentConfig(documentObject) {
     var existing = window.starterQuizLearnContentAlgoliaConfig || {}
-    if (clean(existing.appId) && clean(existing.searchKey)) {
-      return existing
+    if (
+      clean(existing.appId) &&
+      clean(existing.searchKey) &&
+      clean(existing.indexName) === LEARN_CONTENT_INDEX
+    ) {
+      return {
+        appId: clean(existing.appId),
+        searchKey: clean(existing.searchKey),
+        indexName: LEARN_CONTENT_INDEX,
+      }
     }
 
     var sharedClient = null
-    each(documentObject, CLIENT_SELECTOR, function (element) {
+    each(documentObject, SHARED_CLIENT_SELECTOR, function (element) {
+      if (element.getAttribute('data-starters-v3-algolia-client') !== null) return
       if (!sharedClient) sharedClient = element
     })
     var appId = clean(sharedClient && sharedClient.getAttribute('data-app-id'))
@@ -132,9 +160,20 @@
 
   function block(documentObject, reason) {
     activeResolution = null
+    var shared = window.starterQuizLearnContentAlgoliaConfig || {}
+    var sharedAppId = clean(shared.appId)
+    var sharedSearchKey = clean(shared.searchKey)
+    var hasSharedClient = sharedAppId &&
+      sharedSearchKey &&
+      clean(shared.indexName) === LEARN_CONTENT_INDEX
     each(documentObject, CLIENT_SELECTOR, function (element) {
-      element.removeAttribute('data-app-id')
-      element.removeAttribute('data-search-key')
+      if (hasSharedClient) {
+        element.setAttribute('data-app-id', sharedAppId)
+        element.setAttribute('data-search-key', sharedSearchKey)
+      } else {
+        element.removeAttribute('data-app-id')
+        element.removeAttribute('data-search-key')
+      }
       element.setAttribute('data-starters-v3-algolia-blocked', reason)
     })
     each(documentObject, RESOURCE_SELECTOR, function (element) {
@@ -206,8 +245,29 @@
   }
 
   function boot(config) {
-    preserveSharedLearnContentConfig(document)
+    var sharedLearnContent = preserveSharedLearnContentConfig(document)
     var resolution = resolve(window.location && window.location.hostname, config)
+    if (!sharedLearnContent) {
+      resolution = {
+        ok: false,
+        reason: 'missing_learn_content_config',
+        environment: resolution.environment || environmentForHost(
+          window.location && window.location.hostname,
+        ),
+      }
+    } else if (
+      config &&
+      (sharedLearnContent.searchKey === clean(config.test && config.test.searchKey) ||
+        sharedLearnContent.searchKey === clean(
+          config.production && config.production.searchKey,
+        ))
+    ) {
+      resolution = {
+        ok: false,
+        reason: 'shared_learn_search_key',
+        environment: resolution.environment,
+      }
+    }
     if (!resolution.ok) {
       block(document, resolution.reason)
       dispatch(BLOCKED_EVENT, {

@@ -19,7 +19,8 @@ attributes, page globals, or Xano responses.
 
 The TEST and production search keys must differ. Each key must have search-only
 access to its two environment indexes and the shared public `LearnContent`
-index. The resolver rejects shared managed indexes and any managed index name
+index. The resolver rejects any index mapping
+that differs from the table, shared managed indexes, and any managed index name
 that contains a `dev` segment.
 
 ## Required markup
@@ -33,6 +34,18 @@ Mark the one wf-algolia client script:
   data-app-id=""
   data-search-key=""
   src="https://cdn.jsdelivr.net/npm/@candid-leap/wf-algolia@1/dist/index.js"
+></script>
+```
+
+Provide the independent shared LearnContent credentials on a separate client
+owner:
+
+```html
+<script
+  type="application/json"
+  data-starters-shared-algolia-client
+  data-app-id="SHARED_PUBLIC_APP_ID"
+  data-search-key="SHARED_LEARNCONTENT_SEARCH_KEY"
 ></script>
 ```
 
@@ -53,8 +66,8 @@ only the resource attribute:
 ></div>
 ```
 
-Do not mark the shared `LearnContent` index. Before the resolver replaces the
-marked client's credentials, it preserves the existing shared client values in
+Do not mark the shared `LearnContent` index. The resolver reads only the
+separate shared client owner into
 `window.starterQuizLearnContentAlgoliaConfig`. The quiz Learn search uses only
 that dedicated value while the managed resolver is active, so it cannot fall
 back to a TEST or production managed key. Keep the shared key search-only and
@@ -67,6 +80,8 @@ restricted to `LearnContent`.
 - Create distinct restricted TEST and production search-only keys. Permit each
   key to search only its two managed environment indexes plus shared public
   `LearnContent`.
+- Keep the independent shared key restricted to `LearnContent` and distinct
+  from both managed keys.
 - Add the public host configuration to a GitHub-owned config file. Load it
   immediately before `v3/algolia-environment.js`.
 - Run the Xano configure endpoints for each environment after the matching
@@ -79,5 +94,6 @@ restricted to `LearnContent`.
   staging first, and verify loaded bytes and runtime attributes.
 
 Unknown hosts, missing values, an unknown managed resource, shared keys, shared
-indexes, and legacy dev indexes remove the managed client credentials and index
-attributes. This is the intended fail-closed state.
+indexes, and legacy dev indexes replace managed credentials with the independent
+shared LearnContent credentials and remove managed index attributes. This is the
+intended fail-closed state.

@@ -24,8 +24,6 @@
   var XANO_V3_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk'
   var TRADE_TOKEN_PATH = '/auth/trade-token/v3'
   var SEND_PATH = '/quiz_email_test/send/v3'
-  var ALGOLIA_APP_ID = 'PKVW6M9OPZ'
-  var FREELANCER_INDEX = 'Freelancers3.0-dev'
   var LEARN_INDEX = 'LearnContent'
   var PRODUCTION_ORIGIN = 'https://www.thestarters.com'
   var TEMPLATE_VERSION = 'quiz-results-email-v3.1'
@@ -187,29 +185,31 @@
     return { memberstack: memberstack, member: member, quiz: currentSavedQuiz.quiz }
   }
 
-  function getAlgoliaConfig() {
-    var windowConfig = window.starterQuizAlgoliaConfig || {}
-    var explicit = document.querySelector(
-      '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
-    )
-    var script = document.querySelector('script[data-app-id][data-search-key]')
-    var searchKey =
-      normalize(windowConfig.searchKey) ||
-      normalize(explicit && explicit.dataset.starterQuizAlgoliaSearchKey) ||
-      normalize(explicit && explicit.dataset.algoliaSearchKey) ||
-      normalize(script && script.getAttribute('data-search-key'))
-
-    if (!searchKey) throw new Error('Algolia search configuration is unavailable')
-
-    return {
-      appId:
-        normalize(windowConfig.appId) ||
-        normalize(explicit && explicit.dataset.starterQuizAlgoliaAppId) ||
-        normalize(explicit && explicit.dataset.algoliaAppId) ||
-        normalize(script && script.getAttribute('data-app-id')) ||
-        ALGOLIA_APP_ID,
-      searchKey: searchKey,
+  function getManagedAlgoliaConfig() {
+    var resolver = window.StartersV3AlgoliaEnvironment
+    var config = resolver && resolver.getManagedSearchConfig
+      ? resolver.getManagedSearchConfig('starters')
+      : null
+    if (
+      !normalize(config && config.appId) ||
+      !normalize(config && config.searchKey) ||
+      !normalize(config && config.indexName)
+    ) {
+      throw new Error('Managed Algolia search configuration is unavailable')
     }
+    return config
+  }
+
+  function getLearnAlgoliaConfig() {
+    var config = window.starterQuizLearnContentAlgoliaConfig || {}
+    if (
+      !normalize(config.appId) ||
+      !normalize(config.searchKey) ||
+      normalize(config.indexName) !== LEARN_INDEX
+    ) {
+      throw new Error('LearnContent Algolia search configuration is unavailable')
+    }
+    return config
   }
 
   async function algoliaRequest(config, path, body) {
@@ -261,7 +261,7 @@
     }
     var data = await algoliaRequest(config, '*/objects', {
       requests: normalizedIds.map(function (objectID) {
-        return { indexName: FREELANCER_INDEX, objectID: objectID }
+        return { indexName: config.indexName, objectID: objectID }
       }),
     })
     var byId = new Map()
@@ -317,7 +317,7 @@
         var values = aliases[normalize(category.id)] || [normalize(category.id)]
         var data = await algoliaRequest(
           config,
-          encodeURIComponent(LEARN_INDEX) + '/query',
+          encodeURIComponent(config.indexName) + '/query',
           {
             query: '',
             hitsPerPage: Math.max(limit, 8),
@@ -450,10 +450,11 @@
   async function buildMessage(quiz) {
     var categories = Array.isArray(quiz.categories) ? quiz.categories.filter(function (item) { return normalize(item && item.id) }) : []
     if (!categories.length) throw new Error('The saved quiz has no categories')
-    var config = getAlgoliaConfig()
+    var managedConfig = getManagedAlgoliaConfig()
+    var learnConfig = getLearnAlgoliaConfig()
     var results = await Promise.all([
-      fetchPeople(config, quiz.featuredFreelancerIds || []),
-      fetchLearn(config, categories, 3),
+      fetchPeople(managedConfig, quiz.featuredFreelancerIds || []),
+      fetchLearn(learnConfig, categories, 3),
     ])
     var revision = [
       TEMPLATE_VERSION,
