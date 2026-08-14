@@ -3361,7 +3361,8 @@
      * [data-toc-algolia-target] wrappers use display: contents (no layout
      * box), so native #hash navigation has nothing to scroll to. This stamps
      * each section's slug as an id on its first element child (which has a
-     * box), binds the TOC click handler, and honors a deep-link hash.
+     * box) and binds the TOC click handler. The results flow handles an initial
+     * deep-link hash after rendering settles.
      *
      * @returns {void}
      */
@@ -6908,7 +6909,10 @@
 
         renderRecommendedFreelancers(recommendationSections)
         renderQuizStarterCount(recommendationSections)
-        scrollToInitialTocHash()
+        // Let the browser finish its native reaction to the newly stamped id
+        // before applying the sticky-navbar offset. Otherwise Chrome can place
+        // the target at viewport top after our smooth scroll has started.
+        window.requestAnimationFrame(scrollToInitialTocHash)
         // Success render has settled. This covers every remaining terminal path
         // that keeps the visitor here: test mode, the no-save early return, and
         // normal completion — all fall through from this point.
