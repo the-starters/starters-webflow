@@ -32,12 +32,8 @@
  * Hover pauses that Track. Off-screen wrappers pause. prefers-reduced-motion
  * freezes the bands.
  *
- * IMAGES: every logo is forced loading="eager" before arming. Webflow ships CMS
- * images lazy, and the logos parked outside the clip never intersect the
- * viewport, so they were never fetched and never fired load — which deadlocked
- * readiness and left the wall static in production on 2026-08-14. Arming also
- * gives up waiting after IMAGES_READY_TIMEOUT_MS, so no single dead asset can
- * stop the band again.
+ * IMAGES: every logo is forced loading="eager" before arming, and arming does
+ * not wait forever — see forceEagerImages and whenImagesReady for why.
  *
  * SELF-DEFENSE: the companion stylesheet (logo-wall.css) is required. If a
  * Track does not compute as a flex row, the stylesheet did not load. The
@@ -163,22 +159,45 @@
     });
   }
 
+  /**
+   * A marquee needs every logo whatever part of the strip it currently sits in,
+   * so none of them may be deferred. See whenImagesReady for what lazy loading
+   * did to arming before v1.59.239.
+   */
+  function forceEagerImages(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('img'), function (img) {
+      img.loading = 'eager';
+    });
+  }
+
+  /**
+   * Calls `done` when every image has settled — and, if that takes too long,
+   * once EARLY and then once more for real. No single asset gets to hold the
+   * wall hostage (a broken CDN, a blocked request, another lazy regression),
+   * but a wall armed against half-measured images would keep a mis-measured
+   * loop forever, so the stragglers still trigger one corrective pass.
+   *
+   * `done` therefore runs once in the normal case and at most twice in the
+   * degraded one. Callers must be idempotent.
+   */
   function whenImagesReady(root, done) {
     var imgs = root.querySelectorAll('img');
     var pending = 0;
-    var finished = false;
+    var settled = false;
     var timer = 0;
 
-    function finish() {
-      if (finished) return;
-      finished = true;
+    // The real finish: everything has loaded or failed. Latched, so it is the
+    // last call `done` ever gets.
+    function settle() {
+      if (settled) return;
+      settled = true;
       window.clearTimeout(timer);
       done();
     }
 
     function onOne() {
       pending -= 1;
-      if (pending <= 0) finish();
+      if (pending <= 0) settle();
     }
 
     Array.prototype.forEach.call(imgs, function (img) {
@@ -189,14 +208,18 @@
     });
 
     if (pending === 0) {
-      finish();
+      settle();
       return;
     }
-    // No single asset gets to hold the wall hostage. A broken CDN, a blocked
-    // request or another lazy-loading regression can leave an image that never
-    // fires either event; arm on the timeout instead of waiting forever. The
-    // finish() latch makes this and the last onOne mutually exclusive.
-    timer = window.setTimeout(finish, IMAGES_READY_TIMEOUT_MS);
+
+    // Arm on what we have. The listeners above stay attached and keep counting,
+    // so whichever stragglers do arrive still reach settle() and re-arm on
+    // correct measurements. Nothing here fires after settle() has run.
+    timer = window.setTimeout(function armEarly() {
+      if (settled) return;
+      devWarn('armed before all images settled; will re-arm when they do', root);
+      done();
+    }, IMAGES_READY_TIMEOUT_MS);
   }
 
   function columnGapPx(el) {
@@ -211,12 +234,11 @@
   }
 
   function cloneItem(item) {
+    // The originals were flipped to eager before arming, and `loading` is a
+    // reflected attribute, so cloneNode carries it across for free.
     var clone = item.cloneNode(true);
     clone.removeAttribute('data-logo-wall-element');
     clone.setAttribute(CLONE_ATTR, '');
-    Array.prototype.forEach.call(clone.querySelectorAll('img'), function (img) {
-      img.loading = 'eager';
-    });
     return clone;
   }
 
@@ -526,6 +548,9 @@
     }
     function onChange() {
       state.reduceMotion = prefersReducedMotion();
+      // Still record the preference, but the first arm has not happened yet —
+      // it will read the fresh value when it does.
+      if (state.armWidth == null) return;
       armLoops(state);
     }
     if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
@@ -606,15 +631,13 @@
     bindResize(state);
     bindReducedMotion(state);
 
-    // Webflow ships every CMS image as loading="lazy", and a marquee's strip is
-    // wider than the clip that hides it, so the logos parked outside the band
-    // never intersect the viewport, are never fetched, and never fire load. The
-    // readiness count below then never reaches zero and the wall never arms at
-    // all. A marquee needs every logo regardless of where it currently sits.
-    Array.prototype.forEach.call(wrapper.querySelectorAll('img'), function (img) {
-      img.loading = 'eager';
-    });
+    // Must happen before the readiness count is taken: Webflow ships CMS images
+    // lazy, and the logos parked outside the clip are how the wall never armed
+    // at all before v1.59.239.
+    forceEagerImages(wrapper);
 
+    // May run twice — an early arm on the timeout, then a corrective one when
+    // the stragglers land. armLoops is idempotent, so both are safe.
     whenImagesReady(wrapper, function onReady() {
       armLoops(state);
     });

@@ -208,18 +208,20 @@ function logoItem(index, width, options) {
   // Already-loaded images make whenImagesReady resolve inline, so armLoops runs
   // synchronously and the test can read the finished DOM straight after load().
   // A `loaded: false` image models Webflow's lazy default sitting outside the
-  // clip: complete stays false and neither load nor error ever fires, which is
-  // exactly how the readiness count deadlocked in production.
+  // clip: complete stays false until the test says otherwise, and load only
+  // fires if the test dispatches it — which is how readiness deadlocked in
+  // production, where it never fired at all.
   img.complete = o.loaded !== false
-  img.setAttribute('loading', o.loading || 'lazy')
+  img.setAttribute('loading', 'lazy')
   el.appendChild(img)
   el.img = img
   return el
 }
 
-/** Every <img> in the wrapper, originals and clones alike. */
-function imagesOf(wrapper) {
-  return wrapper.querySelectorAll('img')
+/** Resolve a stubbed image the way the network would. */
+function completeImage(img) {
+  img.complete = true
+  img.dispatch('load')
 }
 
 /**
@@ -443,6 +445,8 @@ function load(page, options) {
     listeners,
     timelines,
     flush,
+    /** How many timers are still scheduled — 0 means nothing is waiting. */
+    pendingTimers: () => timers.size,
     /** Every element handed to ResizeObserver.observe(). */
     observed: () => observers.map((ro) => ro.observed),
     /** Fire the wrapper's ResizeObserver, then run whatever it scheduled. */
@@ -463,12 +467,12 @@ function load(page, options) {
       flush()
     },
     /**
-     * Fire the reduced-motion change handler — the one re-arm path that is
-     * unconditional, because it is a preference change and not geometry.
+     * Fire the reduced-motion change handler — the one re-arm path not gated on
+     * geometry, because it is a preference change. It re-arms synchronously,
+     * with no debounce of its own, so nothing needs flushing afterwards.
      */
     rearm: () => {
       motionHandlers.forEach((fn) => fn())
-      flush()
     },
   }
 }
@@ -883,35 +887,88 @@ test('a logo that never loads cannot stop the wall from arming', () => {
 
 test('the originals are forced eager, so a clipped logo still gets fetched', () => {
   // Fixing the deadlock at its source: a marquee needs every logo regardless of
-  // where it sits, so none of them may be deferred.
+  // where it sits, so none of them may be deferred. The clones inherit it
+  // through cloneNode rather than being flipped a second time.
   const page = fillingPage()
   load(page)
 
-  const images = imagesOf(page.wrapper)
+  const images = page.wrapper.querySelectorAll('img')
   assert.ok(images.length > 4, 'originals and clones both carry images')
   images.forEach((img) => {
     assert.equal(img.loading, 'eager', 'every image is eager')
   })
-  page.items.forEach((item) => {
-    assert.equal(item.img.getAttribute('loading'), 'eager', 'including the authored attribute')
-  })
 })
 
-test('images that are all loaded arm once, and the timeout adds nothing', () => {
-  // The fast path must stay synchronous, and the finish() latch must make the
-  // timeout a no-op rather than a second arm that rebuilds the whole band.
+test('images that are already loaded arm once and schedule no timer at all', () => {
   const page = fillingPage()
-  const { flush, timelines } = load(page, { gsap: true })
+  const { flush, timelines, pendingTimers } = load(page, { gsap: true })
 
   const track = tracksOf(page.wrapper)[0]
   const armed = clonesOf(track).length
-  assert.ok(armed > 0, 'armed synchronously, before any timer ran')
+  assert.ok(armed > 0, 'armed synchronously')
   assert.equal(timelines.length, 1, 'one timeline')
+  assert.equal(pendingTimers(), 0, 'the fast path never waits on anything')
 
-  flush() // the readiness timeout, if it is still pending
-
+  flush()
   assert.equal(clonesOf(track).length, armed, 'the band was not rebuilt')
   assert.equal(timelines.length, 1, 'and no second timeline was created')
+})
+
+test('images resolving before the timeout arm once and cancel the timer', () => {
+  // The timer IS scheduled here, so the cancellation is a real assertion: drop
+  // the clearTimeout and the flush below arms a second time.
+  const page = fillingPage({ unloaded: [0, 1, 2, 3] })
+  const { flush, timelines, pendingTimers } = load(page, { gsap: true })
+
+  assert.equal(timelines.length, 0, 'nothing arms while images are outstanding')
+  assert.equal(pendingTimers(), 1, 'the readiness timeout is waiting')
+
+  page.items.forEach((item) => completeImage(item.img))
+
+  assert.equal(timelines.length, 1, 'the last image to land arms the wall')
+  assert.equal(pendingTimers(), 0, 'and cancels the timeout on its way')
+
+  flush()
+  assert.equal(timelines.length, 1, 'so nothing arms a second time')
+})
+
+test('a motion-preference change before the first arm does not arm early', () => {
+  // armLoops runs when the images are ready, not when a preference flips. Going
+  // early would build the band against images that have not landed.
+  const page = fillingPage({ unloaded: [2] })
+  const { flush, timelines, rearm } = load(page, { gsap: true })
+
+  rearm()
+  assert.equal(timelines.length, 0, 'still waiting on the image')
+
+  flush()
+  assert.equal(timelines.length, 1, 'and arms on its own schedule')
+})
+
+test('a straggler that lands after the early arm triggers exactly one re-arm', () => {
+  // An early arm measures a half-loaded strip: the images that have not landed
+  // contribute no width, so the loop is built on the wrong geometry and the
+  // fill can overshoot. When the stragglers do arrive the wall must correct
+  // itself once — and only once.
+  const page = fillingPage({ unloaded: [2] })
+  const { flush, timelines, warnings } = load(page, { gsap: true, debug: true })
+
+  assert.equal(timelines.length, 0, 'the stuck image holds the arm back')
+
+  flush() // the readiness timeout elapses
+  assert.equal(timelines.length, 1, 'armed early on what had loaded')
+  assert.equal(warnings.length, 1, 'and said so on staging')
+  assert.match(warnText(warnings[0]), /armed before all images settled/)
+
+  completeImage(page.items[2].img)
+  assert.equal(timelines.length, 2, 'the straggler triggers a corrective re-arm')
+  assert.equal(timelines[0].killed, true, 'the early timeline was torn down')
+  assert.equal(warnings.length, 1, 'the warning is not repeated')
+
+  // Nothing may arm a third time: not a stray second event, not the dead timer.
+  completeImage(page.items[2].img)
+  flush()
+  assert.equal(timelines.length, 2, 'the corrective arm is the last one')
 })
 
 /* ------------------------------- drift guard ----------------------------- */
