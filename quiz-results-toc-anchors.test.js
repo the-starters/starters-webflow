@@ -92,9 +92,10 @@ class FakeElement {
  * @param {FakeElement[]} sections [data-toc-algolia-target] wrappers.
  * @param {FakeElement | null} navbar Optional .w-nav element.
  * @param {string} hash window.location.hash value.
+ * @param {FakeElement[]} extraElements Other page elements that may own ids.
  * @returns {{context: object, listeners: object, scrolls: object[], pushes: string[]}}
  */
-function buildDom(sections, navbar, hash = '') {
+function buildDom(sections, navbar, hash = '', extraElements = []) {
     const listeners = {}
     const scrolls = []
     const pushes = []
@@ -106,6 +107,7 @@ function buildDom(sections, navbar, hash = '') {
     }
     sections.forEach(collect)
     if (navbar) collect(navbar)
+    extraElements.forEach(collect)
 
     const context = {
         result: null,
@@ -151,7 +153,7 @@ function buildDom(sections, navbar, hash = '') {
             normalizeSource,
             slugifySource,
             anchorSource,
-            'this.result = { syncTocAnchorNavigation }',
+            'this.result = { syncTocAnchorNavigation, scrollToInitialTocHash }',
         ].join('\n'),
         context,
     )
@@ -217,11 +219,17 @@ test('TOC link click scrolls with the sticky navbar offset', () => {
     assert.equal(pushes[0], '#paid-media')
 })
 
-test('clicks fall through to native behavior when no anchor exists', () => {
-    const section = makeSection('finance')
+test('clicks fall through when the matching id was not stamped', () => {
+    const section = makeSection('paid-media', { id: 'keep-me' })
+    const unrelatedElement = new FakeElement({ id: 'paid-media' })
     const link = new FakeElement({ tag: 'a', href: '#paid-media' })
     new FakeElement({ 'data-toc-algolia-link': 'paid-media' }, [link])
-    const { context, listeners, scrolls } = buildDom([section], null)
+    const { context, listeners, scrolls } = buildDom(
+        [section],
+        null,
+        '',
+        [unrelatedElement],
+    )
 
     context.result.syncTocAnchorNavigation()
 
@@ -237,14 +245,17 @@ test('clicks fall through to native behavior when no anchor exists', () => {
     assert.equal(scrolls.length, 0)
 })
 
-test('a deep-link hash scrolls to its stamped anchor on sync', () => {
+test('a deep-link hash scrolls after rendering settles', () => {
     const section = makeSection('paid-media', { rectTop: 300 })
     const { context, scrolls } = buildDom([section], null, '#paid-media')
 
     context.result.syncTocAnchorNavigation()
+    assert.equal(scrolls.length, 0)
 
-    // 300 (rect top) + 100 (scrollY) - 16 (no sticky navbar, breathing room)
+    section.firstElementChild.attrs.rectTop = 500
+    context.result.scrollToInitialTocHash()
+
     assert.equal(scrolls.length, 1)
-    assert.equal(scrolls[0].top, 384)
+    assert.equal(scrolls[0].top, 584)
     assert.equal(scrolls[0].behavior, 'smooth')
 })

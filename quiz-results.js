@@ -3323,6 +3323,7 @@
     }
 
     let tocAnchorClicksBound = false
+    const stampedTocAnchors = new Map()
 
     /**
      * Binds one delegated click handler for TOC anchor links.
@@ -3344,7 +3345,7 @@
             if (!link) return
 
             const slug = slugify(link.getAttribute('href'))
-            const target = slug ? document.getElementById(slug) : null
+            const target = slug ? stampedTocAnchors.get(slug) : null
             if (!target) return
 
             event.preventDefault()
@@ -3371,6 +3372,8 @@
         const stampedSlugs = []
         const skippedSlugs = []
 
+        stampedTocAnchors.clear()
+
         sections.forEach((section) => {
             const slug = slugify(
                 section.getAttribute('data-toc-algolia-target'),
@@ -3383,17 +3386,25 @@
             }
 
             if (!anchor.id) anchor.setAttribute('id', slug)
+            stampedTocAnchors.set(slug, anchor)
             stampedSlugs.push(slug)
         })
 
         bindTocAnchorClicks()
 
         logQuizFlow('stamped TOC anchor ids', { stampedSlugs, skippedSlugs })
+    }
 
+    /**
+     * Scrolls to the initial TOC hash after result rendering has settled.
+     *
+     * @returns {void}
+     */
+    function scrollToInitialTocHash() {
         const hashSlug = slugify(window.location.hash)
-        if (!hashSlug || !stampedSlugs.includes(hashSlug)) return
+        if (!hashSlug) return
 
-        const target = document.getElementById(hashSlug)
+        const target = stampedTocAnchors.get(hashSlug)
         if (target) scrollToTocTarget(target)
     }
 
@@ -6897,6 +6908,7 @@
 
         renderRecommendedFreelancers(recommendationSections)
         renderQuizStarterCount(recommendationSections)
+        scrollToInitialTocHash()
         // Success render has settled. This covers every remaining terminal path
         // that keeps the visitor here: test mode, the no-save early return, and
         // normal completion — all fall through from this point.
