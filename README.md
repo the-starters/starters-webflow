@@ -305,7 +305,9 @@ index only from the managed host resolution in `v3/algolia-environment.js`.
 The exact host mapping, load order, managed markup, fail-closed rules, and
 release prerequisites live in
 [`v3/ALGOLIA-ENVIRONMENT-WIRING.md`](v3/ALGOLIA-ENVIRONMENT-WIRING.md).
-The page's separate `LearnContent` carousel remains unmanaged by that resolver.
+The page's separate `LearnContent` carousel keeps its exact shared index name
+and existing markup, while its search credentials come from the same
+host-resolved configuration.
 
 The Learn carousel filters on the canonical V3 category ID and, for renamed
 categories, the corresponding legacy `LearnContent` slug. This keeps existing
