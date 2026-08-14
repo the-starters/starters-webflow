@@ -329,7 +329,7 @@ previews. Run the focused Algolia-config, taxonomy, saved-answer fallback,
 draft-payload, and V3 lead-enrollment regressions with:
 
 ```sh
-node --test quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js quiz-results-lead-drip.test.js quiz-results-subcategory-labels.test.js
+node --test v3/algolia-environment.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js quiz-results-lead-drip.test.js quiz-results-subcategory-labels.test.js
 ```
 
 ## V3 quiz-completion lead email
@@ -398,8 +398,9 @@ Optional native controls may use `data-quiz-email-test-launcher` and
 
 The browser waits for `quiz-results.js` to publish the compact quiz state that
 was read from or saved to the current Memberstack member. It then refreshes the
-three saved Starter IDs from `Freelancers3.0-dev`, selects current category
-matches from `LearnContent`, and posts the rendered email through the
+three saved Starter IDs from the host-resolved production Starter index, selects
+current category matches from `LearnContent` through its independent shared
+credentials, and posts the rendered email through the
 authenticated `quiz_email_test/send/v3` Xano endpoint. Xano is the security
 boundary: it must authorize the dedicated production canary, replace any client
 recipient with `jp+brand10@thestarters.com`, audit the attempt, enforce

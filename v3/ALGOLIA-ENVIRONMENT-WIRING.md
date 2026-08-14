@@ -18,10 +18,10 @@ attributes, page globals, or Xano responses.
 | `www.thestarters.com` | `production` | `Freelancers3.0-production` | `opportunities_v3_production` |
 
 The TEST and production search keys must differ. Each key must have search-only
-access to its two environment indexes and the shared public `LearnContent`
-index. The resolver rejects any index mapping
-that differs from the table, shared managed indexes, and any managed index name
-that contains a `dev` segment.
+access to its two environment indexes. The independent shared key owns access
+to the public `LearnContent` index. The resolver rejects any index mapping that
+differs from the table, shared managed indexes, and any managed index name that
+contains a `dev` segment.
 
 ## Required markup
 
@@ -78,8 +78,7 @@ restricted to `LearnContent`.
 - Create `opportunities_v3_test`, `Freelancers3.0-production`, and
   `opportunities_v3_production`.
 - Create distinct restricted TEST and production search-only keys. Permit each
-  key to search only its two managed environment indexes plus shared public
-  `LearnContent`.
+  key to search only its two managed environment indexes.
 - Keep the independent shared key restricted to `LearnContent` and distinct
   from both managed keys.
 - Add the public host configuration to a GitHub-owned config file. Load it
