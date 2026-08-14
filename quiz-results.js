@@ -3293,6 +3293,111 @@
     }
 
     /**
+     * Returns the sticky-navbar offset for TOC anchor scrolling.
+     *
+     * @returns {number} Offset in pixels (navbar height plus breathing room).
+     */
+    function getTocScrollOffset() {
+        const navbar = document.querySelector('.w-nav')
+        if (!navbar) return 16
+
+        const position = window.getComputedStyle?.(navbar)?.position
+        if (position !== 'sticky' && position !== 'fixed') return 16
+
+        return (navbar.offsetHeight || 0) + 16
+    }
+
+    /**
+     * Scrolls the window to a TOC anchor target below the sticky navbar.
+     *
+     * @param {HTMLElement} target Anchor element.
+     * @returns {void}
+     */
+    function scrollToTocTarget(target) {
+        const top =
+            target.getBoundingClientRect().top +
+            window.scrollY -
+            getTocScrollOffset()
+
+        window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' })
+    }
+
+    let tocAnchorClicksBound = false
+
+    /**
+     * Binds one delegated click handler for TOC anchor links.
+     *
+     * Links live inside [data-toc-algolia-link] CMS items; their hrefs are
+     * #<slug> hashes. Native hash navigation is left alone when no stamped
+     * anchor exists for the hash.
+     *
+     * @returns {void}
+     */
+    function bindTocAnchorClicks() {
+        if (tocAnchorClicksBound) return
+        tocAnchorClicksBound = true
+
+        document.addEventListener('click', (event) => {
+            const link = event.target?.closest?.(
+                '[data-toc-algolia-link] a[href^="#"]',
+            )
+            if (!link) return
+
+            const slug = slugify(link.getAttribute('href'))
+            const target = slug ? document.getElementById(slug) : null
+            if (!target) return
+
+            event.preventDefault()
+            scrollToTocTarget(target)
+            window.history?.pushState?.(null, '', `#${slug}`)
+        })
+    }
+
+    /**
+     * Stamps TOC anchor ids and wires offset-aware anchor scrolling.
+     *
+     * Webflow cannot bind a per-item id on CMS items, and the
+     * [data-toc-algolia-target] wrappers use display: contents (no layout
+     * box), so native #hash navigation has nothing to scroll to. This stamps
+     * each section's slug as an id on its first element child (which has a
+     * box), binds the TOC click handler, and honors a deep-link hash.
+     *
+     * @returns {void}
+     */
+    function syncTocAnchorNavigation() {
+        const sections = Array.from(
+            document.querySelectorAll('[data-toc-algolia-target]'),
+        )
+        const stampedSlugs = []
+        const skippedSlugs = []
+
+        sections.forEach((section) => {
+            const slug = slugify(
+                section.getAttribute('data-toc-algolia-target'),
+            )
+            const anchor = section.firstElementChild
+
+            if (!slug || !anchor || (anchor.id && anchor.id !== slug)) {
+                skippedSlugs.push(slug)
+                return
+            }
+
+            if (!anchor.id) anchor.setAttribute('id', slug)
+            stampedSlugs.push(slug)
+        })
+
+        bindTocAnchorClicks()
+
+        logQuizFlow('stamped TOC anchor ids', { stampedSlugs, skippedSlugs })
+
+        const hashSlug = slugify(window.location.hash)
+        if (!hashSlug || !stampedSlugs.includes(hashSlug)) return
+
+        const target = document.getElementById(hashSlug)
+        if (target) scrollToTocTarget(target)
+    }
+
+    /**
      * Normalizes array-like Algolia attributes for rendering and storage.
      *
      * @param {unknown} value Attribute value from Algolia.
@@ -6713,6 +6818,7 @@
 
         renderPendingQuiz(pendingQuiz)
         syncTocCategoryVisibility(pendingQuiz)
+        syncTocAnchorNavigation()
 
         const savedFeaturedFreelancers = Array.isArray(
             pendingQuiz.featuredFreelancers,
