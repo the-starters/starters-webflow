@@ -3566,6 +3566,44 @@
     let hasWarnedAboutEmptySubcategories = false
 
     /**
+     * Reports whether a hostname is one of this project's staging surfaces.
+     *
+     * Anchored on purpose (same shape as account-settings/plan-dates.js): a
+     * lookalike such as "notwebflow.io" or "evil-trycloudflare.com" must not
+     * read as staging.
+     *
+     * @param {string} hostname Hostname to classify.
+     * @returns {boolean} True on a staging host.
+     */
+    function isStagingHost(hostname) {
+        const host = hostname || ''
+
+        return (
+            /(\.|^)webflow\.io$/.test(host) ||
+            host === 'localhost' ||
+            host === '127.0.0.1' ||
+            /(\.|^)trycloudflare\.com$/.test(host)
+        )
+    }
+
+    /**
+     * Reports whether staging diagnostics should print.
+     *
+     * STARTERS_DEBUG belongs here and not in isStagingHost(): it may turn
+     * logging on in production, but it must never widen what counts as a
+     * staging host. isDebugLoggingEnabled() is this controller's own opt-in
+     * (query param or stored flag) and is honoured alongside it.
+     *
+     * @returns {boolean} True when diagnostics may print.
+     */
+    function isStagingDiagnosticsEnabled() {
+        if (window.STARTERS_DEBUG === true) return true
+        if (isDebugLoggingEnabled()) return true
+
+        return isStagingHost(window.location?.hostname || '')
+    }
+
+    /**
      * Warns once per page load when hits carry a `categories` object yet no
      * Subcategory label resolves from any of them.
      *
@@ -3574,8 +3612,7 @@
      * dropped from attributesToRetrieve) the chips just go blank, which looks
      * like a styling problem rather than a data one. This is the only signal
      * that distinguishes "this Starter genuinely has no Subcategories" from
-     * "the field moved". Staging-only, matching the gate in
-     * algolia-result-modifiers/subcategories.js, so production stays silent.
+     * "the field moved". Staging-only, so production stays silent.
      *
      * @param {object[]} candidates Normalized recommendation candidates.
      * @returns {void}
@@ -3583,12 +3620,7 @@
     function warnWhenSubcategoriesResolveEmpty(candidates) {
         if (hasWarnedAboutEmptySubcategories || !candidates.length) return
 
-        const isDiagnosticHost =
-            /webflow\.io$|^localhost$|trycloudflare\.com$/.test(
-                window.location.hostname,
-            ) || window.STARTERS_DEBUG
-
-        if (!isDiagnosticHost && !isDebugLoggingEnabled()) return
+        if (!isStagingDiagnosticsEnabled()) return
 
         // Nothing to report when the attribute is absent altogether: that is
         // either a query change or an index without categories, and the warning
