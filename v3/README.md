@@ -1789,9 +1789,11 @@ staging-host only. The adapter does not install on any other `/hire/*` item or
 on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
 both synchronous scripts: scheduling-group requests return HTTP `410` without
 installing authentication, discovery overrides, or booking identity. The
-adapter maps the reviewed legacy scheduling paths to their exact `/v3` routes,
-preserves request method, body, headers, and query parameters, and sends the
-rewritten request through `window.xanoAuthFetch`.
+adapter maps the reviewed legacy scheduling paths and the environment-bound
+`starter/get_stripe_connect_id` lookup to their exact `/v3` routes, preserves
+request method, body, headers, and query parameters, and sends the rewritten
+request through `window.xanoAuthFetch`. The Stripe lookup follows the
+[domain-isolated environment contract](#domain-isolated-test-and-live-environments).
 
 On the exact production `/hire/jp-test` canary, and on the retained staging-only
 `/hire/jp-dionisio` canary, the two public booking-discovery
@@ -2787,13 +2789,15 @@ it selects a Stripe secret or reads or writes a Stripe projection. The browser
 never sends a trusted `test` or `live` selector.
 
 Staging uses the same authenticated `status/v3`, `start/v3`, `dashboard/v3`,
-`disconnect/v3`, and `oauth_exchange/v3` endpoints as production. This gives a
-Test Data member the full persistent Connect lifecycle, including Complete
-setup, Open Stripe, Disconnect Stripe, callback processing, and TEST
-reconciliation, without touching LIVE account fields. The signed Connect
-webhook independently derives its environment from Stripe event `livemode` and
-keeps TEST and LIVE updates isolated. The reconciliation operator must supply
-one explicit environment per run; there is no shared global mode switch.
+`disconnect/v3`, `oauth_exchange/v3`, and
+`starter/get_stripe_connect_id/v3` endpoints as production. This gives a Test
+Data member the full persistent Connect lifecycle and environment-bound account
+lookup, including Complete setup, Open Stripe, Disconnect Stripe, callback
+processing, and TEST reconciliation, without touching LIVE account fields. The
+signed Connect webhook independently derives its environment from Stripe event
+`livemode` and keeps TEST and LIVE updates isolated. The reconciliation
+operator must supply one explicit environment per run; there is no shared
+global mode switch.
 
 Run its focused tests with:
 
