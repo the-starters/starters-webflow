@@ -2,7 +2,7 @@
 /**
  * Logo Wall — attribute-driven looping tracks of CMS logos.
  *
- * @release v1.59.233
+ * @release v1.59.234
  *
  * Raw JS (CDN-served, no HTML wrapper tags). Load with defer. GSAP is assumed
  * as a page global (already on the V3 site). Without GSAP the tracks still
@@ -45,7 +45,7 @@
   if (window.__startersLogoWallInit) return;
   window.__startersLogoWallInit = true;
 
-  var RELEASE = 'v1.59.233';
+  var RELEASE = 'v1.59.234';
   window.__startersLogoWall = { release: RELEASE };
 
   var WRAPPER_SEL = '[data-logo-wall-element="wrapper"]';
