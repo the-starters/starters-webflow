@@ -72,6 +72,7 @@
     '/api:tCpV3oqd/starter/get_booking_profile/v3',
     '/api:tCpV3oqd/starter/get_by_memberstack/v3',
     '/api:tCpV3oqd/starter/get_charges_enabled/v3',
+    '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
     '/api:tCpV3oqd/starter/set_timezone/v3',
     '/api:tCpV3oqd/starter/update_availability/v3',
   ]
