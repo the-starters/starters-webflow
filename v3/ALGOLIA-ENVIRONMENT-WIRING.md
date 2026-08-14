@@ -11,17 +11,27 @@ attributes, page globals, or Xano responses.
 
 ## Exact host contract
 
-| Host | Environment | Starter index | Opportunity index |
-| --- | --- | --- | --- |
-| `the-starters-3-0.webflow.io` | `test` | `Freelancers3.0-staging-test` | `opportunities_v3_test` |
-| `thestarters.com` | `production` | `Freelancers3.0-production` | `opportunities_v3_production` |
-| `www.thestarters.com` | `production` | `Freelancers3.0-production` | `opportunities_v3_production` |
+| Host | Environment | Starter index | Starter replica prefix | Opportunity index |
+| --- | --- | --- | --- | --- |
+| `the-starters-3-0.webflow.io` | `test` | `Freelancers3.0-staging-test` | `Freelancers3.0-staging-test__` | `opportunities_v3_test` |
+| `thestarters.com` | `production` | `Freelancers3.0-production` | `Freelancers3.0-production__` | `opportunities_v3_production` |
+| `www.thestarters.com` | `production` | `Freelancers3.0-production` | `Freelancers3.0-production__` | `opportunities_v3_production` |
 
 The TEST and production search keys must differ. Each key must have search-only
-access to its two environment indexes plus the shared public `LearnContent`
-index. The resolver rejects any index mapping that differs from the table,
-shared managed indexes, and any managed index name that contains a `dev`
-segment.
+access to its two environment primary indexes, the five matching Starter sort
+replicas, and the shared public indexes listed below. The resolver rejects any
+index mapping that differs from the table, shared managed indexes, and any
+managed index name that contains a `dev` segment.
+
+The resolver maps the existing logical sort values `name-AtoZ`, `rate_asc`,
+`rate_desc`, `published_asc`, and `published_desc` to replicas named with the
+environment Starter prefix above. An unknown sort value blocks the managed
+Algolia client. The empty relevance option stays empty.
+
+The current site also uses these public, non-member-data indexes through shared
+components. Both restricted browser keys must include search-only access to
+them: `LearnContent`, `cancelled-consult-1`, `cancelled-consult-2`, and
+`cancelled-hire-1`.
 
 ## Public configuration contract
 
@@ -90,11 +100,12 @@ DOM override while the resolver is active.
 
 ## Release prerequisites
 
-- Create `opportunities_v3_test`, `Freelancers3.0-production`, and
-  `opportunities_v3_production`.
+- Create `opportunities_v3_test`, `Freelancers3.0-production`,
+  `opportunities_v3_production`, and the five environment-specific Starter
+  replicas for both TEST and production.
 - Create distinct restricted TEST and production search-only keys. Permit each
-  key to search only its two managed environment indexes plus shared public
-  `LearnContent`.
+  key to search only its two managed environment indexes, its five Starter
+  replicas, and the four shared public indexes listed above.
 - Add the public host configuration to a GitHub-owned config file. Load it
   immediately before `v3/algolia-environment.js`.
 - Run the Xano configure endpoints for each environment after the matching

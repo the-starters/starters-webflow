@@ -10,6 +10,7 @@
  * - script[data-starters-v3-algolia-client]
  * - [data-starters-v3-algolia-resource="starters"]
  * - [data-starters-v3-algolia-resource="opportunities"]
+ * - [wf-algolia-sort-index]
  *
  * Unknown hosts, missing configuration, shared search keys, shared indexes,
  * and legacy dev index names fail closed before wf-algolia can start.
@@ -24,7 +25,15 @@
   }
   var CLIENT_SELECTOR = 'script[data-starters-v3-algolia-client]'
   var RESOURCE_SELECTOR = '[data-starters-v3-algolia-resource]'
+  var SORT_SELECTOR = '[wf-algolia-sort-index]'
   var LEARN_CONTENT_INDEX = 'LearnContent'
+  var STARTER_SORT_REPLICAS = [
+    'name-AtoZ',
+    'rate_asc',
+    'rate_desc',
+    'published_asc',
+    'published_desc',
+  ]
   var EXPECTED_INDEXES = {
     test: {
       startersIndex: 'Freelancers3.0-staging-test',
@@ -59,6 +68,25 @@
 
   function legacyIndexName(indexName) {
     return /(?:^|[-_.])dev(?:$|[-_.])/i.test(clean(indexName))
+  }
+
+  function starterReplicaName(startersIndex, logicalName) {
+    return clean(startersIndex) + '__' + clean(logicalName)
+  }
+
+  function logicalStarterSortName(value, startersIndex) {
+    var current = clean(value)
+    if (!current) return ''
+    for (var i = 0; i < STARTER_SORT_REPLICAS.length; i += 1) {
+      var logicalName = STARTER_SORT_REPLICAS[i]
+      if (
+        current === logicalName ||
+        current === starterReplicaName(startersIndex, logicalName)
+      ) {
+        return logicalName
+      }
+    }
+    return null
   }
 
   function validateConfig(config) {
@@ -136,6 +164,10 @@
       element.removeAttribute('wf-algolia-index')
       element.setAttribute('data-starters-v3-algolia-blocked', reason)
     })
+    each(documentObject, SORT_SELECTOR, function (element) {
+      element.removeAttribute('wf-algolia-sort-index')
+      element.setAttribute('data-starters-v3-algolia-blocked', reason)
+    })
     if (documentObject && documentObject.documentElement) {
       documentObject.documentElement.setAttribute('data-v3-algolia-status', 'blocked')
       documentObject.documentElement.setAttribute('data-v3-algolia-block-reason', reason)
@@ -167,8 +199,33 @@
       element.setAttribute('data-starters-v3-algolia-environment', resolution.environment)
       element.removeAttribute('data-starters-v3-algolia-blocked')
     })
+    each(documentObject, SORT_SELECTOR, function (element) {
+      var logicalName = logicalStarterSortName(
+        element.getAttribute('data-starters-v3-algolia-sort') ||
+          element.getAttribute('wf-algolia-sort-index'),
+        resolution.settings.startersIndex,
+      )
+      if (logicalName === null) {
+        invalidResource = true
+        element.removeAttribute('wf-algolia-sort-index')
+        element.setAttribute('data-starters-v3-algolia-blocked', 'unknown_sort_index')
+        return
+      }
+      if (!logicalName) {
+        element.setAttribute('wf-algolia-sort-index', '')
+        element.removeAttribute('data-starters-v3-algolia-blocked')
+        return
+      }
+      element.setAttribute('data-starters-v3-algolia-sort', logicalName)
+      element.setAttribute(
+        'wf-algolia-sort-index',
+        starterReplicaName(resolution.settings.startersIndex, logicalName),
+      )
+      element.setAttribute('data-starters-v3-algolia-environment', resolution.environment)
+      element.removeAttribute('data-starters-v3-algolia-blocked')
+    })
     if (invalidResource) {
-      block(documentObject, 'unknown_resource')
+      block(documentObject, 'unknown_resource_or_sort_index')
       return false
     }
     if (documentObject && documentObject.documentElement) {
@@ -225,7 +282,7 @@
       var blocked = {
         ok: false,
         environment: resolution.environment,
-        reason: 'unknown_resource',
+        reason: 'unknown_resource_or_sort_index',
       }
       dispatch(BLOCKED_EVENT, blocked)
       return blocked

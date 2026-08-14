@@ -55,6 +55,17 @@ function load(options = {}) {
     'wf-algolia-index': 'opportunities_v3_dev',
   })
   const unmanaged = element({ 'wf-algolia-index': 'LearnContent' })
+  const sortItems = [
+    element({ 'wf-algolia-sort-index': '' }),
+    element({ 'wf-algolia-sort-index': 'name-AtoZ' }),
+    element({ 'wf-algolia-sort-index': 'rate_asc' }),
+    element({ 'wf-algolia-sort-index': 'rate_desc' }),
+    element({ 'wf-algolia-sort-index': 'published_asc' }),
+    element({ 'wf-algolia-sort-index': 'published_desc' }),
+  ]
+  if (options.unknownSort) {
+    sortItems.push(element({ 'wf-algolia-sort-index': options.unknownSort }))
+  }
   const extra = options.extraResource ? element({
     'data-starters-v3-algolia-resource': options.extraResource,
     'wf-algolia-index': 'unsafe-index',
@@ -68,6 +79,7 @@ function load(options = {}) {
       if (selector === '[data-starters-v3-algolia-resource]') {
         return [starters, opportunities, ...(extra ? [extra] : [])]
       }
+      if (selector === '[wf-algolia-sort-index]') return sortItems
       return []
     },
   }
@@ -98,9 +110,11 @@ function load(options = {}) {
   return {
     api: window.StartersV3AlgoliaEnvironment,
     client,
+    document,
     events,
     opportunities,
     root,
+    sortItems,
     starters,
     unmanaged,
     window,
@@ -114,6 +128,14 @@ test('staging selects only TEST credentials and indexes', () => {
   assert.equal(runtime.client.getAttribute('data-search-key'), 'test-public-search-key')
   assert.equal(runtime.starters.getAttribute('wf-algolia-index'), 'Freelancers3.0-staging-test')
   assert.equal(runtime.opportunities.getAttribute('wf-algolia-index'), 'opportunities_v3_test')
+  assert.deepEqual(runtime.sortItems.map((item) => item.getAttribute('wf-algolia-sort-index')), [
+    '',
+    'Freelancers3.0-staging-test__name-AtoZ',
+    'Freelancers3.0-staging-test__rate_asc',
+    'Freelancers3.0-staging-test__rate_desc',
+    'Freelancers3.0-staging-test__published_asc',
+    'Freelancers3.0-staging-test__published_desc',
+  ])
   assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
   assert.equal(runtime.events.at(-1).name, 'starters:algolia-environment-ready')
   assert.equal(runtime.events.at(-1).detail.searchKey, undefined)
@@ -163,6 +185,10 @@ for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     assert.equal(runtime.client.getAttribute('data-search-key'), 'production-public-search-key')
     assert.equal(runtime.starters.getAttribute('wf-algolia-index'), 'Freelancers3.0-production')
     assert.equal(runtime.opportunities.getAttribute('wf-algolia-index'), 'opportunities_v3_production')
+    assert.equal(
+      runtime.sortItems[1].getAttribute('wf-algolia-sort-index'),
+      'Freelancers3.0-production__name-AtoZ',
+    )
   })
 }
 
@@ -242,7 +268,30 @@ test('unknown managed resources block the whole managed Algolia surface', () => 
   const runtime = load({ extraResource: 'learn' })
   assert.equal(runtime.client.getAttribute('data-search-key'), null)
   assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)
-  assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'unknown_resource')
+  assert.equal(
+    runtime.root.getAttribute('data-v3-algolia-block-reason'),
+    'unknown_resource_or_sort_index',
+  )
+})
+
+test('unknown sort indexes block the whole managed Algolia surface', () => {
+  const runtime = load({ unknownSort: 'Freelancers3.0-dev_price_asc' })
+  assert.equal(runtime.client.getAttribute('data-search-key'), null)
+  assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)
+  assert.equal(
+    runtime.root.getAttribute('data-v3-algolia-block-reason'),
+    'unknown_resource_or_sort_index',
+  )
+})
+
+test('replica mapping is idempotent', () => {
+  const runtime = load()
+  const resolution = runtime.api.resolve('the-starters-3-0.webflow.io', config())
+  assert.equal(runtime.api.apply(runtime.document, resolution), true)
+  assert.equal(
+    runtime.sortItems[2].getAttribute('wf-algolia-sort-index'),
+    'Freelancers3.0-staging-test__rate_asc',
+  )
 })
 
 test('unmanaged Algolia sections are not changed', () => {
