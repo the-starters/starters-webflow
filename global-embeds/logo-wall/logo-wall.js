@@ -398,10 +398,11 @@
 
     // No width means the wrapper (or an ancestor) is hidden or collapsed. A
     // display:none ancestor still computes as flex, so the stylesheet guard
-    // below cannot see this. Filling against 0 clones to the cap, and
-    // horizontalLoop divides by the measured width — NaN transforms. The clones
-    // stay in place; killLoops above has already dropped the timelines and
-    // cleared their inline transforms. The ResizeObserver re-arms on width.
+    // below cannot see this; only the width can. Arming against 0 builds a band
+    // nobody can measure: the fill target is 0 so not one clone is added, and
+    // horizontalLoop then divides by zero-width items — NaN transforms. The
+    // clones stay in place; killLoops above has already dropped the timelines
+    // and cleared their inline transforms. The ResizeObserver re-arms on width.
     if (wrapW <= 0) return;
 
     if (!tracksAreFlexRows(state)) {
