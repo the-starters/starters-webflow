@@ -4,6 +4,8 @@ Status: Built in git, not yet released — no tag, no Webflow embed. `@release`
 and the exported `release` property carry `vX.Y.Z` until the tag stamps them.
 Tickets: `.scratch/starter-profile-redirect/issues/`. Spec:
 [STARTER-PROFILE-REDIRECT-SPEC.md](STARTER-PROFILE-REDIRECT-SPEC.md).
+The Layer 3 funnel map lives in workspace-root `REDIRECT-STRATEGIES.md` (outside
+this git repo by design; already updated to BUILT, not yet embedded).
 
 `v3/starter-profile-redirect.js` is the inbound half of the Talent funnel. A
 signed-in Talent whose Xano funnel is unfinished is sent forward with
