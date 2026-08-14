@@ -1,0 +1,243 @@
+<!--
+This file can be used to override default TalkJS styling outside your components.
+Any styles that you add here will be applied globally to the entire TalkJS UI.
+
+# Warning:
+
+Use the global CSS override with caution, and only for styling non-editable built-in components.
+
+When TalkJS updates, internal CSS class names and DOM structure may change without warning.
+Such changes can cause your styles to stop working, or to behave unexpectedly.
+
+For editable built-in components, always update the CSS of the specific component, rather than using the global CSS override file.
+That way, your style for that component will continue to work reliably.
+-->
+
+<style>
+.action-menu [data-action-name="t:delete"] {
+  order: 9999;
+  color: rgb(239 68 68) !important;
+}
+
+.action-menu [data-action-name="t:delete"]:hover {
+  background-color: hsla(0, 96%, 89%, .4);
+}
+.Inbox .chat-container {
+    border-left: 2px solid #eee;
+}
+.UserMessage__message-row .Avatar__avatar {
+  width: 2rem;
+  height: 2rem;
+}
+.Editor .empty-node::before {
+  color: #1E211E66;
+}
+.DayMarker {
+  font-size: .75rem;
+}
+.DayMarker div.line {
+  opacity: 0;
+}
+.ButtonIcon {
+  opacity: .5;
+}
+.action-menu {
+  border-radius: 0.25rem !important;
+  border-color: #eee;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12) !important;
+  padding: 0.25rem !important;
+}
+.action-menu [data-action-name] {
+  padding: 0.125rem 0.25rem !important;
+  font-size: 0.875rem !important;
+}
+.action-menu [data-action-name]:hover {
+  background-color: #EEE;
+  color: #1E211E;
+  border-radius: 0.25rem !important;
+}
+.ChatHeader__actions {
+  display: none !important;
+}
+.SystemMessage__message .EntityTreeRenderer ul {
+  background-color: #fff !important;
+  padding: .5rem;
+  border-radius: .25rem;
+  margin-top: .75rem;
+  font-size: .875rem;
+}
+.SystemMessage__message .EntityTreeRenderer li {
+  background-color: #eee;
+  padding: .375rem .5rem;
+}
+.MessageList ul li {
+  list-style: none;
+  margin-bottom: .25rem;
+  border-radius: .25rem;
+  margin-left: 0;
+}
+.SystemMessage__message .MessageBody__timestamp-float {
+  margin-top: .25rem;
+}
+
+.MessageBody__thumbnail.MessageBody__audio {
+  padding: .5rem .5rem 0;
+}
+
+.audio-player {
+  background-color: #85B1B3;
+  padding: .5rem;
+  border-radius: .25rem;
+}
+
+.action-menu:has(.playback-heading) {
+  font-size: .875rem;
+  color: #1E211E;
+}
+.action-menu:has(.playback-heading) [role="menuitem"] {
+  border-radius: .25rem;
+}
+.action-menu:has(.playback-heading) [role="menuitem"]:hover {
+  background-color: #eee;
+  color: #1E211E;
+}
+
+
+@media screen and (min-width: 645px) {
+  .Inbox:not(.chat-only) .hub-container {
+    max-width: none !important;
+    width: 30% !important;
+  }
+
+  .Inbox:not(.chat-only) div.chat-container {
+    max-width: none !important;
+    width: 70% !important;
+  }
+}
+
+/* === 3.0 reskin (INITIATIVE-109) — ALL-IN-ONE bundle === */
+/* ONE paste: Themes → the-starters-3-0 → "Global CSS override" → paste at END of file.
+   Uses TalkJS's rendered `Component__class` prefixes (same convention as the existing
+   agency rules above, e.g. .UserMessage__message-row). Class names verified against the
+   theme's actual templates.
+   Trade-off vs the per-component files: global selectors can break if TalkJS renames
+   internals on update — if you prefer the officially-supported route, use the 7
+   per-component .append.css files instead. Don't apply both. */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Baskervville:ital,wght@0,400;0,500;1,400&display=swap');
+
+:root {
+  --ts-black-olive: #1e211e;
+  --ts-olive: #434b43;
+  --ts-silver: #eeeeee;
+  --ts-sky: #b6d5d7;
+  --ts-melon: #effba8;
+  --ts-tint: #1e211e0d;
+  --ts-placeholder: #1e211e66;
+  --ts-error: #d55;
+}
+
+/* base typography */
+html, body, .talkjs, button, input, textarea {
+  font-family: 'Inter', Tahoma, sans-serif !important;
+  color: var(--ts-black-olive);
+}
+
+/* inbox list header ("Inbox" heading in site serif) + search */
+.ConversationListHeader__conversation-list-title,
+.ConversationListHeader__title {
+  font-family: 'Baskervville', Georgia, serif !important;
+  font-weight: 500;
+  font-size: 26px;
+  color: var(--ts-black-olive);
+}
+.ConversationListSearchBox input {
+  border-color: var(--ts-silver);
+  border-radius: 4px;
+  color: var(--ts-black-olive);
+}
+.ConversationListSearchBox input::placeholder { color: var(--ts-placeholder); }
+
+/* conversation list items */
+.ConversationListItem__conversation-link {
+  border-radius: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--ts-tint);
+}
+.ConversationListItem__conversation-link:hover { background: var(--ts-tint); }
+.ConversationListItem__conversation-link.ConversationListItem__active,
+.ConversationListItem__conversation-link.ConversationListItem__active:hover {
+  background: var(--ts-melon) !important;
+}
+.ConversationListItem__conversation-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ts-black-olive);
+}
+.ConversationListItem__timestamp { font-size: 12px; color: var(--ts-olive); }
+.ConversationListItem__body .ConversationListItem__message { font-size: 13px; color: var(--ts-olive); }
+.ConversationListItem__unread .ConversationListItem__conversation-name,
+.ConversationListItem__unread .ConversationListItem__message {
+  font-weight: 700;
+  color: var(--ts-black-olive);
+}
+
+/* empty state */
+.NoChatsScreen__no-chats h1, .NoChatsScreen__no-chats h2, .NoChatsScreen__no-chats .title {
+  font-family: 'Baskervville', Georgia, serif;
+  font-weight: 500;
+  color: var(--ts-black-olive);
+}
+.NoChatsScreen__no-chats p { color: var(--ts-olive); }
+
+/* chat header */
+.ChatHeader__header { background: #fff; border-bottom: 1px solid var(--ts-silver); }
+.ChatHeader__title { font-weight: 600; font-size: 15px; color: var(--ts-black-olive); }
+.ChatHeader__subtitle { font-size: 13px; color: var(--ts-olive); }
+
+/* message bubbles: incoming silver, outgoing sky, radius 4 */
+.UserMessage__message-row .UserMessage__message {
+  border: none;
+  border-radius: 4px;
+  color: var(--ts-black-olive);
+}
+.UserMessage__message-row.UserMessage__by-other .UserMessage__message {
+  background-color: var(--ts-silver);
+  border-color: var(--ts-silver);
+}
+.UserMessage__message-row.UserMessage__by-me .UserMessage__message {
+  background-color: var(--ts-sky);
+  border-color: var(--ts-sky);
+}
+.UserMessage__message .UserMessage__timestamp { font-size: 11px; color: var(--ts-olive); }
+
+/* composer */
+.MessageField__message-field { background: #fff; border-top: 1px solid var(--ts-silver); }
+.MessageField__entry-field {
+  background: var(--ts-silver) !important;
+  border: none;
+  border-radius: 4px;
+  color: var(--ts-black-olive);
+}
+.MessageField__entry-field ::placeholder, .Editor .empty-node::before { color: var(--ts-placeholder); }
+.MessageField__send-button, .MessageField__location-button,
+.MessageField__attachment-button, .MessageField__emoji-button,
+.MessageField__record-button { color: var(--ts-black-olive); }
+
+/* message action menu (built-in) — delete already red via existing agency rule */
+.action-menu { border-radius: 4px; box-shadow: 0 4px 16px #1e211e29; }
+.action-menu button:hover { background: var(--ts-tint); }
+
+/* scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #1e211e33; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.ChatBox .inbox-link-panel {
+  margin-bottom: 0px;
+}
+
+.ConversationListItem__conversation-link.ConversationListItem__active, .ConversationListItem__conversation-link.ConversationListItem__active:hover{
+  background-color: #EEE !important;
+}
+</style>

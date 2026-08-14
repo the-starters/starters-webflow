@@ -1,0 +1,108 @@
+<!--
+This is a subcomponent used by the MessageField. It renders a bar
+above the message field when the user is replying to a message.
+-->
+<template>
+    <div class="reply-bar">
+        <div class="reply-bar-inner">
+        <Icon type="reply" width="20" height="20" class="reply-icon" />
+
+        <ReferencedMessageLink class="referenced-message-link">
+            <div class="sender-name">{{ messageData.sender.name }}</div>
+
+            <div class="message">
+                <span t:if="{{ messageData.body.type == 'location' }}">{{ strings.LOCATION }}</span>
+
+                <span t:else-if="{{ messageData.body.type == 'file' and messageData.body.isVoiceMessage == false }}">
+                    {{ messageData.body.file.filename }}
+                </span>
+
+                <span t:else-if="{{ messageData.body.type == 'file' and messageData.body.isVoiceMessage }}">
+                    {{ strings.VOICE_MESSAGE }} {{ messageData.body.recordingDuration | format_duration }}
+                </span>
+
+                <span t:else>{{ messageData.body.formattedText }}</span>
+            </div>
+        </ReferencedMessageLink>
+
+        <CloseButton
+            class="close-button"
+            title="{{ strings.REPLY_MODE_LEAVE_ARIA_LABEL }}"
+            ariaLabel="{{ strings.REPLY_MODE_LEAVE_ARIA_LABEL }}"
+        >
+            <Icon type="close" width="24" height="24" viewBox="0 0 24 24" />
+        </CloseButton>
+        </div>
+    </div>
+</template>
+<style scoped>
+.reply-bar {
+    background-color: #fff;
+    padding: 0 0.5rem;
+    border: none;
+    font-size: .75rem;;
+}
+
+.reply-bar-inner {
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    color: #262626;
+    order: 1;
+    border: #eee solid 1px;
+    border-bottom: none;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    box-shadow: 0px 0px 4px 0px #0000000D;
+}
+
+.close-button:hover {
+    color: #1E211E;
+    opacity: 1;
+}
+
+.close-button {
+    color: #1E211E;
+    opacity: 1;
+}
+
+.reply-icon {
+    min-width: 20px;
+    min-height: 20px;
+}
+
+.referenced-message-link {
+    cursor: pointer;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    flex-grow: 1;
+    padding: 0 1rem;
+}
+
+.sender-name {
+    font-weight: 600;
+    padding-top: 0px;
+    padding-bottom: 0.165rem;
+}
+
+.message {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0.165rem 0px;
+}
+
+/* The following sections ensure that lists are more compact by only displaying the first item in the list.*/
+.message {
+    height: 1.5rem; /* iOS 15 compatibility */
+    height: 1lh;
+}
+
+.message li {
+    padding-left: 0.5rem;
+    list-style: inside;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+</style>

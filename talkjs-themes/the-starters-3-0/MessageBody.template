@@ -1,0 +1,121 @@
+<!--
+This is a subcomponent used by UserMessage and SystemMessage.
+-->
+<template>
+
+    <div t:if="{{ referencedMessage }}" class="referencedMessage">
+        <ReferencedMessage body="{{ referencedMessage.body }}" sender="{{ referencedMessage.sender }}"/>
+    </div>
+
+    <span t:if="{{ body.type == 'location' }}" class="thumbnail location">
+        <Thumbnail location="{{ body.location }}" gradients="{{darkenMenuArea | then: 'top-right'}}"/>
+    </span>
+    <span t:else-if="{{ body.type == 'file' and body.hasThumbnail }}" class="thumbnail {{ body.file.type }} {{body.thumbnailError | then: 'has-error'}}">
+        <Thumbnail file="{{ body.file }}" gradients="{{darkenMenuArea | then: 'top-right'}}"/>
+    </span>
+
+    <t:set t:if="{{ body.type == 'file' }}" filetype="{{ body.file.type }}"/>
+
+    <div t:if="{{ body.type != 'file' or body.isVoiceMessage == false or body.thumbnailError == true }}" class="text timestamp-float-{{ floatTimestamp }}">
+        <span t:if="{{ isLongEmailMessage }}">
+            <small><i><Icon type="email" /> {{ strings.MESSAGE_SENT_VIA_EMAIL }}</i></small><br/><br/>
+        </span>
+        <span t:if="{{ body.type == 'location' }}" class="message-text">
+            <a href="https://maps.google.com/maps?q={{ body.location }}" target="_blank" rel="noopener">
+                https://maps.google.com/maps?q={{ body.location }}
+            </a>
+        </span>
+        <span t:if="{{ body.type == 'file' }}" class="message-text">
+            <a class="download-link" href="{{ body.file.url }}" target="_blank" rel="noopener noreferrer">
+                <Icon type="download"/>
+                <span t:if="{{ body.isVoiceMessage == false }}">{{ body.file.formattedFilename }}</span>
+                <span t:else><Icon type="microphone" /> {{ strings.VOICE_MESSAGE }} ({{ body.recordingDuration | format_duration }})</span>
+            </a>
+            <span class="filesize"> ({{ body.file.size | filesize }})</span>
+        </span>
+
+        <span t:if="{{ body.type == 'text' }}" class="message-text">
+            {{ body.formattedText }}
+            <LinkPreviews links="{{ body.links }}" compact="{{ false }}" />
+        </span>
+
+        <div t:if="{{ body.type == 'typing-indicator' }}" class="typing-indicator">
+            <TypingIndicator/>
+        </div>
+        <span t:else class="timestamp timestamp-float">
+            <TimeAgo timestamp="{{ timestamp }}"/>
+            <span t:if="{{ showStatus }}">&nbsp;<StatusTicks/></span>
+        </span>
+    </div>
+
+
+</template>
+<style scoped>
+
+.text {
+    padding: 0.25rem .5rem;
+    white-space: pre-wrap;
+}
+.text a {
+    color: currentColor;
+}
+
+.timestamp-float-never .message-text {
+    display: block;
+}
+
+.timestamp {
+    font-size: 75%;
+    line-height: 2.2; /* aligns the timestamp with the message text */
+}
+
+.timestamp-float {
+    float: right;
+    margin-left: 1.5rem;
+    margin-top: 1.5rem;
+    opacity: 100%;
+}
+
+.timestamp-overlay {
+    position: absolute;
+    right: 1rem;
+    bottom: 0.5rem;
+    color: #D4D4D4;
+}
+
+.thumbnail {
+    display: block;
+    min-height: 100px;
+    max-height: 500px;
+    padding: .5rem .5rem 0;
+    margin-bottom: 1rem;
+}
+.thumbnail img {
+    border-radius: .25rem;
+}
+
+.thumbnail.audio {
+    height: auto;
+}
+.thumbnail.audio.has-error {
+    padding: 0.5rem;
+}
+
+.thumbnail.location {
+    height: 200px;
+}
+
+.download-link {
+    word-break: break-all;
+    text-decoration: none;
+}
+
+.download-link span {
+    text-decoration: underline;
+}
+
+.filesize {
+    white-space: nowrap;
+    font-size: 75%;
+}
+</style>

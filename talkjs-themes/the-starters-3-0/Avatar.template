@@ -1,0 +1,48 @@
+<!--
+Renders a user's avatar.
+-->
+<template>
+    <div class="avatar float-{{ float }}" 
+         style="background-image: url('{{ photoUrl }}')"
+    >
+    </div>
+</template>
+<style scoped>
+.avatar {
+    overflow: hidden;
+    background-color: #ececec;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-position: center center;
+    border-style: solid;
+    box-shadow: 0;
+
+    border-radius: 4px;
+    border-width: 0px;
+    border-color: #fff;
+    /* prevent the avatar from shrinking if the contents next to it is large */
+    flex-shrink: 0;
+    /* Align to the start (top in this case) but because we use align-items: center
+       on the parent the message will be vertically centered, unless it is taller 
+       than this Avatar */
+    align-self: flex-start;
+
+    /* Avatar width is also used when sizing message bubbles, be sure to update
+       the width in UserMessage if needed */
+    width: 3.25rem;
+    height: 3.25rem;
+}
+
+.avatar + .avatar {
+    background-color: #fff;
+}
+
+/* Your CSS will be automatically transformed for right-to-left languages, but
+   inline styles are not. Therefore, we must put floats in a class and not inline */
+.avatar.float-left {
+    float: left;
+}
+.avatar.float-right {
+    float: right;
+}
+</style>

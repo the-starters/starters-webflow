@@ -1,0 +1,35 @@
+<!--
+    This component is rendered in the inbox if all of the following conditions apply:
+    - The current user has no conversations, and
+    - selectedConversation is set to undefined (either by passing it when creating the inbox, or by calling inbox.select(undefined))
+-->
+<template>
+    <div class="no-chats">
+        <h1>{{strings.INBOX_NO_CHATS_TITLE}}</h1>
+        <p>{{strings.INBOX_NO_CHATS_BODY}}</p>
+    </div>
+</template>
+<style scoped>
+.no-chats {
+    background-color: #fff;
+    border-radius: 5px;
+    border: 0px solid #D4D4D4;
+    padding: 1rem 1rem 2rem;
+    overflow-x: hidden;
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: #525252;
+}
+
+.no-chats h1 {
+    font-size: 1.75rem;
+    margin: 0 0 0.5rem;
+}
+.no-chats p {
+    max-width: 350px;
+}
+</style>
