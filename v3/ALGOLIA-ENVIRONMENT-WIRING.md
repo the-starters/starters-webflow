@@ -1,0 +1,74 @@
+# V3 Algolia environment wiring
+
+Status: Prepared, not released
+
+`v3/algolia-environment.js` must load before the deferred wf-algolia bundle.
+It selects public search credentials and primary indexes from the exact host.
+It does not accept a mode or index from query parameters, local storage,
+Memberstack custom fields, page forms, or Xano responses.
+
+## Exact host contract
+
+| Host | Environment | Starter index | Opportunity index |
+| --- | --- | --- | --- |
+| `the-starters-3-0.webflow.io` | `test` | `Freelancers3.0-staging-test` | `opportunities_v3_test` |
+| `thestarters.com` | `production` | `Freelancers3.0-production` | `opportunities_v3_production` |
+| `www.thestarters.com` | `production` | `Freelancers3.0-production` | `opportunities_v3_production` |
+
+The TEST and production search keys must differ. Each key must have search-only
+access to its environment indexes. The resolver rejects shared indexes and any
+index name that contains a `dev` segment.
+
+## Required markup
+
+Mark the one wf-algolia client script:
+
+```html
+<script
+  defer
+  data-starters-v3-algolia-client
+  data-app-id=""
+  data-search-key=""
+  src="https://cdn.jsdelivr.net/npm/@candid-leap/wf-algolia@1/dist/index.js"
+></script>
+```
+
+Mark each managed browse section. Keep existing wf-algolia attributes and add
+only the resource attribute:
+
+```html
+<div
+  wf-algolia-element="browse"
+  wf-algolia-index=""
+  data-starters-v3-algolia-resource="starters"
+></div>
+
+<div
+  wf-algolia-element="browse"
+  wf-algolia-index=""
+  data-starters-v3-algolia-resource="opportunities"
+></div>
+```
+
+Do not mark the shared `LearnContent` index. The resolver changes only explicit
+V3 managed elements.
+
+## Release prerequisites
+
+- Create `opportunities_v3_test`, `Freelancers3.0-production`, and
+  `opportunities_v3_production`.
+- Create distinct restricted TEST and production search-only keys.
+- Add the public host configuration to a GitHub-owned config file. Load it
+  immediately before `v3/algolia-environment.js`.
+- Run the Xano configure endpoints for each environment after the matching
+  restricted write keys are present.
+- Publish the five staged Xano Algolia units only after masked configuration
+  readback passes.
+- Reindex the exact TEST and production cohorts separately. Reconcile stable-ID
+  digests and stop on the first cross-environment record.
+- Merge, tag, purge jsDelivr, install the resolver before wf-algolia, publish
+  staging first, and verify loaded bytes and runtime attributes.
+
+Unknown hosts, missing values, an unknown managed resource, shared keys, shared
+indexes, and legacy dev indexes remove the managed client credentials and index
+attributes. This is the intended fail-closed state.
