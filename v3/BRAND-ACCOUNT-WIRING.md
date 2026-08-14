@@ -13,8 +13,8 @@
 
 ## Native markup contract
 
-The native Brand signup form remains Designer-authored Webflow HTML. Keep its
-Memberstack signup contract on the form itself:
+The native standard and quiz Brand signup forms remain Designer-authored
+Webflow HTML. Keep their Memberstack signup contracts on the forms themselves:
 
 ```html
 <form
@@ -26,17 +26,25 @@ Memberstack signup contract on the form itself:
 </form>
 ```
 
+```html
+<form data-quiz-form="signup" data-ms-form="signup">
+  <!-- Designer-authored quiz signup fields and controls -->
+</form>
+```
+
 Before Memberstack handles signup, `brand-account-controller.js` changes only
-the plan attribute for the active Memberstack data mode:
+the plan attribute on both matching forms for the active Memberstack data mode:
 
 | Host | `data-ms-plan:add` |
 | --- | --- |
 | `the-starters-3-0.webflow.io` (Test Data) | `pln_dorxata-test-brand-plan-777r02pa` |
 | `thestarters.com`, `www.thestarters.com` (Live Data) | `pln_free-plan-f6kn0dxz` |
 
-The live plan remains the Designer-authored fallback. The controller does not
-replace or generate the form, and it leaves an element without
-`data-ms-form="signup"` untouched.
+The standard form's live plan remains the Designer-authored fallback. The
+controller does not replace or generate either form, and it leaves an element
+without `data-ms-form="signup"` untouched. The quiz form must also keep
+`data-quiz-form="signup"`; this limits the broader attribute selector to the
+quiz signup surface.
 
 The Build Account form remains native Webflow HTML:
 
@@ -103,7 +111,7 @@ the login-email input outside this form.
 ## Install order
 
 Install `brand-account-controller.js` sitewide, before Memberstack form
-initialization, so it can align the native signup form with Test or Live Data:
+initialization, so it can align both native signup forms with Test or Live Data:
 
 ```html
 <script>
@@ -307,12 +315,12 @@ projection.
 
 Run in Memberstack Test Mode first with an approved sandbox Brand identity:
 
-1. On `the-starters-3-0.webflow.io`, confirm the native signup form carries the
-   Test Brand plan before submitting it, then prove the new Test Data member has
-   that plan connection.
-2. On each custom domain, confirm the native signup form still carries the live
-   Brand Free plan. Creating a production member requires the separate approval
-   described below.
+1. On `the-starters-3-0.webflow.io`, confirm the standard and quiz signup forms
+   carry the Test Brand plan before submitting either one, then prove the new
+   Test Data member has that plan connection.
+2. On each custom domain, confirm both signup forms carry the live Brand Free
+   plan. Creating a production member requires the separate approval described
+   below.
 3. Existing incomplete Brand submits unchanged email plus ordinary fields.
 4. Read Memberstack, `user_v3`, and `brands_v3` back by Memberstack member ID.
 5. Replay the identical submission; prove one Brand row and unchanged final
