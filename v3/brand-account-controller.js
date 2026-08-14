@@ -75,6 +75,7 @@
   var NATIVE_FORM_DIAGNOSTICS_SCRIPT = 'native-form-diagnostics.js'
   var passwordEmailAttempts = new WeakMap()
   var workflowDiagnosticsControllerScript = document.currentScript
+  var brandSignupPlanObserver = null
 
   function boundedWorkflowDiagnostics(promise) {
     return new Promise(function (resolve) {
@@ -231,6 +232,22 @@
       configured = true
     })
     return configured
+  }
+
+  function watchForBrandSignupPlan(hostname) {
+    if (brandSignupPlanObserver || !window.MutationObserver || !document.documentElement) {
+      return false
+    }
+    brandSignupPlanObserver = new window.MutationObserver(function () {
+      if (!configureBrandSignupPlan(hostname)) return
+      brandSignupPlanObserver.disconnect()
+      brandSignupPlanObserver = null
+    })
+    brandSignupPlanObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    })
+    return true
   }
 
   function trim(value) {
@@ -916,6 +933,9 @@
     // live fallback, but align the plan before Memberstack handles signup.
     loadNativeFormDiagnostics()
     var bound = configureBrandSignupPlan(location.hostname || '')
+    if (!bound && location.pathname === '/quiz') {
+      bound = watchForBrandSignupPlan(location.hostname || '') || bound
+    }
     var buildForm = document.querySelector(BUILD_FORM_SELECTOR)
     if (buildForm) {
       bound = bindForm(buildForm, 'brand/account/build', submitBuild, true) || bound
