@@ -201,11 +201,14 @@
   }
 
   function getLearnAlgoliaConfig() {
-    var config = window.starterQuizLearnContentAlgoliaConfig || {}
+    var resolver = window.StartersV3AlgoliaEnvironment
+    var config = resolver && resolver.getSharedSearchConfig
+      ? resolver.getSharedSearchConfig('learnContent')
+      : null
     if (
-      !normalize(config.appId) ||
-      !normalize(config.searchKey) ||
-      normalize(config.indexName) !== LEARN_INDEX
+      !normalize(config && config.appId) ||
+      !normalize(config && config.searchKey) ||
+      normalize(config && config.indexName) !== LEARN_INDEX
     ) {
       throw new Error('LearnContent Algolia search configuration is unavailable')
     }

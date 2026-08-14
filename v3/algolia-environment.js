@@ -23,7 +23,6 @@
     'www.thestarters.com': 'production',
   }
   var CLIENT_SELECTOR = 'script[data-starters-v3-algolia-client]'
-  var SHARED_CLIENT_SELECTOR = 'script[data-starters-shared-algolia-client]'
   var RESOURCE_SELECTOR = '[data-starters-v3-algolia-resource]'
   var LEARN_CONTENT_INDEX = 'LearnContent'
   var EXPECTED_INDEXES = {
@@ -126,54 +125,11 @@
     Array.prototype.forEach.call(elements || [], callback)
   }
 
-  function preserveSharedLearnContentConfig(documentObject) {
-    var existing = window.starterQuizLearnContentAlgoliaConfig || {}
-    if (
-      clean(existing.appId) &&
-      clean(existing.searchKey) &&
-      clean(existing.indexName) === LEARN_CONTENT_INDEX
-    ) {
-      return {
-        appId: clean(existing.appId),
-        searchKey: clean(existing.searchKey),
-        indexName: LEARN_CONTENT_INDEX,
-      }
-    }
-
-    var sharedClient = null
-    each(documentObject, SHARED_CLIENT_SELECTOR, function (element) {
-      if (element.getAttribute('data-starters-v3-algolia-client') !== null) return
-      if (!sharedClient) sharedClient = element
-    })
-    var appId = clean(sharedClient && sharedClient.getAttribute('data-app-id'))
-    var searchKey = clean(sharedClient && sharedClient.getAttribute('data-search-key'))
-    if (!appId || !searchKey) return null
-
-    var preserved = {
-      appId: appId,
-      searchKey: searchKey,
-      indexName: LEARN_CONTENT_INDEX,
-    }
-    window.starterQuizLearnContentAlgoliaConfig = preserved
-    return preserved
-  }
-
   function block(documentObject, reason) {
     activeResolution = null
-    var shared = window.starterQuizLearnContentAlgoliaConfig || {}
-    var sharedAppId = clean(shared.appId)
-    var sharedSearchKey = clean(shared.searchKey)
-    var hasSharedClient = sharedAppId &&
-      sharedSearchKey &&
-      clean(shared.indexName) === LEARN_CONTENT_INDEX
     each(documentObject, CLIENT_SELECTOR, function (element) {
-      if (hasSharedClient) {
-        element.setAttribute('data-app-id', sharedAppId)
-        element.setAttribute('data-search-key', sharedSearchKey)
-      } else {
-        element.removeAttribute('data-app-id')
-        element.removeAttribute('data-search-key')
-      }
+      element.removeAttribute('data-app-id')
+      element.removeAttribute('data-search-key')
       element.setAttribute('data-starters-v3-algolia-blocked', reason)
     })
     each(documentObject, RESOURCE_SELECTOR, function (element) {
@@ -244,30 +200,19 @@
     }
   }
 
-  function boot(config) {
-    var sharedLearnContent = preserveSharedLearnContentConfig(document)
-    var resolution = resolve(window.location && window.location.hostname, config)
-    if (!sharedLearnContent) {
-      resolution = {
-        ok: false,
-        reason: 'missing_learn_content_config',
-        environment: resolution.environment || environmentForHost(
-          window.location && window.location.hostname,
-        ),
-      }
-    } else if (
-      config &&
-      (sharedLearnContent.searchKey === clean(config.test && config.test.searchKey) ||
-        sharedLearnContent.searchKey === clean(
-          config.production && config.production.searchKey,
-        ))
-    ) {
-      resolution = {
-        ok: false,
-        reason: 'shared_learn_search_key',
-        environment: resolution.environment,
-      }
+  function getSharedSearchConfig(resource) {
+    if (!activeResolution || !activeResolution.ok) return null
+    if (resource !== 'learnContent') return null
+    return {
+      appId: activeResolution.settings.appId,
+      searchKey: activeResolution.settings.searchKey,
+      indexName: LEARN_CONTENT_INDEX,
+      environment: activeResolution.environment,
     }
+  }
+
+  function boot(config) {
+    var resolution = resolve(window.location && window.location.hostname, config)
     if (!resolution.ok) {
       block(document, resolution.reason)
       dispatch(BLOCKED_EVENT, {
@@ -302,7 +247,7 @@
     boot: boot,
     environmentForHost: environmentForHost,
     getManagedSearchConfig: getManagedSearchConfig,
-    preserveSharedLearnContentConfig: preserveSharedLearnContentConfig,
+    getSharedSearchConfig: getSharedSearchConfig,
     resolve: resolve,
     validateConfig: validateConfig,
   }

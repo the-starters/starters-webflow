@@ -21,8 +21,8 @@ function response({ ok = true, status = 200, data = {} } = {}) {
 
 function createHarness({
     fetch,
-    learnConfig,
     managedConfig,
+    sharedConfig,
     memberstack,
     query = '',
     savedState,
@@ -60,20 +60,23 @@ function createHarness({
                           environment: 'production',
                       }
             },
+            getSharedSearchConfig(resource) {
+                assert.equal(resource, 'learnContent')
+                return sharedConfig === null
+                    ? null
+                    : sharedConfig || {
+                          appId: 'MANAGEDAPP',
+                          searchKey: 'managed-search-key',
+                          indexName: 'LearnContent',
+                          environment: 'production',
+                      }
+            },
         },
         $memberstackDom: memberstack,
         crypto: crypto.webcrypto,
         fetch: fetch || (async () => response()),
         location: { search: query },
         setTimeout,
-        starterQuizLearnContentAlgoliaConfig:
-            learnConfig === null
-                ? null
-                : learnConfig || {
-                      appId: 'SHAREDAPP',
-                      searchKey: 'shared-learn-key',
-                      indexName: 'LearnContent',
-                  },
     }
     window.window = window
 
@@ -250,9 +253,9 @@ test('hydrates current Starter and Learn records from the expected Algolia index
                 searchKey: 'managed-search-key',
             },
             {
-                appId: 'SHAREDAPP',
+                appId: 'MANAGEDAPP',
                 indexPath: '/1/indexes/LearnContent/query',
-                searchKey: 'shared-learn-key',
+                searchKey: 'managed-search-key',
             },
         ],
     )
@@ -277,7 +280,7 @@ test('fails closed without resolved managed and LearnContent configuration', asy
         /Managed Algolia search configuration is unavailable/,
     )
     await assert.rejects(
-        createHarness({ learnConfig: null }).hooks.buildMessage(quiz),
+        createHarness({ sharedConfig: null }).hooks.buildMessage(quiz),
         /LearnContent Algolia search configuration is unavailable/,
     )
 })

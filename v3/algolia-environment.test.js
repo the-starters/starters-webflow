@@ -46,11 +46,6 @@ function load(options = {}) {
     'data-app-id': 'legacy-managed-app',
     'data-search-key': 'legacy-managed-key',
   })
-  const sharedClient = element({
-    'data-starters-shared-algolia-client': '',
-    'data-app-id': 'shared-app',
-    'data-search-key': 'shared-key',
-  })
   const starters = element({
     'data-starters-v3-algolia-resource': 'starters',
     'wf-algolia-index': 'Freelancers3.0-dev',
@@ -70,9 +65,6 @@ function load(options = {}) {
     documentElement: root,
     querySelectorAll(selector) {
       if (selector === 'script[data-starters-v3-algolia-client]') return [client]
-      if (selector === 'script[data-starters-shared-algolia-client]') {
-        return options.disableSharedClient ? [] : [sharedClient]
-      }
       if (selector === '[data-starters-v3-algolia-resource]') {
         return [starters, opportunities, ...(extra ? [extra] : [])]
       }
@@ -99,7 +91,6 @@ function load(options = {}) {
     },
     localStorage: options.localStorage,
     starterQuizAlgoliaConfig: options.starterQuizAlgoliaConfig,
-    starterQuizLearnContentAlgoliaConfig: options.learnConfig,
     __startersV3AlgoliaEnvironment: options.requestedEnvironment,
   }
 
@@ -110,7 +101,6 @@ function load(options = {}) {
     events,
     opportunities,
     root,
-    sharedClient,
     starters,
     unmanaged,
     window,
@@ -133,10 +123,11 @@ test('staging selects only TEST credentials and indexes', () => {
     indexName: 'Freelancers3.0-staging-test',
     environment: 'test',
   })
-  assert.deepEqual({ ...runtime.window.starterQuizLearnContentAlgoliaConfig }, {
-    appId: 'shared-app',
-    searchKey: 'shared-key',
+  assert.deepEqual({ ...runtime.api.getSharedSearchConfig('learnContent') }, {
+    appId: 'TESTAPP',
+    searchKey: 'test-public-search-key',
     indexName: 'LearnContent',
+    environment: 'test',
   })
 })
 
@@ -175,34 +166,29 @@ for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
   })
 }
 
-test('unknown hosts block managed indexes and retain the shared Learn client', () => {
+test('unknown hosts fail closed while leaving unmanaged index markup unchanged', () => {
   const runtime = load({ hostname: 'preview.example.com' })
-  assert.equal(runtime.client.getAttribute('data-app-id'), 'shared-app')
-  assert.equal(runtime.client.getAttribute('data-search-key'), 'shared-key')
+  assert.equal(runtime.client.getAttribute('data-app-id'), null)
+  assert.equal(runtime.client.getAttribute('data-search-key'), null)
   assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)
   assert.equal(runtime.opportunities.getAttribute('wf-algolia-index'), null)
   assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'blocked')
   assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'unknown_host')
   assert.equal(runtime.events.at(-1).name, 'starters:algolia-environment-blocked')
-  assert.equal(runtime.sharedClient.getAttribute('data-app-id'), 'shared-app')
-  assert.equal(runtime.sharedClient.getAttribute('data-search-key'), 'shared-key')
-  assert.deepEqual({ ...runtime.window.starterQuizLearnContentAlgoliaConfig }, {
-    appId: 'shared-app',
-    searchKey: 'shared-key',
-    indexName: 'LearnContent',
-  })
+  assert.equal(runtime.unmanaged.getAttribute('wf-algolia-index'), 'LearnContent')
+  assert.equal(runtime.api.getSharedSearchConfig('learnContent'), null)
 })
 
 test('missing configuration fails closed on an approved host', () => {
   const runtime = load({ config: undefined })
-  assert.equal(runtime.client.getAttribute('data-search-key'), 'shared-key')
+  assert.equal(runtime.client.getAttribute('data-search-key'), null)
   assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)
   assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'missing_appId')
 })
 
 test('shared search keys fail closed', () => {
   const runtime = load({ config: config({ production: { searchKey: 'test-public-search-key' } }) })
-  assert.equal(runtime.client.getAttribute('data-search-key'), 'shared-key')
+  assert.equal(runtime.client.getAttribute('data-search-key'), null)
   assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'shared_search_key')
 })
 
@@ -247,29 +233,14 @@ test('swapped or arbitrary managed index mappings fail closed', () => {
   )
 })
 
-test('missing or shared LearnContent credentials fail closed', () => {
-  const missing = load({ disableSharedClient: true })
-  assert.equal(
-    missing.root.getAttribute('data-v3-algolia-block-reason'),
-    'missing_learn_content_config',
-  )
-
-  const shared = load({
-    learnConfig: {
-      appId: 'TESTAPP',
-      searchKey: 'test-public-search-key',
-      indexName: 'LearnContent',
-    },
-  })
-  assert.equal(
-    shared.root.getAttribute('data-v3-algolia-block-reason'),
-    'shared_learn_search_key',
-  )
+test('unknown shared resources fail closed through the resolver API', () => {
+  const runtime = load()
+  assert.equal(runtime.api.getSharedSearchConfig('unknown'), null)
 })
 
 test('unknown managed resources block the whole managed Algolia surface', () => {
   const runtime = load({ extraResource: 'learn' })
-  assert.equal(runtime.client.getAttribute('data-search-key'), 'shared-key')
+  assert.equal(runtime.client.getAttribute('data-search-key'), null)
   assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)
   assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'unknown_resource')
 })
@@ -277,5 +248,8 @@ test('unknown managed resources block the whole managed Algolia surface', () => 
 test('unmanaged Algolia sections are not changed', () => {
   const runtime = load()
   assert.equal(runtime.unmanaged.getAttribute('wf-algolia-index'), 'LearnContent')
-  assert.equal(runtime.window.starterQuizLearnContentAlgoliaConfig.searchKey, 'shared-key')
+  assert.equal(
+    runtime.api.getSharedSearchConfig('learnContent').searchKey,
+    'test-public-search-key',
+  )
 })

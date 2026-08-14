@@ -1038,19 +1038,30 @@
     }
 
     function getLearnContentSearchConfig(learnContentSection) {
-        const managedResolverActive = Boolean(
-            window.StartersV3AlgoliaEnvironment,
-        )
+        const resolver = window.StartersV3AlgoliaEnvironment
+        const managedResolverActive = Boolean(resolver)
+        if (managedResolverActive) {
+            const resolved = resolver.getSharedSearchConfig?.('learnContent')
+            return {
+                appId: normalizeLearnContentValue(resolved?.appId),
+                searchKey: normalizeLearnContentValue(resolved?.searchKey),
+                indexName:
+                    normalizeLearnContentValue(resolved?.indexName) ===
+                    learnContentDefaultIndexName
+                        ? learnContentDefaultIndexName
+                        : '',
+            }
+        }
         const windowConfig =
             window.starterQuizLearnContentAlgoliaConfig ||
-            (!managedResolverActive && window.starterQuizAlgoliaConfig) ||
+            window.starterQuizAlgoliaConfig ||
             {}
         const explicitElement = document.querySelector(
             '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
         )
-        const wfAlgoliaScript = managedResolverActive
-            ? null
-            : document.querySelector('script[data-app-id][data-search-key]')
+        const wfAlgoliaScript = document.querySelector(
+            'script[data-app-id][data-search-key]',
+        )
 
         return {
             appId:

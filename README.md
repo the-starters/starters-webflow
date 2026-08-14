@@ -399,8 +399,8 @@ Optional native controls may use `data-quiz-email-test-launcher` and
 The browser waits for `quiz-results.js` to publish the compact quiz state that
 was read from or saved to the current Memberstack member. It then refreshes the
 three saved Starter IDs from the host-resolved production Starter index, selects
-current category matches from `LearnContent` through its independent shared
-credentials, and posts the rendered email through the
+current category matches from the shared `LearnContent` index through the
+host-resolved production search key, and posts the rendered email through the
 authenticated `quiz_email_test/send/v3` Xano endpoint. Xano is the security
 boundary: it must authorize the dedicated production canary, replace any client
 recipient with `jp+brand10@thestarters.com`, audit the attempt, enforce

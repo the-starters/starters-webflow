@@ -108,7 +108,7 @@ function getLearnContentTaxonomyApi() {
     )
 }
 
-function runQuizResultsController({ fetch, learnConfig }) {
+function runQuizResultsController({ fetch, sharedConfig }) {
     const template = {
         classList: { add() {}, contains() { return false }, remove() {} },
         cloneNode() { return this },
@@ -166,6 +166,12 @@ function runQuizResultsController({ fetch, learnConfig }) {
         },
     }
     const window = {
+        StartersV3AlgoliaEnvironment: {
+            getSharedSearchConfig(resource) {
+                assert.equal(resource, 'learnContent')
+                return sharedConfig
+            },
+        },
         WfAlgolia: {
             on() {},
             setFilter() {},
@@ -182,7 +188,6 @@ function runQuizResultsController({ fetch, learnConfig }) {
             queueMicrotask(callback)
             return 1
         },
-        starterQuizLearnContentAlgoliaConfig: learnConfig,
     }
     window.window = window
     const context = vm.createContext({
@@ -403,17 +408,18 @@ test('LearnContent filters preserve current categories without invented aliases'
     )
 })
 
-test('managed Algolia keeps LearnContent on its independent shared credentials', async () => {
+test('managed Algolia keeps LearnContent on the exact shared index', async () => {
     const calls = []
     runQuizResultsController({
         fetch: async (url, options) => {
             calls.push({ url, options })
             return { ok: true, async json() { return { hits: [] } } }
         },
-        learnConfig: {
-            appId: 'SHAREDAPP',
-            searchKey: 'shared-learn-key',
+        sharedConfig: {
+            appId: 'TESTAPP',
+            searchKey: 'test-public-search-key',
             indexName: 'LearnContent',
+            environment: 'test',
         },
     })
     for (let attempt = 0; attempt < 20 && calls.length < 2; attempt += 1) {
@@ -423,15 +429,15 @@ test('managed Algolia keeps LearnContent on its independent shared credentials',
     calls.forEach((call) => {
         assert.equal(
             call.url,
-            'https://SHAREDAPP-dsn.algolia.net/1/indexes/LearnContent/query',
+            'https://TESTAPP-dsn.algolia.net/1/indexes/LearnContent/query',
         )
         assert.equal(
             call.options.headers['X-Algolia-API-Key'],
-            'shared-learn-key',
+            'test-public-search-key',
         )
         assert.equal(
             call.options.headers['X-Algolia-Application-Id'],
-            'SHAREDAPP',
+            'TESTAPP',
         )
     })
 })
