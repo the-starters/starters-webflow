@@ -176,14 +176,34 @@
     })
   }
 
+  const TIMEPICKER_INIT_RETRY_MS = 100
+  const TIMEPICKER_INIT_MAX_ATTEMPTS = 40 // ~4s ceiling before giving up
+
   // Wires the `[data-input-timepicker]` start/end inputs inside `scope` —
   // scoped to just the item card(s) that were rendered/cloned, not a full
   // document re-scan, since global-embeds/form-embeds/timepicker/timepicker.js
   // only initializes inputs present in the DOM at its own load time otherwise.
-  function initInputPickers(scope) {
+  //
+  // `window.wfInputTimepicker` is attached by that other script asynchronously
+  // (it's a separate <script> tag); nothing guarantees it has run by the time
+  // this module's own initialize()/renderAvailabilityItems() fires, especially
+  // on a fresh page load. Calling this once and silently no-op'ing when the
+  // global isn't there yet (the old behavior) meant the very first render
+  // could permanently ship with no timepickers wired up. Retry instead until
+  // the global appears.
+  function initInputPickers(scope, attempt) {
     if (window.wfInputTimepicker && typeof window.wfInputTimepicker.init === 'function') {
       window.wfInputTimepicker.init(scope)
+      return
     }
+    const tries = attempt || 0
+    if (tries >= TIMEPICKER_INIT_MAX_ATTEMPTS) {
+      console.warn('[scheduling-section] window.wfInputTimepicker never became available; timepickers not wired up')
+      return
+    }
+    setTimeout(function () {
+      initInputPickers(scope, tries + 1)
+    }, TIMEPICKER_INIT_RETRY_MS)
   }
 
   // A cloned item-card carries over the item-template's own timepicker
@@ -647,10 +667,12 @@
   // `#price` is a single hidden input living directly in
   // `[data-availability-element="list"]` (not cloned per item form) —
   // populated once at bootstrap from the starter's own `Paid_Call_Rate`.
+  // Only its `value` is read — `[data-rate]` was a static Designer
+  // placeholder left over from the old flow and carries no live data.
   function resolvePaidRate() {
     const priceInput = qs('#price')
     if (priceInput) {
-      const rate = Number(priceInput.value || priceInput.dataset.rate || 0)
+      const rate = Number(priceInput.value || 0)
       if (rate > 0) return rate
     }
     try {
@@ -849,6 +871,7 @@
   async function activatePlatformManager() {
     if (connectBusy || (availability && availability.manager === 'platform')) return
     connectBusy = true
+    setRequestBusy(true)
     publishCalendarConnectionState('loading')
     try {
       const memberId = await writeMemberId()
@@ -868,18 +891,21 @@
       await updateAvail()
       await refreshCanonicalConnectionState()
       renderAvailabilityItems()
+      renderSlotsPreview()
       console.log('[scheduling-section] connected to platform calendar')
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] connect-platform failed:', error && error.message)
     } finally {
       connectBusy = false
+      setRequestBusy(false)
     }
   }
 
   async function activateGoogleManager() {
     if (connectBusy) return
     connectBusy = true
+    setRequestBusy(true)
     publishCalendarConnectionState('loading')
     try {
       const memberId = await writeMemberId()
@@ -909,12 +935,14 @@
       publishCalendarConnectionError()
       console.warn('[scheduling-section] connect-google failed:', error && error.message)
       connectBusy = false
+      setRequestBusy(false)
     }
   }
 
   async function disconnectGoogleManager() {
     if (connectBusy) return
     connectBusy = true
+    setRequestBusy(true)
     publishCalendarConnectionState('loading')
     try {
       const memberId = await writeMemberId()
@@ -940,12 +968,14 @@
       await updateAvail()
       await refreshCanonicalConnectionState()
       renderAvailabilityItems()
+      renderSlotsPreview()
       console.log('[scheduling-section] disconnected Google Calendar, reverted to platform')
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] disconnect-google failed:', error && error.message)
     } finally {
       connectBusy = false
+      setRequestBusy(false)
     }
   }
 
@@ -1062,11 +1092,31 @@
   // whatever it already showed until a real (non-loading) state arrives, so
   // clicking connect/reconnect/disconnect doesn't flash the "disconnected"
   // label before the request even resolves.
+  //
+  // `connect-label-group` holds three `[data-availability-element=
+  // "connect-label"]` instances: `[data-type="false"]` ("Disconnected") plus
+  // two `[data-type="true"][data-manager]` variants, one per manager
+  // ("platform" / "calendar") — only the one matching the live
+  // `availability.manager` is shown while connected.
   function applyConnectLabels(state) {
     if (state === 'loading') return
+    const connected = state === 'connected' || state === 'reconnect'
+    const manager = availability && availability.manager
+    const labels = qsa(elSel('connect-label'))
+    if (labels.length) {
+      labels.forEach(function (label) {
+        const isConnectedVariant = label.getAttribute('data-type') === 'true'
+        const visible = isConnectedVariant
+          ? connected && label.getAttribute('data-manager') === manager
+          : !connected
+        label.style.display = visible ? '' : 'none'
+      })
+      return
+    }
+    // Legacy fallback for markup predating [data-type]/[data-manager]: a
+    // plain 2-child group, ordinal position 0 = disconnected, 1 = connected.
     const group = qs(elSel('connect-label-group'))
     if (!group || !group.children) return
-    const connected = state === 'connected' || state === 'reconnect'
     if (group.children[0]) group.children[0].style.display = connected ? 'none' : ''
     if (group.children[1]) group.children[1].style.display = connected ? '' : 'none'
   }
@@ -1099,10 +1149,25 @@
     setElementVisible('connect-info-wrapper', state !== 'connected' && state !== 'reconnect')
   }
 
+  // `main-wrapper` only ever appears after a *successful* calendar connect —
+  // once shown, it must stay shown through later reconnect/disconnect
+  // switches, so this latches to true on 'connected' and never reverts.
+  let mainWrapperRevealed = false
+
+  function applyMainWrapperVisibility(state) {
+    if (state === 'loading') return
+    if (state === 'connected' || state === 'reconnect') mainWrapperRevealed = true
+    if (!mainWrapperRevealed) return
+    qsa(elSel('main-wrapper')).forEach(function (el) {
+      el.style.display = 'grid'
+    })
+  }
+
   function repaintConnectionUI(state) {
     applyConnectLabels(state)
     applyConnectButtonVisibility()
     applyConnectInfoVisibility(state)
+    applyMainWrapperVisibility(state)
   }
 
   function bindConnectButtons() {
@@ -1424,6 +1489,19 @@
     setCreateTriggerBusy(true)
   }
 
+  // The create trigger has two independent reasons to be locked: an open,
+  // unsaved draft (`creatingDraft`) and an in-flight mutating request
+  // anywhere in the section (`requestBusy`, see below) — either one alone
+  // must keep it disabled, so painting is a pure OR of both instead of
+  // living inside whichever setter last ran.
+  function paintCreateTrigger() {
+    const trigger = qs('[' + ACTION + '="availability-create"]')
+    if (!trigger) return
+    const locked = creatingDraft || requestBusy
+    trigger.style.opacity = locked ? '0.6' : '1'
+    trigger.style.pointerEvents = locked ? 'none' : 'auto'
+  }
+
   // Only one unsaved draft can exist at a time — dims/disables the create
   // trigger while one is open so repeated clicks can't stack more of them.
   // Cleared by renderAvailabilityItems() (any full re-render, including a
@@ -1431,10 +1509,54 @@
   // its own close/cancel button.
   function setCreateTriggerBusy(busy) {
     creatingDraft = busy
-    const trigger = qs('[' + ACTION + '="availability-create"]')
-    if (!trigger) return
-    trigger.style.opacity = busy ? '0.6' : '1'
-    trigger.style.pointerEvents = busy ? 'none' : 'auto'
+    paintCreateTrigger()
+  }
+
+  // Global request lock: while ANY mutating request is in flight (connect,
+  // disconnect, save, remove), every clickable action across the whole
+  // section — connect buttons, every item card's edit/remove/save/cancel —
+  // is disabled, not just the one that started the request. This must not
+  // fight the draft lock above: the create trigger stays disabled as long as
+  // EITHER condition holds (see paintCreateTrigger), so a request finishing
+  // never re-enables it while a draft is still open, and an open draft never
+  // masks the fact that a request is (or isn't) in flight.
+  let requestBusy = false
+
+  function collectRequestLockTargets() {
+    const targets = []
+    const connectWrapper = qs(elSel('connect-btn-wrapper'))
+    if (connectWrapper) {
+      ;['connect-platform', 'connect-google', 'disconnect-google'].forEach(function (action, i) {
+        const target = resolveActionTarget(connectWrapper, action, i)
+        if (target) targets.push(target)
+      })
+    }
+    qsa(elSel('item-card')).forEach(function (card) {
+      const buttonGroup = qs(elSel('item-button-group'), card)
+      if (buttonGroup) {
+        const editBtn = resolveActionTarget(buttonGroup, 'item-form-open', 0)
+        const removeBtn = resolveActionTarget(buttonGroup, 'item-remove', 1)
+        if (editBtn) targets.push(editBtn)
+        if (removeBtn) targets.push(removeBtn)
+      }
+      const { buttonRow } = getItemFormPieces(card)
+      if (buttonRow) {
+        const closeBtn = resolveActionTarget(buttonRow, 'item-form-close', 0)
+        const submitBtn = resolveActionTarget(buttonRow, 'item-form-submit', 1)
+        if (closeBtn) targets.push(closeBtn)
+        if (submitBtn) targets.push(submitBtn)
+      }
+    })
+    return targets
+  }
+
+  function setRequestBusy(busy) {
+    requestBusy = busy
+    collectRequestLockTargets().forEach(function (el) {
+      el.style.pointerEvents = busy ? 'none' : ''
+      el.style.opacity = busy ? '0.6' : ''
+    })
+    paintCreateTrigger()
   }
 
   function bindCreateTrigger() {
@@ -1478,6 +1600,7 @@
     const availId = form.dataset.availabilityId || id || 'general'
     const avail = { days: selectedDays, start: startInput.value, end: endInput.value }
 
+    setRequestBusy(true)
     try {
       if (availId !== 'general') {
         const general = availability.items.general
@@ -1507,6 +1630,8 @@
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability save failed:', error && error.message)
+    } finally {
+      setRequestBusy(false)
     }
   }
 
@@ -1526,6 +1651,7 @@
     availability.items.general = general
     delete availability.items[id]
 
+    setRequestBusy(true)
     try {
       await updateAvail()
       if (grantId && configs.length !== 0) {
@@ -1538,6 +1664,8 @@
     } catch (error) {
       publishCalendarConnectionError()
       console.warn('[scheduling-section] availability remove failed:', error && error.message)
+    } finally {
+      setRequestBusy(false)
     }
   }
 
@@ -1655,20 +1783,26 @@
   /* Bootstrap                                                           */
   /* ------------------------------------------------------------------ */
 
-  // `connect-wrapper` and `main-wrapper` (which itself contains
-  // `list-wrapper` and `slots-wrapper`) are hidden by the site's own CSS
-  // until the first load resolves — the script never hides them, it only
-  // ever reveals them once via an explicit `display` value (clearing to ''
-  // would just fall back to that same CSS-hidden default). `loading-section`
-  // is the single spinner shown in their place until then.
-  function revealSection() {
-    setElementVisible('loading-section', false)
+  // `connect-wrapper` is hidden by the site's own CSS until the first load
+  // resolves — the script never hides it again, it only ever reveals it once
+  // via an explicit `display` value (clearing to '' would just fall back to
+  // that same CSS-hidden default). It must appear once loading finishes
+  // regardless of outcome (connected, disconnected, or error), so members
+  // always land on a usable connect UI instead of a stuck spinner.
+  function revealConnectWrapper() {
     qsa(elSel('connect-wrapper')).forEach(function (el) {
       el.style.display = 'flex'
     })
-    qsa(elSel('main-wrapper')).forEach(function (el) {
-      el.style.display = 'grid'
-    })
+  }
+
+  // `main-wrapper` (containing `list-wrapper` and `slots-wrapper`) is gated
+  // separately by applyMainWrapperVisibility — it only ever appears after a
+  // successful calendar connect. `loading-section` is the single spinner
+  // shown in their place until then.
+  function revealSection(state) {
+    setElementVisible('loading-section', false)
+    revealConnectWrapper()
+    applyMainWrapperVisibility(state)
   }
 
   async function initialize() {
@@ -1740,7 +1874,7 @@
       renderSlotsPreview()
 
       publishCalendarConnectionState(state)
-      revealSection()
+      revealSection(state)
       setStatus('ready')
       emit('starterSchedulingSectionReady', { memberId: sessionMemberId })
       return 'ready'
@@ -1749,6 +1883,9 @@
       setStatus('error')
       setElementVisible('loading-section', false)
       setElementVisible('loading-slots', false)
+      // Loading finished (with an error) — the connect UI must still surface
+      // so the member isn't left staring at a vanished spinner.
+      revealConnectWrapper()
       console.warn('[scheduling-section] initialization failed:', error && error.message)
       return null
     }
