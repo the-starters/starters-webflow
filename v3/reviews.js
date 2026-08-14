@@ -197,6 +197,26 @@
     }
   }
 
+  function summaryBlock(element) {
+    if (!element || typeof element.closest !== 'function') return null
+    // The authored hero row that wraps the summary spans. An explicit
+    // data attribute wins; the published hero class is the live fallback.
+    return element.closest('[data-reviews-v3-summary-block], .profile-hero_card-progress')
+  }
+
+  function toggleSummaryBlocks(documentObject, visible) {
+    if (!documentObject || !documentObject.querySelectorAll) return
+    Array.prototype.forEach.call(
+      documentObject.querySelectorAll('[data-reviews-v3-summary-average], #rating'),
+      function (element) {
+        var block = summaryBlock(element)
+        if (!block) return
+        block.hidden = !visible
+        block.style.display = visible ? '' : 'none'
+      },
+    )
+  }
+
   function paintProfile(documentObject, root, result) {
     if (!configuredProfileList(documentObject, root) || !result) return false
     var response = profileResponse(result)
@@ -204,7 +224,7 @@
     var count = response.count
     var average = response.average
     var averageText = Number.isFinite(average) && count > 0
-      ? average.toFixed(average % 1 === 0 ? 0 : 1)
+      ? average.toFixed(1)
       : '0'
 
     setTextAll(root, '[data-reviews-v3-average]', averageText)
@@ -218,6 +238,7 @@
     // a compatibility target until Designer wiring is published.
     setTextAll(documentObject, '[data-reviews-v3-summary-average], #rating', averageText)
     setTextAll(documentObject, '[data-reviews-v3-summary-count], #rating + span', String(count))
+    toggleSummaryBlocks(documentObject, count > 0)
     renderProfileReviews(documentObject, root, items)
 
     root.hidden = items.length === 0
