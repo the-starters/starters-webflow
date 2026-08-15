@@ -1,0 +1,51 @@
+# Profile portfolio / case-study renderer — wiring
+
+`v3/profile-portfolio.js` renders the **Highlights** section on `/hire/<slug>`.
+"Highlights", "Case Studies" and "Portfolio" are three names for one feature
+(Kaeser, 2026-08-14); the data lives in Xano `Portfolios` (#28).
+
+## Origin
+
+Ported from an on-canvas Code Embed inside the "Embed Code" component on the hire
+template, so the logic lives in GitHub rather than in Webflow. Full search record:
+`platform-ops/migrations/2026-08-14-legacy-case-studies/renderer-location-findings.md`.
+
+## Install
+
+Hire template → Page Settings → Custom Code → **Head Code**:
+
+```html
+<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/profile-portfolio.js"></script>
+```
+
+## Requirements on the page
+
+| Needed | Attribute (preferred) | Class fallback (legacy) |
+| --- | --- | --- |
+| Card list wrapper | `data-highlights` ✅ already present | `.case-studies-wrapper` |
+| Card template | `wf-portfolio-element="card"` | `.portfolio_card` |
+| Section | `portfolio-section` ✅ already present | `.profile-hightlights_wr` |
+| Modal | `wf-portfolio-element="modal"` | `.portfolio_modal-component` |
+| Modal images | `wf-portfolio-element="images"` | `.portfolio_modal-images` |
+| Modal videos | `wf-portfolio-element="videos"` | `.portfolio_modal-videos` |
+
+Also required: the page's existing `starter_memberstack_id` global (or a
+`data-starter-memberstack-id` attribute on any element).
+
+The class fallbacks exist so this can ship BEFORE the Designer attributes are
+added. Delete them once every row above has its attribute.
+
+## Cutover
+
+Safe to install while the legacy embed is still present: whichever runs first
+renders the cards, and the other one exits via the `data-portfolio-rendered`
+guard, so cards can never render twice. Once this script is verified on staging,
+delete the legacy Code Embed in the Designer; nothing else changes.
+
+## Changes from the embed
+
+1. `memberstackId` comes from the page global instead of a hardcoded CMS-bound value.
+2. Selectors are attribute-first (AGENTS.md: never bind behaviour to styling classes).
+3. The modal's Images block hides when a portfolio has no images, matching the
+   Videos behaviour. Needed because the 1,439 imported legacy case studies are
+   text-only and would otherwise show an empty "Images" heading.
