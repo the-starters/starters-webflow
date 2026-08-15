@@ -12,6 +12,7 @@
 // stored snapshot file: this step must work on a machine that has none.
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { lintThemes } from './lint-templates.mjs';
 import {
   readThemeFromDisk,
   getThemes,
@@ -27,7 +28,9 @@ const opt = (name, fallback) => {
   const i = args.indexOf(name);
   return i !== -1 && args[i + 1] ? args[i + 1] : fallback;
 };
-const yes = args.includes('--yes');
+// Both confirm words are accepted across all three tools. Getting "re-run with
+// --yes" back from a tool you just told --confirm is a poor use of an incident.
+const yes = args.includes('--yes') || args.includes('--confirm');
 const dir = opt('--dir', REPO_THEMES_DIR);
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
 const EVIDENCE = opt('--evidence', join(SNAPSHOT_DIR, 'clone-evidence', stamp));
@@ -37,6 +40,13 @@ const SOURCES = opt('--themes', 'the-starters-3-0,the-starters-3-0-profile')
   .map((s) => s.trim())
   .filter(Boolean);
 const CLONES = Object.fromEntries(SOURCES.map((s) => [`${s}-qa`, s]));
+
+const lintProblems = lintThemes(dir, SOURCES);
+if (lintProblems.length) {
+  console.error(`ABORT — template lint failed:\n${lintProblems.map((p) => `     ${p}`).join('\n')}`);
+  process.exit(1);
+}
+console.log('template lint: clean');
 
 const payload = {};
 for (const [clone, source] of Object.entries(CLONES)) {

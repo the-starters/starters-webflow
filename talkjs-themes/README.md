@@ -36,10 +36,16 @@ tree rather than git:
 - **Dotfiles.** One Finder visit leaves a `.DS_Store` behind, and without the
   filter it becomes a theme file — shipping binary junk or 400ing the PUT.
   `.gitignore` cannot help here; nothing in this path consults it.
-- **Untracked files.** Only committed content is promotable. `put-clones.mjs`
-  and `promote-to-real.mjs` refuse to run when a theme folder holds a file git
-  does not know about, and name it. `--allow-untracked` overrides, on purpose
-  awkwardly.
+- **Untracked files.** `promote-to-real.mjs` refuses to run when a theme folder
+  holds a file git does not know about, and names it — an added file silently
+  becoming "a live file was deleted" is not an acceptable failure mode.
+  `--exclude-untracked` proceeds with them left out.
+
+Promotion additionally refuses a folder that is **not clean at HEAD**
+(`--allow-dirty` overrides). Without that, "only committed content ships" was
+false in the ordinary case: `git ls-files` reports tracked-ness, so a
+tracked-but-edited or staged-but-uncommitted file shipped while the evidence
+file named a commit that did not describe it.
 
 The format is lossless: rebuilding the payload from these files reproduces the
 API's response byte-for-byte (`roundtrip-check.mjs`, below).
@@ -83,18 +89,36 @@ Split by what a rollback needs, which is the only line that matters here:
 
 | Where | Scripts | Why there |
 | --- | --- | --- |
-| `talkjs-themes/tools/` (this repo) | `get-themes`, `export-themes`, `roundtrip-check`, `put-clones`, `promote-to-real`, `restore`, `lib` | Release-critical. A rollback that exists on one laptop is not a rollback, and a fresh clone must be able to run every step this README documents. |
+| `talkjs-themes/tools/` (this repo) | `get-themes`, `export-themes`, `roundtrip-check`, `put-clones`, `promote-to-real`, `restore`, `selftest`, `lib` | Release-critical. A rollback that exists on one laptop is not a rollback, and a fresh clone must be able to run every step this README documents. |
 | `staging-qa/talkjs-theme-rig/` (local-only) | `compare-themes`, `identity-gate`, `typing-gate`, `verifier-*` | QA gates. They drive a real browser through the Playwright harness, so they live with it. |
+
+`restore`, `export-themes` and `roundtrip-check` in `staging-qa/talkjs-theme-rig/`
+are now **stubs that refuse and point here**. They used to resolve the snapshot
+from a hardcoded dated path and ignore `--snapshot`, so reaching for the
+familiar name mid-incident returned a confident exit 0 having restored a
+week-old account.
 
 Every script here reads `TALKJS_SECRET_KEY` from the environment and contains
 no secret of any kind. This machine keeps that key in `staging-qa/.env`, which
-is outside every git checkout, so the commands below run from `staging-qa/` and
-let Node load it — but nothing binds the tools to that folder. Anywhere with
-the key in the environment works:
+sits outside every git checkout, so run the tools from `staging-qa/` and let
+Node load it with `--env-file`. Nothing binds the tools to that folder — any
+directory with a `.env` holding the key works — but do not put the key on the
+command line, where it lands in shell history and process listings.
 
-```sh
-TALKJS_SECRET_KEY=… node talkjs-themes/tools/get-themes.mjs
-```
+**Confirm word.** `--confirm` writes; `--yes` is accepted as an alias by all
+three writing tools. Anything else is rejected rather than ignored, including
+`--confirm --dry-run` together, which used to discard the `--dry-run` and write
+to live.
+
+**Exit codes** are distinct because "aborted safely" and "live is now wrong"
+must never be the same number:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | dry run, no-op, or verified success |
+| 1 | aborted before any write; the account was not touched |
+| 2 | a PUT was sent and the outcome could **not** be established |
+| 3 | live was mutated and verification **failed** — roll back |
 
 ## Workflow
 
@@ -115,7 +139,7 @@ node --env-file=.env $T/roundtrip-check.mjs --live
 # --- now edit the files in this folder, then: ---
 
 # 4. push clones (…-qa) and assert no other theme moved
-node --env-file=.env $T/put-clones.mjs --yes
+node --env-file=.env $T/put-clones.mjs --confirm
 
 # 5. visual gate: same conversation, real theme vs clone, in a local rig
 node --env-file=.env talkjs-theme-rig/compare-themes.mjs \
@@ -123,7 +147,8 @@ node --env-file=.env talkjs-theme-rig/compare-themes.mjs \
 
 # 6. promote to the real names — read "Promotion" first, the ordering is load-bearing
 node --env-file=.env $T/promote-to-real.mjs             # dry run, prints the diff
-node --env-file=.env $T/promote-to-real.mjs --confirm
+node --env-file=.env $T/promote-to-real.mjs --confirm   # add --allow-deletions if the
+                                                        # diff shows files being removed
 ```
 
 The gate compares the theme stylesheet rule-for-rule, the computed styles and
@@ -156,20 +181,70 @@ errors — it just quietly does nothing. The full ordered checklist is ticket 06
 
 What the tool does before it writes anything:
 
-1. Reads the complete file map per theme, refusing untracked files.
-2. GETs the account and prints the **exact diff** — files added, changed, and
-   deleted, with line and byte counts. A PUT replaces a theme wholesale, so any
-   file that exists live but not in the folder is called out as a deletion.
-3. Refuses a theme name that does not exist on the account (`--allow-new`
-   overrides), and exits without touching the API when there is nothing to do.
-4. Writes a **pre-PUT snapshot of every theme** to
-   `.scratch/talkjs-chat-theme/` and reads it back before writing. No verified
-   snapshot, no promotion — that file is the rollback.
-5. After the PUT, re-reads the account and proves each promoted theme is
+1. Rejects unknown arguments, and refuses `--confirm --dry-run` together
+   instead of picking one.
+2. Reads the complete file map per theme. Refuses **untracked** files
+   (`--exclude-untracked` proceeds with them left out) and refuses a folder
+   that is **not clean at HEAD** (`--allow-dirty` overrides, and the report
+   then records that the content matches no commit). That is what makes "only
+   committed content ships" a fact: tracked-ness alone says nothing about
+   whether the bytes match the commit the evidence file names.
+3. Prints every resolved path — theme folder, snapshot directory, pinned
+   snapshot, evidence directory — and where each came from, because all of
+   them can be redirected by environment variables set in a `.env` nobody
+   reads mid-incident.
+4. GETs the account and prints the **exact diff** — files added, changed, and
+   deleted, with line and byte counts. A PUT replaces a theme wholesale, so
+   any file that exists live but not in the folder is a deletion, and
+   deletions are **refused** unless `--allow-deletions` is passed. Deleting a
+   live file is the one irreversible thing here and it is the one that used to
+   have no gate.
+5. Refuses a theme name that does not exist on the account (`--allow-new`
+   overrides), warns when you promote one of the pair (the inbox and the
+   profile modal would then disagree), and exits without touching the API when
+   there is nothing to do.
+6. Probes the snapshot **and** evidence directories for writability up front.
+7. Re-reads the account immediately before the PUT and aborts if anything
+   moved since the diff was computed — another session's write must not be
+   captured in the rollback snapshot or blamed on this run.
+8. Writes a **pre-PUT snapshot of every theme** to `.scratch/talkjs-chat-theme/`
+   and reads it back. No verified snapshot, no promotion — that file is the
+   rollback. It then writes `pre-put-plan.json` (targets, diff, snapshot path,
+   rollback command) **before** the PUT, so a dropped connection or a Ctrl-C
+   leaves a record naming the way back. `SIGINT`/`SIGTERM` print it too.
+9. After the PUT, re-reads the account and proves each promoted theme is
    byte-identical to the folder *and* every other theme byte-identical to the
-   snapshot, then writes an evidence JSON under `promote-evidence/<timestamp>/`.
+   snapshot, then writes the evidence JSON. A failed PUT is **verified**
+   rather than assumed: a 502 from an intermediary after the origin applied
+   the write looks identical to a rejection, so the account is re-read and
+   what actually changed is reported.
+
+A dry run takes a full snapshot too, into `.scratch/talkjs-chat-theme/dry-runs/`.
+Snapshot resolution is a prefix match on a non-recursive listing, so a
+rehearsal cannot be picked up as a rollback *by construction* — which matters
+most in the sequence nobody plans: promote, notice something wrong, run a dry
+run to inspect it, and have that rehearsal become the newest "rollback",
+capturing the broken state. A no-op run writes no snapshot at all, because
+there is nothing to roll back to.
 
 It is a dry run unless `--confirm` is passed.
+
+### Proving it works
+
+`selftest.mjs` exercises the whole tool against a throwaway theme name
+(`zz-selftest-promote`), because the promotion path cannot be rehearsed against
+the real themes:
+
+```sh
+cd staging-qa
+node --env-file=.env ../starters-webflow/talkjs-themes/tools/selftest.mjs
+```
+
+It seeds a real divergence (one changed file, one file that exists only live),
+drives every refusal and the success path through the actual CLI, checks that
+the deletion happened and that no other theme moved, deletes the throwaway, and
+asserts the account and the real snapshot directory are exactly as it found
+them. 23 checks, roughly ten seconds, safe to run any time.
 
 ## Clickable Identity contract (inbox theme only)
 
@@ -255,15 +330,23 @@ If a PUT lands something wrong, re-push from a snapshot (the key comes from
 ```sh
 cd staging-qa
 T=../starters-webflow/talkjs-themes/tools
-node --env-file=.env $T/restore.mjs the-starters-3-0 the-starters-3-0-profile          # dry run
-node --env-file=.env $T/restore.mjs the-starters-3-0 the-starters-3-0-profile --yes
+node --env-file=.env $T/restore.mjs the-starters-3-0 the-starters-3-0-profile            # dry run
+node --env-file=.env $T/restore.mjs the-starters-3-0 the-starters-3-0-profile --confirm
 ```
 
-It uses the newest snapshot unless you pass `--snapshot <path>`; after a
-promotion, the newest is the pre-PUT snapshot that promotion just took, which
-is exactly the state you want back. `--all` restores every theme in it. The
-script re-reads the account afterwards and fails loudly if anything did not
-come back identical.
+**Name the themes that are actually wrong.** `--all` exists and restores every
+theme in the snapshot, but it also reverts any unrelated theme another person
+legitimately changed since the snapshot was taken — a recovery with a wider
+blast radius than the incident. A failed promotion prints a scoped, fully
+qualified restore command; use that one.
+
+It uses the newest snapshot unless you pass `--snapshot <path>`, and echoes
+which one it resolved along with the environment variables that could have
+redirected it. After a promotion that actually wrote, the newest is the pre-PUT
+snapshot that promotion took, which is the state you want back. A promotion
+that turned out to be a no-op writes no snapshot, so in that case the newest is
+whatever came before. The script re-reads the account afterwards and fails
+loudly if anything did not come back identical.
 
 ### If there is no snapshot at all
 

@@ -108,6 +108,41 @@ function gitTrackedFiles(target) {
 }
 
 /**
+ * `git status --porcelain` for one theme folder, parsed.
+ *
+ * Returns `[{ code, path }]`, or null when the folder is not in a git work
+ * tree. `code` is the two-character XY status: `??` is untracked, ` M` is
+ * modified-not-staged, `M ` is staged-not-committed, ` D` is a tracked file
+ * deleted from disk, and so on.
+ *
+ * This is what lets "only committed content ships" be a fact rather than a
+ * slogan: tracked-ness alone (`ls-files`) says nothing about whether the bytes
+ * on disk match the commit that the evidence file will name.
+ */
+export function gitStatusFor(target) {
+  let out;
+  try {
+    out = execFileSync('git', ['-C', target, 'status', '--porcelain', '-z', '--', '.'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return null;
+  }
+  const parts = out.split('\0');
+  const entries = [];
+  for (let i = 0; i < parts.length; i++) {
+    const raw = parts[i];
+    if (!raw) continue;
+    const code = raw.slice(0, 2);
+    entries.push({ code, path: raw.slice(3) });
+    // A rename/copy entry is followed by its source path as a separate record.
+    if (code[0] === 'R' || code[0] === 'C') i++;
+  }
+  return entries;
+}
+
+/**
  * Build a theme's PUT payload from its folder.
  *
  * Two filters, because the filesystem is not the source of truth — git is:
