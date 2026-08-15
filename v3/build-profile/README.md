@@ -39,7 +39,9 @@ Because the CTA is now the only way out of a successful submit, a success state
 with no link to `/starter-onboarding` is a dead end. The module logs a staging-only
 `console.warn` in that case (`*.webflow.io`, localhost, `127.0.0.1`,
 `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`). It is a warning only
-and never blocks init.
+and never blocks init. The same invariant is enforced at release time by
+`build-profile-wiring-audit.js`, which also owns the exact rule the CTA's `href`
+has to satisfy — see [Build-profile Videsigns wiring audit](../../README.md#build-profile-videsigns-wiring-audit).
 
 Replace each exact inline block in place with its matching deferred loader. Do not consolidate or reorder these loaders: the untouched blocks between them still supply shared globals and form state.
 

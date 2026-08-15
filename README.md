@@ -294,7 +294,7 @@ Containment-era V2 code. Kept for the live V2 pages; not a pattern to copy.
 
 ## Not browser code (deliberately outside this inventory)
 
-- `build-profile-wiring-audit.js` — a Node audit tool (`require('node:fs')`) that checks the build-profile pages' saved Webflow code for the pinned vendored engine and the draft-identity guard. Never served to a browser
+- `build-profile-wiring-audit.js` — a Node audit tool (`require('node:fs')`) that checks the build-profile pages' saved Webflow code for the pinned vendored engine, the draft-identity guard, and the success state's onboarding CTA; the full failure list lives in [Build-profile Videsigns wiring audit](#build-profile-videsigns-wiring-audit). Never served to a browser
 - `step-flow-test-dom.js` — the `global-embeds/step-flow/step-flow.js` test harness and its minimal DOM shim (`require('node:test')`). Named without the `.test.js` suffix, so run it explicitly
 - `slater/4885.readable.js`, `slater/4885.prod.min.js`, `slater/4960.readable.js`, `slater/4960.prod.min.js` — read-only captures of the Slater.app builds that remain live on the legacy contract pages. Generated mirror artifacts: never edit or load them from this repo; the inventory and refresh contract lives in [`slater/README.md`](slater/README.md)
 
@@ -1242,10 +1242,15 @@ widened to the rest of the page), or when it contains no link to
 `/starter-onboarding`. Since v1.59.245 nothing auto-redirects after a successful
 submit, so that CTA is the member's only way out of a finished form. The link is
 judged **same-origin against the snapshot's own canonical** (or `og:url`), which
-matches the runtime rule in `v3/build-profile/submit-diagnostics.js`: relative,
-root-relative, and protocol-relative same-host hrefs all pass, while a production
-capture whose CTA points at the staging host fails. A snapshot that declares no
-origin can only satisfy the check with a relative href.
+matches the runtime rule in `v3/build-profile/submit-diagnostics.js`. Each href is
+resolved against the page it was captured from, so root-relative, protocol-relative
+same-host, and absolute same-origin hrefs all pass, and so does a document-relative
+href that genuinely lands on the path (`../starter-onboarding` from a
+`/build-profile/*` page — a bare `starter-onboarding` resolves to
+`/build-profile/starter-onboarding` and is rejected). A production capture whose
+CTA points at the staging host fails. A snapshot that declares no origin is still
+checked, but only a root- or document-relative href can satisfy it; an absolute or
+protocol-relative one fails closed as unverifiable.
 
 Run its focused test with:
 
