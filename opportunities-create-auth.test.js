@@ -5,6 +5,21 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./opportunities---create.js'), 'utf8')
 
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 20 && !predicate(); attempt += 1) {
+    await new Promise(setImmediate)
+  }
+  assert.equal(predicate(), true)
+}
+
 test('logged-out opportunity creation retains the requested path and query', async () => {
   let submit
   const form = {
@@ -59,6 +74,8 @@ test('logged-out opportunity creation retains the requested path and query', asy
 test('successful opportunity creation returns to the published opportunities page', async () => {
   let submit
   let createCalls = 0
+  const member = deferred()
+  const created = deferred()
   const form = {
     addEventListener(type, listener) {
       if (type === 'submit') submit = listener
@@ -74,13 +91,13 @@ test('successful opportunity creation returns to the published opportunities pag
   }
   const window = {
     $memberstackDom: {
-      getCurrentMember: async () => ({ data: { id: 'mem_live_brand_canary' } }),
+      getCurrentMember: () => member.promise,
     },
     Opp30: {
       API: {
         brandOppCreate: async () => {
           createCalls += 1
-          return { id: 123 }
+          return created.promise
         },
       },
       prepareOpportunityCreateForms() {},
@@ -106,11 +123,22 @@ test('successful opportunity creation returns to the published opportunities pag
   })
 
   assert.equal(typeof submit, 'function')
-  await submit({
+  const event = {
     preventDefault() {},
     stopImmediatePropagation() {},
     stopPropagation() {},
-  })
+  }
+  const firstSubmit = submit(event)
+  const duplicateSubmit = submit(event)
+
+  member.resolve({ data: { id: 'mem_live_brand_canary' } })
+  await waitFor(() => createCalls === 1)
+
+  assert.equal(createCalls, 1)
+  assert.equal(location.href, '')
+
+  created.resolve({ id: 123 })
+  await Promise.all([firstSubmit, duplicateSubmit])
 
   assert.equal(createCalls, 1)
   assert.equal(location.href, '/opportunities')

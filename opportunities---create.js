@@ -204,26 +204,32 @@
         e.stopImmediatePropagation()
         if (submitting) return
         if (!window.Opp30 || !window.Opp30.API) return say('Core not loaded (window.Opp30 missing).')
-        if (!(await ensureMember())) return
-
-        const payload =
-          window.Opp30 && typeof window.Opp30.readOpportunityForm === 'function'
-            ? window.Opp30.readOpportunityForm(form)
-            : readForm(form)
-        log('payload', payload)
-        const validationMessage =
-          window.Opp30 && typeof window.Opp30.validateOpportunityPayload === 'function'
-            ? window.Opp30.validateOpportunityPayload(payload)
-            : validatePayload(payload)
-        if (validationMessage) return say(validationMessage)
-
         submitting = true
-        if (btn) {
-          btn.disabled = true
-          btn.style.opacity = '0.6'
-        }
-        say('Submitting…')
         try {
+          if (!(await ensureMember())) {
+            submitting = false
+            return
+          }
+
+          const payload =
+            window.Opp30 && typeof window.Opp30.readOpportunityForm === 'function'
+              ? window.Opp30.readOpportunityForm(form)
+              : readForm(form)
+          log('payload', payload)
+          const validationMessage =
+            window.Opp30 && typeof window.Opp30.validateOpportunityPayload === 'function'
+              ? window.Opp30.validateOpportunityPayload(payload)
+              : validatePayload(payload)
+          if (validationMessage) {
+            submitting = false
+            return say(validationMessage)
+          }
+
+          if (btn) {
+            btn.disabled = true
+            btn.style.opacity = '0.6'
+          }
+          say('Submitting…')
           const created = await window.Opp30.API.brandOppCreate(payload)
           log('created', created)
           say('Submitted! Your opportunity is now live.')
