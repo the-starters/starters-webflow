@@ -29,6 +29,8 @@ function member(id = MY_ID) {
  * options.actions   — false to omit the custom-action methods (older SDK)
  * options.fetch     — replaces window.fetch for the Clickable Identity handler
  * options.popupBlocked — window.open returns null, as a blocked popup does
+ * options.steerThrows  — steering a reserved tab throws, as a refused
+ *                        navigation does
  * options.hostname  — window.location.hostname, which gates staging diagnostics
  */
 function loadMessages(options = {}) {
@@ -159,6 +161,9 @@ function loadMessages(options = {}) {
         },
         location: {
           set href(value) {
+            // A navigation the browser refuses: a stale handle, or one the
+            // page is no longer allowed to steer.
+            if (options.steerThrows) throw new Error('navigation refused')
             handle.hrefs.push(value)
           },
           get href() {
@@ -658,9 +663,11 @@ test('sessionStorage being unavailable degrades to an id-only reference', async 
 //
 // The one thing to keep in mind when editing these: the slug is fetched when
 // the CONVERSATION opens, not when the member clicks, and the click must reach
-// window.open without awaiting anything. WebKit only honours a popup opened in
-// the click's own synchronous call stack, and `openedSynchronously` below is
-// what stops that guarantee from silently rotting.
+// window.open without awaiting anything. The handler is not in the click's own
+// call stack — TalkJS is cross-origin, so the action arrives over postMessage
+// in a later task — but it does run on the activation forwarded to this
+// window, and WebKit gives that about a second before a popup stops opening.
+// `openedSynchronously` below is what stops that guarantee from rotting.
 
 const IDENTITY_ACTION = 'starters-open-profile'
 const RESOLVER_URL =
@@ -701,8 +708,8 @@ function selectConversation(loaded, event = selectionEvent()) {
  * Call the handler and report whether window.open ran before the call returned.
  *
  * Single-threaded JS makes this exact: if the open is not recorded by the time
- * the handler's synchronous body has finished, it happened after an await, and
- * WebKit will have discarded the user gesture by then.
+ * the handler's body has finished, it happened after an await, and on WebKit
+ * the forwarded activation will have expired long before the answer lands.
  */
 function clickIdentity(loaded, memberId, channel = 'messageActions') {
   const before = loaded.calls.opens.length
@@ -782,7 +789,7 @@ test('a cached slug opens /hire/<slug> in a new tab, synchronously', async () =>
   assert.equal(
     click.openedSynchronously,
     true,
-    'window.open must run inside the click, or WebKit refuses the tab',
+    'window.open must run before the handler awaits, or WebKit refuses the tab',
   )
   assert.deepEqual(loaded.calls.opens, [
     ['/hire/kaeser-valencerina', '_blank', 'noopener'],
@@ -1151,4 +1158,120 @@ test('an SDK without custom-action support still mounts the inbox', async () => 
 
   assert.equal(calls.mounted.length, 1)
   assert.deepEqual(errors, [])
+})
+
+/* ------------------- one reserved tab per member, not per click ------------ */
+
+test('clicking two identity surfaces before the prefetch answers reserves one tab', async () => {
+  let release
+  const loaded = loadMessages({
+    search: '',
+    fetch: () => new Promise((resolve) => {
+      release = () => resolve({ ok: true, status: 200, json: async () => ({ slug: 'kaeser-valencerina' }) })
+    }),
+  })
+
+  await settle()
+  selectConversation(loaded)
+  await settle()
+
+  // The header photo, then the header name, then a received avatar — all the
+  // same member, all inside the prefetch window.
+  const first = clickIdentity(loaded, OTHER_ID, 'conversationActions')
+  const second = clickIdentity(loaded, OTHER_ID, 'conversationActions')
+  const third = clickIdentity(loaded, OTHER_ID)
+
+  assert.deepEqual(loaded.calls.opens, [['', '_blank']], 'exactly one tab reserved')
+  assert.equal(first.openedSynchronously, true)
+  assert.equal(second.openedSynchronously, false, 'the second click reserves nothing')
+  assert.equal(third.openedSynchronously, false)
+
+  release()
+  await Promise.all([first.settled, second.settled, third.settled])
+
+  assert.equal(loaded.calls.handles.length, 1)
+  assert.deepEqual(loaded.calls.handles[0].hrefs, ['/hire/kaeser-valencerina'], 'steered once')
+  assert.equal(loaded.calls.opens.length, 1, 'no extra tabs after the slug arrives')
+  assert.equal(loaded.calls.fetches.length, 1)
+})
+
+test('a double-click on one avatar still reserves one tab', async () => {
+  let release
+  const loaded = loadMessages({
+    search: '',
+    fetch: () => new Promise((resolve) => {
+      release = () => resolve({ ok: true, status: 200, json: async () => ({ slug: 'jp-test' }) })
+    }),
+  })
+
+  await settle()
+  const a = clickIdentity(loaded, OTHER_ID)
+  const b = clickIdentity(loaded, OTHER_ID)
+  await new Promise((resolve) => setImmediate(resolve))
+  release()
+  await Promise.all([a.settled, b.settled])
+
+  assert.deepEqual(loaded.calls.opens, [['', '_blank']])
+  assert.deepEqual(loaded.calls.handles[0].hrefs, ['/hire/jp-test'])
+})
+
+test('the reservation is released, so a later cold click can reserve again', async () => {
+  const loaded = loadMessages({ search: '', fetch: resolves('') })
+
+  await settle()
+  const first = clickIdentity(loaded, OTHER_ID)
+  await first.settled
+  assert.equal(loaded.calls.handles[0].closed, true)
+
+  // The empty answer was cached, so this one takes the fast path and opens
+  // nothing — the point is that it is not silently swallowed by a stale
+  // reservation.
+  loaded.calls.opens.length = 0
+  const second = clickIdentity(loaded, 'mem_second00000000000000')
+  await second.settled
+
+  assert.deepEqual(loaded.calls.opens, [['', '_blank']], 'a different member can reserve')
+})
+
+/* ------------------ a reservation that cannot be steered ------------------- */
+
+test('a reserved tab that cannot be steered is closed, not stranded', async () => {
+  const loaded = loadMessages({
+    search: '',
+    steerThrows: true,
+    fetch: resolves('kaeser-valencerina'),
+  })
+
+  await settle()
+  const click = clickIdentity(loaded, OTHER_ID)
+  await click.settled
+
+  const reserved = loaded.calls.handles[0]
+  assert.equal(reserved.closed, true, 'the blank tab is closed before the fallback')
+  assert.deepEqual(loaded.calls.opens, [
+    ['', '_blank'],
+    ['/hire/kaeser-valencerina', '_blank', 'noopener'],
+  ])
+})
+
+test('a reserved tab the member closed is not replaced behind their back', async () => {
+  let release
+  const loaded = loadMessages({
+    search: '',
+    fetch: () => new Promise((resolve) => {
+      release = () => resolve({ ok: true, status: 200, json: async () => ({ slug: 'kaeser-valencerina' }) })
+    }),
+  })
+
+  await settle()
+  const click = clickIdentity(loaded, OTHER_ID)
+  await new Promise((resolve) => setImmediate(resolve))
+
+  // The member closes the blank tab while the resolver is still working.
+  loaded.calls.handles[0].close()
+  release()
+  await click.settled
+
+  assert.deepEqual(loaded.calls.opens, [['', '_blank']], 'nothing re-opened')
+  assert.deepEqual(loaded.calls.handles[0].hrefs, [], 'and nothing steered into a closed tab')
 })

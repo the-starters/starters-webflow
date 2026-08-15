@@ -280,16 +280,24 @@ was decided in the grill; see the round's spec.
 ### The slug is resolved when the conversation opens, not when you click
 
 The controller listens for `onConversationSelected` (registered **before**
-`mount()`, because the event fires once as the inbox loads) and resolves the
-other participant's slug then, caching it for the page's lifetime. A click is
-then a Map read followed immediately by `window.open`.
+`mount()`) and resolves the other participant's slug then, caching it for the
+page's lifetime. A click is then a Map read followed immediately by
+`window.open`.
 
 That is a correctness requirement rather than a speed one, and it constrains
-the theme too: WebKit only honours a popup opened inside the click's own
-synchronous call stack, so a tab opened after the ~2.5s resolver round-trip is
-refused on Safari and iOS — silently, with no error to catch. If you ever add
-another identity surface, it must raise the same action with the same
-`data-member`, so it is served by the same cache entry.
+the theme too. The handler is not in the click's own call stack and cannot be:
+TalkJS's UI is cross-origin, so the action arrives over postMessage in a later
+task, carrying a transient activation forwarded to the parent window. WebKit
+budgets that forwarding at about a second, shared with TalkJS's own dispatch,
+so a tab opened after the ~2.5s resolver round-trip is refused on Safari and
+iOS — silently, with no error to catch. If you ever add another identity
+surface, it must raise the same action with the same `data-member`, so it is
+served by the same cache entry and stays a Map read rather than a request.
+
+Register before `mount()` because it is the only ordering that cannot lose the
+race, not because a later listener is guaranteed to miss the event: measured,
+listeners added pre-mount, at mount and +50ms all received the first selection
+event, and only one added +3s later missed it.
 
 The two accessible names in this theme (`View <name>'s profile`, on the header
 photo and on the message avatar) exist because those buttons wrap only an
@@ -308,9 +316,14 @@ opens an element that is never closed, and the theme fails to compile with
 silently renders its **default** theme instead of erroring in any visible way.
 Write `[slug]`, not `<slug>`, in template comments.
 
-`staging-qa/talkjs-theme-rig/lint-templates.mjs` now refuses to push a theme
-whose comments contain a tag, and `put-geometry-clones.mjs` runs it first. The
-trap cost two debugging rounds before that existed.
+`tools/lint-templates.mjs` refuses to push a theme whose comments contain a
+tag, and **every** script here that writes themes from these files runs it
+first: `tools/put-clones.mjs` and `tools/promote-to-real.mjs` in this repo, and
+`put-geometry-clones.mjs` plus `put-clones.mjs` in the `staging-qa` rig.
+`tools/restore.mjs` deliberately does not — it replays a snapshot that already
+compiled, and the rollback path must not grow a new way to fail. A gate wired
+into only one push path would not close this trap; it cost two debugging rounds
+before the lint existed.
 
 ### Reserve the avatar column with margin, never with row padding
 

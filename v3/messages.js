@@ -30,11 +30,12 @@
  * network) is a silent no-op; the chat never shows an error over a decoration.
  *
  * The slug is resolved when the CONVERSATION opens, not when the member clicks.
- * That is a correctness requirement, not a performance one: WebKit only honours
- * `window.open` inside the click's own synchronous call stack, so a tab opened
- * after an awaited ~2.5s resolver round-trip is refused on Safari and iOS, and
- * refused silently. See createIdentityController for the full reasoning and for
- * what happens on the rare click that beats its own prefetch.
+ * That is a correctness requirement, not a performance one: WebKit gives a
+ * cross-origin frame's forwarded click activation about a second before
+ * `window.open` stops working, so a tab opened after an awaited ~2.5s resolver
+ * round-trip is refused on Safari and iOS, and refused silently. See
+ * createIdentityController for the full reasoning and for what happens on the
+ * rare click that beats its own prefetch.
  */
 ;(function () {
   'use strict'
@@ -301,21 +302,26 @@
    * opens, and a click handler that spends it.
    *
    * WHY THE CACHE EXISTS, AND WHY IT IS NOT AN OPTIMISATION.
-   * WebKit scopes popup permission to the click's own synchronous call stack
-   * (`maximumIntervalForUserGestureForwarding` is 1s and, unlike Chrome's ~5s,
-   * is not extended across awaited work). The resolver round-trip measures
-   * ~2.5s, so an `open()` after `await fetch(...)` is refused on Safari and
-   * iOS — silently, with a null return and no error to catch, which every
-   * "silent no-op" failure path here would then swallow. Repo prior art:
-   * v3/scheduling-availability-writer.js documents the same hazard and gives
-   * up on the new tab entirely; opportunities-3.0.js reserves a tab first.
+   * A popup only opens while the window still holds a usable transient
+   * activation from the member's click. TalkJS's UI is cross-origin, so the
+   * action never arrives in the click's own call stack — it comes over
+   * postMessage, in a later task, on activation forwarded to this window.
+   * WebKit budgets that forwarding at about a second
+   * (`maximumIntervalForUserGestureForwarding`), shared with TalkJS's own
+   * dispatch, and unlike Chrome's ~5s it is not extended across awaited work.
+   * The resolver round-trip measures ~2.5s, so an `open()` after
+   * `await fetch(...)` is refused on Safari and iOS — silently, with a null
+   * return and no error to catch, which every "silent no-op" failure path here
+   * would then swallow. Repo prior art: v3/scheduling-availability-writer.js
+   * documents the same hazard and gives up on the new tab entirely;
+   * opportunities-3.0.js reserves a tab first.
    *
    * So the slug is fetched when the conversation becomes visible, not when the
    * member clicks. Every identity button in a conversation carries the same
    * member id — header photo, header name, and each received avatar — so one
    * lookup serves all of them, and the click itself becomes a Map read
-   * followed immediately by `open()`, still inside the gesture. The reserved
-   * tab below is only the fallback for a click that beats its own prefetch.
+   * followed immediately by `open()`, well inside the budget. The reserved tab
+   * below is only the fallback for a click that beats its own prefetch.
    *
    * Everything the controller touches is injected, so the unit tests and the
    * staging rig drive the real logic with their own fetch/open/clock.
@@ -339,6 +345,13 @@
     // memberId -> Promise, so a click during the prefetch joins that request
     // instead of firing a second one.
     const pending = new Map()
+    // memberId -> the blank tab a slow-path click is holding for it, or null
+    // when the reservation was refused. Keyed by member, not by click: the
+    // header photo, the header name and every received avatar all raise the
+    // same action with the same id, so without this a member who clicks two of
+    // them inside the prefetch window (or double-clicks one) reserves a tab per
+    // click and ends up with several copies of the same profile.
+    const reservations = new Map()
 
     function profileUrl(slug) {
       // encodeURIComponent, not raw interpolation: the slug is data from an
@@ -493,8 +506,9 @@
     /**
      * Answer an identity click.
      *
-     * Deliberately NOT an async function: on the cache-hit path there must be
-     * no await, and no microtask hop, between the click and `open()`.
+     * Deliberately NOT an async function: on the cache-hit path nothing may be
+     * awaited before `open()`, or the forwarded activation is spent by the
+     * time the tab is asked for.
      */
     function handleAction(event) {
       const params = (event && event.params) || {}
@@ -511,7 +525,16 @@
 
       // FAST PATH — the conversation's prefetch has already answered. This is
       // the path essentially every real click takes, and the only one WebKit
-      // will honour: the open below runs in the click's own call stack.
+      // reliably honours. Note what actually makes it work, because the
+      // tempting shorthand is wrong: this handler is NOT in the click's own
+      // call stack. TalkJS's UI is cross-origin, so the action reaches us over
+      // postMessage and always runs in a later task. What survives that hop is
+      // the transient activation propagated to this window, and WebKit spends
+      // it against a ~1s user-gesture forwarding budget shared with TalkJS's
+      // own dispatch. A Map read costs microseconds of that budget; the ~2.5s
+      // resolver round-trip this used to await costs all of it, which is why
+      // the tab never appeared on Safari or iOS. Do not "simplify" this back
+      // into an await.
       if (slugs.has(memberId)) {
         const slug = slugs.get(memberId)
         if (!slug) {
@@ -526,29 +549,59 @@
       }
 
       // SLOW PATH — a click inside the first moments of a conversation, before
-      // its prefetch answered. A tab cannot be opened once the gesture is gone,
-      // so one is reserved now and steered when the slug arrives. Reserving
-      // needs a handle to steer, and `noopener` returns null by specification,
-      // so this one call omits it and severs `opener` by hand instead — the
-      // same trade the contract-download flow makes in opportunities-3.0.js.
+      // its prefetch answered. The activation cannot be spent later, so a tab
+      // is reserved now and steered when the slug arrives. Reserving needs a
+      // handle to steer, and `noopener` returns null by specification, so this
+      // one call omits it and severs `opener` by hand instead — the same trade
+      // the contract-download flow makes in opportunities-3.0.js.
+      //
+      // A second click on the same member while that is in flight must not
+      // reserve a second tab: they would all be steered to the same profile.
+      // The first click's continuation owns the reservation and will resolve
+      // it; `has` rather than `get` because a refused reservation is recorded
+      // as null and still means "in flight".
+      if (reservations.has(memberId)) return null
+
       const reserved = config.open('', '_blank')
+      reservations.set(memberId, reserved)
       if (!reserved) {
         note('could not reserve a tab for the profile (popup blocked?)')
       }
 
       return resolveSlug(memberId).then((slug) => {
+        reservations.delete(memberId)
+
         if (!slug) {
           note('no published profile for this member')
           closeReserved(reserved)
           return
         }
+        // The member closed the blank tab while waiting. Opening another one
+        // now would put back exactly what they just dismissed.
+        if (wasDismissed(reserved)) {
+          note('the reserved tab was closed before the profile resolved')
+          return
+        }
         const url = profileUrl(slug)
         if (steerReserved(reserved, url)) return
-        // No usable handle. A direct open still works inside Chrome's gesture
-        // forwarding window; on WebKit it will not, which is exactly why the
-        // fast path above exists.
+        // A live handle we could not steer. Close it first — otherwise the
+        // fallback below leaves a stranded blank tab next to the real one.
+        closeReserved(reserved)
+        // A direct open still works inside Chrome's gesture-forwarding window;
+        // on WebKit it will not, which is exactly why the fast path exists.
         config.open(url, '_blank', 'noopener')
       })
+    }
+
+    // Distinguishes "the member closed it" from "we never got one". A handle
+    // whose `closed` cannot even be read is treated as gone.
+    function wasDismissed(handle) {
+      if (!handle) return false
+      try {
+        return handle.closed === true
+      } catch (error) {
+        return true
+      }
     }
 
     function closeReserved(handle) {
@@ -586,11 +639,14 @@
    * conversation action and the message avatars raise a message action; both
    * carry the same params and take the same handler.
    *
-   * MUST be called before `inbox.mount()`: `onConversationSelected` fires once
-   * as the inbox loads its first conversation, and a listener added after the
-   * mount never sees it (verified in the rig — an after-mount listener received
-   * no event at all). Missing it would leave the first conversation's slug
-   * unprefetched, i.e. the whole feature on its Safari-hostile slow path.
+   * Called before `inbox.mount()` because that is the only ordering that cannot
+   * lose the race: `onConversationSelected` fires once as the inbox loads its
+   * first conversation, and a listener registered late misses it, leaving that
+   * conversation's slug unprefetched — the whole feature on its Safari-hostile
+   * slow path. How late is "late" is not a number to rely on: measured in the
+   * rig, listeners added pre-mount, at mount and +50ms all received the event,
+   * and only one added +3s later missed it. Register before the mount and the
+   * question never arises.
    *
    * @returns {object} the controller, so the deep-link path can prime it too
    */
