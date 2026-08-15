@@ -6,7 +6,30 @@ Renders a message sent by a user.
 
         <!-- show the avatar, but only if the previous message was by a different sender -->
         <t:set t:if="{{ previousMessage and previousMessage.sender }}" previousSenderId="{{ previousMessage.sender.id }}"/>
-        <Avatar t:if="{{ sender.id != previousSenderId }}"
+        <t:set showAvatar="{{ sender.id != previousSenderId }}"/>
+
+        <!-- Clickable Identity. The other participant's avatar is an action
+             button carrying their Memberstack id; the Messages controller
+             resolves that id to /hire/[slug] and opens it in a new tab
+             (nothing happens for members without a profile page). Your own
+             avatar stays a plain Avatar — no button, no affordance, because a
+             link to your own profile is pointless. The two branches are
+             separate t:if tests rather than an if/else chain so neither
+             depends on the other's adjacency.
+
+             The button wraps only an Avatar, which is an empty div painted
+             with a background-image, so on its own it is a tab stop that
+             screen readers announce as an unnamed "button". The hidden span
+             is its accessible name — the same mechanism that already names
+             the header's name button, which has real text inside it. -->
+        <ActionButton t:if="{{ showAvatar and sender.isMe == false }}"
+            class="identity-avatar"
+            action="starters-open-profile"
+            data-member="{{ sender.id }}">
+            <Avatar photoUrl="{{ sender.photoUrl }}"/>
+            <span class="visually-hidden">View {{ sender.name }}'s profile</span>
+        </ActionButton>
+        <Avatar t:if="{{ showAvatar and sender.isMe == true }}"
             photoUrl="{{ sender.photoUrl }}"
         />
 
@@ -159,6 +182,58 @@ Renders a message sent by a user.
     outline-offset: 2px;
 }
 
+/* Clickable Identity — the received-message avatar.
+   The rules above dress an in-bubble action button as a bordered pill, which
+   is right for "Accept"/"Decline" and wrong for a photo, so the identity
+   button resets that chrome. It also has to be layout-invisible: the button
+   now stands where the Avatar stood as the row's flex child, so it carries
+   the alignment the Avatar used to carry for itself (align-self: flex-start,
+   flex-shrink: 0) and contributes no box of its own.
+   The pointer cursor and the focus ring are NOT restated here: the base
+   `.by-other button[data-action]` rules above already give both to every
+   action button, and a duplicate at higher specificity would quietly opt this
+   button out of any future change to them. The hover dim is the one piece of
+   affordance that is identity-only — and, since only the other participant's
+   avatar is ever a button, it appears only where a profile link can exist.
+   That affordance is deliberately optimistic: the theme cannot know whether
+   the sender has a profile page, and the controller is the truth (see the
+   spec's "Inert brands, decided at render vs click time"). */
+.by-other button.identity-avatar[data-action] {
+    display: flex;
+    align-self: flex-start;
+    flex-shrink: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    line-height: 0;
+    border-radius: 4px;
+    transition: opacity 200ms ease-in-out;
+}
+
+.by-other button.identity-avatar[data-action]:hover,
+.by-other button.identity-avatar[data-action]:active {
+    color: inherit;
+    background: none;
+    border: none;
+    opacity: 0.7;
+}
+
+/* The accessible name for a button whose only visible content is a photo.
+   Absolutely positioned, so it leaves the button's box exactly the avatar's
+   box and cannot disturb the message row's alignment. */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
 /*
 override some properties for avatars showing/hiding
 - balloons get whatever width is left after the avatar columns on both sides
@@ -168,15 +243,22 @@ override some properties for avatars showing/hiding
    The rows that drop it still have to reserve the avatar's width, or their
    bubbles slide into the avatar column and the group reads as a ragged
    stagger instead of one tidy edge. A message-row avatar is 2rem (GlobalCSS
-   overrides the Avatar component's 3.25rem for this context), and the bubble
-   keeps its own 0.50rem margin on top of that, which is exactly the offset an
-   ungrouped row ends up with. Previously these were 3rem and 0rem — leftovers
-   from a larger avatar and from no compensation at all. */
-.by-other.previous-same {
-    padding-left: 2rem;
+   overrides the Avatar component's 3.25rem for this context) plus the bubble's
+   own 0.50rem gap, so the offset an ungrouped row ends up with is 2.5rem.
+
+   The reservation is a margin on the BUBBLE, not padding on the row, and that
+   distinction is load-bearing: `max-width: 50%` below resolves against the
+   row's CONTENT box, so 2rem of row padding would quietly cap a grouped bubble
+   at 0.5 × (W − 32px) while its group's first bubble is capped at 0.5 × W. On
+   a long message that is a ~15px ragged edge on the FAR side — the same defect
+   this rule exists to remove, moved to the other end of the bubble (and ~27px
+   at the 644px breakpoint, where the cap is 85%). Margin sits outside the
+   percentage basis, so every row in a group now caps at the same width. */
+.by-other.previous-same .message {
+    margin-left: 2.5rem;
 }
-.by-me.previous-same {
-    padding-right: 2rem;
+.by-me.previous-same .message {
+    margin-right: 2.5rem;
 }
 
 /* Set some widths and defaults on messages that need it */
@@ -253,12 +335,16 @@ override some properties for avatars showing/hiding
     flex-wrap: wrap;
     gap: 0.25rem;
 }
+/* 3.75rem was the avatar column when the avatar was the Avatar component's own
+   3.25rem; GlobalCSS has overridden it to 2rem in message rows for a long time,
+   so this was the last element still lining up with a size nothing renders at.
+   2.5rem is the bubble edge every other rule in this round standardised on. */
 .emoji-reactions.by-me {
     justify-content: flex-end;
-    margin-right: 3.75rem;
+    margin-right: 2.5rem;
 }
 .emoji-reactions.by-other {
-    margin-left: 3.75rem;
+    margin-left: 2.5rem;
 }
 .emoji-reaction {
     border: 1px solid transparent;

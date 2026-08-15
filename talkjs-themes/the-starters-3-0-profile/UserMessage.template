@@ -168,15 +168,22 @@ override some properties for avatars showing/hiding
    The rows that drop it still have to reserve the avatar's width, or their
    bubbles slide into the avatar column and the group reads as a ragged
    stagger instead of one tidy edge. A message-row avatar is 2rem (GlobalCSS
-   overrides the Avatar component's 3.25rem for this context), and the bubble
-   keeps its own 0.50rem margin on top of that, which is exactly the offset an
-   ungrouped row ends up with. Previously these were 3rem and 0rem — leftovers
-   from a larger avatar and from no compensation at all. */
-.by-other.previous-same {
-    padding-left: 2rem;
+   overrides the Avatar component's 3.25rem for this context) plus the bubble's
+   own 0.50rem gap, so the offset an ungrouped row ends up with is 2.5rem.
+
+   The reservation is a margin on the BUBBLE, not padding on the row, and that
+   distinction is load-bearing: `max-width: 50%` below resolves against the
+   row's CONTENT box, so 2rem of row padding would quietly cap a grouped bubble
+   at 0.5 × (W − 32px) while its group's first bubble is capped at 0.5 × W. On
+   a long message that is a ~15px ragged edge on the FAR side — the same defect
+   this rule exists to remove, moved to the other end of the bubble (and ~27px
+   at the 644px breakpoint, where the cap is 85%). Margin sits outside the
+   percentage basis, so every row in a group now caps at the same width. */
+.by-other.previous-same .message {
+    margin-left: 2.5rem;
 }
-.by-me.previous-same {
-    padding-right: 2rem;
+.by-me.previous-same .message {
+    margin-right: 2.5rem;
 }
 
 /* Set some widths and defaults on messages that need it */
@@ -253,12 +260,16 @@ override some properties for avatars showing/hiding
     flex-wrap: wrap;
     gap: 0.25rem;
 }
+/* 3.75rem was the avatar column when the avatar was the Avatar component's own
+   3.25rem; GlobalCSS has overridden it to 2rem in message rows for a long time,
+   so this was the last element still lining up with a size nothing renders at.
+   2.5rem is the bubble edge every other rule in this round standardised on. */
 .emoji-reactions.by-me {
     justify-content: flex-end;
-    margin-right: 3.75rem;
+    margin-right: 2.5rem;
 }
 .emoji-reactions.by-other {
-    margin-left: 3.75rem;
+    margin-left: 2.5rem;
 }
 .emoji-reaction {
     border: 1px solid transparent;
