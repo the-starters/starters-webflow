@@ -26,12 +26,30 @@ function member(id = MY_ID) {
  * options.handoff   — value stored under the handoff key (object or string)
  * options.onSelect  — override inbox.select (e.g. to throw)
  * options.talk      — false to omit the TalkJS stub entirely
+ * options.actions   — false to omit the custom-action methods (older SDK)
+ * options.fetch     — replaces window.fetch for the Clickable Identity handler
+ * options.hostname  — window.location.hostname, which gates staging diagnostics
  */
 function loadMessages(options = {}) {
   const replacements = []
   const warnings = []
   const errors = []
-  const calls = { users: [], conversations: [], selected: [], mounted: [] }
+  const calls = {
+    users: [],
+    conversations: [],
+    selected: [],
+    mounted: [],
+    // Clickable Identity: which actions were registered, and what the handler
+    // did with the network and with window.open.
+    messageActions: new Map(),
+    conversationActions: new Map(),
+    fetches: [],
+    opens: [],
+    aborts: [],
+    // Every window.setTimeout the module arms, so a test can assert the
+    // identity handler's abort budget and fire it without waiting 4 seconds.
+    timers: [],
+  }
   const container = {}
   const storage = new Map()
 
@@ -53,6 +71,18 @@ function loadMessages(options = {}) {
       calls.selected.push(conversation)
       return Promise.resolve()
     },
+  }
+  if (options.actions !== false) {
+    inbox.onCustomMessageAction = (action, handler) => {
+      calls.messageActions.set(action, handler)
+    }
+    inbox.onCustomConversationAction = (action, handler) => {
+      calls.conversationActions.set(action, handler)
+    }
+    // setFeedFilter is what installFeedFilterActions checks for; without it the
+    // feed filters silently skip registration and a test could mistake that for
+    // the identity actions being missing too.
+    inbox.setFeedFilter = () => {}
   }
 
   function conversationStub(id) {
@@ -102,10 +132,27 @@ function loadMessages(options = {}) {
     location: {
       pathname: options.pathname || '/messages',
       search: options.search || '',
+      // Staging diagnostics are gated on this; the default is a non-staging
+      // host so the silence-in-production path is what most tests exercise.
+      hostname: options.hostname || 'thestarters.com',
       replace(value) {
         replacements.push(value)
       },
     },
+    open(...args) {
+      calls.opens.push(args)
+      return null
+    },
+    fetch(url, init) {
+      calls.fetches.push({ url, init })
+      if (init && init.signal) {
+        init.signal.addEventListener('abort', () => calls.aborts.push(url))
+      }
+      return options.fetch
+        ? options.fetch(url, init, calls)
+        : Promise.resolve({ ok: true, status: 200, json: async () => ({ slug: '' }) })
+    },
+    AbortController,
     sessionStorage: {
       getItem: (key) => (storage.has(key) ? storage.get(key) : null),
       setItem: (key, value) => storage.set(key, String(value)),
@@ -113,7 +160,10 @@ function loadMessages(options = {}) {
     },
     setInterval,
     clearInterval,
-    setTimeout,
+    setTimeout(fn, ms, ...rest) {
+      calls.timers.push({ ms, fire: fn })
+      return setTimeout(fn, ms, ...rest)
+    },
     clearTimeout,
   }
   if (options.talk !== false) window.Talk = Talk
@@ -569,4 +619,256 @@ test('sessionStorage being unavailable degrades to an id-only reference', async 
   await settle()
 
   assert.equal(loaded.calls.conversations.length, 1)
+})
+
+/* --------------------------- Clickable Identity --------------------------- */
+//
+// The theme wraps the chat-header photo/name and the received-message avatar in
+// ActionButtons carrying `data-member`, which TalkJS delivers to the controller
+// as `event.params.member`. These tests drive the handler the controller
+// actually registered, through the same inbox object the SDK would use — the
+// DOM half (which surfaces are buttons, which stay inert) is proven separately
+// by the staging theme rig, which cannot be asserted from here.
+
+const IDENTITY_ACTION = 'starters-open-profile'
+const RESOLVER_URL =
+  'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter/slug_by_memberstack'
+
+/** The handler the controller registered for message-row identity clicks. */
+function identityHandler(loaded, channel = 'messageActions') {
+  const handler = loaded.calls[channel].get(IDENTITY_ACTION)
+  assert.equal(typeof handler, 'function', `no ${channel} handler registered`)
+  return handler
+}
+
+/** Answers a fixed slug, as the live resolver does for a listed starter. */
+function resolves(slug) {
+  return () => Promise.resolve({ ok: true, status: 200, json: async () => ({ slug }) })
+}
+
+test('the identity action is registered on both the message and the conversation channel', async () => {
+  const { calls } = loadMessages({ search: '' })
+
+  await settle()
+
+  assert.deepEqual([...calls.messageActions.keys()], [IDENTITY_ACTION])
+  assert.equal(calls.conversationActions.has(IDENTITY_ACTION), true)
+  // The feed filters still register on the same channel and are untouched.
+  assert.deepEqual(
+    [...calls.conversationActions.keys()].sort(),
+    ['messages-filter-all', 'messages-filter-read', 'messages-filter-unread', IDENTITY_ACTION].sort(),
+  )
+})
+
+test('a member with a published profile opens /hire/<slug> in a new tab', async () => {
+  const loaded = loadMessages({ search: '', fetch: resolves('kaeser-valencerina') })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.calls.opens, [
+    ['/hire/kaeser-valencerina', '_blank', 'noopener'],
+  ])
+})
+
+test('the header (conversation) channel opens the same profile as the avatar', async () => {
+  const loaded = loadMessages({ search: '', fetch: resolves('kaeser-valencerina') })
+
+  await settle()
+  await identityHandler(loaded, 'conversationActions')({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.calls.opens, [
+    ['/hire/kaeser-valencerina', '_blank', 'noopener'],
+  ])
+})
+
+test('the resolver is asked for exactly the clicked member, by POST', async () => {
+  const loaded = loadMessages({ search: '', fetch: resolves('kaeser-valencerina') })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.equal(loaded.calls.fetches.length, 1)
+  const { url, init } = loaded.calls.fetches[0]
+  assert.equal(url, RESOLVER_URL)
+  assert.equal(init.method, 'POST')
+  assert.deepEqual(JSON.parse(init.body), { member_id: OTHER_ID })
+})
+
+test('a member with no published profile opens nothing and reports no error', async () => {
+  const loaded = loadMessages({ search: '', fetch: resolves('') })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.calls.opens, [])
+  assert.deepEqual(loaded.errors, [])
+  assert.deepEqual(loaded.warnings, [])
+})
+
+test('a whitespace-only slug counts as no profile', async () => {
+  const loaded = loadMessages({ search: '', fetch: resolves('   ') })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.calls.opens, [])
+})
+
+test('a resolver outage is a silent no-op', async () => {
+  const loaded = loadMessages({
+    search: '',
+    fetch: () => Promise.resolve({ ok: false, status: 500, json: async () => ({}) }),
+  })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.calls.opens, [])
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('a network failure is a silent no-op', async () => {
+  const loaded = loadMessages({
+    search: '',
+    fetch: () => Promise.reject(new Error('offline')),
+  })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.calls.opens, [])
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('a resolver answering something other than JSON is a silent no-op', async () => {
+  const loaded = loadMessages({
+    search: '',
+    fetch: () => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => { throw new Error('not json') },
+    }),
+  })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.calls.opens, [])
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('a slow resolver is aborted at the deadline and opens nothing', async () => {
+  // Never resolves on its own: only the AbortController can end this call.
+  const loaded = loadMessages({
+    search: '',
+    fetch: (url, init) => new Promise((resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(new Error('aborted')))
+    }),
+  })
+
+  await settle()
+  const before = loaded.calls.timers.length
+  const pending = identityHandler(loaded)({ params: { member: OTHER_ID } })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const armed = loaded.calls.timers.slice(before)
+  assert.equal(armed.length, 1, 'the handler arms exactly one deadline')
+  assert.equal(armed[0].ms, 4000, 'the click gives up after 4s')
+  assert.equal(loaded.calls.opens.length, 0, 'nothing opens while the call is in flight')
+
+  // Fire the deadline instead of waiting for it.
+  armed[0].fire()
+  await pending
+
+  assert.deepEqual(loaded.calls.aborts, [RESOLVER_URL])
+  assert.deepEqual(loaded.calls.opens, [])
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('a malformed member id never reaches the network', async () => {
+  for (const value of ['not-a-member', 'mem_', 'mem_sb_', '', 'mem_bad-id', 'mem_sb_extra_underscore', '../../etc', '  ', null, undefined, 42]) {
+    const loaded = loadMessages({ search: '', fetch: resolves('kaeser-valencerina') })
+
+    await settle()
+    await identityHandler(loaded)({ params: { member: value } })
+
+    assert.deepEqual(loaded.calls.fetches, [], 'rejected: ' + JSON.stringify(value))
+    assert.deepEqual(loaded.calls.opens, [], 'nothing opened for: ' + JSON.stringify(value))
+  }
+})
+
+test('an event with no params at all is a no-op', async () => {
+  const loaded = loadMessages({ search: '', fetch: resolves('kaeser-valencerina') })
+
+  await settle()
+  await identityHandler(loaded)({})
+  await identityHandler(loaded)()
+
+  assert.deepEqual(loaded.calls.fetches, [])
+  assert.deepEqual(loaded.calls.opens, [])
+})
+
+test('a sandbox member id resolves like a live one', async () => {
+  const SANDBOX_ID = 'mem_sb_cmqhuaxn80d270sseeo74fn7i'
+  const loaded = loadMessages({ search: '', fetch: resolves('jp-test') })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: SANDBOX_ID } })
+
+  assert.deepEqual(JSON.parse(loaded.calls.fetches[0].init.body), { member_id: SANDBOX_ID })
+  assert.deepEqual(loaded.calls.opens, [['/hire/jp-test', '_blank', 'noopener']])
+})
+
+test('a slug that tries to steer the path is encoded, not obeyed', async () => {
+  const loaded = loadMessages({ search: '', fetch: resolves('../../admin?x=1') })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.calls.opens, [
+    ['/hire/..%2F..%2Fadmin%3Fx%3D1', '_blank', 'noopener'],
+  ])
+})
+
+test('production stays silent about an unresolvable identity click', async () => {
+  const loaded = loadMessages({ search: '', hostname: 'thestarters.com', fetch: resolves('') })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.warnings, [])
+  assert.deepEqual(loaded.errors, [])
+})
+
+test('staging says why nothing happened', async () => {
+  const loaded = loadMessages({
+    search: '',
+    hostname: 'the-starters-3-0.webflow.io',
+    fetch: resolves(''),
+  })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.equal(loaded.warnings.length, 1)
+  assert.match(loaded.warnings[0], /no published profile/)
+})
+
+test('a lookalike staging hostname does not turn diagnostics on', async () => {
+  const loaded = loadMessages({ search: '', hostname: 'notwebflow.io', fetch: resolves('') })
+
+  await settle()
+  await identityHandler(loaded)({ params: { member: OTHER_ID } })
+
+  assert.deepEqual(loaded.warnings, [])
+})
+
+test('an SDK without custom-action support still mounts the inbox', async () => {
+  const { calls, errors } = loadMessages({ search: '', actions: false })
+
+  await settle()
+
+  assert.equal(calls.mounted.length, 1)
+  assert.deepEqual(errors, [])
 })

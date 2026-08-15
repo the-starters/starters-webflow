@@ -19,6 +19,16 @@
  * URL-carried name would therefore be forgeable. Without the query parameter
  * nothing below runs and the page behaves exactly as it did before; the deep
  * link resolves after the inbox is mounted, so a failure leaves a working inbox.
+ *
+ * Clickable Identity: the 3.0 chat theme wraps the chat-header photo and name,
+ * and the avatar beside a received message, in TalkJS ActionButtons carrying
+ * that member's Memberstack id. This module answers those actions by resolving
+ * the id to a public profile slug and opening `/hire/<slug>` in a new tab.
+ * Members without a published profile (brands, unlisted starters) resolve to an
+ * empty slug and nothing happens — the theme cannot know who has a profile, so
+ * the affordance is optimistic and this handler is the truth. Every failure
+ * path (bad id, resolver down, slow network) is a silent no-op; the chat never
+ * shows an error over a decoration.
  */
 ;(function () {
   'use strict'
@@ -46,6 +56,38 @@
     'messages-filter-all': {},
     'messages-filter-unread': { isUnread: true },
     'messages-filter-read': { isUnread: false },
+  }
+
+  /* --------------------------- staging diagnostics -------------------------- */
+
+  // Same convention as account-settings/plan-dates.js: dev-only console noise on
+  // staging hosts (or with the explicit debug flag), silence in production. The
+  // Clickable Identity path is deliberately invisible to members, so this is the
+  // only way to tell "resolved empty" from "never fired" while QA'ing it.
+  // Anchored host tests on purpose — "notwebflow.io" must not read as staging.
+  const LOG_PREFIX = '[messages-3.0]'
+
+  function stagingHost(hostname) {
+    const host = hostname || ''
+    return (
+      /(\.|^)webflow\.io$/.test(host) ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      /(\.|^)trycloudflare\.com$/.test(host)
+    )
+  }
+
+  // STARTERS_DEBUG belongs here and not in stagingHost(): it may turn logging on
+  // in production, but it must never widen what counts as a staging host.
+  function diagnosticsEnabled() {
+    if (window.STARTERS_DEBUG === true) return true
+    return stagingHost((window.location && window.location.hostname) || '')
+  }
+
+  function warn(message, detail) {
+    if (!diagnosticsEnabled()) return
+    if (detail === undefined) console.warn(LOG_PREFIX + ' ' + message)
+    else console.warn(LOG_PREFIX + ' ' + message, detail)
   }
 
   function waitForMemberstackDom(timeoutMs = MEMBERSTACK_TIMEOUT_MS) {
@@ -226,6 +268,140 @@
     })
   }
 
+  /* --------------------------- clickable identity --------------------------- */
+  // clickable-identity:start
+  // Everything between these two markers is lifted verbatim by the staging
+  // theme rig (staging-qa/talkjs-theme-rig/identity-gate.mjs), so that the code
+  // it clicks in a real TalkJS iframe is this code and not a paraphrase of it.
+  // Keep the block self-contained: its only outside dependency is
+  // MEMBER_ID_PATTERN, which the rig lifts from this file too.
+
+  // The theme's ActionButtons all raise this one action, from the chat header
+  // (a conversation action) and from a received message's avatar (a message
+  // action). Both carry `data-member`, which TalkJS delivers as
+  // `event.params.member`.
+  const IDENTITY_ACTION = 'starters-open-profile'
+  // Slug Resolver — public by design: it answers a profile slug for a member id
+  // and nothing else, and answers empty for anyone without a published 3.0
+  // profile page (every brand, and starters who have no profile yet).
+  const SLUG_RESOLVER_URL =
+    'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/starter/slug_by_memberstack'
+  // A click is a foreground gesture: if the answer is slower than this the
+  // member has already moved on, and a tab opening late would be worse than no
+  // tab at all.
+  const IDENTITY_TIMEOUT_MS = 4000
+  const PROFILE_PATH_PREFIX = '/hire/'
+
+  /**
+   * Build the handler for a Clickable Identity action. Everything it touches is
+   * injected, so the unit tests and the staging rig can drive the real logic
+   * with their own fetch/open/clock.
+   *
+   * @param {{
+   *   fetch: Function, open: Function, AbortController: Function|undefined,
+   *   setTimeout: Function, clearTimeout: Function,
+   *   resolverUrl?: string, timeoutMs?: number, warn?: Function
+   * }} options
+   * @returns {(event: object) => Promise<void>}
+   */
+  function createIdentityActionHandler(options) {
+    const config = options || {}
+    const resolverUrl = config.resolverUrl || SLUG_RESOLVER_URL
+    const timeoutMs = config.timeoutMs || IDENTITY_TIMEOUT_MS
+    const note = config.warn || function () {}
+
+    return async function handleIdentityAction(event) {
+      const params = (event && event.params) || {}
+      const raw = typeof params.member === 'string' ? params.member.trim() : ''
+      // Same rule the `?with=` deep link applies. A malformed id means a
+      // hand-edited DOM or a theme change gone wrong, and must not reach the
+      // network at all.
+      if (!MEMBER_ID_PATTERN.test(raw)) {
+        note('identity click carried no usable member id')
+        return
+      }
+
+      if (
+        typeof config.fetch !== 'function' ||
+        typeof config.open !== 'function'
+      ) {
+        return
+      }
+
+      // AbortController is universal in the browsers this site supports; the
+      // guard is for the request never hanging forever if it somehow is not.
+      const controller =
+        typeof config.AbortController === 'function'
+          ? new config.AbortController()
+          : null
+      const timer = controller
+        ? config.setTimeout(() => controller.abort(), timeoutMs)
+        : null
+
+      let slug = ''
+      try {
+        const response = await config.fetch(resolverUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ member_id: raw }),
+          signal: controller ? controller.signal : undefined,
+        })
+        // The resolver answers 200 for every input it understands, including
+        // unknown ids; anything else is an outage and gets the same silence.
+        if (!response || response.ok === false) {
+          note('the slug resolver answered ' + (response && response.status))
+          return
+        }
+        const data = await response.json()
+        slug = data && typeof data.slug === 'string' ? data.slug.trim() : ''
+      } catch (error) {
+        // Covers the abort as well: a timed-out click is a no-op, not an error.
+        note('the slug resolver did not answer', error)
+        return
+      } finally {
+        if (timer !== null) config.clearTimeout(timer)
+      }
+
+      if (!slug) {
+        note('no published profile for this member')
+        return
+      }
+
+      // encodeURIComponent, not raw interpolation: the slug is data from an
+      // open endpoint, and a value containing a slash must not be able to
+      // steer the navigation somewhere other than one profile page.
+      config.open(
+        PROFILE_PATH_PREFIX + encodeURIComponent(slug),
+        '_blank',
+        'noopener',
+      )
+    }
+  }
+  // clickable-identity:end
+
+  /**
+   * Wire the theme's identity ActionButtons. The header buttons raise a
+   * conversation action and the message avatars raise a message action; both
+   * carry the same params and take the same handler.
+   */
+  function installIdentityActions(inbox) {
+    const handler = createIdentityActionHandler({
+      fetch: typeof window.fetch === 'function' ? window.fetch.bind(window) : null,
+      open: typeof window.open === 'function' ? window.open.bind(window) : null,
+      AbortController: window.AbortController,
+      setTimeout: window.setTimeout.bind(window),
+      clearTimeout: window.clearTimeout.bind(window),
+      warn,
+    })
+
+    if (typeof inbox.onCustomMessageAction === 'function') {
+      inbox.onCustomMessageAction(IDENTITY_ACTION, handler)
+    }
+    if (typeof inbox.onCustomConversationAction === 'function') {
+      inbox.onCustomConversationAction(IDENTITY_ACTION, handler)
+    }
+  }
+
   /**
    * The member named by `?with=`, or null when absent or malformed.
    * @returns {string|null}
@@ -374,6 +550,7 @@
     })
 
     installFeedFilterActions(inbox)
+    installIdentityActions(inbox)
     inbox.mount(container)
 
     // Deliberately after mount and deliberately not awaited: the inbox is already

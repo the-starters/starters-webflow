@@ -16,7 +16,8 @@ This is a subcomponent used by UserMessage and SystemMessage.
 
     <t:set t:if="{{ body.type == 'file' }}" filetype="{{ body.file.type }}"/>
 
-    <div t:if="{{ body.type != 'file' or body.isVoiceMessage == false or body.thumbnailError == true }}" class="text timestamp-float-{{ floatTimestamp }}">
+    <div t:if="{{ body.type != 'file' or body.isVoiceMessage == false or body.thumbnailError == true }}"
+         class="text timestamp-float-{{ floatTimestamp }} {{ body.type != 'typing-indicator' | then: 'has-timestamp' }}">
         <span t:if="{{ isLongEmailMessage }}">
             <small><i><Icon type="email" /> {{ strings.MESSAGE_SENT_VIA_EMAIL }}</i></small><br/><br/>
         </span>
@@ -64,7 +65,12 @@ This is a subcomponent used by UserMessage and SystemMessage.
    short, wrapped or grouped message; the min-width keeps a very short message
    wide enough to hold the timestamp, which no longer widens the bubble itself
    now that it is out of flow. System messages pass "right" and are untouched. */
-.text.timestamp-float-auto {
+/* Scoped to bodies that actually render a timestamp. The timestamp span below
+   is the t:else of the typing-indicator branch, so a typing bubble has no
+   timestamp — and without this `has-timestamp` gate it would still reserve the
+   20px band and the 80px min-width, giving the animated dots a dead strip
+   underneath and a bubble wider than they need. */
+.text.timestamp-float-auto.has-timestamp {
     position: relative;
     padding-bottom: 1.25rem;
     min-width: 5rem;
