@@ -1,0 +1,55 @@
+<!--
+    The search box in the conversation list
+-->
+<template>
+  <div class="ConversationListSearchBox">
+    <SearchInput class="SearchInput" />
+    <CloseButton t:if="{{ isTyping }}" class="CloseButton">
+      <Icon type="close" />
+    </CloseButton>
+    <SearchButton t:else class="SearchButton">
+      <Icon type="search" />
+    </SearchButton>
+  </div>
+</template>
+<style scoped>
+.ConversationListSearchBox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  position: relative;
+  padding: 1rem;
+  border-bottom: 2px solid #eee;
+}
+
+.SearchInput {
+  flex-grow: 1;
+  padding: 0.5rem 1rem;
+  background: #FFFFFF;
+  border-radius: 0.25rem;
+  border: 1px solid #eee;
+}
+
+.SearchInput:focus,
+.SearchInput:active,
+.SearchInput:focus-within {
+  outline: #A3A3A3 solid 1px;
+}
+
+.SearchInput:focus-visible {
+  outline: #3291FF 2px solid;
+  outline-offset: 2px;
+}
+
+.CloseButton {
+  position: absolute;
+  right: 1rem;
+  transform: scale(0.8);
+}
+
+.SearchButton {
+  position: absolute;
+  right: 1.25rem;
+  transform: scale(0.8);
+}
+</style>

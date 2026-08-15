@@ -1,0 +1,202 @@
+<!--
+Renders the header at the top of the chatbox panel.
+-->
+<template>
+  <!-- If you are the only person in the conversation, we want to show your name in the header. Otherwise, show the names of the other participants -->
+  <t:set headerParticipants="{{ conversation.otherParticipants.length == 0 | then: conversation.participants | else: conversation.otherParticipants }}" />
+  <header class="header">
+    <SearchBox t:if="{{ showSearchBox }}" class="search" />
+    <div t:else class="inner">
+      <div class="content">
+        <div class="image">
+          <ConversationImage conversation="{{conversation }}" />
+        </div>
+
+        <div t:if="{{ conversation.formattedSubject }}" class="info">
+          <div class="title">{{ conversation.formattedSubject }}</div>
+          <div class="subtitle">	
+            <div class="inline-block user {{ presenceEnabled | then: 'presence-enabled' }}" t:for="{{ user in headerParticipants }}" t:key="{{ user.id }}">	
+              <span>{{user.name}}</span>	
+              <StatusIndicator class="status-indicator" user="{{user}}" />	
+              <span class="participant-separator" t:if="{{ presenceEnabled == false and forloop.last == false }}">, </span>	
+              <span class="company">{{user.custom.company}}</span>
+            </div>	
+          </div>
+        </div>
+        <div t:else class="info">
+          <div class="title">	
+            <div class="inline-block user {{ presenceEnabled | then: 'presence-enabled' }}" t:for="{{ user in headerParticipants }}" t:key="{{ user.id }}">	
+              <span>{{user.name}}</span>	
+              <StatusIndicator class="status-indicator" user="{{user}}" />	
+              <span class="participant-separator" t:if="{{ presenceEnabled == false and forloop.last == false }}">, </span>	
+              <span class="company">{{user.custom.company}}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <SearchButton t:if="{{ showSearchButton }}" class="action-button">
+          <Icon type="search" />
+        </SearchButton>
+        <ActionMenu t:if="{{ showActionMenu }}" class="action-button">	
+          <Icon type="horizontalDots" />	
+        </ActionMenu>
+        <CloseButton t:if="{{ showCloseButton }}" class="action-button">
+          <Icon type="close" />
+        </CloseButton>
+      </div>
+    </div>
+  </header>
+</template>
+<style scoped>
+.header button[data-action] {
+  border-radius: 0.375rem;
+  font-size: inherit;
+  margin: 1px;
+  padding: 0.25rem 0.325rem;
+  cursor: pointer;
+  transition: color 200ms ease-in-out, background-color 200ms ease-in-out, border 200ms ease-in-out;
+  color: #111;
+  background-color: transparent;
+  border: 1px solid #525252;
+}
+
+.header button[data-action]:hover {
+  color: white;
+  background-color: #111;
+  border: 1px solid #111;
+}
+
+.header button[data-action]:active {
+  color: white;
+  background-color: #404040;
+  border: 1px solid #404040;
+}
+
+.header button[data-action]:focus-visible {
+  outline: #525252 solid 2px;
+  outline-offset: 2px;
+}
+
+/* The 3.0 reskin block in GlobalCSS used to restate this selector with a 1px
+   bottom border. This component's copy comes later in the compiled sheet and
+   has the same specificity, so it won and the 1px never painted; the duplicate
+   is now gone and the value that was actually rendering lives here alone.
+   `background` rather than `background-color` keeps the shorthand's reset of
+   the other background longhands, which the GlobalCSS copy was performing. */
+.header {
+  display: flex;
+  align-items: center;
+  height: 5.25rem;
+  background: #fff;
+  border-bottom: 2px solid #eee;
+  flex-shrink: 0;
+}
+
+@media screen and (max-width: 644px) {
+  .header {
+    border-top: 0px solid #eee;
+  }
+}
+
+.inner {
+  flex-grow: 1;
+  flex-basis: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 1rem;
+  padding-right: 1rem;
+  min-width: 0;
+}
+
+.content {
+  flex-grow: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.image {
+  width: 52px;
+  text-align: center;
+  margin-right: 0.75rem;
+  flex-shrink: 0;
+}
+
+.info {
+  flex-grow: 1;
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.title {
+  font-weight: 600;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 3px;
+}
+
+.subtitle {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 85%;
+  margin-left: 4px;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.action-button {
+  /* removing the browser's default button styles: */
+  background-color: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  cursor: pointer;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  color: rgba(17, 17, 17, 0.6);
+  transition: 0.2s ease-out;
+
+  /* Increase the tap size of the button */
+  box-sizing: content-box;
+  padding: 0;
+  margin: -0.5rem;
+  width: 2.5rem;
+  height: 2.5rem;
+}
+.action-button + .action-button {
+  margin-left: 0;
+}
+
+.action-button:hover {
+  color: rgba(17, 17, 17, 0.8);
+}
+
+.search {
+  background-color: transparent;
+  flex-grow: 1;
+}
+
+.inline-block {
+  display: inline-block;
+}
+
+.participant-separator {
+  white-space: pre-wrap;
+}
+
+.status-indicator {
+  margin: 0 0.75rem -1px 0.275rem;
+}
+</style>

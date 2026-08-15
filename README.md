@@ -298,6 +298,7 @@ Containment-era V2 code. Kept for the live V2 pages; not a pattern to copy.
 - `build-profile-wiring-audit.js` — a Node audit tool (`require('node:fs')`) that checks the build-profile pages' saved Webflow code for the pinned vendored engine, the draft-identity guard, and the success state's onboarding CTA; the full failure list lives in [Build-profile Videsigns wiring audit](#build-profile-videsigns-wiring-audit). Never served to a browser
 - `step-flow-test-dom.js` — the `global-embeds/step-flow/step-flow.js` test harness and its minimal DOM shim (`require('node:test')`). Named without the `.test.js` suffix, so run it explicitly
 - `slater/4885.readable.js`, `slater/4885.prod.min.js`, `slater/4960.readable.js`, `slater/4960.prod.min.js` — read-only captures of the Slater.app builds that remain live on the legacy contract pages. Generated mirror artifacts: never edit or load them from this repo; the inventory and refresh contract lives in [`slater/README.md`](slater/README.md)
+- `talkjs-themes/` — the two TalkJS chat themes as exported files, plus the Node tooling in `talkjs-themes/tools/` that pushes them back through the TalkJS REST API. The chat renders in TalkJS's own iframe, so none of this is served to a browser or reachable from a CDN script; the folder exists so the chat's look is diffable and rollback-able. Pushing to the real theme names is instantly live for every member — read [`talkjs-themes/README.md`](talkjs-themes/README.md) before running anything in it
 
 ## Quiz-results freelancer recommendations
 

@@ -1,0 +1,247 @@
+<!--
+Renders the header at the top of the chatbox panel.
+-->
+<template>
+
+  <t:set names="{{ conversation.otherParticipants | map: 'name' | join: ', ' | default: conversation.me.name }}" />
+  <t:set formattedTitle="{{ conversation.formattedSubject | default: names }}" />
+  <t:set rawTitle="{{ conversation.rawTitle | default: names }}" />
+
+  <t:set shouldShowAuthor="{{ conversation.isGroupChat and lastMessage.type == 'UserMessage' }}" />
+
+  <ConversationLink title="{{ rawTitle }}" class="conversation-link {{ isActive | then: 'active' }} {{ isUnread | then: 'unread' }}">
+    <ConversationImage conversation="{{conversation}}"/>
+    <div class="inner">
+      <div class="header">
+        <div class="conversation-name">{{ formattedTitle }}</div>
+        <span class="timestamp"><TimeAgo timestamp="{{lastMessage.timestamp}}" /></span>
+      </div>
+      <div class="body">
+        <div class="message">
+          <span class="name" t:if="{{shouldShowAuthor}}">{{lastMessage.sender.name}}: </span>
+
+          <span t:if="{{ lastMessage.body.type == 'text' }}">
+            {{lastMessage.body.formattedText}}
+          </span>
+          <span t:if="{{ lastMessage.body.type == 'location' }}">
+            <Icon type="location" /> {{strings.LOCATION}}
+          </span>
+          <span t:if="{{ lastMessage.body.type == 'file' and lastMessage.body.isVoiceMessage == false }}">
+            <Icon type="image" t:if="{{lastMessage.body.file.type == 'image'}}" />
+            <Icon type="movie" t:if="{{lastMessage.body.file.type == 'video'}}" />
+            <Icon type="attachment" t:if="{{lastMessage.body.file.type == 'other'}}" />
+            <span> {{lastMessage.body.file.filename}}</span>
+          </span>
+          <span t:if="{{ lastMessage.body.type == 'file' and lastMessage.body.isVoiceMessage == true }}">
+          <span><Icon type="microphone" /> {{ strings.VOICE_MESSAGE }} ({{ lastMessage.body.recordingDuration | format_duration }})</span>
+          </span>
+        </div>
+        <div t:if="{{ isSearchResult }}">
+          <div class="showmsg">
+            <Icon type="chevronUp" />
+          </div>
+        </div>
+        <div t:else>
+          <div t:if="{{ isUnread and unreadMessageCount == 0 }}" class="unread-generic-dot"></div>
+          <div t:if="{{ isUnread and unreadMessageCount > 0 }}" class="unread-dot">
+            <span t:if="{{ unreadMessageCount > 999 }}">
+              999+
+            </span>
+            <span t:else-if="{{ unreadMessageCount > 0 }}">
+              {{ unreadMessageCount }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </ConversationLink>
+</template>
+<style scoped>
+
+/* The highlighted part of the search result */
+mark {
+  font-weight: bold;
+  background: #DBEAFE;
+}
+
+.active mark {
+  color: #262626;
+  background: #FFF;
+}
+
+.showmsg {
+  width: 20px;
+  height: 34px;
+  padding-bottom: 14px;
+  transform: rotate(90deg);
+}
+
+.conversation-link {
+  color: #525252;
+  text-decoration: none;
+  width: 100%;
+  padding: 0;
+  height: auto;
+  padding: 1rem 1.5rem;
+  border: none;
+  border-bottom: 0px solid #D4D4D4;
+  background-color: transparent;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  word-wrap: break-word;
+  transition: color 0.1s ease-in-out,
+              background-color 0.1s ease-in-out;
+}
+
+.conversation-link a {
+  color: #525252;
+}
+
+.conversation-link.active a {
+  color: #fff;
+}
+
+.conversation-link:last-child {
+  border-bottom: none;
+}
+
+.conversation-link:hover,
+.conversation-link.unread:hover {
+  background-color: #f7f7f7;
+}
+
+.conversation-link.active {
+  color: #1E211E;
+  background-color: #eeeeee;
+}
+
+.conversation-link.active:focus-visible {
+  outline: #fff 2px solid;
+  outline-offset: -4px;
+  border-bottom: 0;
+}
+
+.conversation-link:focus-visible {
+  outline: #3291FF 2px solid;
+  outline-offset: -2px;
+}
+
+.conversation-link.unread {
+  background-color: #EFFBA8;
+  color: #1E211E;
+}
+
+.conversation-link.active.unread {
+  color: #fff;
+  background-color: #007DF9;
+}
+
+.inner {
+  margin-left: 10px;
+  flex-basis: 0;
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.header,
+.body {
+  display: flex;
+  align-items: center;
+  flex-grow: 1;
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.timestamp {
+  font-size: 85%;
+  opacity: 0.75;
+}
+
+.timestamp,
+.unread-dot {
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.conversation-name {
+  font-weight: 600;
+}
+
+.conversation-name,
+.message {
+  flex-grow: 1;
+  font-size: 85%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message {
+  opacity: 0.75;
+  flex-basis: 0; /* helps balance width of message preview with unread message counter */
+}
+
+/* Message type icons - e.g file / video / image */
+.message svg {
+  vertical-align: sub;
+  opacity: 1;
+}
+
+.unread-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.4rem;
+  border-radius: 9999px;
+  height: 20px;
+  width: auto;
+  min-width: 20px;
+  text-align: center;
+  line-height: inherit;
+  font-size: 85%;
+  color: #fff;
+  background-color: #007DF9;
+}
+
+.unread-generic-dot {
+  padding: 0.6ex;
+  transform: scale(0.999);
+  border-radius: 999px;
+  background-color: #007DF9;
+}
+
+.conversation-link.active .unread-generic-dot {
+  padding: 0.6ex;
+  transform: scale(0.999);
+  border-radius: 999px;
+  background-color: #fff;
+}
+
+.conversation-link.active .unread-dot {
+  color: #007DF9;
+  background-color: #fff;
+}
+
+.unread-dot:empty {
+  padding: 0;
+  min-width: 10px;
+  min-height: 10px;
+}
+
+/* The following sections ensure that lists are more compact by only displaying the first item in the list.*/
+.message {
+  height: 1rem; /* iOS 15 compatibility */
+  height: 1lh;
+}
+
+.message li {
+  padding-left: 0.5rem;
+  list-style: inside;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+</style>
