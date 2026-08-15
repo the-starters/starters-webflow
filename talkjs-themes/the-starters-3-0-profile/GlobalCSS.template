@@ -216,7 +216,7 @@ html, body, .talkjs, button, input, textarea {
    12px in full-strength --ts-black-olive instead of the muted 11px olive it
    asks for. Now that the timestamp sits in its own pinned band that mistake
    reads as body text, which is the opposite of quiet. */
-.UserMessage__message .MessageBody__timestamp { font-size: 11px; color: var(--ts-olive); }
+.UserMessage__message .MessageBody__timestamp { font-size: 0.75rem; color: var(--ts-olive); }
 
 /* composer */
 .MessageField__message-field { background: #fff; border-top: 1px solid var(--ts-silver); }

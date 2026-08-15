@@ -71,6 +71,12 @@
 }
 
 .consultation-card__title {
+  /* TalkJS's own SystemMessage styling sets white-space: nowrap, which this
+     inherits — a long title then runs straight out of the card instead of
+     wrapping. Overridden here rather than on .consultation-card so the value
+     is stated next to the element it protects. */
+  white-space: normal;
+  overflow-wrap: anywhere;
   margin: 0;
   font-family: Baskervville, Georgia, serif;
   font-size: 1.5rem;
@@ -79,6 +85,10 @@
 }
 
 .consultation-card__status {
+  /* Same inherited nowrap as the title — a long "awaiting response from …"
+     line would otherwise run out of the card. */
+  white-space: normal;
+  overflow-wrap: anywhere;
   margin: 0.5rem 0 0;
   color: #575a56;
   font-size: 0.875rem;
@@ -108,6 +118,10 @@
 }
 
 .consultation-card__details dd {
+  /* Same inherited nowrap: a long value (a timezone-qualified datetime) would
+     otherwise push out of its grid column instead of wrapping inside it. */
+  white-space: normal;
+  overflow-wrap: anywhere;
   margin: 0;
   color: #1e211e;
   font-size: 0.875rem;
