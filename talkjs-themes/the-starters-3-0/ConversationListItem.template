@@ -80,9 +80,12 @@ mark {
   color: #525252;
   text-decoration: none;
   width: 100%;
-  padding: 0;
   height: auto;
-  padding: 1rem 1.5rem;
+  /* 1rem horizontal to match .ConversationListSearchBox's 1rem, so the avatar's
+     left edge lines up with the search field above it. Was 1.5rem, which sat
+     the whole row 8px further in than the search box. (There was also a dead
+     `padding: 0` here, overridden on the next line.) */
+  padding: 0.75rem 1rem;
   border: none;
   border-bottom: 0px solid #D4D4D4;
   background-color: transparent;
@@ -128,14 +131,32 @@ mark {
   outline-offset: -2px;
 }
 
+/* No tint: an unread row looks like every other row, and the count badge
+   carries the signal on its own. */
 .conversation-link.unread {
-  background-color: #EFFBA8;
   color: #1E211E;
 }
 
+/* TalkJS bolds the preview of an unread conversation to 700. The badge and the
+   darker text already carry that signal here, so the weight is reset to match
+   every other row and only the colour distinguishes it. */
+.conversation-link.unread .message {
+  font-weight: 400;
+  color: #1E211E;
+  /* .message is dimmed to 0.75 for read rows; full strength here is what marks
+     the row as unread, now that the tint and the bold are both gone. */
+  opacity: 1;
+}
+
+/* TalkJS bolds an unread conversation's name to 700. Match the 600 every other
+   row uses, so an unread row differs only by text colour and the badge. */
+.conversation-link.unread .conversation-name {
+  font-weight: 600;
+}
+
 .conversation-link.active.unread {
-  color: #fff;
-  background-color: #007DF9;
+  color: #1E211E;
+  background-color: #eeeeee;
 }
 
 .inner {
@@ -156,7 +177,7 @@ mark {
 }
 
 .timestamp {
-  font-size: 85%;
+  font-size: 0.75rem;
   opacity: 0.75;
 }
 
@@ -180,6 +201,8 @@ mark {
 }
 
 .message {
+  /* Read rows: muted olive at 75%. An unread row overrides both below. */
+  color: #434B43;
   opacity: 0.75;
   flex-basis: 0; /* helps balance width of message preview with unread message counter */
 }
@@ -195,34 +218,34 @@ mark {
   align-items: center;
   justify-content: center;
   padding: 0 0.4rem;
-  border-radius: 9999px;
+  border-radius: 4px;
   height: 20px;
   width: auto;
   min-width: 20px;
   text-align: center;
   line-height: inherit;
-  font-size: 85%;
-  color: #fff;
-  background-color: #007DF9;
+  font-size: 0.75rem;
+  color: #1E211E;
+  background-color: #81D187;
 }
 
 .unread-generic-dot {
   padding: 0.6ex;
   transform: scale(0.999);
-  border-radius: 999px;
-  background-color: #007DF9;
+  border-radius: 4px;
+  background-color: #81D187;
 }
 
 .conversation-link.active .unread-generic-dot {
   padding: 0.6ex;
   transform: scale(0.999);
-  border-radius: 999px;
-  background-color: #fff;
+  border-radius: 4px;
+  background-color: #81D187;
 }
 
 .conversation-link.active .unread-dot {
-  color: #007DF9;
-  background-color: #fff;
+  color: #1E211E;
+  background-color: #81D187;
 }
 
 .unread-dot:empty {

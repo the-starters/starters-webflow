@@ -65,21 +65,16 @@ This is a subcomponent used by UserMessage and SystemMessage.
     white-space: pre-wrap;
 }
 
-/* Chat bubbles (UserMessage passes floatTimestamp="auto") pin the timestamp and
-   ticks to the bubble's bottom-right corner rather than floating them to
-   wherever the last line of text happens to leave off. The bottom padding
-   reserves the band the timestamp sits in, so text can never run under it on a
-   short, wrapped or grouped message; the min-width keeps a very short message
-   wide enough to hold the timestamp, which no longer widens the bubble itself
-   now that it is out of flow. System messages pass "right" and are untouched. */
-/* Scoped to bodies that actually render a timestamp. The timestamp span below
-   is the t:else of the typing-indicator branch, so a typing bubble has no
-   timestamp — and without this `has-timestamp` gate it would still reserve the
-   20px band and the 80px min-width, giving the animated dots a dead strip
-   underneath and a bubble wider than they need. */
+/* Chat bubbles (UserMessage passes floatTimestamp="auto") sit the timestamp and
+   ticks ON the last line of the message, hugging the bubble's right edge — the
+   way the site's previous chat theme read. The min-width keeps a one-word
+   message ("ok") wide enough that the timestamp still fits on that line instead
+   of being pushed onto its own. System messages pass "right" and are untouched.
+   Scoped to bodies that actually render a timestamp: the timestamp span is the
+   t:else of the typing-indicator branch, so a typing bubble has none, and
+   without this `has-timestamp` gate it would reserve the 80px min-width and
+   come out wider than the animated dots need. */
 .text.timestamp-float-auto.has-timestamp {
-    position: relative;
-    padding-bottom: 1.25rem;
     min-width: 5rem;
 }
 .text a {
@@ -104,20 +99,24 @@ This is a subcomponent used by UserMessage and SystemMessage.
 
 /* Deliberately AFTER the base rule above, not before it: this override already
    wins on specificity, but relying on that alone means a future simplification
-   that drops `.text` from the selector silently restores `margin-top: 1.5rem`
-   — 24px of dead space inside a 20px band.
-   `white-space: nowrap` because the box is shrink-to-fit with `left: auto`: a
-   longer relative time ("about 2 months") plus the read ticks would otherwise
-   wrap upward into the message text while `bottom` stayed pinned, or resolve
-   `left` negative and paint outside the bubble. Nowrap turns a possible
-   overlap into a predictable overhang. */
+   that drops `.text` from the selector silently restores `margin-top: 1.5rem`,
+   which is what pushed the timestamp off the text line in the first place.
+   The float is what puts the timestamp on the last line and right-aligns it,
+   and it is also why text can never collide with it: a float reserves its own
+   space in the line box, so the text wraps around it rather than under it.
+   `line-height` matches the MESSAGE TEXT's line box (16px * 1.6 = 25.6px), not
+   the timestamp's own 12px font — a float is positioned against the top of the
+   current line box, so a short box would ride high above the text baseline.
+   Matching the text's line height is what lands it ON the line.
+   `white-space: nowrap` keeps a longer relative time ("about 2 months") plus
+   the read ticks from wrapping into a second line inside the float. */
 .text.timestamp-float-auto > .timestamp-float {
-    position: absolute;
-    right: 0.5rem;
-    bottom: 0.25rem;
-    float: none;
-    margin: 0;
-    line-height: 1;
+    float: right;
+    /* The right margin is on top of .text's own 0.5rem padding: the ticks are a
+       tall narrow glyph with almost no side bearing, so at the padding edge
+       alone they read as touching the bubble. */
+    margin: 0 0.25rem 0 1.5rem;
+    line-height: 1.6rem;
     white-space: nowrap;
 }
 
