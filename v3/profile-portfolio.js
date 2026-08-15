@@ -24,9 +24,12 @@
  *     as the Videos block already was. Without this, every text-only case study
  *     shows an empty "Images" heading.
  *
- * Coexistence: while the legacy embed still exists, whichever runs first renders
- * the cards and the other one skips rendering (see `alreadyRendered`). That makes
- * this safe to deploy BEFORE the embed is removed — it can never double-render.
+ * Coexistence: the legacy on-canvas embed has NO guard of its own, so if this
+ * script rendered first the embed would still render a second set of cards on top.
+ * Therefore this script STANDS DOWN completely whenever the legacy embed is still
+ * present on the page (`legacyEmbedPresent`), and takes over only once the embed
+ * has been deleted in the Designer. That makes it safe to install before the
+ * cutover; the empty-Images fix lands with the cutover, not before.
  */
 (function () {
   'use strict';
@@ -35,6 +38,21 @@
   var PLACEHOLDER_THUMB =
     'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg';
   var OWNED = 'data-portfolio-rendered';
+
+  /**
+   * True while the legacy on-canvas Code Embed is still installed. It is an
+   * inline <script> (no src) that calls Get_my_portfolios. Detecting it lets this
+   * script stand down rather than double-render, since the embed has no guard.
+   */
+  function legacyEmbedPresent() {
+    var inline = document.querySelectorAll('script:not([src])');
+    for (var i = 0; i < inline.length; i++) {
+      if (inline[i].textContent && inline[i].textContent.indexOf('Get_my_portfolios') !== -1) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   function pick(attrSelector, classSelector, scope) {
     var root = scope || document;
@@ -233,12 +251,14 @@
 
     if (!wrapper || !template) return;
 
-    // Cutover guard: if the legacy embed is still installed and has already
-    // rendered, do not render a second set of cards. Claim ownership otherwise.
-    var alreadyRendered =
-      wrapper.hasAttribute(OWNED) ||
-      wrapper.querySelector('.portfolio_card:not(.hidden)') !== null;
-    if (alreadyRendered) return;
+    // Cutover guard. The legacy embed does not check for us, so "whoever runs
+    // first wins" is NOT safe: it would append a second set of cards. Stand down
+    // entirely while the embed is still on the page.
+    if (legacyEmbedPresent()) {
+      console.info('Portfolio: legacy embed present, CDN renderer standing down');
+      return;
+    }
+    if (wrapper.hasAttribute(OWNED)) return;
     wrapper.setAttribute(OWNED, 'cdn');
 
     closeModal();
