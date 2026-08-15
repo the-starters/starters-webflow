@@ -1236,6 +1236,17 @@ unpinned, `async`/`defer`, or placed after the first legacy `build_profile`
 storage access (it must load synchronously ahead of any authored draft code —
 see below).
 
+It also fails when the authored `[build-profile-success]` state is missing, when
+its bounds cannot be established (an unterminated element is reported rather than
+widened to the rest of the page), or when it contains no link to
+`/starter-onboarding`. Since v1.59.245 nothing auto-redirects after a successful
+submit, so that CTA is the member's only way out of a finished form. The link is
+judged **same-origin against the snapshot's own canonical** (or `og:url`), which
+matches the runtime rule in `v3/build-profile/submit-diagnostics.js`: relative,
+root-relative, and protocol-relative same-host hrefs all pass, while a production
+capture whose CTA points at the staging host fails. A snapshot that declares no
+origin can only satisfy the check with a relative href.
+
 Run its focused test with:
 
 ```sh

@@ -16,58 +16,141 @@ const DRAFT_IDENTITY_GUARD_SRC_RE =
 
 const AUTHORITATIVE_ENDPOINT_RE = /build_profile\/starter\/update/
 
-const SUCCESS_STATE_RE = /<(\w+)\b[^>]*\bbuild-profile-success\b[^>]*>/i
 const ONBOARDING_PATH = '/starter-onboarding'
-// The hosts these pages are actually served from. An href resolving anywhere
-// else is not a way forward through the funnel, whatever its path says.
-const STARTERS_ORIGINS = [
-  'https://www.thestarters.com',
-  'https://thestarters.com',
-  'https://the-starters-3-0.webflow.io',
-]
+
+// A real opening tag: name, then a well-formed attribute list. Matching through
+// this rather than `<\w+[^>]*attr[^>]*>` is what keeps a `<div …>` written inside
+// a comment or a script string from being mistaken for markup.
+const OPEN_TAG_RE =
+  /<([a-zA-Z][\w-]*)((?:\s+[^\s"'>/=]+(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'>`]+))?)*)\s*(\/?)>/g
+
+// The attribute NAME, not a substring of some other attribute's value.
+const SUCCESS_ATTR_RE = /(?:^|\s)build-profile-success(?=[\s=]|$)/
+
+// Stands in for the page's own origin when the snapshot does not declare one.
+// Nothing absolute can resolve to it, so an unverifiable absolute href fails.
+const UNKNOWN_ORIGIN = 'https://snapshot.invalid'
 
 /**
- * The outer HTML of the element whose opening tag starts at `startIndex`,
- * matched by nesting depth. Falls back to the rest of the document when the
- * close tag is missing, which can only make the CTA check more permissive.
+ * Comments and script/style bodies removed. Everything downstream that counts
+ * tags or looks for the success state works on this, so a `<div` inside a
+ * string literal cannot skew the depth count or fake an opening tag.
  */
-function elementHtml(html, tagName, startIndex) {
-  const re = new RegExp(`<${tagName}\\b|</${tagName}\\s*>`, 'gi')
+function markupOnly(html) {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, ' ')
+}
+
+function attrValue(attributes, name) {
+  const re = new RegExp(
+    `(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`,
+    'i',
+  )
+  const match = re.exec(attributes)
+  if (!match) return null
+  return match[1] !== undefined ? match[1] : match[2] !== undefined ? match[2] : match[3]
+}
+
+/**
+ * The origin this snapshot was captured from, taken from its own canonical link
+ * (or og:url). The audit is same-origin per snapshot: a production capture whose
+ * CTA points at the staging host is a real defect, and a rule that accepted any
+ * known Starters origin would wave it through.
+ */
+function snapshotOrigin(markup) {
+  let canonical = null
+  let ogUrl = null
+  OPEN_TAG_RE.lastIndex = 0
+  let match
+  while ((match = OPEN_TAG_RE.exec(markup))) {
+    const tag = match[1].toLowerCase()
+    const attributes = match[2] || ''
+    if (!canonical && tag === 'link') {
+      const rel = attrValue(attributes, 'rel')
+      if (rel && rel.trim().toLowerCase() === 'canonical') {
+        canonical = attrValue(attributes, 'href')
+      }
+    } else if (!ogUrl && tag === 'meta') {
+      const property = attrValue(attributes, 'property') || attrValue(attributes, 'name')
+      if (property && property.trim().toLowerCase() === 'og:url') {
+        ogUrl = attrValue(attributes, 'content')
+      }
+    }
+  }
+  for (const value of [canonical, ogUrl]) {
+    if (!value) continue
+    try {
+      return new URL(value).origin
+    } catch {
+      continue
+    }
+  }
+  return null
+}
+
+function findSuccessTag(markup) {
+  OPEN_TAG_RE.lastIndex = 0
+  let match
+  while ((match = OPEN_TAG_RE.exec(markup))) {
+    if (SUCCESS_ATTR_RE.test(match[2] || '')) {
+      return { tagName: match[1], index: match.index, selfClosing: match[3] === '/' }
+    }
+  }
+  return null
+}
+
+/**
+ * The outer HTML of the element opening at `startIndex`, or null when its bounds
+ * cannot be established. FAILS CLOSED on purpose: widening to the rest of the
+ * document would let an onboarding link anywhere on the page rescue an empty
+ * success state, which is the opposite of what this check is for.
+ */
+function elementHtml(markup, tagName, startIndex) {
+  const name = escapeRegExp(tagName)
+  const re = new RegExp(`<${name}\\b|</${name}\\s*>`, 'gi')
   re.lastIndex = startIndex
   let depth = 0
   let match
-  while ((match = re.exec(html))) {
+  while ((match = re.exec(markup))) {
     if (match[0][1] === '/') {
       depth -= 1
-      if (depth === 0) return html.slice(startIndex, re.lastIndex)
+      if (depth === 0) return markup.slice(startIndex, re.lastIndex)
+      if (depth < 0) return null
     } else {
       depth += 1
     }
   }
-  return html.slice(startIndex)
+  return null
 }
 
-function resolvesToOnboarding(href, pagePath) {
+/**
+ * Same-origin, matching the runtime rule in
+ * v3/build-profile/submit-diagnostics.js. Relative, root-relative, and
+ * protocol-relative same-host hrefs all resolve; anything landing on another
+ * host does not, whatever its path says.
+ */
+function resolvesToOnboarding(href, pagePath, origin) {
   if (!href) return false
-  const hosts = STARTERS_ORIGINS.map((origin) => new URL(origin).host)
-  for (const origin of STARTERS_ORIGINS) {
-    let url
-    try {
-      url = new URL(href, origin + pagePath)
-    } catch {
-      continue
-    }
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') continue
-    if (!hosts.includes(url.host)) continue
-    const path = url.pathname.length > 1 ? url.pathname.replace(/\/$/, '') : url.pathname
-    if (path === ONBOARDING_PATH) return true
+  const base = (origin || UNKNOWN_ORIGIN) + pagePath
+  let url
+  let page
+  try {
+    url = new URL(href, base)
+    page = new URL(base)
+  } catch {
+    return false
   }
-  return false
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return false
+  if (url.host !== page.host) return false
+  const path = url.pathname.length > 1 ? url.pathname.replace(/\/$/, '') : url.pathname
+  return path === ONBOARDING_PATH
 }
 
-function hasOnboardingCta(successHtml, pagePath) {
+function hasOnboardingCta(successHtml, pagePath, origin) {
   const anchors = [...successHtml.matchAll(/<a\b[^>]*\bhref\s*=\s*["']([^"']*)["'][^>]*>/gi)]
-  return anchors.some((anchor) => resolvesToOnboarding(anchor[1], pagePath))
+  return anchors.some((anchor) => resolvesToOnboarding(anchor[1], pagePath, origin))
 }
 
 const FORM_SUBMIT_SELECTOR_RE =
@@ -214,15 +297,23 @@ function auditBuildProfileHtml(pagePath, html) {
   // Since v1.59.245 nothing auto-redirects after a successful submit: the
   // authored CTA inside the success state is the member's only way forward, so
   // its absence strands them on a finished form.
-  const successMatch = SUCCESS_STATE_RE.exec(html)
-  if (!successMatch) {
+  const markup = markupOnly(html)
+  const successTag = findSuccessTag(markup)
+  if (!successTag) {
     findings.push('[build-profile-success] state is missing')
-  } else if (
-    !hasOnboardingCta(elementHtml(html, successMatch[1], successMatch.index), pagePath)
-  ) {
-    findings.push(
-      `[build-profile-success] must contain a link to ${ONBOARDING_PATH}; it is the only way out of a successful submit`,
-    )
+  } else {
+    const successHtml = successTag.selfClosing
+      ? ''
+      : elementHtml(markup, successTag.tagName, successTag.index)
+    if (successHtml === null) {
+      findings.push(
+        `[build-profile-success] bounds could not be established (no matching </${successTag.tagName}>); the success state is unverifiable`,
+      )
+    } else if (!hasOnboardingCta(successHtml, pagePath, snapshotOrigin(markup))) {
+      findings.push(
+        `[build-profile-success] must contain a same-origin link to ${ONBOARDING_PATH}; it is the only way out of a successful submit`,
+      )
+    }
   }
 
   return {

@@ -21,11 +21,18 @@ const successState = `
     </div>
   `
 
+// Published Webflow pages declare their own origin. The audit resolves CTA hrefs
+// against it, so absolute links are judged against the host the snapshot was
+// actually captured from.
+const PRODUCTION_ORIGIN = 'https://www.thestarters.com'
+const STAGING_ORIGIN = 'https://the-starters-3-0.webflow.io'
+
 function pageHtml({
   engines = pinnedEngine,
   guard = pinnedDraftGuard,
   submitOwner = 'click',
   success = successState,
+  canonical = `${PRODUCTION_ORIGIN}/build-profile/consult`,
 } = {}) {
   const handler =
     submitOwner === 'click'
@@ -44,6 +51,7 @@ function pageHtml({
       `
 
   return `
+    ${canonical ? `<link rel="canonical" href="${canonical}">` : ''}
     ${guard}
     ${engines}
     <form build-profile-form>
@@ -201,7 +209,7 @@ test('a success state with no onboarding CTA fails the audit', () => {
     }),
   )
   assert.equal(noCta.ok, false)
-  assert.match(noCta.findings.join('\n'), /must contain a link to \/starter-onboarding/)
+  assert.match(noCta.findings.join('\n'), /must contain a same-origin link to \/starter-onboarding/)
 
   // A link that goes somewhere else is not the CTA either.
   const wrongTarget = auditBuildProfileHtml(
@@ -212,7 +220,7 @@ test('a success state with no onboarding CTA fails the audit', () => {
     }),
   )
   assert.equal(wrongTarget.ok, false)
-  assert.match(wrongTarget.findings.join('\n'), /must contain a link to \/starter-onboarding/)
+  assert.match(wrongTarget.findings.join('\n'), /must contain a same-origin link to \/starter-onboarding/)
 })
 
 test('the onboarding CTA is accepted in every href shape the pages author', () => {
@@ -221,8 +229,8 @@ test('the onboarding CTA is accepted in every href shape the pages author', () =
     '/starter-onboarding/',
     '/starter-onboarding?ref=cta',
     '../starter-onboarding',
-    'https://www.thestarters.com/starter-onboarding',
-    'https://the-starters-3-0.webflow.io/starter-onboarding',
+    `${PRODUCTION_ORIGIN}/starter-onboarding`,
+    '//www.thestarters.com/starter-onboarding',
   ]) {
     const result = auditBuildProfileHtml(
       '/build-profile/consult',
@@ -230,15 +238,6 @@ test('the onboarding CTA is accepted in every href shape the pages author', () =
     )
     assert.equal(result.ok, true, `${href}: ${result.findings.join('; ')}`)
   }
-
-  // Off-site, and a nested CTA inside the real success markup shape.
-  const offSite = auditBuildProfileHtml(
-    '/build-profile/consult',
-    pageHtml({
-      success: '<div build-profile-success><a href="https://evil.example/starter-onboarding">Go</a></div>',
-    }),
-  )
-  assert.equal(offSite.ok, false)
 
   const nested = auditBuildProfileHtml(
     '/build-profile/consult',
@@ -255,6 +254,86 @@ test('the onboarding CTA is accepted in every href shape the pages author', () =
   assert.equal(nested.ok, true, nested.findings.join('; '))
 })
 
+test('the CTA rule is same-origin per snapshot, matching the runtime module', () => {
+  // A production capture whose CTA points at staging is a real defect: members
+  // on the live site would be sent to another host.
+  const productionToStaging = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      canonical: `${PRODUCTION_ORIGIN}/build-profile/consult`,
+      success: `<div build-profile-success><a href="${STAGING_ORIGIN}/starter-onboarding">Go</a></div>`,
+    }),
+  )
+  assert.equal(productionToStaging.ok, false)
+  assert.match(productionToStaging.findings.join('\n'), /same-origin link/)
+
+  // The mirror image: on a staging capture the staging href is correct and the
+  // production one is not.
+  const stagingToStaging = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      canonical: `${STAGING_ORIGIN}/build-profile/consult`,
+      success: `<div build-profile-success><a href="${STAGING_ORIGIN}/starter-onboarding">Go</a></div>`,
+    }),
+  )
+  assert.equal(stagingToStaging.ok, true, stagingToStaging.findings.join('; '))
+
+  const stagingToProduction = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      canonical: `${STAGING_ORIGIN}/build-profile/consult`,
+      success: `<div build-profile-success><a href="${PRODUCTION_ORIGIN}/starter-onboarding">Go</a></div>`,
+    }),
+  )
+  assert.equal(stagingToProduction.ok, false)
+
+  // Wholly unrelated hosts never pass.
+  for (const canonical of [`${PRODUCTION_ORIGIN}/build-profile/consult`, null]) {
+    const offSite = auditBuildProfileHtml(
+      '/build-profile/consult',
+      pageHtml({
+        canonical,
+        success:
+          '<div build-profile-success><a href="https://evil.example/starter-onboarding">Go</a></div>',
+      }),
+    )
+    assert.equal(offSite.ok, false, String(canonical))
+  }
+})
+
+test('a snapshot with no declared origin still accepts relative CTAs and rejects absolute ones', () => {
+  const relative = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      canonical: null,
+      success: '<div build-profile-success><a href="/starter-onboarding">Go</a></div>',
+    }),
+  )
+  assert.equal(relative.ok, true, relative.findings.join('; '))
+
+  // Nothing can vouch for an absolute host when the snapshot declares no origin.
+  const absolute = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      canonical: null,
+      success: `<div build-profile-success><a href="${PRODUCTION_ORIGIN}/starter-onboarding">Go</a></div>`,
+    }),
+  )
+  assert.equal(absolute.ok, false)
+})
+
+test('og:url stands in for a missing canonical link', () => {
+  const html = pageHtml({
+    canonical: null,
+    success: `<div build-profile-success><a href="${STAGING_ORIGIN}/starter-onboarding">Go</a></div>`,
+  }).replace(
+    '<form build-profile-form>',
+    `<meta property="og:url" content="${STAGING_ORIGIN}/build-profile/consult"><form build-profile-form>`,
+  )
+  const result = auditBuildProfileHtml('/build-profile/consult', html)
+  assert.equal(result.ok, true, result.findings.join('; '))
+})
+
 test('the CTA search is scoped to the success state, not the whole page', () => {
   // A link to onboarding elsewhere on the page does not rescue an empty success
   // state — the member never sees it from there.
@@ -266,7 +345,74 @@ test('the CTA search is scoped to the success state, not the whole page', () => 
     }),
   )
   assert.equal(result.ok, false)
-  assert.match(result.findings.join('\n'), /must contain a link to \/starter-onboarding/)
+  assert.match(result.findings.join('\n'), /must contain a same-origin link to \/starter-onboarding/)
+})
+
+test('an unterminated success state fails closed instead of widening to the page', () => {
+  // No closing tag: the element's bounds cannot be established. Widening to the
+  // rest of the document would let the link below rescue it.
+  const result = auditBuildProfileHtml(
+    '/build-profile/consult',
+    `${pageHtml({ success: '<div build-profile-success class="w-form-done"><h3>Thanks</h3>' })}
+     <a href="/starter-onboarding">elsewhere entirely</a>`,
+  )
+  assert.equal(result.ok, false)
+  assert.match(result.findings.join('\n'), /bounds could not be established/)
+})
+
+test('a nested same-tag element does not end the success state early', () => {
+  const result = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success: `
+        <div build-profile-success>
+          <div><div><h3>Thanks</h3></div></div>
+          <a href="/starter-onboarding">Start onboarding</a>
+        </div>
+      `,
+    }),
+  )
+  assert.equal(result.ok, true, result.findings.join('; '))
+})
+
+test('markup inside comments and scripts cannot fake or skew the success state', () => {
+  // A commented-out success state is not a success state.
+  const commented = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success:
+        '<!-- <div build-profile-success><a href="/starter-onboarding">Go</a></div> -->',
+    }),
+  )
+  assert.equal(commented.ok, false)
+  assert.match(commented.findings.join('\n'), /\[build-profile-success\] state is missing/)
+
+  // An unbalanced `<div` inside a script string must not skew the depth count
+  // and swallow the real closing tag.
+  const withScriptNoise = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success: `
+        <div build-profile-success>
+          <script>var tpl = '<div class="unclosed">'</script>
+          <a href="/starter-onboarding">Start onboarding</a>
+        </div>
+      `,
+    }),
+  )
+  assert.equal(withScriptNoise.ok, true, withScriptNoise.findings.join('; '))
+})
+
+test('the success attribute must be an attribute name, not another value', () => {
+  const result = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success:
+        '<div data-state="build-profile-success"><a href="/starter-onboarding">Go</a></div>',
+    }),
+  )
+  assert.equal(result.ok, false)
+  assert.match(result.findings.join('\n'), /\[build-profile-success\] state is missing/)
 })
 
 test('the no-op failover probe is allowed when exactly one pinned engine is present', () => {
