@@ -5021,7 +5021,7 @@
             }
           } else {
             say('Submitted! Your opportunity is now live.')
-            location.href = '/opportunities-brands-view'
+            location.href = '/opportunities'
           }
         } catch (err) {
           const receipt = diagnosticForError(err)

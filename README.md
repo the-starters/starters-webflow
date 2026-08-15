@@ -459,6 +459,12 @@ so loading both scripts does not submit twice. Keep the existing load order:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities---create.js"></script>
 ```
 
+After a successful standalone-page create request, the controller returns the
+member to the published merged `/opportunities` feed. It ignores duplicate
+submits while member lookup or the create request is pending, and it does not
+redirect until the create request succeeds. The Brand-feed modal keeps its
+authored inline success screen instead of redirecting.
+
 The form may keep its native submit control; an optional
 `data-opp-submit="create"` control inside the form is still owned by the form's
 submit handler. The Webflow form display name, generated ID, and styling classes

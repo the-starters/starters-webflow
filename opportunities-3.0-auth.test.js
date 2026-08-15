@@ -166,6 +166,12 @@ async function loadBridge(
         this.detail = options?.detail
       }
     },
+    Event: class Event {
+      constructor(type, options) {
+        this.type = type
+        this.bubbles = options?.bubbles
+      }
+    },
     FormData,
     Headers,
     MutationObserver: class MutationObserver {
@@ -5183,6 +5189,91 @@ test('merged feed for a paid brand: brand wrapper + only the brand feed activate
   assert.deepEqual(inits, [roots.brand], 'only the brand root is activated')
   assert.equal(bridge.window.__opp30CloseWired, true, 'brand close-opportunity modal wired')
   assert.equal(bridge.window.__opp30CreatePage, true, 'brand create form binder ran')
+})
+
+test('standalone create owner sends one request before returning to the published feed', async () => {
+  let submit
+  const input = (name, value, attrs = {}) => {
+    const field = el('input', { name, ...attrs })
+    field.value = value
+    field.addEventListener = () => {}
+    field.dispatchEvent = () => true
+    field.setCustomValidity = () => {}
+    return field
+  }
+  const title = input('Opportunity-title', 'V3 canary')
+  const description = input('Description', 'Production email automation canary')
+  const requirements = input('Requirements', 'Verified Brand owner')
+  const category = input('Category-option', '', {
+    'data-opp30-selected-values': '["Email Automation"]',
+  })
+  const projectType = input('Project-Type', 'One Time', {
+    id: 'One-Time',
+    checked: '',
+  })
+  projectType.id = 'One-Time'
+  const duration = input('Duration', '≤ 1 month', { checked: '' })
+  const budget = input('One-Time-Budget', '1000')
+  const button = input('', 'Submit', { type: 'submit' })
+  const form = el('form', { 'data-opp-form': 'create' }, [
+    title,
+    description,
+    requirements,
+    category,
+    projectType,
+    duration,
+    budget,
+    button,
+  ])
+  form.addEventListener = (type, listener) => {
+    if (type === 'submit') submit = listener
+  }
+
+  const createResponse = deferred()
+  const requests = []
+  const bridge = await loadBridge(
+    async (request) => {
+      const url = String(request)
+      requests.push(url)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/opportunities/create')) return createResponse.promise
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/opportunities---create',
+      querySelector: (selector) => selector === '[data-opp-form="create"]' ? form : null,
+      querySelectorAll: (selector) =>
+        selector === '[data-opp-form="create"], [data-modal-target="edit-opportunity"] form'
+          ? [form]
+          : [],
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => typeof submit === 'function'))
+  const event = {
+    preventDefault() {},
+    stopImmediatePropagation() {},
+    stopPropagation() {},
+  }
+  const firstSubmit = submit(event)
+  const duplicateSubmit = submit(event)
+  assert.ok(
+    await waitFor(
+      () => requests.filter((url) => url.includes('/brand/opportunities/create')).length === 1,
+    ),
+  )
+  assert.equal(bridge.location.href, 'https://example.test/opportunities---create')
+
+  createResponse.resolve(response({ id: 123 }))
+  await Promise.all([firstSubmit, duplicateSubmit])
+
+  assert.equal(
+    requests.filter((url) => url.includes('/brand/opportunities/create')).length,
+    1,
+  )
+  assert.equal(bridge.location.href, '/opportunities')
 })
 
 test('merged feed re-applies the Talent navbar role after Webflow restores the authored component value', async () => {
