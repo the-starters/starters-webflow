@@ -501,6 +501,13 @@ boolean `build_profile_done`, or a browser without `fetch` all leave the page
 exactly as authored. It needs three page-level embeds installed after the guard;
 see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md).
 
+Two rules were added on 2026-08-14. A visible authored `[build-profile-success]`
+state stands the redirect down, checked at redirect time rather than at boot so it
+also catches a status read that resolves `done` after the member submitted
+mid-flight; the member leaves through the authored CTA instead. And a `pageshow`
+with `persisted === true` re-runs the whole evaluation, so a Back out of
+onboarding no longer restores this page for a member who has since finished it.
+
 ## Starter profile redirect
 
 `starter-profile-redirect.js` is the Talent twin of `brand-profile-redirect.js`:
