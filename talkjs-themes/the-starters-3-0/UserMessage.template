@@ -298,32 +298,30 @@ override some properties for avatars showing/hiding
     width: 1.8rem;
     height: 1.8rem;
     /* Centre the button on its bubble at EVERY bubble height. The vertical
-       offset has to be proportional, never a fixed length. `top` resolves
-       against the bubble (`.message` is `position: relative`), so a constant
-       like the previous `top: 1rem` held the button the same distance below
-       the bubble's TOP edge whatever that bubble's height: it put the button's
-       centre a fixed 28.8px down, which is centred at exactly one bubble
-       height, 57.6px, and wrong at every other by an error that grows without
-       bound as the bubble grows. Measured on the live theme: +12.02px on a
-       33.59px bubble, with the button hanging 9.62px past its bottom edge;
-       -64.77px on a 187.16px one; -90.36px at the narrow breakpoint.
+       offset has to be proportional, never a fixed length: `top` resolves
+       against the bubble (`.message` is `position: relative`), so the previous
+       `top: 1rem` held the button a constant distance below the bubble's TOP
+       edge and put its centre a fixed 28.8px down. That is centred at exactly
+       one bubble height, 57.6px, and wrong at every other by an error that
+       grows with the message — up to 90px on the tallest bubble measured.
 
        `top: 50%` puts the button's top edge on the bubble's midpoint and
-       `translateY(-50%)` lifts it by half its own height, which is what
-       actually centres it. The 50% resolves against the bubble's padding box
-       while the thing being centred on is its border box, but the bubble's 1px
-       border is symmetric top and bottom, so those two offsets cancel and the
-       residual is 0.00px.
+       `translateY(-50%)` lifts it by half its own height. The 50% resolves
+       against the bubble's PADDING box while the box being centred on is its
+       border box, so this is exact only while the bubble's top and bottom
+       borders are equal; an asymmetric border would decentre it by half the
+       difference. Today the bubble has no border to speak of: GlobalCSS
+       overrides this file's `border-width: 1px` with `border: none` at higher
+       specificity, so the two boxes coincide and the residual is 0.00px.
 
        The margin is horizontal-only, and both halves of that matter. It does
        NOT enlarge the hit area — a margin only offsets the box, whatever this
        comment used to claim — but `left`/`right: -2.25rem` below resolve
        against the MARGIN box, so this -0.1rem is part of the horizontal
        placement and dropping it outright would move the button 1.6px sideways.
-       A vertical component is not merely redundant: `margin-top` applies after
-       `top` and the transform cannot see it, so keeping the old -0.1rem on all
-       four sides would sit every button 1.6px high — outside the 1px tolerance
-       this rule exists to meet.
+       A vertical component is worse than redundant: `margin-top` applies after
+       `top` and the transform cannot see it, so the old -0.1rem on all four
+       sides would sit every button 1.6px high, outside the 1px tolerance.
 
        Keep this rule character-identical to the one in the other Chat Theme,
        so a later edit to one is an obvious omission in the other. */
