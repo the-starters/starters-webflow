@@ -13,9 +13,11 @@
  * - [wf-algolia-sort-index]
  *
  * It also rejects and strips competing credentialed clients and unexpected
- * index resources. Unknown hosts, missing configuration, shared search keys,
- * shared indexes, and legacy dev index names fail closed before wf-algolia can
- * start.
+ * index resources. On approved hosts, it remaps only exact, unmarked
+ * Freelancers3.0-dev browse and tab-count attributes for the V3 cutover.
+ * Unknown hosts, missing configuration, shared search keys, shared indexes,
+ * legacy dev names in configuration, and legacy near matches fail closed
+ * before wf-algolia can start.
  */
 ;(function () {
   'use strict'

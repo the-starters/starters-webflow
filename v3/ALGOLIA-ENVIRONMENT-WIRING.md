@@ -134,7 +134,8 @@ Xano routes are published.
   and verify loaded bytes and runtime attributes.
 
 Unknown hosts, missing values, an unknown managed resource, shared keys, shared
-indexes, and legacy dev indexes remove all client credentials and all
-non-shared index attributes. On approved hosts, the unmarked `LearnContent`
-index and its UI stay unchanged while the host-owned key supplies its
-search-only access.
+indexes, and legacy dev indexes in public configuration remove all client
+credentials and all non-shared index attributes. On approved hosts, only the
+exact legacy `Freelancers3.0-dev` markup described above is remapped; legacy
+near matches still fail closed. The unmarked `LearnContent` index and its UI
+stay unchanged while the host-owned key supplies its search-only access.
