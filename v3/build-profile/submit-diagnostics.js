@@ -1,7 +1,7 @@
 /**
  * Privacy-safe outcome diagnostics for Build Profile.
  *
- * @release v1.59.245
+ * @release v1.59.250
  *
  * Elvin's inline writer remains the sole mutation owner. This controller only
  * observes the authored submit click plus authored success/error states. It
@@ -49,7 +49,7 @@
   ]
   var ALLOWED_PATHS = ['/build-profile/consult', '/build-profile/full-profile']
   var CONTROLLER_VERSION = 'build-profile-submit-outcome-v3'
-  var RELEASE = 'v1.59.245'
+  var RELEASE = 'v1.59.250'
   var HELPER_TIMEOUT_MS = 2000
   var ONBOARDING_CTA_PATH = '/starter-onboarding'
   var LOG_PREFIX = '[starters build-profile-submit]'
