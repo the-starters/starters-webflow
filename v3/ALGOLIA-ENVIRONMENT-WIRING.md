@@ -75,8 +75,8 @@ another script carries `data-app-id` or `data-search-key`:
 ></script>
 ```
 
-Mark each managed browse section. Keep existing wf-algolia attributes and add
-only the resource attribute:
+Mark each new managed browse section. Keep existing wf-algolia attributes and
+add only the resource attribute:
 
 ```html
 <div
@@ -94,10 +94,16 @@ only the resource attribute:
 
 Do not mark or rename the four shared indexes. Every unmarked
 `wf-algolia-index` must match `LearnContent`, `cancelled-consult-1`,
-`cancelled-consult-2`, or `cancelled-hire-1` exactly. Any other unmarked index
-blocks all clients. wf-algolia version 1.0.4 creates one runtime client from the
-first `script[data-app-id]`, so each host-owned search key must also have
-search-only access to the shared indexes.
+`cancelled-consult-2`, or `cancelled-hire-1` exactly. During the current V3
+cutover, the resolver also treats the exact unmarked legacy index
+`Freelancers3.0-dev` as the Starter resource and rewrites it to the host-owned
+Starter index. It also rewrites the exact legacy `data-tab-count-for` value used
+by Explore, and keeps both attributes resolver-managed on repeated boots. This
+covers the sitewide Explore and Expert Card component attributes without a
+broad Designer rewrite. Near matches and every other unmarked index still block
+all clients. wf-algolia version 1.0.4 creates one
+runtime client from the first `script[data-app-id]`, so each host-owned search
+key must also have search-only access to the shared indexes.
 Managed quiz code reads the exact `LearnContent` index through
 `getSharedSearchConfig('learnContent')`; it does not accept a legacy window or
 DOM override while the resolver is active.
@@ -128,7 +134,8 @@ Xano routes are published.
   and verify loaded bytes and runtime attributes.
 
 Unknown hosts, missing values, an unknown managed resource, shared keys, shared
-indexes, and legacy dev indexes remove all client credentials and all
-non-shared index attributes. On approved hosts, the unmarked `LearnContent`
-index and its UI stay unchanged while the host-owned key supplies its
-search-only access.
+indexes, and legacy dev indexes in public configuration remove all client
+credentials and all non-shared index attributes. On approved hosts, only the
+exact legacy `Freelancers3.0-dev` markup described above is remapped; legacy
+near matches still fail closed. The unmarked `LearnContent` index and its UI
+stay unchanged while the host-owned key supplies its search-only access.
