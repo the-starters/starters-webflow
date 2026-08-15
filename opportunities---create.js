@@ -227,7 +227,7 @@
           const created = await window.Opp30.API.brandOppCreate(payload)
           log('created', created)
           say('Submitted! Your opportunity is now live.')
-          location.href = '/opportunities-brands-view'
+          location.href = '/opportunities'
         } catch (err) {
           console.error('[opp30:create]', err)
           say((err && err.data && err.data.message) || 'Something went wrong. Please try again.')
