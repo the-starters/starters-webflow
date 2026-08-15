@@ -172,12 +172,13 @@ override some properties for avatars showing/hiding
 - balloons get whatever width is left after the avatar columns on both sides
 - we could avoid some of this math at the cost of inserting another div, but we prefer a lighter DOM.
 */
-/* Only the first row of a run of messages from the same sender draws an avatar.
-   The rows that drop it still have to reserve the avatar's width, or their
-   bubbles slide into the avatar column and the group reads as a ragged
-   stagger instead of one tidy edge. A message-row avatar is 2rem (GlobalCSS
-   overrides the Avatar component's 3.25rem for this context) plus the bubble's
-   own 0.50rem gap, so the offset an ungrouped row ends up with is 2.5rem.
+/* Only the first row of a Message Group — a run of messages from the same
+   sender within one calendar day — draws an avatar. The rows that drop it
+   still have to reserve the avatar's width, or their bubbles slide into the
+   avatar column and the group reads as a ragged stagger instead of one tidy
+   edge. A message-row avatar is 2rem (GlobalCSS overrides the Avatar
+   component's 3.25rem for this context) plus the bubble's own 0.50rem gap, so
+   the offset an ungrouped row ends up with is 2.5rem.
 
    The reservation is a margin on the BUBBLE, not padding on the row, and that
    distinction is load-bearing: `max-width: 50%` below resolves against the
