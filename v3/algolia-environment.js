@@ -30,6 +30,7 @@
   var RESOURCE_SELECTOR = '[data-starters-v3-algolia-resource]'
   var INDEX_SELECTOR = '[wf-algolia-index]'
   var SORT_SELECTOR = '[wf-algolia-sort-index]'
+  var LEGACY_STARTERS_INDEX = 'Freelancers3.0-dev'
   var LEARN_CONTENT_INDEX = 'LearnContent'
   var SHARED_INDEXES = [
     LEARN_CONTENT_INDEX,
@@ -172,6 +173,13 @@
     return SHARED_INDEXES.indexOf(String(indexName || '')) !== -1
   }
 
+  function legacyStartersElement(element) {
+    return (
+      !clean(element.getAttribute('data-starters-v3-algolia-resource')) &&
+      clean(element.getAttribute('wf-algolia-index')) === LEGACY_STARTERS_INDEX
+    )
+  }
+
   function validateDocument(documentObject) {
     var managedClients = elements(documentObject, CLIENT_SELECTOR)
     if (managedClients.length !== 1) {
@@ -188,6 +196,7 @@
       var element = indexedElements[index]
       var resource = clean(element.getAttribute('data-starters-v3-algolia-resource'))
       if (resource === 'starters' || resource === 'opportunities') continue
+      if (legacyStartersElement(element)) continue
       if (!resource && sharedIndex(element.getAttribute('wf-algolia-index'))) continue
       return { ok: false, reason: 'unexpected_index_resource' }
     }
@@ -237,6 +246,12 @@
     each(documentObject, CLIENT_SELECTOR, function (element) {
       element.setAttribute('data-app-id', resolution.settings.appId)
       element.setAttribute('data-search-key', resolution.settings.searchKey)
+      element.setAttribute('data-starters-v3-algolia-environment', resolution.environment)
+      element.removeAttribute('data-starters-v3-algolia-blocked')
+    })
+    each(documentObject, INDEX_SELECTOR, function (element) {
+      if (!legacyStartersElement(element)) return
+      element.setAttribute('wf-algolia-index', resolution.settings.startersIndex)
       element.setAttribute('data-starters-v3-algolia-environment', resolution.environment)
       element.removeAttribute('data-starters-v3-algolia-blocked')
     })

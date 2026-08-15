@@ -75,8 +75,8 @@ another script carries `data-app-id` or `data-search-key`:
 ></script>
 ```
 
-Mark each managed browse section. Keep existing wf-algolia attributes and add
-only the resource attribute:
+Mark each new managed browse section. Keep existing wf-algolia attributes and
+add only the resource attribute:
 
 ```html
 <div
@@ -94,10 +94,14 @@ only the resource attribute:
 
 Do not mark or rename the four shared indexes. Every unmarked
 `wf-algolia-index` must match `LearnContent`, `cancelled-consult-1`,
-`cancelled-consult-2`, or `cancelled-hire-1` exactly. Any other unmarked index
-blocks all clients. wf-algolia version 1.0.4 creates one runtime client from the
-first `script[data-app-id]`, so each host-owned search key must also have
-search-only access to the shared indexes.
+`cancelled-consult-2`, or `cancelled-hire-1` exactly. During the current V3
+cutover, the resolver also treats the exact unmarked legacy index
+`Freelancers3.0-dev` as the Starter resource and rewrites it to the host-owned
+Starter index. This covers the sitewide Explore and Expert Card component
+attributes without a broad Designer rewrite. Near matches and every other
+unmarked index still block all clients. wf-algolia version 1.0.4 creates one
+runtime client from the first `script[data-app-id]`, so each host-owned search
+key must also have search-only access to the shared indexes.
 Managed quiz code reads the exact `LearnContent` index through
 `getSharedSearchConfig('learnContent')`; it does not accept a legacy window or
 DOM override while the resolver is active.

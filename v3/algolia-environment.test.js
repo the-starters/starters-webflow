@@ -314,8 +314,33 @@ test('unknown managed resources block the whole managed Algolia surface', () => 
   )
 })
 
-test('an unmarked unexpected index blocks every Algolia client', () => {
+test('the exact legacy Starter index is remapped for unmarked sitewide component elements', () => {
   const runtime = load({ unexpectedIndex: 'Freelancers3.0-dev' })
+  assert.equal(runtime.client.getAttribute('data-search-key'), 'test-public-search-key')
+  assert.equal(
+    runtime.unexpectedIndex.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-staging-test',
+  )
+  assert.equal(runtime.unexpectedIndex.getAttribute('data-starters-v3-algolia-environment'), 'test')
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('the exact legacy Starter index maps to production on both production hosts', () => {
+  for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
+    const runtime = load({ hostname, unexpectedIndex: 'Freelancers3.0-dev' })
+    assert.equal(
+      runtime.unexpectedIndex.getAttribute('wf-algolia-index'),
+      'Freelancers3.0-production',
+    )
+    assert.equal(
+      runtime.unexpectedIndex.getAttribute('data-starters-v3-algolia-environment'),
+      'production',
+    )
+  }
+})
+
+test('an unmarked near-match or arbitrary index blocks every Algolia client', () => {
+  const runtime = load({ unexpectedIndex: 'Freelancers3.0-staging' })
   assert.equal(runtime.client.getAttribute('data-search-key'), null)
   assert.equal(runtime.unexpectedIndex.getAttribute('wf-algolia-index'), null)
   assert.equal(runtime.root.getAttribute('data-v3-algolia-block-reason'), 'unexpected_index_resource')
