@@ -403,6 +403,55 @@ test('markup inside comments and scripts cannot fake or skew the success state',
   assert.equal(withScriptNoise.ok, true, withScriptNoise.findings.join('; '))
 })
 
+test('a tag spelled inside an attribute value cannot skew the success-state bounds', () => {
+  // An extra `<div>` in an attribute value used to inflate the depth count, so
+  // the slice ran past the real closing tag and the link below rescued a success
+  // state that has no CTA of its own.
+  const widened = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success:
+        '<div build-profile-success><p data-tip="click the <div> below">Thanks</p></div><a href="/starter-onboarding">elsewhere</a>',
+    }),
+  )
+  assert.equal(widened.ok, false)
+  assert.match(widened.findings.join('\n'), /must contain a same-origin link to \/starter-onboarding/)
+
+  // The mirror image: a stray `</div>` in an attribute value used to end the
+  // element early and hide the CTA that really is inside it.
+  const truncated = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success:
+        '<div build-profile-success><p data-tip="the </div> below">Thanks</p><a href="/starter-onboarding">Start onboarding</a></div>',
+    }),
+  )
+  assert.equal(truncated.ok, true, truncated.findings.join('; '))
+})
+
+test('the CTA href is read as an attribute, not as text inside another attribute', () => {
+  // `href=` nested in another attribute's value must not donate a phantom target
+  // to an anchor whose real destination is the dashboard.
+  const phantom = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success:
+        '<div build-profile-success><a href="/starter-dashboard" data-analytics="href=\'/starter-onboarding\'">Dashboard</a></div>',
+    }),
+  )
+  assert.equal(phantom.ok, false)
+  assert.match(phantom.findings.join('\n'), /must contain a same-origin link to \/starter-onboarding/)
+
+  // An unquoted href is still a real href.
+  const unquoted = auditBuildProfileHtml(
+    '/build-profile/consult',
+    pageHtml({
+      success: '<div build-profile-success><a href=/starter-onboarding>Start onboarding</a></div>',
+    }),
+  )
+  assert.equal(unquoted.ok, true, unquoted.findings.join('; '))
+})
+
 test('the success attribute must be an attribute name, not another value', () => {
   const result = auditBuildProfileHtml(
     '/build-profile/consult',
