@@ -224,7 +224,8 @@ mark {
   min-width: 20px;
   text-align: center;
   line-height: inherit;
-  font-size: 0.75rem;
+  font-size: 11px;
+  font-weight: 600;
   color: #1E211E;
   background-color: #81D187;
 }
