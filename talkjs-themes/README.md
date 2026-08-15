@@ -80,7 +80,7 @@ node --env-file=.env talkjs-theme-rig/roundtrip-check.mjs --live
 
 # --- now edit the files in this folder, then: ---
 
-# 4. push clones (…-qa) and assert no other theme moved
+# 4. push clones (…-qa): lints the templates, then asserts no other theme moved
 node --env-file=.env talkjs-theme-rig/put-clones.mjs --yes
 
 # 5. visual gate: same conversation, real theme vs clone, in a local rig
@@ -134,11 +134,14 @@ other participant's slug then, caching it for the page's lifetime. A click is
 then a Map read followed immediately by `window.open`.
 
 That is a correctness requirement rather than a speed one, and it constrains
-the theme too: WebKit only honours a popup opened inside the click's own
-synchronous call stack, so a tab opened after the ~2.5s resolver round-trip is
-refused on Safari and iOS — silently, with no error to catch. If you ever add
-another identity surface, it must raise the same action with the same
-`data-member`, so it is served by the same cache entry.
+the theme too. The handler is never in the click's own call stack — TalkJS's UI
+is cross-origin, so the action arrives over postMessage in a later task, on a
+transient activation forwarded to the parent window. WebKit budgets that
+forwarding at about a second, shared with TalkJS's own dispatch, so a tab
+opened after the ~2.5s resolver round-trip is refused on Safari and iOS —
+silently, with no error to catch. If you ever add another identity surface, it
+must raise the same action with the same `data-member`, so it is served by the
+same cache entry and stays a Map read rather than a request.
 
 The two accessible names in this theme (`View <name>'s profile`, on the header
 photo and on the message avatar) exist because those buttons wrap only an
@@ -158,8 +161,12 @@ silently renders its **default** theme instead of erroring in any visible way.
 Write `[slug]`, not `<slug>`, in template comments.
 
 `staging-qa/talkjs-theme-rig/lint-templates.mjs` now refuses to push a theme
-whose comments contain a tag, and `put-geometry-clones.mjs` runs it first. The
-trap cost two debugging rounds before that existed.
+whose comments contain a tag, and **both** push-from-disk scripts —
+`put-clones.mjs` and `put-geometry-clones.mjs` — run it before they build a
+payload. (`restore.mjs` deliberately does not: it replays a snapshot that
+already compiled, and the rollback path must not grow a new way to fail.) The
+trap cost two debugging rounds before the gate existed, and a gate wired into
+only one of the two paths would not have closed it.
 
 ### Reserve the avatar column with margin, never with row padding
 
