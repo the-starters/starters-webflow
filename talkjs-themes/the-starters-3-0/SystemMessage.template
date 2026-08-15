@@ -85,6 +85,10 @@
 }
 
 .consultation-card__status {
+  /* Same inherited nowrap as the title — a long "awaiting response from …"
+     line would otherwise run out of the card. */
+  white-space: normal;
+  overflow-wrap: anywhere;
   margin: 0.5rem 0 0;
   color: #575a56;
   font-size: 0.875rem;
