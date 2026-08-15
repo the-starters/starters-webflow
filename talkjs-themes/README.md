@@ -49,9 +49,13 @@ API's response byte-for-byte (`roundtrip-check.mjs`, below).
 1. **Do not edit these themes in the TalkJS dashboard.** The dashboard's copy is
    overwritten by the next PUT, silently and without a diff. Dashboard editing of
    these two themes is retired; change the files here instead.
-2. **The committed export is the only rollback.** A PUT replaces the whole theme
-   (verified — see "PUT semantics"), and TalkJS keeps no history, so the previous
-   commit of this folder is what "undo" means.
+2. **The committed export is the durable rollback.** A PUT replaces the whole
+   theme (verified — see "PUT semantics") and TalkJS keeps no history, so
+   "undo" means re-pushing content you still hold. There are two layers: a
+   snapshot file, which is faster and captures themes this folder does not
+   track, and this folder, which survives a lost laptop. Neither is optional —
+   the snapshots live in `.scratch/`, outside git, and a recovery plan that
+   depends on one machine's untracked directory is not a plan.
 3. **The API bypasses the dashboard's Test → Publish safeguard.** A PUT lands on
    live instantly. Every change therefore goes to a **clone theme** first
    (`…-qa`), passes the visual gate, and only then to the real names.
