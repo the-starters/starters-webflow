@@ -136,9 +136,17 @@ click before the library can fall through to Webflow's native form API, and a
 `submit` listener still catches real native submits such as pressing Enter. Both
 run before Webflow's delegated submit handler. It deliberately suppresses the
 native Webflow submission because Zapier is no longer the application intake
-path, then posts JSON to Xano's `talent/application/create` endpoint. Xano owns
-the authoritative application row and mirrors it to the Airtable review table
-server-side.
+path, then selects the Xano intake route from the exact browser host:
+
+| Browser host | Xano route | Data environment |
+| --- | --- | --- |
+| `the-starters-3-0.webflow.io` | `talent/application/create-test` | TEST |
+| `thestarters.com` | `talent/application/create` | LIVE |
+| `www.thestarters.com` | `talent/application/create` | LIVE |
+
+An unknown host fails closed before a request starts. Browser input cannot
+select or override the route. Xano owns the authoritative application row and
+mirrors it to the Airtable review table server-side.
 
 Native constraint validation is preserved before the script takes ownership of
 the submit: it calls `reportValidity` on the first invalid control, but only for
@@ -147,9 +155,13 @@ consult/full-profile pair, inactive steps) cannot silently block Complete with
 an unshowable error. When a visible field is invalid the submission is aborted
 and the native validation UI is shown.
 
-After the GitHub release is available, replace the full legacy inline Code
-Embed with the UI loader below. Install both scripts on step 1 only, in this
-order:
+The GitHub-backed source can be merged, tagged, and served through jsDelivr
+before the Xano routes are ready. Do not install this browser change in Webflow
+or run a canary until the Xano TEST route exists and the Talent application data
+model enforces its `data_environment` partition. Staging must never fall back
+to the LIVE route or LIVE data. After those prerequisites pass, replace the
+full legacy inline Code Embed with the UI loader below. Install both scripts on
+step 1 only, in this order:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/talent-application-ui.js"></script>
@@ -488,6 +500,13 @@ contract, a rejected trade, a 401, a 500, an unparseable body, a body without a
 boolean `build_profile_done`, or a browser without `fetch` all leave the page
 exactly as authored. It needs three page-level embeds installed after the guard;
 see [BUILD-PROFILE-REDIRECT-WIRING.md](BUILD-PROFILE-REDIRECT-WIRING.md).
+
+Two rules were added on 2026-08-14. A visible authored `[build-profile-success]`
+state stands the redirect down, checked at redirect time rather than at boot so it
+also catches a status read that resolves `done` after the member submitted
+mid-flight; the member leaves through the authored CTA instead. And a `pageshow`
+with `persisted === true` re-runs the whole evaluation, so a Back out of
+onboarding no longer restores this page for a member who has since finished it.
 
 ## Starter profile redirect
 

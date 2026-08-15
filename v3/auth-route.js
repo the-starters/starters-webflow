@@ -1,7 +1,7 @@
 /**
  * V3 login router.
  *
- * @release v1.59.176
+ * @release v1.59.251
  *
  * Install on the V3 login pages (/login and /starter-login) and /auth-route
  * only. Every V3 login form must redirect to /auth-route so shared Memberstack
@@ -749,7 +749,7 @@
   var api = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/auth-route.test.js drift guard asserts they match.
-    release: 'v1.59.176',
+    release: 'v1.59.251',
     activePlanIds: activePlanIds,
     destinationFor: destinationFor,
     hasCompletedQuiz: hasCompletedQuiz,

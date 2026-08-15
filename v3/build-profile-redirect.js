@@ -1,7 +1,7 @@
 /**
  * /build-profile/* — funnel-position redirect.
  *
- * @release v1.59.176
+ * @release v1.59.251
  *
  * ONE job: keep a Talent member who is PAST the Build-profile step from
  * re-entering it. The product flow is Apply → Build profile (stamps the Xano
@@ -49,6 +49,22 @@
  * security boundary — Memberstack gated content, v3/route-guard.js, and Xano
  * endpoint authorization remain the enforced layers.
  *
+ * STAND DOWN ON THE AUTHORED SUCCESS STATE. If `[build-profile-success]` is
+ * visible, the member has just submitted this form and is looking at the success
+ * copy. Jerico's decision (2026-08-14) is that they leave via the authored
+ * "Start onboarding" CTA, in their own time, so this module must not navigate
+ * out from under them. The check happens at REDIRECT time, not at boot: the race
+ * this closes is precisely a status read that starts before the submit and
+ * resolves "done" after it, which is the one case a boot-time check cannot see.
+ * On /build-profile/select-profile there is no success element at all, so the
+ * lookup is null and behaviour is unchanged.
+ *
+ * BFCACHE. The funnel position is only read at boot, so a Back out of
+ * onboarding restores this page from the bfcache with a member who has since
+ * finished it. A `pageshow` with `persisted === true` re-runs the same
+ * evaluation, through the same budget and fail-open rules. The stand-down
+ * applies there too: a restored page still showing the success state stays put.
+ *
  * Install: one deferred tag on each of the three /build-profile pages, after
  * the sitewide route guard. Diagnostics are staging-only (`*.webflow.io`,
  * localhost, 127.0.0.1, `*.trycloudflare.com`, or `window.STARTERS_DEBUG ===
@@ -82,6 +98,12 @@
   var ONBOARDING_PATH = '/starter-onboarding'
   var DASHBOARD_PATH = '/starter-dashboard'
 
+  // The authored success state on /build-profile/full-profile and
+  // /build-profile/consult. Same hook v3/build-profile/submit-diagnostics.js
+  // observes, and the same visibility semantics, so the two modules agree on
+  // what "the member is looking at the success copy" means.
+  var SUCCESS_STATE_SELECTOR = '[build-profile-success]'
+
   // Same production allowlist as v3/route-guard.js, plus the local/dev-tunnel
   // hosts ./dev-tunnel.sh serves from — without those the module would be dead
   // on staging exactly when it needs QA.
@@ -107,6 +129,8 @@
   var FUNNEL_UNKNOWN = 'unknown'
 
   var LOG_PREFIX = '[starters build-profile-redirect]'
+
+  var checkInFlight = false
 
   /* ------------------------------ environment ------------------------------ */
 
@@ -154,6 +178,51 @@
 
   function describe(error) {
     return (error && error.message) || String(error)
+  }
+
+  /* ----------------------------- success state ----------------------------- */
+
+  /**
+   * Deliberately the same shape as the visibility test in
+   * v3/build-profile/submit-diagnostics.js: the authored states are toggled by
+   * inline `display`, by a class, by `hidden`, and by `aria-hidden` depending on
+   * which control Webflow generated, so all four have to count. Anything this
+   * cannot read is treated as NOT visible, which keeps the module's normal
+   * behaviour rather than standing down on a bad read.
+   */
+  function visible(element) {
+    if (!element) return false
+    if (element.hidden === true) return false
+    if (
+      typeof element.getAttribute === 'function' &&
+      element.getAttribute('aria-hidden') === 'true'
+    ) {
+      return false
+    }
+    if (element.style && element.style.display === 'none') return false
+    if (typeof window.getComputedStyle === 'function') {
+      var style = window.getComputedStyle(element)
+      if (style && (style.display === 'none' || style.visibility === 'hidden')) {
+        return false
+      }
+    }
+    return true
+  }
+
+  /**
+   * True only when the member is actually looking at the authored success copy.
+   * /build-profile/select-profile has no such element, so this is false there
+   * and that page keeps its original behaviour exactly.
+   */
+  function successStateVisible() {
+    if (!document || typeof document.querySelector !== 'function') return false
+    var success = null
+    try {
+      success = document.querySelector(SUCCESS_STATE_SELECTOR)
+    } catch (error) {
+      return false
+    }
+    return visible(success)
   }
 
   /* ------------------------------ role contract ------------------------------ */
@@ -404,11 +473,50 @@
     return null
   }
 
+  /**
+   * The stand-down is checked HERE, after the await, rather than at boot. The
+   * member can submit the form while the status read is still in flight, and
+   * that read then resolves "done" — correctly, because they just finished it.
+   * A boot-time check would have looked before the success state existed and
+   * redirected anyway, which is the exact race this closes.
+   */
   async function redirectPastBuildProfile() {
     var destination = await funnelDestination()
     if (!destination) return false
+    if (successStateVisible()) {
+      note(
+        'the authored success state is visible; standing down so the member can ' +
+          'leave via the CTA instead of being redirected to ' +
+          destination +
+          '.',
+      )
+      return false
+    }
     window.location.replace(destination)
     return true
+  }
+
+  /**
+   * One evaluation at a time. A bfcache restore can arrive while the boot check
+   * is still inside its 4s budget, and two concurrent checks would mean two
+   * token trades and a race between two answers. The loser is dropped rather
+   * than queued: whatever the in-flight check decides is the current answer.
+   */
+  function evaluate(reason) {
+    if (checkInFlight) {
+      note('a funnel check is already running; ignoring the ' + reason + ' trigger.')
+      return Promise.resolve(false)
+    }
+    checkInFlight = true
+    return redirectPastBuildProfile()
+      .catch(function (error) {
+        warn('unexpected funnel-redirect failure: ' + describe(error))
+        return false
+      })
+      .then(function (redirected) {
+        checkInFlight = false
+        return redirected
+      })
   }
 
   /* ---------------------------------- boot ---------------------------------- */
@@ -416,7 +524,7 @@
   window.StartersBuildProfileRedirect = {
     // Keep in sync with the @release line in this file's header comment; the
     // v3/build-profile-redirect.test.js drift guard asserts they match.
-    release: 'v1.59.176',
+    release: 'v1.59.251',
     allowedHost: allowedHost,
     stagingHost: stagingHost,
     isBuildProfilePath: isBuildProfilePath,
@@ -424,17 +532,31 @@
     funnelStateFrom: funnelStateFrom,
     funnelState: funnelState,
     funnelDestination: funnelDestination,
+    successStateVisible: successStateVisible,
     redirectPastBuildProfile: redirectPastBuildProfile,
     buildProfilePaths: BUILD_PROFILE_PATHS.slice(),
     onboardingPath: ONBOARDING_PATH,
     dashboardPath: DASHBOARD_PATH,
+    successStateSelector: SUCCESS_STATE_SELECTOR,
     checkBudgetMs: FUNNEL_CHECK_BUDGET_MS,
   }
 
   if (!allowedHost(window.location.hostname)) return
   if (!isBuildProfilePath(window.location.pathname)) return
 
-  redirectPastBuildProfile().catch(function (error) {
-    warn('unexpected funnel-redirect failure: ' + describe(error))
-  })
+  evaluate('boot')
+
+  // The boot guard at the top of this IIFE stops the SCRIPT from running twice;
+  // it must not stop a bfcache restore from being re-evaluated. This listener is
+  // registered once, inside that guard, and calls the evaluation directly rather
+  // than re-entering boot, so the flag is never in its way.
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('pageshow', function (event) {
+      // Only a real bfcache restore. A normal load already ran the boot check,
+      // and re-running it here would double every page view's Xano traffic.
+      if (!event || event.persisted !== true) return
+      note('restored from the bfcache; re-evaluating the funnel position.')
+      evaluate('pageshow')
+    })
+  }
 })()

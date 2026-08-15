@@ -48,7 +48,8 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-main/quiz-home.js` — homepage hero controller; saves selected category bucket IDs to `sessionStorage.quizSelectedCategories` and redirects to `/quiz` (see `quiz-main/README.md`)
 - `quiz-main/quiz-main.js` — `/quiz` controller: combines homepage bucket selections with saved Memberstack answers, persists draft/ready payloads for results, and owns the signup redirect contract; authoritative restore-order, markup, and redirect contracts live in [`quiz-main/README.md`](quiz-main/README.md#main-controller)
 - `quiz-main/quiz-redirect.js` — `/quiz` member entry redirect by role and quiz state, including the ready-payload safety net for new members; authoritative rules live in [`quiz-main/README.md`](quiz-main/README.md#entry-redirect)
-- `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, stamps the CMS category slugs onto boxed result elements so the **Your expert lineup** TOC and deep links scroll below the sticky navbar, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, sends authenticated members whose completion marker has outlived missing or malformed answer JSON to `/quiz?retake=true&quizDataMissing=1`, registers the authenticated [V3 quiz-completion lead email](#v3-quiz-completion-lead-email) only after a finished result is saved, keeps diagnostics opt-in through `starterQuizDebug`, uses the `Freelancers3.0-dev` Algolia index for freelancer recommendations by default, sources the Consult-card Subcategory chips and the ranked-role line only from each record's own `categories.lvl1` leaves (role slugs are excluded, a value carrying no `>` delimiter or a blank parent yields no chip at all, and labels print exactly as the index stores them so `UI/UX Design` and `E-Commerce Management` survive intact), recomputes any saved payload stamped with a recommendation version older than `category-subcategory-pairs-v20` so cached role-derived Subcategories cannot keep painting, warns once per page load on staging hosts only when hits carry `categories` but no leaf resolves, and rides the ad-attribution cookies written by `v3/signup-attribution.js` into the same `updateMember` call as `starter-quiz` (Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`, `signup-source`, `signup-referrer`, all verified in the app config; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone, and `signup-source`/`signup-referrer` are write-once so a returning member who merely logged in on `/quiz` keeps the page and referrer their original signup recorded)
+- `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, stamps the CMS category slugs onto boxed result elements so the **Your expert lineup** TOC and deep links scroll below the sticky navbar, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, sends authenticated members whose completion marker has outlived missing or malformed answer JSON to `/quiz?retake=true&quizDataMissing=1`, registers the authenticated [V3 quiz-completion lead email](#v3-quiz-completion-lead-email) only after a finished result is saved, keeps diagnostics opt-in through `starterQuizDebug`, gets its managed Algolia credentials and Starter index from `v3/algolia-environment.js`, sources the Consult-card Subcategory chips and the ranked-role line only from each record's own `categories.lvl1` leaves (role slugs are excluded, a value carrying no `>` delimiter or a blank parent yields no chip at all, and labels print exactly as the index stores them so `UI/UX Design` and `E-Commerce Management` survive intact), recomputes any saved payload stamped with a recommendation version older than `category-subcategory-pairs-v20` so cached role-derived Subcategories cannot keep painting, warns once per page load on staging hosts only when hits carry `categories` but no leaf resolves, and rides the ad-attribution cookies written by `v3/signup-attribution.js` into the same `updateMember` call as `starter-quiz` (Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`, `signup-source`, `signup-referrer`, all verified in the app config; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone, and `signup-source`/`signup-referrer` are write-once so a returning member who merely logged in on `/quiz` keeps the page and referrer their original signup recorded)
+- `v3/algolia-environment.js` — host-owned TEST/LIVE resolver for managed V3 Algolia clients and indexes; see [`v3/ALGOLIA-ENVIRONMENT-WIRING.md`](v3/ALGOLIA-ENVIRONMENT-WIRING.md) for the exact host contract, markup, fail-closed rules, and release prerequisites
 - `quiz-results-email-tester.js` and `.css` — query-gated production tester for the V3 `/quiz-results` email; binds a native Webflow panel, hydrates the signed-in canary Brand's current saved quiz plus current Starter and Learn records, and sends only through the authenticated Xano endpoint described under [Quiz-results email tester](#quiz-results-email-tester)
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
 - `opportunities-3.0.js` — Opportunities 3.0 page and dashboard binder (including the role-gated merged `/opportunities` feed plus category-matched and applied starter feeds); binds the paid-Brand create/edit forms, validates their custom category selector, keeps the authored 15-word opportunity-title rule while adding a native 120-character backstop, maps ongoing Part Time estimated weekly hours through the existing Xano contract, paints the authored create/edit success screen with the saved opportunity title and opportunity-specific copy, defers access decisions to the sitewide `v3/route-guard.js` when present, redirects a foreign brand off an opportunity it does not own to `/opportunities-brands-view`, drives authenticated canonical project actions on both role dashboards, keeps Generate Invoice Starter-only, and uses the shared diagnostic receipt contract below
@@ -70,6 +71,7 @@ Do not discard local changes unless the user explicitly asks.
   contract lives in
   [`v3/AI-RECRUITER-WIRING.md`](v3/AI-RECRUITER-WIRING.md)
 - `v3/saved-starters-roles.js` — `/favorites` saved-list roles chips: one cloned paragraph per delimited role, so the wf-xano list matches the Algolia browse cards; authoritative behavior and constraints live in [`v3/README.md`](v3/README.md#saved-starters-roles-chips)
+- `v3/profile-portfolio.js` — `/hire/<slug>` portfolio / case-study renderer for the section labelled "Highlights"; reads Xano Portfolios (#28) via `Get_my_portfolios`, binds by custom attribute with legacy class fallbacks, and carries a `data-portfolio-rendered` guard so it can run alongside the legacy on-canvas embed without double-rendering. Wiring and cutover: [`v3/PROFILE-PORTFOLIO-WIRING.md`](v3/PROFILE-PORTFOLIO-WIRING.md)
 - `v3/reviews.js` — V3 public-profile reviews adapter; see [`v3/README.md`](v3/README.md#v3-reviews-frontend) for the authoritative ownership, wiring, and release contract
 - `v3/starter-dashboard-messages.js` — shared Brand/Starter dashboard Messages tile; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for the authoritative data, rendering, and deep-link contract
 - `v3/starter-dashboard-points.js` — authenticated, attribute-driven `/starter-dashboard` points and rank tile; see [`v3/README.md`](v3/README.md#starter-dashboard-points-and-rank-tile) for the authoritative rendering, wiring, and ownership contract
@@ -89,13 +91,13 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/build-profile/field-counters.js` — provenance-locked Build Profile field counters
 - `v3/build-profile/bio-editor.js` — provenance-locked Build Profile bio editor
 - `v3/build-profile/grouped-selects.js` — provenance-locked Build Profile grouped-select controller
-- `v3/build-profile/submit-diagnostics.js` — Build Profile submit outcome observer; it keeps diagnostics in the console, leaves the coupled writer unchanged, and routes an authored success to `/starter-onboarding`
+- `v3/build-profile/submit-diagnostics.js` — Build Profile submit outcome observer; it keeps diagnostics in the console, leaves the coupled writer unchanged, and never navigates: the authored success-state CTA owns the move to `/starter-onboarding`
 - `v3/starter-edit-profile/` — source-controlled Starter Edit Profile browser controllers; the authoritative extraction scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md)
 - `v3/starter-edit-profile/portfolio-crud.js` — provenance-locked Edit Profile portfolio mutation controller
 - `v3/starter-edit-profile/portfolio-list.js` — provenance-locked Edit Profile portfolio list controller
 - `v3/starter-edit-profile/company-autocomplete.js` — provenance-locked Edit Profile company autocomplete
 - `v3/starter-edit-profile/company-experience-crud.js` — provenance-locked Edit Profile company-experience controller
-- `v3/build-profile-redirect.js` — fail-open `/build-profile/*` funnel-position redirect for signed-in Talent arriving through bookmarks, back navigation, or stale links; authoritative rules and page embeds live in [`v3/README.md`](v3/README.md#build-profile-funnel-redirect) and [`v3/BUILD-PROFILE-REDIRECT-WIRING.md`](v3/BUILD-PROFILE-REDIRECT-WIRING.md)
+- `v3/build-profile-redirect.js` — fail-open `/build-profile/*` funnel-position redirect for signed-in Talent arriving through bookmarks, back navigation, or stale links; stands down while the authored success state is visible and re-evaluates on a bfcache restore; authoritative rules and page embeds live in [`v3/README.md`](v3/README.md#build-profile-funnel-redirect) and [`v3/BUILD-PROFILE-REDIRECT-WIRING.md`](v3/BUILD-PROFILE-REDIRECT-WIRING.md)
 - `v3/starter-profile-redirect.js` — inbound Talent twin of `brand-profile-redirect.js`: fail-open page-entry funnel for unfinished Starters on the Brand-twin lock net (`/starter-dashboard`, `/brand-dashboard`, `/opportunities`, `/all-starters`, `/messages`, `/dashboard`); authoritative rules and paste checklist live in [`v3/README.md`](v3/README.md#starter-profile-redirect) and [`v3/STARTER-PROFILE-REDIRECT-WIRING.md`](v3/STARTER-PROFILE-REDIRECT-WIRING.md)
 - `v3/complete-profile-redirect.js` — outbound half of the Brand profile-completion loop: wrong-role bounce plus the complete paid-Brand exit to `/brand-dashboard`; authoritative routing and signals live in [`v3/README.md`](v3/README.md#complete-profile-role-routing) and [`v3/COMPLETE-PROFILE-REDIRECT-WIRING.md`](v3/COMPLETE-PROFILE-REDIRECT-WIRING.md)
 - `v3/brand-profile-redirect.js` — inbound half of the same loop: sends an unfinished paid Brand from protected Brand pages to `/complete-profile`; authoritative page scope and Xano signal live in [`v3/BRAND-PROFILE-REDIRECT-WIRING.md`](v3/BRAND-PROFILE-REDIRECT-WIRING.md)
@@ -293,23 +295,21 @@ Containment-era V2 code. Kept for the live V2 pages; not a pattern to copy.
 
 ## Not browser code (deliberately outside this inventory)
 
-- `build-profile-wiring-audit.js` — a Node audit tool (`require('node:fs')`) that checks the build-profile pages' saved Webflow code for the pinned vendored engine and the draft-identity guard. Never served to a browser
+- `build-profile-wiring-audit.js` — a Node audit tool (`require('node:fs')`) that checks the build-profile pages' saved Webflow code for the pinned vendored engine, the draft-identity guard, and the success state's onboarding CTA; the full failure list lives in [Build-profile Videsigns wiring audit](#build-profile-videsigns-wiring-audit). Never served to a browser
 - `step-flow-test-dom.js` — the `global-embeds/step-flow/step-flow.js` test harness and its minimal DOM shim (`require('node:test')`). Named without the `.test.js` suffix, so run it explicitly
 - `slater/4885.readable.js`, `slater/4885.prod.min.js`, `slater/4960.readable.js`, `slater/4960.prod.min.js` — read-only captures of the Slater.app builds that remain live on the legacy contract pages. Generated mirror artifacts: never edit or load them from this repo; the inventory and refresh contract lives in [`slater/README.md`](slater/README.md)
 - `talkjs-themes/` — the two TalkJS chat themes as exported files, plus the Node tooling in `talkjs-themes/tools/` that pushes them back through the TalkJS REST API. The chat renders in TalkJS's own iframe, so none of this is served to a browser or reachable from a CDN script; the folder exists so the chat's look is diffable and rollback-able. Pushing to the real theme names is instantly live for every member — read [`talkjs-themes/README.md`](talkjs-themes/README.md) before running anything in it
 
 ## Quiz-results freelancer recommendations
 
-`quiz-results.js` resolves the freelancer-recommendation Algolia settings per
-value, in this priority order: `window.starterQuizAlgoliaConfig`, dedicated
-`data-starter-quiz-algolia-*` (or legacy `data-algolia-*`) attributes, then the
-existing `script[data-app-id][data-search-key]`. The app ID and search key may
-be on a different element from the index name. When no index is configured, it
-uses `Freelancers3.0-dev`.
-
-Do not use a general `[wf-algolia-index]` wrapper to configure these searches.
-The page's LearnContent carousel owns its own wrapper and index; using that
-wrapper for freelancer recommendations can return no Starter cards.
+`quiz-results.js` gets its freelancer-recommendation credentials and Starter
+index only from the managed host resolution in `v3/algolia-environment.js`.
+The exact host mapping, load order, managed markup, fail-closed rules, and
+release prerequisites live in
+[`v3/ALGOLIA-ENVIRONMENT-WIRING.md`](v3/ALGOLIA-ENVIRONMENT-WIRING.md).
+The page's separate `LearnContent` carousel keeps its exact shared index name
+and existing markup, while its search credentials come from the same
+host-resolved configuration.
 
 The Learn carousel filters on the canonical V3 category ID and, for renamed
 categories, the corresponding legacy `LearnContent` slug. This keeps existing
@@ -333,7 +333,7 @@ previews. Run the focused Algolia-config, taxonomy, saved-answer fallback,
 draft-payload, and V3 lead-enrollment regressions with:
 
 ```sh
-node --test quiz-results-config.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js quiz-results-lead-drip.test.js quiz-results-subcategory-labels.test.js
+node --test v3/algolia-environment.test.js quiz-taxonomy-compatibility.test.js quiz-member-json-fallback.test.js quiz-results-pending-draft.test.js quiz-results-lead-drip.test.js quiz-results-subcategory-labels.test.js
 ```
 
 ## V3 quiz-completion lead email
@@ -357,7 +357,10 @@ maps to the matching `starter_1_image_url`, `starter_2_image_url`, or
 fallbacks. Recommendations cached before these review fields were added refresh
 before enrollment without changing the quiz revision. When no Learn record is
 available, it sends the safe `/learn` fallback instead of leaving the email
-empty.
+empty. Learn interview links use the live V3
+`/learn/interviews-analyses/<slug>` CMS route; legacy
+`/learn/interviews/<slug>` records are normalized to that route while keeping
+their query parameters and fragment.
 The Memberstack session exchange accepts every response shape used by the
 shared V3 trade-token endpoint: a raw string, `{authToken}`, or `{token}`.
 
@@ -399,8 +402,9 @@ Optional native controls may use `data-quiz-email-test-launcher` and
 
 The browser waits for `quiz-results.js` to publish the compact quiz state that
 was read from or saved to the current Memberstack member. It then refreshes the
-three saved Starter IDs from `Freelancers3.0-dev`, selects current category
-matches from `LearnContent`, and posts the rendered email through the
+three saved Starter IDs from the host-resolved production Starter index, selects
+current category matches from the shared `LearnContent` index through the
+host-resolved production search key, and posts the rendered email through the
 authenticated `quiz_email_test/send/v3` Xano endpoint. Xano is the security
 boundary: it must authorize the dedicated production canary, replace any client
 recipient with `jp+brand10@thestarters.com`, audit the attempt, enforce
@@ -1233,6 +1237,22 @@ authoritative handler, or a draft identity guard that is missing, duplicated,
 unpinned, `async`/`defer`, or placed after the first legacy `build_profile`
 storage access (it must load synchronously ahead of any authored draft code —
 see below).
+
+It also fails when the authored `[build-profile-success]` state is missing, when
+its bounds cannot be established (an unterminated element is reported rather than
+widened to the rest of the page), or when it contains no link to
+`/starter-onboarding`. Since v1.59.245 nothing auto-redirects after a successful
+submit, so that CTA is the member's only way out of a finished form. The link is
+judged **same-origin against the snapshot's own canonical** (or `og:url`), which
+matches the runtime rule in `v3/build-profile/submit-diagnostics.js`. Each href is
+resolved against the page it was captured from, so root-relative, protocol-relative
+same-host, and absolute same-origin hrefs all pass, and so does a document-relative
+href that genuinely lands on the path (`../starter-onboarding` from a
+`/build-profile/*` page — a bare `starter-onboarding` resolves to
+`/build-profile/starter-onboarding` and is rejected). A production capture whose
+CTA points at the staging host fails. A snapshot that declares no origin is still
+checked, but only a root- or document-relative href can satisfy it; an absolute or
+protocol-relative one fails closed as unverifiable.
 
 Run its focused test with:
 

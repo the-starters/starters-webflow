@@ -174,6 +174,11 @@ function loadModule(options = {}) {
   const fetchCalls = []
   const aborted = []
   const logs = { info: [], warn: [], error: [] }
+  // Mutable so a test can change what Xano answers BETWEEN the boot check and a
+  // later bfcache restore, which is the whole point of the pageshow re-run.
+  let statusBody = Object.prototype.hasOwnProperty.call(options, 'statusBody')
+    ? options.statusBody
+    : ONBOARDED
 
   const location = {
     hostname,
@@ -207,11 +212,7 @@ function loadModule(options = {}) {
         return jsonResponse(null, { ok: false, status: options.getStatus })
       }
       if (options.getMalformedJson) return malformedJsonResponse()
-      return jsonResponse(
-        Object.prototype.hasOwnProperty.call(options, 'statusBody')
-          ? options.statusBody
-          : ONBOARDED,
-      )
+      return jsonResponse(statusBody)
     }
 
     // Answerable on purpose (see LEGACY_GET_URL): the pre-migration module would
@@ -224,6 +225,22 @@ function loadModule(options = {}) {
     throw new Error('unexpected fetch: ' + url)
   }
 
+  // The authored `[build-profile-success]` element. Absent unless a test asks
+  // for it, which is the real shape of /build-profile/select-profile and keeps
+  // every pre-existing test on its original path.
+  const successElement = options.successState
+    ? {
+        style: { display: options.successState.display || 'block' },
+        hidden: options.successState.hidden === true,
+        getAttribute: (name) =>
+          name === 'aria-hidden' && options.successState.ariaHidden === true
+            ? 'true'
+            : null,
+      }
+    : null
+
+  const eventListeners = {}
+
   const window = {
     CustomEvent: class CustomEvent {
       constructor(name, init) {
@@ -233,7 +250,14 @@ function loadModule(options = {}) {
     },
     URL,
     URLSearchParams,
+    addEventListener(type, handler) {
+      ;(eventListeners[type] ||= []).push(handler)
+    },
     dispatchEvent() {},
+    getComputedStyle: (element) => ({
+      display: (element && element.style && element.style.display) || 'block',
+      visibility: 'visible',
+    }),
     location,
     setTimeout: clock.setTimeout,
     clearTimeout: clock.clearTimeout,
@@ -288,6 +312,9 @@ function loadModule(options = {}) {
     documentElement: {
       setAttribute() {},
     },
+    querySelector(selector) {
+      return selector === '[build-profile-success]' ? successElement : null
+    },
     querySelectorAll() {
       return []
     },
@@ -336,7 +363,17 @@ function loadModule(options = {}) {
     fetchCalls,
     location,
     logs,
+    successElement,
     window,
+    setStatusBody(body) {
+      statusBody = body
+    },
+    // A bfcache restore is `persisted: true`; a normal load or a same-page
+    // history hop is not, and must not re-run the check.
+    firePageshow(persisted = true) {
+      for (const handler of eventListeners.pageshow || []) handler({ persisted })
+    },
+    pageshowListenerCount: () => (eventListeners.pageshow || []).length,
   }
 }
 
@@ -760,6 +797,193 @@ test('a second load does not re-run the check', async () => {
   const first = fetchCalls.length
   assert.equal(window.__startersBuildProfileRedirectBooted, true)
   assert.ok(first > 0)
+})
+
+// --- Success-state stand-down -------------------------------------------------
+
+test('a visible authored success state stands the redirect down', async () => {
+  const { location, fetchCalls, logs } = loadModule({
+    pathname: '/build-profile/consult',
+    statusBody: ONBOARDED,
+    successState: { display: 'block' },
+  })
+  await flush()
+  await flush()
+  assert.equal(location.replaced, undefined)
+  // The check still RAN — the stand-down is a decision at redirect time, not an
+  // early bail that skips the funnel read. That is what makes it beat the race.
+  assert.equal(fetchCalls.length, 2)
+  assert.ok(
+    logs.info.some((line) => line.includes('standing down')),
+    'expected a stand-down note, got: ' + JSON.stringify(logs.info),
+  )
+})
+
+test('the stand-down covers both authored success pages and every hide mechanism', async () => {
+  for (const pathname of ['/build-profile/full-profile', '/build-profile/consult']) {
+    const { location } = loadModule({
+      pathname,
+      statusBody: ONBOARDED,
+      successState: { display: 'block' },
+    })
+    await flush()
+    await flush()
+    assert.equal(location.replaced, undefined, pathname)
+  }
+
+  // A success element that is present but HIDDEN is not a stand-down: the member
+  // is looking at the form, so the normal funnel redirect still applies.
+  for (const successState of [
+    { display: 'none' },
+    { hidden: true },
+    { ariaHidden: true },
+  ]) {
+    const { location } = loadModule({
+      pathname: '/build-profile/consult',
+      statusBody: ONBOARDED,
+      successState,
+    })
+    await flush()
+    await flush()
+    assert.equal(location.replaced, DASHBOARD, JSON.stringify(successState))
+  }
+})
+
+test('select-profile has no success element, so its behaviour is unchanged', async () => {
+  const { location, api } = loadModule({
+    pathname: SELECT_PROFILE,
+    statusBody: ONBOARDED,
+  })
+  await flush()
+  await flush()
+  assert.equal(api.successStateVisible(), false)
+  assert.equal(location.replaced, DASHBOARD)
+})
+
+test('the stand-down does not suppress the onboarding destination either', async () => {
+  const { location } = loadModule({
+    pathname: '/build-profile/consult',
+    statusBody: NEEDS_ONBOARDING,
+    successState: { display: 'block' },
+  })
+  await flush()
+  await flush()
+  assert.equal(location.replaced, undefined)
+})
+
+// --- bfcache re-evaluation ----------------------------------------------------
+
+test('a bfcache restore re-evaluates and redirects a member who is now done', async () => {
+  const page = loadModule({
+    pathname: '/build-profile/consult',
+    statusBody: UNFINISHED_WITH_ROW,
+  })
+  await flush()
+  await flush()
+  assert.equal(page.location.replaced, undefined, 'boot must leave an unfinished member alone')
+  const afterBoot = page.fetchCalls.length
+
+  // The member finished the funnel, then came Back to this page.
+  page.setStatusBody(ONBOARDED)
+  page.firePageshow(true)
+  await flush()
+  await flush()
+  assert.equal(page.location.replaced, DASHBOARD)
+  assert.ok(page.fetchCalls.length > afterBoot, 'the restore must re-read the funnel')
+})
+
+test('a restored page still showing the success state stays put', async () => {
+  const page = loadModule({
+    pathname: '/build-profile/consult',
+    statusBody: ONBOARDED,
+    successState: { display: 'block' },
+  })
+  await flush()
+  await flush()
+  assert.equal(page.location.replaced, undefined)
+
+  page.firePageshow(true)
+  await flush()
+  await flush()
+  assert.equal(page.location.replaced, undefined)
+})
+
+test('a non-persisted pageshow does not re-run the check', async () => {
+  const page = loadModule({
+    pathname: '/build-profile/consult',
+    statusBody: UNFINISHED_WITH_ROW,
+  })
+  await flush()
+  await flush()
+  const afterBoot = page.fetchCalls.length
+  assert.ok(afterBoot > 0)
+
+  page.setStatusBody(ONBOARDED)
+  page.firePageshow(false)
+  await flush()
+  await flush()
+  assert.equal(page.fetchCalls.length, afterBoot, 'a normal load already ran the boot check')
+  assert.equal(page.location.replaced, undefined)
+})
+
+test('the pageshow listener is registered once and only on an in-scope page', async () => {
+  const inScope = loadModule({ pathname: '/build-profile/consult', statusBody: UNFINISHED_WITH_ROW })
+  await flush()
+  assert.equal(inScope.pageshowListenerCount(), 1)
+
+  for (const options of [
+    { pathname: DASHBOARD },
+    { hostname: 'attacker.example' },
+  ]) {
+    const out = loadModule({ statusBody: ONBOARDED, ...options })
+    await flush()
+    assert.equal(out.pageshowListenerCount(), 0, JSON.stringify(options))
+  }
+})
+
+test('a restore arriving mid-check is dropped rather than run concurrently', async () => {
+  const page = loadModule({
+    pathname: '/build-profile/consult',
+    statusBody: ONBOARDED,
+    getNeverSettles: true,
+  })
+  await flush()
+  await flush()
+  const inFlight = page.fetchCalls.length
+
+  page.firePageshow(true)
+  await flush()
+  await flush()
+  assert.equal(page.fetchCalls.length, inFlight, 'no second token trade while one check is open')
+  assert.ok(
+    page.logs.info.some((line) => line.includes('already running')),
+    'expected an in-flight note, got: ' + JSON.stringify(page.logs.info),
+  )
+})
+
+test('a restore after a finished check is evaluated normally', async () => {
+  const page = loadModule({
+    pathname: '/build-profile/consult',
+    statusBody: UNFINISHED_WITH_ROW,
+  })
+  await flush()
+  await flush()
+  const afterBoot = page.fetchCalls.length
+
+  // Two restores in a row: the first completes, so the second is not blocked by
+  // a stale in-flight latch.
+  page.firePageshow(true)
+  await flush()
+  await flush()
+  const afterFirst = page.fetchCalls.length
+  assert.ok(afterFirst > afterBoot)
+
+  page.setStatusBody(ONBOARDED)
+  page.firePageshow(true)
+  await flush()
+  await flush()
+  assert.ok(page.fetchCalls.length > afterFirst)
+  assert.equal(page.location.replaced, DASHBOARD)
 })
 
 // --- Release marker -----------------------------------------------------------

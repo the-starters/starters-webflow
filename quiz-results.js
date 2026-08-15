@@ -1,7 +1,7 @@
 /**
  * Quiz results page controller.
  *
- * @release v1.59.238
+ * @release v1.59.245
  *
  * Initial data source:
  * - sessionStorage.starterQuizPending saved by quiz-main.js before signup.
@@ -44,7 +44,6 @@
     const learnContentResultsSelector =
         learnContentSectionSelector + ' [wf-algolia-element="results"]'
     const learnContentDefaultFilterField = 'categories'
-    const learnContentDefaultAppId = 'PKVW6M9OPZ'
     const learnContentDefaultIndexName = 'LearnContent'
     const learnContentDefaultHitsPerPage = 4
     const learnContentFilterWaitAttempts = 40
@@ -280,6 +279,22 @@
         }
     }
 
+    function getQuizLeadDripLearnUrl(value) {
+        const normalizedUrl = getQuizLeadDripUrl(value, '/learn/')
+        if (!normalizedUrl) return ''
+
+        const url = new URL(normalizedUrl)
+        const legacyInterviewPrefix = '/learn/interviews/'
+        if (url.pathname.startsWith(legacyInterviewPrefix)) {
+            url.pathname = url.pathname.replace(
+                legacyInterviewPrefix,
+                '/learn/interviews-analyses/',
+            )
+        }
+
+        return url.toString()
+    }
+
     function normalizeQuizLeadDripStarter(record) {
         const slug = normalizeQuizLeadDripText(
             getQuizLeadDripValue(record, [
@@ -412,10 +427,9 @@
             getQuizLeadDripValue(hit, ['slug', 'objectID']),
             160,
         )
-        const url = getQuizLeadDripUrl(
+        const url = getQuizLeadDripLearnUrl(
             getQuizLeadDripValue(hit, ['url', 'link']) ||
                 (slug ? `/learn/${encodeURIComponent(slug)}` : ''),
-            '/learn/',
         )
         const title = normalizeQuizLeadDripText(
             getQuizLeadDripValue(hit, ['name', 'title']),
@@ -1022,51 +1036,20 @@
         }
     }
 
-    function getLearnContentSearchConfig(learnContentSection) {
-        const windowConfig =
-            window.starterQuizLearnContentAlgoliaConfig ||
-            window.starterQuizAlgoliaConfig ||
-            {}
-        const explicitElement = document.querySelector(
-            '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
-        )
-        const wfAlgoliaScript = document.querySelector(
-            'script[data-app-id][data-search-key]',
-        )
+    function getLearnContentSearchConfig() {
+        const resolved =
+            window.StartersV3AlgoliaEnvironment?.getSharedSearchConfig?.(
+                'learnContent',
+            )
 
         return {
-            appId:
-                normalizeLearnContentValue(windowConfig.appId) ||
-                normalizeLearnContentValue(
-                    explicitElement?.dataset.starterQuizAlgoliaAppId,
-                ) ||
-                normalizeLearnContentValue(explicitElement?.dataset.algoliaAppId) ||
-                normalizeLearnContentValue(
-                    wfAlgoliaScript?.getAttribute('data-app-id'),
-                ) ||
-                learnContentDefaultAppId,
-            searchKey:
-                normalizeLearnContentValue(windowConfig.searchKey) ||
-                normalizeLearnContentValue(
-                    explicitElement?.dataset.starterQuizAlgoliaSearchKey,
-                ) ||
-                normalizeLearnContentValue(
-                    explicitElement?.dataset.algoliaSearchKey,
-                ) ||
-                normalizeLearnContentValue(
-                    wfAlgoliaScript?.getAttribute('data-search-key'),
-                ),
+            appId: normalizeLearnContentValue(resolved?.appId),
+            searchKey: normalizeLearnContentValue(resolved?.searchKey),
             indexName:
-                normalizeLearnContentValue(
-                    learnContentSection?.getAttribute('wf-algolia-index'),
-                ) ||
-                normalizeLearnContentValue(
-                    learnContentSection?.getAttribute(
-                        'data-quiz-learn-index-name',
-                    ),
-                ) ||
-                normalizeLearnContentValue(windowConfig.indexName) ||
-                learnContentDefaultIndexName,
+                normalizeLearnContentValue(resolved?.indexName) ===
+                learnContentDefaultIndexName
+                    ? learnContentDefaultIndexName
+                    : '',
         }
     }
 
@@ -1959,8 +1942,6 @@
     'DOMContentLoaded',
     function starterQuizResultsController() {
     const debugLogPrefix = '[Starter Quiz Funnel]'
-    const algoliaDefaultAppId = 'PKVW6M9OPZ'
-    const algoliaDefaultIndexName = 'Freelancers3.0-dev'
     const recommendationAlgorithmVersion = 'category-subcategory-pairs-v20'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
@@ -2177,9 +2158,9 @@
      * index uses different attribute names. Dot paths (such as
      * categories.lvl1) are supported for nested fields.
      *
-     * Confirmed for the Freelancers3.0-dev index: hourly rate is `rate`,
-     * project rate is `average-project-size`, and category/subcategory data
-     * is also present under `categories.lvl0` / `categories.lvl1`.
+     * The host-resolved Starter indexes use `rate` for hourly rate,
+     * `average-project-size` for project rate, and `categories.lvl0` /
+     * `categories.lvl1` for category and subcategory data.
      */
     const hourlyRateFieldNames = ['rate', 'hourly-rate', 'hourlyRate']
     const projectRateFieldNames = [
@@ -4001,56 +3982,16 @@
     }
 
     /**
-     * Reads Algolia search settings from page config.
-     *
-     * Supported sources, in priority order:
-     * - window.starterQuizAlgoliaConfig = { appId, searchKey, indexName }
-     * - dedicated elements with data-starter-quiz-algolia-* attributes
-     * - the existing wf-algolia script[data-app-id][data-search-key]
-     *
-     * Each setting resolves independently, so credentials and the index may
-     * be supplied by separate dedicated elements.
-     *
-     * Deliberately does not use an arbitrary [wf-algolia-index] element. The
-     * quiz-results page also has a LearnContent carousel, so treating the first
-     * global WF-Algolia wrapper as the freelancer index routes recommendation
-     * searches to LearnContent and produces zero Starter cards.
-     *
      * @returns {{appId: string, searchKey: string, indexName: string}} Algolia config.
      */
     function getAlgoliaSearchConfig() {
-        const windowConfig = window.starterQuizAlgoliaConfig || {}
-        const explicitCredentialsElement = document.querySelector(
-            '[data-starter-quiz-algolia-app-id], [data-algolia-app-id]',
-        )
-        const explicitIndexElement = document.querySelector(
-            '[data-starter-quiz-algolia-index-name], [data-algolia-index-name]',
-        )
-        const wfAlgoliaScript = document.querySelector(
-            'script[data-app-id][data-search-key]',
-        )
+        const resolver = window.StartersV3AlgoliaEnvironment
+        const resolved = resolver?.getManagedSearchConfig?.('starters')
 
         return {
-            appId:
-                normalize(windowConfig.appId) ||
-                normalize(explicitCredentialsElement?.dataset.starterQuizAlgoliaAppId) ||
-                normalize(explicitCredentialsElement?.dataset.algoliaAppId) ||
-                normalize(wfAlgoliaScript?.getAttribute('data-app-id')) ||
-                algoliaDefaultAppId,
-            searchKey:
-                normalize(windowConfig.searchKey) ||
-                normalize(
-                    explicitCredentialsElement?.dataset.starterQuizAlgoliaSearchKey,
-                ) ||
-                normalize(explicitCredentialsElement?.dataset.algoliaSearchKey) ||
-                normalize(wfAlgoliaScript?.getAttribute('data-search-key')),
-            indexName:
-                normalize(windowConfig.indexName) ||
-                normalize(explicitIndexElement?.dataset.starterQuizAlgoliaIndexName) ||
-                normalize(explicitIndexElement?.dataset.algoliaIndexName) ||
-                normalize(wfAlgoliaScript?.getAttribute('data-index-name')) ||
-                normalize(wfAlgoliaScript?.getAttribute('data-index')) ||
-                algoliaDefaultIndexName,
+            appId: normalize(resolved?.appId),
+            searchKey: normalize(resolved?.searchKey),
+            indexName: normalize(resolved?.indexName),
         }
     }
 
@@ -4076,9 +4017,9 @@
 
         const config = getAlgoliaSearchConfig()
 
-        if (!config.searchKey) {
+        if (!config.appId || !config.searchKey || !config.indexName) {
             throw new Error(
-                'Algolia search key missing. Add data-search-key to the wf-algolia script, set window.starterQuizAlgoliaConfig.searchKey, or add data-starter-quiz-algolia-search-key.',
+                'Managed Algolia search configuration is unavailable.',
             )
         }
 
@@ -4170,7 +4111,7 @@
         if (!uniqueFacetValues.length) return null
 
         const config = getAlgoliaSearchConfig()
-        if (!config.searchKey) return null
+        if (!config.appId || !config.searchKey || !config.indexName) return null
 
         try {
             const response = await fetch(

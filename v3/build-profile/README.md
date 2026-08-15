@@ -21,10 +21,27 @@ The files below are source-controlled candidates for self-contained controller b
 `submit-diagnostics.js` is an additional outcome loader, not a replacement for
 an inline block. It watches the existing human click on `[form-submit]` and the
 authored `[build-profile-success]` / `[build-profile-error]` states. It does not
-read fields, intercept the click, or change the coupled writer. After the
-authored success state appears, it preserves the clean success copy for 1.2
-seconds and then routes the member to `/starter-onboarding` with `location.replace`.
-Errors stay on the form.
+read fields, intercept the click, or change the coupled writer. It also does not
+navigate. Once the authored success state appears it stays there, and the member
+moves on by clicking the authored success-state CTA ("Start onboarding", which
+links to `/starter-onboarding`). That CTA already exists on both pages and owns
+the navigation, so the observer only records the outcome.
+
+Because nothing navigates away any more, the module owns its own teardown. The
+authored success state is terminal: once observed, the MutationObserver
+disconnects and later submit clicks are ignored, so a second click cannot re-arm
+a receipt and inherit the still-visible success state. An authored error is not
+terminal, since the member may fix the form and retry; outcomes are edge-triggered
+on a state change, so a stale visible error is never charged to the retry that
+follows it. Errors stay on the form.
+
+Because the CTA is now the only way out of a successful submit, a success state
+with no link to `/starter-onboarding` is a dead end. The module logs a staging-only
+`console.warn` in that case (`*.webflow.io`, localhost, `127.0.0.1`,
+`*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`). It is a warning only
+and never blocks init. The same invariant is enforced at release time by
+`build-profile-wiring-audit.js`, which also owns the exact rule the CTA's `href`
+has to satisfy — see [Build-profile Videsigns wiring audit](../../README.md#build-profile-videsigns-wiring-audit).
 
 Replace each exact inline block in place with its matching deferred loader. Do not consolidate or reorder these loaders: the untouched blocks between them still supply shared globals and form state.
 
@@ -65,5 +82,5 @@ This exclusion is a release boundary, not proof that the remaining inline code i
 4. Recapture both pages and replace only a block whose script position, character count, and SHA-256 match `live-body-provenance.json`.
 5. Publish staging first, then use human-like clicks for photo, portfolio, work history, counters, bio, and grouped selects without submitting the full profile.
 6. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
-7. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request, clean authored success copy for 1.2 seconds, and routing to `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
+7. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
 8. Scan both published domains for Airtable, Make, and PAT exposure patterns.
