@@ -71,6 +71,7 @@ Do not discard local changes unless the user explicitly asks.
   contract lives in
   [`v3/AI-RECRUITER-WIRING.md`](v3/AI-RECRUITER-WIRING.md)
 - `v3/saved-starters-roles.js` — `/favorites` saved-list roles chips: one cloned paragraph per delimited role, so the wf-xano list matches the Algolia browse cards; authoritative behavior and constraints live in [`v3/README.md`](v3/README.md#saved-starters-roles-chips)
+- `v3/profile-portfolio.js` — `/hire/<slug>` portfolio / case-study renderer for the section labelled "Highlights"; reads Xano Portfolios (#28) via `Get_my_portfolios`, binds by custom attribute with legacy class fallbacks, and carries a `data-portfolio-rendered` guard so it can run alongside the legacy on-canvas embed without double-rendering. Wiring and cutover: [`v3/PROFILE-PORTFOLIO-WIRING.md`](v3/PROFILE-PORTFOLIO-WIRING.md)
 - `v3/reviews.js` — V3 public-profile reviews adapter; see [`v3/README.md`](v3/README.md#v3-reviews-frontend) for the authoritative ownership, wiring, and release contract
 - `v3/starter-dashboard-messages.js` — shared Brand/Starter dashboard Messages tile; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for the authoritative data, rendering, and deep-link contract
 - `v3/starter-dashboard-points.js` — authenticated, attribute-driven `/starter-dashboard` points and rank tile; see [`v3/README.md`](v3/README.md#starter-dashboard-points-and-rank-tile) for the authoritative rendering, wiring, and ownership contract
