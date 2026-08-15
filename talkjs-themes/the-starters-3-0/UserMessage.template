@@ -2,11 +2,36 @@
 Renders a message sent by a user.
 -->
 <template>
-    <div class="message-row {{ sender.isMe | then: 'by-me' | else: 'by-other' }} {{ body.type }} {{ sender.id == previousSenderId | then: 'previous-same' }}">
+    <div class="message-row {{ sender.isMe | then: 'by-me' | else: 'by-other' }} {{ body.type }} {{ grouped | then: 'previous-same' }}">
 
-        <!-- show the avatar, but only if the previous message was by a different sender -->
+        <!-- The first message of each Message Group draws the avatar. A group
+             is a run by one sender WITHIN ONE CALENDAR DAY, and the day half
+             is not decoration: TalkJS draws its own DayMarker between days,
+             and a run that survives that marker renders a message with no
+             photo whose bubble still holds the avatar column open — which
+             reads as a photo that failed to load, not as a continuation.
+             Sender identity alone was the original test and produced exactly
+             that, sixteen days apart.
+
+             `date` is the standard Liquid filter. The rule holds only if it
+             formats on the same clock DayMarker uses, so the gate runs this
+             conversation under two timezones sixteen hours apart and both
+             pass. Read that as far as it goes and no further: the QA
+             conversation's messages sit inside a thirty-minute window that no
+             standard offset splits, so the run shows the two AGREE — not that
+             both are local. The case that would separate them is a message
+             pair straddling local midnight but not UTC midnight, and no
+             sandbox conversation contains one. If a viewer far from UTC ever
+             reports a photo missing under a divider again, this is the first
+             thing to re-examine.
+             `grouped` drives both the avatar and the `previous-same` class:
+             they reserve and fill the same column, so a change to one that
+             misses the other yields an avatar PLUS a 2.5rem indent. -->
         <t:set t:if="{{ previousMessage and previousMessage.sender }}" previousSenderId="{{ previousMessage.sender.id }}"/>
-        <t:set showAvatar="{{ sender.id != previousSenderId }}"/>
+        <t:set t:if="{{ previousMessage }}" previousDay="{{ previousMessage.timestamp | date: '%Y-%m-%d' }}"/>
+        <t:set thisDay="{{ timestamp | date: '%Y-%m-%d' }}"/>
+        <t:set grouped="{{ sender.id == previousSenderId and thisDay == previousDay }}"/>
+        <t:set showAvatar="{{ grouped == false }}"/>
 
         <!-- Clickable Identity. The other participant's avatar is an action
              button carrying their Memberstack id; the Messages controller

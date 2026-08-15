@@ -2,11 +2,19 @@
 Renders a message sent by a user.
 -->
 <template>
-    <div class="message-row {{ sender.isMe | then: 'by-me' | else: 'by-other' }} {{ body.type }} {{ sender.id == previousSenderId | then: 'previous-same' }}">
+    <div class="message-row {{ sender.isMe | then: 'by-me' | else: 'by-other' }} {{ body.type }} {{ grouped | then: 'previous-same' }}">
 
-        <!-- show the avatar, but only if the previous message was by a different sender -->
+        <!-- The first message of each Message Group draws the avatar. A group
+             is a run by one sender WITHIN ONE CALENDAR DAY. See the inbox
+             theme's UserMessage for why the day half is load-bearing; this
+             modal shows the same history and had the same defect. Kept
+             deliberately identical to that file so the two cannot drift. -->
         <t:set t:if="{{ previousMessage and previousMessage.sender }}" previousSenderId="{{ previousMessage.sender.id }}"/>
-        <Avatar t:if="{{ sender.id != previousSenderId }}"
+        <t:set t:if="{{ previousMessage }}" previousDay="{{ previousMessage.timestamp | date: '%Y-%m-%d' }}"/>
+        <t:set thisDay="{{ timestamp | date: '%Y-%m-%d' }}"/>
+        <t:set grouped="{{ sender.id == previousSenderId and thisDay == previousDay }}"/>
+        <t:set showAvatar="{{ grouped == false }}"/>
+        <Avatar t:if="{{ showAvatar }}"
             photoUrl="{{ sender.photoUrl }}"
         />
 
