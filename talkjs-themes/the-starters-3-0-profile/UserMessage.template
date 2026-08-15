@@ -230,29 +230,35 @@ override some properties for avatars showing/hiding
        one bubble height, 57.6px, and wrong at every other by an error that
        grows with the message — up to 90px on the tallest bubble measured.
 
-       `top: 50%` puts the button's top edge on the bubble's midpoint and
-       `translateY(-50%)` lifts it by half its own height. The 50% resolves
-       against the bubble's PADDING box while the box being centred on is its
-       border box, so this is exact only while the bubble's top and bottom
-       borders are equal; an asymmetric border would decentre it by half the
-       difference. Today the bubble has no border to speak of: GlobalCSS
-       overrides this file's `border-width: 1px` with `border: none` at higher
-       specificity, so the two boxes coincide and the residual is 0.00px.
+       Pinning both `top` and `bottom` over-constrains a box that already has a
+       fixed height, and CSS resolves that by sharing the leftover space
+       equally between the two `auto` vertical margins — which centres it. That
+       is against the bubble's PADDING box, so it is exact only while the
+       bubble's top and bottom borders are equal; an asymmetric border would
+       decentre it by half the difference. Today the bubble has no border to
+       speak of: GlobalCSS overrides this file's `border-width: 1px` with
+       `border: none` at higher specificity, so the padding box and the border
+       box coincide and the residual is 0.00px.
 
-       The margin is horizontal-only, and both halves of that matter. It does
-       NOT enlarge the hit area — a margin only offsets the box, whatever this
-       comment used to claim — but `left`/`right: -2.25rem` below resolve
-       against the MARGIN box, so this -0.1rem is part of the horizontal
-       placement and dropping it outright would move the button 1.6px sideways.
-       A vertical component is worse than redundant: `margin-top` applies after
-       `top` and the transform cannot see it, so the old -0.1rem on all four
-       sides would sit every button 1.6px high, outside the 1px tolerance.
+       Do NOT "simplify" this to `top: 50%` plus `transform: translateY(-50%)`.
+       That centres identically, but `transform` is a single slot with no
+       cascade composition, and this button demonstrably takes rules from the
+       `default_v7` base theme — its `display: none` at rest comes from there,
+       not from this file — so any base-theme rule that ever sets a transform
+       on it would silently wipe the centring and drop every menu 14.4px, with
+       nothing failing anywhere. Auto margins hold no property the base theme
+       is likely to want.
+
+       The horizontal margin is not decoration either. It does NOT enlarge the
+       hit area — a margin only offsets the box, whatever this comment used to
+       claim — but `left`/`right: -2.25rem` below resolve against the MARGIN
+       box, so dropping it would move the button 1.6px sideways.
 
        Keep this rule character-identical to the one in the other Chat Theme,
        so a later edit to one is an obvious omission in the other. */
-    top: 50%;
-    margin: 0 -0.1rem;
-    transform: translateY(-50%);
+    top: 0;
+    bottom: 0;
+    margin: auto -0.1rem;
     z-index: 1;
     font-size: .5rem;
     border-radius: 50%;
