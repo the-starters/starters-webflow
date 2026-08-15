@@ -190,8 +190,9 @@ html, body, .talkjs, button, input, textarea {
 }
 .NoChatsScreen__no-chats p { color: var(--ts-olive); }
 
-/* chat header */
-.ChatHeader__header { background: #fff; border-bottom: 1px solid var(--ts-silver); }
+/* chat header — the .ChatHeader__header rule that used to sit here was dead
+   (ChatHeader.template restates the selector later in the sheet and won); its
+   surviving values now live in that component. */
 .ChatHeader__title { font-weight: 600; font-size: 15px; color: var(--ts-black-olive); }
 .ChatHeader__subtitle { font-size: 13px; color: var(--ts-olive); }
 
@@ -209,7 +210,13 @@ html, body, .talkjs, button, input, textarea {
   background-color: var(--ts-sky);
   border-color: var(--ts-sky);
 }
-.UserMessage__message .UserMessage__timestamp { font-size: 11px; color: var(--ts-olive); }
+/* The timestamp element is rendered by MessageBody, so its class is
+   `MessageBody__timestamp`; this rule named `UserMessage__timestamp` and had
+   therefore never matched anything — timestamps were painting at the inherited
+   12px in full-strength --ts-black-olive instead of the muted 11px olive it
+   asks for. Now that the timestamp sits in its own pinned band that mistake
+   reads as body text, which is the opposite of quiet. */
+.UserMessage__message .MessageBody__timestamp { font-size: 11px; color: var(--ts-olive); }
 
 /* composer */
 .MessageField__message-field { background: #fff; border-top: 1px solid var(--ts-silver); }

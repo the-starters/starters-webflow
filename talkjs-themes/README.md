@@ -171,6 +171,82 @@ What the tool does before it writes anything:
 
 It is a dry run unless `--confirm` is passed.
 
+## Clickable Identity contract (inbox theme only)
+
+The inbox theme's chat-header photo, chat-header name and received-message
+avatar are `<ActionButton>`s. Clicking one is answered by `v3/messages.js`,
+which resolves the member id to a public profile slug and opens `/hire/`+slug
+in a new tab. The two sides agree on exactly three things, so changing either
+half without the other breaks the feature silently:
+
+| | Value |
+| --- | --- |
+| action name | `starters-open-profile` |
+| parameter | `data-member` on the button, arriving as `event.params.member` |
+| channels | `ChatHeader` raises a **conversation** action, `UserMessage` raises a **message** action; the controller registers the same handler on both |
+
+Rules the templates enforce, not the controller:
+
+- Only the **other** participant is wrapped. Your own avatar stays a plain
+  `<Avatar>`, so there is no button to click and no pointer cursor.
+- The header buttons only render for a one-on-one conversation
+  (`conversation.otherParticipants.length == 1`).
+- The pointer cursor and the hover dim are declared **only** on the identity
+  buttons, so an affordance never appears where a click cannot do anything.
+
+The affordance is optimistic: the theme cannot know whether a member has a
+published profile, so brands and profile-less starters show the cursor and the
+click quietly does nothing (the resolver answers an empty slug). That trade-off
+was decided in the grill; see the round's spec.
+
+`data-member` is a single word on purpose. TalkJS turns `data-<key>` into
+`event.params.<key>`, and a hyphenated key's arrival form is not documented.
+
+### The slug is resolved when the conversation opens, not when you click
+
+The controller listens for `onConversationSelected` (registered **before**
+`mount()`, because the event fires once as the inbox loads) and resolves the
+other participant's slug then, caching it for the page's lifetime. A click is
+then a Map read followed immediately by `window.open`.
+
+That is a correctness requirement rather than a speed one, and it constrains
+the theme too: WebKit only honours a popup opened inside the click's own
+synchronous call stack, so a tab opened after the ~2.5s resolver round-trip is
+refused on Safari and iOS — silently, with no error to catch. If you ever add
+another identity surface, it must raise the same action with the same
+`data-member`, so it is served by the same cache entry.
+
+The two accessible names in this theme (`View <name>'s profile`, on the header
+photo and on the message avatar) exist because those buttons wrap only an
+image. Do not replace them with `ariaLabel` on the ActionButton: unknown props
+become `data-*` attributes, and would arrive in `event.params`.
+
+The profile-modal theme (`the-starters-3-0-profile/`) deliberately has **no**
+click wiring — that chat already sits on the person's profile page.
+
+### A parser trap worth remembering
+
+TalkJS parses the whole `.template` file, comments included. A comment
+containing something that looks like a tag — `/hire/<slug>`, "as a `<span>`" —
+opens an element that is never closed, and the theme fails to compile with
+`Unexpected close tag` pointing at the last line of the file. TalkJS then
+silently renders its **default** theme instead of erroring in any visible way.
+Write `[slug]`, not `<slug>`, in template comments.
+
+`staging-qa/talkjs-theme-rig/lint-templates.mjs` now refuses to push a theme
+whose comments contain a tag, and `put-geometry-clones.mjs` runs it first. The
+trap cost two debugging rounds before that existed.
+
+### Reserve the avatar column with margin, never with row padding
+
+`max-width` on a bubble is a percentage, and it resolves against the message
+ROW's content box. Padding the row to reserve the dropped avatar's width
+therefore shrinks the cap for exactly the rows that carry it, so a long grouped
+bubble ends up narrower than its group's first bubble — a ragged far edge worth
+16px at the desktop 50% cap and 27px at the 644px 85% one. The reservation is a
+`margin` on `.message` for that reason. `staging-qa/talkjs-theme-rig/cap-gate.mjs`
+measures it at both breakpoints.
+
 ## Restore
 
 If a PUT lands something wrong, re-push from a snapshot (the key comes from
@@ -208,7 +284,8 @@ want first: what it pushes is whatever this folder contains.
 
 ## Clone themes on the account
 
-`the-starters-3-0-qa` and `the-starters-3-0-profile-qa` exist as QA targets and
-are currently byte-identical to their sources. Nothing in production points at
-them — they are only ever loaded by the local rig or a dev-tunnel build of the
-page controller.
+`the-starters-3-0-qa` and `the-starters-3-0-profile-qa` exist as QA targets.
+They currently carry this folder's edits while the real theme names still carry
+the pre-change look; the cutover to the real names is the last step of the
+round. Nothing in production points at the clones — they are only ever loaded by
+the local rig or a dev-tunnel build of the page controller.

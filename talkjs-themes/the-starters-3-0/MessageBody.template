@@ -3,6 +3,13 @@ This is a subcomponent used by UserMessage and SystemMessage.
 -->
 <template>
 
+    <!-- One predicate for both halves of the timestamp: the class that reserves
+         the band, and the branch that renders the band's contents. Written out
+         twice they agreed today but could silently drift — insert any branch
+         between the typing-indicator t:if and its t:else and the timestamp
+         would paint over the message text with no reservation under it. -->
+    <t:set hasTimestamp="{{ body.type != 'typing-indicator' }}"/>
+
     <div t:if="{{ referencedMessage }}" class="referencedMessage">
         <ReferencedMessage body="{{ referencedMessage.body }}" sender="{{ referencedMessage.sender }}"/>
     </div>
@@ -16,7 +23,8 @@ This is a subcomponent used by UserMessage and SystemMessage.
 
     <t:set t:if="{{ body.type == 'file' }}" filetype="{{ body.file.type }}"/>
 
-    <div t:if="{{ body.type != 'file' or body.isVoiceMessage == false or body.thumbnailError == true }}" class="text timestamp-float-{{ floatTimestamp }}">
+    <div t:if="{{ body.type != 'file' or body.isVoiceMessage == false or body.thumbnailError == true }}"
+         class="text timestamp-float-{{ floatTimestamp }} {{ hasTimestamp | then: 'has-timestamp' }}">
         <span t:if="{{ isLongEmailMessage }}">
             <small><i><Icon type="email" /> {{ strings.MESSAGE_SENT_VIA_EMAIL }}</i></small><br/><br/>
         </span>
@@ -39,10 +47,10 @@ This is a subcomponent used by UserMessage and SystemMessage.
             <LinkPreviews links="{{ body.links }}" compact="{{ false }}" />
         </span>
 
-        <div t:if="{{ body.type == 'typing-indicator' }}" class="typing-indicator">
+        <div t:if="{{ hasTimestamp == false }}" class="typing-indicator">
             <TypingIndicator/>
         </div>
-        <span t:else class="timestamp timestamp-float">
+        <span t:if="{{ hasTimestamp }}" class="timestamp timestamp-float">
             <TimeAgo timestamp="{{ timestamp }}"/>
             <span t:if="{{ showStatus }}">&nbsp;<StatusTicks/></span>
         </span>
@@ -55,6 +63,24 @@ This is a subcomponent used by UserMessage and SystemMessage.
 .text {
     padding: 0.25rem .5rem;
     white-space: pre-wrap;
+}
+
+/* Chat bubbles (UserMessage passes floatTimestamp="auto") pin the timestamp and
+   ticks to the bubble's bottom-right corner rather than floating them to
+   wherever the last line of text happens to leave off. The bottom padding
+   reserves the band the timestamp sits in, so text can never run under it on a
+   short, wrapped or grouped message; the min-width keeps a very short message
+   wide enough to hold the timestamp, which no longer widens the bubble itself
+   now that it is out of flow. System messages pass "right" and are untouched. */
+/* Scoped to bodies that actually render a timestamp. The timestamp span below
+   is the t:else of the typing-indicator branch, so a typing bubble has no
+   timestamp — and without this `has-timestamp` gate it would still reserve the
+   20px band and the 80px min-width, giving the animated dots a dead strip
+   underneath and a bubble wider than they need. */
+.text.timestamp-float-auto.has-timestamp {
+    position: relative;
+    padding-bottom: 1.25rem;
+    min-width: 5rem;
 }
 .text a {
     color: currentColor;
@@ -74,6 +100,25 @@ This is a subcomponent used by UserMessage and SystemMessage.
     margin-left: 1.5rem;
     margin-top: 1.5rem;
     opacity: 100%;
+}
+
+/* Deliberately AFTER the base rule above, not before it: this override already
+   wins on specificity, but relying on that alone means a future simplification
+   that drops `.text` from the selector silently restores `margin-top: 1.5rem`
+   — 24px of dead space inside a 20px band.
+   `white-space: nowrap` because the box is shrink-to-fit with `left: auto`: a
+   longer relative time ("about 2 months") plus the read ticks would otherwise
+   wrap upward into the message text while `bottom` stayed pinned, or resolve
+   `left` negative and paint outside the bubble. Nowrap turns a possible
+   overlap into a predictable overhang. */
+.text.timestamp-float-auto > .timestamp-float {
+    position: absolute;
+    right: 0.5rem;
+    bottom: 0.25rem;
+    float: none;
+    margin: 0;
+    line-height: 1;
+    white-space: nowrap;
 }
 
 .timestamp-overlay {

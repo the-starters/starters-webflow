@@ -72,13 +72,9 @@ Renders a message sent by a user.
     word-wrap: break-word;
     position: relative;
     display: inline-block;
-    max-width: calc(100% - 6rem - 0.25rem - 0.25rem);
     border-color: #eee;
     background-color: #eee;
     color: #1E211E;
-}
-.has-avatar-spacer .message {
-    max-width: calc(100% - 3rem - 0.25rem - 0.25rem);
 }
 /* change some styles if the message is by me */
 .by-me .message {
@@ -87,21 +83,27 @@ Renders a message sent by a user.
     color: #1E211E;
     /* Space between avatar and the message */
     margin-right: 0.50rem;
-    max-width: 50%;
     margin-left: auto;
 }
 
 .by-other .message {
     /* Space between avatar and the message */
     margin-left: 0.50rem;
-    max-width: 50%;
     margin-right: auto;
 }
 
+/* Bubble width is the same on both sides — only the direction it hugs differs —
+   so it is declared once and cannot drift apart. This used to be four rules:
+   a `.message` base and a `.has-avatar-spacer .message` variant, both of which
+   were dead (every row carries `by-me` or `by-other`, and those selectors are
+   more specific), plus one 50% and one 85% rule per side. */
+.by-me .message,
+.by-other .message {
+    max-width: 50%;
+}
+
 @media screen and (max-width: 644px) {
-    .by-me .message {
-        max-width: 85%;
-    }
+    .by-me .message,
     .by-other .message {
         max-width: 85%;
     }
@@ -162,15 +164,26 @@ override some properties for avatars showing/hiding
 - balloons get whatever width is left after the avatar columns on both sides
 - we could avoid some of this math at the cost of inserting another div, but we prefer a lighter DOM.
 */
-/* When multiple messages are sent by the same user but 
-   only 1 avatar is displayed, so we need a space  */
-.by-other.previous-same {
-    /* Avatar width (see Avatar component) */
-    padding-left: 3rem;
+/* Only the first row of a run of messages from the same sender draws an avatar.
+   The rows that drop it still have to reserve the avatar's width, or their
+   bubbles slide into the avatar column and the group reads as a ragged
+   stagger instead of one tidy edge. A message-row avatar is 2rem (GlobalCSS
+   overrides the Avatar component's 3.25rem for this context) plus the bubble's
+   own 0.50rem gap, so the offset an ungrouped row ends up with is 2.5rem.
+
+   The reservation is a margin on the BUBBLE, not padding on the row, and that
+   distinction is load-bearing: `max-width: 50%` below resolves against the
+   row's CONTENT box, so 2rem of row padding would quietly cap a grouped bubble
+   at 0.5 × (W − 32px) while its group's first bubble is capped at 0.5 × W. On
+   a long message that is a ~15px ragged edge on the FAR side — the same defect
+   this rule exists to remove, moved to the other end of the bubble (and ~27px
+   at the 644px breakpoint, where the cap is 85%). Margin sits outside the
+   percentage basis, so every row in a group now caps at the same width. */
+.by-other.previous-same .message {
+    margin-left: 2.5rem;
 }
-.by-me.previous-same {
-    /* Avatar width (see Avatar component) */
-    padding-right: 0rem;
+.by-me.previous-same .message {
+    margin-right: 2.5rem;
 }
 
 /* Set some widths and defaults on messages that need it */
@@ -247,12 +260,16 @@ override some properties for avatars showing/hiding
     flex-wrap: wrap;
     gap: 0.25rem;
 }
+/* 3.75rem was the avatar column when the avatar was the Avatar component's own
+   3.25rem; GlobalCSS has overridden it to 2rem in message rows for a long time,
+   so this was the last element still lining up with a size nothing renders at.
+   2.5rem is the bubble edge every other rule in this round standardised on. */
 .emoji-reactions.by-me {
     justify-content: flex-end;
-    margin-right: 3.75rem;
+    margin-right: 2.5rem;
 }
 .emoji-reactions.by-other {
-    margin-left: 3.75rem;
+    margin-left: 2.5rem;
 }
 .emoji-reaction {
     border: 1px solid transparent;
