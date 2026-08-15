@@ -126,6 +126,25 @@ was decided in the grill; see the round's spec.
 `data-member` is a single word on purpose. TalkJS turns `data-<key>` into
 `event.params.<key>`, and a hyphenated key's arrival form is not documented.
 
+### The slug is resolved when the conversation opens, not when you click
+
+The controller listens for `onConversationSelected` (registered **before**
+`mount()`, because the event fires once as the inbox loads) and resolves the
+other participant's slug then, caching it for the page's lifetime. A click is
+then a Map read followed immediately by `window.open`.
+
+That is a correctness requirement rather than a speed one, and it constrains
+the theme too: WebKit only honours a popup opened inside the click's own
+synchronous call stack, so a tab opened after the ~2.5s resolver round-trip is
+refused on Safari and iOS — silently, with no error to catch. If you ever add
+another identity surface, it must raise the same action with the same
+`data-member`, so it is served by the same cache entry.
+
+The two accessible names in this theme (`View <name>'s profile`, on the header
+photo and on the message avatar) exist because those buttons wrap only an
+image. Do not replace them with `ariaLabel` on the ActionButton: unknown props
+become `data-*` attributes, and would arrive in `event.params`.
+
 The profile-modal theme (`the-starters-3-0-profile/`) deliberately has **no**
 click wiring — that chat already sits on the person's profile page.
 
@@ -137,6 +156,20 @@ opens an element that is never closed, and the theme fails to compile with
 `Unexpected close tag` pointing at the last line of the file. TalkJS then
 silently renders its **default** theme instead of erroring in any visible way.
 Write `[slug]`, not `<slug>`, in template comments.
+
+`staging-qa/talkjs-theme-rig/lint-templates.mjs` now refuses to push a theme
+whose comments contain a tag, and `put-geometry-clones.mjs` runs it first. The
+trap cost two debugging rounds before that existed.
+
+### Reserve the avatar column with margin, never with row padding
+
+`max-width` on a bubble is a percentage, and it resolves against the message
+ROW's content box. Padding the row to reserve the dropped avatar's width
+therefore shrinks the cap for exactly the rows that carry it, so a long grouped
+bubble ends up narrower than its group's first bubble — a ragged far edge worth
+16px at the desktop 50% cap and 27px at the 644px 85% one. The reservation is a
+`margin` on `.message` for that reason. `staging-qa/talkjs-theme-rig/cap-gate.mjs`
+measures it at both breakpoints.
 
 ## Restore
 
