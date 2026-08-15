@@ -4,6 +4,10 @@ const test = require('node:test')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./algolia-environment.js'), 'utf8')
+const tabCountsSource = fs.readFileSync(
+  require.resolve('../explore-search/explore-search-tab-counts.js'),
+  'utf8',
+)
 
 function element(initial = {}) {
   const attributes = { ...initial }
@@ -64,6 +68,9 @@ function load(options = {}) {
   const unexpectedIndex = options.unexpectedIndex
     ? element({ 'wf-algolia-index': options.unexpectedIndex })
     : null
+  const tabCount = options.legacyTabCount
+    ? element({ 'data-tab-count-for': 'Freelancers3.0-dev' })
+    : null
   const competingClient = options.competingClient
     ? element({
         'data-app-id': 'browser-selected-app',
@@ -101,7 +108,15 @@ function load(options = {}) {
         return [client, ...(competingClient ? [competingClient] : [])]
       }
       if (selector === '[data-starters-v3-algolia-resource]') {
-        return [starters, opportunities, ...(extra ? [extra] : [])]
+        return [
+          starters,
+          opportunities,
+          ...(unexpectedIndex &&
+          unexpectedIndex.getAttribute('data-starters-v3-algolia-resource') !== null
+            ? [unexpectedIndex]
+            : []),
+          ...(extra ? [extra] : []),
+        ]
       }
       if (selector === '[wf-algolia-index]') {
         return [
@@ -113,7 +128,17 @@ function load(options = {}) {
         ].filter((item) => item.getAttribute('wf-algolia-index') !== null)
       }
       if (selector === '[wf-algolia-sort-index]') return sortItems
+      if (selector === '[data-tab-count-for]') return tabCount ? [tabCount] : []
+      if (selector === '[data-starters-v3-algolia-tab-count-resource]') {
+        return tabCount && tabCount.getAttribute(selector.slice(1, -1)) !== null ? [tabCount] : []
+      }
+      if (selector === '[data-active-tab-count]') return []
+      if (selector === '[data-tab-component="button-list"]') return []
       return []
+    },
+    querySelector(selector) {
+      if (selector === '[data-tab-count-for]') return tabCount
+      return null
     },
   }
   const window = {
@@ -151,6 +176,7 @@ function load(options = {}) {
     sortItems,
     sharedIndexes,
     starters,
+    tabCount,
     unexpectedIndex,
     unmanaged,
     window,
@@ -315,19 +341,68 @@ test('unknown managed resources block the whole managed Algolia surface', () => 
 })
 
 test('the exact legacy Starter index is remapped for unmarked sitewide component elements', () => {
-  const runtime = load({ unexpectedIndex: 'Freelancers3.0-dev' })
+  const runtime = load({ unexpectedIndex: 'Freelancers3.0-dev', legacyTabCount: true })
   assert.equal(runtime.client.getAttribute('data-search-key'), 'test-public-search-key')
   assert.equal(
     runtime.unexpectedIndex.getAttribute('wf-algolia-index'),
     'Freelancers3.0-staging-test',
   )
   assert.equal(runtime.unexpectedIndex.getAttribute('data-starters-v3-algolia-environment'), 'test')
+  assert.equal(runtime.unexpectedIndex.getAttribute('data-starters-v3-algolia-resource'), 'starters')
+  assert.equal(runtime.tabCount.getAttribute('data-tab-count-for'), 'Freelancers3.0-staging-test')
   assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('remapped legacy sitewide elements remain managed across repeated boots', () => {
+  const runtime = load({ unexpectedIndex: 'Freelancers3.0-dev', legacyTabCount: true })
+  assert.equal(runtime.api.boot(config()).ok, true)
+  assert.equal(runtime.client.getAttribute('data-search-key'), 'test-public-search-key')
+  assert.equal(
+    runtime.unexpectedIndex.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-staging-test',
+  )
+  assert.equal(runtime.tabCount.getAttribute('data-tab-count-for'), 'Freelancers3.0-staging-test')
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('Explore counts render against the host-remapped legacy tab index', async () => {
+  const runtime = load({ legacyTabCount: true })
+  runtime.window.fetch = () => Promise.resolve({
+    clone() {
+      return {
+        text() {
+          return Promise.resolve(JSON.stringify({ results: [{ nbHits: 42 }] }))
+        },
+      }
+    },
+  })
+  vm.runInNewContext(tabCountsSource, {
+    document: runtime.document,
+    setTimeout,
+    window: runtime.window,
+  })
+
+  await runtime.window.fetch('https://test.algolia.net/1/indexes/*/queries', {
+    body: JSON.stringify({
+      requests: [{
+        indexName: 'Freelancers3.0-staging-test',
+        params: { clickAnalytics: true },
+        query: '',
+      }],
+    }),
+  })
+  await new Promise(setImmediate)
+
+  assert.equal(runtime.tabCount.textContent, '42')
 })
 
 test('the exact legacy Starter index maps to production on both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
-    const runtime = load({ hostname, unexpectedIndex: 'Freelancers3.0-dev' })
+    const runtime = load({
+      hostname,
+      legacyTabCount: true,
+      unexpectedIndex: 'Freelancers3.0-dev',
+    })
     assert.equal(
       runtime.unexpectedIndex.getAttribute('wf-algolia-index'),
       'Freelancers3.0-production',
@@ -336,6 +411,7 @@ test('the exact legacy Starter index maps to production on both production hosts
       runtime.unexpectedIndex.getAttribute('data-starters-v3-algolia-environment'),
       'production',
     )
+    assert.equal(runtime.tabCount.getAttribute('data-tab-count-for'), 'Freelancers3.0-production')
   }
 })
 

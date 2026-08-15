@@ -29,6 +29,8 @@
   var CREDENTIAL_CLIENT_SELECTOR = 'script[data-app-id], script[data-search-key]'
   var RESOURCE_SELECTOR = '[data-starters-v3-algolia-resource]'
   var INDEX_SELECTOR = '[wf-algolia-index]'
+  var TAB_COUNT_SELECTOR = '[data-tab-count-for]'
+  var TAB_COUNT_RESOURCE_SELECTOR = '[data-starters-v3-algolia-tab-count-resource]'
   var SORT_SELECTOR = '[wf-algolia-sort-index]'
   var LEGACY_STARTERS_INDEX = 'Freelancers3.0-dev'
   var LEARN_CONTENT_INDEX = 'LearnContent'
@@ -200,6 +202,18 @@
       if (!resource && sharedIndex(element.getAttribute('wf-algolia-index'))) continue
       return { ok: false, reason: 'unexpected_index_resource' }
     }
+    var tabCountElements = elements(documentObject, TAB_COUNT_RESOURCE_SELECTOR)
+    for (var tabIndex = 0; tabIndex < tabCountElements.length; tabIndex += 1) {
+      if (
+        clean(
+          tabCountElements[tabIndex].getAttribute(
+            'data-starters-v3-algolia-tab-count-resource',
+          ),
+        ) !== 'starters'
+      ) {
+        return { ok: false, reason: 'unexpected_index_resource' }
+      }
+    }
     return { ok: true }
   }
 
@@ -230,6 +244,19 @@
       element.removeAttribute('wf-algolia-index')
       element.setAttribute('data-starters-v3-algolia-blocked', reason)
     })
+    each(documentObject, TAB_COUNT_SELECTOR, function (element) {
+      var resource = clean(
+        element.getAttribute('data-starters-v3-algolia-tab-count-resource'),
+      )
+      if (
+        !resource &&
+        clean(element.getAttribute('data-tab-count-for')) !== LEGACY_STARTERS_INDEX
+      ) {
+        return
+      }
+      element.removeAttribute('data-tab-count-for')
+      element.setAttribute('data-starters-v3-algolia-blocked', reason)
+    })
     if (documentObject && documentObject.documentElement) {
       documentObject.documentElement.setAttribute('data-v3-algolia-status', 'blocked')
       documentObject.documentElement.setAttribute('data-v3-algolia-block-reason', reason)
@@ -251,7 +278,24 @@
     })
     each(documentObject, INDEX_SELECTOR, function (element) {
       if (!legacyStartersElement(element)) return
+      element.setAttribute('data-starters-v3-algolia-resource', 'starters')
       element.setAttribute('wf-algolia-index', resolution.settings.startersIndex)
+      element.setAttribute('data-starters-v3-algolia-environment', resolution.environment)
+      element.removeAttribute('data-starters-v3-algolia-blocked')
+    })
+    each(documentObject, TAB_COUNT_SELECTOR, function (element) {
+      var resource = clean(
+        element.getAttribute('data-starters-v3-algolia-tab-count-resource'),
+      )
+      if (
+        !resource &&
+        clean(element.getAttribute('data-tab-count-for')) === LEGACY_STARTERS_INDEX
+      ) {
+        element.setAttribute('data-starters-v3-algolia-tab-count-resource', 'starters')
+        resource = 'starters'
+      }
+      if (resource !== 'starters') return
+      element.setAttribute('data-tab-count-for', resolution.settings.startersIndex)
       element.setAttribute('data-starters-v3-algolia-environment', resolution.environment)
       element.removeAttribute('data-starters-v3-algolia-blocked')
     })
