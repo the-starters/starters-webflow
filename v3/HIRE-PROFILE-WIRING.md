@@ -171,11 +171,19 @@ closed and leaves the current popup handler in place. Logged-out visitors keep
 the existing signup-attribution modal. Paid-call and Stripe behavior are not
 part of this canary.
 
-Free-call access keeps the V2 rule: any signed-in Brand identity (the existing
-`brands-dashboard-url` contract), including Brand Free, can select and book a
-free call. Brand Free does not need to upgrade for a free call. Paid-call
-selection, Stripe, reminders, transactional email, and paid-call activation
-remain held.
+Free-call access keeps the V2 product rule: any signed-in Brand, including
+Brand Free, can select and book a free call. Brand Free does not need to
+upgrade for a free call. The controller resolves the role from active, stable
+Memberstack plan IDs using the same map as `route-guard.js`. An explicit empty,
+inactive, unknown-only, or cross-role plan state fails closed. The legacy
+`brands-dashboard-url` field is only a compatibility fallback when the SDK
+payload omits `planConnections`; it cannot override supplied plan state.
+
+This rule was added after the TEST canary found that a valid Test Brand member
+without the legacy dashboard field was treated as Talent. Regression tests now
+cover Test Brand and Brand Free plan-only members, plus empty, inactive, and
+cross-role plan states. Paid-call selection, Stripe, reminders, transactional
+email, and paid-call activation remain held.
 
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code

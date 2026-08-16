@@ -65,6 +65,52 @@
   // top of the Freelancer Template page). Read it off window so a missing global
   // warns instead of throwing a ReferenceError that would abort this file.
   const FREELANCER_ID = window.starter_memberstack_id;
+  // Keep this map aligned with v3/route-guard.js and v3/auth-route.js. Access
+  // decisions use stable Memberstack plan IDs; display names and old dashboard
+  // URL fields are not role authority.
+  const MEMBERSTACK_PLAN_ROLES = {
+      'pln_free-plan-f6kn0dxz': 'brand-free',
+      'pln_new-paid-plan-463h04ph': 'brand-paid',
+      'pln_dorxata-test-free-plan-dvcg0k8o': 'talent',
+      'pln_dorxata-test-brand-plan-777r02pa': 'brand-paid',
+  };
+
+  function isActivePlanConnection(connection) {
+      return !!connection && (connection.active === true || connection.status === 'ACTIVE');
+  }
+
+  function memberRole(member) {
+      const hasPlanConnectionList = !!member && Array.isArray(member.planConnections);
+      const connections = hasPlanConnectionList ? member.planConnections : [];
+      const roles = connections
+          .filter(isActivePlanConnection)
+          .map(function (connection) {
+              return MEMBERSTACK_PLAN_ROLES[connection.planId];
+          })
+          .filter(Boolean);
+      const hasTalent = roles.includes('talent');
+      const hasBrandPaid = roles.includes('brand-paid');
+      const hasBrandFree = roles.includes('brand-free');
+
+      // A cross-role member is not eligible to book. Unknown or inactive plan
+      // records also stay closed when Memberstack supplied plan history.
+      if (hasTalent && (hasBrandPaid || hasBrandFree)) return null;
+      if (hasBrandPaid) return 'brand-paid';
+      if (hasBrandFree) return 'brand-free';
+      if (hasTalent) return 'talent';
+      if (hasPlanConnectionList) return null;
+
+      // Compatibility only for older members whose SDK payload omits the plan
+      // connection list. Once plan data exists, even an empty list always wins.
+      return member && member.customFields && member.customFields['brands-dashboard-url']
+          ? 'legacy-brand'
+          : null;
+  }
+
+  function isBrandMember(member) {
+      const role = memberRole(member);
+      return role === 'brand-free' || role === 'brand-paid' || role === 'legacy-brand';
+  }
   // The Designer keeps this panel visible while it is being authored. Runtime
   // ownership starts closed for every viewer and every /hire record; only the
   // approved inline initializer may reveal it after eligibility and
@@ -95,7 +141,7 @@
           const brand_email = MEMBER['auth']['email'];
 
           // if it's not a brand
-          if (!MEMBER.customFields['brands-dashboard-url']) {
+          if (!isBrandMember(MEMBER)) {
               // check calendar\availability connections
               const starter = await getStarterByMemberId(FREELANCER_ID);
               const grant_id = starter ? starter['nylas_grant_id'] : null;
@@ -150,7 +196,7 @@
      the public search record. Starter members keep the live-derived
      owner toggles above. */
   waitForMember(async function () {
-      var isBrand = !!(MEMBER.customFields || {})['brands-dashboard-url'];
+      var isBrand = isBrandMember(MEMBER);
       if (MEMBER.id && !isBrand) return;
 
       try {
