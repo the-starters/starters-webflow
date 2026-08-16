@@ -1,7 +1,7 @@
 # `v3/hire-profile.js` — wiring and ownership
 
 Last updated: 2026-08-16
-Status: ported out of Webflow page code; behaviour unchanged
+Status: Phase 2 native-CMS source cutover ready for release
 
 ## What this is
 
@@ -13,9 +13,17 @@ lives here, and the page footer loads it from jsDelivr instead.
 This is the same move already made for `v3/profile-portfolio.js`: GitHub is the
 source of truth for browser code, and page/site custom code stays thin.
 
-The port is **behaviour-for-behaviour**. The exact pre-migration block is kept at
+The initial port was **behaviour-for-behaviour**. The exact pre-migration block
+is kept at
 `webflow-sites/starters-3/custom-code-backups/hire-template-footer-pre-cdn-migration-2026-08-16.html`
 in the ops workspace.
+
+Phase 2 removed Experiences and Clients from this runtime. Webflow now renders
+Notable Experience from the **Work Histories** collection list filtered to the
+current freelancer, and Clients from the freelancer's **also-worked-with**
+multi-reference. The 2026-08-16 Xano-to-CMS projection finished with zero drift
+for 515 of 517 profiles. The 74 collision-blocked profiles continue to use their
+stale-but-present CMS rows, so both sections still render natively.
 
 ## Install
 
@@ -30,16 +38,23 @@ deferred loads (`scheduling-auth.js`, `scheduling-v3-stage.js`,
 `paid-call-brand-payment.js`, `freelancer-cms/stripe-connect.js`, `reviews.js`,
 `project-form.js`, `starters-ms-redirect.js`, `profile-portfolio.js`).
 
-## What it renders
+## Page ownership
 
-| Area | Audience | Source |
+| Area | Audience | Owner / source |
 | --- | --- | --- |
-| Notable Experience | everyone, incl. logged out | `api:SYL06lUR/companies` |
-| Clients ("also worked with") | everyone, incl. logged out | `api:KZf7nFnk/.../get_also_worked_with` + `/profile/get_companies` |
-| Services call cards (Free / Paid Consulting) | owner: live connection state · anonymous + brand: public search record | Nylas/Stripe state, or Algolia |
-| Freelance / Retainer rate cards | everyone | Algolia record, cloned from the section's Default card |
-| Booking popups, next-available slot | signed-in members only | Nylas via page embeds |
-| Utilities | everyone | rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more |
+| Notable Experience | everyone, incl. logged out | native Webflow CMS / Work Histories |
+| Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
+| Services call cards (Free / Paid Consulting) | owner: live connection state · anonymous + brand: public search record | this file / Nylas, Stripe, or Algolia |
+| Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
+| Booking popups, next-available slot | signed-in members only | this file / Nylas via page embeds |
+| Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more |
+
+The runtime no longer calls `api:SYL06lUR/companies`,
+`edit_profile/starter/get_also_worked_with`, or `profile/get_companies`.
+`FREELANCER_ID` remains the Memberstack ID used by booking. The public Algolia
+lookup instead reads the starter's positive integer Xano ID at parse time from
+`[data-starter-xano-id]` inside the hidden `.data-native-binding` wrapper. If
+the carrier is absent or invalid, the lookup warns and stands down.
 
 ## Dependencies this file does NOT own
 
@@ -51,7 +66,8 @@ It stands down with a `[hire-profile]` warning when `qs`, `qsa`,
 The booking globals are guaranteed by the verified page install order below.
 
 - Site head: `qs`, `qsa`, `MEMBER`, `memberReady`, `waitForMember`
-- Page embeds: `starter_memberstack_id`, `stripe_charges`
+- Page embeds: `starter_memberstack_id`, `stripe_charges`, and the CMS-bound
+  `[data-starter-xano-id]` carrier inside `.data-native-binding`
 - Booking embeds: `getStarterByMemberId`, `getConfigs`, `getNearestSlot`,
   `initBookingComponents`, `formatWithTimezone`
 - jQuery `$` — used by the dropdown and anchor-scroll blocks only; each is
@@ -70,6 +86,7 @@ Checked on `www.thestarters.com/hire/ashna-rana` at `document.readyState:
 | `MEMBER`, `memberReady`, `WfAlgolia` | `object` |
 | `starter_memberstack_id` | `string` |
 | `stripe_charges` | property present, value `undefined` |
+| `[data-starter-xano-id]` inside `.data-native-binding` | positive integer text |
 | `[wf-algolia-index]` resolved by the environment script | `Freelancers3.0-production` |
 
 `stripe_charges` is only ever written as `window.stripe_charges` (three
@@ -109,7 +126,8 @@ Services section on 2026-08-16, for every viewer, after the index migration.
 Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
 `/hire/jake-mcintyre` (free call only, 135 / 5500).
 
-1. Anonymous: 4 cards on ashna, 3 on jake. Experiences and Clients both render.
+1. Anonymous: 4 cards on ashna, 3 on jake. Native CMS Experiences and Clients
+   remain present, and no profile-data Xano request runs.
 2. Anonymous click on **any** service card opens the signup modal in place.
    That is driven by `v3/signup-attribution.js` off `data-signup-trigger-*`, so
    the cloned rate cards must keep those attributes (values `Freelance` /
@@ -118,6 +136,8 @@ Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
    popup for a card that cannot be booked.
 3. Signed-in brand: same cards visible, no console errors, booking still gated.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
+5. The Algolia object ID matches the positive integer in
+   `[data-starter-xano-id]`.
 
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code

@@ -1,16 +1,16 @@
 /**
  * V3 hire-profile renderer — /hire/<slug>
  *
- * Ported verbatim (behaviour-for-behaviour) from the page-level FOOTER custom
- * code on the hire template (page 69f241ed147b71addb6f153d), so that this logic
- * lives in GitHub instead of in Webflow. Same intent as v3/profile-portfolio.js.
+ * Ported from the page-level FOOTER custom code on the hire template (page
+ * 69f241ed147b71addb6f153d), so that the remaining runtime logic lives in
+ * GitHub instead of in Webflow. Same intent as v3/profile-portfolio.js.
  * Backup of the exact source block:
  * webflow-sites/starters-3/custom-code-backups/hire-template-footer-pre-cdn-migration-2026-08-16.html
  *
  * WHAT IT DOES
- *  - Experiences ("Notable Experience") and Clients ("also worked with"), both
- *    public: they must render for anonymous viewers. Contract:
- *    platform-ops/migrations/2026-07-30-notable-clients-backfill/
+ *  - The starter Xano id carrier used to key the public Algolia record lookup.
+ *    Experiences and Clients are outside this file: Webflow CMS renders them
+ *    natively for all viewers after the Phase 2 cutover.
  *  - Booking wiring, which stays behind the Memberstack member gate.
  *  - Services call-card visibility. The live connection endpoints 401 for
  *    anonymous callers and the brand booking path never toggles visibility, so
