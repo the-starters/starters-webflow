@@ -136,22 +136,23 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
     makeElement('div', { 'data-starters-v3-algolia-resource': 'starters', 'wf-algolia-index': index }),
   )
 
-  // Experiences: present so the renderer resolves a starter id and proceeds.
-  const expWrapper = makeElement('div', { 'experience-wrapper': '' })
-  const expList = makeElement('div', { 'experience-list': '' })
-  const expTemplate = makeElement('div', { 'experience-tag': '' }, ['js-template'])
-  for (const attr of [
-    'experience-tag-name',
-    'experience-tag-job',
-    'experience-tag-start',
-    'experience-tag-end',
-    'experience-tag-date-wrapper',
-  ]) {
-    expTemplate.appendChild(makeElement('div', { [attr]: '' }))
-  }
-  expList.appendChild(expTemplate)
-  expWrapper.appendChild(expList)
-  root.appendChild(expWrapper)
+  const nativeBinding = makeElement('div', {}, ['data-native-binding'])
+  const starterXanoId = makeElement('div', { 'data-starter-xano-id': '' })
+  nativeBinding.appendChild(starterXanoId)
+  root.appendChild(nativeBinding)
+
+  // Webflow CMS owns these rows after the Phase 2 cutover. The runtime must
+  // leave the server-rendered content in place for anonymous visitors.
+  const experience = makeElement('article', { 'data-native-experience': '' })
+  experience.textContent = 'Acme Corp — Product Designer — 2022 to Present'
+  root.appendChild(experience)
+
+  const client = makeElement('a', {
+    'data-native-client': '',
+    href: '/companies/globex',
+  })
+  client.textContent = 'Globex'
+  root.appendChild(client)
 
   // Services section with the Default card the rate cards are cloned from.
   const services = makeElement('div', { id: 'services' })
@@ -177,13 +178,17 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
   services.appendChild(list)
   root.appendChild(services)
 
-  return { root, servicesList: list }
+  return { root, servicesList: list, starterXanoId, experience, client }
 }
 
 function makeContext({ page, record, starterId = 383, member = {} } = {}) {
   const warnings = []
   const requestedIndexes = []
+  const requestedObjectIds = []
+  const requestedUrls = []
   const root = page ? page.root : makeElement('body')
+
+  if (page) page.starterXanoId.textContent = String(starterId)
 
   const documentObject = {
     documentElement: makeElement('html'),
@@ -233,17 +238,13 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
     starter_memberstack_id: 'mem_canary',
     stripe_charges: false,
     fetch: (url) => {
-      if (String(url).includes('/companies?member_id=')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ starter_id: starterId, companies: [] }),
-        })
-      }
+      requestedUrls.push(String(url))
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
     },
     WfAlgolia: {
-      getObject: (indexName) => {
+      getObject: (indexName, objectId) => {
         requestedIndexes.push(indexName)
+        requestedObjectIds.push(objectId)
         return Promise.resolve(record || null)
       },
     },
@@ -251,6 +252,8 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
   context.window = context
   context.warnings = warnings
   context.requestedIndexes = requestedIndexes
+  context.requestedObjectIds = requestedObjectIds
+  context.requestedUrls = requestedUrls
   return context
 }
 
@@ -312,8 +315,6 @@ test('the file keeps its symbols out of the page global scope', async () => {
 
   for (const leaked of [
     'FREELANCER_ID',
-    'experiences_handler',
-    'alsoWorkedWith_handler',
     'startersBooking_handler',
     'renderRateCards',
     'markServiceCardsClickable',
@@ -339,6 +340,36 @@ test('it queries the Algolia index the page declares, not a hardcoded one', asyn
   for (const name of context.requestedIndexes) {
     assert.equal(name, 'Freelancers3.0-production')
   }
+  assert.deepEqual([...new Set(context.requestedObjectIds)], ['383'])
+})
+
+test('native CMS profile rows remain visible while services use the CMS-bound Xano id', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    starterId: 517,
+    record: { rate: 225, 'retainer-rate': 1800, 'retainer-enabled': true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.root.querySelector('[data-native-experience]'), page.experience)
+  assert.equal(
+    page.experience.textContent,
+    'Acme Corp — Product Designer — 2022 to Present',
+  )
+  assert.equal(page.root.querySelector('[data-native-client]'), page.client)
+  assert.equal(page.client.textContent, 'Globex')
+  assert.equal(page.client.getAttribute('href'), '/companies/globex')
+  assert.deepEqual(context.requestedUrls, [], 'native profile data must not trigger Xano fetches')
+  assert.deepEqual([...new Set(context.requestedObjectIds)], ['517'])
+  assert.deepEqual(
+    page.servicesList.children
+      .filter((child) => child.getAttribute('data-rate-card'))
+      .map((child) => child.getAttribute('data-rate-card')),
+    ['freelance', 'retainer'],
+  )
 })
 
 test('it follows the page when the environment resolves a different index', async () => {
