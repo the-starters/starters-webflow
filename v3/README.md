@@ -2966,3 +2966,66 @@ Run its focused tests with:
 ```sh
 node --test v3/dashboard-action-items.test.js
 ```
+
+## Invited Starter review form
+
+`starter-review-form.js` binds the native `/review-starter` Designer form to
+the V3 invited-review endpoints. Load it synchronously in the page head, before
+the site PostHog initialization:
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
+```
+
+The controller reads the private capability token from the URL fragment,
+immediately removes the fragment with `history.replaceState`, and keeps the
+token only in a function closure. It never writes the token to the DOM,
+storage, PostHog properties, or a query string. Context resolves through
+`POST /starter/reviews/invited/context/resolve`; submission uses
+`POST /starter/reviews/invited/submit`. Both calls omit credentials and referrer
+data. URL cleanup removes a legacy `token` query value and preserves every other
+query field unchanged, including the one manually authored UTM set. The native
+form contract is:
+
+| Attribute or name | Purpose |
+| --- | --- |
+| `data-starter-review` | One page root |
+| `data-starter-review-state="loading|form|success|unavailable|error"` | State blocks |
+| `form[data-starter-review-form]` | Native Webflow form |
+| `rating` | Required 1–5 radio group |
+| `review_text` | Required 10–4,000 character review |
+| `private_feedback` | Optional private feedback, maximum 2,000 characters |
+| `data-starter-review-name` | Safe Starter display name |
+| `data-starter-review-photo` | Public HTTPS Starter image |
+| `data-starter-review-headline` | Safe Starter headline |
+| `data-starter-review-profile-link` | Optional `/hire/<slug>` link |
+| `data-starter-review-error` | Inline validation or submission error |
+
+Pass the controller's redaction hook at the site-level PostHog initialization
+boundary. If the site already has a `before_send` callback, assign that callback
+to the hook name before loading this controller. The controller replaces it
+with a redacting wrapper and calls the prior callback with the redacted event:
+
+```js
+window.__startersV3ReviewPosthogBeforeSend = existingBeforeSend
+```
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
+```
+
+```js
+posthog.init(POSTHOG_KEY, {
+    before_send: window.__startersV3ReviewPosthogBeforeSend,
+})
+```
+
+Omit the first assignment when there is no existing callback. The controller
+accepts capability tokens from the fragment only; it never uses the removed
+legacy query value. After an ambiguous submission failure, the form locks the
+review fields and retries the exact first payload with the same idempotency key.
+Run the focused tests with:
+
+```sh
+node --test v3/starter-review-form.test.js
+```
