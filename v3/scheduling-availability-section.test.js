@@ -764,6 +764,26 @@ test('getUpcomingTimeSlots returns an empty array without grantId/configId', asy
   assert.equal(result.length, 0)
 })
 
+test('getUpcomingTimeSlots returns the full booking window when limit is zero', async () => {
+  const firstSlot = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const slots = Array.from({ length: 140 }, (_, index) => ({
+    start_time: firstSlot + index * 15 * 60,
+  }))
+  const { window } = loadSection({
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({ status: 200, body: { time_slots: slots } }),
+    },
+  })
+  await settle()
+
+  const result = await window.StarterSchedulingAvailabilitySection.getUpcomingTimeSlots({
+    grantId: 'grant-1',
+    configId: 'cfg-free',
+    limit: 0,
+  })
+  assert.equal(result.length, 140)
+})
+
 /* ------------------------------------------------------------------ */
 /* Tests: connection-state -> visibility                               */
 /* ------------------------------------------------------------------ */
@@ -1408,6 +1428,10 @@ test('calendar-preview uses the existing jQuery UI library for a stylable month 
     'none',
   )
   assert.equal(calendar.querySelector('.ui-datepicker-inline').style.display, 'block')
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-picker-layout"]').style.gridTemplateColumns,
+    'minmax(0, 1fr)',
+  )
   assert.equal(calendar._datepickerOptions.dateFormat, 'yy-mm-dd')
   assert.equal(calendar._datepickerOptions.beforeShowDay(calendar._datepickerDate)[0], true)
   assert.equal(
