@@ -125,6 +125,7 @@
                   qsa('[has-connection="paid"]').forEach((item) => item.style.display = "block");
               }
 
+              refreshEmptySectionNav();
               return;
           }
 
@@ -154,10 +155,30 @@
           }
 
           if (!MEMBER.id) markServiceCardsClickable();
+          refreshEmptySectionNav();
       } catch (error) {
           console.warn('Anonymous services:', error);
       }
   });
+
+  function refreshEmptySectionNav() {
+      /* hide-empty-sections.js decides whether #services is empty, and it
+         watches the DOM with `{ childList: true, subtree: true }` — no
+         `attributes`. Revealing a call card only flips inline style, which
+         that observer cannot see, so the section stays hidden along with its
+         TOC link even though cards are now visible. The rate-card prepend is
+         a childList change and sometimes rescues it, which made the bug look
+         intermittent rather than constant. Poke the refresh hook the script
+         exposes for exactly this case; it is debounced and safe to call more
+         than once, and its absence must never break rendering. */
+      try {
+          if (typeof window.__startersEmptyNavRefresh === 'function') {
+              window.__startersEmptyNavRefresh();
+          }
+      } catch (error) {
+          /* cosmetic only */
+      }
+  }
 
   function markServiceCardsClickable() {
       /* Logged-out clicks are handled by signup-attribution.js: its
@@ -184,6 +205,7 @@
           renderRateCards(record);
           await memberReady;
           if (!MEMBER.id) markServiceCardsClickable();
+          refreshEmptySectionNav();
       } catch (error) {
           console.warn('Rate services:', error);
       }

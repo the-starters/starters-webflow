@@ -181,9 +181,16 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
   return { root, servicesList: list, starterXanoId, experience, client }
 }
 
-function makeContext({ page, record, starterId = 383, member = {} } = {}) {
+function makeContext({
+  page,
+  record,
+  starterId = 383,
+  member = {},
+  getStarterByMemberId = () => Promise.resolve(null),
+} = {}) {
   const warnings = []
   const requestedIndexes = []
+  const emptyNavRefreshCalls = []
   const requestedObjectIds = []
   const requestedUrls = []
   const root = page ? page.root : makeElement('body')
@@ -235,11 +242,15 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
     MEMBER: member,
     memberReady: Promise.resolve(member),
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
+    getStarterByMemberId,
     starter_memberstack_id: 'mem_canary',
     stripe_charges: false,
     fetch: (url) => {
       requestedUrls.push(String(url))
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    },
+    __startersEmptyNavRefresh: () => {
+      emptyNavRefreshCalls.push(Date.now())
     },
     WfAlgolia: {
       getObject: (indexName, objectId) => {
@@ -252,6 +263,7 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
   context.window = context
   context.warnings = warnings
   context.requestedIndexes = requestedIndexes
+  context.emptyNavRefreshCalls = emptyNavRefreshCalls
   context.requestedObjectIds = requestedObjectIds
   context.requestedUrls = requestedUrls
   return context
@@ -461,5 +473,78 @@ test('a retainer that is disabled or zero produces no retainer card', async () =
       .filter((c) => c.getAttribute('data-rate-card'))
       .map((c) => c.getAttribute('data-rate-card')),
     ['freelance'],
+  )
+})
+
+test('it asks hide-empty-sections to re-evaluate after revealing service cards', async () => {
+  // hide-empty-sections.js observes { childList, subtree } only. Revealing a
+  // call card is an inline-style change, which that observer cannot see, so
+  // #services and its TOC link stay hidden even though cards are visible.
+  // Reproduced on production 2026-08-16 (/hire/advika-aggarwal, logged out).
+  const context = makeContext({
+    page: makePage(),
+    record: { rate: 125, 'retainer-rate': '2500', 'retainer-enabled': true,
+      'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.ok(
+    context.emptyNavRefreshCalls.length > 0,
+    'expected __startersEmptyNavRefresh to be invoked after the cards were revealed',
+  )
+})
+
+test('a signed-in Starter refreshes empty navigation after owner cards are revealed', async () => {
+  const page = makePage()
+  let resolveStarter
+  const starterReady = new Promise((resolve) => {
+    resolveStarter = resolve
+  })
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-rate': 0, 'retainer-enabled': false },
+    member: {
+      id: 'owner_member',
+      auth: { email: 'owner@example.com' },
+      customFields: { 'free-user': 'Owner', 'last-name': 'Member' },
+    },
+    getStarterByMemberId: () => starterReady,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(context.emptyNavRefreshCalls.length, 1)
+  resolveStarter({ nylas_grant_id: 'grant_owner' })
+  await settle()
+
+  assert.equal(page.servicesList.children.length, 1, 'zero rates must not add a childList mutation')
+  assert.equal(page.servicesList.children[0].style.display, 'block')
+  assert.equal(
+    context.emptyNavRefreshCalls.length,
+    2,
+    'owner card visibility must trigger a refresh after the delayed lookup completes',
+  )
+})
+
+test('a page without the hide-empty hook still renders its cards', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    record: { rate: 125, 'retainer-rate': '2500', 'retainer-enabled': true },
+  })
+  delete context.__startersEmptyNavRefresh
+  vm.createContext(context)
+
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  await settle()
+  assert.deepEqual(
+    page.servicesList.children
+      .filter((c) => c.getAttribute('data-rate-card'))
+      .map((c) => c.getAttribute('data-rate-card')),
+    ['freelance', 'retainer'],
+    'a missing cosmetic hook must never stop the cards rendering',
   )
 })

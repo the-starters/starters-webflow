@@ -74,6 +74,11 @@ The booking globals are guaranteed by the verified page install order below.
   individually guarded, so a missing jQuery costs those two behaviours and
   nothing else
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
+- `window.__startersEmptyNavRefresh` — optional, debounced refresh hook from
+  `utils/section-custom-toc/hide-empty-sections.js`. After an asynchronous
+  call-card reveal or rate-card render, this file asks the empty-section owner
+  to re-evaluate the Services section and its TOC link. The call is guarded:
+  a missing or failing cosmetic hook must not stop card rendering.
 
 ### Dependency contract, verified on production
 
@@ -109,6 +114,12 @@ Deferred, therefore strictly **later** than the inline footer was: it runs after
 HTML parse rather than mid-parse. Every global it consumes is set by then. This
 is the only intentional timing change in the port.
 
+The empty-section observer watches child-list mutations, not attribute changes.
+Changing a call card's inline `display` therefore does not trigger that observer.
+Every asynchronous path that reveals call cards, plus the rate-card render path,
+calls `window.__startersEmptyNavRefresh()` so `#services` and its TOC link match
+the final visible-card state even when no rate card adds a DOM child.
+
 ## ⛔ The Algolia index must never be hardcoded
 
 `resolveStartersIndex()` reads `[wf-algolia-index]` from the page.
@@ -126,8 +137,10 @@ Services section on 2026-08-16, for every viewer, after the index migration.
 Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
 `/hire/jake-mcintyre` (free call only, 135 / 5500).
 
-1. Anonymous: 4 cards on ashna, 3 on jake. Native CMS Experiences and Clients
-   remain present, and no profile-data Xano request runs.
+1. Anonymous: 4 cards on ashna, 3 on jake. The Services section and its TOC
+   link remain visible after the asynchronous cards render. Native CMS
+   Experiences and Clients remain present, and no profile-data Xano request
+   runs.
 2. Anonymous click on **any** service card opens the signup modal in place.
    That is driven by `v3/signup-attribution.js` off `data-signup-trigger-*`, so
    the cloned rate cards must keep those attributes (values `Freelance` /
