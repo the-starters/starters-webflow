@@ -640,6 +640,7 @@ function loadSection(options = {}) {
     MEMBER: { auth: { email: 'member@example.com' } },
     xanoAuthFetch,
     clearGrantData: options.clearGrantData,
+    jQuery: options.jQuery,
   }
 
   class CustomEvent {
@@ -669,6 +670,25 @@ function loadSection(options = {}) {
 
 async function settle(iterations = 25) {
   for (let i = 0; i < iterations; i++) await new Promise(setImmediate)
+}
+
+function createDatepickerStub() {
+  const jQuery = (element) => {
+    const api = {
+      datepicker(arg, value) {
+        if (typeof arg === 'object') {
+          element._datepickerOptions = arg
+          element.appendChild(new El('div', { class: 'ui-datepicker ui-datepicker-inline' }))
+        } else if (arg === 'setDate') {
+          element._datepickerDate = value
+        }
+        return api
+      },
+    }
+    return api
+  }
+  jQuery.fn = { datepicker() {} }
+  return jQuery
 }
 
 /* ------------------------------------------------------------------ */
@@ -1348,6 +1368,53 @@ test('calendar-preview renders canonical active free services and their live slo
   assert.equal(
     calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
     1,
+  )
+})
+
+test('calendar-preview uses the existing jQuery UI library for a stylable month calendar', async () => {
+  const firstDate = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const secondDate = firstDate + 24 * 60 * 60
+  const { dom } = loadSection({
+    jQuery: createDatepickerStub(),
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: firstDate }, { start_time: secondDate }] },
+      }),
+    },
+  })
+  await settle()
+
+  const calendar = dom.calendarPreview.querySelector(
+    '[data-availability-element="preview-month-calendar"]',
+  )
+  assert.ok(calendar)
+  assert.equal(
+    dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]').style.display,
+    'none',
+  )
+  assert.equal(calendar.querySelector('.ui-datepicker-inline').style.display, 'block')
+  assert.equal(calendar._datepickerOptions.dateFormat, 'yy-mm-dd')
+  assert.equal(calendar._datepickerOptions.beforeShowDay(calendar._datepickerDate)[0], true)
+  assert.equal(
+    calendar._datepickerOptions.beforeShowDay(
+      new Date(calendar._datepickerDate.getFullYear(), calendar._datepickerDate.getMonth(), calendar._datepickerDate.getDate() + 7),
+    )[0],
+    false,
   )
 })
 
