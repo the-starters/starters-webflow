@@ -421,7 +421,9 @@ function buildSectionDom(options = {}) {
 
   const slotsWrapper = new El('div', { 'data-availability-element': 'slots-wrapper' })
   const loadingSlots = new El('div', { 'data-availability-element': 'loading-slots' })
+  const calendarPreview = new El('div', { 'data-availability-element': 'calendar-preview' })
   slotsWrapper.appendChild(loadingSlots)
+  slotsWrapper.appendChild(calendarPreview)
 
   mainWrapper.appendChild(listWrapper)
   mainWrapper.appendChild(createCard)
@@ -446,6 +448,7 @@ function buildSectionDom(options = {}) {
     list,
     priceInput,
     loadingSlots,
+    calendarPreview,
     slotsWrapper,
     createBtn,
     notif,
@@ -463,6 +466,7 @@ function buildStatefulRoutes(initialState) {
       grantEmail: null,
       calendarId: null,
       Paid_Call_Rate: 150,
+      configs: null,
       availability: {
         items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
         manager: null,
@@ -492,7 +496,16 @@ function buildStatefulRoutes(initialState) {
     '/starter/clear_calendar_data/v3': () => ({ status: 200, body: { id: 1 } }),
     '/nylas_configurations/get_all/v3': () => ({
       status: 200,
-      body: state.grantId ? [{ config_id: 'cfg-free', grant_id: state.grantId, is_paid: false }] : [],
+      body: state.grantId
+        ? state.configs || [{
+            config_id: 'cfg-free',
+            grant_id: state.grantId,
+            title: 'Free Consultation Call',
+            duration: 30,
+            is_paid: false,
+            active: true,
+          }]
+        : [],
     }),
     '/scheduler/configurations/create/v3': () => ({ status: 200, body: { response: { status: 200 } } }),
     '/scheduler/configurations/update/v3': () => ({ status: 200, body: { response: { status: 200 } } }),
@@ -558,7 +571,7 @@ function loadSection(options = {}) {
       calls.push({ path, method, query })
       const route = getRoutes[path]
       if (!route) throw new Error('unrouted GET path ' + path)
-      const result = route(query)
+      const result = await route(query)
       return { ok: result.status >= 200 && result.status < 300, status: result.status, json: async () => result.body }
     }
     const body = init && init.body ? JSON.parse(init.body) : {}
@@ -1286,6 +1299,137 @@ test('item cards remain visible (not display:none) across repeated renders', asy
 /* Tests: bookable-slots preview loading state                        */
 /* ------------------------------------------------------------------ */
 
+test('calendar-preview renders canonical active free services and their live slots', async () => {
+  const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free',
+          grant_id: 'grant-1',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: future }] },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'ready')
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.ok(services)
+  assert.equal(services.children.length, 1)
+  assert.equal(services.children[0].getAttribute('data-preview-config-id'), 'cfg-free')
+  assert.equal(services.children[0].getAttribute('aria-pressed'), 'true')
+  assert.equal(services.children[0].children[0].textContent, 'Free Consultation Call')
+  assert.equal(services.children[0].children[1].textContent, '30 minutes · Free')
+
+  const slotsList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
+  assert.ok(slotsList)
+  assert.equal(slotsList.children.length, 1)
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    1,
+  )
+})
+
+test('calendar-preview never falls back to a paid configuration', async () => {
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-paid',
+          grant_id: 'grant-1',
+          title: 'Paid Consultation Call',
+          duration: 60,
+          is_paid: true,
+          active: true,
+        },
+      ],
+    },
+  })
+  await settle()
+
+  assert.equal(dom.calendarPreview.getAttribute('data-scheduling-preview-state'), 'empty')
+  assert.equal(dom.calendarPreview.querySelector('[data-preview-config-id="cfg-paid"]'), null)
+  assert.equal(
+    calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
+    0,
+  )
+})
+
+test('calendar-preview ignores an older slot response after the selected service changes', async () => {
+  const pending = []
+  const slotA = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const slotB = Math.floor(Date.now() / 1000) + 4 * 24 * 60 * 60
+  const { dom } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        { config_id: 'cfg-a', title: 'Free A', duration: 30, is_paid: false, active: true },
+        { config_id: 'cfg-b', title: 'Free B', duration: 45, is_paid: false, active: true },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': (query) => new Promise((resolve) => {
+        pending.push({ configId: query.configuration_id, resolve })
+      }),
+    },
+  })
+  await settle(5)
+
+  const services = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.ok(services)
+  assert.equal(pending.length, 1)
+  services.children[1].click()
+  await settle(5)
+  assert.equal(pending.length, 2)
+
+  pending.find((request) => request.configId === 'cfg-b').resolve({
+    status: 200,
+    body: { time_slots: [{ start_time: slotB }] },
+  })
+  await settle(5)
+  pending.find((request) => request.configId === 'cfg-a').resolve({
+    status: 200,
+    body: { time_slots: [{ start_time: slotA }] },
+  })
+  await settle(5)
+
+  const expected = new Intl.DateTimeFormat('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Manila',
+  }).format(new Date(slotB * 1000))
+  const currentList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
+  assert.ok(currentList)
+  assert.equal(currentList.children.length, 1)
+  assert.equal(currentList.children[0].textContent, expected)
+  assert.equal(services.children[1].getAttribute('aria-pressed'), 'false') // stale DOM was replaced
+  const currentServices = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
+  assert.equal(currentServices.children[1].getAttribute('aria-pressed'), 'true')
+})
+
 test('removing an item waits for the response before refreshing slots (not fired concurrently)', async () => {
   const { dom } = loadSection({
     serverState: {
@@ -1321,7 +1465,9 @@ test('removing an item waits for the response before refreshing slots (not fired
   await settle()
 
   assert.equal(dom.loadingSlots.style.display, 'none')
-  assert.notEqual(slotsList.style.display, 'none')
+  const refreshedSlotsList = dom.slotsWrapper.querySelector('[data-availability-element="slots-list"]')
+  assert.ok(refreshedSlotsList)
+  assert.notEqual(refreshedSlotsList.style.display, 'none')
 })
 
 test('open-item-remove opens the confirm modal, and confirming dims the modal buttons while the request is in flight', async () => {

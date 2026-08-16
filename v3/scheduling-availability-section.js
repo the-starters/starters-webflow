@@ -91,6 +91,8 @@
   let connectBusy = false
   let cachedItemTemplate = null
   let creatingDraft = false
+  let selectedPreviewConfigId = null
+  let previewRenderVersion = 0
   // Set by the per-item "open-item-remove" trigger, consumed by the
   // notification modal's "item-remove" confirm button.
   let pendingRemoveId = null
@@ -1860,14 +1862,126 @@
         hour: '2-digit',
         minute: '2-digit',
         hour12: true,
+        timeZone: timezone || undefined,
       }).format(date)
     } catch (error) {
       return date.toString()
     }
   }
 
-  // Renders as a plain list built directly by this script — the 2 existing
-  // (empty) HtmlEmbeds inside `slots-wrapper` are out of scope and ignored.
+  function activeFreeConfigs() {
+    return configs.filter(function (config) {
+      return Boolean(
+        config &&
+          config.config_id &&
+          config.is_paid === false &&
+          config.active !== false,
+      )
+    })
+  }
+
+  function applyStyles(node, styles) {
+    Object.keys(styles).forEach(function (name) {
+      node.style[name] = styles[name]
+    })
+    return node
+  }
+
+  function previewText(tag, text, styles) {
+    const node = document.createElement(tag)
+    node.textContent = text
+    return applyStyles(node, styles || {})
+  }
+
+  function renderServicesPreview(mount, services, selectedConfig) {
+    mount.innerHTML = ''
+    mount.setAttribute('data-scheduling-preview-state', services.length ? 'ready' : 'empty')
+
+    const shell = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gap: '16px',
+    })
+    shell.setAttribute(EL, 'services-calendar-preview')
+
+    if (!services.length) {
+      shell.appendChild(
+        previewText('div', 'No active free service is available for preview.', {
+          padding: '18px',
+          border: '1px solid #e2e2e2',
+          borderRadius: '8px',
+        }),
+      )
+      mount.appendChild(shell)
+      return null
+    }
+
+    const servicesWrap = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: services.length > 1 ? 'repeat(2, minmax(0, 1fr))' : '1fr',
+      gap: '8px',
+    })
+    servicesWrap.setAttribute(EL, 'preview-services')
+    services.forEach(function (config) {
+      const selected = config.config_id === selectedConfig.config_id
+      const button = applyStyles(document.createElement('button'), {
+        padding: '12px 14px',
+        border: selected ? '2px solid #1f211d' : '1px solid #d9d9d9',
+        borderRadius: '8px',
+        background: '#ffffff',
+        color: '#1f211d',
+        textAlign: 'left',
+        cursor: 'pointer',
+      })
+      button.setAttribute('type', 'button')
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false')
+      button.setAttribute('data-preview-config-id', config.config_id)
+      button.appendChild(
+        previewText('strong', config.title || 'Free Consultation Call', {
+          display: 'block',
+          fontSize: '14px',
+        }),
+      )
+      button.appendChild(
+        previewText('span', String(Number(config.duration) || 30) + ' minutes · Free', {
+          display: 'block',
+          marginTop: '4px',
+          color: '#6f746d',
+          fontSize: '12px',
+        }),
+      )
+      button.addEventListener('click', function () {
+        if (selectedPreviewConfigId === config.config_id) return
+        selectedPreviewConfigId = config.config_id
+        renderSlotsPreview()
+      })
+      servicesWrap.appendChild(button)
+    })
+    shell.appendChild(servicesWrap)
+
+    const calendar = applyStyles(document.createElement('div'), {
+      padding: '14px',
+      border: '1px solid #e2e2e2',
+      borderRadius: '8px',
+      background: '#ffffff',
+    })
+    calendar.setAttribute(EL, 'preview-calendar')
+    const heading = applyStyles(document.createElement('div'), {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: '12px',
+      alignItems: 'baseline',
+      marginBottom: '10px',
+    })
+    heading.appendChild(previewText('strong', 'Next available times', { fontSize: '14px' }))
+    heading.appendChild(previewText('span', timezone || '', { color: '#6f746d', fontSize: '11px' }))
+    calendar.appendChild(heading)
+    shell.appendChild(calendar)
+    mount.appendChild(shell)
+    return calendar
+  }
+
+  // Renders inside the Designer-owned calendar-preview mount. The generated
+  // nodes are read-only and use canonical configuration and availability data.
   function renderSlotsList(wrapper, slots) {
     let list = qs(elSel('slots-list'), wrapper)
     if (!list) {
@@ -1879,11 +1993,19 @@
     if (!slots.length) {
       const empty = document.createElement('div')
       empty.textContent = 'No upcoming open slots found.'
+      applyStyles(empty, { color: '#6f746d', fontSize: '12px' })
       list.appendChild(empty)
       return
     }
+    applyStyles(list, { display: 'grid', gap: '7px' })
     slots.forEach(function (startTime) {
-      const row = document.createElement('div')
+      const row = applyStyles(document.createElement('div'), {
+        padding: '9px 11px',
+        borderRadius: '6px',
+        background: '#f3f4ef',
+        color: '#1f211d',
+        fontSize: '12px',
+      })
       row.textContent = formatSlotTime(startTime)
       list.appendChild(row)
     })
@@ -1892,23 +2014,29 @@
   async function renderSlotsPreview() {
     const wrapper = qs(elSel('slots-wrapper'))
     if (!wrapper) return
+    const mount = qs(elSel('calendar-preview'), wrapper) || wrapper
+    const renderVersion = ++previewRenderVersion
     setElementVisible('slots-list', false)
     setElementVisible('loading-slots', true)
-    const generalConfig =
-      configs.filter(function (c) {
-        return !c.is_paid
-      })[0] || configs[0]
-    if (!grantId || !generalConfig) {
+    const services = activeFreeConfigs()
+    const selectedConfig =
+      services.filter(function (config) {
+        return config.config_id === selectedPreviewConfigId
+      })[0] || services[0]
+    selectedPreviewConfigId = selectedConfig ? selectedConfig.config_id : null
+    const calendar = renderServicesPreview(mount, services, selectedConfig)
+    if (!grantId || !selectedConfig || !calendar) {
       setElementVisible('loading-slots', false)
       return
     }
     const slots = await getUpcomingTimeSlots({
       grantId: grantId,
-      configId: generalConfig.config_id,
+      configId: selectedConfig.config_id,
       searchDays: SLOTS_SEARCH_DAYS,
       limit: SLOTS_LIMIT,
     })
-    renderSlotsList(wrapper, slots)
+    if (renderVersion !== previewRenderVersion) return
+    renderSlotsList(calendar, slots)
     setElementVisible('loading-slots', false)
     setElementVisible('slots-list', true)
   }
@@ -1960,6 +2088,8 @@
       timezonePersisted = false
       connectionError = false
       configs = []
+      selectedPreviewConfigId = null
+      previewRenderVersion = 0
       grantId = null
       grantEmail = null
       grantCalendarId = null
