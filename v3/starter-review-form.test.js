@@ -5,8 +5,10 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./starter-review-form.js'), 'utf8')
 
-function load() {
+function load(options = {}) {
     const listeners = new Map()
+    const historyCalls = []
+    const fetchCalls = []
     const context = {
         URL,
         URLSearchParams,
@@ -15,9 +17,18 @@ function load() {
         console,
         window: {
             __STARTERS_TEST__: true,
-            location: { href: 'https://thestarters.com/review-starter' },
-            history: { state: null, replaceState() {} },
+            location: {
+                href: options.href || 'https://thestarters.com/review-starter',
+                origin: 'https://thestarters.com',
+            },
+            history: {
+                state: null,
+                replaceState(state, title, url) {
+                    historyCalls.push(url)
+                },
+            },
             crypto: { randomUUID: () => '00000000-0000-4000-8000-000000000000' },
+            posthog: options.posthog,
         },
         document: {
             readyState: 'loading',
@@ -25,19 +36,26 @@ function load() {
                 listeners.set(name, callback)
             },
             querySelector() {
-                return null
+                return options.root || null
             },
         },
-        fetch: async () => {
-            throw new Error('fetch must not run during pure-contract tests')
+        fetch: async (...args) => {
+            fetchCalls.push(args)
+            if (!options.fetch) throw new Error('unexpected fetch')
+            return options.fetch(...args)
         },
     }
     vm.runInNewContext(source, context)
-    return context.window.__startersReviewFormTest
+    return {
+        api: context.window.__startersReviewFormTest,
+        fetchCalls,
+        historyCalls,
+        init: listeners.get('DOMContentLoaded'),
+    }
 }
 
 test('extracts a fragment token and returns a token-free URL with manual UTMs', () => {
-    const api = load()
+    const { api } = load()
     const result = api.getTokenAndSanitizedUrl(
         'https://thestarters.com/review-starter?utm_source=mandrill&utm_medium=email#token=private-capability-token-12345',
     )
@@ -50,11 +68,11 @@ test('extracts a fragment token and returns a token-free URL with manual UTMs', 
 })
 
 test('removes a legacy query token without deleting unrelated query fields', () => {
-    const api = load()
+    const { api } = load()
     const result = api.getTokenAndSanitizedUrl(
         'https://thestarters.com/review-starter?token=legacy-private-token-12345&utm_campaign=v3_starter_review_request',
     )
-    assert.equal(result.token, 'legacy-private-token-12345')
+    assert.equal(result.token, '')
     assert.equal(
         result.sanitized,
         '/review-starter?utm_campaign=v3_starter_review_request',
@@ -62,7 +80,7 @@ test('removes a legacy query token without deleting unrelated query fields', () 
 })
 
 test('builds the bounded public submit payload', () => {
-    const api = load()
+    const { api } = load()
     const result = api.buildSubmission(
         {
             rating: '5',
@@ -83,7 +101,7 @@ test('builds the bounded public submit payload', () => {
 })
 
 test('rejects invalid ratings and out-of-bounds public text', () => {
-    const api = load()
+    const { api } = load()
     assert.equal(
         api.buildSubmission(
             { rating: '0', review_text: 'Long enough review', private_feedback: '' },
@@ -105,4 +123,130 @@ test('rejects invalid ratings and out-of-bounds public text', () => {
         ).ok,
         false,
     )
+})
+
+test('sanitizes the visible URL before checking the Designer root', () => {
+    const harness = load({
+        href: 'https://thestarters.com/review-starter?utm_source=email#token=private-capability-token-12345',
+    })
+    assert.deepEqual(harness.historyCalls, ['/review-starter?utm_source=email'])
+})
+
+test('redacts token values and URLs before analytics sends them', () => {
+    const { api } = load()
+    const event = api.redactAnalyticsEvent({
+        properties: {
+            token: 'private-capability-token-12345',
+            $current_url: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        },
+    })
+    assert.deepEqual(JSON.parse(JSON.stringify(event)), {
+        properties: {
+            token: '[redacted]',
+            $current_url: 'https://thestarters.com/review-starter',
+        },
+    })
+})
+
+function makeFormHarness() {
+    const states = [
+        'loading',
+        'form',
+        'success',
+        'unavailable',
+        'error',
+    ].map((name) => ({
+        hidden: false,
+        getAttribute: () => name,
+    }))
+    const fields = {
+        rating: { value: '5', disabled: false },
+        review_text: { value: 'Excellent partner and operator.', disabled: false },
+        private_feedback: { value: 'Internal note.', disabled: false },
+    }
+    const submitButton = { disabled: false }
+    const errorNode = { textContent: '' }
+    let submit
+    const form = {
+        addEventListener(name, callback) {
+            if (name === 'submit') submit = callback
+        },
+        querySelector(selector) {
+            if (selector === '[name="rating"]:checked') return fields.rating
+            if (selector === '[name="review_text"]') return fields.review_text
+            if (selector === '[name="private_feedback"]') return fields.private_feedback
+            if (selector === '[type="submit"]') return submitButton
+            return null
+        },
+        querySelectorAll() {
+            return Object.values(fields)
+        },
+    }
+    const root = {
+        state: '',
+        setAttribute(name, value) {
+            if (name === 'data-starter-review-current-state') this.state = value
+        },
+        querySelectorAll: () => states,
+        querySelector(selector) {
+            if (selector === 'form[data-starter-review-form]') return form
+            if (selector === '[data-starter-review-error]') return errorNode
+            return null
+        },
+    }
+    return {
+        fields,
+        root,
+        submit: (event) => submit(event),
+        submitButton,
+    }
+}
+
+function response(payload, ok = true, status = 200) {
+    return {
+        ok,
+        status,
+        json: async () => payload,
+    }
+}
+
+test('analytics failures do not make a valid form unavailable', async () => {
+    const formHarness = makeFormHarness()
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        posthog: { capture: () => { throw new Error('analytics unavailable') } },
+        fetch: async () => response({ available: true, starter: { name: 'Starter' } }),
+    })
+    await harness.init()
+    assert.equal(formHarness.root.state, 'form')
+})
+
+test('ambiguous retries preserve the first payload and idempotency key', async () => {
+    const formHarness = makeFormHarness()
+    let submitAttempts = 0
+    const harness = load({
+        href: 'https://thestarters.com/review-starter#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async (url) => {
+            if (url.endsWith('/context/resolve')) {
+                return response({ available: true, starter: { name: 'Starter' } })
+            }
+            submitAttempts += 1
+            if (submitAttempts === 1) throw new Error('connection lost')
+            return response({ accepted: true, duplicate: true })
+        },
+    })
+    await harness.init()
+    const event = { preventDefault() {}, stopImmediatePropagation() {} }
+    await formHarness.submit(event)
+    formHarness.fields.review_text.value = 'A different review after the timeout.'
+    await formHarness.submit(event)
+
+    const payloads = harness.fetchCalls
+        .slice(1)
+        .map(([, options]) => JSON.parse(options.body))
+    assert.equal(formHarness.fields.review_text.disabled, true)
+    assert.deepEqual(payloads[0], payloads[1])
+    assert.equal(formHarness.root.state, 'success')
 })

@@ -11,9 +11,6 @@
 (function () {
     'use strict'
 
-    if (window.__startersV3ReviewFormBooted) return
-    window.__startersV3ReviewFormBooted = true
-
     var API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:opp30'
     var CONTEXT_PATH = '/starter/reviews/invited/context/resolve'
     var SUBMIT_PATH = '/starter/reviews/invited/submit'
@@ -30,7 +27,7 @@
     var getTokenAndSanitizedUrl = function (href) {
         var url = new URL(href)
         var hash = new URLSearchParams(url.hash.replace(/^#/, ''))
-        var token = normalize(hash.get('token') || url.searchParams.get('token'))
+        var token = normalize(hash.get('token'))
 
         url.searchParams.delete('token')
         url.hash = ''
@@ -40,6 +37,53 @@
             sanitized: url.pathname + (url.search ? url.search : ''),
         }
     }
+
+    var sanitizeAnalyticsUrl = function (value) {
+        if (typeof value !== 'string' || !/[?#&]token=/i.test(value)) return value
+
+        try {
+            var absolute = /^[a-z][a-z\d+.-]*:/i.test(value)
+            var url = new URL(value, window.location.origin)
+            url.searchParams.delete('token')
+            var hash = new URLSearchParams(url.hash.replace(/^#/, ''))
+            hash.delete('token')
+            url.hash = hash.toString() ? '#' + hash.toString() : ''
+            return absolute
+                ? url.toString()
+                : url.pathname + url.search + url.hash
+        } catch (error) {
+            return value
+        }
+    }
+
+    var redactAnalyticsEvent = function (event) {
+        if (!event || typeof event !== 'object') return event
+
+        var redact = function (value, key, depth) {
+            if (/(^|_)token$/i.test(key)) return '[redacted]'
+            if (typeof value === 'string') return sanitizeAnalyticsUrl(value)
+            if (!value || typeof value !== 'object' || depth > 4) return value
+
+            Object.keys(value).forEach(function (childKey) {
+                value[childKey] = redact(value[childKey], childKey, depth + 1)
+            })
+            return value
+        }
+
+        return redactAnalyticsEvent.previous
+            ? redactAnalyticsEvent.previous(redact(event, '', 0))
+            : redact(event, '', 0)
+    }
+
+    redactAnalyticsEvent.previous = window.__startersV3ReviewPosthogBeforeSend
+    window.__startersV3ReviewPosthogBeforeSend = redactAnalyticsEvent
+
+    var tokenResult = getTokenAndSanitizedUrl(window.location.href)
+    window.history.replaceState(window.history.state, '', tokenResult.sanitized)
+    var initialCapabilityToken = tokenResult.token
+
+    if (window.__startersV3ReviewFormBooted) return
+    window.__startersV3ReviewFormBooted = true
 
     var makeIdempotencyKey = function () {
         if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -109,17 +153,20 @@
 
     var capture = function (name, properties) {
         if (!window.posthog || typeof window.posthog.capture !== 'function') return
-        window.posthog.capture(name, properties || {})
+        try {
+            window.posthog.capture(name, properties || {})
+        } catch (error) {}
     }
 
     var init = async function () {
         var root = document.querySelector('[data-starter-review]')
-        if (!root) return
+        if (!root) {
+            initialCapabilityToken = ''
+            return
+        }
 
-        var tokenResult = getTokenAndSanitizedUrl(window.location.href)
-        window.history.replaceState(window.history.state, '', tokenResult.sanitized)
-
-        var capabilityToken = tokenResult.token
+        var capabilityToken = initialCapabilityToken
+        initialCapabilityToken = ''
         var setState = function (name) {
             root.setAttribute('data-starter-review-current-state', name)
             root.querySelectorAll('[data-starter-review-state]').forEach(function (node) {
@@ -173,38 +220,51 @@
             if (!form) throw new Error('The review form is not configured.')
 
             var idempotencyKey = makeIdempotencyKey()
+            var pendingSubmission = null
+            var submitting = false
             form.addEventListener('submit', async function (event) {
                 event.preventDefault()
                 event.stopImmediatePropagation()
+                if (submitting) return
                 setError('')
 
-                var selectedRating = form.querySelector('[name="rating"]:checked')
-                var reviewField = form.querySelector('[name="review_text"]')
-                var feedbackField = form.querySelector('[name="private_feedback"]')
-                var submission = buildSubmission(
-                    {
-                        rating: selectedRating ? selectedRating.value : '',
-                        review_text: reviewField ? reviewField.value : '',
-                        private_feedback: feedbackField ? feedbackField.value : '',
-                    },
-                    idempotencyKey,
-                )
+                if (!pendingSubmission) {
+                    var selectedRating = form.querySelector('[name="rating"]:checked')
+                    var reviewField = form.querySelector('[name="review_text"]')
+                    var feedbackField = form.querySelector('[name="private_feedback"]')
+                    var submission = buildSubmission(
+                        {
+                            rating: selectedRating ? selectedRating.value : '',
+                            review_text: reviewField ? reviewField.value : '',
+                            private_feedback: feedbackField ? feedbackField.value : '',
+                        },
+                        idempotencyKey,
+                    )
 
-                if (!submission.ok) {
-                    setError(submission.message)
-                    return
+                    if (!submission.ok) {
+                        setError(submission.message)
+                        return
+                    }
+
+                    pendingSubmission = submission.payload
+                    form.querySelectorAll(
+                        '[name="rating"], [name="review_text"], [name="private_feedback"]',
+                    ).forEach(function (field) {
+                        field.disabled = true
+                    })
                 }
 
                 var submitButton = form.querySelector('[type="submit"]')
                 if (submitButton) submitButton.disabled = true
+                submitting = true
 
                 try {
                     var result = await postJson(SUBMIT_PATH, {
                         token: capabilityToken,
-                        rating: submission.payload.rating,
-                        review_text: submission.payload.review_text,
-                        private_feedback: submission.payload.private_feedback,
-                        idempotency_key: submission.payload.idempotency_key,
+                        rating: pendingSubmission.rating,
+                        review_text: pendingSubmission.review_text,
+                        private_feedback: pendingSubmission.private_feedback,
+                        idempotency_key: pendingSubmission.idempotency_key,
                     })
                     if (!result || result.accepted !== true) {
                         throw new Error('Review submission was not accepted.')
@@ -216,6 +276,7 @@
                         duplicate: result.duplicate === true,
                     })
                 } catch (error) {
+                    submitting = false
                     if (submitButton) submitButton.disabled = false
                     setError('We could not submit your review. Try again.')
                     setState('form')
@@ -240,6 +301,7 @@
         window.__startersReviewFormTest = {
             getTokenAndSanitizedUrl: getTokenAndSanitizedUrl,
             buildSubmission: buildSubmission,
+            redactAnalyticsEvent: redactAnalyticsEvent,
         }
     }
 

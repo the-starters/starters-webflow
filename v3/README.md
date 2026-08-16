@@ -2970,10 +2970,11 @@ node --test v3/dashboard-action-items.test.js
 ## Invited Starter review form
 
 `starter-review-form.js` binds the native `/review-starter` Designer form to
-the V3 invited-review endpoints. Load it on that page only:
+the V3 invited-review endpoints. Load it synchronously in the page head, before
+the site PostHog initialization:
 
 ```html
-<script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
 ```
 
 The controller reads the private capability token from the URL fragment,
@@ -2998,9 +2999,20 @@ data. The native form contract is:
 | `data-starter-review-profile-link` | Optional `/hire/<slug>` link |
 | `data-starter-review-error` | Inline validation or submission error |
 
-The page must also redact any legacy `token` query or fragment value in the
-site-level PostHog `before_send` hook before public activation. Run the focused
-tests with:
+Pass the controller's redaction hook at the site-level PostHog initialization
+boundary. If the site already has a `before_send` callback, the controller
+chains it after redaction:
+
+```js
+posthog.init(POSTHOG_KEY, {
+    before_send: window.__startersV3ReviewPosthogBeforeSend,
+})
+```
+
+The controller accepts capability tokens from the fragment only. It removes a
+legacy `token` query value but does not use it. After an ambiguous submission
+failure, the form locks the review fields and retries the exact first payload
+with the same idempotency key. Run the focused tests with:
 
 ```sh
 node --test v3/starter-review-form.test.js
