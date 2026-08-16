@@ -584,10 +584,12 @@ test('the approved production canary opens free booking inline and uses state-aw
       id: 'brand_prod_test',
       auth: { email: 'brand@example.com' },
       customFields: {
-        'brands-dashboard-url': '/brand-dashboard',
         'free-user': 'Brand',
         'last-name': 'Tester',
       },
+      planConnections: [
+        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      ],
     },
     getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
     getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
@@ -649,7 +651,6 @@ test('Brand Free keeps the V2 free-call booking rule on the approved canary', as
       id: 'brand_free_member',
       auth: { email: 'brand-free@example.com' },
       customFields: {
-        'brands-dashboard-url': '/quiz-results',
         'free-user': 'Free',
         'last-name': 'Brand',
       },
@@ -678,6 +679,55 @@ test('Brand Free keeps the V2 free-call booking rule on the approved canary', as
 
   assert.equal(schedulerCalls, 1, 'Brand Free may book the free service without an upgrade gate')
   assert.equal(page.inlineWrapper.style.display, 'flex')
+})
+
+test('invalid, inactive, and cross-role plan records fail closed with a legacy Brand field', async () => {
+  for (const planConnections of [
+    null,
+    {},
+    'pln_free-plan-f6kn0dxz',
+    [],
+    [{ planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' }],
+    [
+      { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      { planId: 'pln_dorxata-test-free-plan-dvcg0k8o', status: 'ACTIVE' },
+    ],
+  ]) {
+    const page = makePage()
+    let configReads = 0
+    let schedulerCalls = 0
+    const context = makeContext({
+      page,
+      member: {
+        id: 'ineligible_member',
+        auth: { email: 'ineligible@example.com' },
+        customFields: {
+          'brands-dashboard-url': '/brand-dashboard',
+          'free-user': 'Ineligible',
+          'last-name': 'Member',
+        },
+        planConnections,
+      },
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
+      getConfigs: async () => {
+        configReads += 1
+        return [{ config_id: 'config_free', is_paid: false }]
+      },
+      createScheduler: () => {
+        schedulerCalls += 1
+      },
+      location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+      schedulingBridge: true,
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    assert.equal(configReads, 0, 'ineligible plan state must not read booking configurations')
+    assert.equal(schedulerCalls, 0, 'ineligible plan state must not initialize the scheduler')
+    assert.equal(page.inlineWrapper.style.display, 'none')
+    assert.equal(page.servicesList.children[0].getAttribute('data-modal-trigger'), 'popup-booking')
+  }
 })
 
 test('logged-out free-call clicks keep signup attribution and never initialize inline booking', async () => {
