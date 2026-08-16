@@ -181,7 +181,13 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
   return { root, servicesList: list, starterXanoId, experience, client }
 }
 
-function makeContext({ page, record, starterId = 383, member = {} } = {}) {
+function makeContext({
+  page,
+  record,
+  starterId = 383,
+  member = {},
+  getStarterByMemberId = () => Promise.resolve(null),
+} = {}) {
   const warnings = []
   const requestedIndexes = []
   const emptyNavRefreshCalls = []
@@ -236,6 +242,7 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
     MEMBER: member,
     memberReady: Promise.resolve(member),
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
+    getStarterByMemberId,
     starter_memberstack_id: 'mem_canary',
     stripe_charges: false,
     fetch: (url) => {
@@ -486,6 +493,39 @@ test('it asks hide-empty-sections to re-evaluate after revealing service cards',
   assert.ok(
     context.emptyNavRefreshCalls.length > 0,
     'expected __startersEmptyNavRefresh to be invoked after the cards were revealed',
+  )
+})
+
+test('a signed-in Starter refreshes empty navigation after owner cards are revealed', async () => {
+  const page = makePage()
+  let resolveStarter
+  const starterReady = new Promise((resolve) => {
+    resolveStarter = resolve
+  })
+  const context = makeContext({
+    page,
+    record: { rate: 0, 'retainer-rate': 0, 'retainer-enabled': false },
+    member: {
+      id: 'owner_member',
+      auth: { email: 'owner@example.com' },
+      customFields: { 'free-user': 'Owner', 'last-name': 'Member' },
+    },
+    getStarterByMemberId: () => starterReady,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(context.emptyNavRefreshCalls.length, 1)
+  resolveStarter({ nylas_grant_id: 'grant_owner' })
+  await settle()
+
+  assert.equal(page.servicesList.children.length, 1, 'zero rates must not add a childList mutation')
+  assert.equal(page.servicesList.children[0].style.display, 'block')
+  assert.equal(
+    context.emptyNavRefreshCalls.length,
+    2,
+    'owner card visibility must trigger a refresh after the delayed lookup completes',
   )
 })
 

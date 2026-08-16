@@ -125,6 +125,7 @@
                   qsa('[has-connection="paid"]').forEach((item) => item.style.display = "block");
               }
 
+              refreshEmptySectionNav();
               return;
           }
 
