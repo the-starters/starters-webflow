@@ -152,6 +152,25 @@ Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
 
+## Inline free-call calendar canary
+
+The hire template owns three native Designer elements:
+
+| Attribute | Purpose |
+| --- | --- |
+| `data-availability-element="wrapper"` | Hidden inline booking panel; the controller changes it to `display: flex` only after a valid free-call selection. |
+| `data-availability-element="calendar-live"` | Mount target for the existing Nylas Scheduling component. |
+| `data-availability-element="back"` | Context-aware navigation. It closes and resets the panel on the date/time screen, and returns from booking details to date/time on the next screen. |
+
+Activation is intentionally limited to the environment-classified V3 hire
+canaries: `/hire/jp-dionisio` on `the-starters-3-0.webflow.io` (TEST) and
+`/hire/jp-test` on the production hosts. The matching
+`scheduling-v3-stage.js` bridge must expose its controller and report
+`data-scheduling-v3-stage="ready"`; otherwise the inline controller fails
+closed and leaves the current popup handler in place. Logged-out visitors keep
+the existing signup-attribution modal. Paid-call and Stripe behavior are not
+part of this canary.
+
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
 fault. Card rendering is verified on production.

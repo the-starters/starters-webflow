@@ -176,9 +176,30 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
   card.appendChild(makeElement('div', { 'data-millify': '', 'data-millify-raw': '0' }))
   list.appendChild(card)
   services.appendChild(list)
+
+  const inlineWrapper = makeElement('div', { 'data-availability-element': 'wrapper' })
+  inlineWrapper.style.display = 'none'
+  const back = makeElement('button', { 'data-availability-element': 'back' })
+  const calendarLive = makeElement('div', { 'data-availability-element': 'calendar-live' })
+  inlineWrapper.appendChild(back)
+  inlineWrapper.appendChild(calendarLive)
+  services.appendChild(inlineWrapper)
   root.appendChild(services)
 
-  return { root, servicesList: list, starterXanoId, experience, client }
+  const popupNylasContainer = makeElement('div', { 'nylas-container': '' })
+  root.appendChild(popupNylasContainer)
+
+  return {
+    root,
+    servicesList: list,
+    starterXanoId,
+    experience,
+    client,
+    inlineWrapper,
+    back,
+    calendarLive,
+    popupNylasContainer,
+  }
 }
 
 function makeContext({
@@ -187,6 +208,12 @@ function makeContext({
   starterId = 383,
   member = {},
   getStarterByMemberId = () => Promise.resolve(null),
+  getConfigs,
+  getNearestSlot,
+  initBookingComponents,
+  createScheduler,
+  location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
+  schedulingBridge = false,
 } = {}) {
   const warnings = []
   const requestedIndexes = []
@@ -243,8 +270,14 @@ function makeContext({
     memberReady: Promise.resolve(member),
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
     getStarterByMemberId,
+    getConfigs,
+    getNearestSlot,
+    initBookingComponents,
+    createScheduler,
+    formatWithTimezone: () => ({ list: {} }),
     starter_memberstack_id: 'mem_canary',
     stripe_charges: false,
+    location,
     fetch: (url) => {
       requestedUrls.push(String(url))
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
@@ -261,6 +294,10 @@ function makeContext({
     },
   }
   context.window = context
+  if (schedulingBridge) {
+    context.StarterSchedulingV3Stage = {}
+    documentObject.documentElement.setAttribute('data-scheduling-v3-stage', 'ready')
+  }
   context.warnings = warnings
   context.requestedIndexes = requestedIndexes
   context.emptyNavRefreshCalls = emptyNavRefreshCalls
@@ -527,6 +564,110 @@ test('a signed-in Starter refreshes empty navigation after owner cards are revea
     2,
     'owner card visibility must trigger a refresh after the delayed lookup completes',
   )
+})
+
+test('the approved production canary opens free booking inline and uses state-aware back', async () => {
+  const page = makePage()
+  let scheduler
+  let toggledTo = null
+  let schedulerBackCalls = 0
+  const connector = {
+    scheduler: {
+      toggleAdditionalData: async (value) => {
+        toggledTo = value
+      },
+    },
+  }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_prod_test',
+      auth: { email: 'brand@example.com' },
+      customFields: {
+        'brands-dashboard-url': '/brand-dashboard',
+        'free-user': 'Brand',
+        'last-name': 'Tester',
+      },
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
+    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
+    getNearestSlot: async () => null,
+    initBookingComponents: () => {},
+    createScheduler: (configId) => {
+      const container = page.root.querySelector('[nylas-container]')
+      assert.equal(container, page.calendarLive, 'the shared scheduler must target calendar-live')
+      assert.equal(configId, 'config_free')
+      scheduler = makeElement('nylas-scheduling')
+      scheduler.eventOverrides = {
+        backButtonClicked: async () => {
+          schedulerBackCalls += 1
+        },
+      }
+      container.appendChild(scheduler)
+      return scheduler
+    },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const card = page.servicesList.children[0]
+  assert.equal(card.getAttribute('data-modal-trigger'), null, 'canary uses inline UI, not popup')
+  assert.equal(card.getAttribute('aria-expanded'), 'false')
+
+  card.onclick({ preventDefault() {}, stopPropagation() {} })
+  assert.equal(page.inlineWrapper.style.display, 'flex')
+  assert.equal(card.getAttribute('aria-expanded'), 'true')
+  assert.equal(page.calendarLive.getAttribute('nylas-container'), null)
+  assert.equal(page.popupNylasContainer.getAttribute('nylas-container'), '')
+  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'close')
+
+  await scheduler.eventOverrides.timeslotConfirmed({ detail: {} }, connector)
+  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'previous-step')
+
+  await page.back.listeners.click[0]({ preventDefault() {} })
+  assert.equal(toggledTo, false)
+  assert.equal(schedulerBackCalls, 1)
+  assert.equal(page.inlineWrapper.style.display, 'flex')
+  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'close')
+
+  await page.back.listeners.click[0]({ preventDefault() {} })
+  assert.equal(page.inlineWrapper.style.display, 'none')
+  assert.equal(card.getAttribute('aria-expanded'), 'false')
+})
+
+test('inline booking stays inert when the route environment bridge is missing', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_prod_test',
+      auth: { email: 'brand@example.com' },
+      customFields: {
+        'brands-dashboard-url': '/brand-dashboard',
+        'free-user': 'Brand',
+        'last-name': 'Tester',
+      },
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
+    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
+    getNearestSlot: async () => null,
+    initBookingComponents: () => {},
+    createScheduler: () => {
+      throw new Error('must not initialize')
+    },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const card = page.servicesList.children[0]
+  assert.equal(card.getAttribute('data-modal-trigger'), 'popup-booking')
+  assert.equal(page.inlineWrapper.style.display, 'none')
+  assert.ok(context.warnings.some((line) => line.includes('environment bridge is not ready')))
 })
 
 test('a page without the hide-empty hook still renders its cards', async () => {
