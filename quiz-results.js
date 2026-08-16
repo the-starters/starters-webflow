@@ -6955,7 +6955,11 @@
                 'saved quiz has no current taxonomy selections; requiring retake',
             )
             signalQuizResultsReady('taxonomy-reselection')
-            window.location.replace('/quiz?retake=true&taxonomyUpdate=1')
+            window.location.replace(
+                getQuizRedirectTargetWithAttribution(
+                    '/quiz?retake=true&taxonomyUpdate=1',
+                ),
+            )
             return
         }
 
