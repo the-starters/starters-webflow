@@ -15,7 +15,7 @@ function sliceSource(startText, endText) {
     return source.slice(start, end)
 }
 
-function getMemberJsonFallbackApi(memberstack = null) {
+function getMemberJsonFallbackApi(memberstack = null, search = '') {
     const redirects = []
     const parserSource = sliceSource(
         'function parsePendingQuiz(value)',
@@ -37,14 +37,17 @@ function getMemberJsonFallbackApi(memberstack = null) {
             '  parseStarterQuizCustomField,',
             '  getMemberCustomFields,',
             '  hasStarterQuizCompletionMarker,',
+            '  getQuizRedirectTargetWithAttribution,',
             '  getAuthenticatedNoQuizDataRedirectTarget,',
             '  redirectVisitorWithoutResults,',
             '})',
         ].join('\n'),
         {
             Boolean,
+            URLSearchParams,
             window: {
                 location: {
+                    search,
                     replace(target) {
                         redirects.push(target)
                     },
@@ -137,4 +140,34 @@ test('no-data runtime keeps Memberstack-unresolved visitors in place', async () 
     await api.redirectVisitorWithoutResults()
 
     assert.deepEqual(redirects, [])
+})
+
+test('logged-out email visitor keeps only safe campaign attribution on quiz redirect', async () => {
+    const { api, redirects } = getMemberJsonFallbackApi(
+        {
+            async getCurrentMember() {
+                return { data: null }
+            },
+        },
+        '?utm_source=mailchimp&utm_medium=email&utm_campaign=v3_quiz_results_drip&utm_content=e1_results&memberstack_id=private&quizEmailTest=1',
+    )
+
+    await api.redirectVisitorWithoutResults()
+
+    assert.deepEqual(redirects, [
+        '/quiz?utm_source=mailchimp&utm_medium=email&utm_campaign=v3_quiz_results_drip&utm_content=e1_results',
+    ])
+})
+
+test('authenticated retake keeps required controls and safe campaign attribution', () => {
+    const { getQuizRedirectTargetWithAttribution } =
+        getMemberJsonFallbackApi().api
+
+    assert.equal(
+        getQuizRedirectTargetWithAttribution(
+            '/quiz?retake=true&quizDataMissing=1',
+            '?utm_source=mailchimp&utm_medium=email&utm_campaign=v3_quiz_results_drip&utm_content=e1_results&recipient_id=private',
+        ),
+        '/quiz?retake=true&quizDataMissing=1&utm_source=mailchimp&utm_medium=email&utm_campaign=v3_quiz_results_drip&utm_content=e1_results',
+    )
 })
