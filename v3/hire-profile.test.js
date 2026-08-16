@@ -184,6 +184,7 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
 function makeContext({ page, record, starterId = 383, member = {} } = {}) {
   const warnings = []
   const requestedIndexes = []
+  const emptyNavRefreshCalls = []
   const requestedObjectIds = []
   const requestedUrls = []
   const root = page ? page.root : makeElement('body')
@@ -241,6 +242,9 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
       requestedUrls.push(String(url))
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
     },
+    __startersEmptyNavRefresh: () => {
+      emptyNavRefreshCalls.push(Date.now())
+    },
     WfAlgolia: {
       getObject: (indexName, objectId) => {
         requestedIndexes.push(indexName)
@@ -252,6 +256,7 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
   context.window = context
   context.warnings = warnings
   context.requestedIndexes = requestedIndexes
+  context.emptyNavRefreshCalls = emptyNavRefreshCalls
   context.requestedObjectIds = requestedObjectIds
   context.requestedUrls = requestedUrls
   return context
@@ -461,5 +466,45 @@ test('a retainer that is disabled or zero produces no retainer card', async () =
       .filter((c) => c.getAttribute('data-rate-card'))
       .map((c) => c.getAttribute('data-rate-card')),
     ['freelance'],
+  )
+})
+
+test('it asks hide-empty-sections to re-evaluate after revealing service cards', async () => {
+  // hide-empty-sections.js observes { childList, subtree } only. Revealing a
+  // call card is an inline-style change, which that observer cannot see, so
+  // #services and its TOC link stay hidden even though cards are visible.
+  // Reproduced on production 2026-08-16 (/hire/advika-aggarwal, logged out).
+  const context = makeContext({
+    page: makePage(),
+    record: { rate: 125, 'retainer-rate': '2500', 'retainer-enabled': true,
+      'free-consulting-calls-t-f': true, 'paid-consulting-calls-t-f': true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.ok(
+    context.emptyNavRefreshCalls.length > 0,
+    'expected __startersEmptyNavRefresh to be invoked after the cards were revealed',
+  )
+})
+
+test('a page without the hide-empty hook still renders its cards', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    record: { rate: 125, 'retainer-rate': '2500', 'retainer-enabled': true },
+  })
+  delete context.__startersEmptyNavRefresh
+  vm.createContext(context)
+
+  assert.doesNotThrow(() => vm.runInContext(source, context))
+  await settle()
+  assert.deepEqual(
+    page.servicesList.children
+      .filter((c) => c.getAttribute('data-rate-card'))
+      .map((c) => c.getAttribute('data-rate-card')),
+    ['freelance', 'retainer'],
+    'a missing cosmetic hook must never stop the cards rendering',
   )
 })
