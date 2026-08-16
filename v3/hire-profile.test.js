@@ -681,8 +681,11 @@ test('Brand Free keeps the V2 free-call booking rule on the approved canary', as
   assert.equal(page.inlineWrapper.style.display, 'flex')
 })
 
-test('inactive and cross-role plan records fail closed even with a legacy Brand field', async () => {
+test('invalid, inactive, and cross-role plan records fail closed with a legacy Brand field', async () => {
   for (const planConnections of [
+    null,
+    {},
+    'pln_free-plan-f6kn0dxz',
     [],
     [{ planId: 'pln_new-paid-plan-463h04ph', status: 'CANCELED' }],
     [

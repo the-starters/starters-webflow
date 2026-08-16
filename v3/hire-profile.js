@@ -80,7 +80,9 @@
   }
 
   function memberRole(member) {
-      const hasPlanConnectionList = !!member && Array.isArray(member.planConnections);
+      const hasPlanConnections = !!member
+          && Object.prototype.hasOwnProperty.call(member, 'planConnections');
+      const hasPlanConnectionList = hasPlanConnections && Array.isArray(member.planConnections);
       const connections = hasPlanConnectionList ? member.planConnections : [];
       const roles = connections
           .filter(isActivePlanConnection)
@@ -98,7 +100,7 @@
       if (hasBrandPaid) return 'brand-paid';
       if (hasBrandFree) return 'brand-free';
       if (hasTalent) return 'talent';
-      if (hasPlanConnectionList) return null;
+      if (hasPlanConnections) return null;
 
       // Compatibility only for older members whose SDK payload omits the plan
       // connection list. Once plan data exists, even an empty list always wins.
