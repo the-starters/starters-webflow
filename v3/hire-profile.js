@@ -457,12 +457,13 @@
           });
           if (existing.length) return existing;
 
-          /* The TEST canary and production share one Webflow CMS item. Its
-             Free Call boolean must stay production-safe, so the CMS condition
-             can omit the card on TEST even when trusted TEST Xano has a valid
-             free configuration. Reuse the native service-card component only
-             after the exact route bridge and canonical config checks above
-             pass. Unknown routes and missing/mixed records never reach here. */
+          /* The TEST fixture's Webflow CMS item also publishes on the custom
+             production domain. Its Free Call boolean must stay
+             production-safe, so the CMS condition can omit the card on TEST
+             even when trusted TEST Xano has a valid free configuration. Reuse
+             the native service-card component only after the exact route
+             bridge and canonical config checks above pass. Unknown routes and
+             missing/mixed records never reach here. */
           const list = qs('#services .services-list_wrapper');
           const template = list
               ? Array.from(qsa('[data-service-card="component"][data-service-card-state="Default"]', list))
