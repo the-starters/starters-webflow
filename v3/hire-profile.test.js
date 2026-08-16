@@ -128,7 +128,7 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
 }
 
 /** A hire page with the elements the renderer looks for. */
-function makePage({ index = 'Freelancers3.0-production' } = {}) {
+function makePage({ index = 'Freelancers3.0-production', includeFreeCard = true } = {}) {
   const root = makeElement('body')
 
   // The element algolia-environment.js rewrites per environment.
@@ -157,22 +157,29 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
   // Services section with the Default card the rate cards are cloned from.
   const services = makeElement('div', { id: 'services' })
   const list = makeElement('div', {}, ['services-list_wrapper'])
+  const cardAttributes = {
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'has-connection': includeFreeCard ? 'free' : 'paid',
+    'data-modal-trigger': 'popup-booking',
+    'booking-popup-open': '',
+    'data-type': includeFreeCard ? 'free' : 'paid',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': includeFreeCard ? 'Free Call' : 'Paid Consulting Call',
+  }
+  if (!includeFreeCard) delete cardAttributes['booking-popup-open']
+
   const card = makeElement(
     'div',
-    {
-      'data-service-card': 'component',
-      'data-service-card-state': 'Default',
-      'has-connection': 'free',
-      'data-modal-trigger': 'popup-booking',
-      'booking-popup-open': '',
-      'data-type': 'free',
-      'data-signup-trigger-element': 'service',
-      'data-signup-trigger-value': 'Free Call',
-    },
+    cardAttributes,
     ['service-card_component'],
   )
-  card.appendChild(makeElement('div', { 'data-service-card-element': 'title' }))
-  card.appendChild(makeElement('div', {}, ['service-card_content-wrapper']))
+  const cardTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  cardTitle.textContent = includeFreeCard ? 'Free Call' : 'Paid Consulting Call'
+  card.appendChild(cardTitle)
+  const bookingContent = makeElement('div', {}, ['service-card_content-wrapper'])
+  bookingContent.appendChild(makeElement('div', { 'next-available-slot': '' }))
+  card.appendChild(bookingContent)
   card.appendChild(makeElement('div', { 'data-millify': '', 'data-millify-raw': '0' }))
   list.appendChild(card)
   services.appendChild(list)
@@ -564,6 +571,112 @@ test('a signed-in Starter refreshes empty navigation after owner cards are revea
     2,
     'owner card visibility must trigger a refresh after the delayed lookup completes',
   )
+})
+
+test('the TEST canary creates one native free card only after canonical free config passes', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
+  const originalPaidCard = page.servicesList.children[0]
+  let schedulerCalls = 0
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_test_member',
+      auth: { email: 'brand-test@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
+      planConnections: [
+        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      ],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
+    getConfigs: async () => [{ config_id: 'config_test_free', is_paid: false }],
+    getNearestSlot: async () => null,
+    initBookingComponents: () => {},
+    createScheduler: () => {
+      schedulerCalls += 1
+      const scheduler = makeElement('nylas-scheduling')
+      scheduler.eventOverrides = {}
+      page.calendarLive.appendChild(scheduler)
+      return scheduler
+    },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const runtimeCards = page.servicesList.children.filter((card) =>
+    card.hasAttribute('data-runtime-free-call-card'),
+  )
+  assert.equal(runtimeCards.length, 1)
+  assert.equal(runtimeCards[0].getAttribute('data-type'), 'free')
+  assert.equal(runtimeCards[0].getAttribute('has-connection'), 'free')
+  assert.equal(runtimeCards[0].getAttribute('data-modal-trigger'), null)
+  assert.equal(
+    runtimeCards[0].querySelector('[data-service-card-element="title"]').textContent,
+    'Free Call',
+  )
+  assert.equal(runtimeCards[0].querySelector('[data-millify]').getAttribute('data-millify'), '0')
+  assert.equal(originalPaidCard.getAttribute('data-type'), 'paid', 'paid card type must stay unchanged')
+  assert.equal(
+    originalPaidCard.getAttribute('data-modal-trigger'),
+    'popup-booking',
+    'paid booking activation must stay untouched',
+  )
+
+  runtimeCards[0].onclick({ preventDefault() {}, stopPropagation() {} })
+  assert.equal(schedulerCalls, 1)
+  assert.equal(page.inlineWrapper.style.display, 'flex')
+})
+
+test('the runtime free card fails closed without a free config or exact route', async () => {
+  for (const scenario of [
+    {
+      name: 'no free config',
+      configs: [{ config_id: 'config_paid', is_paid: true }],
+      location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    },
+    {
+      name: 'unknown route',
+      configs: [{ config_id: 'config_test_free', is_paid: false }],
+      location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/someone-else' },
+    },
+  ]) {
+    const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
+    const context = makeContext({
+      page,
+      member: {
+        id: 'brand_test_member',
+        auth: { email: 'brand-test@example.com' },
+        customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
+        planConnections: [
+          { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+        ],
+      },
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
+      getConfigs: async () => scenario.configs,
+      getNearestSlot: async () => null,
+      initBookingComponents: () => {},
+      createScheduler: () => {
+        throw new Error('must not initialize')
+      },
+      location: scenario.location,
+      schedulingBridge: true,
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    assert.equal(
+      page.servicesList.children.filter((card) =>
+        card.hasAttribute('data-runtime-free-call-card'),
+      ).length,
+      0,
+      scenario.name,
+    )
+    assert.equal(page.inlineWrapper.style.display, 'none', scenario.name)
+    assert.equal(page.servicesList.children[0].getAttribute('data-type'), 'paid', scenario.name)
+  }
 })
 
 test('the approved production canary opens free booking inline and uses state-aware back', async () => {

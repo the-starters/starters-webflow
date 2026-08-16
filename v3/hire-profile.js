@@ -442,11 +442,74 @@
       let scheduler = null;
       let schedulerConnector = null;
       let schedulerState = 'closed';
-      const freeCards = Array.from(qsa('[booking-popup-open][data-type]')).filter(function (card) {
-          return card.getAttribute('data-type') === 'free';
-      });
+      const freeCards = getOrCreateInlineFreeCards();
+
+      if (!freeCards.length) {
+          console.warn('[hire-profile] inline booking stood down: free service card is unavailable');
+          return false;
+      }
 
       wrapper.style.display = 'none';
+
+      function getOrCreateInlineFreeCards() {
+          const existing = Array.from(qsa('[booking-popup-open][data-type]')).filter(function (card) {
+              return card.getAttribute('data-type') === 'free';
+          });
+          if (existing.length) return existing;
+
+          /* The TEST canary and production share one Webflow CMS item. Its
+             Free Call boolean must stay production-safe, so the CMS condition
+             can omit the card on TEST even when trusted TEST Xano has a valid
+             free configuration. Reuse the native service-card component only
+             after the exact route bridge and canonical config checks above
+             pass. Unknown routes and missing/mixed records never reach here. */
+          const list = qs('#services .services-list_wrapper');
+          const template = list
+              ? Array.from(qsa('[data-service-card="component"][data-service-card-state="Default"]', list))
+                  .find(function (candidate) {
+                      return !candidate.hasAttribute('data-rate-card') &&
+                          !!qs('.service-card_content-wrapper', candidate);
+                  })
+              : null;
+          if (!list || !template) return [];
+
+          const card = template.cloneNode(true);
+          [
+              'data-rate-card',
+              'has-connection',
+              'no-connection',
+              'data-modal-trigger',
+              'booking-popup-open',
+              'data-type',
+          ].forEach(function (attribute) {
+              card.removeAttribute(attribute);
+          });
+
+          card.setAttribute('data-runtime-free-call-card', '');
+          card.setAttribute('has-connection', 'free');
+          card.setAttribute('booking-popup-open', '');
+          card.setAttribute('data-type', 'free');
+          card.setAttribute('data-signup-trigger-element', 'service');
+          card.setAttribute('data-signup-trigger-value', 'Free Call');
+
+          const title = qs('[data-service-card-element="title"]', card);
+          if (title) title.textContent = 'Free Call';
+
+          const price = qs('[data-millify]', card);
+          if (price) {
+              price.removeAttribute('data-millify-raw');
+              price.setAttribute('data-millify', '0');
+              price.textContent = '0';
+          }
+
+          const nextSlot = qs('[next-available-slot]', card);
+          if (nextSlot) nextSlot.textContent = 'Loading...';
+
+          card.style.display = 'block';
+          list.prepend(card);
+          refreshEmptySectionNav();
+          return [card];
+      }
 
       function setBackMode(mode) {
           back.setAttribute('data-availability-back-mode', mode);
