@@ -6060,6 +6060,49 @@
             : Boolean(value)
     }
 
+    const quizRedirectAttributionParams = [
+        'utm_source',
+        'utm_medium',
+        'utm_campaign',
+        'utm_content',
+        'utm_term',
+        'utm_id',
+    ]
+
+    /**
+     * Keeps safe campaign attribution when the results page sends a visitor
+     * back to the quiz. Do not copy the complete query string: test controls,
+     * member identifiers, and future private values must not cross routes.
+     *
+     * @param {string} target Relative quiz URL, with any required control params.
+     * @param {string} search Current page query string.
+     * @returns {string} Relative target with allowlisted attribution params.
+     */
+    function getQuizRedirectTargetWithAttribution(
+        target,
+        search = window.location.search,
+    ) {
+        const separatorIndex = target.indexOf('?')
+        const pathname =
+            separatorIndex === -1 ? target : target.slice(0, separatorIndex)
+        const targetParams = new URLSearchParams(
+            separatorIndex === -1 ? '' : target.slice(separatorIndex + 1),
+        )
+        const sourceParams = new URLSearchParams(search || '')
+
+        quizRedirectAttributionParams.forEach((name) => {
+            if (targetParams.has(name)) return
+
+            const value = sourceParams.get(name)
+
+            if (value) targetParams.set(name, value)
+        })
+
+        const query = targetParams.toString()
+
+        return query ? `${pathname}?${query}` : pathname
+    }
+
     function getAuthenticatedNoQuizDataRedirectTarget(member) {
         if (
             !member ||
@@ -6266,7 +6309,9 @@
 
         if (authState.isLoggedOut) {
             logQuizFlow('logged-out visitor with no quiz data; redirecting to /quiz')
-            window.location.replace('/quiz')
+            window.location.replace(
+                getQuizRedirectTargetWithAttribution('/quiz'),
+            )
             return
         }
 
@@ -6283,7 +6328,11 @@
                     redirectTarget: authenticatedRedirectTarget,
                 },
             )
-            window.location.replace(authenticatedRedirectTarget)
+            window.location.replace(
+                getQuizRedirectTargetWithAttribution(
+                    authenticatedRedirectTarget,
+                ),
+            )
         }
     }
 
