@@ -52,6 +52,7 @@
   const DAY_VARIANT_SELECTED = 'w-variant-ebea452c-a047-af3f-dd6c-3062ee4c048c'
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
+  const PREVIEW_SLOTS_LIMIT = 96
 
   // Shared "Availability - Notifications" modal (`[data-modal-target=
   // "availability-notification"]`), driven by global-embeds/modal/modal.js.
@@ -92,6 +93,8 @@
   let cachedItemTemplate = null
   let creatingDraft = false
   let selectedPreviewConfigId = null
+  let selectedPreviewDateKey = null
+  let selectedPreviewSlotStart = null
   let previewRenderVersion = 0
   // Set by the per-item "open-item-remove" trigger, consumed by the
   // notification modal's "item-remove" confirm button.
@@ -1869,6 +1872,53 @@
     }
   }
 
+  function slotDateKey(startTimeSeconds) {
+    const date = new Date(startTimeSeconds * 1000)
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        timeZone: timezone || undefined,
+      }).formatToParts(date)
+      const values = {}
+      parts.forEach(function (part) {
+        values[part.type] = part.value
+      })
+      return [values.year, values.month, values.day].join('-')
+    } catch (error) {
+      return date.toISOString().slice(0, 10)
+    }
+  }
+
+  function formatSlotDate(startTimeSeconds) {
+    const date = new Date(startTimeSeconds * 1000)
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        timeZone: timezone || undefined,
+      }).format(date)
+    } catch (error) {
+      return date.toDateString()
+    }
+  }
+
+  function formatSlotTimeOnly(startTimeSeconds) {
+    const date = new Date(startTimeSeconds * 1000)
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: timezone || undefined,
+      }).format(date)
+    } catch (error) {
+      return date.toTimeString().slice(0, 5)
+    }
+  }
+
   function activeFreeConfigs() {
     return configs.filter(function (config) {
       return Boolean(
@@ -1950,7 +2000,10 @@
         }),
       )
       button.addEventListener('click', function () {
-        if (selectedPreviewConfigId === config.config_id) return
+        if (selectedPreviewConfigId !== config.config_id) {
+          selectedPreviewDateKey = null
+          selectedPreviewSlotStart = null
+        }
         selectedPreviewConfigId = config.config_id
         renderSlotsPreview()
       })
@@ -1997,18 +2050,91 @@
       list.appendChild(empty)
       return
     }
-    applyStyles(list, { display: 'grid', gap: '7px' })
+    const groupedSlots = {}
+    const dateKeys = []
     slots.forEach(function (startTime) {
-      const row = applyStyles(document.createElement('div'), {
-        padding: '9px 11px',
-        borderRadius: '6px',
-        background: '#f3f4ef',
+      const key = slotDateKey(startTime)
+      if (!groupedSlots[key]) {
+        groupedSlots[key] = []
+        dateKeys.push(key)
+      }
+      groupedSlots[key].push(startTime)
+    })
+    if (!groupedSlots[selectedPreviewDateKey]) {
+      selectedPreviewDateKey = dateKeys[0]
+      selectedPreviewSlotStart = null
+    }
+
+    applyStyles(list, { display: 'grid', gap: '14px' })
+    const dates = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(82px, 1fr))',
+      gap: '7px',
+    })
+    dates.setAttribute(EL, 'preview-dates')
+    dateKeys.forEach(function (key) {
+      const dateSlots = groupedSlots[key]
+      const selected = key === selectedPreviewDateKey
+      const dateButton = applyStyles(document.createElement('button'), {
+        padding: '9px 8px',
+        border: selected ? '2px solid #1f211d' : '1px solid #d9d9d9',
+        borderRadius: '7px',
+        background: selected ? '#f0ffc0' : '#ffffff',
         color: '#1f211d',
+        cursor: 'pointer',
         fontSize: '12px',
       })
-      row.textContent = formatSlotTime(startTime)
-      list.appendChild(row)
+      dateButton.setAttribute('type', 'button')
+      dateButton.setAttribute('data-preview-date', key)
+      dateButton.setAttribute('aria-pressed', selected ? 'true' : 'false')
+      dateButton.textContent = formatSlotDate(dateSlots[0])
+      dateButton.addEventListener('click', function () {
+        selectedPreviewDateKey = key
+        selectedPreviewSlotStart = null
+        renderSlotsList(wrapper, slots)
+      })
+      dates.appendChild(dateButton)
     })
+    list.appendChild(dates)
+
+    const times = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(104px, 1fr))',
+      gap: '7px',
+    })
+    times.setAttribute(EL, 'preview-times')
+    groupedSlots[selectedPreviewDateKey].forEach(function (startTime) {
+      const selected = startTime === selectedPreviewSlotStart
+      const timeButton = applyStyles(document.createElement('button'), {
+        padding: '10px 11px',
+        border: selected ? '2px solid #1f211d' : '1px solid transparent',
+        borderRadius: '6px',
+        background: selected ? '#1f211d' : '#f3f4ef',
+        color: selected ? '#ffffff' : '#1f211d',
+        cursor: 'pointer',
+        fontSize: '12px',
+      })
+      timeButton.setAttribute('type', 'button')
+      timeButton.setAttribute('data-preview-slot-start', String(startTime))
+      timeButton.setAttribute('aria-pressed', selected ? 'true' : 'false')
+      timeButton.textContent = formatSlotTimeOnly(startTime)
+      timeButton.addEventListener('click', function () {
+        selectedPreviewSlotStart = startTime
+        renderSlotsList(wrapper, slots)
+      })
+      times.appendChild(timeButton)
+    })
+    list.appendChild(times)
+
+    if (selectedPreviewSlotStart) {
+      const selectedSummary = previewText(
+        'div',
+        'Selected: ' + formatSlotTime(selectedPreviewSlotStart),
+        { color: '#1f211d', fontSize: '12px', fontWeight: '600' },
+      )
+      selectedSummary.setAttribute(EL, 'preview-selection')
+      list.appendChild(selectedSummary)
+    }
   }
 
   async function renderSlotsPreview() {
@@ -2033,7 +2159,7 @@
       grantId: grantId,
       configId: selectedConfig.config_id,
       searchDays: SLOTS_SEARCH_DAYS,
-      limit: SLOTS_LIMIT,
+      limit: PREVIEW_SLOTS_LIMIT,
     })
     if (renderVersion !== previewRenderVersion) return
     renderSlotsList(calendar, slots)
@@ -2089,6 +2215,8 @@
       connectionError = false
       configs = []
       selectedPreviewConfigId = null
+      selectedPreviewDateKey = null
+      selectedPreviewSlotStart = null
       previewRenderVersion = 0
       grantId = null
       grantEmail = null
