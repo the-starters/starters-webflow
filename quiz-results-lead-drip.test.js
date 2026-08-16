@@ -78,6 +78,13 @@ function completedQuiz(overrides = {}) {
                 name: 'Alex Morgan',
                 slug: 'alex-morgan',
                 roles: ['Creative Director'],
+                'profile-type': 'Full',
+                city: 'Philadelphia',
+                state: 'PA',
+                country: 'US',
+                'service-1': 'Build a scalable growth engine',
+                'service-2': 'Scale toward $100k per month',
+                'service-3': 'Enter a new growth phase',
                 review_count: 12,
                 review_average: 4.83,
             },
@@ -284,6 +291,20 @@ test('completed quiz posts current matches with safe email properties', async ()
     assert.equal(payload.properties.starter_2_first_name, 'Sam')
     assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
     assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
+    assert.equal(payload.properties.starter_1_classification, 'Full')
+    assert.equal(payload.properties.starter_1_location, 'Philadelphia, PA, US')
+    assert.equal(
+        payload.properties.starter_1_service_1,
+        'Build a scalable growth engine',
+    )
+    assert.equal(
+        payload.properties.starter_1_service_2,
+        'Scale toward $100k per month',
+    )
+    assert.equal(
+        payload.properties.starter_1_service_3,
+        'Enter a new growth phase',
+    )
     assert.equal(payload.properties.starter_2_reviews, '')
     assert.equal(payload.properties.starter_2_reviews_display, 'none')
     assert.equal(payload.properties.starter_count, '2')
@@ -567,6 +588,13 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
                 name: 'Taylor Jordan',
                 slug: 'taylor-jordan',
                 roles: ['creative-director'],
+                'profile-type': 'Consult',
+                city: 'New York',
+                state: 'NY',
+                country: 'US',
+                'service-1': 'Audit current acquisition strategy',
+                'service-2': 'Build a testing roadmap',
+                'service-3': 'Improve paid-media measurement',
                 'ranking-points': 100,
                 review_count: 12,
                 review_average: 4.83,
@@ -602,9 +630,30 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
         const attributes = JSON.parse(call.options.body).attributesToRetrieve
         assert.ok(attributes.includes('review_count'))
         assert.ok(attributes.includes('review_average'))
+        assert.ok(attributes.includes('profile-type'))
+        assert.ok(attributes.includes('city'))
+        assert.ok(attributes.includes('state'))
+        assert.ok(attributes.includes('country'))
+        assert.ok(attributes.includes('service-1'))
+        assert.ok(attributes.includes('service-2'))
+        assert.ok(attributes.includes('service-3'))
     })
     assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
     assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
+    assert.equal(payload.properties.starter_1_classification, 'Consult')
+    assert.equal(payload.properties.starter_1_location, 'New York, NY, US')
+    assert.deepEqual(
+        [
+            payload.properties.starter_1_service_1,
+            payload.properties.starter_1_service_2,
+            payload.properties.starter_1_service_3,
+        ],
+        [
+            'Audit current acquisition strategy',
+            'Build a testing roadmap',
+            'Improve paid-media measurement',
+        ],
+    )
     evidence.algolia_attributes_to_retrieve = JSON.parse(
         recommendationCalls[0].options.body,
     ).attributesToRetrieve

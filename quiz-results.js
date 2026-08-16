@@ -317,13 +317,22 @@
                 'primary-role',
             ]),
         )
-        const services = getQuizLeadDripList(
-            getQuizLeadDripValue(record, ['services', 'Services']),
+        const projectedServices = [
+            getQuizLeadDripValue(record, ['service-1', 'service_1']),
+            getQuizLeadDripValue(record, ['service-2', 'service_2']),
+            getQuizLeadDripValue(record, ['service-3', 'service_3']),
+        ].filter(Boolean)
+        const services = (
+            projectedServices.length
+                ? projectedServices
+                : getQuizLeadDripList(
+                      getQuizLeadDripValue(record, ['services', 'Services']),
+                  )
         )
             .map((service) =>
                 normalizeQuizLeadDripText(
                     typeof service === 'object'
-                        ? service.name || service.title
+                        ? service.name || service.title || service.raw
                         : service,
                     100,
                 ),
@@ -375,6 +384,7 @@
             ),
             classification: normalizeQuizLeadDripText(
                 getQuizLeadDripValue(record, [
+                    'profile-type',
                     'classification',
                     'Classification',
                     'profile_type_30',
@@ -382,7 +392,18 @@
                 100,
             ),
             location: normalizeQuizLeadDripText(
-                getQuizLeadDripValue(record, ['location', 'Location']),
+                getQuizLeadDripValue(record, ['location', 'Location']) ||
+                    [
+                        getQuizLeadDripValue(record, ['city', 'City']),
+                        getQuizLeadDripValue(record, [
+                            'state',
+                            'State_Province',
+                        ]),
+                        getQuizLeadDripValue(record, ['country', 'Country']),
+                    ]
+                        .map((part) => normalizeQuizLeadDripText(part, 60))
+                        .filter(Boolean)
+                        .join(', '),
                 120,
             ),
             reviews: formatQuizLeadDripReviews(record),
@@ -4058,6 +4079,12 @@
                         'free-consulting-calls-t-f',
                         'paid-consulting-calls-t-f',
                         'profile-type',
+                        'city',
+                        'state',
+                        'country',
+                        'service-1',
+                        'service-2',
+                        'service-3',
                         'availability',
                         'ranking-points',
                         'review_count',
