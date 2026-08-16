@@ -677,7 +677,12 @@
 
           // GET CONFIGS
           const configs = await getConfigs(grant_id);
-          if (configs) {
+          if (
+              Array.isArray(configs) &&
+              configs.length &&
+              configs[0] &&
+              configs[0].config_id
+          ) {
 
               initBookingComponents(freelancerId, grant_id, configs, brand_name, brand_email);
               const inlineFreeBooking = initInlineFreeBooking(configs, brand_name, brand_email);

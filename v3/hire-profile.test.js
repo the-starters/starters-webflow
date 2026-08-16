@@ -689,6 +689,50 @@ test('the runtime free card fails closed without a free config or exact route', 
   }
 })
 
+test('an empty canonical configuration response fails closed without booking activation', async () => {
+  const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
+  let bookingComponentCalls = 0
+  let schedulerCalls = 0
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_test_member',
+      auth: { email: 'brand-test@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
+      planConnections: [
+        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
+      ],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
+    getConfigs: async () => [],
+    getNearestSlot: async () => {
+      throw new Error('must not read availability without a configuration')
+    },
+    initBookingComponents: () => {
+      bookingComponentCalls += 1
+    },
+    createScheduler: () => {
+      schedulerCalls += 1
+    },
+    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(bookingComponentCalls, 0)
+  assert.equal(schedulerCalls, 0)
+  assert.equal(page.inlineWrapper.style.display, 'none')
+  assert.equal(
+    page.servicesList.children.filter((card) =>
+      card.hasAttribute('data-runtime-free-call-card'),
+    ).length,
+    0,
+  )
+  assert.ok(context.warnings.some((line) => line.includes('No Configurations found')))
+})
+
 test('the runtime free card uses its selected config when a paid config comes first', async () => {
   const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
   const nearestSlotConfigIds = []
