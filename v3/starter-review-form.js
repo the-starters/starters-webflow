@@ -1,12 +1,7 @@
 /**
  * V3 invited Starter review form controller.
  *
- * Designer contract:
- * - root: [data-starter-review]
- * - state blocks: [data-starter-review-state="loading|form|success|unavailable|error"]
- * - form: form[data-starter-review-form]
- * - fields: rating, review_text, private_feedback
- * - display: [data-starter-review-name|photo|headline|profile-link|error]
+ * Designer and security contract: v3/README.md#invited-starter-review-form
  */
 (function () {
     'use strict'
