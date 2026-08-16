@@ -136,22 +136,10 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
     makeElement('div', { 'data-starters-v3-algolia-resource': 'starters', 'wf-algolia-index': index }),
   )
 
-  // Experiences: present so the renderer resolves a starter id and proceeds.
-  const expWrapper = makeElement('div', { 'experience-wrapper': '' })
-  const expList = makeElement('div', { 'experience-list': '' })
-  const expTemplate = makeElement('div', { 'experience-tag': '' }, ['js-template'])
-  for (const attr of [
-    'experience-tag-name',
-    'experience-tag-job',
-    'experience-tag-start',
-    'experience-tag-end',
-    'experience-tag-date-wrapper',
-  ]) {
-    expTemplate.appendChild(makeElement('div', { [attr]: '' }))
-  }
-  expList.appendChild(expTemplate)
-  expWrapper.appendChild(expList)
-  root.appendChild(expWrapper)
+  const nativeBinding = makeElement('div', {}, ['data-native-binding'])
+  const starterXanoId = makeElement('div', { 'data-starter-xano-id': '' })
+  nativeBinding.appendChild(starterXanoId)
+  root.appendChild(nativeBinding)
 
   // Services section with the Default card the rate cards are cloned from.
   const services = makeElement('div', { id: 'services' })
@@ -177,13 +165,16 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
   services.appendChild(list)
   root.appendChild(services)
 
-  return { root, servicesList: list }
+  return { root, servicesList: list, starterXanoId }
 }
 
 function makeContext({ page, record, starterId = 383, member = {} } = {}) {
   const warnings = []
   const requestedIndexes = []
+  const requestedObjectIds = []
   const root = page ? page.root : makeElement('body')
+
+  if (page) page.starterXanoId.textContent = String(starterId)
 
   const documentObject = {
     documentElement: makeElement('html'),
@@ -232,18 +223,11 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
     waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
     starter_memberstack_id: 'mem_canary',
     stripe_charges: false,
-    fetch: (url) => {
-      if (String(url).includes('/companies?member_id=')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ starter_id: starterId, companies: [] }),
-        })
-      }
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
-    },
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve([]) }),
     WfAlgolia: {
-      getObject: (indexName) => {
+      getObject: (indexName, objectId) => {
         requestedIndexes.push(indexName)
+        requestedObjectIds.push(objectId)
         return Promise.resolve(record || null)
       },
     },
@@ -251,6 +235,7 @@ function makeContext({ page, record, starterId = 383, member = {} } = {}) {
   context.window = context
   context.warnings = warnings
   context.requestedIndexes = requestedIndexes
+  context.requestedObjectIds = requestedObjectIds
   return context
 }
 
@@ -312,8 +297,6 @@ test('the file keeps its symbols out of the page global scope', async () => {
 
   for (const leaked of [
     'FREELANCER_ID',
-    'experiences_handler',
-    'alsoWorkedWith_handler',
     'startersBooking_handler',
     'renderRateCards',
     'markServiceCardsClickable',
@@ -339,6 +322,7 @@ test('it queries the Algolia index the page declares, not a hardcoded one', asyn
   for (const name of context.requestedIndexes) {
     assert.equal(name, 'Freelancers3.0-production')
   }
+  assert.deepEqual([...new Set(context.requestedObjectIds)], ['383'])
 })
 
 test('it follows the page when the environment resolves a different index', async () => {
