@@ -95,7 +95,12 @@ one route-level rule that page needs.
 > `/quiz` normally. It redirects only after Memberstack positively reports
 > member state; if Memberstack is unavailable or errors, the visitor stays on
 > the page. Pre-signup visitors with a pending quiz and test-mode previews are
-> unaffected.
+> unaffected. Every redirect from `/quiz-results` back to `/quiz` keeps the
+> target's required control parameters and copies only `utm_source`,
+> `utm_medium`, `utm_campaign`, `utm_content`, `utm_term`, and `utm_id` from the
+> results-page query. This keeps explicit email campaign attribution for the
+> `/quiz` landing while dropping member identifiers, test controls, and all
+> other query values.
 
 > **Quiz entry controller (updated 2026-08-03):** `/quiz` remains outside all
 > three `route-guard.js` tables, but `quiz-main/quiz-redirect.js` redirects an

@@ -113,7 +113,18 @@ function runQuizResultsController({
     sharedConfig,
     resolver = undefined,
     legacyConfig,
+    pendingQuiz = {
+        status: 'ready',
+        categories: [
+            { id: 'creative', label: 'Creative' },
+            { id: 'paid-media', label: 'Paid Media' },
+        ],
+    },
+    search = '',
 }) {
+    const redirects = []
+    const removals = []
+    let domContentLoadedHandler = null
     const template = {
         classList: { add() {}, contains() { return false }, remove() {} },
         cloneNode() { return this },
@@ -145,7 +156,12 @@ function runQuizResultsController({
     }
     const document = {
         currentScript: null,
-        addEventListener() {},
+        addEventListener(type, handler) {
+            if (type === 'DOMContentLoaded') {
+                domContentLoadedHandler = handler
+            }
+        },
+        dispatchEvent() {},
         querySelector(selector) {
             if (selector === '.section_results-learn') return learnContentSection
             if (selector === '.section_results-learn [wf-algolia-element="results"]') {
@@ -160,14 +176,11 @@ function runQuizResultsController({
     const storage = {
         getItem(key) {
             return key === 'starterQuizPending'
-                ? JSON.stringify({
-                      status: 'ready',
-                      categories: [
-                          { id: 'creative', label: 'Creative' },
-                          { id: 'paid-media', label: 'Paid Media' },
-                      ],
-                  })
+                ? JSON.stringify(pendingQuiz)
                 : null
+        },
+        removeItem(key) {
+            removals.push(key)
         },
     }
     const defaultResolver = {
@@ -187,7 +200,13 @@ function runQuizResultsController({
         clearInterval() {},
         clearTimeout() {},
         dispatchEvent() {},
-        location: { hostname: 'the-starters-3-0.webflow.io', search: '' },
+        location: {
+            hostname: 'the-starters-3-0.webflow.io',
+            search,
+            replace(target) {
+                redirects.push(target)
+            },
+        },
         localStorage: storage,
         sessionStorage: storage,
         starterQuizLearnContentAlgoliaConfig: legacyConfig,
@@ -217,6 +236,15 @@ function runQuizResultsController({
     })
 
     vm.runInContext(resultsSource, context)
+
+    return {
+        redirects,
+        removals,
+        runDOMContentLoaded() {
+            assert.ok(domContentLoadedHandler)
+            domContentLoadedHandler()
+        },
+    }
 }
 
 function runMainSubcategoryRestore({ subcategoryItems, categoryInputs, savedSubcategoryIds }) {
@@ -656,6 +684,52 @@ test('an entirely retired saved payload requires reselection', () => {
     assert.equal(result.requiresReselection, true)
     assert.equal(result.payload.categories.length, 0)
     assert.equal(result.payload.subcategories.length, 0)
+})
+
+test('taxonomy reselection keeps only safe campaign attribution', async () => {
+    const controller = runQuizResultsController({
+        fetch: async () => {
+            throw new Error('taxonomy redirect must not fetch')
+        },
+        sharedConfig: {
+            appId: 'TESTAPP',
+            searchKey: 'test-public-search-key',
+            indexName: 'LearnContent',
+            environment: 'test',
+        },
+        pendingQuiz: {
+            status: 'ready',
+            categories: [
+                {
+                    id: 'hiring-team-building',
+                    label: 'Hiring & Team Building',
+                },
+            ],
+            subcategories: [
+                {
+                    id: 'fractional-leadership',
+                    label: 'Fractional Leadership',
+                    categoryId: 'hiring-team-building',
+                },
+            ],
+        },
+        search: '?utm_source=mailchimp&utm_medium=email&utm_campaign=v3_quiz_results_drip&utm_content=e1_results&utm_term=retake&utm_id=journey_6180&memberstack_id=private&quizEmailTest=1',
+    })
+
+    controller.runDOMContentLoaded()
+
+    for (
+        let attempt = 0;
+        attempt < 20 && controller.redirects.length === 0;
+        attempt += 1
+    ) {
+        await new Promise(setImmediate)
+    }
+
+    assert.deepEqual(controller.removals, ['starterQuizPending'])
+    assert.deepEqual(controller.redirects, [
+        '/quiz?retake=true&taxonomyUpdate=1&utm_source=mailchimp&utm_medium=email&utm_campaign=v3_quiz_results_drip&utm_content=e1_results&utm_term=retake&utm_id=journey_6180',
+    ])
 })
 
 test('a current canonical payload remains unchanged', () => {

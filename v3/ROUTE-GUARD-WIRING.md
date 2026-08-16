@@ -359,12 +359,10 @@ Test paid Brand to `/brand-dashboard`, an active Talent member to
 redirects but not for the Talent one, which has no quiz to retake; unknown and
 inactive plans are unaffected. On entry, `quiz-main.js` combines the logged-in
 member's saved quiz answers with any homepage-bucket selections.
-Logged-out handling on `/quiz-results` stays entirely with `quiz-results.js`:
-when no test, pending, or saved quiz data exists, it redirects to
-`/quiz` only after Memberstack positively reports that the visitor is logged
-out. It stays put if Memberstack is unavailable or errors, and pending
-pre-signup quizzes and test-mode previews never reach this branch. `/all-starters`
-is excluded from `PAGE_ROLES` permanently (decision 2026-08-03): its content
+Logged-out and missing-data handling on `/quiz-results` stays entirely with
+`quiz-results.js`; the authoritative redirect and query-preservation contract
+is in the [access matrix](ACCESS-MATRIX.md#route-level-access). `/all-starters` is
+excluded from `PAGE_ROLES` permanently (decision 2026-08-03): its content
 gating is Memberstack `data-ms-content` on the page plus list/render-level
 limiting for free Brands, and the Talent role bounce is the only route-level rule
 it gets.
