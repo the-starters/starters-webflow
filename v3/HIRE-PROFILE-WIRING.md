@@ -171,6 +171,12 @@ closed and leaves the current popup handler in place. Logged-out visitors keep
 the existing signup-attribution modal. Paid-call and Stripe behavior are not
 part of this canary.
 
+Free-call access keeps the V2 rule: any signed-in Brand identity (the existing
+`brands-dashboard-url` contract), including Brand Free, can select and book a
+free call. Brand Free does not need to upgrade for a free call. Paid-call
+selection, Stripe, reminders, transactional email, and paid-call activation
+remain held.
+
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
 fault. Card rendering is verified on production.

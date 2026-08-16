@@ -638,6 +638,71 @@ test('the approved production canary opens free booking inline and uses state-aw
   assert.equal(card.getAttribute('aria-expanded'), 'false')
 })
 
+test('Brand Free keeps the V2 free-call booking rule on the approved canary', async () => {
+  const page = makePage()
+  let schedulerCalls = 0
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_free_member',
+      auth: { email: 'brand-free@example.com' },
+      customFields: {
+        'brands-dashboard-url': '/quiz-results',
+        'free-user': 'Free',
+        'last-name': 'Brand',
+      },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
+    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
+    getNearestSlot: async () => null,
+    initBookingComponents: () => {},
+    createScheduler: () => {
+      schedulerCalls += 1
+      const scheduler = makeElement('nylas-scheduling')
+      scheduler.eventOverrides = {}
+      page.calendarLive.appendChild(scheduler)
+      return scheduler
+    },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.children[0]
+  freeCard.onclick({ preventDefault() {}, stopPropagation() {} })
+
+  assert.equal(schedulerCalls, 1, 'Brand Free may book the free service without an upgrade gate')
+  assert.equal(page.inlineWrapper.style.display, 'flex')
+})
+
+test('logged-out free-call clicks keep signup attribution and never initialize inline booking', async () => {
+  const page = makePage()
+  let schedulerCalls = 0
+  const context = makeContext({
+    page,
+    record: { 'free-consulting-calls-t-f': true },
+    createScheduler: () => {
+      schedulerCalls += 1
+    },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freeCard = page.servicesList.children[0]
+  assert.equal(freeCard.getAttribute('data-signup-trigger-element'), 'service')
+  assert.equal(freeCard.getAttribute('data-signup-trigger-value'), 'Free Call')
+  assert.equal(freeCard.getAttribute('data-modal-trigger'), 'popup-booking')
+  assert.equal(freeCard.onclick, undefined)
+  assert.equal(page.inlineWrapper.style.display, 'none')
+  assert.equal(schedulerCalls, 0)
+})
+
 test('inline back recovers the Nylas connector when the timeslot callback omits it', async () => {
   const page = makePage()
   let scheduler
