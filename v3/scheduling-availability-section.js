@@ -52,7 +52,6 @@
   const DAY_VARIANT_SELECTED = 'w-variant-ebea452c-a047-af3f-dd6c-3062ee4c048c'
   const SLOTS_SEARCH_DAYS = 14
   const SLOTS_LIMIT = 8
-  const PREVIEW_SLOTS_LIMIT = 96
 
   // Shared "Availability - Notifications" modal (`[data-modal-target=
   // "availability-notification"]`), driven by global-embeds/modal/modal.js.
@@ -1821,7 +1820,7 @@
     const grant = opts.grantId
     const configId = opts.configId
     const searchDays = opts.searchDays || SLOTS_SEARCH_DAYS
-    const limit = opts.limit || SLOTS_LIMIT
+    const limit = opts.limit === undefined ? SLOTS_LIMIT : Number(opts.limit)
     const region = opts.region || 'us'
     if (!grant || !configId) return []
 
@@ -1838,7 +1837,7 @@
       })
       const timeSlots = (response && response.time_slots) || []
       if (!Array.isArray(timeSlots)) return []
-      return timeSlots
+      const sortedSlots = timeSlots
         .map(function (slot) {
           return Number(slot && slot.start_time)
         })
@@ -1848,7 +1847,7 @@
         .sort(function (a, b) {
           return a - b
         })
-        .slice(0, limit)
+      return Number.isFinite(limit) && limit > 0 ? sortedSlots.slice(0, limit) : sortedSlots
     } catch (error) {
       console.warn('[scheduling-section] getUpcomingTimeSlots failed:', error && error.message)
       return []
@@ -2127,7 +2126,7 @@
     applyStyles(list, { display: 'grid', gap: '14px' })
     const pickerLayout = applyStyles(document.createElement('div'), {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+      gridTemplateColumns: 'minmax(0, 1fr)',
       gap: '14px',
       alignItems: 'start',
     })
@@ -2250,7 +2249,10 @@
       grantId: grantId,
       configId: selectedConfig.config_id,
       searchDays: SLOTS_SEARCH_DAYS,
-      limit: PREVIEW_SLOTS_LIMIT,
+      // The provider configuration already enforces the canonical 14-day
+      // booking window. Keep every returned slot so dense 15-minute schedules
+      // do not make later bookable dates disappear from the month calendar.
+      limit: 0,
     })
     if (renderVersion !== previewRenderVersion) return
     renderSlotsList(calendar, slots)
