@@ -78,6 +78,13 @@ function completedQuiz(overrides = {}) {
                 name: 'Alex Morgan',
                 slug: 'alex-morgan',
                 roles: ['Creative Director'],
+                'profile-type': 'Full',
+                city: 'Philadelphia',
+                state: 'PA',
+                country: 'US',
+                'service-1': 'Build a scalable growth engine',
+                'service-2': 'Scale toward $100k per month',
+                'service-3': 'Enter a new growth phase',
                 review_count: 12,
                 review_average: 4.83,
             },
@@ -284,6 +291,20 @@ test('completed quiz posts current matches with safe email properties', async ()
     assert.equal(payload.properties.starter_2_first_name, 'Sam')
     assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
     assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
+    assert.equal(payload.properties.starter_1_classification, 'Full')
+    assert.equal(payload.properties.starter_1_location, 'Philadelphia, PA, US')
+    assert.equal(
+        payload.properties.starter_1_service_1,
+        'Build a scalable growth engine',
+    )
+    assert.equal(
+        payload.properties.starter_1_service_2,
+        'Scale toward $100k per month',
+    )
+    assert.equal(
+        payload.properties.starter_1_service_3,
+        'Enter a new growth phase',
+    )
     assert.equal(payload.properties.starter_2_reviews, '')
     assert.equal(payload.properties.starter_2_reviews_display, 'none')
     assert.equal(payload.properties.starter_count, '2')
@@ -567,6 +588,13 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
                 name: 'Taylor Jordan',
                 slug: 'taylor-jordan',
                 roles: ['creative-director'],
+                'profile-type': 'Consult',
+                city: 'New York',
+                state: 'NY',
+                country: 'US',
+                'service-1': 'Audit current acquisition strategy',
+                'service-2': 'Build a testing roadmap',
+                'service-3': 'Improve paid-media measurement',
                 'ranking-points': 100,
                 review_count: 12,
                 review_average: 4.83,
@@ -602,16 +630,80 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
         const attributes = JSON.parse(call.options.body).attributesToRetrieve
         assert.ok(attributes.includes('review_count'))
         assert.ok(attributes.includes('review_average'))
+        assert.ok(attributes.includes('profile-type'))
+        assert.ok(attributes.includes('city'))
+        assert.ok(attributes.includes('state'))
+        assert.ok(attributes.includes('country'))
+        assert.ok(attributes.includes('service-1'))
+        assert.ok(attributes.includes('service-2'))
+        assert.ok(attributes.includes('service-3'))
     })
     assert.equal(payload.properties.starter_1_reviews, '4.8 (12 Reviews)')
     assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
+    assert.equal(payload.properties.starter_1_classification, 'Consult')
+    assert.equal(payload.properties.starter_1_location, 'New York, NY, US')
+    assert.deepEqual(
+        [
+            payload.properties.starter_1_service_1,
+            payload.properties.starter_1_service_2,
+            payload.properties.starter_1_service_3,
+        ],
+        [
+            'Audit current acquisition strategy',
+            'Build a testing roadmap',
+            'Improve paid-media measurement',
+        ],
+    )
     evidence.algolia_attributes_to_retrieve = JSON.parse(
         recommendationCalls[0].options.body,
     ).attributesToRetrieve
     evidence.fresh_algolia_enrollment = payload
 })
 
-test('pre-review recommendation caches refresh before email enrollment', async () => {
+test('canonical projection fields override stale legacy profile metadata without shifting service slots', async () => {
+    const quiz = completedQuiz({
+        memberstackSavedAt: '2026-08-11T04:01:00.000Z',
+    })
+    quiz.featuredFreelancers[0] = {
+        ...quiz.featuredFreelancers[0],
+        location: 'Stale legacy location',
+        services: ['Stale legacy service'],
+        city: 'Philadelphia',
+        state: 'PA',
+        country: 'US',
+        'service-1': '',
+        'service-2': 'Canonical second service',
+        'service-3': 'Canonical third service',
+    }
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_location, 'Philadelphia, PA, US')
+    assert.equal(payload.properties.starter_1_service_1, '')
+    assert.equal(
+        payload.properties.starter_1_service_2,
+        'Canonical second service',
+    )
+    assert.equal(
+        payload.properties.starter_1_service_3,
+        'Canonical third service',
+    )
+    evidence.canonical_precedence_and_service_slots = {
+        location: payload.properties.starter_1_location,
+        service_1: payload.properties.starter_1_service_1,
+        service_2: payload.properties.starter_1_service_2,
+        service_3: payload.properties.starter_1_service_3,
+    }
+})
+
+test('v20 recommendation caches refresh canonical email fields before enrollment', async () => {
     const staleStarter = {
         objectID: 'stale-starter',
         name: 'Stale Starter',
@@ -621,7 +713,7 @@ test('pre-review recommendation caches refresh before email enrollment', async (
     const quiz = completedQuiz({
         featuredFreelancers: [staleStarter],
         recommendedFreelancers: [staleStarter],
-        recommendationVersion: 'category-subcategory-pairs-v18',
+        recommendationVersion: 'category-subcategory-pairs-v20',
     })
     const storage = createStorage(quiz)
     const harness = await runController({
@@ -633,6 +725,13 @@ test('pre-review recommendation caches refresh before email enrollment', async (
                 name: 'Refreshed Starter',
                 slug: 'refreshed-starter',
                 roles: ['creative-director'],
+                'profile-type': 'Consult',
+                city: 'Austin',
+                state: 'TX',
+                country: 'US',
+                'service-1': 'Build a growth plan',
+                'service-2': 'Improve paid acquisition',
+                'service-3': 'Measure channel performance',
                 'ranking-points': 100,
                 review_count: 2,
                 review_average: 4.5,
@@ -650,6 +749,20 @@ test('pre-review recommendation caches refresh before email enrollment', async (
         ),
     )
     assert.equal(payload.properties.starter_1_first_name, 'Refreshed')
+    assert.equal(payload.properties.starter_1_classification, 'Consult')
+    assert.equal(payload.properties.starter_1_location, 'Austin, TX, US')
+    assert.deepEqual(
+        [
+            payload.properties.starter_1_service_1,
+            payload.properties.starter_1_service_2,
+            payload.properties.starter_1_service_3,
+        ],
+        [
+            'Build a growth plan',
+            'Improve paid acquisition',
+            'Measure channel performance',
+        ],
+    )
     assert.equal(payload.properties.starter_1_reviews, '4.5 (2 Reviews)')
     assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
     assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
@@ -658,7 +771,7 @@ test('pre-review recommendation caches refresh before email enrollment', async (
     assert.equal(refreshedQuiz.updatedAt, '2026-08-11T04:00:00.000Z')
     assert.equal(refreshedQuiz.completedAt, '2026-08-11T04:00:00.000Z')
     assert.equal(refreshedQuiz.recommendationVersion, recommendationVersion)
-    evidence.v18_cache_refresh = {
+    evidence.v20_cache_refresh = {
         enrollment: payload,
         persisted_quiz: refreshedQuiz,
     }

@@ -317,19 +317,52 @@
                 'primary-role',
             ]),
         )
-        const services = getQuizLeadDripList(
-            getQuizLeadDripValue(record, ['services', 'Services']),
+        const projectedServiceFields = [
+            ['service-1', 'service_1'],
+            ['service-2', 'service_2'],
+            ['service-3', 'service_3'],
+        ]
+        const hasProjectedServices = projectedServiceFields.some((fields) =>
+            fields.some((field) =>
+                Object.prototype.hasOwnProperty.call(record || {}, field),
+            ),
+        )
+        const services = (
+            hasProjectedServices
+                ? projectedServiceFields.map((fields) =>
+                      getQuizLeadDripValue(record, fields),
+                  )
+                : getQuizLeadDripList(
+                      getQuizLeadDripValue(record, ['services', 'Services']),
+                  )
         )
             .map((service) =>
                 normalizeQuizLeadDripText(
                     typeof service === 'object'
-                        ? service.name || service.title
+                        ? service.name || service.title || service.raw
                         : service,
                     100,
                 ),
             )
-            .filter(Boolean)
             .slice(0, 3)
+
+        while (services.length < 3) services.push('')
+
+        const projectedLocationFields = [
+            ['city', 'City'],
+            ['state', 'State_Province'],
+            ['country', 'Country'],
+        ]
+        const hasProjectedLocation = projectedLocationFields.some((fields) =>
+            fields.some((field) =>
+                Object.prototype.hasOwnProperty.call(record || {}, field),
+            ),
+        )
+        const projectedLocation = projectedLocationFields
+            .map((fields) => getQuizLeadDripValue(record, fields))
+            .map((part) => normalizeQuizLeadDripText(part, 60))
+            .filter(Boolean)
+            .join(', ')
 
         return {
             first_name: getQuizLeadDripFirstName(record),
@@ -375,6 +408,7 @@
             ),
             classification: normalizeQuizLeadDripText(
                 getQuizLeadDripValue(record, [
+                    'profile-type',
                     'classification',
                     'Classification',
                     'profile_type_30',
@@ -382,7 +416,9 @@
                 100,
             ),
             location: normalizeQuizLeadDripText(
-                getQuizLeadDripValue(record, ['location', 'Location']),
+                hasProjectedLocation
+                    ? projectedLocation
+                    : getQuizLeadDripValue(record, ['location', 'Location']),
                 120,
             ),
             reviews: formatQuizLeadDripReviews(record),
@@ -1942,7 +1978,7 @@
     'DOMContentLoaded',
     function starterQuizResultsController() {
     const debugLogPrefix = '[Starter Quiz Funnel]'
-    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v20'
+    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v21'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
     // Pool gathered per category before featured picks are drawn off the top,
@@ -4058,6 +4094,12 @@
                         'free-consulting-calls-t-f',
                         'paid-consulting-calls-t-f',
                         'profile-type',
+                        'city',
+                        'state',
+                        'country',
+                        'service-1',
+                        'service-2',
+                        'service-3',
                         'availability',
                         'ranking-points',
                         'review_count',
