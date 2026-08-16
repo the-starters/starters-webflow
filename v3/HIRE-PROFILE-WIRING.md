@@ -57,6 +57,26 @@ whole file and take every section with it.
   nothing else
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
 
+### Dependency contract, verified on production
+
+Checked on `www.thestarters.com/hire/ashna-rana` at `document.readyState:
+"complete"` — i.e. exactly the moment a deferred script runs — on 2026-08-16:
+
+| Global | At defer time |
+| --- | --- |
+| `qs`, `qsa`, `waitForMember`, `getStarterByMemberId`, `getConfigs`, `getNearestSlot`, `initBookingComponents`, `formatWithTimezone`, `$` | `function` |
+| `MEMBER`, `memberReady`, `WfAlgolia` | `object` |
+| `starter_memberstack_id` | `string` |
+| `stripe_charges` | property present, value `undefined` |
+| `[wf-algolia-index]` resolved by the environment script | `Freelancers3.0-production` |
+
+`stripe_charges` is only ever written as `window.stripe_charges` (three
+assignments, no `var`/`let`/`const` declaration anywhere on the page). The
+property exists, so the footer's original bare `stripe_charges` reference
+resolved to `undefined` rather than throwing; reading it as
+`window.stripe_charges` here is therefore equivalent today, and stays safe if
+that assignment ever fails to run.
+
 ## Scoping
 
 Each original `<script>` block keeps **its own IIFE**. They were separate
