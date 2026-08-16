@@ -1919,6 +1919,19 @@
     }
   }
 
+  function localDateFromKey(key) {
+    const parts = String(key || '').split('-').map(Number)
+    return new Date(parts[0], parts[1] - 1, parts[2])
+  }
+
+  function localDateKey(date) {
+    return [
+      String(date.getFullYear()),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-')
+  }
+
   function activeFreeConfigs() {
     return configs.filter(function (config) {
       return Boolean(
@@ -2035,6 +2048,52 @@
 
   // Renders inside the Designer-owned calendar-preview mount. The generated
   // nodes are read-only and use canonical configuration and availability data.
+  function renderMonthCalendar(container, groupedSlots, dateKeys, slots, wrapper) {
+    const $ = window.jQuery
+    if (!$ || !$.fn || !$.fn.datepicker) return false
+
+    const calendarHost = applyStyles(document.createElement('div'), {
+      minWidth: '0',
+      width: '100%',
+    })
+    calendarHost.setAttribute(EL, 'preview-month-calendar')
+    container.appendChild(calendarHost)
+
+    $(calendarHost).datepicker({
+      dateFormat: 'yy-mm-dd',
+      defaultDate: localDateFromKey(selectedPreviewDateKey),
+      minDate: localDateFromKey(dateKeys[0]),
+      maxDate: localDateFromKey(dateKeys[dateKeys.length - 1]),
+      showOtherMonths: true,
+      selectOtherMonths: false,
+      beforeShowDay: function (date) {
+        const key = localDateKey(date)
+        const available = Boolean(groupedSlots[key])
+        return [
+          available,
+          available ? 'scheduling-preview-available-date' : '',
+          available ? 'Available' : 'Unavailable',
+        ]
+      },
+      onSelect: function (dateText) {
+        selectedPreviewDateKey = dateText
+        selectedPreviewSlotStart = null
+        renderSlotsList(wrapper, slots)
+      },
+    })
+    $(calendarHost).datepicker('setDate', localDateFromKey(selectedPreviewDateKey))
+
+    const inlineCalendar = calendarHost.querySelector('.ui-datepicker-inline')
+    if (inlineCalendar) {
+      applyStyles(inlineCalendar, {
+        display: 'block',
+        width: '100%',
+        boxShadow: 'none',
+      })
+    }
+    return true
+  }
+
   function renderSlotsList(wrapper, slots) {
     let list = qs(elSel('slots-list'), wrapper)
     if (!list) {
@@ -2066,12 +2125,31 @@
     }
 
     applyStyles(list, { display: 'grid', gap: '14px' })
+    const pickerLayout = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+      gap: '14px',
+      alignItems: 'start',
+    })
+    pickerLayout.setAttribute(EL, 'preview-picker-layout')
+
+    const calendarColumn = document.createElement('div')
+    calendarColumn.setAttribute(EL, 'preview-calendar-column')
+    const hasMonthCalendar = renderMonthCalendar(
+      calendarColumn,
+      groupedSlots,
+      dateKeys,
+      slots,
+      wrapper,
+    )
+
     const dates = applyStyles(document.createElement('div'), {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fit, minmax(82px, 1fr))',
       gap: '7px',
     })
     dates.setAttribute(EL, 'preview-dates')
+    if (hasMonthCalendar) dates.style.display = 'none'
     dateKeys.forEach(function (key) {
       const dateSlots = groupedSlots[key]
       const selected = key === selectedPreviewDateKey
@@ -2095,8 +2173,19 @@
       })
       dates.appendChild(dateButton)
     })
-    list.appendChild(dates)
+    calendarColumn.appendChild(dates)
+    pickerLayout.appendChild(calendarColumn)
 
+    const timesColumn = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gap: '9px',
+    })
+    timesColumn.setAttribute(EL, 'preview-times-column')
+    timesColumn.appendChild(
+      previewText('strong', formatSlotDate(groupedSlots[selectedPreviewDateKey][0]), {
+        fontSize: '13px',
+      }),
+    )
     const times = applyStyles(document.createElement('div'), {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fit, minmax(104px, 1fr))',
@@ -2124,7 +2213,9 @@
       })
       times.appendChild(timeButton)
     })
-    list.appendChild(times)
+    timesColumn.appendChild(times)
+    pickerLayout.appendChild(timesColumn)
+    list.appendChild(pickerLayout)
 
     if (selectedPreviewSlotStart) {
       const selectedSummary = previewText(
