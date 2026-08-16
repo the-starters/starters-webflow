@@ -34,7 +34,8 @@
  * DEPENDS ON (defined by earlier page/site embeds, not by this file):
  *   starter_memberstack_id, stripe_charges, waitForMember, memberReady, MEMBER,
  *   qs, qsa, getStarterByMemberId, getConfigs, getNearestSlot,
- *   initBookingComponents, formatWithTimezone, jQuery ($, two utility blocks),
+ *   initBookingComponents, createScheduler, formatWithTimezone,
+ *   jQuery ($, two utility blocks),
  *   window.WfAlgolia (search record).
  *
  * The Algolia index is READ FROM THE PAGE, never hardcoded: v3/algolia-environment.js
@@ -64,6 +65,15 @@
   // top of the Freelancer Template page). Read it off window so a missing global
   // warns instead of throwing a ReferenceError that would abort this file.
   const FREELANCER_ID = window.starter_memberstack_id;
+  // The Designer keeps this panel visible while it is being authored. Runtime
+  // ownership starts closed for every viewer and every /hire record; only the
+  // approved inline initializer may reveal it after eligibility and
+  // environment checks pass.
+  const INLINE_BOOKING_WRAPPER = document.querySelector('[data-availability-element="wrapper"]');
+  if (INLINE_BOOKING_WRAPPER) {
+      INLINE_BOOKING_WRAPPER.style.display = 'none';
+      INLINE_BOOKING_WRAPPER.setAttribute('aria-hidden', 'true');
+  }
   // The starter's Xano id is CMS-bound into the page ([data-starter-xano-id]
   // inside the native-binding wrapper); it keys the public search-record
   // lookup. Experiences/clients render natively from the CMS since the
@@ -339,6 +349,207 @@
   });
 
   // METHODS
+  function getInlineBookingEnvironment() {
+      const host = window.location && window.location.hostname;
+      const path = window.location && window.location.pathname
+          ? window.location.pathname.replace(/\/+$/, '') || '/'
+          : '';
+
+      if (host === 'the-starters-3-0.webflow.io' && path === '/hire/jp-dionisio') {
+          return 'test';
+      }
+      if ((host === 'thestarters.com' || host === 'www.thestarters.com') && path === '/hire/jp-test') {
+          return 'production';
+      }
+      return null;
+  }
+
+  function initInlineFreeBooking(configs, brand_name, brand_email) {
+      const environment = getInlineBookingEnvironment();
+      if (!environment) return false;
+
+      // The route bridge owns environment selection. Its ready marker proves
+      // this page has the matching TEST/production endpoint map and identity
+      // injector. Missing or mixed context must keep the inline flow inert.
+      if (
+          !window.StarterSchedulingV3Stage ||
+          document.documentElement.getAttribute('data-scheduling-v3-stage') !== 'ready'
+      ) {
+          console.warn('[hire-profile] inline booking stood down: environment bridge is not ready');
+          return false;
+      }
+
+      const wrapper = qs('[data-availability-element="wrapper"]');
+      const calendar = qs('[data-availability-element="calendar-live"]', wrapper || document);
+      const back = qs('[data-availability-element="back"]', wrapper || document);
+      const freeConfig = Array.from(configs || []).find(function (record) {
+          return record && !record.is_paid && record.config_id;
+      });
+
+      if (!wrapper || !calendar || !back || !freeConfig || typeof window.createScheduler !== 'function') {
+          console.warn('[hire-profile] inline booking stood down: required markup or scheduler is missing');
+          return false;
+      }
+
+      let scheduler = null;
+      let schedulerConnector = null;
+      let schedulerState = 'closed';
+      const freeCards = Array.from(qsa('[booking-popup-open][data-type]')).filter(function (card) {
+          return card.getAttribute('data-type') === 'free';
+      });
+
+      wrapper.style.display = 'none';
+
+      function setBackMode(mode) {
+          back.setAttribute('data-availability-back-mode', mode);
+          back.setAttribute(
+              'aria-label',
+              mode === 'previous-step' ? 'Back to date and time' : 'Close date and time picker'
+          );
+      }
+
+      function closeInlineBooking() {
+          if (scheduler && typeof scheduler.remove === 'function') scheduler.remove();
+          calendar.innerHTML = '';
+          wrapper.style.display = 'none';
+          wrapper.setAttribute('aria-hidden', 'true');
+          scheduler = null;
+          schedulerConnector = null;
+          schedulerState = 'closed';
+          setBackMode('close');
+          freeCards.forEach(function (card) {
+              card.setAttribute('aria-expanded', 'false');
+          });
+      }
+
+      function installSchedulerStateTracking(activeScheduler) {
+          const originalOverrides = activeScheduler.eventOverrides || {};
+
+          activeScheduler.eventOverrides = Object.assign({}, originalOverrides, {
+              timeslotConfirmed: async function (event, connector) {
+                  schedulerState = 'details';
+                  schedulerConnector = connector || schedulerConnector;
+                  setBackMode('previous-step');
+                  if (typeof originalOverrides.timeslotConfirmed === 'function') {
+                      return originalOverrides.timeslotConfirmed(event, connector);
+                  }
+              },
+              backButtonClicked: async function (event, connector) {
+                  schedulerState = 'date-time';
+                  schedulerConnector = connector || schedulerConnector;
+                  setBackMode('close');
+                  if (typeof originalOverrides.backButtonClicked === 'function') {
+                      return originalOverrides.backButtonClicked(event, connector);
+                  }
+              },
+              bookedEventInfo: async function (event, connector) {
+                  if (event && event.detail && !event.detail.error && event.detail.data) {
+                      schedulerState = 'complete';
+                      schedulerConnector = connector || schedulerConnector;
+                      setBackMode('close');
+                  }
+                  if (typeof originalOverrides.bookedEventInfo === 'function') {
+                      return originalOverrides.bookedEventInfo(event, connector);
+                  }
+              },
+          });
+      }
+
+      function openInlineBooking(card, event) {
+          if (event) {
+              event.preventDefault();
+              if (typeof event.stopPropagation === 'function') event.stopPropagation();
+          }
+
+          closeInlineBooking();
+          wrapper.style.display = 'flex';
+          wrapper.setAttribute('aria-hidden', 'false');
+          schedulerState = 'date-time';
+          setBackMode('close');
+          card.setAttribute('aria-expanded', 'true');
+
+          // createScheduler is shared with the existing modal and selects the
+          // first [nylas-container]. Claim that selector only for this
+          // synchronous call, then restore the modal containers unchanged.
+          const modalContainers = qsa('[nylas-container]');
+          modalContainers.forEach(function (container) {
+              container.removeAttribute('nylas-container');
+          });
+          calendar.setAttribute('nylas-container', '');
+
+          try {
+              scheduler = window.createScheduler(freeConfig.config_id, brand_name || '', brand_email || '');
+          } finally {
+              calendar.removeAttribute('nylas-container');
+              modalContainers.forEach(function (container) {
+                  container.setAttribute('nylas-container', '');
+              });
+          }
+
+          if (!scheduler) {
+              closeInlineBooking();
+              console.warn('[hire-profile] inline booking stood down: scheduler did not initialize');
+              return;
+          }
+
+          installSchedulerStateTracking(scheduler);
+          if (typeof wrapper.scrollIntoView === 'function') {
+              wrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+      }
+
+      back.addEventListener('click', async function (event) {
+          event.preventDefault();
+
+          if (schedulerState === 'details') {
+              let connector = schedulerConnector;
+              if (!connector && scheduler && typeof scheduler.getNylasSchedulerConnector === 'function') {
+                  connector = await scheduler.getNylasSchedulerConnector();
+                  schedulerConnector = connector || null;
+              }
+
+              if (
+                  !connector ||
+                  !connector.scheduler ||
+                  typeof connector.scheduler.toggleAdditionalData !== 'function'
+              ) {
+                  console.warn('[hire-profile] inline booking back stood down: scheduler connector is unavailable');
+                  return;
+              }
+
+              await connector.scheduler.toggleAdditionalData(false);
+              schedulerState = 'date-time';
+              setBackMode('close');
+
+              const backOverride = scheduler && scheduler.eventOverrides
+                  ? scheduler.eventOverrides.backButtonClicked
+                  : null;
+              if (typeof backOverride === 'function') {
+                  await backOverride(event, connector);
+              }
+              return;
+          }
+
+          closeInlineBooking();
+      });
+
+      freeCards.forEach(function (card) {
+          // The logged-out path never reaches this initializer, so signup
+          // attribution remains untouched. Signed-in canaries use the inline
+          // panel instead of the old modal.
+          card.removeAttribute('data-modal-trigger');
+          card.setAttribute('aria-controls', 'hire-inline-calendar');
+          card.setAttribute('aria-expanded', 'false');
+          card.onclick = function (event) {
+              openInlineBooking(card, event);
+          };
+      });
+
+      wrapper.setAttribute('id', 'hire-inline-calendar');
+      setBackMode('close');
+      return true;
+  }
+
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
 
       // GET STARTER
@@ -351,6 +562,7 @@
           if (configs) {
 
               initBookingComponents(freelancerId, grant_id, configs, brand_name, brand_email);
+              initInlineFreeBooking(configs, brand_name, brand_email);
 
               /* Next Available Slot _ Handlers */
               // loading state
