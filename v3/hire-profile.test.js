@@ -353,6 +353,23 @@ test('it follows the page when the environment resolves a different index', asyn
   assert.deepEqual([...new Set(context.requestedIndexes)], ['Freelancers3.0-staging-test'])
 })
 
+test('a page missing the Algolia index stands down before requesting a record', async () => {
+  const page = makePage()
+  page.root.querySelector('[wf-algolia-index]').remove()
+  const context = makeContext({ page, record: { rate: 5000 } })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(context.requestedIndexes, [])
+  assert.ok(
+    context.warnings.some(
+      (line) => line.includes('Anonymous services:') && line.includes('search index'),
+    ),
+    'expected a missing-index warning, got: ' + JSON.stringify(context.warnings),
+  )
+})
+
 test('a cloned rate card keeps signup attribution and drops the booking wiring', async () => {
   // Logged-out clicks reach the signup modal only through data-signup-trigger-*,
   // handled by v3/signup-attribution.js. Leaving the booking attributes on a

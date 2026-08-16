@@ -307,7 +307,13 @@
           return null;
       }
 
-      return window.WfAlgolia.getObject(resolveStartersIndex(), String(starterId));
+      const startersIndex = resolveStartersIndex();
+      if (!startersIndex) {
+          console.warn('Anonymous services:', 'No page-declared search index available');
+          return null;
+      }
+
+      return window.WfAlgolia.getObject(startersIndex, String(starterId));
   }
 
   function resolveStartersIndex() {
@@ -315,10 +321,10 @@
          environment's starters index (Freelancers3.0-production on prod,
          Freelancers3.0-staging-test on webflow.io) before wf-algolia loads,
          and the rotated search key only allows that index. Read it from the
-         page instead of hardcoding; the -dev literal is a last resort. */
+         page instead of hardcoding. */
       var el = document.querySelector('[data-starters-v3-algolia-resource="starters"][wf-algolia-index]') ||
           document.querySelector('[wf-algolia-index^="Freelancers"]');
-      return (el && el.getAttribute('wf-algolia-index')) || 'Freelancers3.0-dev';
+      return (el && el.getAttribute('wf-algolia-index')) || null;
   }
 
   // Hide empty dynamic list wrappers
