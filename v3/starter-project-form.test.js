@@ -130,6 +130,11 @@ class Element {
   querySelectorAll(selector) {
     if (selector === 'input, select, textarea, button') return this.controls || []
     if (selector === 'input, select, textarea') return this.controls || []
+    if (selector === 'button[type="submit"], input[type="submit"], [data-project-submit]') {
+      return (this.controls || []).filter((control) => (
+        control.getAttribute('type') === 'submit' || control.getAttribute('data-project-submit') !== null
+      ))
+    }
     if (selector === '[data-set-current-date-inited="true"]') {
       return (this.controls || []).filter((control) => control.getAttribute('data-set-current-date-inited') === 'true')
     }
@@ -736,6 +741,41 @@ test('Review then submit restores preview fields without enabling authored disab
   assert.equal(renderedBrand.textContent, 'Brand')
   assert.equal(loaded.form.fields.company.disabled, false)
   assert.equal(loaded.form.fields.email.disabled, true)
+})
+
+test('ready and retry states enable the authored Confirm submit control', async () => {
+  const fixture = formFixture()
+  const confirm = new Element({
+    tagName: 'button',
+    type: 'submit',
+    disabled: true,
+    className: 'clickable_btn w-form-loading',
+  })
+  confirm.form = fixture.form
+  fixture.form.controls.push(confirm)
+  let rejectSubmit
+  const loaded = load({
+    fixture,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+    projectSubmit: () => new Promise((resolve, reject) => { rejectSubmit = reject }),
+  })
+
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
+  assert.equal(confirm.disabled, false)
+  assert.equal(confirm.getAttribute('aria-disabled'), 'false')
+
+  const submission = loaded.api.submit(loaded.form, loaded.window, loaded.document)
+  await Promise.resolve()
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'submitting')
+  assert.equal(confirm.disabled, true)
+  assert.equal(confirm.getAttribute('aria-disabled'), 'true')
+
+  rejectSubmit(Object.assign(new Error('temporary'), { status: 503 }))
+  assert.equal(await submission, false)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'error')
+  assert.equal(confirm.disabled, false)
+  assert.equal(confirm.getAttribute('aria-disabled'), 'false')
 })
 
 test('Review Edit fee change refreshes preview controls and preserves authored disabled fields', async () => {

@@ -462,6 +462,14 @@
     if (!form) return
     form.setAttribute('data-starter-project-status', status)
     form.setAttribute('aria-busy', status === 'submitting' ? 'true' : 'false')
+    var submitEnabled = status === 'ready' || status === 'error'
+    var submitters = form.querySelectorAll
+      ? form.querySelectorAll('button[type="submit"], input[type="submit"], [data-project-submit]')
+      : []
+    Array.prototype.forEach.call(submitters, function (submitter) {
+      submitter.disabled = !submitEnabled
+      if (submitter.setAttribute) submitter.setAttribute('aria-disabled', submitEnabled ? 'false' : 'true')
+    })
     var error = stateElement(form, ERROR_SELECTOR)
     if (error) {
       error.textContent = status === 'error' || status === 'blocked' ? clean(message) : ''
@@ -731,8 +739,8 @@
       setStatus(form, 'error', 'The project service is not available. Reload and try again.')
       return Promise.resolve(false)
     }
-    setStatus(form, 'submitting', '')
     lockForm(form, true)
+    setStatus(form, 'submitting', '')
     var submitRequest = Promise.resolve()
       .then(function () { return request(serialized.payload) })
       .then(function (result) {
