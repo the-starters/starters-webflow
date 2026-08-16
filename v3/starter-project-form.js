@@ -31,6 +31,7 @@
   var REVIEW_CONTROL_SELECTOR = 'input, select, textarea'
   var REVIEW_TRIGGER_SELECTOR = '[dx-button="review"]'
   var EDIT_TRIGGER_SELECTOR = '[dx-button="edit"]'
+  var CONFIRM_SUBMIT_SELECTOR = '.button-group.is-confirm button[type="submit"], .button-group.is-confirm input[type="submit"], .button-group.is-confirm [data-project-submit]'
   var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
   var PROFILE_BIND_SELECTOR = '[data-project-bind]'
   var LEGACY_PROFILE_BIND_SELECTOR = '[element]'
@@ -109,6 +110,9 @@
       keyPayload: '',
       lockedControls: null,
       reviewControls: null,
+      submitStatus: 'idle',
+      submitRetryable: false,
+      submitObserver: null,
       generation: 0,
       optionsGeneration: 0,
       profileGeneration: 0,
@@ -340,6 +344,8 @@
 
   function prepareStarterContext(form) {
     if (!form || !form.querySelectorAll) return false
+    installSubmitControlOwner(form)
+    syncSubmitControls(form)
     // The shared Contract Generation component is reused outside its CMS page.
     // Mark the native form (not its visual wrapper) so the sitewide Turnstile
     // repair can restore Webflow's form contents before any submit attempt.
@@ -458,10 +464,39 @@
     if (typeof shared.fillCurrentDates === 'function') shared.fillCurrentDates(form, globalObject)
   }
 
-  function setStatus(form, status, message) {
+  function syncSubmitControls(form) {
     if (!form) return
+    var current = formState(form)
+    var submitEnabled = current.submitStatus === 'ready' || (
+      current.submitStatus === 'error' && current.submitRetryable
+    )
+    var submitters = form.querySelectorAll
+      ? form.querySelectorAll(CONFIRM_SUBMIT_SELECTOR)
+      : []
+    Array.prototype.forEach.call(submitters, function (submitter) {
+      if (submitter.disabled === submitEnabled) submitter.disabled = !submitEnabled
+      if (submitter.setAttribute) submitter.setAttribute('aria-disabled', submitEnabled ? 'false' : 'true')
+    })
+  }
+
+  function installSubmitControlOwner(form) {
+    var current = formState(form)
+    if (current.submitObserver || typeof global.MutationObserver !== 'function') return
+    current.submitObserver = new global.MutationObserver(function () {
+      syncSubmitControls(form)
+    })
+    current.submitObserver.observe(form, { attributes: true, attributeFilter: ['disabled'], subtree: true })
+  }
+
+  function setStatus(form, status, message, retryableSubmit) {
+    if (!form) return
+    var current = formState(form)
+    current.submitStatus = status
+    current.submitRetryable = status === 'error' && retryableSubmit === true
+    installSubmitControlOwner(form)
     form.setAttribute('data-starter-project-status', status)
     form.setAttribute('aria-busy', status === 'submitting' ? 'true' : 'false')
+    syncSubmitControls(form)
     var error = stateElement(form, ERROR_SELECTOR)
     if (error) {
       error.textContent = status === 'error' || status === 'blocked' ? clean(message) : ''
@@ -703,6 +738,11 @@
     return 'The project could not be created. Try again.'
   }
 
+  function retryableSubmitError(error) {
+    var status = Number(error && error.status)
+    return !status || status === 408 || status === 425 || status === 429 || status >= 500
+  }
+
   function submit(form, globalObject, documentObject) {
     var current = formState(form)
     if (current.submitRequest) return current.submitRequest
@@ -731,14 +771,14 @@
       setStatus(form, 'error', 'The project service is not available. Reload and try again.')
       return Promise.resolve(false)
     }
-    setStatus(form, 'submitting', '')
     lockForm(form, true)
+    setStatus(form, 'submitting', '')
     var submitRequest = Promise.resolve()
       .then(function () { return request(serialized.payload) })
       .then(function (result) {
         if (generation !== current.generation) return false
         if (!createdProject(result)) {
-          setStatus(form, 'error', safeError())
+          setStatus(form, 'error', safeError(), true)
           return false
         }
         showSuccess(form, result, documentObject)
@@ -747,12 +787,13 @@
       .catch(function (requestError) {
         if (generation !== current.generation) return false
         if (Number(requestError && requestError.status) === 403) invalidateOptions(form)
-        setStatus(form, 'error', safeError(requestError))
+        setStatus(form, 'error', safeError(requestError), retryableSubmitError(requestError))
         return false
       })
       .finally(function () {
         if (generation !== current.generation || current.submitRequest !== submitRequest) return
         lockForm(form, false)
+        syncSubmitControls(form)
         if (!current.optionsLoaded) setSelectState(form, 'Choose a Brand', true)
         current.submitRequest = null
       })
