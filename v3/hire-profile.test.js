@@ -638,6 +638,96 @@ test('the approved production canary opens free booking inline and uses state-aw
   assert.equal(card.getAttribute('aria-expanded'), 'false')
 })
 
+test('inline back recovers the Nylas connector when the timeslot callback omits it', async () => {
+  const page = makePage()
+  let scheduler
+  let toggledTo = null
+  const connector = {
+    scheduler: {
+      toggleAdditionalData: async (value) => {
+        toggledTo = value
+      },
+    },
+  }
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_prod_test',
+      auth: { email: 'brand@example.com' },
+      customFields: {
+        'brands-dashboard-url': '/brand-dashboard',
+        'free-user': 'Brand',
+        'last-name': 'Tester',
+      },
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
+    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
+    getNearestSlot: async () => null,
+    initBookingComponents: () => {},
+    createScheduler: () => {
+      scheduler = makeElement('nylas-scheduling')
+      scheduler.eventOverrides = {}
+      scheduler.getNylasSchedulerConnector = async () => connector
+      page.calendarLive.appendChild(scheduler)
+      return scheduler
+    },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  page.servicesList.children[0].onclick({ preventDefault() {}, stopPropagation() {} })
+  await scheduler.eventOverrides.timeslotConfirmed({ detail: {} })
+  await page.back.listeners.click[0]({ preventDefault() {} })
+
+  assert.equal(toggledTo, false)
+  assert.equal(page.inlineWrapper.style.display, 'flex')
+  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'close')
+})
+
+test('a malformed booking callback does not mark the inline scheduler complete', async () => {
+  const page = makePage()
+  let scheduler
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_prod_test',
+      auth: { email: 'brand@example.com' },
+      customFields: {
+        'brands-dashboard-url': '/brand-dashboard',
+        'free-user': 'Brand',
+        'last-name': 'Tester',
+      },
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
+    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
+    getNearestSlot: async () => null,
+    initBookingComponents: () => {},
+    createScheduler: () => {
+      scheduler = makeElement('nylas-scheduling')
+      scheduler.eventOverrides = {}
+      page.calendarLive.appendChild(scheduler)
+      return scheduler
+    },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    schedulingBridge: true,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const card = page.servicesList.children[0]
+  card.onclick({ preventDefault() {}, stopPropagation() {} })
+  await scheduler.eventOverrides.timeslotConfirmed({ detail: {} })
+  await scheduler.eventOverrides.bookedEventInfo({ detail: {} })
+  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'previous-step')
+
+  await page.back.listeners.click[0]({ preventDefault() {} })
+  assert.equal(page.inlineWrapper.style.display, 'flex')
+})
+
 test('inline booking stays inert when the route environment bridge is missing', async () => {
   const page = makePage()
   const context = makeContext({

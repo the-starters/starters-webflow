@@ -433,7 +433,7 @@
                   }
               },
               bookedEventInfo: async function (event, connector) {
-                  if (!event || !event.detail || !event.detail.error) {
+                  if (event && event.detail && !event.detail.error && event.detail.data) {
                       schedulerState = 'complete';
                       schedulerConnector = connector || schedulerConnector;
                       setBackMode('close');
@@ -490,13 +490,23 @@
       back.addEventListener('click', async function (event) {
           event.preventDefault();
 
-          if (
-              schedulerState === 'details' &&
-              schedulerConnector &&
-              schedulerConnector.scheduler &&
-              typeof schedulerConnector.scheduler.toggleAdditionalData === 'function'
-          ) {
-              await schedulerConnector.scheduler.toggleAdditionalData(false);
+          if (schedulerState === 'details') {
+              let connector = schedulerConnector;
+              if (!connector && scheduler && typeof scheduler.getNylasSchedulerConnector === 'function') {
+                  connector = await scheduler.getNylasSchedulerConnector();
+                  schedulerConnector = connector || null;
+              }
+
+              if (
+                  !connector ||
+                  !connector.scheduler ||
+                  typeof connector.scheduler.toggleAdditionalData !== 'function'
+              ) {
+                  console.warn('[hire-profile] inline booking back stood down: scheduler connector is unavailable');
+                  return;
+              }
+
+              await connector.scheduler.toggleAdditionalData(false);
               schedulerState = 'date-time';
               setBackMode('close');
 
@@ -504,7 +514,7 @@
                   ? scheduler.eventOverrides.backButtonClicked
                   : null;
               if (typeof backOverride === 'function') {
-                  await backOverride(event, schedulerConnector);
+                  await backOverride(event, connector);
               }
               return;
           }
