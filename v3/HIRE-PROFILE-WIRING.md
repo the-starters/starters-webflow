@@ -44,9 +44,11 @@ deferred loads (`scheduling-auth.js`, `scheduling-v3-stage.js`,
 ## Dependencies this file does NOT own
 
 All of these are defined by **other** page or site embeds that run before it.
-The file reads them defensively and stands down with a `[hire-profile]` warning
-rather than throwing, because an uncaught `ReferenceError` would abort the
-whole file and take every section with it.
+The file reads the page-owned identity and shared helper globals from `window`.
+It stands down with a `[hire-profile]` warning when `qs`, `qsa`,
+`waitForMember`, or `starter_memberstack_id` is missing, because an uncaught
+`ReferenceError` would abort the whole file and take every section with it.
+The booking globals are guaranteed by the verified page install order below.
 
 - Site head: `qs`, `qsa`, `MEMBER`, `memberReady`, `waitForMember`
 - Page embeds: `starter_memberstack_id`, `stripe_charges`
@@ -96,7 +98,8 @@ is the only intentional timing change in the port.
 `v3/algolia-environment.js` rewrites that attribute per environment
 (`Freelancers3.0-production` on prod, `Freelancers3.0-staging-test` on
 `webflow.io`) before wf-algolia boots, and the rotated search key **403s any
-other index**.
+other index**. If the page does not declare an index, the public-record lookup
+warns and stands down without making an Algolia request.
 
 A hardcoded `Freelancers3.0-dev` is exactly what silently broke the entire
 Services section on 2026-08-16, for every viewer, after the index migration.
