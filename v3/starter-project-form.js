@@ -109,6 +109,9 @@
       keyPayload: '',
       lockedControls: null,
       reviewControls: null,
+      submitStatus: 'idle',
+      submitRetryable: false,
+      submitObserver: null,
       generation: 0,
       optionsGeneration: 0,
       profileGeneration: 0,
@@ -458,18 +461,39 @@
     if (typeof shared.fillCurrentDates === 'function') shared.fillCurrentDates(form, globalObject)
   }
 
-  function setStatus(form, status, message) {
+  function syncSubmitControls(form) {
     if (!form) return
-    form.setAttribute('data-starter-project-status', status)
-    form.setAttribute('aria-busy', status === 'submitting' ? 'true' : 'false')
-    var submitEnabled = status === 'ready' || status === 'error'
+    var current = formState(form)
+    var submitEnabled = current.submitStatus === 'ready' || (
+      current.submitStatus === 'error' && current.submitRetryable
+    )
     var submitters = form.querySelectorAll
       ? form.querySelectorAll('button[type="submit"], input[type="submit"], [data-project-submit]')
       : []
     Array.prototype.forEach.call(submitters, function (submitter) {
-      submitter.disabled = !submitEnabled
+      if (submitter.disabled === submitEnabled) submitter.disabled = !submitEnabled
       if (submitter.setAttribute) submitter.setAttribute('aria-disabled', submitEnabled ? 'false' : 'true')
     })
+  }
+
+  function installSubmitControlOwner(form) {
+    var current = formState(form)
+    if (current.submitObserver || typeof global.MutationObserver !== 'function') return
+    current.submitObserver = new global.MutationObserver(function () {
+      syncSubmitControls(form)
+    })
+    current.submitObserver.observe(form, { attributes: true, attributeFilter: ['disabled'], subtree: true })
+  }
+
+  function setStatus(form, status, message, retryableSubmit) {
+    if (!form) return
+    var current = formState(form)
+    current.submitStatus = status
+    current.submitRetryable = status === 'error' && retryableSubmit === true
+    installSubmitControlOwner(form)
+    form.setAttribute('data-starter-project-status', status)
+    form.setAttribute('aria-busy', status === 'submitting' ? 'true' : 'false')
+    syncSubmitControls(form)
     var error = stateElement(form, ERROR_SELECTOR)
     if (error) {
       error.textContent = status === 'error' || status === 'blocked' ? clean(message) : ''
@@ -711,6 +735,11 @@
     return 'The project could not be created. Try again.'
   }
 
+  function retryableSubmitError(error) {
+    var status = Number(error && error.status)
+    return !status || status === 408 || status === 425 || status === 429 || status >= 500
+  }
+
   function submit(form, globalObject, documentObject) {
     var current = formState(form)
     if (current.submitRequest) return current.submitRequest
@@ -746,7 +775,7 @@
       .then(function (result) {
         if (generation !== current.generation) return false
         if (!createdProject(result)) {
-          setStatus(form, 'error', safeError())
+          setStatus(form, 'error', safeError(), true)
           return false
         }
         showSuccess(form, result, documentObject)
@@ -755,12 +784,13 @@
       .catch(function (requestError) {
         if (generation !== current.generation) return false
         if (Number(requestError && requestError.status) === 403) invalidateOptions(form)
-        setStatus(form, 'error', safeError(requestError))
+        setStatus(form, 'error', safeError(requestError), retryableSubmitError(requestError))
         return false
       })
       .finally(function () {
         if (generation !== current.generation || current.submitRequest !== submitRequest) return
         lockForm(form, false)
+        syncSubmitControls(form)
         if (!current.optionsLoaded) setSelectState(form, 'Choose a Brand', true)
         current.submitRequest = null
       })

@@ -201,6 +201,7 @@ function load(options = {}) {
   const calls = { options: [], profile: [], submit: [] }
   const events = []
   const tracks = []
+  const mutationObservers = []
   const serializedPayload = {
     starter_memberstack_id: 'mem_starter',
     connection_type: 'opportunity',
@@ -235,6 +236,14 @@ function load(options = {}) {
       constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles) }
     },
     CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init.detail } },
+    MutationObserver: class MutationObserver {
+      constructor(callback) {
+        this.callback = callback
+        this.target = null
+        mutationObservers.push(this)
+      }
+      observe(target) { this.target = target }
+    },
     WeakMap,
     listeners: {},
     addEventListener(name, handler) { this.listeners[name] = handler },
@@ -267,7 +276,22 @@ function load(options = {}) {
     } },
   }
   vm.runInNewContext(SOURCE, { window, WeakMap, Number, String, JSON, Object, Array, Promise }, { filename: 'starter-project-form.js' })
-  return { api: window.StartersStarterProjectFormV3, calls, context, document, events, form, tracks, window, wrapper }
+  return {
+    api: window.StartersStarterProjectFormV3,
+    calls,
+    context,
+    document,
+    events,
+    form,
+    tracks,
+    window,
+    wrapper,
+    flushDisabledMutation() {
+      mutationObservers.forEach((observer) => {
+        if (observer.target === form) observer.callback([{ attributeName: 'disabled' }])
+      })
+    },
+  }
 }
 
 test('normalizes and renders the authenticated Starter profile into scoped bindings', async () => {
@@ -743,7 +767,7 @@ test('Review then submit restores preview fields without enabling authored disab
   assert.equal(loaded.form.fields.email.disabled, true)
 })
 
-test('ready and retry states enable the authored Confirm submit control', async () => {
+test('delayed Turnstile tokens cannot enable Confirm outside eligible controller states', async () => {
   const fixture = formFixture()
   const confirm = new Element({
     tagName: 'button',
@@ -751,6 +775,39 @@ test('ready and retry states enable the authored Confirm submit control', async 
     disabled: true,
     className: 'clickable_btn w-form-loading',
   })
+  confirm.form = fixture.form
+  fixture.form.controls.push(confirm)
+  let resolveOptions
+  const loaded = load({
+    fixture,
+    projectOptions: () => new Promise((resolve) => { resolveOptions = resolve }),
+  })
+
+  const optionsRequest = loaded.api.loadOptions(loaded.form, loaded.window)
+  await Promise.resolve()
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'loading')
+  confirm.disabled = false
+  loaded.flushDisabledMutation()
+  assert.equal(confirm.disabled, true)
+
+  resolveOptions({ counterparties: [] })
+  await optionsRequest
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'blocked')
+  confirm.disabled = false
+  loaded.flushDisabledMutation()
+  assert.equal(confirm.disabled, true)
+
+  const refreshRequest = loaded.api.loadOptions(loaded.form, loaded.window, true)
+  await Promise.resolve()
+  resolveOptions({ counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }] })
+  await refreshRequest
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
+  assert.equal(confirm.disabled, false)
+})
+
+test('Confirm enables only for ready and retryable submit errors', async () => {
+  const fixture = formFixture()
+  const confirm = new Element({ tagName: 'button', type: 'submit', disabled: true })
   confirm.form = fixture.form
   fixture.form.controls.push(confirm)
   let rejectSubmit
@@ -770,12 +827,81 @@ test('ready and retry states enable the authored Confirm submit control', async 
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'submitting')
   assert.equal(confirm.disabled, true)
   assert.equal(confirm.getAttribute('aria-disabled'), 'true')
+  confirm.disabled = false
+  loaded.flushDisabledMutation()
+  assert.equal(confirm.disabled, true)
 
   rejectSubmit(Object.assign(new Error('temporary'), { status: 503 }))
   assert.equal(await submission, false)
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'error')
   assert.equal(confirm.disabled, false)
   assert.equal(confirm.getAttribute('aria-disabled'), 'false')
+})
+
+test('Confirm stays disabled for non-retryable errors', async () => {
+  const cases = [
+    {
+      name: 'options load',
+      load: { projectOptions: async () => { throw new Error('offline') } },
+      run: async (loaded) => loaded.api.loadOptions(loaded.form, loaded.window),
+    },
+    {
+      name: 'validation',
+      load: {
+        counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+        validationError: () => 'Invalid details',
+      },
+      run: async (loaded) => {
+        await loaded.api.loadOptions(loaded.form, loaded.window)
+        return loaded.api.submit(loaded.form, loaded.window, loaded.document)
+      },
+    },
+    {
+      name: 'missing service',
+      load: { counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }] },
+      run: async (loaded) => {
+        await loaded.api.loadOptions(loaded.form, loaded.window)
+        delete loaded.window.Opp30.API.projectSubmit
+        return loaded.api.submit(loaded.form, loaded.window, loaded.document)
+      },
+    },
+    {
+      name: 'authorization invalidation',
+      load: {
+        counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+        projectSubmit: async () => { throw Object.assign(new Error('forbidden'), { status: 403 }) },
+      },
+      run: async (loaded) => {
+        await loaded.api.loadOptions(loaded.form, loaded.window)
+        return loaded.api.submit(loaded.form, loaded.window, loaded.document)
+      },
+    },
+    {
+      name: 'reload required',
+      load: {
+        counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+        projectSubmit: async () => { throw Object.assign(new Error('expired'), { status: 401 }) },
+      },
+      run: async (loaded) => {
+        await loaded.api.loadOptions(loaded.form, loaded.window)
+        return loaded.api.submit(loaded.form, loaded.window, loaded.document)
+      },
+    },
+  ]
+
+  for (const scenario of cases) {
+    const fixture = formFixture()
+    const confirm = new Element({ tagName: 'button', type: 'submit', disabled: true })
+    confirm.form = fixture.form
+    fixture.form.controls.push(confirm)
+    const loaded = load({ fixture, ...scenario.load })
+    await scenario.run(loaded)
+    assert.equal(confirm.disabled, true, scenario.name)
+    assert.equal(confirm.getAttribute('aria-disabled'), 'true', scenario.name)
+    confirm.disabled = false
+    loaded.flushDisabledMutation()
+    assert.equal(confirm.disabled, true, scenario.name + ' after delayed token')
+  }
 })
 
 test('Review Edit fee change refreshes preview controls and preserves authored disabled fields', async () => {
