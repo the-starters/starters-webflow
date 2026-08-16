@@ -1301,6 +1301,7 @@ test('item cards remain visible (not display:none) across repeated renders', asy
 
 test('calendar-preview renders canonical active free services and their live slots', async () => {
   const future = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const laterDate = future + 24 * 60 * 60
   const { dom, calls } = loadSection({
     serverState: {
       grantId: 'grant-1',
@@ -1320,7 +1321,7 @@ test('calendar-preview renders canonical active free services and their live slo
     getRoutes: {
       '/scheduler/get_availability/v3': () => ({
         status: 200,
-        body: { time_slots: [{ start_time: future }] },
+        body: { time_slots: [{ start_time: future }, { start_time: laterDate }] },
       }),
     },
   })
@@ -1337,10 +1338,61 @@ test('calendar-preview renders canonical active free services and their live slo
 
   const slotsList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
   assert.ok(slotsList)
-  assert.equal(slotsList.children.length, 1)
+  const dates = slotsList.querySelector('[data-availability-element="preview-dates"]')
+  const times = slotsList.querySelector('[data-availability-element="preview-times"]')
+  assert.ok(dates)
+  assert.ok(times)
+  assert.equal(dates.children.length, 2)
+  assert.equal(dates.children[0].getAttribute('aria-pressed'), 'true')
+  assert.equal(times.children.length, 1)
   assert.equal(
     calls.filter((call) => call.path === '/scheduler/get_availability/v3').length,
     1,
+  )
+})
+
+test('calendar-preview selects a date and time without creating a booking', async () => {
+  const firstDate = Math.floor(Date.now() / 1000) + 2 * 24 * 60 * 60
+  const secondDate = firstDate + 24 * 60 * 60
+  const { dom, calls } = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        {
+          config_id: 'cfg-free',
+          title: 'Free Consultation Call',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+    },
+    getRoutes: {
+      '/scheduler/get_availability/v3': () => ({
+        status: 200,
+        body: { time_slots: [{ start_time: firstDate }, { start_time: secondDate }] },
+      }),
+    },
+  })
+  await settle()
+  const writeCountBeforeSelection = calls.filter((call) => call.method !== 'GET').length
+
+  let dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
+  dates.children[1].click()
+  dates = dom.calendarPreview.querySelector('[data-availability-element="preview-dates"]')
+  assert.equal(dates.children[1].getAttribute('aria-pressed'), 'true')
+
+  let times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(times.children.length, 1)
+  times.children[0].click()
+  times = dom.calendarPreview.querySelector('[data-availability-element="preview-times"]')
+  assert.equal(times.children[0].getAttribute('aria-pressed'), 'true')
+  assert.ok(dom.calendarPreview.querySelector('[data-availability-element="preview-selection"]'))
+  assert.equal(
+    calls.filter((call) => call.method !== 'GET').length,
+    writeCountBeforeSelection,
   )
 })
 
@@ -1423,8 +1475,16 @@ test('calendar-preview ignores an older slot response after the selected service
   }).format(new Date(slotB * 1000))
   const currentList = dom.calendarPreview.querySelector('[data-availability-element="slots-list"]')
   assert.ok(currentList)
-  assert.equal(currentList.children.length, 1)
-  assert.equal(currentList.children[0].textContent, expected)
+  const currentTimes = currentList.querySelector('[data-availability-element="preview-times"]')
+  assert.ok(currentTimes)
+  assert.equal(currentTimes.children.length, 1)
+  assert.equal(currentTimes.children[0].textContent, new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Manila',
+  }).format(new Date(slotB * 1000)))
+  assert.ok(expected)
   assert.equal(services.children[1].getAttribute('aria-pressed'), 'false') // stale DOM was replaced
   const currentServices = dom.calendarPreview.querySelector('[data-availability-element="preview-services"]')
   assert.equal(currentServices.children[1].getAttribute('aria-pressed'), 'true')
