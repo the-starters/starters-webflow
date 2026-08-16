@@ -1963,7 +1963,7 @@
     'DOMContentLoaded',
     function starterQuizResultsController() {
     const debugLogPrefix = '[Starter Quiz Funnel]'
-    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v20'
+    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v21'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
     // Pool gathered per category before featured picks are drawn off the top,

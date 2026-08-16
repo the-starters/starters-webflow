@@ -660,7 +660,7 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
     evidence.fresh_algolia_enrollment = payload
 })
 
-test('pre-review recommendation caches refresh before email enrollment', async () => {
+test('v20 recommendation caches refresh canonical email fields before enrollment', async () => {
     const staleStarter = {
         objectID: 'stale-starter',
         name: 'Stale Starter',
@@ -670,7 +670,7 @@ test('pre-review recommendation caches refresh before email enrollment', async (
     const quiz = completedQuiz({
         featuredFreelancers: [staleStarter],
         recommendedFreelancers: [staleStarter],
-        recommendationVersion: 'category-subcategory-pairs-v18',
+        recommendationVersion: 'category-subcategory-pairs-v20',
     })
     const storage = createStorage(quiz)
     const harness = await runController({
@@ -682,6 +682,13 @@ test('pre-review recommendation caches refresh before email enrollment', async (
                 name: 'Refreshed Starter',
                 slug: 'refreshed-starter',
                 roles: ['creative-director'],
+                'profile-type': 'Consult',
+                city: 'Austin',
+                state: 'TX',
+                country: 'US',
+                'service-1': 'Build a growth plan',
+                'service-2': 'Improve paid acquisition',
+                'service-3': 'Measure channel performance',
                 'ranking-points': 100,
                 review_count: 2,
                 review_average: 4.5,
@@ -699,6 +706,20 @@ test('pre-review recommendation caches refresh before email enrollment', async (
         ),
     )
     assert.equal(payload.properties.starter_1_first_name, 'Refreshed')
+    assert.equal(payload.properties.starter_1_classification, 'Consult')
+    assert.equal(payload.properties.starter_1_location, 'Austin, TX, US')
+    assert.deepEqual(
+        [
+            payload.properties.starter_1_service_1,
+            payload.properties.starter_1_service_2,
+            payload.properties.starter_1_service_3,
+        ],
+        [
+            'Build a growth plan',
+            'Improve paid acquisition',
+            'Measure channel performance',
+        ],
+    )
     assert.equal(payload.properties.starter_1_reviews, '4.5 (2 Reviews)')
     assert.equal(payload.properties.starter_1_reviews_display, 'table-cell')
     assert.equal(payload.properties.quiz_revision, '2026-08-11T04:00:00.000Z')
@@ -707,7 +728,7 @@ test('pre-review recommendation caches refresh before email enrollment', async (
     assert.equal(refreshedQuiz.updatedAt, '2026-08-11T04:00:00.000Z')
     assert.equal(refreshedQuiz.completedAt, '2026-08-11T04:00:00.000Z')
     assert.equal(refreshedQuiz.recommendationVersion, recommendationVersion)
-    evidence.v18_cache_refresh = {
+    evidence.v20_cache_refresh = {
         enrollment: payload,
         persisted_quiz: refreshedQuiz,
     }
