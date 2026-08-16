@@ -431,7 +431,10 @@
       const calendar = qs('[data-availability-element="calendar-live"]', wrapper || document);
       const back = qs('[data-availability-element="back"]', wrapper || document);
       const freeConfig = Array.from(configs || []).find(function (record) {
-          return record && !record.is_paid && record.config_id;
+          return record &&
+              record.config_id &&
+              record.is_paid === false &&
+              record.active !== false;
       });
 
       if (!wrapper || !calendar || !back || !freeConfig || typeof window.createScheduler !== 'function') {
@@ -659,7 +662,10 @@
 
       wrapper.setAttribute('id', 'hire-inline-calendar');
       setBackMode('close');
-      return true;
+      return {
+          cards: freeCards,
+          configId: freeConfig.config_id,
+      };
   }
 
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
@@ -674,30 +680,65 @@
           if (configs) {
 
               initBookingComponents(freelancerId, grant_id, configs, brand_name, brand_email);
-              initInlineFreeBooking(configs, brand_name, brand_email);
+              const inlineFreeBooking = initInlineFreeBooking(configs, brand_name, brand_email);
+              const primaryConfigId = configs[0].config_id;
+              const inlineUsesPrimaryConfig = inlineFreeBooking &&
+                  inlineFreeBooking.configId === primaryConfigId;
 
               /* Next Available Slot _ Handlers */
               // loading state
               nearestSlotSetup();
 
-              const nearestSlotTimestamp = await getNearestSlot(grant_id, configs[0].config_id);
+              const nearestSlotTimestamp = await getNearestSlot(grant_id, primaryConfigId);
               if (nearestSlotTimestamp) {
                   const date = formatWithTimezone(nearestSlotTimestamp * 1000, { month: '2-digit' }).list;
 
                   // ready state
-                  nearestSlotSetup(`${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`);
+                  nearestSlotSetup(
+                      `${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`,
+                      inlineUsesPrimaryConfig ? [] : inlineFreeBooking && inlineFreeBooking.cards,
+                  );
               } else {
 
                   // empty state
-                  nearestSlotSetup("No available slots");
+                  nearestSlotSetup(
+                      "No available slots",
+                      inlineUsesPrimaryConfig ? [] : inlineFreeBooking && inlineFreeBooking.cards,
+                  );
               }
 
-              function nearestSlotSetup(timeSlot = null) {
+              if (inlineFreeBooking && !inlineUsesPrimaryConfig) {
+                  const inlineNearestSlotTimestamp = await getNearestSlot(
+                      grant_id,
+                      inlineFreeBooking.configId,
+                  );
+                  if (inlineNearestSlotTimestamp) {
+                      const date = formatWithTimezone(
+                          inlineNearestSlotTimestamp * 1000,
+                          { month: '2-digit' },
+                      ).list;
+                      inlineNearestSlotSetup(
+                          `${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`,
+                      );
+                  } else {
+                      inlineNearestSlotSetup("No available slots");
+                  }
+              }
+
+              function nearestSlotSetup(timeSlot = null, excludedCards = []) {
                   qsa("[booking-popup-open][data-type]").forEach(async (item) => {
+                      if (excludedCards && excludedCards.includes(item)) return;
                       const nextSlot = qs('[next-available-slot]', item);
                       if (nextSlot) {
                           nextSlot.textContent = timeSlot || "Loading...";
                       }
+                  });
+              }
+
+              function inlineNearestSlotSetup(timeSlot) {
+                  inlineFreeBooking.cards.forEach(function (item) {
+                      const nextSlot = qs('[next-available-slot]', item);
+                      if (nextSlot) nextSlot.textContent = timeSlot;
                   });
               }
 
