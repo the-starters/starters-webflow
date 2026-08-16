@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-16
+Last updated: 2026-08-17
 Status: Phase 2 native-CMS source cutover ready for release
 
 ## What this is
@@ -173,17 +173,17 @@ part of this canary.
 
 Free-call access keeps the V2 product rule: any signed-in Brand, including
 Brand Free, can select and book a free call. Brand Free does not need to
-upgrade for a free call. The controller resolves the role from active, stable
-Memberstack plan IDs using the same map as `route-guard.js`. An explicit empty,
-inactive, unknown-only, or cross-role plan state fails closed. The legacy
-`brands-dashboard-url` field is only a compatibility fallback when the SDK
-payload omits `planConnections`; it cannot override supplied plan state.
-
-This rule was added after the TEST canary found that a valid Test Brand member
-without the legacy dashboard field was treated as Talent. Regression tests now
-cover Test Brand and Brand Free plan-only members, plus empty, inactive, and
-cross-role plan states. Paid-call selection, Stripe, reminders, transactional
-email, and paid-call activation remain held.
+upgrade for a free call. The controller resolves the role from the active,
+stable Memberstack plan IDs defined in
+[`ACCESS-MATRIX.md`](ACCESS-MATRIX.md), using the same map as `route-guard.js`.
+An explicit empty, inactive, unknown-only, or cross-role plan state fails
+closed. The legacy `brands-dashboard-url` field is only a compatibility
+fallback when the SDK payload omits `planConnections`; it cannot override
+supplied plan state. Regression coverage in
+[`hire-profile.test.js`](hire-profile.test.js) includes Test Brand and Brand
+Free plan-only members, plus empty, inactive, and cross-role plan states.
+Paid-call selection, Stripe, reminders, transactional email, and paid-call
+activation remain held.
 
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
