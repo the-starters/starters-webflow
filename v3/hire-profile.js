@@ -65,6 +65,15 @@
   // top of the Freelancer Template page). Read it off window so a missing global
   // warns instead of throwing a ReferenceError that would abort this file.
   const FREELANCER_ID = window.starter_memberstack_id;
+  // The Designer keeps this panel visible while it is being authored. Runtime
+  // ownership starts closed for every viewer and every /hire record; only the
+  // approved inline initializer may reveal it after eligibility and
+  // environment checks pass.
+  const INLINE_BOOKING_WRAPPER = document.querySelector('[data-availability-element="wrapper"]');
+  if (INLINE_BOOKING_WRAPPER) {
+      INLINE_BOOKING_WRAPPER.style.display = 'none';
+      INLINE_BOOKING_WRAPPER.setAttribute('aria-hidden', 'true');
+  }
   // The starter's Xano id is CMS-bound into the page ([data-starter-xano-id]
   // inside the native-binding wrapper); it keys the public search-record
   // lookup. Experiences/clients render natively from the CMS since the
@@ -403,6 +412,7 @@
           if (scheduler && typeof scheduler.remove === 'function') scheduler.remove();
           calendar.innerHTML = '';
           wrapper.style.display = 'none';
+          wrapper.setAttribute('aria-hidden', 'true');
           scheduler = null;
           schedulerConnector = null;
           schedulerState = 'closed';
@@ -453,6 +463,7 @@
 
           closeInlineBooking();
           wrapper.style.display = 'flex';
+          wrapper.setAttribute('aria-hidden', 'false');
           schedulerState = 'date-time';
           setBackMode('close');
           card.setAttribute('aria-expanded', 'true');

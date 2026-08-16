@@ -178,7 +178,7 @@ function makePage({ index = 'Freelancers3.0-production' } = {}) {
   services.appendChild(list)
 
   const inlineWrapper = makeElement('div', { 'data-availability-element': 'wrapper' })
-  inlineWrapper.style.display = 'none'
+  inlineWrapper.style.display = 'flex'
   const back = makeElement('button', { 'data-availability-element': 'back' })
   const calendarLive = makeElement('div', { 'data-availability-element': 'calendar-live' })
   inlineWrapper.appendChild(back)
@@ -619,6 +619,7 @@ test('the approved production canary opens free booking inline and uses state-aw
 
   card.onclick({ preventDefault() {}, stopPropagation() {} })
   assert.equal(page.inlineWrapper.style.display, 'flex')
+  assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'false')
   assert.equal(card.getAttribute('aria-expanded'), 'true')
   assert.equal(page.calendarLive.getAttribute('nylas-container'), null)
   assert.equal(page.popupNylasContainer.getAttribute('nylas-container'), '')
@@ -635,6 +636,7 @@ test('the approved production canary opens free booking inline and uses state-aw
 
   await page.back.listeners.click[0]({ preventDefault() {} })
   assert.equal(page.inlineWrapper.style.display, 'none')
+  assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
   assert.equal(card.getAttribute('aria-expanded'), 'false')
 })
 
@@ -700,6 +702,7 @@ test('logged-out free-call clicks keep signup attribution and never initialize i
   assert.equal(freeCard.getAttribute('data-modal-trigger'), 'popup-booking')
   assert.equal(freeCard.onclick, undefined)
   assert.equal(page.inlineWrapper.style.display, 'none')
+  assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
   assert.equal(schedulerCalls, 0)
 })
 
