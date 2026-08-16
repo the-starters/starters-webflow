@@ -1,10 +1,14 @@
 /**
  * Guards for the footer -> GitHub port of the /hire profile renderer.
  *
- * These cover the ways THIS MIGRATION could regress, not the renderer's whole
- * behaviour: the file must survive missing page globals instead of throwing
- * (an uncaught ReferenceError at top level would abort every section), each
- * former <script> keeps its own scope, and the Algolia index stays page-derived.
+ * These cover the ways THIS MIGRATION could regress rather than the renderer's
+ * whole behaviour. Inline in the page, a throw cost only its own <script>; in
+ * one file an uncaught throw at top level takes every section with it, so the
+ * stand-down paths are load-bearing now in a way they were not before.
+ *
+ * The DOM here is a hand-rolled mock in the style of the other tests in this
+ * repo. It supports the attribute, class and descendant selectors this file
+ * actually uses, which is enough to drive the real code paths end to end.
  */
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
@@ -13,39 +17,192 @@ const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./hire-profile.js'), 'utf8')
 
-function element(attrs = {}) {
-  const attributes = { ...attrs }
-  return {
-    attributes,
-    style: {},
-    getAttribute(name) {
-      return Object.prototype.hasOwnProperty.call(attributes, name) ? attributes[name] : null
-    },
-    setAttribute(name, value) {
-      attributes[name] = String(value)
-    },
-    removeAttribute(name) {
-      delete attributes[name]
-    },
-    querySelector: () => null,
-    querySelectorAll: () => [],
-    addEventListener() {},
+/* ------------------------------------------------------------------ DOM --- */
+
+/** Parses the selector subset used by hire-profile.js into a predicate. */
+function compile(selector) {
+  const parts = selector.trim().split(/\s+/)
+  const last = parts[parts.length - 1]
+  const tests = []
+  let rest = last
+
+  const not = rest.match(/:not\(\.([\w-]+)\)/)
+  if (not) {
+    tests.push((el) => !el.classList.contains(not[1]))
+    rest = rest.replace(not[0], '')
   }
+  for (const m of rest.matchAll(/\[([\w-]+)(?:=(?:"([^"]*)"|([^\]]*)))?\]/g)) {
+    const name = m[1]
+    const want = m[2] !== undefined ? m[2] : m[3]
+    tests.push((el) =>
+      want === undefined ? el.getAttribute(name) !== null : el.getAttribute(name) === want,
+    )
+  }
+  rest = rest.replace(/\[[^\]]*\]/g, '')
+  for (const m of rest.matchAll(/\.([\w-]+)/g)) {
+    const cls = m[1]
+    tests.push((el) => el.classList.contains(cls))
+  }
+  const id = rest.match(/#([\w-]+)/)
+  if (id) tests.push((el) => el.getAttribute('id') === id[1])
+  rest = rest.replace(/[#.][\w-]+/g, '')
+  if (rest) tests.push((el) => el.tag === rest)
+
+  return (el) => tests.every((t) => t(el))
 }
 
-/** Minimal page: no Memberstack helpers, no jQuery, nothing but a bare DOM. */
-function bareContext(overrides = {}) {
-  const warnings = []
-  const documentObject = {
-    documentElement: element(),
-    body: element(),
-    addEventListener() {},
-    getElementById: () => null,
-    querySelector: () => null,
-    querySelectorAll: () => [],
+function makeElement(tag = 'div', attrs = {}, classes = []) {
+  const el = {
+    tag,
+    attributes: { ...attrs },
+    classes: [...classes],
+    children: [],
+    parentElement: null,
+    style: {},
+    textContent: '',
+    dataset: {},
+    listeners: {},
   }
+  el.classList = {
+    contains: (c) => el.classes.includes(c),
+    remove: (c) => {
+      el.classes = el.classes.filter((x) => x !== c)
+    },
+    add: (c) => el.classes.push(c),
+  }
+  el.getAttribute = (n) =>
+    Object.prototype.hasOwnProperty.call(el.attributes, n) ? el.attributes[n] : null
+  el.setAttribute = (n, v) => {
+    el.attributes[n] = String(v)
+  }
+  el.removeAttribute = (n) => {
+    delete el.attributes[n]
+  }
+  el.hasAttribute = (n) => el.getAttribute(n) !== null
+  el.matches = (s) => compile(s)(el)
+  el.appendChild = (child) => {
+    child.parentElement = el
+    el.children.push(child)
+    return child
+  }
+  el.prepend = (child) => {
+    child.parentElement = el
+    el.children.unshift(child)
+    return child
+  }
+  el.remove = () => {
+    if (!el.parentElement) return
+    el.parentElement.children = el.parentElement.children.filter((c) => c !== el)
+    el.parentElement = null
+  }
+  el.insertAdjacentElement = (_pos, node) => el.parentElement && el.parentElement.appendChild(node)
+  el.addEventListener = (type, fn) => {
+    ;(el.listeners[type] = el.listeners[type] || []).push(fn)
+  }
+  el.closest = (s) => {
+    const match = compile(s)
+    let node = el
+    while (node) {
+      if (match(node)) return node
+      node = node.parentElement
+    }
+    return null
+  }
+  const walk = (node, out = []) => {
+    for (const c of node.children) {
+      out.push(c)
+      walk(c, out)
+    }
+    return out
+  }
+  el.descendants = () => walk(el)
+  el.querySelectorAll = (s) => walk(el).filter(compile(s))
+  el.querySelector = (s) => el.querySelectorAll(s)[0] || null
+  el.cloneNode = () => {
+    const copy = makeElement(el.tag, el.attributes, el.classes)
+    copy.textContent = el.textContent
+    for (const child of el.children) copy.appendChild(child.cloneNode())
+    return copy
+  }
+  return el
+}
+
+/** A hire page with the elements the renderer looks for. */
+function makePage({ index = 'Freelancers3.0-production' } = {}) {
+  const root = makeElement('body')
+
+  // The element algolia-environment.js rewrites per environment.
+  root.appendChild(
+    makeElement('div', { 'data-starters-v3-algolia-resource': 'starters', 'wf-algolia-index': index }),
+  )
+
+  // Experiences: present so the renderer resolves a starter id and proceeds.
+  const expWrapper = makeElement('div', { 'experience-wrapper': '' })
+  const expList = makeElement('div', { 'experience-list': '' })
+  const expTemplate = makeElement('div', { 'experience-tag': '' }, ['js-template'])
+  for (const attr of [
+    'experience-tag-name',
+    'experience-tag-job',
+    'experience-tag-start',
+    'experience-tag-end',
+    'experience-tag-date-wrapper',
+  ]) {
+    expTemplate.appendChild(makeElement('div', { [attr]: '' }))
+  }
+  expList.appendChild(expTemplate)
+  expWrapper.appendChild(expList)
+  root.appendChild(expWrapper)
+
+  // Services section with the Default card the rate cards are cloned from.
+  const services = makeElement('div', { id: 'services' })
+  const list = makeElement('div', {}, ['services-list_wrapper'])
+  const card = makeElement(
+    'div',
+    {
+      'data-service-card': 'component',
+      'data-service-card-state': 'Default',
+      'has-connection': 'free',
+      'data-modal-trigger': 'popup-booking',
+      'booking-popup-open': '',
+      'data-type': 'free',
+      'data-signup-trigger-element': 'service',
+      'data-signup-trigger-value': 'Free Call',
+    },
+    ['service-card_component'],
+  )
+  card.appendChild(makeElement('div', { 'data-service-card-element': 'title' }))
+  card.appendChild(makeElement('div', {}, ['service-card_content-wrapper']))
+  card.appendChild(makeElement('div', { 'data-millify': '', 'data-millify-raw': '0' }))
+  list.appendChild(card)
+  services.appendChild(list)
+  root.appendChild(services)
+
+  return { root, servicesList: list }
+}
+
+function makeContext({ page, record, starterId = 383, member = {} } = {}) {
+  const warnings = []
+  const requestedIndexes = []
+  const root = page ? page.root : makeElement('body')
+
+  const documentObject = {
+    documentElement: makeElement('html'),
+    body: root,
+    addEventListener: (type, fn) => {
+      if (type === 'DOMContentLoaded') fn()
+    },
+    getElementById: (id) => root.querySelector('#' + id),
+    querySelector: (s) => root.querySelector(s),
+    querySelectorAll: (s) => root.querySelectorAll(s),
+    createElement: (tag) => makeElement(tag),
+  }
+
   const context = {
-    console: { warn: (...args) => warnings.push(args.map(String).join(' ')), error() {}, log() {} },
+    console: {
+      warn: (...a) => warnings.push(a.map((x) => (x && x.message) || String(x)).join(' ')),
+      error() {},
+      log() {},
+    },
     document: documentObject,
     setTimeout,
     clearTimeout,
@@ -54,97 +211,207 @@ function bareContext(overrides = {}) {
     Map,
     Set,
     JSON,
-    fetch: () => Promise.reject(new Error('no network in test')),
+    Number,
+    Array,
+    Object,
+    String,
+    parseFloat,
+    isNaN,
+    getComputedStyle: () => ({ display: 'block', cursor: 'auto' }),
+    innerWidth: 1280,
     IntersectionObserver: function () {
       return { observe() {} }
     },
     MutationObserver: function () {
       return { observe() {} }
     },
-    getComputedStyle: () => ({ display: 'block', cursor: 'auto' }),
-    innerWidth: 1280,
-    ...overrides,
+    qs: (s, scope) => (scope || documentObject).querySelector(s),
+    qsa: (s, scope) => (scope || documentObject).querySelectorAll(s),
+    MEMBER: member,
+    memberReady: Promise.resolve(member),
+    waitForMember: (cb) => Promise.resolve().then(() => cb(member)),
+    starter_memberstack_id: 'mem_canary',
+    stripe_charges: false,
+    fetch: (url) => {
+      if (String(url).includes('/companies?member_id=')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ starter_id: starterId, companies: [] }),
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    },
+    WfAlgolia: {
+      getObject: (indexName) => {
+        requestedIndexes.push(indexName)
+        return Promise.resolve(record || null)
+      },
+    },
   }
   context.window = context
   context.warnings = warnings
+  context.requestedIndexes = requestedIndexes
   return context
 }
 
+/** Lets the file's promise chains settle. */
+async function settle(times = 30) {
+  for (let i = 0; i < times; i += 1) await Promise.resolve()
+  await new Promise((r) => setTimeout(r, 10))
+  for (let i = 0; i < times; i += 1) await Promise.resolve()
+}
+
+/* ---------------------------------------------------------------- tests --- */
+
 test('a page missing the Memberstack helpers stands down instead of throwing', () => {
-  const context = bareContext()
+  const context = makeContext()
+  delete context.qs
+  delete context.qsa
+  delete context.waitForMember
   vm.createContext(context)
 
   assert.doesNotThrow(() => vm.runInContext(source, context))
   assert.ok(
-    context.warnings.some((line) => line.includes('[hire-profile]') && line.includes('stood down')),
-    'expected a [hire-profile] stand-down warning, got: ' + JSON.stringify(context.warnings),
+    context.warnings.some((l) => l.includes('[hire-profile]') && l.includes('stood down')),
+    'expected a stand-down warning, got: ' + JSON.stringify(context.warnings),
   )
 })
 
 test('a page missing starter_memberstack_id stands down instead of throwing', () => {
-  const context = bareContext({
-    qs: () => null,
-    qsa: () => [],
-    waitForMember: () => Promise.resolve({}),
-    memberReady: Promise.resolve({}),
-  })
+  const context = makeContext()
+  delete context.starter_memberstack_id
   vm.createContext(context)
 
   assert.doesNotThrow(() => vm.runInContext(source, context))
   assert.ok(
-    context.warnings.some((line) => line.includes('starter_memberstack_id')),
+    context.warnings.some((l) => l.includes('starter_memberstack_id')),
     'expected a warning naming the missing global, got: ' + JSON.stringify(context.warnings),
   )
 })
 
 test('the jQuery-only blocks are skipped, not fatal, when jQuery is absent', () => {
-  const context = bareContext({
-    qs: () => null,
-    qsa: () => [],
-    waitForMember: () => Promise.resolve({}),
-    memberReady: Promise.resolve({}),
-    starter_memberstack_id: 'mem_test',
-  })
+  const context = makeContext({ page: makePage() })
   vm.createContext(context)
 
   assert.doesNotThrow(() => vm.runInContext(source, context))
-  const skipped = context.warnings.filter((line) => line.includes('jQuery missing'))
-  assert.equal(skipped.length, 2, 'both jQuery blocks should report themselves skipped')
-})
-
-test('each former footer <script> keeps its own scope', () => {
-  // Two of the original blocks declare `el` at top level. If the port merged
-  // them into one scope this file would not even parse, so assert the shape.
-  const iifeCount = source.split('\n').filter((line) => line === '(function () {').length
-  assert.equal(iifeCount, 8, 'expected one top-level IIFE per original <script> block')
-  assert.doesNotThrow(() => new vm.Script(source), 'file must parse')
-})
-
-test('the Algolia index is read from the page, never hardcoded as the live index', () => {
-  assert.match(
-    source,
-    /getAttribute\('wf-algolia-index'\)/,
-    'the index must come from the page attribute that algolia-environment.js rewrites',
-  )
-  assert.doesNotMatch(
-    source,
-    /getObject\(\s*'Freelancers3\.0-/,
-    'passing a literal index to getObject 403s under the rotated search key',
+  assert.equal(
+    context.warnings.filter((l) => l.includes('jQuery missing')).length,
+    2,
+    'both jQuery blocks should report themselves skipped',
   )
 })
 
-test('cloned rate cards keep signup attribution and drop the booking wiring', () => {
-  // Logged-out clicks reach the signup modal only via data-signup-trigger-*;
-  // leaving the booking attributes on a non-bookable card opens an empty popup.
-  const stripped = source.match(/\[([^\]]*)\]\.forEach\(function \(attr\) \{\s*el\.removeAttribute/)
-  assert.ok(stripped, 'expected the rate-card attribute strip list')
-  const list = stripped[1]
-  for (const attr of ['data-modal-trigger', 'booking-popup-open', 'data-type']) {
-    assert.ok(list.includes(attr), `${attr} must be stripped from cloned rate cards`)
+test('the file keeps its symbols out of the page global scope', async () => {
+  // The footer blocks were separate <script>s. Merging them into one file must
+  // not start publishing their internals to the page, where they could collide
+  // with another embed.
+  const context = makeContext({ page: makePage(), record: { rate: 100 } })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  for (const leaked of [
+    'FREELANCER_ID',
+    'experiences_handler',
+    'alsoWorkedWith_handler',
+    'startersBooking_handler',
+    'renderRateCards',
+    'markServiceCardsClickable',
+    'resolveStartersIndex',
+    'formatShort',
+  ]) {
+    assert.equal(context[leaked], undefined, `${leaked} must not leak onto window`)
   }
-  assert.ok(
-    !list.includes('data-signup-trigger'),
-    'signup-trigger attributes must survive on cloned rate cards',
+})
+
+test('it queries the Algolia index the page declares, not a hardcoded one', async () => {
+  // Regression: a hardcoded Freelancers3.0-dev silently 403'd under the rotated
+  // search key after the index migration and emptied Services for every viewer.
+  const context = makeContext({
+    page: makePage({ index: 'Freelancers3.0-production' }),
+    record: { rate: 5000 },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.ok(context.requestedIndexes.length > 0, 'expected the search record to be requested')
+  for (const name of context.requestedIndexes) {
+    assert.equal(name, 'Freelancers3.0-production')
+  }
+})
+
+test('it follows the page when the environment resolves a different index', async () => {
+  const context = makeContext({
+    page: makePage({ index: 'Freelancers3.0-staging-test' }),
+    record: { rate: 135 },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual([...new Set(context.requestedIndexes)], ['Freelancers3.0-staging-test'])
+})
+
+test('a cloned rate card keeps signup attribution and drops the booking wiring', async () => {
+  // Logged-out clicks reach the signup modal only through data-signup-trigger-*,
+  // handled by v3/signup-attribution.js. Leaving the booking attributes on a
+  // card that cannot be booked opens an unconfigured popup for members.
+  const page = makePage()
+  const context = makeContext({
+    page,
+    record: { rate: 5000, 'retainer-rate': '4500', 'retainer-enabled': true },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const cloned = page.servicesList.children.filter((c) => c.getAttribute('data-rate-card'))
+  assert.deepEqual(
+    cloned.map((c) => c.getAttribute('data-rate-card')),
+    ['freelance', 'retainer'],
+    'both rate cards should be prepended, cheapest-first order preserved',
   )
-  assert.match(source, /setAttribute\('data-signup-trigger-value', card\.title\)/)
+
+  for (const card of cloned) {
+    const title = card.getAttribute('data-rate-card') === 'freelance' ? 'Freelance' : 'Retainer'
+    assert.equal(card.getAttribute('data-signup-trigger-element'), 'service')
+    assert.equal(card.getAttribute('data-signup-trigger-value'), title)
+    for (const dropped of [
+      'data-modal-trigger',
+      'booking-popup-open',
+      'data-type',
+      'has-connection',
+      'no-connection',
+    ]) {
+      assert.equal(card.getAttribute(dropped), null, `${dropped} must be stripped`)
+    }
+    assert.equal(
+      card.querySelector('.service-card_content-wrapper'),
+      null,
+      'the booking "Next Available" row must not survive on a rate card',
+    )
+  }
+
+  const price = cloned[0].querySelector('[data-millify]')
+  assert.equal(price.getAttribute('data-millify'), '5000')
+  assert.equal(price.getAttribute('data-millify-raw'), null, 'stale raw value must be cleared')
+})
+
+test('a retainer that is disabled or zero produces no retainer card', async () => {
+  const page = makePage()
+  const context = makeContext({
+    page,
+    record: { rate: 135, 'retainer-rate': '5500', 'retainer-enabled': false },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.deepEqual(
+    page.servicesList.children
+      .filter((c) => c.getAttribute('data-rate-card'))
+      .map((c) => c.getAttribute('data-rate-card')),
+    ['freelance'],
+  )
 })
