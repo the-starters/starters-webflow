@@ -286,9 +286,9 @@ function load(options = {}) {
     tracks,
     window,
     wrapper,
-    flushDisabledMutation() {
+    flushDisabledMutation(target = form) {
       mutationObservers.forEach((observer) => {
-        if (observer.target === form) observer.callback([{ attributeName: 'disabled' }])
+        if (observer.target === target) observer.callback([{ attributeName: 'disabled' }])
       })
     },
   }
@@ -392,12 +392,18 @@ test('member reset clears profile identity and rejects stale profile responses',
   assert.equal(photo.getAttribute('src'), null)
 })
 
-test('promotes the detached shared Contract Generation form into Starter context', () => {
-  const { api } = load({ noDocument: true })
+test('promotes the detached shared Contract Generation form into Starter context', async () => {
+  const loaded = load({
+    noDocument: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+  })
   const old = new Element({ tagName: 'dialog', 'data-modal-target': 'start-project' })
   old.form = new Element({ tagName: 'form' })
   const shared = new Element({ tagName: 'dialog', 'data-modal-target': 'generate-contract' })
   shared.form = formFixture().form
+  const confirm = new Element({ tagName: 'button', type: 'submit', disabled: true })
+  confirm.form = shared.form
+  shared.form.controls.push(confirm)
   shared.form.dialog = shared
   shared.form.context = shared
   const marker = new Element({ tagName: 'img', element: 'profile_photo' })
@@ -421,11 +427,19 @@ test('promotes the detached shared Contract Generation form into Starter context
     },
   }
 
-  assert.equal(api.normalizeModalMarkup(document), true)
+  assert.equal(loaded.api.normalizeModalMarkup(document), true)
   assert.equal(shared.getAttribute('data-project-form-v3'), 'starter')
   assert.equal(shared.getAttribute('data-modal-target'), 'start-project')
   assert.equal(old.getAttribute('data-modal-target'), 'start-project-legacy-disabled-1')
   assert.equal(shared.form.getAttribute('data-starters-turnstile-fix'), 'true')
+  assert.equal(confirm.disabled, true)
+  assert.equal(confirm.getAttribute('aria-disabled'), 'true')
+  confirm.disabled = false
+  loaded.flushDisabledMutation(shared.form)
+  assert.equal(confirm.disabled, true)
+  await loaded.api.loadOptions(shared.form, loaded.window)
+  assert.equal(shared.form.getAttribute('data-starter-project-status'), 'ready')
+  assert.equal(confirm.disabled, false)
   assert.equal(shared.form.fields.select.required, true)
   assert.equal(shared.form.fields.select.getAttribute('data-project-field'), 'brand_id')
   assert.equal(nestedLink.getAttribute('href'), '#start-project')

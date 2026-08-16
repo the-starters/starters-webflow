@@ -343,6 +343,8 @@
 
   function prepareStarterContext(form) {
     if (!form || !form.querySelectorAll) return false
+    installSubmitControlOwner(form)
+    syncSubmitControls(form)
     // The shared Contract Generation component is reused outside its CMS page.
     // Mark the native form (not its visual wrapper) so the sitewide Turnstile
     // repair can restore Webflow's form contents before any submit attempt.
