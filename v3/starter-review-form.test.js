@@ -222,6 +222,32 @@ test('analytics failures do not make a valid form unavailable', async () => {
     assert.equal(formHarness.root.state, 'form')
 })
 
+test('sends the capability only in private endpoint bodies without credentials or referrer data', async () => {
+    const formHarness = makeFormHarness()
+    const harness = load({
+        href: 'https://thestarters.com/review-starter?utm_source=mandrill#token=private-capability-token-12345',
+        root: formHarness.root,
+        fetch: async (url) => response(
+            url.endsWith('/context/resolve')
+                ? { available: true, starter: { name: 'Starter' } }
+                : { accepted: true, duplicate: false },
+        ),
+    })
+
+    await harness.init()
+    await formHarness.submit({ preventDefault() {}, stopImmediatePropagation() {} })
+
+    assert.equal(harness.fetchCalls.length, 2)
+    for (const [url, options] of harness.fetchCalls) {
+        assert.equal(options.method, 'POST')
+        assert.equal(options.credentials, 'omit')
+        assert.equal(options.referrerPolicy, 'no-referrer')
+        assert.doesNotMatch(url, /private-capability|token=/)
+        assert.equal(JSON.parse(options.body).token, 'private-capability-token-12345')
+    }
+    assert.deepEqual(harness.historyCalls, ['/review-starter?utm_source=mandrill'])
+})
+
 test('ambiguous retries preserve the first payload and idempotency key', async () => {
     const formHarness = makeFormHarness()
     let submitAttempts = 0
