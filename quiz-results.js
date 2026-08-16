@@ -317,14 +317,21 @@
                 'primary-role',
             ]),
         )
-        const projectedServices = [
-            getQuizLeadDripValue(record, ['service-1', 'service_1']),
-            getQuizLeadDripValue(record, ['service-2', 'service_2']),
-            getQuizLeadDripValue(record, ['service-3', 'service_3']),
-        ].filter(Boolean)
+        const projectedServiceFields = [
+            ['service-1', 'service_1'],
+            ['service-2', 'service_2'],
+            ['service-3', 'service_3'],
+        ]
+        const hasProjectedServices = projectedServiceFields.some((fields) =>
+            fields.some((field) =>
+                Object.prototype.hasOwnProperty.call(record || {}, field),
+            ),
+        )
         const services = (
-            projectedServices.length
-                ? projectedServices
+            hasProjectedServices
+                ? projectedServiceFields.map((fields) =>
+                      getQuizLeadDripValue(record, fields),
+                  )
                 : getQuizLeadDripList(
                       getQuizLeadDripValue(record, ['services', 'Services']),
                   )
@@ -337,8 +344,25 @@
                     100,
                 ),
             )
-            .filter(Boolean)
             .slice(0, 3)
+
+        while (services.length < 3) services.push('')
+
+        const projectedLocationFields = [
+            ['city', 'City'],
+            ['state', 'State_Province'],
+            ['country', 'Country'],
+        ]
+        const hasProjectedLocation = projectedLocationFields.some((fields) =>
+            fields.some((field) =>
+                Object.prototype.hasOwnProperty.call(record || {}, field),
+            ),
+        )
+        const projectedLocation = projectedLocationFields
+            .map((fields) => getQuizLeadDripValue(record, fields))
+            .map((part) => normalizeQuizLeadDripText(part, 60))
+            .filter(Boolean)
+            .join(', ')
 
         return {
             first_name: getQuizLeadDripFirstName(record),
@@ -392,18 +416,9 @@
                 100,
             ),
             location: normalizeQuizLeadDripText(
-                getQuizLeadDripValue(record, ['location', 'Location']) ||
-                    [
-                        getQuizLeadDripValue(record, ['city', 'City']),
-                        getQuizLeadDripValue(record, [
-                            'state',
-                            'State_Province',
-                        ]),
-                        getQuizLeadDripValue(record, ['country', 'Country']),
-                    ]
-                        .map((part) => normalizeQuizLeadDripText(part, 60))
-                        .filter(Boolean)
-                        .join(', '),
+                hasProjectedLocation
+                    ? projectedLocation
+                    : getQuizLeadDripValue(record, ['location', 'Location']),
                 120,
             ),
             reviews: formatQuizLeadDripReviews(record),

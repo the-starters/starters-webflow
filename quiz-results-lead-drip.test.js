@@ -660,6 +660,49 @@ test('fresh Algolia recommendations carry canonical reviews into the email', asy
     evidence.fresh_algolia_enrollment = payload
 })
 
+test('canonical projection fields override stale legacy profile metadata without shifting service slots', async () => {
+    const quiz = completedQuiz({
+        memberstackSavedAt: '2026-08-11T04:01:00.000Z',
+    })
+    quiz.featuredFreelancers[0] = {
+        ...quiz.featuredFreelancers[0],
+        location: 'Stale legacy location',
+        services: ['Stale legacy service'],
+        city: 'Philadelphia',
+        state: 'PA',
+        country: 'US',
+        'service-1': '',
+        'service-2': 'Canonical second service',
+        'service-3': 'Canonical third service',
+    }
+    const storage = createStorage(quiz)
+    const harness = await runController({
+        storage,
+        enrollmentResponses: [],
+        waitUntil: ({ fetchCalls }) => enrollmentCalls(fetchCalls).length === 1,
+    })
+    const payload = JSON.parse(
+        enrollmentCalls(harness.fetchCalls)[0].options.body,
+    )
+
+    assert.equal(payload.properties.starter_1_location, 'Philadelphia, PA, US')
+    assert.equal(payload.properties.starter_1_service_1, '')
+    assert.equal(
+        payload.properties.starter_1_service_2,
+        'Canonical second service',
+    )
+    assert.equal(
+        payload.properties.starter_1_service_3,
+        'Canonical third service',
+    )
+    evidence.canonical_precedence_and_service_slots = {
+        location: payload.properties.starter_1_location,
+        service_1: payload.properties.starter_1_service_1,
+        service_2: payload.properties.starter_1_service_2,
+        service_3: payload.properties.starter_1_service_3,
+    }
+})
+
 test('v20 recommendation caches refresh canonical email fields before enrollment', async () => {
     const staleStarter = {
         objectID: 'stale-starter',
