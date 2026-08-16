@@ -86,6 +86,14 @@ class Element {
   }
   closest(selector) {
     if (selector === '.w-form') return this.wrapper || null
+    if (selector === '.button-group.is-confirm') {
+      let element = this
+      while (element) {
+        if (element.classList.contains('button-group') && element.classList.contains('is-confirm')) return element
+        element = element.parentElement
+      }
+      return null
+    }
     if (selector.includes('dialog[data-modal-target="start-project"] form')) return this.form || null
     if (selector.includes('[data-project-form-v3="starter"] form')) return this.form || null
     if (selector === '[data-project-form-v3="starter"]') return this.context || (this.matches(selector) ? this : null)
@@ -130,9 +138,10 @@ class Element {
   querySelectorAll(selector) {
     if (selector === 'input, select, textarea, button') return this.controls || []
     if (selector === 'input, select, textarea') return this.controls || []
-    if (selector === 'button[type="submit"], input[type="submit"], [data-project-submit]') {
+    if (selector === '.button-group.is-confirm button[type="submit"], .button-group.is-confirm input[type="submit"], .button-group.is-confirm [data-project-submit]') {
       return (this.controls || []).filter((control) => (
-        control.getAttribute('type') === 'submit' || control.getAttribute('data-project-submit') !== null
+        (control.getAttribute('type') === 'submit' || control.getAttribute('data-project-submit') !== null) &&
+        control.closest('.button-group.is-confirm')
       ))
     }
     if (selector === '[data-set-current-date-inited="true"]') {
@@ -194,6 +203,15 @@ function formFixture() {
   ]
   form.controls = Object.values(form.fields)
   return { context, form, wrapper }
+}
+
+function attachConfirm(form, attrs = {}) {
+  const footer = new Element({ className: 'button-group is-confirm' })
+  const confirm = new Element({ tagName: 'button', type: 'submit', disabled: true, ...attrs })
+  footer.appendChild(confirm)
+  confirm.form = form
+  form.controls.push(confirm)
+  return confirm
 }
 
 function load(options = {}) {
@@ -401,9 +419,10 @@ test('promotes the detached shared Contract Generation form into Starter context
   old.form = new Element({ tagName: 'form' })
   const shared = new Element({ tagName: 'dialog', 'data-modal-target': 'generate-contract' })
   shared.form = formFixture().form
-  const confirm = new Element({ tagName: 'button', type: 'submit', disabled: true })
-  confirm.form = shared.form
-  shared.form.controls.push(confirm)
+  const confirm = attachConfirm(shared.form)
+  const otherSubmitter = new Element({ tagName: 'button', type: 'submit', disabled: true })
+  otherSubmitter.form = shared.form
+  shared.form.controls.push(otherSubmitter)
   shared.form.dialog = shared
   shared.form.context = shared
   const marker = new Element({ tagName: 'img', element: 'profile_photo' })
@@ -434,12 +453,16 @@ test('promotes the detached shared Contract Generation form into Starter context
   assert.equal(shared.form.getAttribute('data-starters-turnstile-fix'), 'true')
   assert.equal(confirm.disabled, true)
   assert.equal(confirm.getAttribute('aria-disabled'), 'true')
+  assert.equal(otherSubmitter.disabled, true)
+  assert.equal(otherSubmitter.getAttribute('aria-disabled'), null)
   confirm.disabled = false
   loaded.flushDisabledMutation(shared.form)
   assert.equal(confirm.disabled, true)
+  assert.equal(otherSubmitter.disabled, true)
   await loaded.api.loadOptions(shared.form, loaded.window)
   assert.equal(shared.form.getAttribute('data-starter-project-status'), 'ready')
   assert.equal(confirm.disabled, false)
+  assert.equal(otherSubmitter.disabled, true)
   assert.equal(shared.form.fields.select.required, true)
   assert.equal(shared.form.fields.select.getAttribute('data-project-field'), 'brand_id')
   assert.equal(nestedLink.getAttribute('href'), '#start-project')
@@ -783,14 +806,12 @@ test('Review then submit restores preview fields without enabling authored disab
 
 test('delayed Turnstile tokens cannot enable Confirm outside eligible controller states', async () => {
   const fixture = formFixture()
-  const confirm = new Element({
-    tagName: 'button',
-    type: 'submit',
-    disabled: true,
+  const confirm = attachConfirm(fixture.form, {
     className: 'clickable_btn w-form-loading',
   })
-  confirm.form = fixture.form
-  fixture.form.controls.push(confirm)
+  const otherSubmitter = new Element({ tagName: 'button', type: 'submit', disabled: true })
+  otherSubmitter.form = fixture.form
+  fixture.form.controls.push(otherSubmitter)
   let resolveOptions
   const loaded = load({
     fixture,
@@ -800,6 +821,7 @@ test('delayed Turnstile tokens cannot enable Confirm outside eligible controller
   const optionsRequest = loaded.api.loadOptions(loaded.form, loaded.window)
   await Promise.resolve()
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'loading')
+  assert.equal(otherSubmitter.disabled, true)
   confirm.disabled = false
   loaded.flushDisabledMutation()
   assert.equal(confirm.disabled, true)
@@ -807,6 +829,7 @@ test('delayed Turnstile tokens cannot enable Confirm outside eligible controller
   resolveOptions({ counterparties: [] })
   await optionsRequest
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'blocked')
+  assert.equal(otherSubmitter.disabled, true)
   confirm.disabled = false
   loaded.flushDisabledMutation()
   assert.equal(confirm.disabled, true)
@@ -817,13 +840,15 @@ test('delayed Turnstile tokens cannot enable Confirm outside eligible controller
   await refreshRequest
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
   assert.equal(confirm.disabled, false)
+  assert.equal(otherSubmitter.disabled, true)
 })
 
 test('Confirm enables only for ready and retryable submit errors', async () => {
   const fixture = formFixture()
-  const confirm = new Element({ tagName: 'button', type: 'submit', disabled: true })
-  confirm.form = fixture.form
-  fixture.form.controls.push(confirm)
+  const confirm = attachConfirm(fixture.form)
+  const otherSubmitter = new Element({ tagName: 'button', type: 'submit', disabled: true })
+  otherSubmitter.form = fixture.form
+  fixture.form.controls.push(otherSubmitter)
   let rejectSubmit
   const loaded = load({
     fixture,
@@ -835,12 +860,15 @@ test('Confirm enables only for ready and retryable submit errors', async () => {
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
   assert.equal(confirm.disabled, false)
   assert.equal(confirm.getAttribute('aria-disabled'), 'false')
+  assert.equal(otherSubmitter.disabled, true)
+  assert.equal(otherSubmitter.getAttribute('aria-disabled'), null)
 
   const submission = loaded.api.submit(loaded.form, loaded.window, loaded.document)
   await Promise.resolve()
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'submitting')
   assert.equal(confirm.disabled, true)
   assert.equal(confirm.getAttribute('aria-disabled'), 'true')
+  assert.equal(otherSubmitter.disabled, true)
   confirm.disabled = false
   loaded.flushDisabledMutation()
   assert.equal(confirm.disabled, true)
@@ -850,6 +878,7 @@ test('Confirm enables only for ready and retryable submit errors', async () => {
   assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'error')
   assert.equal(confirm.disabled, false)
   assert.equal(confirm.getAttribute('aria-disabled'), 'false')
+  assert.equal(otherSubmitter.disabled, true)
 })
 
 test('Confirm stays disabled for non-retryable errors', async () => {
@@ -905,9 +934,7 @@ test('Confirm stays disabled for non-retryable errors', async () => {
 
   for (const scenario of cases) {
     const fixture = formFixture()
-    const confirm = new Element({ tagName: 'button', type: 'submit', disabled: true })
-    confirm.form = fixture.form
-    fixture.form.controls.push(confirm)
+    const confirm = attachConfirm(fixture.form)
     const loaded = load({ fixture, ...scenario.load })
     await scenario.run(loaded)
     assert.equal(confirm.disabled, true, scenario.name)

@@ -31,6 +31,7 @@
   var REVIEW_CONTROL_SELECTOR = 'input, select, textarea'
   var REVIEW_TRIGGER_SELECTOR = '[dx-button="review"]'
   var EDIT_TRIGGER_SELECTOR = '[dx-button="edit"]'
+  var CONFIRM_SUBMIT_SELECTOR = '.button-group.is-confirm button[type="submit"], .button-group.is-confirm input[type="submit"], .button-group.is-confirm [data-project-submit]'
   var CURRENT_DATE_INITIALIZED_SELECTOR = '[data-set-current-date-inited="true"]'
   var PROFILE_BIND_SELECTOR = '[data-project-bind]'
   var LEGACY_PROFILE_BIND_SELECTOR = '[element]'
@@ -470,7 +471,7 @@
       current.submitStatus === 'error' && current.submitRetryable
     )
     var submitters = form.querySelectorAll
-      ? form.querySelectorAll('button[type="submit"], input[type="submit"], [data-project-submit]')
+      ? form.querySelectorAll(CONFIRM_SUBMIT_SELECTOR)
       : []
     Array.prototype.forEach.call(submitters, function (submitter) {
       if (submitter.disabled === submitEnabled) submitter.disabled = !submitEnabled
