@@ -1795,6 +1795,78 @@ test('OAuth callback and intent survive a transient grant save failure', async (
   assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
 })
 
+test('OAuth retry reconciles a committed grant after its response was lost', async () => {
+  let grantPersisted = false
+  let manager = null
+  let configCreated = false
+  const routes = {
+    '/grants/add/v3': () => {
+      grantPersisted = true
+      return { status: 503, body: { message: 'response lost' } }
+    },
+    '/starter/get_by_memberstack/v3': () => ({
+      status: 200,
+      body: {
+        id: 1,
+        timezone: 'Asia/Manila',
+        availability: { ...defaultAvailability(), manager },
+        nylas_grant_id: grantPersisted ? 'hosted-grant-9' : null,
+        nylas_grant_email: grantPersisted ? 'google@example.com' : null,
+        nylas_calendar_id: grantPersisted ? 'cal-9' : null,
+      },
+    }),
+    '/starter/update_availability/v3': (body) => {
+      manager = body.availability.manager
+      return { status: 200, body: { id: 1 } }
+    },
+    '/nylas_configurations/get_all/v3': () => ({
+      status: 200,
+      body: configCreated
+        ? [{ config_id: 'cfg-free', grant_id: 'hosted-grant-9', is_paid: false, active: true }]
+        : [],
+    }),
+    '/scheduler/configurations/create/v3': () => {
+      configCreated = true
+      return { status: 200, body: { response: { status: 200 } } }
+    },
+  }
+  const firstLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?success=true&grant_id=hosted-grant-9&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+      }),
+    },
+    routes,
+  })
+  await settle()
+
+  assert.equal(firstLoad.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+  assert.equal(firstLoad.sessionStorage.has('starter-scheduling-oauth-callback'), true)
+
+  const secondLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+    storage: TZ_CACHED,
+    sessionStorage: Object.fromEntries(firstLoad.sessionStorage),
+    routes,
+  })
+  await settle()
+  await settle()
+
+  assert.equal(secondLoad.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(manager, 'calendar')
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
+})
+
 test('OAuth success resumes paid restoration without saving the grant twice', async () => {
   let grantPersisted = false
   let manager = null

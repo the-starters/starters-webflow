@@ -83,6 +83,7 @@
           Date.now() - stored.capturedAt <= OAUTH_INTENT_MAX_AGE &&
           (stored.code || stored.grantId || stored.hasError)
         ) {
+          stored.resumed = true
           stored.remainingQuery = window.location.search.replace(/^\?/, '')
           return stored
         }
@@ -1623,6 +1624,18 @@
           }
           oauthPaidCallIntent = oauthIntent.paidCallIntent || null
           await ensureTimezone()
+          if (!oauthIntent.oauthGrantSaved && oauthCallback.resumed) {
+            await refreshCanonicalConnectionState()
+            if (
+              grantId &&
+              grantEmail &&
+              grantCalendarId &&
+              (!oauthGrantId || grantId === oauthGrantId)
+            ) {
+              oauthIntent.oauthGrantSaved = true
+              persistOAuthIntent(memberId, oauthIntent)
+            }
+          }
           if (!oauthIntent.oauthGrantSaved) {
             const grantPayload = {
               member_id: memberId,

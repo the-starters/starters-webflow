@@ -22,6 +22,7 @@
   let refreshVersion = 0
   let bound = false
   let wiredMemberstack = null
+  let memberstackReadyResolvers = []
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -401,14 +402,33 @@
 
   function wireAuthChanges() {
     const memberstack = window.$memberstackDom
-    if (!memberstack || typeof memberstack.onAuthChange !== 'function') {
+    if (
+      !memberstack ||
+      typeof memberstack.getCurrentMember !== 'function' ||
+      typeof memberstack.onAuthChange !== 'function'
+    ) {
       window.setTimeout(wireAuthChanges, 100)
       return
     }
     if (memberstack === wiredMemberstack) return
     wiredMemberstack = memberstack
+    const resolvers = memberstackReadyResolvers
+    memberstackReadyResolvers = []
+    resolvers.forEach(function (resolve) {
+      resolve(memberstack)
+    })
     memberstack.onAuthChange(function (nextMember) {
       return loadSession(authMember(nextMember), false)
+    })
+  }
+
+  function waitForMemberstack() {
+    const memberstack = window.$memberstackDom
+    if (memberstack && typeof memberstack.getCurrentMember === 'function') {
+      return Promise.resolve(memberstack)
+    }
+    return new Promise(function (resolve) {
+      memberstackReadyResolvers.push(resolve)
     })
   }
 
@@ -459,6 +479,7 @@
       return null
     }
     bind()
+    await waitForMemberstack()
     return loadSession(undefined, true)
   }
 

@@ -387,6 +387,27 @@ test('late Memberstack arrival still wires auth changes', async () => {
   assert.equal(result.dom.save.disabled, true)
 })
 
+test('late Memberstack arrival starts the initial canonical read after memberReady resolves', async () => {
+  const memberReady = deferred()
+  const result = load({
+    initial: canonical({ services: [service({ title: 'Member A Call' })] }),
+    memberReady: memberReady.promise,
+    withoutMemberstackAtLoad: true,
+  })
+  memberReady.resolve({ id: 'member-a' })
+  await settle()
+
+  assert.equal(result.calls.length, 0)
+  assert.equal(result.timers.length, 1)
+
+  result.installMemberstack()
+  result.flushTimers()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 1)
+  assert.equal(result.dom.title.value, 'Member A Call')
+})
+
 test('disable sends the canonical revision and verifies the service is inactive', async () => {
   const active = service({ revision: 7 })
   const result = load({
