@@ -364,8 +364,8 @@ function defaultRoutes(overridesMap = {}) {
     '/nylas_configurations/get_all/v3': () => ({
       status: 200,
       body: [
-        { config_id: 'cfg-free', grant_id: 'grant-1', is_paid: false },
-        { config_id: 'cfg-paid', grant_id: 'grant-1', is_paid: true },
+        { config_id: 'cfg-free', grant_id: 'grant-1', duration: 30, is_paid: false, active: true },
+        { config_id: 'cfg-paid', grant_id: 'grant-1', duration: 60, is_paid: true, active: true },
       ],
     }),
     '/scheduler/configurations/create/v3': () => ({ status: 200, body: { response: { status: 200 } } }),
@@ -792,10 +792,10 @@ test('form submit writes the authenticated member id and reaches the success ste
   const configUpdates = result.calls.filter(
     (c) => c.path === '/scheduler/configurations/update/v3',
   )
-  assert.equal(configUpdates.length, 1)
+  assert.equal(configUpdates.length, 2)
   assert.deepEqual(
     configUpdates.map((c) => c.body.config_id).sort(),
-    ['cfg-free'],
+    ['cfg-free', 'cfg-paid'],
   )
   for (const c of configUpdates) assert.equal(c.body.grant_id, 'grant-1')
 
@@ -1369,8 +1369,16 @@ test('removing an override returns its days to the general schedule', async () =
   assert.equal(update.body.availability.items['ov-1'], undefined)
   assert.equal(
     result.calls.filter((c) => c.path === '/scheduler/configurations/update/v3').length,
-    1,
+    2,
   )
+  const configUpdates = result.calls.filter((c) => c.path === '/scheduler/configurations/update/v3')
+  assert.deepEqual(configUpdates.map((call) => call.body.config_id), ['cfg-free', 'cfg-paid'])
+  assert.deepEqual(configUpdates.map((call) => call.body.in_availability.duration_minutes), [30, 60])
+  configUpdates.forEach((call) => {
+    assert.equal(call.body.in_config_name, undefined)
+    assert.equal(call.body.in_event_booking, undefined)
+    assert.equal(call.body.in_scheduler, undefined)
+  })
   const paths = result.calls.map((call) => call.path)
   const updateIndex = paths.indexOf('/starter/update_availability/v3')
   const configIndex = paths.lastIndexOf('/scheduler/configurations/update/v3')

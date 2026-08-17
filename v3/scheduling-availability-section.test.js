@@ -1622,9 +1622,16 @@ test('removing an item waits for the response before refreshing slots (not fired
   assert.notEqual(refreshedSlotsList.style.display, 'none')
 })
 
-test('open-item-remove opens the confirm modal, and confirming dims the modal buttons while the request is in flight', async () => {
-  const { dom } = loadSection({
+test('open-item-remove updates all active configurations without replacing paid fields', async () => {
+  const { dom, calls } = loadSection({
     serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        { config_id: 'cfg-free', duration: 30, is_paid: false, active: true },
+        { config_id: 'cfg-paid', duration: 60, is_paid: true, active: true },
+      ],
       availability: {
         items: {
           general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
@@ -1662,6 +1669,15 @@ test('open-item-remove opens the confirm modal, and confirming dims the modal bu
   assert.equal(stillThere, undefined)
   assert.equal(dom.notif.steps['availability-removed'].style.display, '')
   assert.notEqual(group.style.pointerEvents, 'none')
+
+  const configUpdates = calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
+  assert.deepEqual(configUpdates.map((call) => call.body.config_id), ['cfg-free', 'cfg-paid'])
+  assert.deepEqual(configUpdates.map((call) => call.body.in_availability.duration_minutes), [30, 60])
+  configUpdates.forEach((call) => {
+    assert.equal(call.body.in_config_name, undefined)
+    assert.equal(call.body.in_event_booking, undefined)
+    assert.equal(call.body.in_scheduler, undefined)
+  })
 })
 
 test('open-item-remove switches to the error step on failure without removing the card', async () => {

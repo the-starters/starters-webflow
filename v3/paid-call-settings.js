@@ -19,6 +19,7 @@
   let sessionMemberId = null
   let settings = null
   let busy = false
+  let refreshVersion = 0
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -269,7 +270,6 @@
         throw new Error('Paid-call settings did not match canonical readback')
       }
       render(canonical)
-      setMessage('Paid calls are on and bookable.')
       emit('starterPaidCallWriteSuccess', { action: 'upsert', configId: saved.config_id })
       return canonical
     } catch (error) {
@@ -279,6 +279,22 @@
       throw error
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function refreshFromPrerequisite() {
+    if (!root || !sessionMemberId || busy) return settings
+    const version = ++refreshVersion
+    try {
+      const canonical = await readCanonicalSettings()
+      if (version === refreshVersion && !busy) render(canonical)
+      return canonical
+    } catch (error) {
+      if (version === refreshVersion && !busy) {
+        setStatus('error')
+        setMessage('Paid-call readiness could not be refreshed. Your account was not changed.')
+      }
+      throw error
     }
   }
 
@@ -342,6 +358,11 @@
         }
       })
     }
+    ;['starterSchedulingConnectionStateChanged', 'starterStripeConnectReady'].forEach(function (name) {
+      window.addEventListener(name, function () {
+        refreshFromPrerequisite().catch(function () {})
+      })
+    })
   }
 
   async function initialize() {

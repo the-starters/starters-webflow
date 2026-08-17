@@ -697,7 +697,7 @@
     return free
   }
 
-  async function setupConfigs(type, isUpdate, configId) {
+  async function setupConfigs(type) {
     if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
     await ensureTimezone()
     const openHours = getAvailArray()
@@ -713,12 +713,9 @@
     const tinyTitle = 'Free Consultation Call'
     const fullTitle = tinyTitle + ' - ' + duration + 'min'
 
-    const requestConfig = {}
-    if (isUpdate && configId) requestConfig.config_id = configId
-
     const redirectURL = window.location.origin + window.location.pathname
 
-    const payload = Object.assign({}, requestConfig, {
+    const payload = {
       grant_id: grantId,
       in_config_name: fullTitle,
       in_availability: {
@@ -774,11 +771,11 @@
           from_stage: { type: 'text', label: 'Is From Stage', default: '', required: false },
         },
       },
-    })
+    }
 
     try {
       const res = await xanoPost(
-        '/scheduler/configurations/' + (isUpdate ? 'update/v3' : 'create/v3'),
+        '/scheduler/configurations/create/v3',
         payload,
       )
       if (res && res.response && res.response.status === 200) return true
@@ -792,10 +789,34 @@
     }
   }
 
+  async function updateConfigAvailability(record) {
+    await ensureTimezone()
+    const duration = Number(record && record.duration)
+    if (!record || !record.config_id || !Number.isFinite(duration) || duration <= 0) {
+      throw new Error('Canonical scheduler configuration is missing update fields')
+    }
+    const res = await xanoPost('/scheduler/configurations/update/v3', {
+      config_id: record.config_id,
+      grant_id: grantId,
+      in_availability: {
+        duration_minutes: duration,
+        interval_minutes: 15,
+        availability_rules: {
+          availability_method: 'collective',
+          buffer: { before: 10, after: 10 },
+          default_open_hours: getAvailArray(),
+        },
+      },
+    })
+    if (res && res.response && res.response.status === 200) return true
+    publishCalendarConnectionError()
+    return null
+  }
+
   async function updateConfigs() {
     const configsResponse = []
-    for (const record of configs.filter(function (config) { return config.is_paid === false })) {
-      const res = await setupConfigs('free', true, record.config_id)
+    for (const record of configs.filter(function (config) { return config.active !== false })) {
+      const res = await updateConfigAvailability(record)
       configsResponse.push(res)
     }
     return configsResponse.length > 0 && configsResponse.every(Boolean)

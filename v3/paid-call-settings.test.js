@@ -95,6 +95,7 @@ function load(options = {}) {
   const html = new El('html')
   const calls = []
   const events = []
+  const windowListeners = new Map()
   const warnings = []
   let state = options.initial || canonical()
   const routes = options.routes || {}
@@ -116,7 +117,11 @@ function load(options = {}) {
     $memberstackDom: {
       getCurrentMember: async () => ({ data: { id: options.memberId || 'member-a' } }),
     },
-    addEventListener() {},
+    addEventListener(name, listener) {
+      const listeners = windowListeners.get(name) || []
+      listeners.push(listener)
+      windowListeners.set(name, listeners)
+    },
     dispatchEvent(event) { events.push(event) },
     xanoAuthFetch: async (url, init) => {
       const path = url.replace(API_BASE, '')
@@ -144,7 +149,19 @@ function load(options = {}) {
     window,
   })
 
-  return { dom, calls, events, warnings, window, document, getState: () => state }
+  return {
+    dom,
+    calls,
+    events,
+    warnings,
+    window,
+    document,
+    getState: () => state,
+    dispatchWindow: async (name, detail) => {
+      const event = { type: name, detail }
+      await Promise.all((windowListeners.get(name) || []).map((listener) => listener(event)))
+    },
+  }
 }
 
 async function settle(iterations = 20) {
@@ -212,6 +229,44 @@ test('upsert sends product intent and revision, then trusts canonical readback',
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 2)
   assert.equal(result.dom.price.value, 500)
   assert.equal(result.dom.status.textContent, 'Paid calls are on and bookable.')
+})
+
+test('canonical readback does not report bookable when readiness changed during save', async () => {
+  const savedService = service({ price_cents: 50000, revision: 1 })
+  const result = load({
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ setState }) => {
+        setState(canonical({
+          services: [savedService],
+          readiness: { paid_call_enabled: true, bookable: false },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: savedService }) }
+      },
+    },
+  })
+  await settle()
+  result.dom.enabled.checked = true
+  result.dom.title.value = 'Paid Consultation Call'
+  result.dom.price.value = '500'
+  result.dom.duration.value = '60'
+
+  await result.window.StarterPaidCallSettings.save()
+
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'false')
+  assert.equal(result.dom.status.textContent, 'Paid calls are saved, but a prerequisite needs attention.')
+})
+
+test('readiness events refresh canonical settings without a reload', async () => {
+  const result = load({ initial: canonical({ readiness: { calendar_connected: false } }) })
+  await settle()
+  assert.equal(result.dom.save.disabled, true)
+
+  result.getState().readiness.calendar_connected = true
+  await result.dispatchWindow('starterSchedulingConnectionStateChanged', { state: 'connected' })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 2)
+  assert.equal(result.dom.save.disabled, false)
 })
 
 test('disable sends the canonical revision and verifies the service is inactive', async () => {
