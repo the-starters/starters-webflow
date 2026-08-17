@@ -266,3 +266,43 @@ test('refuses a canonical row for a different stable member id', async () => {
     /canonical profile identity mismatch/,
   )
 })
+
+test('refuses an in-flight canonical row after the active member changes', async () => {
+  let resolveCanonical
+  const canonicalReady = new Promise((resolve) => { resolveCanonical = resolve })
+  const apiWindow = {
+    __TS_DISABLE_BUILD_PROFILE_CANONICAL_AUTO_INIT__: true,
+    location: { pathname: '/build-profile/full-profile' },
+    MEMBER: { id: 'mem_owned' },
+    activeProfile: { type: 'full', type_id: 'type-id', last_update: 1, data: {} },
+    waitForMember(callback) { callback() },
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => canonicalReady,
+    }),
+    setInterval,
+    clearInterval,
+  }
+  const context = {
+    window: apiWindow,
+    document: { querySelector() { return null }, querySelectorAll() { return [] } },
+    console,
+    Event: class Event {},
+    CSS: { escape: String },
+    Set,
+    Date,
+    Promise,
+    JSON,
+    Array,
+  }
+  vm.runInNewContext(source, context)
+  const hydration = apiWindow.StartersBuildProfileCanonicalHydrator.hydrate()
+  await new Promise((resolve) => setImmediate(resolve))
+  apiWindow.MEMBER = { id: 'mem_other' }
+  resolveCanonical({ memberstack_id: 'mem_owned', First_Name: 'Wrong member' })
+
+  await assert.rejects(hydration, /canonical profile identity mismatch/)
+  assert.equal(apiWindow.activeProfile.data.step_1, undefined)
+  assert.equal(apiWindow.__tsBuildProfileCanonicalHydrated, undefined)
+})

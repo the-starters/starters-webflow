@@ -298,9 +298,16 @@
     if (!member || !member.id) return null
     var active = await waitForActiveProfile()
     var canonical = await readCanonicalProfile(member.id)
-    if (!canonical || canonical.memberstack_id !== member.id) {
+    var currentMember = await waitForMember()
+    if (
+      !currentMember ||
+      currentMember.id !== member.id ||
+      !canonical ||
+      canonical.memberstack_id !== currentMember.id
+    ) {
       throw new Error('canonical profile identity mismatch')
     }
+    if (isPlainObject(globalObject.activeProfile)) active = globalObject.activeProfile
     var merged = mergeProfileFallback(mapCanonicalProfile(canonical), active)
     globalObject.activeProfile = merged
     globalObject.__tsBuildProfileCanonicalHydrated = true
@@ -323,6 +330,10 @@
   var run = function runHydration() {
     hydrate().catch(function reportHydrationFailure(error) {
       console.warn('[build-profile-canonical] fallback unavailable', error && error.message)
+    }).finally(function releaseProfileConsumers() {
+      if (typeof globalObject.__tsReleaseBuildProfileCanonical === 'function') {
+        globalObject.__tsReleaseBuildProfileCanonical()
+      }
     })
   }
   if (document.readyState === 'loading') {

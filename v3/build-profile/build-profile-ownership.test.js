@@ -47,7 +47,7 @@ const EXPECTED_CAPTURE = {
 const EXPECTED_CANDIDATES = {
   sourceCommit: 'ba8bc46e67fc4284d85b471f9bc58a0e42406451',
   files: {
-    'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 7315, sha256: 'd1a064ebb42676e9a25d771f63abbf59961b2b41cd4468811123c39880264d6f' },
+    'profile-photo.js': { path: 'v3/build-profile/profile-photo.js', bytes: 8430, sha256: '8d68d4b00babe43cf654bacfffa32a280ab39ebd2f41de4ba8d83d45c4710f52' },
     'portfolio-crud.js': { path: 'v3/build-profile/portfolio-crud.js', bytes: 38194, sha256: 'dd827f0e98e442774a935cc40224381a53fde0c0bdd1603e694f932d6b1dbfc7' },
     'portfolio-list.js': { path: 'v3/build-profile/portfolio-list.js', bytes: 3834, sha256: '9f7e8f223de29bc5d8ddb970ca0fe25dbfdf53cdbb36fd68a07c2e81b08b28d1' },
     'company-autocomplete.js': { path: 'v3/build-profile/company-autocomplete.js', bytes: 11921, sha256: 'a342c3700e30a9693ed2c746feef7641785726f0ca9f28c4b00730e417525cbe' },
@@ -141,4 +141,39 @@ test('controllers boot against native markup without creating forms or excluded 
     assert.equal(created.includes('form'), false, `${file} created a form`)
     assert.equal(requests.some((url) => /availability|booking|paid[_-]?call|free-consulting/i.test(url)), false, file)
   }
+})
+
+test('profile consumers wait for canonical fallback before their first read', () => {
+  const listeners = new Map()
+  let insertedScript
+  let profileReads = 0
+  const document = {
+    currentScript: { src: 'https://cdn.example.test/v3/build-profile/profile-photo.js' },
+    addEventListener() {},
+    createElement() {
+      insertedScript = {
+        addEventListener(type, listener) { listeners.set(type, listener) },
+      }
+      return insertedScript
+    },
+    head: { appendChild() {} },
+  }
+  const window = {
+    location: { pathname: '/build-profile/full-profile' },
+    document,
+    waitProfileData(callback) { profileReads += 1; callback() },
+  }
+  const context = vm.createContext({
+    console, document, URL, waitForMember() {}, window,
+  })
+
+  new vm.Script(source('profile-photo.js'), { filename: 'profile-photo.js' }).runInContext(context)
+  context.waitProfileData = window.waitProfileData
+  window.waitProfileData(() => {})
+  assert.equal(profileReads, 0)
+
+  window.__tsReleaseBuildProfileCanonical()
+  assert.equal(profileReads, 1)
+  assert.equal(window.waitProfileData.name, 'waitProfileData')
+  assert.ok(insertedScript)
 })

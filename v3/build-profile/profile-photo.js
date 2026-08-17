@@ -7,8 +7,30 @@
   if (window.StartersBuildProfileCanonicalHydrator || window.__tsCanonicalProfileHydratorLoading) {
     return
   }
+  var buildProfilePaths = ['/build-profile/full-profile', '/build-profile/consult']
+  var isBuildProfile = buildProfilePaths.includes(String(window.location && window.location.pathname || ''))
+  var originalWaitForProfile = window.waitProfileData
+  var waitingForCanonical = []
+  var canonicalReleased = false
+  if (isBuildProfile && typeof originalWaitForProfile === 'function') {
+    window.waitProfileData = function waitForCanonicalProfile(callback) {
+      if (canonicalReleased) return originalWaitForProfile(callback)
+      waitingForCanonical.push(callback)
+    }
+    window.__tsReleaseBuildProfileCanonical = function releaseCanonicalProfile() {
+      if (canonicalReleased) return
+      canonicalReleased = true
+      window.waitProfileData = originalWaitForProfile
+      waitingForCanonical.splice(0).forEach(function resumeProfileConsumer(callback) {
+        originalWaitForProfile(callback)
+      })
+    }
+  }
   var source = document.currentScript && document.currentScript.src
-  if (!source) return
+  if (!source) {
+    if (window.__tsReleaseBuildProfileCanonical) window.__tsReleaseBuildProfileCanonical()
+    return
+  }
   var script = document.createElement('script')
   script.src = new URL('canonical-profile-hydrator.js', source).href
   script.async = false
@@ -18,6 +40,7 @@
   }, { once: true })
   script.addEventListener('error', function failed() {
     window.__tsCanonicalProfileHydratorLoading = false
+    if (window.__tsReleaseBuildProfileCanonical) window.__tsReleaseBuildProfileCanonical()
     console.warn('[build-profile-canonical] loader failed')
   }, { once: true })
   ;(document.head || document.documentElement).appendChild(script)
