@@ -78,13 +78,16 @@
      list's font size instead of the size the Designer class asks for.
   font-size: inherit;
   */
-  /* Backup — glued a company to its comma, but a company name wider than the
-     card could then not break at all and was clipped by the overflow.
+  /* Each company is one unbreakable unit, so "Xero Shoes" cannot wrap after
+     Xero and leave Shoes hanging on the next line. Wrap still happens between
+     companies because these are `display: inline`. A single name wider than
+     the card is clipped by the list overflow — that is the tradeoff.
+     `white-space: normal` let the space inside a name become a wrap point. */
   white-space: nowrap;
-  */
-  /* Beats the Designer's `.expert-card_company-text { white-space: nowrap }`.
-     The comma stays glued via `content: ','` below, not via nowrap. */
+  /* Backup — beat the Designer nowrap so a name wider than the card could
+     wrap inside itself. That also split two-word names mid-company.
   white-space: normal;
+  */
 }
 
 /* Kill the inherited leading commas — those are what hang at the start of a
