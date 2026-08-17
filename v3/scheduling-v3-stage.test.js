@@ -539,6 +539,37 @@ test('remaps the versioned Hire helpers that call xanoAuthFetch directly', async
   )
 })
 
+test('preserves reviewed Brand payment routes outside the Hire adapter', async () => {
+  const dashboard = loadStage({ pathname: '/brand-dashboard' })
+  const hire = loadStage({ pathname: '/hire/jp-dionisio' })
+  const paymentRoutes = [
+    'brand/payment-method/setup/v3',
+    'brand/payment-method/set-default/v3',
+  ]
+
+  for (const route of paymentRoutes) {
+    const dashboardResponse = await dashboard.window.xanoAuthFetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+    const hireResponse = await hire.window.xanoAuthFetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+
+    assert.equal(dashboardResponse.status, 200)
+    assert.equal(hireResponse.status, 410)
+  }
+
+  assert.deepEqual(
+    dashboard.authenticatedRequests.map((request) =>
+      new URL(typeof request === 'string' ? request : request.url).pathname
+    ),
+    paymentRoutes.map((route) => `/api:tCpV3oqd/${route}`),
+  )
+  assert.equal(hire.authenticatedRequests.length, 0)
+})
+
 test('maps every reviewed legacy route to an authenticated V3 request', async () => {
   const { authenticatedRequests, window } = loadStage()
   const routeMap = window.StarterSchedulingV3Stage.routeMap

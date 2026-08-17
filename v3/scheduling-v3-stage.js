@@ -338,7 +338,9 @@
   }
 
   window.fetch = stageFetch
-  if (originalXanoAuthFetch) window.xanoAuthFetch = stageXanoAuthFetch
+  if (originalXanoAuthFetch && isHireBookingPath) {
+    window.xanoAuthFetch = stageXanoAuthFetch
+  }
   window.__tsSchedulingV3StageOriginalFetch = originalFetch
   window.StarterSchedulingV3Stage = Object.freeze({
     paths: STAGE_PATHS.slice(),
