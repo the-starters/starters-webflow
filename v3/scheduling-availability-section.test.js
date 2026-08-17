@@ -553,7 +553,7 @@ function loadSection(options = {}) {
   const dom = buildSectionDom(options.dom)
   const body = new El('body')
   body.appendChild(dom.root)
-  const { postRoutes, getRoutes } = buildStatefulRoutes(options.serverState)
+  const { state, postRoutes, getRoutes } = buildStatefulRoutes(options.serverState)
   Object.assign(postRoutes, options.postRoutes || {})
   Object.assign(getRoutes, options.getRoutes || {})
   const calls = []
@@ -665,7 +665,7 @@ function loadSection(options = {}) {
     window,
   })
 
-  return { dom, calls, warnings, logs, assigned, events, window, document }
+  return { dom, calls, warnings, logs, assigned, events, state, window, document }
 }
 
 async function settle(iterations = 25) {
@@ -1623,14 +1623,13 @@ test('removing an item waits for the response before refreshing slots (not fired
 })
 
 test('open-item-remove updates all active configurations without replacing paid fields', async () => {
-  const { dom, calls } = loadSection({
+  const { dom, calls, state } = loadSection({
     serverState: {
       grantId: 'grant-1',
       grantEmail: 'g@example.com',
       calendarId: 'cal-1',
       configs: [
         { config_id: 'cfg-free', duration: 30, is_paid: false, active: true },
-        { config_id: 'cfg-paid', duration: 60, is_paid: true, active: true },
       ],
       availability: {
         items: {
@@ -1642,6 +1641,7 @@ test('open-item-remove updates all active configurations without replacing paid 
     },
   })
   await settle()
+  state.configs.push({ config_id: 'cfg-paid', duration: 60, is_paid: true, active: true })
 
   const overrideCard = dom.list.children.find((el) => el.dataset.id === 'override1')
   const removeBtn = overrideCard.children[0].children[2].children[1]

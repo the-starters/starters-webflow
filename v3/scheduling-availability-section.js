@@ -814,6 +814,7 @@
   }
 
   async function updateConfigs() {
+    configs = await getConfigs(grantId, true)
     const configsResponse = []
     for (const record of configs.filter(function (config) { return config.active !== false })) {
       const res = await updateConfigAvailability(record)
@@ -1746,11 +1747,12 @@
       availability.items[availId] = avail
       await updateAvail()
 
-      if (grantId && configs.length !== 0) {
+      if (grantId) {
         const updated = await updateConfigs()
-        if (!updated) throw new Error('Scheduler configuration update failed')
-      } else if (grantId && configs.length === 0) {
-        await createFreeConfig()
+        if (!updated) {
+          if (configs.length === 0) await createFreeConfig()
+          else throw new Error('Scheduler configuration update failed')
+        }
       }
 
       await refreshCanonicalConnectionState()
@@ -1785,9 +1787,11 @@
     setRequestBusy(true)
     try {
       await updateAvail()
-      if (grantId && configs.length !== 0) {
+      if (grantId) {
         const updated = await updateConfigs()
-        if (!updated) throw new Error('Scheduler configuration update failed')
+        if (!updated && configs.length !== 0) {
+          throw new Error('Scheduler configuration update failed')
+        }
       }
       await refreshCanonicalConnectionState()
       renderAvailabilityItems()

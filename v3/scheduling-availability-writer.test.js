@@ -1349,10 +1349,29 @@ test('config update rejection lands on config-request-error', async () => {
 })
 
 test('removing an override returns its days to the general schedule', async () => {
+  let paidCreated = false
   const availability = defaultAvailability()
   availability.items.general.days = [1, 2]
   availability.items['ov-1'] = { days: [3], start: '13:00', end: '15:00' }
-  const result = loadWriter({ availability, storage: TZ_CACHED })
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/update_availability/v3': () => {
+        paidCreated = true
+        return { status: 200, body: { id: 1 } }
+      },
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: [
+          { config_id: 'cfg-free', grant_id: 'grant-1', duration: 30, is_paid: false, active: true },
+          ...(paidCreated
+            ? [{ config_id: 'cfg-paid', grant_id: 'grant-1', duration: 60, is_paid: true, active: true }]
+            : []),
+        ],
+      }),
+    },
+  })
   await settle()
 
   const item = new El('div', { 'availability-item': '' })

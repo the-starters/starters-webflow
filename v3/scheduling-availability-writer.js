@@ -861,6 +861,7 @@
   }
 
   async function updateConfigs(step, removeAvail) {
+    configs = await getConfigs(grantId, true)
     const configsResponse = []
     for (const record of configs) {
       if (record.active === false) continue
@@ -1061,15 +1062,15 @@
       }
 
       if (grantId) {
-        if (configs.length !== 0) {
-          const updated = await updateConfigs(step)
-          if (!updated) throw new Error('Scheduler configuration update failed')
+        const updated = await updateConfigs(step)
+        if (updated) {
           await refreshCanonicalConnectionState()
           renderAvail()
           emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
           setLoader(false, step)
           return
-        } else {
+        }
+        if (configs.length === 0) {
           await createFreeConfig()
           await refreshCanonicalConnectionState()
           renderAvail()
@@ -1078,6 +1079,7 @@
           setLoader(false, step)
           return
         }
+        throw new Error('Scheduler configuration update failed')
       }
       await refreshCanonicalConnectionState()
       renderAvail()
@@ -1266,9 +1268,11 @@
 
     try {
       await updateAvail()
-      if (grantId && configs.length !== 0) {
+      if (grantId) {
         const updated = await updateConfigs(null, true)
-        if (!updated) throw new Error('Scheduler configuration update failed')
+        if (!updated && configs.length !== 0) {
+          throw new Error('Scheduler configuration update failed')
+        }
       }
       await refreshCanonicalConnectionState()
       renderAvail()
