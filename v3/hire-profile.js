@@ -537,6 +537,45 @@
           );
       }
 
+      function hideInternalBookingFields(activeScheduler) {
+          const internalFieldIds = new Set([
+              'brand_memberstack_id',
+              'starter_memberstack_id',
+          ]);
+          let attempts = 0;
+          let retryId = null;
+
+          function hideAvailableFields() {
+              const schedulerRoot = activeScheduler && activeScheduler.shadowRoot;
+              const bookingForm = schedulerRoot && schedulerRoot.querySelector
+                  ? schedulerRoot.querySelector('nylas-booking-form')
+                  : null;
+              const formRoot = bookingForm && bookingForm.shadowRoot;
+              if (!formRoot || typeof formRoot.querySelectorAll !== 'function') return false;
+
+              let hiddenCount = 0;
+              Array.from(formRoot.querySelectorAll('input-component')).forEach(function (field) {
+                  if (!field || !internalFieldIds.has(field.id)) return;
+
+                  const fieldWrapper = field.parentElement || field;
+                  if (fieldWrapper.style) fieldWrapper.style.display = 'none';
+                  if (typeof fieldWrapper.setAttribute === 'function') {
+                      fieldWrapper.setAttribute('aria-hidden', 'true');
+                  }
+                  hiddenCount += 1;
+              });
+              return hiddenCount === internalFieldIds.size;
+          }
+
+          if (hideAvailableFields() || typeof window.setInterval !== 'function') return;
+
+          retryId = window.setInterval(function () {
+              attempts += 1;
+              if (!hideAvailableFields() && attempts < 50) return;
+              if (typeof window.clearInterval === 'function') window.clearInterval(retryId);
+          }, 100);
+      }
+
       function closeInlineBooking() {
           if (scheduler && typeof scheduler.remove === 'function') scheduler.remove();
           calendar.innerHTML = '';
@@ -559,9 +598,12 @@
                   schedulerState = 'details';
                   schedulerConnector = connector || schedulerConnector;
                   setBackMode('previous-step');
+                  let result;
                   if (typeof originalOverrides.timeslotConfirmed === 'function') {
-                      return originalOverrides.timeslotConfirmed(event, connector);
+                      result = await originalOverrides.timeslotConfirmed(event, connector);
                   }
+                  hideInternalBookingFields(activeScheduler);
+                  return result;
               },
               backButtonClicked: async function (event, connector) {
                   schedulerState = 'date-time';
