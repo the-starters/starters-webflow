@@ -247,6 +247,18 @@
     }
   }
 
+  function configureActionButtons(card, role, status) {
+    card.querySelectorAll('[booking-card-action-btn], [booking-action-btn]').forEach(function (button) {
+      const action = clean(
+        button.getAttribute('booking-action-btn') ||
+        button.getAttribute('booking-card-action-btn'),
+      )
+      // Accept is the first V3-native mutation. Every other legacy control
+      // stays hidden until it has a current endpoint contract and tests.
+      show(button, role === 'starter' && status === 'pending' && action === 'switch-confirm')
+    })
+  }
+
   function bindCard(card, booking, role) {
     const status = bookingStatus(booking)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
@@ -283,24 +295,8 @@
     text(brandStatus, '[label-text]', status === 'pending' ? 'Awaiting confirmation' : '')
     show(brandStatus, status === 'pending' && role === 'brand')
 
-    card.querySelectorAll('[booking-card-action-btn], [booking-action-btn="switch-confirm"]').forEach(function (button) {
-      const action = clean(
-        button.getAttribute('booking-action-btn') ||
-        button.getAttribute('booking-card-action-btn'),
-      )
-      // Accept is the first V3-native mutation. Every other legacy control
-      // stays hidden until it has a current endpoint contract and tests.
-      show(button, role === 'starter' && status === 'pending' && action === 'switch-confirm')
-    })
+    configureActionButtons(card, role, status)
 
-    const meetingLink = clean(booking.meeting_link)
-    card
-      .querySelectorAll('[booking-action-btn="join"], [booking-card-action-btn="join"]')
-      .forEach(function (button) {
-        const anchor = button.matches('a') ? button : button.querySelector('a')
-        if (anchor && meetingLink) anchor.href = meetingLink
-        show(button, Boolean(meetingLink) && status === 'confirmed')
-      })
     return card
   }
 
@@ -911,6 +907,7 @@
 
   const api = {
     bookingStatus,
+    configureActionButtons,
     confirmPayload,
     decodeBookingRef,
     memberOwnsBooking,

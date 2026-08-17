@@ -1971,8 +1971,8 @@ canonical `booking_ref`, requires its booking and configuration IDs to match the
 row, and supplies a per-attempt idempotency key. A successful response refreshes
 the canonical list, which moves the accepted row from Starter Call Requests to
 Starter Calls while it remains in Brand Calls. All other legacy mutation
-controls stay hidden; only a confirmed row with a canonical meeting link
-exposes its join control.
+controls, including Decline, Reschedule, Message, and Join, stay hidden until
+they have current V3-safe endpoint contracts.
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for

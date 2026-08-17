@@ -202,6 +202,99 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
   }
 })
 
+test('only the V3-native Starter Accept action is visible on pending cards', () => {
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const decline = element({ 'booking-action-btn': 'switch-decline' })
+  const reschedule = element({ 'booking-action-btn': 'reschedule' })
+  const message = element({ 'booking-action-btn': 'message' })
+  const join = element({ 'booking-action-btn': 'join' })
+  const buttons = [accept, decline, reschedule, message, join]
+  const card = {
+    querySelectorAll(selector) {
+      assert.equal(selector, '[booking-card-action-btn], [booking-action-btn]')
+      return buttons
+    },
+  }
+
+  api.configureActionButtons(card, 'starter', 'pending')
+
+  assert.equal(accept.hidden, false)
+  assert.equal(accept.style.display, '')
+  for (const button of [decline, reschedule, message, join]) {
+    assert.equal(button.hidden, true)
+    assert.equal(button.style.display, 'none')
+  }
+})
+
+test('accepted calls keep every legacy action hidden even with a meeting link', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const actions = [
+    element({ 'booking-action-btn': 'switch-confirm' }),
+    element({ 'booking-action-btn': 'switch-decline' }),
+    element({ 'booking-action-btn': 'reschedule' }),
+    element({ 'booking-action-btn': 'message' }),
+    element({ 'booking-action-btn': 'join' }),
+  ]
+  const renderedCards = []
+  const card = element({ 'bookings-item-template': 'calls' })
+  card.cloneNode = () => card
+  card.querySelectorAll = (selector) =>
+    selector === '[booking-card-action-btn], [booking-action-btn]' ? actions : []
+  const list = element()
+  list.appendChild = (rendered) => renderedCards.push(rendered)
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [card] : []
+  const template = element({ 'bookings-item-template': 'calls' })
+  template.cloneNode = () => card
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': element(),
+      '[bookings-empty="calls"]': element(),
+    })[selector] || null
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        return { id: 'starter-1' }
+      },
+      onAuthChange() {},
+    },
+    document,
+    location: { pathname: '/starter-dashboard' },
+    xanoAuthFetch: async () => ({
+      ok: true,
+      json: async () => [{
+        booking_id: 'confirmed-call',
+        starter_data: { memberstack_id: 'starter-1' },
+        status: 'confirmed',
+        meeting_link: 'https://meet.example/canonical',
+      }],
+    }),
+  }
+
+  vm.runInNewContext(source, { console: { error() {} }, document, Intl, window })
+  await until(() => root.attributes['data-dashboard-calls-v3'] === 'ready')
+
+  assert.equal(renderedCards.length, 1)
+  for (const action of actions) {
+    assert.equal(action.hidden, true)
+    assert.equal(action.style.display, 'none')
+  }
+})
+
 test('canonical V3 component loader includes the dashboard controller', () => {
   const loader = fs.readFileSync(
     require.resolve('./scheduling-v3-stage-component.html'),
