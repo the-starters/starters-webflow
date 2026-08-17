@@ -480,7 +480,7 @@
     }
     bind()
     await waitForMemberstack()
-    return loadSession(undefined, true)
+    return loadSession(undefined, false)
   }
 
   window.StarterPaidCallSettings = {

@@ -387,7 +387,7 @@ test('late Memberstack arrival still wires auth changes', async () => {
   assert.equal(result.dom.save.disabled, true)
 })
 
-test('late Memberstack arrival starts the initial canonical read after memberReady resolves', async () => {
+test('late Memberstack arrival starts the initial canonical read when memberReady resolved first', async () => {
   const memberReady = deferred()
   const result = load({
     initial: canonical({ services: [service({ title: 'Member A Call' })] }),
@@ -406,6 +406,38 @@ test('late Memberstack arrival starts the initial canonical read after memberRea
 
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 1)
   assert.equal(result.dom.title.value, 'Member A Call')
+})
+
+test('late bootstrap keeps a live account switch over stale memberReady identity', async () => {
+  const memberReady = deferred()
+  const result = load({
+    memberReady: memberReady.promise,
+    withoutMemberstackAtLoad: true,
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member }) => ({
+        ok: true,
+        status: 200,
+        json: async () => canonical({
+          services: [service({
+            config_id: member.id === 'member-b' ? 'cfg-paid-b' : 'cfg-paid-a',
+            title: member.id === 'member-b' ? 'Member B Call' : 'Member A Call',
+          })],
+        }),
+      }),
+    },
+  })
+  await settle(2)
+
+  result.installMemberstack()
+  result.flushTimers()
+  const memberBLoad = result.changeMember({ id: 'member-b' })
+  memberReady.resolve({ id: 'member-a' })
+  await memberBLoad
+  await settle()
+
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.warnings.length, 0)
+  assert.ok(result.calls.length >= 1)
 })
 
 test('disable sends the canonical revision and verifies the service is inactive', async () => {
