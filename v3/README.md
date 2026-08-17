@@ -2706,10 +2706,13 @@ root, use these values:
 
 Give every Connect control `data-stripe-connect-action="start"`. An optional
 retry control can use `data-stripe-connect-action="refresh"`. The Action Item
-root is visible for `loading`, `disconnected`, and `error`. It is hidden for
-every provider-connected state: `incomplete`, `review`, and `ready`. The
-controller does not create or bind a disconnect control. Members must contact
-The Starters support team to disconnect Stripe.
+root is visible for `loading`, `disconnected`, and `error` until canonical
+status proves a connection. It is hidden for every provider-connected state:
+`incomplete`, `review`, and `ready`, and stays hidden during later loading or
+error states until canonical status reports `disconnected`. The controller does
+not create or bind a disconnect control. Members must contact The Starters
+support team to disconnect Stripe.
+
 The hero can keep its two authored Stripe tiles, both with
 `data-stripe-connect-action="earnings"`, but the controller uses only one blue
 tile for the full lifecycle. Mark the original Connect Stripe tile with
