@@ -466,6 +466,7 @@ function buildStatefulRoutes(initialState) {
       grantEmail: null,
       calendarId: null,
       Paid_Call_Rate: 150,
+      paidService: null,
       configs: null,
       availability: {
         items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
@@ -494,6 +495,16 @@ function buildStatefulRoutes(initialState) {
     }),
     '/starter/set_timezone/v3': () => ({ status: 200, body: { timezone: 'Asia/Manila' } }),
     '/starter/clear_calendar_data/v3': () => ({ status: 200, body: { id: 1 } }),
+    '/starter/paid-call-settings/upsert/v3': (body) => {
+      state.paidService = {
+        config_id: 'cfg-paid-restored',
+        title: body.title,
+        price_cents: body.price_cents,
+        duration: body.duration_minutes,
+        active: true,
+      }
+      return { status: 200, body: { service: state.paidService } }
+    },
     '/nylas_configurations/get_all/v3': () => ({
       status: 200,
       body: state.grantId
@@ -524,6 +535,7 @@ function buildStatefulRoutes(initialState) {
       state.grantId = null
       state.grantEmail = null
       state.calendarId = null
+      state.paidService = null
       return {
         status: 200,
         body: {
@@ -544,6 +556,13 @@ function buildStatefulRoutes(initialState) {
 
   const getRoutes = {
     '/scheduler/get_availability/v3': () => ({ status: 200, body: { time_slots: [] } }),
+    '/starter/paid-call-settings/get/v3': () => ({
+      status: 200,
+      body: {
+        readiness: { paid_call_enabled: Boolean(state.paidService) },
+        services: state.paidService ? [state.paidService] : [],
+      },
+    }),
   }
 
   return { state, postRoutes, getRoutes }
@@ -966,6 +985,13 @@ test('switching straight from Google to Platform clears the existing Google gran
       grantId: 'grant-1',
       grantEmail: 'g@example.com',
       calendarId: 'cal-1',
+      paidService: {
+        config_id: 'cfg-paid-old',
+        title: 'Paid Strategy Call',
+        price_cents: 42500,
+        duration: 45,
+        active: true,
+      },
       availability: {
         items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
         manager: 'calendar',
@@ -981,6 +1007,17 @@ test('switching straight from Google to Platform clears the existing Google gran
   assert.ok(deleteCall, 'expected the existing Google grant to be deleted')
   assert.equal(deleteCall.body.in_grant_id, 'grant-1')
   assert.deepEqual(legacyClearCalls, [], 'legacy clearGrantData must not own provider disconnect')
+  const restoreCall = calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.deepEqual(restoreCall.body, {
+    config_id: null,
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration_minutes: 45,
+    expected_revision: 0,
+    idempotency_key: 'paid-call-calendar-transition:uuid-fixed',
+  })
+  const paths = calls.map((call) => call.path)
+  assert.ok(paths.indexOf('/grants/delete/v3') < paths.indexOf('/starter/paid-call-settings/upsert/v3'))
 })
 
 test('an active-booking disconnect rejection stops the Google-to-Platform switch', async () => {

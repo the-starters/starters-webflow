@@ -361,6 +361,10 @@ function defaultRoutes(overridesMap = {}) {
     }),
     '/starter/set_timezone/v3': () => ({ status: 200, body: { timezone: 'Asia/Manila' } }),
     '/starter/clear_calendar_data/v3': () => ({ status: 200, body: { id: 1 } }),
+    '/starter/paid-call-settings/get/v3': () => ({
+      status: 200,
+      body: { readiness: { paid_call_enabled: false }, services: [] },
+    }),
     '/nylas_configurations/get_all/v3': () => ({
       status: 200,
       body: [
@@ -428,10 +432,11 @@ function loadWriter(options = {}) {
       ? undefined
       : async (url, init) => {
           const path = url.replace(API_BASE, '')
-          calls.push({ path, body: JSON.parse(init.body) })
+          const body = init.body ? JSON.parse(init.body) : undefined
+          calls.push({ path, method: init.method, body })
           const route = routes[path]
           if (!route) throw new Error('unrouted path ' + path)
-          const result = route(JSON.parse(init.body))
+          const result = route(body)
           return {
             ok: result.status >= 200 && result.status < 300,
             status: result.status,
@@ -1087,9 +1092,46 @@ test('an active-booking rejection stops the Google-to-Platform manager switch', 
 test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virtual calendar', async () => {
   let virtualPersisted = false
   let configCreated = false
+  let paidService = {
+    config_id: 'cfg-paid-old',
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration: 45,
+    active: true,
+  }
   const result = loadWriter({
     storage: TZ_CACHED,
     routes: {
+      '/starter/paid-call-settings/get/v3': () => ({
+        status: 200,
+        body: {
+          readiness: { paid_call_enabled: Boolean(paidService) },
+          services: paidService ? [paidService] : [],
+        },
+      }),
+      '/starter/paid-call-settings/upsert/v3': (body) => {
+        paidService = {
+          config_id: 'cfg-paid-restored',
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          active: true,
+        }
+        return { status: 200, body: { service: paidService } }
+      },
+      '/grants/delete/v3': () => {
+        paidService = null
+        return {
+          status: 200,
+          body: {
+            connected: false,
+            already_disconnected: false,
+            availability: {},
+            deleted_configuration_ids: ['cfg-free-old', 'cfg-paid-old'],
+            provider_response: { status: 200 },
+          },
+        }
+      },
       '/grants/add_virtual/v3': () => {
         virtualPersisted = true
         return { status: 200, body: { id: 5 } }
@@ -1143,6 +1185,18 @@ test('disconnect flow: confirm navigates to its step, disconnect rebuilds a virt
   assert.equal(update.body.availability.manager, 'platform')
   assert.equal(result.dom.steps['success-disconnect'].style.display, 'block')
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'connected')
+  const restoreCall = result.calls.find(
+    (call) => call.path === '/starter/paid-call-settings/upsert/v3',
+  )
+  assert.deepEqual(restoreCall.body, {
+    config_id: null,
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration_minutes: 45,
+    expected_revision: 0,
+    idempotency_key: 'paid-call-calendar-transition:uuid-fixed',
+  })
+  assert.ok(paths.indexOf('/grants/delete/v3') < paths.indexOf('/starter/paid-call-settings/upsert/v3'))
 
   const canonicalReadIndex = paths.indexOf('/starter/get_by_memberstack/v3', calendarIndex + 1)
   const canonicalConfigIndex = paths.indexOf(

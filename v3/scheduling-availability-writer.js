@@ -307,11 +307,15 @@
       : 'https://' + window.location.hostname + PRODUCTION_PATH
   }
 
-  function rememberOAuthIntent(memberId, redirectUri) {
+  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent) {
     try {
       window.sessionStorage.setItem(
         OAUTH_INTENT_PREFIX + memberId,
-        JSON.stringify({ createdAt: Date.now(), redirectUri: redirectUri }),
+        JSON.stringify({
+          createdAt: Date.now(),
+          redirectUri: redirectUri,
+          paidCallIntent: paidCallIntent || null,
+        }),
       )
     } catch (error) {
       /* storage unavailable */
@@ -320,7 +324,6 @@
 
   function readOAuthIntent(memberId) {
     const redirectUri = oauthRedirectUri()
-    if (isStagingHost) return { redirectUri: redirectUri }
     const key = OAUTH_INTENT_PREFIX + memberId
     try {
       const raw = window.sessionStorage.getItem(key)
@@ -335,14 +338,14 @@
         return intent
       }
       window.sessionStorage.removeItem(key)
-      return null
+      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
     } catch (error) {
       try {
         window.sessionStorage.removeItem(key)
       } catch (storageError) {
         /* storage unavailable */
       }
-      return null
+      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
     }
   }
 
@@ -366,6 +369,26 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    })
+    const data = await response.json().catch(function () {
+      return null
+    })
+    if (!response.ok) {
+      throw Object.assign(new Error(path + ' failed (' + response.status + ')'), {
+        status: response.status,
+        data: data,
+      })
+    }
+    return data
+  }
+
+  async function xanoGet(path) {
+    if (typeof window.xanoAuthFetch !== 'function') {
+      throw new Error('xanoAuthFetch is not available')
+    }
+    const response = await window.xanoAuthFetch(API_BASE + path, {
+      method: 'GET',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     })
     const data = await response.json().catch(function () {
       return null
@@ -726,6 +749,58 @@
     return free
   }
 
+  function paidCallService(value) {
+    if (!value || !Array.isArray(value.services) || !value.readiness) {
+      throw new Error('Paid-call settings reader returned an invalid response')
+    }
+    const active = value.services.filter(function (service) {
+      return service && service.active === true
+    })
+    if (active.length > 1) throw new Error('Multiple active paid-call services require support')
+    return active[0] || null
+  }
+
+  async function capturePaidCallIntent() {
+    const service = paidCallService(await xanoGet('/starter/paid-call-settings/get/v3'))
+    if (!service) return null
+    const intent = {
+      title: String(service.title || '').trim(),
+      price_cents: Number(service.price_cents),
+      duration_minutes: Number(service.duration),
+    }
+    if (
+      intent.title.length < 3 ||
+      !Number.isInteger(intent.price_cents) ||
+      intent.price_cents < 500 ||
+      [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
+    ) {
+      throw new Error('Canonical paid-call service cannot be preserved')
+    }
+    return intent
+  }
+
+  async function restorePaidCallIntent(intent) {
+    if (!intent) return null
+    await xanoPost('/starter/paid-call-settings/upsert/v3', {
+      config_id: null,
+      title: intent.title,
+      price_cents: intent.price_cents,
+      duration_minutes: intent.duration_minutes,
+      expected_revision: 0,
+      idempotency_key: 'paid-call-calendar-transition:' + crypto.randomUUID(),
+    })
+    const service = paidCallService(await xanoGet('/starter/paid-call-settings/get/v3'))
+    if (
+      !service ||
+      service.title !== intent.title ||
+      Number(service.price_cents) !== intent.price_cents ||
+      Number(service.duration) !== intent.duration_minutes
+    ) {
+      throw new Error('Paid-call service did not match canonical transition readback')
+    }
+    return service
+  }
+
   async function setupConfigs(type) {
     if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
     await ensureTimezone()
@@ -927,13 +1002,14 @@
   }
 
   async function clearGrant(currentGrantId) {
-    if (!currentGrantId) return
+    if (!currentGrantId) return { paidCallIntent: null }
     await ensureTimezone()
+    const paidCallIntent = await capturePaidCallIntent()
     const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
     if (!result || result.connected !== false) {
       throw new Error('grants/delete/v3 returned an invalid disconnected state')
     }
-    return result
+    return { result: result, paidCallIntent: paidCallIntent }
   }
 
   /* ------------------------------------------------------------------ */
@@ -1119,7 +1195,7 @@
         switchStep('virtual-connect')
         publishCalendarConnectionState('loading')
         const memberId = await writeMemberId()
-        await clearGrant(grantId)
+        const transition = await clearGrant(grantId)
         const virtual = await createVirtualCalendarFlow(memberId)
         if (virtual.status === 200) {
           grantId = virtual.grant_id
@@ -1130,6 +1206,7 @@
 
           availability.manager = activeManager
           await updateAvail()
+          await restorePaidCallIntent(transition.paidCallIntent)
           await refreshCanonicalConnectionState()
           try {
             window.localStorage.setItem('prev-availability-manager', activeManager)
@@ -1147,7 +1224,7 @@
       } else {
         publishCalendarConnectionState('loading')
         const memberId = await writeMemberId()
-        await clearGrant(grantId)
+        const transition = await clearGrant(grantId)
         grantId = null
         grantEmail = null
         grantCalendarId = null
@@ -1158,7 +1235,7 @@
         }
         await refreshCanonicalConnectionState()
         emit('starterSchedulingWriteSuccess', { action: 'manager-calendar' })
-        await handlePreRedirect()
+        await handlePreRedirect(transition.paidCallIntent)
       }
     } catch (error) {
       publishCalendarConnectionError()
@@ -1177,7 +1254,7 @@
     try {
       publishCalendarConnectionState('loading')
       const memberId = await writeMemberId()
-      await clearGrant(grantId)
+      const transition = await clearGrant(grantId)
       availability.manager = null
 
       const virtual = await createVirtualCalendarFlow(memberId)
@@ -1190,6 +1267,7 @@
 
         availability.manager = 'platform'
         await updateAvail()
+        await restorePaidCallIntent(transition.paidCallIntent)
         await refreshCanonicalConnectionState()
         switchStep('success-disconnect')
         emit('starterSchedulingWriteSuccess', { action: 'disconnect-calendar' })
@@ -1217,7 +1295,7 @@
     showManagerActions()
   }
 
-  async function handlePreRedirect() {
+  async function handlePreRedirect(paidCallIntent) {
     switchStep('pre-redirect')
     try {
       // OAuth returns to this same dashboard. Xano derives `state` from the
@@ -1238,7 +1316,7 @@
         response.response.result.data &&
         response.response.result.data.url
       if (!url) throw new Error('grants/oauth returned no URL')
-      rememberOAuthIntent(memberId, redirectUri)
+      rememberOAuthIntent(memberId, redirectUri, paidCallIntent)
       // A delayed window.open occurs after awaited requests and is blocked by
       // normal browser popup protection. Same-tab navigation is reliable and
       // preserves the sessionStorage intent needed by the callback verifier.
@@ -1443,6 +1521,7 @@
         oauthCallback ? oauthCallback.remainingQuery : window.location.search,
       )
       let connectedCalendar = isStagingHost ? urlParams.get('calendar') || null : null
+      let oauthPaidCallIntent = null
 
       // OAuth returns directly to this page. The classic Nylas flow returns
       // ?code&state; the hosted-auth success flow returns
@@ -1469,6 +1548,7 @@
           if (!oauthIntent) {
             throw invalidOAuthCallback('OAuth return was not initiated by this session')
           }
+          oauthPaidCallIntent = oauthIntent.paidCallIntent || null
           await ensureTimezone()
           const grantPayload = {
             member_id: memberId,
@@ -1518,6 +1598,7 @@
         availability.manager = 'calendar'
         await updateAvail()
         await createFreeConfig()
+        await restorePaidCallIntent(oauthPaidCallIntent)
         await refreshCanonicalConnectionState()
         switchStep('default')
       }
