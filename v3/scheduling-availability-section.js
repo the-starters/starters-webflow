@@ -752,6 +752,23 @@
     return service
   }
 
+  async function recoverPaidCallAfterOAuthCancellation(memberId, intent) {
+    if (!intent) return false
+    const virtual = await createVirtualCalendarFlow(memberId)
+    if (virtual.status !== 200) throw new Error('OAuth cancellation recovery failed')
+    grantId = virtual.grant_id
+    grantEmail = virtual.email
+    grantCalendarId = virtual.calendar_id
+    configs = []
+    ensureDefaultAvailability()
+    await createFreeConfig()
+    availability.manager = 'platform'
+    await updateAvail()
+    await restorePaidCallIntent(intent)
+    await refreshCanonicalConnectionState()
+    return true
+  }
+
   async function setupConfigs(type) {
     if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
     await ensureTimezone()
@@ -1094,18 +1111,22 @@
     const oauthCode = oauthCallback.code
     const oauthGrantId = oauthCallback.grantId
     const oauthState = oauthCallback.state
+    let memberId = null
+    let oauthIntent = null
+    let trustedState = false
     try {
-      const memberId = await writeMemberId()
+      memberId = await writeMemberId()
       if (!oauthState || oauthState !== memberId) {
         throw invalidOAuthCallback('OAuth state does not match the logged-in member')
       }
+      trustedState = true
+      oauthIntent = readOAuthIntent(memberId)
       if (oauthCallback.hasError) {
         throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
       }
       if (oauthGrantId && oauthCallback.success !== 'true') {
         throw invalidOAuthCallback('Hosted OAuth did not report success')
       }
-      const oauthIntent = readOAuthIntent(memberId)
       if (!oauthIntent) {
         throw invalidOAuthCallback('OAuth return was not initiated by this session')
       }
@@ -1133,8 +1154,35 @@
       await refreshCanonicalConnectionState()
       console.log('[scheduling-section] Google Calendar connected via OAuth')
     } catch (error) {
+      let recovered = false
+      if (
+        error &&
+        error.code === 'OAUTH_CALLBACK_INVALID' &&
+        trustedState &&
+        oauthIntent &&
+        oauthIntent.paidCallIntent
+      ) {
+        try {
+          recovered = await recoverPaidCallAfterOAuthCancellation(
+            memberId,
+            oauthIntent.paidCallIntent,
+          )
+        } catch (recoveryError) {
+          console.warn(
+            '[scheduling-section] OAuth cancellation recovery failed:',
+            recoveryError && recoveryError.message,
+          )
+        }
+      }
       publishCalendarConnectionError()
-      if (error && error.code === 'OAUTH_CALLBACK_INVALID') clearOAuthCallback()
+      if (
+        error &&
+        error.code === 'OAUTH_CALLBACK_INVALID' &&
+        (!trustedState || !oauthIntent || !oauthIntent.paidCallIntent || recovered)
+      ) {
+        if (trustedState && memberId) clearOAuthIntent(memberId)
+        clearOAuthCallback()
+      }
       console.warn('[scheduling-section] OAuth grant save failed:', error && error.message)
     }
   }

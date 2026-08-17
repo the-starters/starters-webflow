@@ -630,7 +630,7 @@ function loadSection(options = {}) {
       },
     },
     sessionStorage: {
-      _map: new Map(),
+      _map: new Map(Object.entries(options.sessionStorage || {})),
       getItem(key) {
         return this._map.has(key) ? this._map.get(key) : null
       },
@@ -1018,6 +1018,41 @@ test('switching straight from Google to Platform clears the existing Google gran
   })
   const paths = calls.map((call) => call.path)
   assert.ok(paths.indexOf('/grants/delete/v3') < paths.indexOf('/starter/paid-call-settings/upsert/v3'))
+})
+
+test('OAuth cancellation rebuilds platform scheduling and restores the saved paid service', async () => {
+  const result = loadSection({
+    search: '?error=access_denied&error_description=cancelled&state=member-a',
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(result.state.grantId, 'vgrant-1')
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.deepEqual(result.state.paidService, {
+    config_id: 'cfg-paid-restored',
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration: 45,
+    active: true,
+  })
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(
+    result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
+    false,
+  )
 })
 
 test('an active-booking disconnect rejection stops the Google-to-Platform switch', async () => {
