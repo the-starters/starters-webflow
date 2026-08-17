@@ -1135,6 +1135,53 @@ test('an active-booking disconnect rejection stops the Google-to-Platform switch
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
+test('a failed calendar replacement retains paid intent and recovers it on reload', async () => {
+  const firstLoad = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      paidService: {
+        config_id: 'cfg-paid-old',
+        title: 'Paid Strategy Call',
+        price_cents: 42500,
+        duration: 45,
+        active: true,
+      },
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/create_virtual_account/v3': () => ({ status: 503, body: { message: 'try again' } }),
+    },
+  })
+  await settle()
+
+  firstLoad.dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  const retained = JSON.parse(
+    firstLoad.window.sessionStorage._map.get('starter-scheduling-oauth-intent:member-a'),
+  )
+  assert.equal(retained.paidCallIntent.title, 'Paid Strategy Call')
+  assert.equal(firstLoad.state.paidService, null)
+
+  const secondLoad = loadSection({
+    serverState: firstLoad.state,
+    sessionStorage: Object.fromEntries(firstLoad.window.sessionStorage._map),
+  })
+  await settle()
+
+  assert.equal(secondLoad.state.paidService.title, 'Paid Strategy Call')
+  assert.equal(secondLoad.state.availability.manager, 'platform')
+  assert.equal(
+    secondLoad.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
+    false,
+  )
+})
+
 test('connect-label-group and connect-info-wrapper do not flash mid-request on disconnect-google', async () => {
   const { dom } = loadSection({
     serverState: {

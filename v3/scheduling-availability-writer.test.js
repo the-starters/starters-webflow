@@ -810,6 +810,33 @@ test('form submit writes the authenticated member id and reaches the success ste
   assert.ok(result.events.some((e) => e.type === 'starterSchedulingWriteSuccess'))
 })
 
+test('form submit recreates a free configuration when every canonical config is inactive', async () => {
+  const result = loadWriter({
+    storage: TZ_CACHED,
+    routes: {
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: [
+          { config_id: 'cfg-free-old', grant_id: 'grant-1', duration: 30, is_paid: false, active: false },
+          { config_id: 'cfg-paid-old', grant_id: 'grant-1', duration: 60, is_paid: true, active: false },
+        ],
+      }),
+    },
+  })
+  await settle()
+
+  result.dom.fields.days[1].checked = true
+  result.dom.fields.start.value = '10:00'
+  result.dom.fields.end.value = '16:00'
+  result.clickAction(result.dom.buttons.submit)
+  await settle()
+
+  assert.equal(
+    result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length,
+    1,
+  )
+})
+
 test('shows and hides the step loader around a submit', async () => {
   let releaseUpdate
   const gate = new Promise((resolve) => {

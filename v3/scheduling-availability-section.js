@@ -359,17 +359,19 @@
   }
 
   function rememberOAuthIntent(memberId, redirectUri, paidCallIntent) {
+    const intent = {
+      createdAt: Date.now(),
+      redirectUri: redirectUri,
+      paidCallIntent: paidCallIntent || null,
+    }
     try {
       window.sessionStorage.setItem(
         OAUTH_INTENT_PREFIX + memberId,
-        JSON.stringify({
-          createdAt: Date.now(),
-          redirectUri: redirectUri,
-          paidCallIntent: paidCallIntent || null,
-        }),
+        JSON.stringify(intent),
       )
+      return intent
     } catch (error) {
-      /* storage unavailable */
+      return null
     }
   }
 
@@ -812,6 +814,16 @@
     return true
   }
 
+  async function recoverFailedCalendarTransition(memberId, transition) {
+    if (!(memberId && transition && transition.oauthIntent)) return false
+    const recovered = await recoverPaidCallAfterOAuthCancellation(
+      memberId,
+      transition.oauthIntent,
+    )
+    if (recovered) clearOAuthIntent(memberId)
+    return recovered
+  }
+
   async function setupConfigs(type) {
     if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
     await ensureTimezone()
@@ -992,10 +1004,16 @@
     }
   }
 
-  async function clearGrant(currentGrantId) {
+  async function clearGrant(currentGrantId, memberId) {
     if (!currentGrantId) return { paidCallIntent: null }
     await ensureTimezone()
     const paidCallIntent = await capturePaidCallIntent()
+    const oauthIntent = paidCallIntent
+      ? rememberOAuthIntent(memberId, oauthRedirectUri(), paidCallIntent)
+      : null
+    if (paidCallIntent && !oauthIntent) {
+      throw new Error('Paid-call calendar transition could not be retained')
+    }
     // The authenticated Xano route owns the complete provider-first lifecycle:
     // active-booking guard, Nylas grant deletion, configuration cleanup,
     // canonical availability cleanup, and Memberstack reconciliation. Never
@@ -1006,7 +1024,7 @@
     if (!result || result.connected !== false) {
       throw new Error('grants/delete/v3 returned an invalid disconnected state')
     }
-    return { result: result, paidCallIntent: paidCallIntent }
+    return { result: result, paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
   }
 
   /* ------------------------------------------------------------------ */
@@ -1018,13 +1036,15 @@
     connectBusy = true
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
+    let memberId = null
+    let transition = null
     try {
-      const memberId = await writeMemberId()
+      memberId = await writeMemberId()
       // Switching straight from Google to Platform (connect-platform stays
       // clickable while manager === 'calendar') must clear the existing
       // Google grant first — otherwise it's orphaned, still connected in
       // Nylas, while the local state moves on to platform.
-      const transition = await clearGrant(grantId)
+      transition = await clearGrant(grantId, memberId)
       const virtual = await createVirtualCalendarFlow(memberId)
       if (virtual.status !== 200) throw new Error('Virtual calendar setup failed')
       grantId = virtual.grant_id
@@ -1036,11 +1056,17 @@
       await updateAvail()
       await restorePaidCallIntent(transition.paidCallIntent)
       await refreshCanonicalConnectionState()
+      if (transition.oauthIntent) clearOAuthIntent(memberId)
       renderAvailabilityItems()
       renderSlotsPreview()
       console.log('[scheduling-section] connected to platform calendar')
       return true
     } catch (error) {
+      try {
+        await recoverFailedCalendarTransition(memberId, transition)
+      } catch (recoveryError) {
+        console.warn('[scheduling-section] connect-platform recovery failed:', recoveryError && recoveryError.message)
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] connect-platform failed:', error && error.message)
       return false
@@ -1055,9 +1081,11 @@
     connectBusy = true
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
+    let memberId = null
+    let transition = null
     try {
-      const memberId = await writeMemberId()
-      const transition = await clearGrant(grantId)
+      memberId = await writeMemberId()
+      transition = await clearGrant(grantId, memberId)
       grantId = null
       grantEmail = null
       grantCalendarId = null
@@ -1081,6 +1109,11 @@
       // intentionally left set; a fresh page load resets module state.
       return true
     } catch (error) {
+      try {
+        await recoverFailedCalendarTransition(memberId, transition)
+      } catch (recoveryError) {
+        console.warn('[scheduling-section] connect-google recovery failed:', recoveryError && recoveryError.message)
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] connect-google failed:', error && error.message)
       connectBusy = false
@@ -1094,9 +1127,11 @@
     connectBusy = true
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
+    let memberId = null
+    let transition = null
     try {
-      const memberId = await writeMemberId()
-      const transition = await clearGrant(grantId)
+      memberId = await writeMemberId()
+      transition = await clearGrant(grantId, memberId)
       availability.manager = null
 
       const virtual = await createVirtualCalendarFlow(memberId)
@@ -1118,11 +1153,17 @@
       await updateAvail()
       await restorePaidCallIntent(transition.paidCallIntent)
       await refreshCanonicalConnectionState()
+      if (transition.oauthIntent) clearOAuthIntent(memberId)
       renderAvailabilityItems()
       renderSlotsPreview()
       console.log('[scheduling-section] disconnected Google Calendar, reverted to platform')
       return true
     } catch (error) {
+      try {
+        await recoverFailedCalendarTransition(memberId, transition)
+      } catch (recoveryError) {
+        console.warn('[scheduling-section] disconnect-google recovery failed:', recoveryError && recoveryError.message)
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] disconnect-google failed:', error && error.message)
       return false
@@ -1149,7 +1190,9 @@
         response.response.result.data &&
         response.response.result.data.url
       if (!url) throw new Error('grants/oauth returned no URL')
-      rememberOAuthIntent(memberId, redirectUri, paidCallIntent)
+      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent)) {
+        throw new Error('OAuth transition could not be retained')
+      }
       window.location.assign(url)
     } catch (error) {
       publishCalendarConnectionError()
@@ -1931,7 +1974,10 @@
       if (grantId) {
         const updated = await updateConfigs()
         if (!updated) {
-          if (configs.length === 0) await createFreeConfig()
+          const activeConfigs = configs.filter(function (config) {
+            return config.active !== false
+          })
+          if (activeConfigs.length === 0) await createFreeConfig()
           else throw new Error('Scheduler configuration update failed')
         }
       }
@@ -1970,8 +2016,12 @@
       await updateAvail()
       if (grantId) {
         const updated = await updateConfigs()
-        if (!updated && configs.length !== 0) {
-          throw new Error('Scheduler configuration update failed')
+        if (!updated) {
+          const activeConfigs = configs.filter(function (config) {
+            return config.active !== false
+          })
+          if (activeConfigs.length === 0) await createFreeConfig()
+          else throw new Error('Scheduler configuration update failed')
         }
       }
       await refreshCanonicalConnectionState()
@@ -2510,6 +2560,15 @@
 
       if (oauthCallback) {
         await consumeOAuthCallback()
+      } else {
+        const pendingTransition = readOAuthIntent(sessionMemberId)
+        if (pendingTransition && pendingTransition.paidCallIntent) {
+          const recovered = await recoverPaidCallAfterOAuthCancellation(
+            sessionMemberId,
+            pendingTransition,
+          )
+          if (recovered) clearOAuthIntent(sessionMemberId)
+        }
       }
 
       if (grantId) {
