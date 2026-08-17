@@ -107,20 +107,32 @@ function load(lists, options = {}) {
 
 /* --------------------------- the two-line cap --------------------------- */
 
-test('the applied height is capped at two lines, not the measured overflow', () => {
-  // The bug: 80px of content was written back as max-height, which overrode
-  // the stylesheet's `max-height: 2lh` and let the list grow past two lines.
+test('the shared height is capped at two lines, not the measured overflow', () => {
+  // The bug: 80px of content was written back as a height, which overrode the
+  // stylesheet's clamp and let the list grow past two lines.
   const a = companyList(80)
   const b = companyList(80)
   const page = load([a, b], { lineHeight: '20px' })
 
   page.fire('load')
 
-  assert.equal(a.style.maxHeight, '40px', 'two 20px lines, not the measured 80')
-  assert.equal(b.style.maxHeight, '40px', 'every list gets the same cap')
-  assert.equal(a.style.minHeight, '40px', 'min and max still agree, so rows line up')
-  assert.equal(b.style.minHeight, '40px')
+  assert.equal(a.style.minHeight, '40px', 'two 20px lines, not the measured 80')
+  assert.equal(b.style.minHeight, '40px', 'every list gets the same floor, so rows line up')
   assert.deepEqual(page.dispatched, ['expert-cards:relayout:done'])
+})
+
+test('no inline max-height is written, or the ellipsis is clipped away', () => {
+  // An inline max-height in px stops the box at two lines with no `…` painted,
+  // which is exactly the silent clip `-webkit-line-clamp: 2` replaced. The
+  // ceiling is the stylesheet's; this pass only ever writes the floor.
+  const a = companyList(80)
+  const b = companyList(20)
+  const page = load([a, b], { lineHeight: '20px' })
+
+  page.fire('load')
+
+  assert.ok(!a.style.maxHeight, 'the clamped list must keep its ellipsis')
+  assert.ok(!b.style.maxHeight, 'and a short list has nothing to cap anyway')
 })
 
 test('a list shorter than two lines is left at its measured height', () => {
@@ -130,8 +142,8 @@ test('a list shorter than two lines is left at its measured height', () => {
 
   page.fire('load')
 
-  assert.equal(short.style.maxHeight, '20px')
   assert.equal(short.style.minHeight, '20px')
+  assert.ok(!short.style.maxHeight)
 })
 
 test('the tallest list still sets the shared height, up to the cap', () => {
@@ -141,8 +153,8 @@ test('the tallest list still sets the shared height, up to the cap', () => {
 
   page.fire('load')
 
-  assert.equal(short.style.maxHeight, '34px', 'equalized on the tallest')
-  assert.equal(tall.style.maxHeight, '34px')
+  assert.equal(short.style.minHeight, '34px', 'equalized on the tallest')
+  assert.equal(tall.style.minHeight, '34px')
 })
 
 test('a fractional line height is rounded up, so the second line is not clipped', () => {
@@ -151,19 +163,20 @@ test('a fractional line height is rounded up, so the second line is not clipped'
 
   page.fire('load')
 
-  assert.equal(list.style.maxHeight, '41px', 'ceil(2 * 20.4)')
+  assert.equal(list.style.minHeight, '41px', 'ceil(2 * 20.4)')
 })
 
 test('line-height: normal writes no inline height, so the CSS clamp stays', () => {
-  // Writing the measured 80px back would override `max-height: 2lh`. With no
-  // line height to cap against, the stylesheet is the better authority.
+  // Writing the measured 80px back would push the list past its two clamped
+  // lines. With no line height to cap against, the stylesheet is the better
+  // authority.
   const list = companyList(80)
   const page = load([list], { lineHeight: 'normal' })
 
   page.fire('load')
 
-  assert.ok(!list.style.maxHeight, 'no inline max-height to beat max-height: 2lh')
-  assert.ok(!list.style.minHeight, 'and none to pad the list out either')
+  assert.ok(!list.style.minHeight, 'nothing to pad the list out')
+  assert.ok(!list.style.maxHeight, 'and nothing to clip the ellipsis either')
   assert.deepEqual(page.dispatched, ['expert-cards:relayout:done'], 'still settles')
 })
 
@@ -186,10 +199,10 @@ test('a list with no readable line height cannot uncap the rest of the page', ()
 
   page.fire('load')
 
-  assert.ok(!unreadable.style.maxHeight, 'left to the stylesheet')
-  assert.ok(!unreadable.style.minHeight)
-  assert.equal(normal.style.maxHeight, '40px', 'still capped at its own two lines')
-  assert.equal(normal.style.minHeight, '40px')
+  assert.ok(!unreadable.style.minHeight, 'left to the stylesheet')
+  assert.ok(!unreadable.style.maxHeight)
+  assert.equal(normal.style.minHeight, '40px', 'still capped at its own two lines')
+  assert.ok(!normal.style.maxHeight, 'and still no clip over the ellipsis')
 })
 
 test('each list is capped against its own line height, not the first one', () => {
@@ -201,8 +214,8 @@ test('each list is capped against its own line height, not the first one', () =>
 
   page.fire('load')
 
-  assert.equal(big.style.maxHeight, '40px', 'max of the capped contributions')
-  assert.equal(small.style.maxHeight, '40px', 'equalized on it, as rows must line up')
+  assert.equal(big.style.minHeight, '40px', 'max of the capped contributions')
+  assert.equal(small.style.minHeight, '40px', 'equalized on it, as rows must line up')
 })
 
 test('the layout pass runs once, not once per frame and again on the belt', () => {
@@ -214,7 +227,7 @@ test('the layout pass runs once, not once per frame and again on the belt', () =
 
   page.flush()
 
-  assert.equal(list.style.maxHeight, '40px', 'still capped after the belt fires')
+  assert.equal(list.style.minHeight, '40px', 'still capped after the belt fires')
   assert.deepEqual(page.dispatched, ['expert-cards:relayout:done'], 'exactly one pass')
 })
 
@@ -232,7 +245,7 @@ test('the requested relayout event runs the same capped pass', () => {
 
   page.fire('expert-cards:relayout')
 
-  assert.equal(list.style.maxHeight, '40px')
+  assert.equal(list.style.minHeight, '40px')
 })
 
 test('the init guard means a second load cannot bind a second pass', () => {
@@ -250,27 +263,38 @@ test('the init guard means a second load cannot bind a second pass', () => {
 
 test('the list is taken out of flex, or the companies stay one per row', () => {
   // A flex container blockifies its children, so `display: inline` on a
-  // company is ignored and each one claims its own line. This is the rule the
-  // 2lh clamp depends on. Doubled class so it still wins if the Designer's
-  // flex rule on the same class loads after this sheet.
+  // company is ignored and each one claims its own line. Doubled class so it
+  // still wins if the Designer's flex rule on the same class loads after this
+  // sheet. `-webkit-box` reads as a sentence exactly as `display: block` did,
+  // because the companies are inline either way — the earlier ban on
+  // `-webkit-line-clamp` was measured against flex with BLOCK children, which
+  // is not the shape this sheet ships.
   assert.match(
     liveCss,
-    /\.expert-card_company-list\.expert-card_company-list\s*\{[^}]*\bdisplay:\s*block\b/,
-    'no doubled-class `display: block` on .expert-card_company-list'
-  )
-  assert.doesNotMatch(
-    liveCss,
-    /-webkit-line-clamp/,
-    '-webkit-line-clamp re-stacks the companies one per line'
+    /\.expert-card_company-list\.expert-card_company-list\s*\{[^}]*display:\s*-webkit-box\b/,
+    'no doubled-class `display: -webkit-box` on .expert-card_company-list'
   )
 })
 
-test('the clamp is two lines of the list, clipped', () => {
-  assert.match(liveCss, /max-height:\s*2lh/, 'no `max-height: 2lh`')
+test('the clamp is two lines with an ellipsis, not a silent height clip', () => {
+  // A `max-height` clip stops at two lines and paints no `…`, so a card with
+  // ten companies read as a card with two. Only line-clamp shows the cut. The
+  // prefixed pair is deliberate: unprefixed `line-clamp` on a block does not
+  // clamp in this engine.
+  const doubled = liveCss.match(
+    /\.expert-card_company-list\.expert-card_company-list\s*\{[^}]*\}/
+  )
+  assert.ok(doubled, 'no doubled-class rule at all')
+  assert.match(doubled[0], /-webkit-line-clamp:\s*2\b/, 'no `-webkit-line-clamp: 2`')
+  assert.match(
+    doubled[0],
+    /-webkit-box-orient:\s*vertical\b/,
+    'line-clamp does nothing without a vertical box orientation'
+  )
   assert.match(
     liveCss,
     /\.expert-card_company-list\s*\{[^}]*\boverflow:\s*hidden\b/,
-    'the clamp needs overflow: hidden to bite'
+    'the clamp needs overflow: hidden to paint the ellipsis'
   )
 })
 
@@ -345,6 +369,8 @@ test('the earlier attempt is commented out, not live', () => {
     [/text-wrap:\s*pretty/, 'text-wrap: pretty re-balanced the two clamped lines'],
     [/--expert-card-company-line-height-unitless/, 'the line height is written directly'],
     [/p:empty/, 'hiding an empty last item left the previous comma trailing'],
+    [/max-height:\s*2lh/, 'a height clip stops at two lines but paints no ellipsis'],
+    [/display:\s*block/, 'the list is a -webkit-box now, or the clamp cannot paint'],
   ]) {
     assert.doesNotMatch(liveCss, pattern, why)
   }

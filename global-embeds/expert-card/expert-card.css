@@ -7,9 +7,14 @@
  *
  * The list is a flex container in the Designer, and flex blockifies its
  * children, so `display: inline` on a company never took effect and every
- * company got its own row. `display: block` puts the companies back into one
- * inline formatting context so they read as a sentence and the 2-line clamp
- * means what it says.
+ * company got its own row. `-webkit-box` puts the companies back into one
+ * inline formatting context so they read as a sentence.
+ *
+ * The 2-line clamp is `-webkit-line-clamp: 2`, not a `max-height` clip. Both
+ * stop at two lines, but only line-clamp paints the `…`: a height clip just
+ * cuts the third line off mid-glyph and leaves no sign that anything is
+ * missing. Nothing may write an inline `max-height` in px on this list either,
+ * because that reinstates the silent clip.
  *
  * Rules commented out below and marked "Backup" are the earlier attempt, kept
  * inert on purpose; the live declaration beside each one is the fix.
@@ -25,7 +30,11 @@
      equalize pass writes a shared min-height, so this only added an empty row.
   min-height: 1lh;
   */
+  /* Backup — this is the clip that ate the ellipsis: it stops the box at two
+     lines but paints no `…`, so a truncated list looked like a complete one.
+     `-webkit-line-clamp: 2` below is the clamp now.
   max-height: 2lh;
+  */
   overflow: hidden;
   /* Backup — both fought the comma: break-word split company names mid-word,
      and text-wrap: pretty re-balanced the two lines so the clamp cut elsewhere.
@@ -36,9 +45,22 @@
 
 /* Doubled class: outranks the Designer's flex layout on this same class
    whichever stylesheet loads last. Flex is what stacked each company on its
-   own row and put the commas at the start of the next line. */
+   own row and put the commas at the start of the next line.
+
+   `-webkit-box` is the display the clamp needs. It reads as a sentence exactly
+   like `display: block` did, because the companies below are `display: inline`
+   and so form one inline formatting context either way, but it is the only
+   display in this engine on which `-webkit-line-clamp` both clamps and paints
+   the ellipsis. Unprefixed `line-clamp` on a block does neither here. */
 .expert-card_company-list.expert-card_company-list {
+  /* Backup — clamped by `max-height` above instead, which cut the second line
+     without an ellipsis, so a card with ten companies read as a card with two.
   display: block;
+  */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   gap: 0;
 }
 
