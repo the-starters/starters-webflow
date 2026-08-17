@@ -1921,6 +1921,74 @@ test('OAuth cancellation rebuilds platform scheduling and restores the saved pai
   assert.equal(result.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
 })
 
+test('OAuth cancellation recovery reuses canonical resources after partial success', async () => {
+  const paidService = {
+    config_id: 'cfg-paid-existing',
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration: 45,
+    active: true,
+  }
+  const result = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?error=access_denied&error_description=cancelled&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: defaultAvailability(),
+          nylas_grant_id: 'vgrant-existing',
+          nylas_grant_email: 'virtual@example.com',
+          nylas_calendar_id: 'vcal-existing',
+        },
+      }),
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: [
+          {
+            config_id: 'cfg-free-existing',
+            grant_id: 'vgrant-existing',
+            duration: 30,
+            is_paid: false,
+            active: true,
+          },
+        ],
+      }),
+      '/starter/paid-call-settings/get/v3': () => ({
+        status: 200,
+        body: {
+          readiness: { paid_call_enabled: true },
+          services: [paidService],
+        },
+      }),
+    },
+  })
+  await settle()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(result.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
+})
+
 test('OAuth cancellation keeps recovery state when platform scheduling cannot be rebuilt', async () => {
   const result = loadWriter({
     hostname: 'thestarters.com',
@@ -1941,6 +2009,17 @@ test('OAuth cancellation keeps recovery state when platform scheduling cannot be
     },
     routes: {
       '/grants/create_virtual_account/v3': () => ({ status: 503, body: { message: 'try again' } }),
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: { ...defaultAvailability(), manager: null },
+          nylas_grant_id: null,
+          nylas_grant_email: null,
+          nylas_calendar_id: null,
+        },
+      }),
     },
   })
   await settle()

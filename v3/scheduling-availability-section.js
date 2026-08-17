@@ -732,6 +732,17 @@
 
   async function restorePaidCallIntent(intent) {
     if (!intent) return null
+    const existing = paidCallService(await xanoGet('/starter/paid-call-settings/get/v3'))
+    if (existing) {
+      if (
+        existing.title === intent.title &&
+        Number(existing.price_cents) === intent.price_cents &&
+        Number(existing.duration) === intent.duration_minutes
+      ) {
+        return existing
+      }
+      throw new Error('Canonical paid-call service conflicts with transition intent')
+    }
     await xanoPost('/starter/paid-call-settings/upsert/v3', {
       config_id: null,
       title: intent.title,
@@ -754,16 +765,26 @@
 
   async function recoverPaidCallAfterOAuthCancellation(memberId, intent) {
     if (!intent) return false
-    const virtual = await createVirtualCalendarFlow(memberId)
-    if (virtual.status !== 200) throw new Error('OAuth cancellation recovery failed')
-    grantId = virtual.grant_id
-    grantEmail = virtual.email
-    grantCalendarId = virtual.calendar_id
-    configs = []
+    await refreshCanonicalConnectionState()
+    let createdVirtual = false
+    if (grantId && (!grantEmail || !grantCalendarId)) {
+      throw new Error('Canonical calendar transition is incomplete')
+    }
+    if (!grantId) {
+      const virtual = await createVirtualCalendarFlow(memberId)
+      if (virtual.status !== 200) throw new Error('OAuth cancellation recovery failed')
+      grantId = virtual.grant_id
+      grantEmail = virtual.email
+      grantCalendarId = virtual.calendar_id
+      configs = []
+      createdVirtual = true
+    }
     ensureDefaultAvailability()
-    await createFreeConfig()
-    availability.manager = 'platform'
-    await updateAvail()
+    if (activeFreeConfigs().length === 0) await createFreeConfig()
+    if (createdVirtual || availability.manager === null) {
+      availability.manager = 'platform'
+      await updateAvail()
+    }
     await restorePaidCallIntent(intent)
     await refreshCanonicalConnectionState()
     return true

@@ -1055,6 +1055,58 @@ test('OAuth cancellation rebuilds platform scheduling and restores the saved pai
   )
 })
 
+test('OAuth cancellation recovery reuses canonical resources after partial success', async () => {
+  const result = loadSection({
+    search: '?error=access_denied&error_description=cancelled&state=member-a',
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+    serverState: {
+      grantId: 'vgrant-existing',
+      grantEmail: 'virtual@example.com',
+      calendarId: 'vcal-existing',
+      configs: [
+        {
+          config_id: 'cfg-free-existing',
+          grant_id: 'vgrant-existing',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+      paidService: {
+        config_id: 'cfg-paid-existing',
+        title: 'Paid Strategy Call',
+        price_cents: 42500,
+        duration: 45,
+        active: true,
+      },
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'platform',
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(
+    result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
+    false,
+  )
+})
+
 test('an active-booking disconnect rejection stops the Google-to-Platform switch', async () => {
   const { dom, calls, window } = loadSection({
     serverState: {
