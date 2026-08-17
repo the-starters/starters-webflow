@@ -856,11 +856,12 @@
     return true
   }
 
-  async function recoverFailedCalendarTransition(memberId, transition) {
-    if (!(memberId && transition && transition.oauthIntent)) return false
+  async function recoverFailedCalendarTransition(memberId, transition, error) {
+    const recoveryTransition = transition || (error && error.calendarTransition)
+    if (!(memberId && recoveryTransition && recoveryTransition.oauthIntent)) return false
     const recovered = await recoverPaidCallAfterOAuthCancellation(
       memberId,
-      transition.oauthIntent,
+      recoveryTransition.oauthIntent,
     )
     if (recovered) clearOAuthIntent(memberId)
     return recovered
@@ -1098,11 +1099,18 @@
     if (paidCallIntent && !oauthIntent) {
       throw new Error('Paid-call calendar transition could not be retained')
     }
-    const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
-    if (!result || result.connected !== false) {
-      throw new Error('grants/delete/v3 returned an invalid disconnected state')
+    const transition = { paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
+    try {
+      const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
+      if (!result || result.connected !== false) {
+        throw new Error('grants/delete/v3 returned an invalid disconnected state')
+      }
+      return Object.assign({ result: result }, transition)
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error('grants/delete/v3 failed')
+      failure.calendarTransition = transition
+      throw failure
     }
-    return { result: result, paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
   }
 
   /* ------------------------------------------------------------------ */
@@ -1342,7 +1350,7 @@
       }
     } catch (error) {
       try {
-        await recoverFailedCalendarTransition(memberId, transition)
+        await recoverFailedCalendarTransition(memberId, transition, error)
       } catch (recoveryError) {
         console.warn('[scheduling-writer] manager recovery failed:', recoveryError && recoveryError.message)
       }
@@ -1397,7 +1405,7 @@
       }
     } catch (error) {
       try {
-        await recoverFailedCalendarTransition(memberId, transition)
+        await recoverFailedCalendarTransition(memberId, transition, error)
       } catch (recoveryError) {
         console.warn('[scheduling-writer] disconnect recovery failed:', recoveryError && recoveryError.message)
       }

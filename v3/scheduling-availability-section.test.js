@@ -1135,6 +1135,61 @@ test('an active-booking disconnect rejection stops the Google-to-Platform switch
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
+test('an ambiguous grant deletion immediately restores the paid service', async () => {
+  let canonicalState = null
+  const result = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      paidService: {
+        config_id: 'cfg-paid-old',
+        title: 'Paid Strategy Call',
+        price_cents: 42500,
+        duration: 45,
+        active: true,
+      },
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/delete/v3': () => {
+        canonicalState.grantId = null
+        canonicalState.grantEmail = null
+        canonicalState.calendarId = null
+        canonicalState.paidService = null
+        return { status: 503, body: { message: 'response lost' } }
+      },
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 1)
+  assert.equal(
+    result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length,
+    1,
+  )
+  assert.deepEqual(result.state.paidService, {
+    config_id: 'cfg-paid-restored',
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration: 45,
+    active: true,
+  })
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.equal(
+    result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
+    false,
+  )
+})
+
 test('a failed calendar replacement retains paid intent and recovers it on reload', async () => {
   const firstLoad = loadSection({
     serverState: {

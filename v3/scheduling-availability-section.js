@@ -805,11 +805,12 @@
     return true
   }
 
-  async function recoverFailedCalendarTransition(memberId, transition) {
-    if (!(memberId && transition && transition.oauthIntent)) return false
+  async function recoverFailedCalendarTransition(memberId, transition, error) {
+    const recoveryTransition = transition || (error && error.calendarTransition)
+    if (!(memberId && recoveryTransition && recoveryTransition.oauthIntent)) return false
     const recovered = await recoverPaidCallAfterOAuthCancellation(
       memberId,
-      transition.oauthIntent,
+      recoveryTransition.oauthIntent,
     )
     if (recovered) clearOAuthIntent(memberId)
     return recovered
@@ -1019,17 +1020,24 @@
     if (paidCallIntent && !oauthIntent) {
       throw new Error('Paid-call calendar transition could not be retained')
     }
+    const transition = { paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
     // The authenticated Xano route owns the complete provider-first lifecycle:
     // active-booking guard, Nylas grant deletion, configuration cleanup,
     // canonical availability cleanup, and Memberstack reconciliation. Never
     // call the page's legacy clearGrantData helper or clear canonical fields
     // before this request, because doing so removes the ownership proof that
     // the composite route needs to delete the provider grant safely.
-    const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
-    if (!result || result.connected !== false) {
-      throw new Error('grants/delete/v3 returned an invalid disconnected state')
+    try {
+      const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
+      if (!result || result.connected !== false) {
+        throw new Error('grants/delete/v3 returned an invalid disconnected state')
+      }
+      return Object.assign({ result: result }, transition)
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error('grants/delete/v3 failed')
+      failure.calendarTransition = transition
+      throw failure
     }
-    return { result: result, paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
   }
 
   /* ------------------------------------------------------------------ */
@@ -1071,7 +1079,7 @@
       return true
     } catch (error) {
       try {
-        await recoverFailedCalendarTransition(memberId, transition)
+        await recoverFailedCalendarTransition(memberId, transition, error)
       } catch (recoveryError) {
         console.warn('[scheduling-section] connect-platform recovery failed:', recoveryError && recoveryError.message)
       }
@@ -1118,7 +1126,7 @@
       return true
     } catch (error) {
       try {
-        await recoverFailedCalendarTransition(memberId, transition)
+        await recoverFailedCalendarTransition(memberId, transition, error)
       } catch (recoveryError) {
         console.warn('[scheduling-section] connect-google recovery failed:', recoveryError && recoveryError.message)
       }
@@ -1171,7 +1179,7 @@
       return true
     } catch (error) {
       try {
-        await recoverFailedCalendarTransition(memberId, transition)
+        await recoverFailedCalendarTransition(memberId, transition, error)
       } catch (recoveryError) {
         console.warn('[scheduling-section] disconnect-google recovery failed:', recoveryError && recoveryError.message)
       }
