@@ -860,6 +860,24 @@ test('the approved production canary opens free booking inline and uses state-aw
       readOnly: false,
       parentElement: makeElement('label'),
     },
+    {
+      id: 'name',
+      value: 'Brand Tester',
+      readOnly: false,
+      parentElement: makeElement('label'),
+    },
+    {
+      id: 'email',
+      value: 'brand@example.com',
+      readOnly: false,
+      parentElement: makeElement('label'),
+    },
+    {
+      id: 'add_guest',
+      value: '',
+      readOnly: false,
+      parentElement: makeElement('label'),
+    },
   ]
   const bookingForm = {
     shadowRoot: {
@@ -939,7 +957,10 @@ test('the approved production canary opens free booking inline and uses state-aw
   assert.equal(bookingFields[1].value, 'mem_canary')
   assert.equal(bookingFields[0].readOnly, true)
   assert.equal(bookingFields[1].readOnly, true)
-  assert.notEqual(bookingFields[2].parentElement.style.display, 'none')
+  bookingFields.slice(2).forEach((field) => {
+    assert.notEqual(field.parentElement.style.display, 'none', `${field.id} must stay visible`)
+    assert.notEqual(field.parentElement.getAttribute('aria-hidden'), 'true')
+  })
 
   await page.back.listeners.click[0]({ preventDefault() {} })
   assert.equal(toggledTo, false)
