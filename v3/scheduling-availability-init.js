@@ -31,6 +31,7 @@
 
   let activeAvailability = null
   let activeConnectionState = 'loading'
+  let activeConfigurationCount = 0
 
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
@@ -279,7 +280,7 @@
     })
   }
 
-  function renderConnectionAction(state, availability, detail) {
+  function renderConnectionAction(state, availability) {
     const actions = Array.from(document.querySelectorAll('[calendar-connection-action]'))
     actions.forEach(function (action) {
       // The Calendar entry is a pending Action Item, not a second settings
@@ -290,8 +291,7 @@
         typeof action.closest === 'function'
           ? action.closest('[data-action-element="item"], .dash-hero_action-item')
           : null
-      const hasNylasAvailability =
-        Number(detail && detail.configurationCount) > 0
+      const hasNylasAvailability = activeConfigurationCount > 0
       if (item) {
         item.hidden = hasNylasAvailability
         item.style.display = hasNylasAvailability ? 'none' : ''
@@ -353,11 +353,18 @@
   function setConnectionState(state, detail) {
     const allowed = ['loading', 'disconnected', 'connected', 'reconnect', 'error']
     activeConnectionState = allowed.indexOf(state) > -1 ? state : 'error'
+    if (
+      detail &&
+      Object.prototype.hasOwnProperty.call(detail, 'configurationCount')
+    ) {
+      activeConfigurationCount = Number(detail.configurationCount) || 0
+    }
     document.documentElement.setAttribute(CONNECTION_STATUS_ATTRIBUTE, activeConnectionState)
     window.STARTER_SCHEDULING_CONNECTION = Object.assign({}, detail || {}, {
       state: activeConnectionState,
+      configurationCount: activeConfigurationCount,
     })
-    renderConnectionAction(activeConnectionState, activeAvailability, detail)
+    renderConnectionAction(activeConnectionState, activeAvailability)
     if (activeAvailability) renderState(activeAvailability, activeConnectionState, false)
     return activeConnectionState
   }

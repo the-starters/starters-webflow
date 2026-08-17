@@ -155,6 +155,89 @@ test('connected Stripe states remove the Action Item root', () => {
   }
 })
 
+test('status refresh keeps a canonically connected Action Item hidden while polling', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+  }
+  const { root } = stripeRoot()
+  let resolveStatus
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.fetch = () =>
+    new Promise((resolve) => {
+      resolveStatus = resolve
+    })
+  api.__resetXanoToken()
+  api.renderRoots([root], 'ready')
+
+  try {
+    const refresh = api.loadDashboardStatus([root], false)
+    await new Promise(setImmediate)
+
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'loading')
+    assert.equal(root.hidden, true)
+    assert.equal(root.style.display, 'none')
+
+    resolveStatus(response({ connected: true, charges_enabled: true }))
+    await refresh
+    assert.equal(root.hidden, true)
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+  }
+})
+
+test('Dashboard access failure keeps a canonically connected Action Item hidden', async () => {
+  const previous = {
+    console: global.console,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    memberstack: global.$memberstackDom,
+    open: global.open,
+  }
+  const { root } = stripeRoot()
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+    opener: global,
+  }
+  global.console = { ...console, error: () => {} }
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.open = () => stripeTab
+  global.fetch = async () => response({}, { ok: false, status: 503 })
+  api.__resetXanoToken()
+  api.renderRoots([root], 'ready')
+
+  try {
+    assert.equal(
+      await api.openDashboardInNewTab(
+        api.createExclusiveRunner(),
+        new FakeElement('A'),
+        [root],
+        'member-123',
+      ),
+      false,
+    )
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+    assert.equal(root.hidden, true)
+    assert.equal(root.style.display, 'none')
+  } finally {
+    api.__resetXanoToken()
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
+  }
+})
+
 test('the two authored earnings tiles resolve to disconnected and ready states', () => {
   const connect = new FakeElement()
   const history = new FakeElement()

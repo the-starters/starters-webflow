@@ -526,6 +526,37 @@ test('keeps the Calendar Action Item until Nylas availability exists', async () 
   assert.equal(result.connectionItem.style.display, '')
 })
 
+test('reinitializing retains the last canonical Nylas configuration count', async () => {
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability: { items: {}, manager: 'calendar' },
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'connected', configurationCount: 1 },
+  })
+  assert.equal(result.connectionItem.hidden, true)
+
+  await result.window.StarterSchedulingAvailability.initialize()
+
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+  assert.equal(
+    result.window.STARTER_SCHEDULING_CONNECTION.configurationCount,
+    1,
+  )
+})
+
 test('renders partial provider state as reconnect and keeps the CTA actionable', async () => {
   const availability = {
     items: { general: { days: [1], start: '09:00', end: '18:00' } },

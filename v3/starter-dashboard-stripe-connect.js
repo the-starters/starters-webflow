@@ -58,6 +58,7 @@
   const elementSelector = (name) =>
     '[' + ELEMENT_ATTR + '="' + name + '"]'
   const actionSelector = (name) => '[' + ACTION_ATTR + '="' + name + '"]'
+  const canonicalConnectedByRoot = new WeakMap()
 
   function show(element, visible) {
     if (!element) return
@@ -75,11 +76,13 @@
 
   function renderRoots(roots, view) {
     roots.forEach(function (root) {
+      if (view === 'incomplete' || view === 'ready' || view === 'review') {
+        canonicalConnectedByRoot.set(root, true)
+      } else if (view === 'disconnected') {
+        canonicalConnectedByRoot.set(root, false)
+      }
       setView(root, view)
-      show(
-        root,
-        view !== 'incomplete' && view !== 'ready' && view !== 'review',
-      )
+      show(root, canonicalConnectedByRoot.get(root) !== true)
     })
   }
 
