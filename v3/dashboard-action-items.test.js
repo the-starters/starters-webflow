@@ -347,14 +347,15 @@ function brandDocument(post, browse) {
   }
 }
 
-function installBrandGlobals({ list, visited = false }) {
+function installBrandGlobals({ list, visited = false, installApi = true }) {
   const listeners = new Map()
   global.location = { pathname: '/brand-dashboard' }
   global.memberReady = Promise.resolve({ id: 'brand-1' })
-  global.Opp30 = { API: { brandOppList: list } }
+  if (installApi) global.Opp30 = { API: { brandOppList: list } }
+  global.$memberstackDom = {}
   global.StartersV3RouteGuard = {
-    hasBrandAllStartersVisit: (memberId) =>
-      memberId === 'brand-1' && visited,
+    hasBrandAllStartersVisit: async (_memberstack, member) =>
+      member.id === 'brand-1' && visited,
   }
   global.CustomEvent = function (type, init) {
     return { type, detail: init && init.detail }
@@ -363,6 +364,13 @@ function installBrandGlobals({ list, visited = false }) {
     const handlers = listeners.get(type) || []
     handlers.push(listener)
     listeners.set(type, handlers)
+  }
+  global.removeEventListener = (type, listener) => {
+    const handlers = listeners.get(type) || []
+    listeners.set(
+      type,
+      handlers.filter((handler) => handler !== listener),
+    )
   }
   global.dispatchEvent = (event) => {
     ;(listeners.get(event.type) || []).forEach((listener) => listener(event))
@@ -376,9 +384,11 @@ function clearBrandGlobals() {
     'location',
     'memberReady',
     'Opp30',
+    '$memberstackDom',
     'StartersV3RouteGuard',
     'CustomEvent',
     'addEventListener',
+    'removeEventListener',
     'dispatchEvent',
   ].forEach((name) => delete global[name])
 }
@@ -445,6 +455,31 @@ test('Brand canonical read failures leave unfinished rows visible and settle as 
     assert.notEqual(post.style.display, 'none')
     assert.equal(browse.style.display, 'none')
     assert.equal(errors, 1)
+  } finally {
+    clearBrandGlobals()
+  }
+})
+
+test('Brand opportunity check waits for the shared API to become ready', async () => {
+  const post = row()
+  const browse = row()
+  installBrandGlobals({
+    list: async () => ({ items: [{ id: 9 }], itemsTotal: 1 }),
+    installApi: false,
+  })
+
+  try {
+    const mounted = api.mountBrandActionItems(brandDocument(post, browse))
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    global.Opp30 = {
+      API: {
+        brandOppList: async () => ({ items: [{ id: 9 }], itemsTotal: 1 }),
+      },
+    }
+    global.dispatchEvent({ type: 'starters:opp30-ready' })
+
+    assert.equal(await mounted, true)
+    assert.equal(post.style.display, 'none')
   } finally {
     clearBrandGlobals()
   }

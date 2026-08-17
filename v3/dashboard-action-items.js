@@ -52,6 +52,8 @@
   ]
   const CHANGED_EVENT = 'actionItemsChanged'
   const OPPORTUNITY_CREATED_EVENT = 'starters:opportunity-created'
+  const OPPORTUNITY_API_READY_EVENT = 'starters:opp30-ready'
+  const OPPORTUNITY_API_TIMEOUT_MS = 4000
   const BRAND_READY_EVENT = 'starterBrandActionItemsReady'
   const BRAND_ERROR_EVENT = 'starterBrandActionItemsError'
 
@@ -171,6 +173,37 @@
     return Array.isArray(response.items) && response.items.length > 0
   }
 
+  function opportunityApi() {
+    const api = global.Opp30 && global.Opp30.API
+    return api && typeof api.brandOppList === 'function' ? api : null
+  }
+
+  function waitForOpportunityApi() {
+    const ready = opportunityApi()
+    if (ready) return Promise.resolve(ready)
+
+    return new Promise(function (resolve, reject) {
+      let settled = false
+      const finish = function (api, error) {
+        if (settled) return
+        settled = true
+        global.clearTimeout(timeout)
+        global.removeEventListener(OPPORTUNITY_API_READY_EVENT, onReady)
+        if (api) resolve(api)
+        else reject(error)
+      }
+      const onReady = function () {
+        const api = opportunityApi()
+        if (api) finish(api)
+      }
+      const timeout = global.setTimeout(function () {
+        finish(null, new Error('Opportunity API unavailable'))
+      }, OPPORTUNITY_API_TIMEOUT_MS)
+      global.addEventListener(OPPORTUNITY_API_READY_EVENT, onReady)
+      onReady()
+    })
+  }
+
   async function mountBrandActionItems(doc) {
     if (!global.location || global.location.pathname !== '/brand-dashboard') {
       return false
@@ -186,20 +219,18 @@
     try {
       const member = await currentMember()
       if (!member || !member.id) throw new Error('Member unavailable')
+      const memberstack = global.$memberstackDom
       const routeGuard = global.StartersV3RouteGuard
       if (
         rows.browse &&
         routeGuard &&
         typeof routeGuard.hasBrandAllStartersVisit === 'function' &&
-        routeGuard.hasBrandAllStartersVisit(member.id)
+        (await routeGuard.hasBrandAllStartersVisit(memberstack, member))
       ) {
         show(rows.browse, false)
       }
 
-      const opportunities = global.Opp30 && global.Opp30.API
-      if (!opportunities || typeof opportunities.brandOppList !== 'function') {
-        throw new Error('Opportunity API unavailable')
-      }
+      const opportunities = await waitForOpportunityApi()
       const response = await opportunities.brandOppList('', 1, 1)
       if (responseHasOpportunity(response)) hidePost()
       emitNamed(BRAND_READY_EVENT)
@@ -377,6 +408,7 @@
     mountBrandActionItems,
     brandRows,
     responseHasOpportunity,
+    waitForOpportunityApi,
     resolveScopes,
     setTotal,
     shouldSettle,

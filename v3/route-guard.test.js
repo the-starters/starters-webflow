@@ -80,6 +80,17 @@ function loadGuard(options = {}) {
     options.storageThrows,
   )
   const localStorage = localStorageDouble(options.localStorageThrows)
+  let memberJson = options.memberJson || {}
+  const memberJsonUpdates = []
+  const memberJsonMethods = {
+    async getMemberJSON() {
+      return { data: memberJson }
+    },
+    async updateMemberJSON(payload) {
+      memberJson = payload.json
+      memberJsonUpdates.push(payload.json)
+    },
+  }
   const window = {
     CustomEvent: class CustomEvent {
       constructor(name, init) {
@@ -106,15 +117,18 @@ function loadGuard(options = {}) {
   if (Object.prototype.hasOwnProperty.call(options, 'delayedMember')) {
     window.setTimeout(() => {
       window.$memberstackDom = {
+        ...memberJsonMethods,
         getCurrentMember: async () => ({ data: options.delayedMember }),
       }
     }, options.memberstackDelayMs || 25)
   } else if (Object.prototype.hasOwnProperty.call(options, 'getCurrentMember')) {
     window.$memberstackDom = {
+      ...memberJsonMethods,
       getCurrentMember: options.getCurrentMember,
     }
   } else if (Object.prototype.hasOwnProperty.call(options, 'member')) {
     window.$memberstackDom = {
+      ...memberJsonMethods,
       getCurrentMember: async () => ({
         data: typeof options.member === 'function' ? options.member() : options.member,
       }),
@@ -147,6 +161,7 @@ function loadGuard(options = {}) {
     window,
     sessionStorage,
     localStorage,
+    memberJsonUpdates,
   }
 }
 
@@ -1146,14 +1161,27 @@ test('a paid Brand stays on /all-starters and is bounced off /quiz-results', asy
   assert.equal(bounced.location.replaced, '/brand-dashboard')
 })
 
-test('an allowed Brand visit to /all-starters records a member-scoped completion', async () => {
+test('an allowed Brand visit persists completion in authenticated member JSON', async () => {
   for (const member of [BRAND_PAID, BRAND_FREE]) {
-    const result = loadGuard({ pathname: '/all-starters', member })
+    const result = loadGuard({
+      pathname: '/all-starters',
+      member,
+      memberJson: { preserved: true },
+    })
     await flush()
-    const key = `starters:v3:brand-actions:all-starters:${member.id}`
-    assert.deepEqual(result.localStorage.written, [[key, '1']])
-    assert.equal(result.api.hasBrandAllStartersVisit(member.id), true)
-    assert.equal(result.api.hasBrandAllStartersVisit('another-member'), false)
+    assert.equal(result.memberJsonUpdates.length, 1)
+    assert.equal(result.memberJsonUpdates[0].preserved, true)
+    assert.match(
+      result.memberJsonUpdates[0].brandActionItems.allStartersVisitedAt,
+      /^\d{4}-\d{2}-\d{2}T/,
+    )
+    assert.equal(
+      await result.api.hasBrandAllStartersVisit(
+        result.window.$memberstackDom,
+        member,
+      ),
+      true,
+    )
   }
 })
 
@@ -1161,18 +1189,26 @@ test('a denied Talent visit does not complete the Brand browse action', async ()
   const result = loadGuard({ pathname: '/all-starters', member: TALENT })
   await flush()
   assert.equal(result.location.replaced, '/starter-dashboard')
-  assert.deepEqual(result.localStorage.written, [])
+  assert.deepEqual(result.memberJsonUpdates, [])
 })
 
-test('blocked local storage never changes /all-starters routing', async () => {
+test('failed member JSON persistence never changes /all-starters routing', async () => {
   const result = loadGuard({
     pathname: '/all-starters',
     member: BRAND_PAID,
-    localStorageThrows: true,
   })
+  result.window.$memberstackDom.getMemberJSON = async () => {
+    throw new Error('member JSON blocked')
+  }
   await flush()
   assert.equal(result.location.replaced, undefined)
-  assert.equal(result.api.hasBrandAllStartersVisit(BRAND_PAID.id), false)
+  assert.equal(
+    await result.api.hasBrandAllStartersVisit(
+      result.window.$memberstackDom,
+      BRAND_PAID,
+    ),
+    false,
+  )
 })
 
 test('the exact paid Brand email can use the production quiz email canary only', async () => {

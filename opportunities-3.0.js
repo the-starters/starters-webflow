@@ -6028,4 +6028,10 @@
     readOpportunityForm,
     validateOpportunityPayload,
   }
+  if (
+    typeof window.CustomEvent === 'function' &&
+    typeof window.dispatchEvent === 'function'
+  ) {
+    window.dispatchEvent(new window.CustomEvent('starters:opp30-ready'))
+  }
 })()
