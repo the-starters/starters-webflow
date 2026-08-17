@@ -602,6 +602,7 @@ test('the TEST canary creates one native free card only after canonical free con
   let schedulerCalls = 0
   const context = makeContext({
     page,
+    record: { rate: 125, 'retainer-rate': 800, 'retainer-enabled': true },
     member: {
       id: 'brand_test_member',
       auth: { email: 'brand-test@example.com' },
@@ -632,6 +633,11 @@ test('the TEST canary creates one native free card only after canonical free con
     card.hasAttribute('data-runtime-free-call-card'),
   )
   assert.equal(runtimeCards.length, 1)
+  assert.equal(
+    page.servicesList.children.filter((card) => card.hasAttribute('data-rate-card')).length,
+    2,
+    'rate cards must render without inheriting the canonical free-call marker',
+  )
   assert.equal(runtimeCards[0].getAttribute('data-type'), 'free')
   assert.equal(runtimeCards[0].getAttribute('has-connection'), 'free')
   assert.equal(runtimeCards[0].getAttribute('data-modal-trigger'), null)

@@ -297,6 +297,7 @@
 
           el.removeAttribute('hidden');
           el.removeAttribute('data-runtime-call-template');
+          el.removeAttribute('data-runtime-free-call-card');
           el.setAttribute('aria-hidden', 'false');
 
           // Keep data-signup-trigger-* so signup-attribution.js opens the
