@@ -333,3 +333,119 @@ test('render scheduler falls back to setTimeout without rAF', async () => {
 
   if (previous) global.requestAnimationFrame = previous
 })
+
+function brandDocument(post, browse) {
+  const link = { closest: () => browse }
+  return {
+    querySelector(selector) {
+      if (selector === '[data-project-proposal-template="true"]') return post
+      if (selector === '.dash-hero_action-item a[href="/all-starters"]') {
+        return link
+      }
+      return null
+    },
+  }
+}
+
+function installBrandGlobals({ list, visited = false }) {
+  const listeners = new Map()
+  global.location = { pathname: '/brand-dashboard' }
+  global.memberReady = Promise.resolve({ id: 'brand-1' })
+  global.Opp30 = { API: { brandOppList: list } }
+  global.StartersV3RouteGuard = {
+    hasBrandAllStartersVisit: (memberId) =>
+      memberId === 'brand-1' && visited,
+  }
+  global.CustomEvent = function (type, init) {
+    return { type, detail: init && init.detail }
+  }
+  global.addEventListener = (type, listener) => {
+    const handlers = listeners.get(type) || []
+    handlers.push(listener)
+    listeners.set(type, handlers)
+  }
+  global.dispatchEvent = (event) => {
+    ;(listeners.get(event.type) || []).forEach((listener) => listener(event))
+    return true
+  }
+  return listeners
+}
+
+function clearBrandGlobals() {
+  ;[
+    'location',
+    'memberReady',
+    'Opp30',
+    'StartersV3RouteGuard',
+    'CustomEvent',
+    'addEventListener',
+    'dispatchEvent',
+  ].forEach((name) => delete global[name])
+}
+
+test('Brand actions hide after a canonical post and member-scoped browse visit', async () => {
+  const post = row()
+  const browse = row()
+  installBrandGlobals({
+    list: async () => ({ items: [{ id: 7 }], itemsTotal: 1 }),
+    visited: true,
+  })
+
+  try {
+    assert.equal(
+      await api.mountBrandActionItems(brandDocument(post, browse)),
+      true,
+    )
+    assert.equal(post.style.display, 'none')
+    assert.equal(browse.style.display, 'none')
+  } finally {
+    clearBrandGlobals()
+  }
+})
+
+test('Brand actions remain until completed and a successful create hides only the template', async () => {
+  const post = row()
+  const browse = row()
+  installBrandGlobals({
+    list: async () => ({ items: [], itemsTotal: 0 }),
+  })
+
+  try {
+    await api.mountBrandActionItems(brandDocument(post, browse))
+    assert.notEqual(post.style.display, 'none')
+    assert.notEqual(browse.style.display, 'none')
+
+    global.dispatchEvent({ type: 'starters:opportunity-created' })
+    assert.equal(post.style.display, 'none')
+    assert.notEqual(browse.style.display, 'none')
+  } finally {
+    clearBrandGlobals()
+  }
+})
+
+test('Brand canonical read failures leave unfinished rows visible and settle as an error', async () => {
+  const post = row()
+  const browse = row()
+  const listeners = installBrandGlobals({
+    list: async () => {
+      throw new Error('canonical read failed')
+    },
+    visited: true,
+  })
+  let errors = 0
+  listeners.set('starterBrandActionItemsError', [() => {
+    errors += 1
+  }])
+
+  try {
+    assert.equal(
+      await api.mountBrandActionItems(brandDocument(post, browse)),
+      false,
+    )
+    assert.notEqual(post.style.display, 'none')
+    assert.equal(browse.style.display, 'none')
+    assert.equal(errors, 1)
+  } finally {
+    clearBrandGlobals()
+  }
+})

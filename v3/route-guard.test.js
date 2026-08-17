@@ -47,6 +47,22 @@ function sessionStorageDouble(pending, throws) {
   }
 }
 
+function localStorageDouble(throws) {
+  const values = new Map()
+  return {
+    written: [],
+    getItem(key) {
+      if (throws) throw new Error('storage blocked')
+      return values.has(key) ? values.get(key) : null
+    },
+    setItem(key, value) {
+      if (throws) throw new Error('storage blocked')
+      values.set(key, String(value))
+      this.written.push([key, String(value)])
+    },
+  }
+}
+
 function loadGuard(options = {}) {
   const attributes = {}
   const events = []
@@ -63,6 +79,7 @@ function loadGuard(options = {}) {
     options.pending,
     options.storageThrows,
   )
+  const localStorage = localStorageDouble(options.localStorageThrows)
   const window = {
     CustomEvent: class CustomEvent {
       constructor(name, init) {
@@ -76,6 +93,7 @@ function loadGuard(options = {}) {
       events.push(event)
     },
     location,
+    localStorage,
     setInterval,
     setTimeout,
     clearInterval,
@@ -128,6 +146,7 @@ function loadGuard(options = {}) {
     location,
     window,
     sessionStorage,
+    localStorage,
   }
 }
 
@@ -1125,6 +1144,35 @@ test('a paid Brand stays on /all-starters and is bounced off /quiz-results', asy
   const bounced = loadGuard({ pathname: '/quiz-results', member: BRAND_PAID })
   await flush()
   assert.equal(bounced.location.replaced, '/brand-dashboard')
+})
+
+test('an allowed Brand visit to /all-starters records a member-scoped completion', async () => {
+  for (const member of [BRAND_PAID, BRAND_FREE]) {
+    const result = loadGuard({ pathname: '/all-starters', member })
+    await flush()
+    const key = `starters:v3:brand-actions:all-starters:${member.id}`
+    assert.deepEqual(result.localStorage.written, [[key, '1']])
+    assert.equal(result.api.hasBrandAllStartersVisit(member.id), true)
+    assert.equal(result.api.hasBrandAllStartersVisit('another-member'), false)
+  }
+})
+
+test('a denied Talent visit does not complete the Brand browse action', async () => {
+  const result = loadGuard({ pathname: '/all-starters', member: TALENT })
+  await flush()
+  assert.equal(result.location.replaced, '/starter-dashboard')
+  assert.deepEqual(result.localStorage.written, [])
+})
+
+test('blocked local storage never changes /all-starters routing', async () => {
+  const result = loadGuard({
+    pathname: '/all-starters',
+    member: BRAND_PAID,
+    localStorageThrows: true,
+  })
+  await flush()
+  assert.equal(result.location.replaced, undefined)
+  assert.equal(result.api.hasBrandAllStartersVisit(BRAND_PAID.id), false)
 })
 
 test('the exact paid Brand email can use the production quiz email canary only', async () => {

@@ -64,6 +64,8 @@
     'thestarters.com',
     'www.thestarters.com',
   ])
+  var BRAND_ALL_STARTERS_VISIT_KEY_PREFIX =
+    'starters:v3:brand-actions:all-starters:'
 
   // Identical to v3/auth-route.js and opportunities-3.0.js (MS_PLAN_ROLES).
   var PLAN_ROLES = {
@@ -406,6 +408,36 @@
 
   function memberRoleError(member) {
     return roleResolution(member).error
+  }
+
+  function brandAllStartersVisitKey(memberId) {
+    var normalizedId = String(memberId || '').trim()
+    return normalizedId
+      ? BRAND_ALL_STARTERS_VISIT_KEY_PREFIX + normalizedId
+      : ''
+  }
+
+  function recordBrandAllStartersVisit(member) {
+    var role = memberRole(member)
+    var key = brandAllStartersVisitKey(member && member.id)
+    if ((role !== 'brand-paid' && role !== 'brand-free') || !key) return false
+    try {
+      if (!window.localStorage) return false
+      window.localStorage.setItem(key, '1')
+      return true
+    } catch (error) {
+      return false
+    }
+  }
+
+  function hasBrandAllStartersVisit(memberId) {
+    var key = brandAllStartersVisitKey(memberId)
+    if (!key) return false
+    try {
+      return !!window.localStorage && window.localStorage.getItem(key) === '1'
+    } catch (error) {
+      return false
+    }
   }
 
   function roleHome(member) {
@@ -902,6 +934,13 @@
       )
       return
     }
+    if (
+      !target &&
+      (window.location.pathname === '/all-starters' ||
+        window.location.pathname === '/all-starters/')
+    ) {
+      recordBrandAllStartersVisit(member)
+    }
     if (target) replaceLocation(target)
   }
 
@@ -913,6 +952,9 @@
     roleResolution: roleResolution,
     memberRole: memberRole,
     memberRoleError: memberRoleError,
+    brandAllStartersVisitKey: brandAllStartersVisitKey,
+    recordBrandAllStartersVisit: recordBrandAllStartersVisit,
+    hasBrandAllStartersVisit: hasBrandAllStartersVisit,
     roleHome: roleHome,
     hasCompletedQuiz: hasCompletedQuiz,
     hasReadyPendingQuiz: hasReadyPendingQuiz,

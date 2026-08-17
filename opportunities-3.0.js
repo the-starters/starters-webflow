@@ -479,6 +479,20 @@
           has_message: path === 'starter/applications/submit' ? Boolean(body && body.message) : undefined,
         })
       }
+      if (
+        path === 'brand/opportunities/create' &&
+        typeof window.CustomEvent === 'function' &&
+        typeof window.dispatchEvent === 'function'
+      ) {
+        window.dispatchEvent(
+          new window.CustomEvent('starters:opportunity-created', {
+            detail: {
+              opportunityId:
+                (data && (data.opportunity_id || data.id)) || null,
+            },
+          }),
+        )
+      }
       assertMemberScopeGeneration(generation)
       return data
     } catch (error) {

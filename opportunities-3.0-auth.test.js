@@ -118,6 +118,7 @@ async function loadBridge(
     readyState: 'loading',
   }
   const trackCalls = []
+  const dispatchedEvents = []
   const diagnosticStorage = new Map()
   const copiedDiagnostics = []
   const window = {
@@ -137,6 +138,7 @@ async function loadBridge(
     clearInterval,
     clearTimeout,
     dispatchEvent(event) {
+      dispatchedEvents.push(event)
       for (const listener of windowListeners.get(event.type) || []) listener(event)
     },
     removeEventListener(type, listener) {
@@ -145,6 +147,12 @@ async function loadBridge(
     },
     setInterval,
     setTimeout: setTimeoutImpl,
+  }
+  window.CustomEvent = class CustomEvent {
+    constructor(type, options) {
+      this.type = type
+      this.detail = options?.detail
+    }
   }
   if (workflowDiagnosticsReady) {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
@@ -228,6 +236,7 @@ async function loadBridge(
     fetch: window.fetch,
     location,
     trackCalls,
+    dispatchedEvents,
     diagnosticStorage,
     copiedDiagnostics,
     appendedScripts,
@@ -495,6 +504,36 @@ test('failed mutation exposes a safe diagnostic on the thrown error', async () =
       return true
     },
   )
+  assert.equal(
+    bridge.dispatchedEvents.some(
+      (event) => event.type === 'starters:opportunity-created',
+    ),
+    false,
+  )
+})
+
+test('a successful opportunity create emits the Brand action completion event', async () => {
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) {
+        return response({ authToken: 'xano-token' })
+      }
+      if (url.includes('/brand/opportunities/create')) {
+        return response({ id: 712 }, true, 201)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+
+  await bridge.API.brandOppCreate({ title: 'First opportunity' })
+
+  const created = bridge.dispatchedEvents.filter(
+    (event) => event.type === 'starters:opportunity-created',
+  )
+  assert.equal(created.length, 1)
+  assert.equal(created[0].detail.opportunityId, 712)
 })
 
 test('loads the matching-version diagnostic helper before an opportunity mutation', async () => {
