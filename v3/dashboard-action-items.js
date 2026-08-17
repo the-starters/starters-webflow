@@ -154,12 +154,17 @@
   }
 
   function brandRows(doc) {
-    const post = doc.querySelector('[data-project-proposal-template="true"]')
+    const postTemplate = doc.querySelector(
+      '[data-project-proposal-template="true"]',
+    )
     const browseLink = doc.querySelector(
       '.dash-hero_action-item a[href="/all-starters"]',
     )
     return {
-      post,
+      post:
+        postTemplate && typeof postTemplate.closest === 'function'
+          ? postTemplate.closest('.dash-hero_action-item') || postTemplate
+          : postTemplate,
       browse:
         browseLink && typeof browseLink.closest === 'function'
           ? browseLink.closest('.dash-hero_action-item')

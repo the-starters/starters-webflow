@@ -393,6 +393,20 @@ function clearBrandGlobals() {
   ].forEach((name) => delete global[name])
 }
 
+test('Brand post action resolves the authored template to its outer action row', () => {
+  const post = row()
+  const browse = row()
+  const template = {
+    closest(selector) {
+      return selector === '.dash-hero_action-item' ? post : null
+    },
+  }
+
+  const rows = api.brandRows(brandDocument(template, browse))
+  assert.equal(rows.post, post)
+  assert.equal(rows.browse, browse)
+})
+
 test('Brand actions hide after a canonical post and member-scoped browse visit', async () => {
   const post = row()
   const browse = row()
