@@ -77,7 +77,8 @@ another script carries `data-app-id` or `data-search-key`:
 ```
 
 Mark each new managed browse section. Keep existing wf-algolia attributes and
-add only the resource attribute:
+add the resource attribute. A Static List that needs a Sort Replica also gets
+`data-starters-v3-algolia-sort` (see below).
 
 ```html
 <div
@@ -124,7 +125,8 @@ Three consequences follow:
   for the whole page, exactly like an unknown sort button value.
 - An authored replica name on `wf-algolia-index` does not select a replica. The
   resolver overwrites it with the host Starter index unless
-  `data-starters-v3-algolia-sort` names the sort.
+  `data-starters-v3-algolia-sort` or `wf-algolia-sort-index` on that same
+  element names the sort.
 
 An `opportunities` resource ignores Starter sort replicas.
 

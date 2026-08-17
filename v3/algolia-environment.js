@@ -10,6 +10,7 @@
  * - script[data-starters-v3-algolia-client]
  * - [data-starters-v3-algolia-resource="starters"]
  * - [data-starters-v3-algolia-resource="opportunities"]
+ * - [data-starters-v3-algolia-sort]
  * - [wf-algolia-sort-index]
  *
  * A starters resource that also carries a known logical sort in
