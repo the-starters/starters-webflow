@@ -952,10 +952,12 @@ authenticated Xano `contracts/link/v3`; this route is limited to `sent`,
 `viewed`, and `partial` contract states. `View Signed Contract` instead requests
 the completed PDF from the separate authenticated Xano
 `contracts/download/v3` route and opens the returned PDF through a temporary
-browser object URL. Both paths open in a new tab when the browser permits it and
-fall back to the current tab. No PandaDoc credential or stored contract URL is
-exposed in the page. Xano rechecks Brand or Starter project ownership,
-environment, canonical V3 Standard Contract state, and the live PandaDoc
+browser object URL. Both paths reserve and open a new tab from the click on the
+Brand and Starter dashboards. They never replace the dashboard in the current
+tab. If the browser blocks the new tab, the controller asks the member to allow
+pop-ups and does not request a contract session. No PandaDoc credential or
+stored contract URL is exposed in the page. Xano rechecks Brand or Starter
+project ownership, environment, canonical V3 Standard Contract state, and the live PandaDoc
 document status before returning either a one-hour recipient session or a
 completed PDF. Missing projects, own-contract or legacy rows, non-completed PDF
 requests, wrong owners, and wrong-environment rows fail closed. Neither browser

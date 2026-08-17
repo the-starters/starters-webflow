@@ -3173,8 +3173,19 @@
     projectWorkflowActionLocks.set(projectId, 'contract')
     setProjectContractPending(projectId, true, action)
     let contractWindow = null
+    let contractWindowNavigated = false
     let releaseObjectUrl = null
     try {
+      if (typeof window.open === 'function') contractWindow = window.open('', '_blank')
+      if (!contractWindow) {
+        showProjectContractFeedback(
+          projectId,
+          'Allow pop-ups to open the contract in a new tab.',
+          true,
+        )
+        return
+      }
+      contractWindow.opener = null
       const project = await currentProjectContext(card, true)
       if (!project) {
         showProjectContractFeedback(projectId, 'Project details unavailable', true)
@@ -3190,7 +3201,6 @@
         showProjectContractFeedback(projectId, 'Contract is not available yet', true)
         return
       }
-      if (typeof window.open === 'function') contractWindow = window.open('', '_blank')
       let url = ''
       if (projectContractIsDownloadable(project)) {
         const blob = await API.contractDownload(project.id || project.project_id)
@@ -3212,21 +3222,27 @@
         if (releaseObjectUrl && typeof contractWindow.addEventListener === 'function') {
           contractWindow.addEventListener('load', releaseObjectUrl, { once: true })
         }
-        contractWindow.opener = null
         contractWindow.location.href = url
+        contractWindowNavigated = true
       } else {
-        if (releaseObjectUrl) window.addEventListener('pagehide', releaseObjectUrl, { once: true })
-        window.location.href = url
+        throw new Error('Contract tab was closed')
       }
     } catch (error) {
       if (releaseObjectUrl) releaseObjectUrl()
-      if (contractWindow && !contractWindow.closed) contractWindow.close()
       showProjectContractFeedback(
         projectId,
         'Contract is unavailable. Please try again.',
         true,
       )
     } finally {
+      if (
+        !contractWindowNavigated &&
+        contractWindow &&
+        !contractWindow.closed &&
+        typeof contractWindow.close === 'function'
+      ) {
+        contractWindow.close()
+      }
       projectWorkflowActionLocks.delete(projectId)
       setProjectContractPending(projectId, false, action)
       setOpportunityActionPending(projectActionWrap(action), false)

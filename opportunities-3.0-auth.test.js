@@ -1432,7 +1432,7 @@ test('project contract lock follows replacement controls during replay', async (
   ))
   bridge.dispatchDocument('click', clickEvent(live.contract).event)
   await new Promise(setImmediate)
-  assert.equal(opened, 0)
+  assert.equal(opened, 1)
   assert.equal(linkRequests, 0)
 
   firstPageTwo.resolve()
@@ -2961,7 +2961,12 @@ test('View Contract fails closed when the canonical refresh transiently fails', 
       routeGuard: true,
     },
   )
-  const contractWindow = { closed: false, location: {}, opener: bridge.window }
+  const contractWindow = {
+    closed: false,
+    location: {},
+    opener: bridge.window,
+    close() { this.closed = true },
+  }
   bridge.window.open = () => contractWindow
   assert.ok(await waitFor(() => listCount === 1))
 
@@ -2971,7 +2976,8 @@ test('View Contract fails closed when the canonical refresh transiently fails', 
   assert.equal(listCount, 2)
   assert.deepEqual(requests, [])
   assert.deepEqual(contractWindow.location, {})
-  assert.equal(contractWindow.opener, bridge.window)
+  assert.equal(contractWindow.opener, null)
+  assert.equal(contractWindow.closed, true)
   assert.equal(wrap.style.display, 'none')
   assert.equal(wrap.getAttribute('aria-hidden'), 'true')
   assert.equal(label.textContent, 'Contract is unavailable. Please try again.')
@@ -3190,52 +3196,81 @@ test('View Contract closes its blank popup and reports a safe error when Xano re
   assert.equal(label.textContent, 'Contract is unavailable. Please try again.')
 })
 
-test('View Contract uses the authorized session in the current tab when popups are blocked', async () => {
-  const contract = el('a', { href: '#contract' })
-  const label = el('div', { class: 'button_main-text' })
-  label.textContent = 'View Contract'
-  const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
-  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
-  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
-  const sessionUrl = 'https://app.pandadoc.com/s/popup-blocked-contract'
-  const bridge = await loadBridge(
-    async (input) => {
-      const url = String(input)
-      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/starter/projects/mine')) {
-        return response({
-          items: [{
-            id: 675,
-            sync_origin: 'v3',
-            contract_source: 'standard',
-            brand_signed_at: '2026-08-12T01:00:00Z',
-            lifecycle_state: 'contract_sent',
-            pandadoc_document_id: 'doc-675',
-            contract_status: 'viewed',
-          }],
-        })
-      }
-      if (url.includes('/contracts/link/v3')) return response({ url: sessionUrl })
-      throw new Error(`Unexpected request: ${url}`)
-    },
+test('View Contract never replaces either dashboard when popups are blocked', async () => {
+  for (const dashboard of [
     {
       member: talentMember,
       pathname: '/starter-dashboard',
-      querySelector: (selector) =>
-        selectorMatches(root, selector) ? root : root.querySelector(selector),
-      querySelectorAll: (selector) =>
-        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
-      routeGuard: true,
+      instance: 'dash-projects',
+      endpoint: '/starter/projects/mine',
     },
-  )
-  bridge.window.location = bridge.location
-  bridge.window.open = () => null
-  assert.ok(await waitFor(() => wrap.style.display === ''))
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      instance: 'dash-brand-projects',
+      endpoint: '/brand/projects/mine',
+    },
+  ]) {
+    const contract = el('a', { href: '#contract' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'View Contract'
+    const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+    const root = el('div', { 'wf-xano-instance': dashboard.instance }, [card])
+    let contractRequests = 0
+    const bridge = await loadBridge(
+      async (input) => {
+        const url = String(input)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+        if (url.includes(dashboard.endpoint)) {
+          return response({
+            items: [{
+              id: 675,
+              sync_origin: 'v3',
+              contract_source: 'standard',
+              brand_signed_at: '2026-08-12T01:00:00Z',
+              lifecycle_state: 'contract_sent',
+              pandadoc_document_id: 'doc-675',
+              contract_status: 'viewed',
+            }],
+          })
+        }
+        if (url.includes('/contracts/link/v3')) {
+          contractRequests += 1
+          return response({ url: 'https://app.pandadoc.com/s/popup-blocked-contract' })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      },
+      {
+        member: dashboard.member,
+        pathname: dashboard.pathname,
+        querySelector: (selector) =>
+          selectorMatches(root, selector) ? root : root.querySelector(selector),
+        querySelectorAll: (selector) =>
+          [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+        routeGuard: true,
+      },
+    )
+    bridge.window.location = bridge.location
+    let popupAttempts = 0
+    bridge.window.open = () => {
+      popupAttempts += 1
+      return null
+    }
+    assert.ok(await waitFor(() => wrap.style.display === ''), dashboard.pathname)
+    const originalHref = bridge.location.href
 
-  bridge.dispatchDocument('click', clickEvent(contract).event)
+    bridge.dispatchDocument('click', clickEvent(contract).event)
 
-  assert.ok(await waitFor(() => bridge.location.href === sessionUrl))
-  assert.notEqual(wrap.getAttribute('data-project-action-result'), 'error')
+    assert.equal(popupAttempts, 1, dashboard.pathname)
+    assert.ok(
+      await waitFor(() => wrap.getAttribute('data-project-action-result') === 'error'),
+      dashboard.pathname,
+    )
+    assert.equal(bridge.location.href, originalHref, dashboard.pathname)
+    assert.equal(contractRequests, 0, dashboard.pathname)
+    assert.equal(label.textContent, 'Allow pop-ups to open the contract in a new tab.')
+  }
 })
 
 test('project action context includes every canonical project page', async () => {
