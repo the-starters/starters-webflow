@@ -43,3 +43,33 @@ test('object promise rejections retain safe diagnostics without leaking arbitrar
   assert.doesNotMatch(captured[0].error.message, /\[object Object\]/)
   assert.doesNotMatch(captured[0].error.message, /must not be captured/)
 })
+
+test('throwing rejection properties cannot escape the analytics listener', () => {
+  const listeners = {}
+  const captured = []
+  const context = {
+    location: { host: 'www.thestarters.com', pathname: '/starter-dashboard' },
+    document: { addEventListener() {} },
+    MutationObserver: function () {},
+    getComputedStyle: () => ({}),
+    setTimeout,
+    clearTimeout,
+    Error,
+  }
+  context.window = context
+  context.window.posthog = {
+    captureException(error, properties) { captured.push({ error, properties }) },
+  }
+  context.window.addEventListener = (type, fn) => { listeners[type] = fn }
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  const reason = new Proxy({}, {
+    get() { throw new Error('unsafe getter') },
+  })
+
+  assert.doesNotThrow(() => listeners.unhandledrejection({ reason }))
+  assert.equal(captured.length, 1)
+  assert.equal(captured[0].error.message, 'Unhandled rejection object')
+  assert.equal(captured[0].properties.platform, 'v3')
+})
