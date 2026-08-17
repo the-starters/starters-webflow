@@ -2962,10 +2962,14 @@ is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
 On `/brand-dashboard`, the controller finds the first-opportunity row through
-`[data-project-proposal-template="true"]`. It requests the first owned
-opportunity through `Opp30.API.brandOppList('', 1, 1)` and hides that row when
-the response has at least one item. A successful opportunity create also emits
-`starters:opportunity-created`, so the row disappears without a reload.
+`[data-project-proposal-template="true"]`, then resolves that authored inner
+template to its closest `.dash-hero_action-item` so the full outer row hides. If
+there is no outer row, it uses the template itself as a compatibility fallback.
+It requests the first owned opportunity through
+`Opp30.API.brandOppList('', 1, 1)` and hides the resolved target when the
+response has at least one item. A successful opportunity create also emits
+`starters:opportunity-created`, so the resolved target disappears without a
+reload.
 `opportunities-3.0.js` emits `starters:opp30-ready` after exposing its API; the
 controller waits up to four seconds for that signal, so either deferred script
 order works.
