@@ -32,6 +32,8 @@
   let activeAvailability = null
   let activeConnectionState = 'loading'
   let activeConfigurationCount = 0
+  const CALENDAR_ACTION_SELECTOR =
+    '[calendar-connection-action], .dash-hero_action-item a[href="#calendar"]'
 
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
@@ -281,7 +283,7 @@
   }
 
   function renderConnectionAction(state, availability) {
-    const actions = Array.from(document.querySelectorAll('[calendar-connection-action]'))
+    const actions = Array.from(document.querySelectorAll(CALENDAR_ACTION_SELECTOR))
     actions.forEach(function (action) {
       // The Calendar entry is a pending Action Item, not a second settings
       // launcher. It tracks the Nylas availability configuration only. Google

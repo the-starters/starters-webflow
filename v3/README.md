@@ -2065,8 +2065,11 @@ Webflow markup contract:
 - The first-time and saved-schedule controls use `[init-availability]` and
   `[update-availability]`, respectively.
 - The Dashboard Calendar action row uses `[calendar-connection-action]` and its
-  clickable component carries `data-modal-trigger="set-availability"`. The row
-  stays Designer-authored; the initializer only shows/hides it and selects an
+  clickable component carries `data-modal-trigger="set-availability"`. Until
+  that canonical attribute reaches the published Starter dashboard, the
+  initializer also matches only the existing
+  `.dash-hero_action-item a[href="#calendar"]` link. The row stays
+  Designer-authored; the initializer only shows/hides it and selects an
   existing native modal step. The row is complete when the live scheduling
   event reports `configurationCount > 0`. Google grant and calendar fields do
   not control this Action Item.
