@@ -164,7 +164,7 @@ The hire template owns three native Designer elements:
 
 Activation is intentionally limited to the environment-classified V3 hire
 canaries: `/hire/jp-dionisio` on `the-starters-3-0.webflow.io` (TEST) and
-`/hire/jp-test` on the production hosts. The matching
+`/hire/jp-testiz-d` on the production hosts. The matching
 `scheduling-v3-stage.js` bridge must expose its controller and report
 `data-scheduling-v3-stage="ready"`; otherwise the inline controller fails
 closed and leaves the current popup handler in place. Logged-out visitors keep

@@ -878,7 +878,7 @@ test('the approved production canary opens free booking inline and uses state-aw
       container.appendChild(scheduler)
       return scheduler
     },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
     schedulingBridge: true,
   })
   vm.createContext(context)
@@ -937,7 +937,7 @@ test('Brand Free keeps the V2 free-call booking rule on the approved canary', as
       page.calendarLive.appendChild(scheduler)
       return scheduler
     },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
     schedulingBridge: true,
   })
   vm.createContext(context)
@@ -986,7 +986,7 @@ test('invalid, inactive, and cross-role plan records fail closed with a legacy B
       createScheduler: () => {
         schedulerCalls += 1
       },
-      location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+      location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
       schedulingBridge: true,
     })
     vm.createContext(context)
@@ -1009,7 +1009,7 @@ test('logged-out free-call clicks keep signup attribution and never initialize i
     createScheduler: () => {
       schedulerCalls += 1
     },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
     schedulingBridge: true,
   })
   vm.createContext(context)
@@ -1059,7 +1059,7 @@ test('inline back recovers the Nylas connector when the timeslot callback omits 
       page.calendarLive.appendChild(scheduler)
       return scheduler
     },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
     schedulingBridge: true,
   })
   vm.createContext(context)
@@ -1099,7 +1099,7 @@ test('a malformed booking callback does not mark the inline scheduler complete',
       page.calendarLive.appendChild(scheduler)
       return scheduler
     },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
     schedulingBridge: true,
   })
   vm.createContext(context)
@@ -1136,7 +1136,7 @@ test('inline booking stays inert when the route environment bridge is missing', 
     createScheduler: () => {
       throw new Error('must not initialize')
     },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-test' },
+    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
   })
   vm.createContext(context)
   vm.runInContext(source, context)

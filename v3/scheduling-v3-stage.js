@@ -13,7 +13,7 @@
     '/hire/jp-dionisio',
   ]
   const PRODUCTION_PATHS = [
-    '/hire/jp-test',
+    '/hire/jp-testiz-d',
     '/starter-dashboard',
     '/brand-dashboard',
   ]
@@ -84,7 +84,7 @@
   if (!isStagingPath && !isProductionPath) return
   const isHireBookingPath =
     (activeHost === STAGING_HOST && activePath === '/hire/jp-dionisio') ||
-    (PRODUCTION_HOSTS.has(activeHost) && activePath === '/hire/jp-test')
+    (PRODUCTION_HOSTS.has(activeHost) && activePath === '/hire/jp-testiz-d')
   if (window.__tsSchedulingV3Stage) return
   window.__tsSchedulingV3Stage = true
 

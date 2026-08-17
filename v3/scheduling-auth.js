@@ -4,7 +4,7 @@
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const PRODUCTION_PATHS = new Set([
-    '/hire/jp-test',
+    '/hire/jp-testiz-d',
     '/starter-dashboard',
     '/brand-dashboard',
   ])
