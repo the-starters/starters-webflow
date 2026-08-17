@@ -47,6 +47,7 @@ function createEnvironment(fetchImpl, {
   const authChangeListeners = []
   const tracked = []
   const copied = []
+  const requests = []
   const fields = {
     email: Object.assign(new Target(), {
       value: 'new@example.com',
@@ -95,6 +96,17 @@ function createEnvironment(fetchImpl, {
     ...(stepIndex === 2 ? [['tagline', 'Product strategist']] : []),
     ...(stepIndex === 5 ? [['skill-option', 'Research']] : []),
     ...(stepIndex === 6 ? [['rate', '125']] : []),
+    ...(stepIndex === 7 ? [
+      ['reviewer', JSON.stringify({
+        fname: 'Owned',
+        lname: 'Reviewer',
+        job: 'Founder',
+        company: 'QA Company',
+        email: 'owned-reviewer@example.com',
+      })],
+      ['reviewer-2', ''],
+      ['reviewer-3', ''],
+    ] : []),
   ]
 
   const successModal = new Target()
@@ -199,7 +211,10 @@ function createEnvironment(fetchImpl, {
   const sandbox = {
     window,
     document,
-    fetch: fetchImpl,
+    fetch: async (...args) => {
+      requests.push(args)
+      return fetchImpl(...args)
+    },
     FormData,
     Event,
     console,
@@ -234,6 +249,7 @@ function createEnvironment(fetchImpl, {
     memberUpdates,
     tracked,
     copied,
+    requests,
     successFeedback,
     errorFeedback,
     counter,
@@ -334,7 +350,7 @@ async function testNon2xx() {
 }
 
 async function testEveryOwnedSectionOpensSuccessModal() {
-  for (const stepIndex of [2, 5, 6]) {
+  for (const stepIndex of [2, 5, 6, 7]) {
     const environment = createEnvironment(async () => ({
       ok: true,
       status: 200,
@@ -346,6 +362,49 @@ async function testEveryOwnedSectionOpensSuccessModal() {
     assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
     assert.deepEqual(environment.modalApiCalls, ['edit-form-success'])
   }
+}
+
+async function testReviewerStepUsesCanonicalBuildProfileShape() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), { stepIndex: 7 })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 1)
+  const [, options] = environment.requests[0]
+  const payload = JSON.parse(options.body)
+  assert.deepEqual(payload.Reviewers, {
+    'reviewer-1': {
+      'first-name': 'Owned',
+      'last-name': 'Reviewer',
+      position: 'Founder',
+      company: 'QA Company',
+      email: 'owned-reviewer@example.com',
+    },
+    'reviewer-2': null,
+    'reviewer-3': null,
+  })
+  assert.equal(payload.Profile_Type, 'full')
+  assert.equal(payload.Profile_Type_ID, 1)
+  assert.equal(typeof payload.Updated_On, 'number')
+  assert.deepEqual(environment.modalEvents, { success: 1, error: 0 })
+}
+
+async function testReviewerFieldIsOmittedWhenNativeStepIsAbsent() {
+  const environment = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+
+  await submit(environment)
+
+  const [, options] = environment.requests[0]
+  const payload = JSON.parse(options.body)
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, 'Reviewers'), false)
 }
 
 async function testRejectedFetch() {
@@ -505,6 +564,8 @@ Promise.all([
   testEarlyLoadInitializesCountersAfterParsing(),
   testNon2xx(),
   testEveryOwnedSectionOpensSuccessModal(),
+  testReviewerStepUsesCanonicalBuildProfileShape(),
+  testReviewerFieldIsOmittedWhenNativeStepIsAbsent(),
   testRejectedFetch(),
   testBrowserGlobalDoesNotRecurse(),
   testHiddenTriggerFallback(),

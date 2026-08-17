@@ -126,6 +126,11 @@ Do not discard local changes unless the user explicitly asks.
   stops the workflow instead of writing into the new session and records a safe
   auth-failure receipt when diagnostics are available. The script owns its DOM,
   readiness, validation, rate-input, and loader fallbacks. The site-wide Webflow
+  form may include the existing native reviewer increment component as step 7;
+  the controller normalizes its three hidden JSON slots to the same canonical
+  `Reviewers` object used by Build Profile before the authenticated Xano PATCH.
+  If that native step is absent, the controller does not send `Reviewers`.
+  The site-wide Webflow
   Head Code still initializes
   `MEMBER`, `memberReady`, and the matching helper aliases before deferred page
   scripts. Load `intl-tel-input`, Quill, then this deferred `@latest` asset.

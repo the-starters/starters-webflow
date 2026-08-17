@@ -17,7 +17,7 @@ const onDomReady = (callback) => {
 	callback();
 };
 const PROFILE_WORKFLOW = 'starter_profile_edit';
-const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v1';
+const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v2';
 const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
@@ -407,6 +407,10 @@ onDomReady(function () {
 				Retainer_Rate: 'rate-retainer',
 				Services: 'service',
 			},
+
+			7: {
+				Reviewers: 'reviewer',
+			},
 		};
 
 		initStepSubmits();
@@ -480,7 +484,7 @@ onDomReady(function () {
 				try {
 					return JSON.parse(value);
 				} catch (error) {
-					console.warn('[starter-edit-profile] ignored an invalid service JSON field');
+					console.warn('[starter-edit-profile] ignored an invalid structured form field');
 					return null;
 				}
 			};
@@ -507,6 +511,30 @@ onDomReady(function () {
 					"service-2": requiredServicesFields(service2?.name, service2?.price) ? service2 : null,
 					"service-3": requiredServicesFields(service3?.name, service3?.price) ? service3 : null,
 				});
+			}
+
+			// Reviewers. The native increment-dropdown component stores each slot as
+			// JSON in reviewer, reviewer-2, and reviewer-3 hidden fields. Keep the
+			// same canonical shape as the Build Profile writer.
+			if (Object.prototype.hasOwnProperty.call(payload, 'Reviewers')) {
+				const formData = getFormDataObject();
+				const normalizeReviewer = (reviewer) => {
+					if (!reviewer?.fname || !reviewer?.email) return null;
+
+					return {
+						'first-name': reviewer.fname || '',
+						'last-name': reviewer.lname || '',
+						position: reviewer.job || '',
+						company: reviewer.company || '',
+						email: reviewer.email || '',
+					};
+				};
+
+				payload.Reviewers = {
+					'reviewer-1': normalizeReviewer(parseJson(formData.reviewer)),
+					'reviewer-2': normalizeReviewer(parseJson(formData['reviewer-2'])),
+					'reviewer-3': normalizeReviewer(parseJson(formData['reviewer-3'])),
+				};
 			}
 
 			// Phone
