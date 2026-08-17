@@ -95,6 +95,9 @@
   const activeV3Targets = new Set(Object.values(activeRouteMap))
 
   const originalFetch = window.fetch.bind(window)
+  const originalXanoAuthFetch = typeof window.xanoAuthFetch === 'function'
+    ? window.xanoAuthFetch.bind(window)
+    : null
 
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
@@ -291,20 +294,20 @@
 
     const target = activeRouteMap[scheduling.route]
     if (target) {
-      if (typeof window.xanoAuthFetch !== 'function') {
+      if (!originalXanoAuthFetch) {
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
       }
       scheduling.url.pathname = API_PREFIX + target
-      return window.xanoAuthFetch(requestAt(request, scheduling.url))
+      return originalXanoAuthFetch(requestAt(request, scheduling.url))
     }
 
     if (activeV3Targets.has(scheduling.route)) {
-      if (typeof window.xanoAuthFetch !== 'function') {
+      if (!originalXanoAuthFetch) {
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
       }
-      return window.xanoAuthFetch(request)
+      return originalXanoAuthFetch(request)
     }
 
     if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return originalFetch(request)
@@ -312,7 +315,30 @@
     return blockedResponse(scheduling.route)
   }
 
+  async function stageXanoAuthFetch(input, init) {
+    const request = new Request(input, init)
+    const scheduling = schedulingRoute(request)
+    if (!scheduling) return originalXanoAuthFetch(request)
+
+    const target = activeRouteMap[scheduling.route]
+    if (target) {
+      scheduling.url.pathname = API_PREFIX + target
+      return originalXanoAuthFetch(requestAt(request, scheduling.url))
+    }
+
+    if (activeV3Targets.has(scheduling.route)) {
+      return originalXanoAuthFetch(request)
+    }
+
+    if (LEGACY_PROVIDER_PATH.test(scheduling.route)) {
+      return originalXanoAuthFetch(request)
+    }
+
+    return blockedResponse(scheduling.route)
+  }
+
   window.fetch = stageFetch
+  if (originalXanoAuthFetch) window.xanoAuthFetch = stageXanoAuthFetch
   window.__tsSchedulingV3StageOriginalFetch = originalFetch
   window.StarterSchedulingV3Stage = Object.freeze({
     paths: STAGE_PATHS.slice(),

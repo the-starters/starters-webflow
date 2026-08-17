@@ -1843,6 +1843,8 @@ adapter maps the reviewed unversioned scheduling paths and the environment-bound
 request method, body, headers, and query parameters, and sends the rewritten
 request through `window.xanoAuthFetch`. The Stripe lookup follows the
 [domain-isolated environment contract](#domain-isolated-test-and-live-environments).
+The adapter owns both `window.fetch` and direct `window.xanoAuthFetch` calls so
+the shared scheduling helpers cannot bypass the route map.
 
 On the exact production `/hire/jp-test` canary, and on the retained staging-only
 `/hire/jp-dionisio` canary, the two public booking-discovery helpers use

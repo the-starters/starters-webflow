@@ -518,6 +518,27 @@ test('uses Brand-safe discovery reads only on the approved real Hire canary', as
   )
 })
 
+test('remaps the versioned Hire helpers that call xanoAuthFetch directly', async () => {
+  const hire = loadStage({ pathname: '/hire/jp-dionisio' })
+
+  await hire.window.xanoAuthFetch(`${API_BASE}starter/get_by_memberstack/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ member_id: 'test-talent' }),
+  })
+  await hire.window.xanoAuthFetch(`${API_BASE}nylas_configurations/get_all/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ grant_id: 'test-grant' }),
+  })
+
+  assert.deepEqual(
+    hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
+    [
+      '/api:tCpV3oqd/starter/get_booking_profile/v3',
+      '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
+    ],
+  )
+})
+
 test('maps every reviewed legacy route to an authenticated V3 request', async () => {
   const { authenticatedRequests, window } = loadStage()
   const routeMap = window.StarterSchedulingV3Stage.routeMap
