@@ -12,6 +12,10 @@
  * - [data-starters-v3-algolia-resource="opportunities"]
  * - [wf-algolia-sort-index]
  *
+ * A starters resource that also carries a known logical sort in
+ * data-starters-v3-algolia-sort receives the host Starter sort replica on
+ * wf-algolia-index, because static lists search that attribute only.
+ *
  * It also rejects and strips competing credentialed clients and unexpected
  * index resources. On approved hosts, it remaps only exact, unmarked
  * Freelancers3.0-dev browse and tab-count attributes for the V3 cutover.
@@ -313,6 +317,25 @@
         element.removeAttribute('wf-algolia-index')
         element.setAttribute('data-starters-v3-algolia-blocked', 'unknown_resource')
         return
+      }
+      if (resource === 'starters') {
+        // Static Lists search wf-algolia-index only, so an authored logical sort
+        // has to resolve to the host Sort Replica here, not on wf-algolia-sort-index.
+        var logicalSort = logicalStarterSortName(
+          element.getAttribute('data-starters-v3-algolia-sort') ||
+            element.getAttribute('wf-algolia-sort-index'),
+          resolution.settings.startersIndex,
+        )
+        if (logicalSort === null) {
+          invalidResource = true
+          element.removeAttribute('wf-algolia-index')
+          element.setAttribute('data-starters-v3-algolia-blocked', 'unknown_sort_index')
+          return
+        }
+        if (logicalSort) {
+          element.setAttribute('data-starters-v3-algolia-sort', logicalSort)
+          indexName = starterReplicaName(resolution.settings.startersIndex, logicalSort)
+        }
       }
       element.setAttribute('wf-algolia-index', indexName)
       element.setAttribute('data-starters-v3-algolia-environment', resolution.environment)

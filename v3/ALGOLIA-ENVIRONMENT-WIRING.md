@@ -25,8 +25,9 @@ managed index name that contains a `dev` segment.
 
 The resolver maps the existing logical sort values `name-AtoZ`, `rate_asc`,
 `rate_desc`, `published_asc`, and `published_desc` to replicas named with the
-environment Starter prefix above. An unknown sort value blocks the managed
-Algolia client. The empty relevance option stays empty.
+environment Starter prefix above. It applies that mapping to sort buttons and to
+Static Lists; see [Required markup](#required-markup). An unknown sort value
+blocks the managed Algolia client. The empty relevance option stays empty.
 
 The current site also uses these public, non-member-data indexes through shared
 components. Both restricted browser keys must include search-only access to
@@ -91,6 +92,41 @@ add only the resource attribute:
   data-starters-v3-algolia-resource="opportunities"
 ></div>
 ```
+
+A Static List — a browse wrapper with `wf-algolia-disable-filters="true"`, one
+empty query, and no sort buttons — that must read a Starter sort replica also
+gets `data-starters-v3-algolia-sort`. Use the logical sort name, never the full
+replica name:
+
+```html
+<div
+  wf-algolia-element="browse"
+  wf-algolia-disable-filters="true"
+  wf-algolia-index=""
+  data-starters-v3-algolia-resource="starters"
+  data-starters-v3-algolia-sort="published_desc"
+></div>
+```
+
+A Static List reads `wf-algolia-index` only; it never reads
+`wf-algolia-sort-index`. The resolver therefore writes the host Starter sort
+replica onto `wf-algolia-index` for a starters resource that carries a known
+logical sort, and stamps the logical name back onto
+`data-starters-v3-algolia-sort`. The same rules apply when the logical name is
+authored on `wf-algolia-sort-index` on that one element.
+
+Three consequences follow:
+
+- A starters resource with no sort attribute keeps the host Starter index. Nested
+  starters elements inside a sorted Static List, such as Expert Card job rows,
+  stay on the Starter index because they carry no sort attribute of their own.
+- An unknown sort value on a starters resource blocks the managed Algolia client
+  for the whole page, exactly like an unknown sort button value.
+- An authored replica name on `wf-algolia-index` does not select a replica. The
+  resolver overwrites it with the host Starter index unless
+  `data-starters-v3-algolia-sort` names the sort.
+
+An `opportunities` resource ignores Starter sort replicas.
 
 Do not mark or rename the four shared indexes. Every unmarked
 `wf-algolia-index` must match `LearnContent`, `cancelled-consult-1`,
