@@ -576,6 +576,8 @@ test('a signed-in Starter refreshes empty navigation after owner cards are revea
 test('the TEST canary creates one native free card only after canonical free config passes', async () => {
   const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
   const originalPaidCard = page.servicesList.children[0]
+  originalPaidCard.setAttribute('hidden', 'hidden')
+  originalPaidCard.setAttribute('aria-hidden', 'true')
   let schedulerCalls = 0
   const context = makeContext({
     page,
@@ -612,12 +614,15 @@ test('the TEST canary creates one native free card only after canonical free con
   assert.equal(runtimeCards[0].getAttribute('data-type'), 'free')
   assert.equal(runtimeCards[0].getAttribute('has-connection'), 'free')
   assert.equal(runtimeCards[0].getAttribute('data-modal-trigger'), null)
+  assert.equal(runtimeCards[0].hasAttribute('hidden'), false)
+  assert.equal(runtimeCards[0].getAttribute('aria-hidden'), 'false')
   assert.equal(
     runtimeCards[0].querySelector('[data-service-card-element="title"]').textContent,
     'Free Call',
   )
   assert.equal(runtimeCards[0].querySelector('[data-millify]').getAttribute('data-millify'), '0')
   assert.equal(originalPaidCard.getAttribute('data-type'), 'paid', 'paid card type must stay unchanged')
+  assert.equal(originalPaidCard.hasAttribute('hidden'), true, 'native template must stay hidden')
   assert.equal(
     originalPaidCard.getAttribute('data-modal-trigger'),
     'popup-booking',

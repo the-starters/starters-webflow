@@ -295,6 +295,12 @@
       function buildRateCard(sourceTemplate, card) {
           const el = sourceTemplate.cloneNode(true);
 
+          // Designer can provide an always-published native card template
+          // with the HTML hidden attribute. Clones are real service cards,
+          // so remove the template-only visibility state before rendering.
+          el.removeAttribute('hidden');
+          el.setAttribute('aria-hidden', 'false');
+
           // Keep data-signup-trigger-* so signup-attribution.js opens the
           // signup modal for logged-out clicks (same as the call cards);
           // strip the booking wiring so logged-in clicks do not open an
@@ -478,6 +484,8 @@
           if (!list || !template) return [];
 
           const card = template.cloneNode(true);
+          card.removeAttribute('hidden');
+          card.setAttribute('aria-hidden', 'false');
           [
               'data-rate-card',
               'has-connection',
