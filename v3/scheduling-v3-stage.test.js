@@ -19,6 +19,60 @@ function response(data, status = 200) {
   })
 }
 
+function scriptElementModel(html) {
+  const elements = []
+  let cursor = 0
+  while (cursor < html.length) {
+    const start = html.indexOf('<script', cursor)
+    if (start === -1) break
+    let end = start + 7
+    let quote = null
+    while (end < html.length) {
+      const character = html[end]
+      if (quote) {
+        if (character === quote) quote = null
+      } else if (character === '"' || character === "'") {
+        quote = character
+      } else if (character === '>') {
+        break
+      }
+      end += 1
+    }
+    const attributes = new Map()
+    let index = start + 7
+    while (index < end) {
+      while (index < end && /\s/.test(html[index])) index += 1
+      const nameStart = index
+      while (index < end && !/[\s=>]/.test(html[index])) index += 1
+      if (nameStart === index) break
+      const name = html.slice(nameStart, index).toLowerCase()
+      while (index < end && /\s/.test(html[index])) index += 1
+      let value = ''
+      if (html[index] === '=') {
+        index += 1
+        while (index < end && /\s/.test(html[index])) index += 1
+        const delimiter = html[index] === '"' || html[index] === "'" ? html[index++] : null
+        const valueStart = index
+        if (delimiter) {
+          while (index < end && html[index] !== delimiter) index += 1
+          value = html.slice(valueStart, index)
+          if (html[index] === delimiter) index += 1
+        } else {
+          while (index < end && !/\s/.test(html[index])) index += 1
+          value = html.slice(valueStart, index)
+        }
+      }
+      attributes.set(name, value)
+    }
+    elements.push({
+      src: attributes.get('src') || '',
+      defer: attributes.has('defer'),
+    })
+    cursor = end + 1
+  }
+  return elements
+}
+
 function loadStage(options = {}) {
   const nativeRequests = []
   const authenticatedRequests = []
@@ -311,27 +365,23 @@ test('restarts retrying for a scheduler added after the first loop completed', (
   assert.equal(intervals[0].cleared, true)
 })
 
-test('component loader installs auth and routing synchronously before cloned logic', () => {
-  const tags = [...componentSource.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)]
+test('component manifest installs auth and routing before deferred controllers', () => {
+  const scripts = scriptElementModel(componentSource)
   assert.deepEqual(
-    tags.map((match) => match[1].split('/').at(-1)),
+    scripts.map((script) => ({
+      file: new URL(script.src).pathname.split('/').at(-1),
+      defer: script.defer,
+    })),
     [
-      'scheduling-auth.js',
-      'scheduling-v3-stage.js',
-      'dashboard-calls.js',
-      'scheduling-availability-init.js',
-      'scheduling-availability-writer.js',
-      'scheduling-availability-section.js',
-      'paid-call-settings.js',
+      { file: 'scheduling-auth.js', defer: false },
+      { file: 'scheduling-v3-stage.js', defer: false },
+      { file: 'dashboard-calls.js', defer: true },
+      { file: 'scheduling-availability-init.js', defer: true },
+      { file: 'scheduling-availability-writer.js', defer: true },
+      { file: 'scheduling-availability-section.js', defer: true },
+      { file: 'paid-call-settings.js', defer: true },
     ],
   )
-  assert.doesNotMatch(tags[0][0], /\bdefer\b/)
-  assert.doesNotMatch(tags[1][0], /\bdefer\b/)
-  assert.match(tags[2][0], /\bdefer\b/)
-  assert.match(tags[3][0], /\bdefer\b/)
-  assert.match(tags[4][0], /\bdefer\b/)
-  assert.match(tags[5][0], /\bdefer\b/)
-  assert.match(tags[6][0], /\bdefer\b/)
 })
 
 test('maps paid-call settings routes only to their exact authenticated V3 endpoints', async () => {

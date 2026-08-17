@@ -21,6 +21,7 @@
   let busy = false
   let refreshVersion = 0
   let bound = false
+  let wiredMemberstack = null
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -398,6 +399,19 @@
     }
   }
 
+  function wireAuthChanges() {
+    const memberstack = window.$memberstackDom
+    if (!memberstack || typeof memberstack.onAuthChange !== 'function') {
+      window.setTimeout(wireAuthChanges, 100)
+      return
+    }
+    if (memberstack === wiredMemberstack) return
+    wiredMemberstack = memberstack
+    memberstack.onAuthChange(function (nextMember) {
+      return loadSession(authMember(nextMember), false)
+    })
+  }
+
   function bind() {
     if (bound) return
     bound = true
@@ -435,12 +449,7 @@
         refreshFromPrerequisite().catch(function () {})
       })
     })
-    const memberstack = window.$memberstackDom
-    if (memberstack && typeof memberstack.onAuthChange === 'function') {
-      memberstack.onAuthChange(function (nextMember) {
-        return loadSession(authMember(nextMember), false)
-      })
-    }
+    wireAuthChanges()
   }
 
   async function initialize() {

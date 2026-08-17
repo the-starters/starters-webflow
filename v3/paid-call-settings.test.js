@@ -102,6 +102,7 @@ function load(options = {}) {
   const calls = []
   const events = []
   const windowListeners = new Map()
+  const timers = []
   const warnings = []
   let state = options.initial || canonical()
   let activeMember = { id: options.memberId || 'member-a' }
@@ -119,13 +120,15 @@ function load(options = {}) {
     addEventListener() {},
   }
 
+  const memberstack = {
+    getCurrentMember: async () => ({ data: activeMember }),
+    onAuthChange(listener) { authChange = listener },
+  }
   const window = {
     location: { hostname: options.hostname || 'thestarters.com' },
     crypto: { randomUUID: () => 'uuid-fixed' },
-    $memberstackDom: {
-      getCurrentMember: async () => ({ data: activeMember }),
-      onAuthChange(listener) { authChange = listener },
-    },
+    memberReady: options.memberReady,
+    setTimeout(callback, delay) { timers.push({ callback, delay }) },
     addEventListener(name, listener) {
       const listeners = windowListeners.get(name) || []
       listeners.push(listener)
@@ -152,6 +155,7 @@ function load(options = {}) {
       throw new Error('unrouted request ' + path)
     },
   }
+  if (!options.withoutMemberstackAtLoad) window.$memberstackDom = memberstack
 
   class CustomEvent {
     constructor(type, init) { this.type = type; this.detail = init && init.detail }
@@ -170,6 +174,7 @@ function load(options = {}) {
     dom,
     calls,
     events,
+    timers,
     warnings,
     window,
     document,
@@ -177,6 +182,11 @@ function load(options = {}) {
       activeMember = nextMember
       if (authChange) return authChange(nextMember)
       return null
+    },
+    installMemberstack: () => { window.$memberstackDom = memberstack },
+    flushTimers: () => {
+      const pending = timers.splice(0)
+      pending.forEach((timer) => timer.callback())
     },
     getState: () => state,
     dispatchWindow: async (name, detail) => {
@@ -348,6 +358,28 @@ test('auth changes clear prior settings and load the next member canonically', a
   await memberBLoad
   assert.equal(result.dom.title.value, 'Member B Call')
   assert.equal(result.dom.price.value, 450)
+
+  await result.changeMember(null)
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.save.disabled, true)
+})
+
+test('late Memberstack arrival still wires auth changes', async () => {
+  const memberReady = deferred()
+  const result = load({
+    initial: canonical({ services: [service({ title: 'Member A Call' })] }),
+    memberReady: memberReady.promise,
+    withoutMemberstackAtLoad: true,
+  })
+  await settle(2)
+  assert.equal(result.timers.length, 1)
+
+  result.installMemberstack()
+  result.flushTimers()
+  memberReady.resolve({ id: 'member-a' })
+  await settle()
+  assert.equal(result.dom.title.value, 'Member A Call')
 
   await result.changeMember(null)
   assert.equal(result.dom.title.value, '')
