@@ -27,16 +27,29 @@ stale-but-present CMS rows, so both sections still render natively.
 
 ## Install
 
+Webflow → hire template → Page Settings → Custom Code → **Head**:
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-v3-stage.js"></script>
+```
+
+Use [`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
+as the owned embed source. Both tags are intentionally synchronous. The adapter
+must own scheduling requests before the shared **Call Scheduling - Global Code**
+component can execute its legacy helpers.
+
 Webflow → hire template → Page Settings → Custom Code → **Footer**:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/hire-profile.js"></script>
 ```
 
-Nothing else belongs in that footer. The page **head** keeps its existing
-deferred loads (`scheduling-auth.js`, `scheduling-v3-stage.js`,
-`paid-call-brand-payment.js`, `freelancer-cms/stripe-connect.js`, `reviews.js`,
-`project-form.js`, `starters-ms-redirect.js`, `profile-portfolio.js`).
+Nothing else belongs in that footer. The page **head** keeps the two synchronous
+scheduling loads above before the shared component. Its other page scripts can
+remain deferred (`paid-call-brand-payment.js`,
+`freelancer-cms/stripe-connect.js`, `reviews.js`, `project-form.js`,
+`starters-ms-redirect.js`, `profile-portfolio.js`).
 
 ## Page ownership
 

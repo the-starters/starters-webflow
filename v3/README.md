@@ -1768,6 +1768,12 @@ copy in page head/footer code.
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 ```
 
+The live `detail_hire` template is the timing exception. Install
+[`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
+in its Page Settings head so `scheduling-auth.js` and
+`scheduling-v3-stage.js` execute synchronously before the shared scheduling
+component. A deferred adapter can lose the first legacy scheduling request.
+
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
@@ -1842,8 +1848,9 @@ scheduling component. It installs on these exact staging paths:
 The seventh path is the existing Test Talent CMS item. Every valid
 single-segment `/hire/<slug>` path plus `/starter-dashboard` and
 `/brand-dashboard` is enabled on `thestarters.com` and `www.thestarters.com`;
-every `*-stage` path remains staging-host only. The adapter does not install on
-`detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
+every `*-stage` path remains staging-host only. The live `detail_hire` template
+loads the adapter, which activates from the rendered `/hire/<slug>` URL.
+Production `/hire/jp-dionisio` is explicitly contained by
 both synchronous scripts: scheduling-group requests return HTTP `410` without
 installing authentication, discovery overrides, or booking identity. The
 adapter maps the reviewed unversioned scheduling paths and the environment-bound
@@ -1899,6 +1906,11 @@ not replace the shared `Call Scheduling - Global Code` component while the live
 stage surfaces and both canonical dashboards; releases update its Git-owned
 files through the reviewed semver tag and jsDelivr purge flow.
 
+`scheduling-v3-hire-template-head.html` separately owns the live Hire-template
+boundary. Install it in the `detail_hire` Page Settings head, before the shared
+component renders. It contains only the synchronous auth and route adapter, so
+dashboard-only modules remain owned by the isolated component loader.
+
 Runtime contract:
 
 - `data-scheduling-v3-stage` on the document root reports `ready` once the
@@ -1908,9 +1920,9 @@ Runtime contract:
   otherwise, the attribute is not set on pages where the adapter does not
   install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
-  seven installed stage paths), `productionPaths` (the exact production Hire
-  canary and canonical dashboards), and `routeMap` (the effective request-to-`/v3`
-  route map).
+  explicit stage paths), `productionPaths` (the canonical dashboards), and
+  `routeMap` (the effective request-to-`/v3` route map). Valid Hire paths are
+  selected by the route grammar and are not enumerated in either path array.
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 
