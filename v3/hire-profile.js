@@ -431,7 +431,10 @@
       const calendar = qs('[data-availability-element="calendar-live"]', wrapper || document);
       const back = qs('[data-availability-element="back"]', wrapper || document);
       const freeConfig = Array.from(configs || []).find(function (record) {
-          return record && !record.is_paid && record.config_id;
+          return record &&
+              record.config_id &&
+              record.is_paid === false &&
+              record.active !== false;
       });
 
       if (!wrapper || !calendar || !back || !freeConfig || typeof window.createScheduler !== 'function') {
@@ -442,11 +445,75 @@
       let scheduler = null;
       let schedulerConnector = null;
       let schedulerState = 'closed';
-      const freeCards = Array.from(qsa('[booking-popup-open][data-type]')).filter(function (card) {
-          return card.getAttribute('data-type') === 'free';
-      });
+      const freeCards = getOrCreateInlineFreeCards();
+
+      if (!freeCards.length) {
+          console.warn('[hire-profile] inline booking stood down: free service card is unavailable');
+          return false;
+      }
 
       wrapper.style.display = 'none';
+
+      function getOrCreateInlineFreeCards() {
+          const existing = Array.from(qsa('[booking-popup-open][data-type]')).filter(function (card) {
+              return card.getAttribute('data-type') === 'free';
+          });
+          if (existing.length) return existing;
+
+          /* The TEST fixture's Webflow CMS item also publishes on the custom
+             production domain. Its Free Call boolean must stay
+             production-safe, so the CMS condition can omit the card on TEST
+             even when trusted TEST Xano has a valid free configuration. Reuse
+             the native service-card component only after the exact route
+             bridge and canonical config checks above pass. Unknown routes and
+             missing/mixed records never reach here. */
+          const list = qs('#services .services-list_wrapper');
+          const template = list
+              ? Array.from(qsa('[data-service-card="component"][data-service-card-state="Default"]', list))
+                  .find(function (candidate) {
+                      return !candidate.hasAttribute('data-rate-card') &&
+                          !!qs('.service-card_content-wrapper', candidate);
+                  })
+              : null;
+          if (!list || !template) return [];
+
+          const card = template.cloneNode(true);
+          [
+              'data-rate-card',
+              'has-connection',
+              'no-connection',
+              'data-modal-trigger',
+              'booking-popup-open',
+              'data-type',
+          ].forEach(function (attribute) {
+              card.removeAttribute(attribute);
+          });
+
+          card.setAttribute('data-runtime-free-call-card', '');
+          card.setAttribute('has-connection', 'free');
+          card.setAttribute('booking-popup-open', '');
+          card.setAttribute('data-type', 'free');
+          card.setAttribute('data-signup-trigger-element', 'service');
+          card.setAttribute('data-signup-trigger-value', 'Free Call');
+
+          const title = qs('[data-service-card-element="title"]', card);
+          if (title) title.textContent = 'Free Call';
+
+          const price = qs('[data-millify]', card);
+          if (price) {
+              price.removeAttribute('data-millify-raw');
+              price.setAttribute('data-millify', '0');
+              price.textContent = '0';
+          }
+
+          const nextSlot = qs('[next-available-slot]', card);
+          if (nextSlot) nextSlot.textContent = 'Loading...';
+
+          card.style.display = 'block';
+          list.prepend(card);
+          refreshEmptySectionNav();
+          return [card];
+      }
 
       function setBackMode(mode) {
           back.setAttribute('data-availability-back-mode', mode);
@@ -595,7 +662,10 @@
 
       wrapper.setAttribute('id', 'hire-inline-calendar');
       setBackMode('close');
-      return true;
+      return {
+          cards: freeCards,
+          configId: freeConfig.config_id,
+      };
   }
 
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
@@ -607,33 +677,73 @@
 
           // GET CONFIGS
           const configs = await getConfigs(grant_id);
-          if (configs) {
+          if (
+              Array.isArray(configs) &&
+              configs.length &&
+              configs[0] &&
+              configs[0].config_id
+          ) {
 
               initBookingComponents(freelancerId, grant_id, configs, brand_name, brand_email);
-              initInlineFreeBooking(configs, brand_name, brand_email);
+              const inlineFreeBooking = initInlineFreeBooking(configs, brand_name, brand_email);
+              const primaryConfigId = configs[0].config_id;
+              const inlineUsesPrimaryConfig = inlineFreeBooking &&
+                  inlineFreeBooking.configId === primaryConfigId;
 
               /* Next Available Slot _ Handlers */
               // loading state
               nearestSlotSetup();
 
-              const nearestSlotTimestamp = await getNearestSlot(grant_id, configs[0].config_id);
+              const nearestSlotTimestamp = await getNearestSlot(grant_id, primaryConfigId);
               if (nearestSlotTimestamp) {
                   const date = formatWithTimezone(nearestSlotTimestamp * 1000, { month: '2-digit' }).list;
 
                   // ready state
-                  nearestSlotSetup(`${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`);
+                  nearestSlotSetup(
+                      `${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`,
+                      inlineUsesPrimaryConfig ? [] : inlineFreeBooking && inlineFreeBooking.cards,
+                  );
               } else {
 
                   // empty state
-                  nearestSlotSetup("No available slots");
+                  nearestSlotSetup(
+                      "No available slots",
+                      inlineUsesPrimaryConfig ? [] : inlineFreeBooking && inlineFreeBooking.cards,
+                  );
               }
 
-              function nearestSlotSetup(timeSlot = null) {
+              if (inlineFreeBooking && !inlineUsesPrimaryConfig) {
+                  const inlineNearestSlotTimestamp = await getNearestSlot(
+                      grant_id,
+                      inlineFreeBooking.configId,
+                  );
+                  if (inlineNearestSlotTimestamp) {
+                      const date = formatWithTimezone(
+                          inlineNearestSlotTimestamp * 1000,
+                          { month: '2-digit' },
+                      ).list;
+                      inlineNearestSlotSetup(
+                          `${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`,
+                      );
+                  } else {
+                      inlineNearestSlotSetup("No available slots");
+                  }
+              }
+
+              function nearestSlotSetup(timeSlot = null, excludedCards = []) {
                   qsa("[booking-popup-open][data-type]").forEach(async (item) => {
+                      if (excludedCards && excludedCards.includes(item)) return;
                       const nextSlot = qs('[next-available-slot]', item);
                       if (nextSlot) {
                           nextSlot.textContent = timeSlot || "Loading...";
                       }
+                  });
+              }
+
+              function inlineNearestSlotSetup(timeSlot) {
+                  inlineFreeBooking.cards.forEach(function (item) {
+                      const nextSlot = qs('[next-available-slot]', item);
+                      if (nextSlot) nextSlot.textContent = timeSlot;
                   });
               }
 

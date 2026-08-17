@@ -171,6 +171,19 @@ closed and leaves the current popup handler in place. Logged-out visitors keep
 the existing signup-attribution modal. Paid-call and Stripe behavior are not
 part of this canary.
 
+The TEST fixture's Webflow CMS item also publishes on the custom production
+domain, so its **Free Call** CMS flag must remain disabled. After the exact
+route bridge, eligible Brand plan, Nylas grant, and canonical free
+configuration all pass, the controller reuses the page's native Default
+service-card component to add one runtime Free Call card when the CMS card is
+absent. It marks that card with `data-runtime-free-call-card`, keeps the normal
+signup attribution attributes, and binds the inline calendar only for the
+signed-in canary. An unknown route, mixed or ineligible plan, missing grant,
+missing free configuration, or missing native card template adds no card and
+leaves the inline panel hidden. The controller may clone an eligible native
+card as its template, but it does not change, bind, or activate the source card
+or any other existing paid card.
+
 Free-call access keeps the V2 product rule: any signed-in Brand, including
 Brand Free, can select and book a free call. Brand Free does not need to
 upgrade for a free call. The controller resolves the role from the active,
