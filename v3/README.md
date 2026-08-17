@@ -2060,7 +2060,9 @@ Webflow markup contract:
 - The Dashboard Calendar action row uses `[calendar-connection-action]` and its
   clickable component carries `data-modal-trigger="set-availability"`. The row
   stays Designer-authored; the initializer only shows/hides it and selects an
-  existing native modal step.
+  existing native modal step. The row is complete when the live scheduling
+  event reports `configurationCount > 0`. Google grant and calendar fields do
+  not control this Action Item.
 - The hero and Dashboard Calendar triggers share the authored
   `dialog[data-modal-target="set-availability"]`. Lumos normally owns its
   open/close lifecycle. After a trigger click has bubbled, the initializer uses
@@ -2083,9 +2085,11 @@ Runtime contract:
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
 - `window.STARTER_SCHEDULING_CONNECTION` contains only non-secret connection
-  state. The initializer always supplies `state`; once the writer runs, it also
-  supplies boolean grant/calendar flags, configuration count, and manager.
-  Provider identifiers are never exposed through this object.
+  state. The initializer always supplies `state` and the last canonical
+  configuration count; once the writer runs, it also supplies boolean
+  grant/calendar flags and manager. Transient loading and error events do not
+  replace the retained canonical count. Provider identifiers are never exposed
+  through this object.
 - `starterSchedulingAvailabilityReady` carries
   `{ memberId, source, state, connectionState }`;
   `source` is `starter`, `default`, or `query-test`, and `state` is
@@ -2093,8 +2097,9 @@ Runtime contract:
   `memberId` is the selected test member rather than the authenticated member.
 - `starterSchedulingConnectionStateChanged` carries the non-secret connection
   summary and repaints both the hero entry point and Calendar action row. The
-  row remains visible and actionable for loading/disconnected/reconnect/error,
-  and is hidden only after connected proof.
+  row is hidden when the retained canonical Nylas configuration count is above
+  zero and remains visible when that count is zero, regardless of loading,
+  disconnected, connected, reconnect, or error state.
 - `starterSchedulingAvailabilityError` carries `{ message }` after a failed read.
 - `window.StarterSchedulingAvailability` exposes `initialize()` for retries,
   `normalizeAvailability(value)` for the legacy object or JSON-string shape,
@@ -2694,29 +2699,20 @@ root, use these values:
 | --- | --- |
 | `loading` | Immediate loading state while Memberstack and Xano resolve |
 | `disconnected` | No connected Stripe account; contains the authored connect CTA |
-| `incomplete` | Connected account whose charges are not enabled; contains the authored “Complete setup” CTA |
+| `incomplete` | Connected account whose charges are not enabled; used by the hero earnings tile while the Action Item root is hidden |
 | `ready` | Stripe reports `charges_enabled: true` |
 | `review` | The user just returned from Stripe, but the authoritative enabled flag has not settled after short polling |
 | `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code |
 
-Give every Connect or Complete setup control
-`data-stripe-connect-action="start"`. An optional retry control can use
-`data-stripe-connect-action="refresh"`. Keep an
-`.action-item_button-wrapper` in the `ready` state. If its first child is an
-authored Webflow button component, the controller reuses that component as the
-accessible `Open Stripe` control, so the ready state cannot retain a conflicting
-`Connect Stripe` CTA. Otherwise, keep an existing Webflow button component as
-the first child of the disconnected state's `.action-item_button-wrapper`; the
-controller clones it into the ready wrapper. The controller clones the resolved
-Open Stripe component for `Disconnect Stripe`, assigns
-`data-stripe-connect-action="dashboard"` and
-`data-stripe-connect-action="disconnect"`, respectively, and does not add a
-second copy if either action already exists. Open Stripe requests the exact
-provider-verified connected account destination. Disconnect Stripe asks for an
-explicit browser confirmation before it sends the authenticated disconnect.
-The controller also clones that action into the `incomplete` and `review`
-wrappers, so a member can disconnect and restart even before charges are
-enabled.
+Give every Connect control `data-stripe-connect-action="start"`. An optional
+retry control can use `data-stripe-connect-action="refresh"`. The Action Item
+root is visible for `loading`, `disconnected`, and `error` until canonical
+status proves a connection. It is hidden for every provider-connected state:
+`incomplete`, `review`, and `ready`, and stays hidden during later loading or
+error states until canonical status reports `disconnected`. The controller does
+not create or bind a disconnect control. Members must contact The Starters
+support team to disconnect Stripe.
+
 The hero can keep its two authored Stripe tiles, both with
 `data-stripe-connect-action="earnings"`, but the controller uses only one blue
 tile for the full lifecycle. Mark the original Connect Stripe tile with
@@ -2773,8 +2769,8 @@ confirmation returns to the canonical disconnected or incomplete state. If the
 browser exposes none of the return-watcher APIs, the controller releases the
 pending state and guard after the successful tab navigation.
 
-A single in-flight guard is shared across every start, refresh, Earnings, Open
-Stripe, and disconnect control in the dashboard, so a second click on any
+A single in-flight guard is shared across every start, refresh, Earnings, and
+Open Stripe control in the dashboard, so a second click on any
 control is ignored while an authenticated action is resolving. Start
 posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
@@ -2788,10 +2784,12 @@ navigating the reserved tab. Exact backend replays with `mode="connected"` or
 close the reserved tab and refresh canonical status instead of displaying a
 false invalid-URL error.
 
-Dashboard access and disconnect each send their own bounded idempotency key.
-A retry after a network-ambiguous, timeout, conflict, rate-limit, or server
-outcome reuses the action's key. A definitive provider result or non-retryable
-response clears it, so a later intentional action starts a new attempt.
+Dashboard access sends a bounded idempotency key. A retry after a
+network-ambiguous, timeout, conflict, rate-limit, or server outcome reuses the
+key. A definitive provider result or non-retryable response clears it, so a
+later intentional action starts a new attempt. The authenticated disconnect
+endpoint remains available to the support-owned workflow, but the dashboard
+does not expose it.
 
 The dashboard calls provider-aware `status/v3` immediately. It repairs a
 readiness mismatch and clears a stale projection only when Stripe returns a
@@ -2852,8 +2850,9 @@ Staging uses the same authenticated `status/v3`, `start/v3`, `dashboard/v3`,
 `disconnect/v3`, `oauth_exchange/v3`, and
 `starter/get_stripe_connect_id/v3` endpoints as production. This gives a Test
 Data member the full persistent Connect lifecycle and environment-bound account
-lookup, including Complete setup, Open Stripe, Disconnect Stripe, callback
-processing, and TEST reconciliation, without touching LIVE account fields. The
+lookup, including Complete setup, Open Stripe, callback processing, and TEST
+reconciliation, without touching LIVE account fields. Provider disconnect stays
+in the support-owned flow. The
 signed Connect webhook independently derives its environment from Stripe event
 `livemode` and keeps TEST and LIVE updates isolated. The reconciliation
 operator must supply one explicit environment per run; there is no shared
@@ -2917,8 +2916,9 @@ node --test v3/scheduling-auth.test.js v3/paid-call-brand-payment.test.js
 Starter and Brand dashboards. The panel itself is shared infrastructure: the
 feature scripts that contribute rows (Stripe Connect, calls, projects, and
 future sections) still own their own rows and show or hide them themselves.
-This controller never shows, hides, or edits a feature row. It only renders the
-loading card, the "all caught up" empty card, and the live count.
+This controller never shows, hides, or edits a feature row. It renders the
+loading card, the "all caught up" empty card, and the live count. After a scoped
+wrapper settles with zero items, it hides that full wrapper with `display:none`.
 
 Load it on `/starter-dashboard` and `/brand-dashboard`:
 
@@ -2931,7 +2931,7 @@ the Brand dashboard:
 
 | Value | Purpose |
 | --- | --- |
-| `wrapper` | Panel scope root. Optional; with no wrapper anywhere on the page the controller falls back to a single document-wide panel whenever any `loading`, `empty`, or `total` chrome is authored, which is what the Starter dashboard still uses. A page with neither a wrapper nor chrome stays untouched |
+| `wrapper` | Panel scope root. Optional; hidden after settlement when its pending count is zero. With no wrapper anywhere on the page the controller falls back to a single document-wide panel whenever any `loading`, `empty`, or `total` chrome is authored, which is what the Starter dashboard still uses. A page with neither a wrapper nor chrome stays untouched |
 | `list` | List container; informational only |
 | `loading` | Loading card, visible until the panel first settles |
 | `empty` | "All caught up" card, visible once settled with zero items |
@@ -2952,12 +2952,14 @@ today, including component-driven ones that cannot take the attribute yet. It
 is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
-The panel settles — and only then may the empty card appear — at the first of:
+The panel settles at the first of:
 an item becoming visible, a Stripe readiness/error event, a terminal Calendar
 connection state or availability error event, or a 4-second timeout. A Calendar
 `loading` event alone does not settle the panel. Until it settles the loading
 card stays up, so a slow feature controller never flashes a false "all caught
-up".
+up". A scoped wrapper with no remaining items is hidden, including its empty
+card. The document-wide fallback can still show the empty card because it has
+no wrapper to hide.
 
 Every render also writes the count to `data-action-items-count` on the scope
 (on `<body>`, or `<html>` if there is no body, when the scope is the document)

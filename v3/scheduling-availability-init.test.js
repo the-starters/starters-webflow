@@ -458,6 +458,118 @@ test('removes the Calendar Action Item once the canonical connection is ready', 
   assert.equal(result.steps[0].style.display, 'block')
 })
 
+test('removes the Calendar Action Item when Nylas availability exists without a Google connection', async () => {
+  const availability = {
+    items: { general: { days: [1], start: '09:00', end: '18:00' } },
+    manager: 'platform',
+  }
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability,
+        nylas_grant_id: '',
+        nylas_calendar_id: '',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'reconnect',
+      hasGrant: false,
+      hasCalendar: false,
+      configurationCount: 1,
+      manager: 'platform',
+    },
+  })
+
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+})
+
+test('keeps the Calendar Action Item until Nylas availability exists', async () => {
+  const availability = {
+    items: { general: { days: [1], start: '09:00', end: '18:00' } },
+    manager: 'calendar',
+  }
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability,
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'connected',
+      hasGrant: true,
+      hasCalendar: true,
+      configurationCount: 0,
+      manager: 'calendar',
+    },
+  })
+
+  assert.equal(result.connectionAction.style.display, 'flex')
+  assert.equal(result.connectionItem.hidden, false)
+  assert.equal(result.connectionItem.style.display, '')
+})
+
+test('writer reinitialization cannot replace the canonical Nylas count while loading', async () => {
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability: { items: {}, manager: 'calendar' },
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'connected', configurationCount: 1 },
+  })
+  assert.equal(result.connectionItem.hidden, true)
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'loading', configurationCount: 0 },
+  })
+
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+  assert.equal(
+    result.window.STARTER_SCHEDULING_CONNECTION.configurationCount,
+    1,
+  )
+
+  await result.window.StarterSchedulingAvailability.initialize()
+
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+  assert.equal(
+    result.window.STARTER_SCHEDULING_CONNECTION.configurationCount,
+    1,
+  )
+})
+
 test('renders partial provider state as reconnect and keeps the CTA actionable', async () => {
   const availability = {
     items: { general: { days: [1], start: '09:00', end: '18:00' } },
@@ -504,13 +616,13 @@ test('restores the Calendar Action Item when a connected provider needs reconnec
 
   result.window.dispatchEvent({
     type: 'starterSchedulingConnectionStateChanged',
-    detail: { state: 'connected' },
+    detail: { state: 'connected', configurationCount: 1 },
   })
   assert.equal(result.connectionItem.hidden, true)
 
   result.window.dispatchEvent({
     type: 'starterSchedulingConnectionStateChanged',
-    detail: { state: 'reconnect' },
+    detail: { state: 'reconnect', configurationCount: 0 },
   })
   assert.equal(result.connectionAction.style.display, 'flex')
   assert.equal(result.connectionItem.hidden, false)
