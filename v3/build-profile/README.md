@@ -21,11 +21,13 @@ The files below are source-controlled candidates for self-contained controller b
 `canonical-profile-hydrator.js` is a supplemental fallback loaded by the
 existing `profile-photo.js` asset. It does not replace an inline block. After
 the legacy Memberstack/local draft initializes, it reads the canonical
-`starter/get` profile, verifies the stable Memberstack ID, maps the canonical
+`starter/get` profile through the authenticated browser fetch, verifies the
+stable Memberstack ID before and after that read, maps the canonical
 fields to the seven-step draft shape, and fills only keys that are absent from
 the active draft. Existing draft keys always win, including intentional empty
-values. It does not persist Memberstack JSON, localStorage, or Xano data; the
-native wizard keeps ownership of capture and persistence after human input.
+or false values. It does not persist Memberstack JSON, localStorage, or Xano
+data; the native wizard keeps ownership of capture and persistence after human
+input.
 
 `submit-diagnostics.js` is an additional outcome loader, not a replacement for
 an inline block. It watches the existing human click on `[form-submit]` and the
