@@ -428,6 +428,28 @@ out for good and is content-gated on the page instead; both quiz pages keep thei
 page-controller redirects, and `/quiz-results` and `/all-starters` additionally
 get the role bounce, which is why the sitewide install matters on them.
 
+## Brand Action Items completion marker
+
+After the role bounce allows a paid or free Brand to stay on `/all-starters` or
+`/all-starters/`, the guard records the visit in Memberstack JSON at
+`brandActionItems.allStartersVisitedAt` with an ISO timestamp. It first reads the
+current JSON, preserves every top-level key, shallow-copies every existing
+`brandActionItems` key, and then updates only the visit timestamp. A repeat visit
+refreshes that timestamp.
+
+This is the guard's only Memberstack write. It requires a mapped Brand role, a
+member ID, and both `getMemberJSON` and `updateMemberJSON`; other roles and
+unavailable APIs return without writing. Read or write failures fail quietly and
+do not change the page's routing decision. The marker is Action Items UX state,
+not an access or authorization boundary.
+
+The guard exports `hasBrandAllStartersVisit(memberstack, member)` for
+`dashboard-action-items.js`. That reader uses the same paid/free Brand boundary
+and returns `false` for missing data, unavailable APIs, other roles, or read
+failures. The Action Items behavior and Designer row selector remain owned by
+the [Dashboard Action Items panel](README.md#dashboard-action-items-panel)
+documentation.
+
 ## Integration checklist
 
 - Point new generic dashboard links, post-auth Memberstack destinations, and

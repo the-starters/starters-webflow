@@ -2923,10 +2923,9 @@ node --test v3/scheduling-auth.test.js v3/paid-call-brand-payment.test.js
 ## Dashboard Action Items panel
 
 `dashboard-action-items.js` owns the chrome of the Action Items panel on the
-Starter and Brand dashboards. The panel itself is shared infrastructure: the
-feature scripts that contribute rows (Stripe Connect, calls, projects, and
-future sections) still own their own rows and show or hide them themselves.
-This controller never shows, hides, or edits a feature row. It renders the
+Starter and Brand dashboards. Starter feature scripts still own their Stripe,
+Calendar, calls, and project rows. The controller also owns two Brand onboarding
+rows: post the first opportunity, and visit `/all-starters`. It renders the
 loading card, the "all caught up" empty card, and the live count. After a scoped
 wrapper settles with zero items, it hides that full wrapper with `display:none`.
 
@@ -2962,14 +2961,30 @@ today, including component-driven ones that cannot take the attribute yet. It
 is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
-The panel settles at the first of:
-an item becoming visible, a Stripe readiness/error event, a terminal Calendar
-connection state or availability error event, or a 4-second timeout. A Calendar
-`loading` event alone does not settle the panel. Until it settles the loading
-card stays up, so a slow feature controller never flashes a false "all caught
-up". A scoped wrapper with no remaining items is hidden, including its empty
-card. The document-wide fallback can still show the empty card because it has
-no wrapper to hide.
+On `/brand-dashboard`, the controller finds the first-opportunity row through
+`[data-project-proposal-template="true"]`. It requests the first owned
+opportunity through `Opp30.API.brandOppList('', 1, 1)` and hides that row when
+the response has at least one item. A successful opportunity create also emits
+`starters:opportunity-created`, so the row disappears without a reload.
+`opportunities-3.0.js` emits `starters:opp30-ready` after exposing its API; the
+controller waits up to four seconds for that signal, so either deferred script
+order works.
+
+The browse row is the `.dash-hero_action-item` containing an exact
+`href="/all-starters"` link. When a paid or free Brand visits `/all-starters`,
+the sitewide `route-guard.js` records the visit in Memberstack JSON. The Brand
+dashboard reads that completion marker and hides the browse row. See
+[ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md#brand-action-items-completion-marker)
+for the marker, role, preservation, and failure contracts.
+
+The panel settles at the first of: an item becoming visible, a Stripe
+readiness/error event, a terminal Calendar connection state or availability
+error event, Brand action-item readiness/error, or a 4-second timeout. A
+Calendar `loading` event alone does not settle the panel. Until it settles the
+loading card stays up, so a slow feature controller never flashes a false "all
+caught up". A scoped wrapper with no remaining items is hidden, including its
+empty card. The document-wide Starter fallback can still show the empty card
+because it has no wrapper to hide.
 
 Every render also writes the count to `data-action-items-count` on the scope
 (on `<body>`, or `<html>` if there is no body, when the scope is the document)
