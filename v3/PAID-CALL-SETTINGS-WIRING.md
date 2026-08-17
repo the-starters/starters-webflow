@@ -22,7 +22,7 @@ Use these attributes on existing native Webflow elements:
 | Save button wrapper | `data-paid-call-action` | `save` |
 | Disable button wrapper | `data-paid-call-action` | `disable` |
 
-The duration select must use `15`, `30`, `45`, and `60` as option values. The rate field accepts whole US dollars from 5 to 999999.
+The title must contain 3 to 80 characters. The duration select must use `15`, `30`, `45`, and `60` as option values. The rate field accepts whole US dollars from 5 to 999999.
 
 Optional prerequisite rows use `data-paid-call-prerequisite` with one of these values:
 
