@@ -1,0 +1,124 @@
+/* Docs: https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/expert-card
+ *
+ * CDN-served. Load in Head (same jsDelivr ref as expert-card.js). Not a paste embed.
+ *
+ * Company list only. Everything else on the card (image, jobs reveal, hover)
+ * stays in Webflow.
+ *
+ * The list is a flex container in the Designer, and flex blockifies its
+ * children, so `display: inline` on a company never took effect and every
+ * company got its own row. `display: block` puts the companies back into one
+ * inline formatting context so they read as a sentence and the 2-line clamp
+ * means what it says.
+ *
+ * Rules commented out below and marked "Backup" are the earlier attempt, kept
+ * inert on purpose; the live declaration beside each one is the fix.
+ */
+.expert-card_company-list {
+  /* Backup — the custom property existed only to feed the line-height below,
+     and a second knob for one value is a place for the two to drift apart.
+  --expert-card-company-line-height-unitless: 1.7;
+  */
+  min-width: 0;
+  line-height: 1.7;
+  /* Backup — reserved a line on a list that has no companies at all. The JS
+     equalize pass writes a shared min-height, so this only added an empty row.
+  min-height: 1lh;
+  */
+  max-height: 2lh;
+  overflow: hidden;
+  /* Backup — both fought the comma: break-word split company names mid-word,
+     and text-wrap: pretty re-balanced the two lines so the clamp cut elsewhere.
+  overflow-wrap: break-word;
+  text-wrap: pretty;
+  */
+}
+
+/* Doubled class: outranks the Designer's flex layout on this same class
+   whichever stylesheet loads last. Flex is what stacked each company on its
+   own row and put the commas at the start of the next line. */
+.expert-card_company-list.expert-card_company-list {
+  display: block;
+  gap: 0;
+}
+
+/* Three markup shapes reach this list: CMS nested collection items
+   (`p.expert-card_company-text` inside `display: contents` wrappers), Algolia
+   template siblings (`p[wf-algolia-display="inline"]`), and plain paragraphs. */
+.expert-card_company-list p,
+.expert-card_company-list p.text-size-small,
+.expert-card_company-list .expert-card_company-text,
+.expert-card_company-list [wf-algolia-display='inline'] {
+  display: inline;
+  margin: 0;
+  line-height: inherit;
+  /* Backup — this beat `.text-size-small`, so the companies rendered at the
+     list's font size instead of the size the Designer class asks for.
+  font-size: inherit;
+  */
+  /* Backup — glued a company to its comma, but a company name wider than the
+     card could then not break at all and was clipped by the overflow.
+  white-space: nowrap;
+  */
+  /* Beats the Designer's `.expert-card_company-text { white-space: nowrap }`.
+     The comma stays glued via `content: ','` below, not via nowrap. */
+  white-space: normal;
+}
+
+/* Kill the inherited leading commas — those are what hang at the start of a
+   line, because a `::before` sits on the wrong side of the wrap opportunity.
+   The class is repeated to outrank a site rule of the shape
+   `.expert-card_company-list p:not(:first-child)::before` whichever order the
+   two stylesheets load in, without a forced override. */
+.expert-card_company-list.expert-card_company-list p::before,
+.expert-card_company-list.expert-card_company-list p:not(:first-child)::before,
+.expert-card_company-list.expert-card_company-list .expert-card_company-text::before,
+.expert-card_company-list.expert-card_company-list [wf-algolia-display='inline']::before {
+  content: none;
+}
+
+/* Trailing commas instead. The comma is glued to the name because there is no
+   wrap opportunity inside `content: ','`, and the gap to the next company is
+   margin rather than a space, so the next company can start a new line without
+   dragging the previous company's comma down with it. */
+.expert-card_company-list p::after,
+.expert-card_company-list .expert-card_company-text::after,
+.expert-card_company-list [wf-algolia-display='inline']::after
+/* Backup — Designer canvas only, and this sheet is CDN-served on the published
+   site, where `.wf-design-mode` never exists.
+, .wf-design-mode [data-card='company-list'] p::after
+*/ {
+  content: ',';
+  margin-right: 0.35em;
+  /* Backup — the space inside the content string is itself a wrap opportunity,
+     so the comma travelled to the next line ahead of the following company.
+  content: ', ';
+  white-space: normal;
+  */
+}
+
+/* No comma after the last company. `p:not(:last-child)` cannot express this:
+   under a CMS nested collection every `p` is both the first and the last child
+   of its own `display: contents` item, so the last child has to be found on
+   the item, not on the paragraph. */
+.expert-card_company-list > p:last-child::after,
+.expert-card_company-list .w-dyn-item:last-child p::after,
+.expert-card_company-list .w-dyn-item:last-child .expert-card_company-text::after,
+.expert-card_company-list .w-dyn-item:last-child [wf-algolia-display='inline']::after
+/* Backup — `[data-company-list-item]` is not markup this card ships; it was
+   invented here. The Designer-canvas shapes are canvas-only (see above).
+, .expert-card_company-list [data-company-list-item]:last-child::after
+, .wf-design-mode [data-card='company-list'] > p:last-child::after
+, .wf-design-mode [data-card='company-list'] .w-dyn-item:last-child p::after
+*/ {
+  content: none;
+}
+
+/* Backup — hiding a trailing empty CMS item took it out of `:last-child`
+   reckoning, so the comma of the company before it was painted with nothing
+   after it. The last-child suppression above already leaves the empty item's
+   own comma unpainted.
+.expert-card_company-list p:empty {
+  display: none;
+}
+*/
