@@ -411,7 +411,7 @@
       if (host === 'the-starters-3-0.webflow.io' && path === '/hire/jp-dionisio') {
           return 'test';
       }
-      if ((host === 'thestarters.com' || host === 'www.thestarters.com') && path === '/hire/jp-test') {
+      if ((host === 'thestarters.com' || host === 'www.thestarters.com') && path === '/hire/jp-testiz-d') {
           return 'production';
       }
       return null;

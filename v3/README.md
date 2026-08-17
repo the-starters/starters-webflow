@@ -1771,7 +1771,7 @@ copy in page head/footer code.
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
-- On the V3 custom domains, runs only on `/hire/jp-test`,
+- On the V3 custom domains, runs only on `/hire/jp-testiz-d`,
   `/starter-dashboard`, and `/brand-dashboard`; all other paths remain inert.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
   origin, including the two Brand paid-call payment-method paths documented
@@ -1839,7 +1839,7 @@ scheduling component. It installs on these exact staging paths:
 - `/hire/jp-dionisio`
 
 The seventh path is the existing approved Test Talent CMS item. The exact paths
-`/hire/jp-test`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
+`/hire/jp-testiz-d`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
 `thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
 staging-host only. The adapter does not install on any other `/hire/*` item or
 on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
@@ -1855,7 +1855,7 @@ and direct `window.xanoAuthFetch` calls so the shared scheduling helpers cannot
 bypass the Hire route map. The adapter does not wrap direct authenticated calls
 on the other installed surfaces.
 
-On the exact production `/hire/jp-test` canary, and on the retained staging-only
+On the exact production `/hire/jp-testiz-d` canary, and on the retained staging-only
 `/hire/jp-dionisio` canary, the two public booking-discovery helpers use
 Brand-safe contracts instead of Talent-owner contracts. Both the unversioned
 and `/v3` forms of `starter/get_by_memberstack` are remapped to

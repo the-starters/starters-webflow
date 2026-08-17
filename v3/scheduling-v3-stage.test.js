@@ -119,7 +119,7 @@ test('detaches the Nylas element only after the authored success step is ready',
   }
   const { attributes, documentListeners } = loadStage({
     hostname: 'thestarters.com',
-    pathname: '/hire/jp-test',
+    pathname: '/hire/jp-testiz-d',
   })
 
   documentListeners.get('bookedEventInfo')({
@@ -145,7 +145,7 @@ test('keeps the Nylas element mounted when booking fails or success is not shown
   }
   const { documentListeners } = loadStage({
     hostname: 'thestarters.com',
-    pathname: '/hire/jp-test',
+    pathname: '/hire/jp-testiz-d',
   })
   const listener = documentListeners.get('bookedEventInfo')
 
@@ -348,7 +348,7 @@ test('does not install on the live profile component or unrelated production pat
 test('installs only on the approved Hire canary and canonical dashboards across both production hosts', async () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
-      '/hire/jp-test',
+      '/hire/jp-testiz-d',
       '/starter-dashboard',
       '/brand-dashboard',
     ]) {
@@ -357,9 +357,11 @@ test('installs only on the approved Hire canary and canonical dashboards across 
       assert.equal(approved.attributes['data-scheduling-v3-stage'], 'ready')
     }
 
-    const otherProfile = loadStage({ hostname, pathname: '/hire/sabina-rahaman' })
-    assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
-    assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+    for (const pathname of ['/hire/sabina-rahaman', '/hire/jp-test']) {
+      const otherProfile = loadStage({ hostname, pathname })
+      assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
+      assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+    }
 
     const protectedProfile = loadStage({ hostname, pathname: '/hire/jp-dionisio' })
     assert.equal(protectedProfile.window.__tsSchedulingV3InertRoute, true)
@@ -423,7 +425,7 @@ test('keeps the protected production Test profile inert with both synchronous sc
 test('adds stable booking identity on the exact production Live JP Hire route', () => {
   const { window } = loadStage({
     hostname: 'www.thestarters.com',
-    pathname: '/hire/jp-test',
+    pathname: '/hire/jp-testiz-d',
     brandMemberstackId: 'live-brand-member',
     starterMemberstackId: 'live-starter-member',
   })

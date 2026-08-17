@@ -88,15 +88,17 @@ test('installs immediately and takes ownership from the opportunities bridge', (
 })
 
 test('does not install on unrelated production Hire paths', () => {
-  const nativeFetch = async () => response({})
-  const { window } = loadBridge(nativeFetch, {
-    hostname: 'www.thestarters.com',
-    pathname: '/hire/sabina-rahaman',
-  })
+  for (const pathname of ['/hire/sabina-rahaman', '/hire/jp-test']) {
+    const nativeFetch = async () => response({})
+    const { window } = loadBridge(nativeFetch, {
+      hostname: 'www.thestarters.com',
+      pathname,
+    })
 
-  assert.equal(window.__tsSchedulingAuthBridge, undefined)
-  assert.equal(window.xanoAuthFetch, undefined)
-  assert.equal(window.fetch, nativeFetch)
+    assert.equal(window.__tsSchedulingAuthBridge, undefined)
+    assert.equal(window.xanoAuthFetch, undefined)
+    assert.equal(window.fetch, nativeFetch)
+  }
 })
 
 test('blocks every scheduling request on the protected production Test profile', async () => {
@@ -127,7 +129,7 @@ test('blocks every scheduling request on the protected production Test profile',
 test('installs on the approved Hire canary and canonical dashboards across both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
-      '/hire/jp-test',
+      '/hire/jp-testiz-d',
       '/starter-dashboard',
       '/brand-dashboard',
     ]) {
