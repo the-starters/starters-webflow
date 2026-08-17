@@ -1768,19 +1768,26 @@ copy in page head/footer code.
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 ```
 
+The live `detail_hire` template is the timing exception. Install
+[`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
+in its Page Settings head so `scheduling-auth.js` and
+`scheduling-v3-stage.js` execute synchronously before the shared scheduling
+component. A deferred adapter can lose the first legacy scheduling request.
+
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
-- On the V3 custom domains, runs only on `/hire/jp-testiz-d`,
-  `/starter-dashboard`, and `/brand-dashboard`; all other paths remain inert.
+- On the V3 custom domains, runs on valid single-segment `/hire/<slug>` paths,
+  `/starter-dashboard`, and `/brand-dashboard`. Production
+  `/hire/jp-dionisio` remains explicitly blocked.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
   origin, including the two Brand paid-call payment-method paths documented
   below. It does not use a group-wide prefix allowlist.
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
   This prevents a release-time regression on non-stage staging consumers; the
-  stage adapter intercepts those paths first on its seven approved staging paths
-  and three exact production surfaces.
+  stage adapter intercepts those paths first on its explicit staging paths,
+  canonical dashboards, and valid Hire routes.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
@@ -1838,11 +1845,12 @@ scheduling component. It installs on these exact staging paths:
 - `/hire-stage`
 - `/hire/jp-dionisio`
 
-The seventh path is the existing approved Test Talent CMS item. The exact paths
-`/hire/jp-testiz-d`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
-`thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
-staging-host only. The adapter does not install on any other `/hire/*` item or
-on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
+The seventh path is the existing Test Talent CMS item. Every valid
+single-segment `/hire/<slug>` path plus `/starter-dashboard` and
+`/brand-dashboard` is enabled on `thestarters.com` and `www.thestarters.com`;
+every `*-stage` path remains staging-host only. The live `detail_hire` template
+loads the adapter, which activates from the rendered `/hire/<slug>` URL.
+Production `/hire/jp-dionisio` is explicitly contained by
 both synchronous scripts: scheduling-group requests return HTTP `410` without
 installing authentication, discovery overrides, or booking identity. The
 adapter maps the reviewed unversioned scheduling paths and the environment-bound
@@ -1850,13 +1858,12 @@ adapter maps the reviewed unversioned scheduling paths and the environment-bound
 request method, body, headers, and query parameters, and sends the rewritten
 request through `window.xanoAuthFetch`. The Stripe lookup follows the
 [domain-isolated environment contract](#domain-isolated-test-and-live-environments).
-On the two approved Hire booking surfaces, the adapter owns both `window.fetch`
-and direct `window.xanoAuthFetch` calls so the shared scheduling helpers cannot
-bypass the Hire route map. The adapter does not wrap direct authenticated calls
-on the other installed surfaces.
+On valid Hire booking surfaces, the adapter owns both `window.fetch` and direct
+`window.xanoAuthFetch` calls so the shared scheduling helpers cannot bypass the
+Hire route map. The adapter does not wrap direct authenticated calls on the
+other installed surfaces.
 
-On the exact production `/hire/jp-testiz-d` canary, and on the retained staging-only
-`/hire/jp-dionisio` canary, the two public booking-discovery helpers use
+On valid Hire paths, the two public booking-discovery helpers use
 Brand-safe contracts instead of Talent-owner contracts. Both the unversioned
 and `/v3` forms of `starter/get_by_memberstack` are remapped to
 `starter/get_booking_profile/v3`, which returns only the Starter row ID and
@@ -1866,7 +1873,7 @@ metadata. Every other installed surface uses the self-only
 `starter/get_by_memberstack/v3` and grant-owner-only
 `nylas_configurations/get_all/v3` routes.
 
-Those two approved Hire booking surfaces also contain the post-booking Nylas
+Hire booking surfaces also contain the post-booking Nylas
 DOM race. After a successful `bookedEventInfo` event includes a `booking_id`,
 the adapter waits for the Designer-authored `[schedule-step="success"]` inside
 the same `[popup-booking]` to be visible, then detaches only that popup's
@@ -1899,6 +1906,11 @@ not replace the shared `Call Scheduling - Global Code` component while the live
 stage surfaces and both canonical dashboards; releases update its Git-owned
 files through the reviewed semver tag and jsDelivr purge flow.
 
+`scheduling-v3-hire-template-head.html` separately owns the live Hire-template
+boundary. Install it in the `detail_hire` Page Settings head, before the shared
+component renders. It contains only the synchronous auth and route adapter, so
+dashboard-only modules remain owned by the isolated component loader.
+
 Runtime contract:
 
 - `data-scheduling-v3-stage` on the document root reports `ready` once the
@@ -1908,9 +1920,9 @@ Runtime contract:
   otherwise, the attribute is not set on pages where the adapter does not
   install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
-  seven installed stage paths), `productionPaths` (the exact production Hire
-  canary and canonical dashboards), and `routeMap` (the effective request-to-`/v3`
-  route map).
+  explicit stage paths), `productionPaths` (the canonical dashboards), and
+  `routeMap` (the effective request-to-`/v3` route map). Valid Hire paths are
+  selected by the route grammar and are not enumerated in either path array.
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 
@@ -1952,9 +1964,15 @@ Webflow owns all call-section markup. Each section must provide:
 
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
-requests and all other rows under calls; Brand keeps one calls list. Legacy card
-action controls are hidden because V3 has no identity-safe mutation handler;
-only a confirmed row with a canonical meeting link exposes its join control.
+requests and all other rows under calls; Brand keeps pending and accepted rows
+in its calls list. The Starter pending card exposes only the Designer-authored
+Accept control. Before it calls `booking/confirm/v3`, the controller decodes the
+canonical `booking_ref`, requires its booking and configuration IDs to match the
+row, and supplies a per-attempt idempotency key. A successful response refreshes
+the canonical list, which moves the accepted row from Starter Call Requests to
+Starter Calls while it remains in Brand Calls. All other legacy mutation
+controls stay hidden; only a confirmed row with a canonical meeting link
+exposes its join control.
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for

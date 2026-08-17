@@ -13,7 +13,6 @@
     '/hire/jp-dionisio',
   ]
   const PRODUCTION_PATHS = [
-    '/hire/jp-testiz-d',
     '/starter-dashboard',
     '/brand-dashboard',
   ]
@@ -75,19 +74,20 @@
 
   const activePath = normalizedPagePath()
   const activeHost = window.location.hostname
+  const isHirePath = /^\/hire\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(activePath)
   const isBlockedProductionPath =
     PRODUCTION_HOSTS.has(activeHost) && BLOCKED_PRODUCTION_PATHS.includes(activePath)
   if (isBlockedProductionPath) {
     installBlockedRoute()
     return
   }
-  const isStagingPath = activeHost === STAGING_HOST && STAGE_PATHS.includes(activePath)
+  const isStagingPath =
+    activeHost === STAGING_HOST && (STAGE_PATHS.includes(activePath) || isHirePath)
   const isProductionPath =
-    PRODUCTION_HOSTS.has(activeHost) && PRODUCTION_PATHS.includes(activePath)
+    PRODUCTION_HOSTS.has(activeHost) && (PRODUCTION_PATHS.includes(activePath) || isHirePath)
   if (!isStagingPath && !isProductionPath) return
-  const isHireBookingPath =
-    (activeHost === STAGING_HOST && activePath === '/hire/jp-dionisio') ||
-    (PRODUCTION_HOSTS.has(activeHost) && activePath === '/hire/jp-testiz-d')
+  const isHireBookingPath = isHirePath &&
+    (activeHost === STAGING_HOST || PRODUCTION_HOSTS.has(activeHost))
   if (window.__tsSchedulingV3Stage) return
   window.__tsSchedulingV3Stage = true
 

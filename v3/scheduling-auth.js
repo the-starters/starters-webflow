@@ -4,7 +4,6 @@
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const PRODUCTION_PATHS = new Set([
-    '/hire/jp-testiz-d',
     '/starter-dashboard',
     '/brand-dashboard',
   ])
@@ -12,12 +11,14 @@
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_PREFIX = '/api:tCpV3oqd/'
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
+  const isHirePath = /^\/hire\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(activePath)
   const isStagingHost = window.location.hostname === STAGING_HOST
   const isBlockedProductionPath =
     PRODUCTION_HOSTS.has(window.location.hostname) &&
     BLOCKED_PRODUCTION_PATHS.has(activePath)
   const isApprovedProductionPath =
-    PRODUCTION_HOSTS.has(window.location.hostname) && PRODUCTION_PATHS.has(activePath)
+    PRODUCTION_HOSTS.has(window.location.hostname) &&
+    (PRODUCTION_PATHS.has(activePath) || isHirePath)
   if (isBlockedProductionPath) {
     installBlockedRoute()
     return

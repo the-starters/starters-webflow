@@ -92,8 +92,8 @@ test('installs immediately and takes ownership from the opportunities bridge', (
   assert.notEqual(window.fetch, legacyFetch)
 })
 
-test('does not install on unrelated production Hire paths', () => {
-  for (const pathname of ['/hire/sabina-rahaman', '/hire/jp-test']) {
+test('does not install on malformed or nested production Hire paths', () => {
+  for (const pathname of ['/hire', '/hire/', '/hire/two/levels', '/hire/Bad_Slug']) {
     const nativeFetch = async () => response({})
     const { window } = loadBridge(nativeFetch, {
       hostname: 'www.thestarters.com',
@@ -131,10 +131,11 @@ test('blocks every scheduling request on the protected production Test profile',
   }
 })
 
-test('installs on the approved Hire canary and canonical dashboards across both production hosts', () => {
+test('installs on valid Hire profiles and canonical dashboards across both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
       '/hire/jp-testiz-d',
+      '/hire/sabina-rahaman',
       '/starter-dashboard',
       '/brand-dashboard',
     ]) {

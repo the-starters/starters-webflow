@@ -113,10 +113,10 @@
       const role = memberRole(member);
       return role === 'brand-free' || role === 'brand-paid' || role === 'legacy-brand';
   }
-  // The Designer keeps this panel visible while it is being authored. Runtime
-  // ownership starts closed for every viewer and every /hire record; only the
-  // approved inline initializer may reveal it after eligibility and
-  // environment checks pass.
+  // Park the beside-services calendar experiment. The live Hire experience
+  // uses the existing two-step modal: Book Call -> Free/Paid -> calendar.
+  // Keep the authored panel available for a future opt-in, but never let
+  // leftover preview markup take ownership of booking cards.
   const INLINE_BOOKING_WRAPPER = document.querySelector('[data-availability-element="wrapper"]');
   if (INLINE_BOOKING_WRAPPER) {
       INLINE_BOOKING_WRAPPER.style.display = 'none';
@@ -213,6 +213,10 @@
           }
 
           if (!MEMBER.id) markServiceCardsClickable();
+          if (isBrand) {
+              wireProjectServiceCards();
+              window.setTimeout(wireProjectServiceCards, 0);
+          }
           refreshEmptySectionNav();
       } catch (error) {
           console.warn('Anonymous services:', error);
@@ -244,7 +248,15 @@
          [data-signup-trigger-element] click and stamps attribution. All
          four cards carry those attributes (the rate-card clones set their
          own value below), so this only adds the pointer affordance. */
-      qsa('#services [data-service-card="component"], #services [data-rate-card]').forEach(function (card) {
+      const serviceCards = Array.from(qsa('[data-service-card="component"]')).filter(function (card) {
+          return !!card.closest('#services');
+      });
+      Array.from(qsa('[data-rate-card]')).filter(function (card) {
+          return !!card.closest('#services');
+      }).forEach(function (card) {
+          if (!serviceCards.includes(card)) serviceCards.push(card);
+      });
+      serviceCards.forEach(function (card) {
           if (getComputedStyle(card).display === 'none') return;
           card.style.cursor = 'pointer';
       });
@@ -263,6 +275,10 @@
           renderRateCards(record);
           await memberReady;
           if (!MEMBER.id) markServiceCardsClickable();
+          if (isBrandMember(MEMBER)) {
+              wireProjectServiceCards();
+              window.setTimeout(wireProjectServiceCards, 0);
+          }
           refreshEmptySectionNav();
       } catch (error) {
           console.warn('Rate services:', error);
@@ -341,6 +357,67 @@
       }
   }
 
+  function wireProjectServiceCards() {
+      const serviceField = qs('dialog[data-modal-target="generate-contract"] [name="Services"]');
+      const options = serviceField && serviceField.options
+          ? Array.from(serviceField.options).filter(function (option) {
+              return String(option.value || '').trim();
+          })
+          : [];
+      if (!options.length) return;
+
+      function normalized(value) {
+          return String(value || '').trim().toLowerCase();
+      }
+
+      function optionValueForCard(card) {
+          const title = qs('[data-service-card-element="title"]', card);
+          const titleValue = title ? String(title.textContent || '').trim() : '';
+          const rateType = normalized(card.getAttribute('data-rate-card'));
+          const candidates = [titleValue];
+
+          // Freelance and Retainer are commercial formats, not separate
+          // project-service values. Both map to the authored Freelance work
+          // option when that exact option exists. Every CMS service otherwise
+          // requires an exact native option match and fails closed.
+          if (rateType === 'freelance' || rateType === 'retainer') {
+              candidates.push('Freelance work');
+          }
+
+          for (let i = 0; i < candidates.length; i += 1) {
+              const candidate = normalized(candidates[i]);
+              const option = options.find(function (item) {
+                  return normalized(item.value) === candidate ||
+                      normalized(item.textContent) === candidate;
+              });
+              if (option) return String(option.value || '').trim();
+          }
+          return '';
+      }
+
+      qsa('#services [data-service-card="component"], #services [data-rate-card]').forEach(function (card) {
+          if (card.hasAttribute('hidden') || card.getAttribute('aria-hidden') === 'true') return;
+
+          const type = normalized(card.getAttribute('data-type'));
+          const signupValue = normalized(card.getAttribute('data-signup-trigger-value'));
+          const isCall = type === 'free' || type === 'paid' ||
+              card.hasAttribute('booking-popup-open') ||
+              signupValue === 'free call' ||
+              signupValue === 'paid call' ||
+              signupValue === 'paid consulting call';
+          if (isCall) return;
+
+          const serviceValue = optionValueForCard(card);
+          if (!serviceValue) return;
+
+          card.setAttribute('data-modal-trigger', 'generate-contract');
+          card.setAttribute('data-sp-fill', 'button');
+          card.setAttribute('data-sp-fill-category', 'service');
+          card.setAttribute('data-sp-fill-value', serviceValue);
+          card.style.cursor = 'pointer';
+      });
+  }
+
   function getPublicStarterRecord() {
       if (!publicStarterRecordPromise) {
           publicStarterRecordPromise = loadPublicStarterRecord();
@@ -401,329 +478,6 @@
       item.style.display = 'none';
   });
 
-  // METHODS
-  function getInlineBookingEnvironment() {
-      const host = window.location && window.location.hostname;
-      const path = window.location && window.location.pathname
-          ? window.location.pathname.replace(/\/+$/, '') || '/'
-          : '';
-
-      if (host === 'the-starters-3-0.webflow.io' && path === '/hire/jp-dionisio') {
-          return 'test';
-      }
-      if ((host === 'thestarters.com' || host === 'www.thestarters.com') && path === '/hire/jp-testiz-d') {
-          return 'production';
-      }
-      return null;
-  }
-
-  function initInlineFreeBooking(configs, brand_name, brand_email) {
-      const environment = getInlineBookingEnvironment();
-      if (!environment) return false;
-
-      // The route bridge owns environment selection. Its ready marker proves
-      // this page has the matching TEST/production endpoint map and identity
-      // injector. Missing or mixed context must keep the inline flow inert.
-      if (
-          !window.StarterSchedulingV3Stage ||
-          document.documentElement.getAttribute('data-scheduling-v3-stage') !== 'ready'
-      ) {
-          console.warn('[hire-profile] inline booking stood down: environment bridge is not ready');
-          return false;
-      }
-
-      const wrapper = qs('[data-availability-element="wrapper"]');
-      const calendar = qs('[data-availability-element="calendar-live"]', wrapper || document);
-      const back = qs('[data-availability-element="back"]', wrapper || document);
-      const freeConfig = Array.from(configs || []).find(function (record) {
-          return record &&
-              record.config_id &&
-              record.is_paid === false &&
-              record.active !== false;
-      });
-
-      if (!wrapper || !calendar || !back || !freeConfig || typeof window.createScheduler !== 'function') {
-          console.warn('[hire-profile] inline booking stood down: required markup or scheduler is missing');
-          return false;
-      }
-
-      let scheduler = null;
-      let schedulerConnector = null;
-      let schedulerState = 'closed';
-      const freeCards = getOrCreateInlineFreeCards();
-
-      if (!freeCards.length) {
-          console.warn('[hire-profile] inline booking stood down: free service card is unavailable');
-          return false;
-      }
-
-      wrapper.style.display = 'none';
-
-      function getOrCreateInlineFreeCards() {
-          const existing = Array.from(qsa('[booking-popup-open][data-type]')).filter(function (card) {
-              return card.getAttribute('data-type') === 'free' &&
-                  card.getAttribute('data-runtime-call-template') !== 'free' &&
-                  !card.hasAttribute('hidden');
-          });
-          if (existing.length) return existing;
-
-          /* The TEST fixture's Webflow CMS item also publishes on the custom
-             production domain. Its Free Call boolean must stay
-             production-safe, so the CMS condition can omit the card on TEST
-             even when trusted TEST Xano has a valid free configuration. Reuse
-             the native service-card component only after the exact route
-             bridge and canonical config checks above pass. Unknown routes and
-             missing/mixed records never reach here. */
-          const list = qs('#services .services-list_wrapper');
-          const template = list
-              ? Array.from(qsa(
-                  '[data-service-card="component"][data-service-card-state="Default"]' +
-                  '[data-runtime-call-template="free"][hidden]',
-                  list
-              ))
-                  .find(function (candidate) {
-                      return !candidate.hasAttribute('data-rate-card') &&
-                          !!qs('.service-card_content-wrapper', candidate);
-                  })
-              : null;
-          if (!list || !template) return [];
-
-          const card = template.cloneNode(true);
-          card.removeAttribute('hidden');
-          card.setAttribute('aria-hidden', 'false');
-          [
-              'data-rate-card',
-              'has-connection',
-              'no-connection',
-              'data-modal-trigger',
-              'booking-popup-open',
-              'data-type',
-              'data-runtime-call-template',
-          ].forEach(function (attribute) {
-              card.removeAttribute(attribute);
-          });
-
-          card.setAttribute('data-runtime-free-call-card', '');
-          card.setAttribute('has-connection', 'free');
-          card.setAttribute('booking-popup-open', '');
-          card.setAttribute('data-type', 'free');
-          card.setAttribute('data-signup-trigger-element', 'service');
-          card.setAttribute('data-signup-trigger-value', 'Free Call');
-
-          const title = qs('[data-service-card-element="title"]', card);
-          if (title) title.textContent = 'Free Call';
-
-          const price = qs('[data-millify]', card);
-          if (price) {
-              price.removeAttribute('data-millify-raw');
-              price.setAttribute('data-millify', '0');
-              price.textContent = '0';
-          }
-
-          const nextSlot = qs('[next-available-slot]', card);
-          if (nextSlot) nextSlot.textContent = 'Loading...';
-
-          card.style.display = 'block';
-          list.prepend(card);
-          refreshEmptySectionNav();
-          return [card];
-      }
-
-      function setBackMode(mode) {
-          back.setAttribute('data-availability-back-mode', mode);
-          back.setAttribute(
-              'aria-label',
-              mode === 'previous-step' ? 'Back to date and time' : 'Close date and time picker'
-          );
-      }
-
-      function hideInternalBookingFields(activeScheduler) {
-          const internalFieldIds = new Set([
-              'brand_memberstack_id',
-              'starter_memberstack_id',
-          ]);
-          let attempts = 0;
-          let retryId = null;
-
-          function hideAvailableFields() {
-              const schedulerRoot = activeScheduler && activeScheduler.shadowRoot;
-              const bookingForm = schedulerRoot && schedulerRoot.querySelector
-                  ? schedulerRoot.querySelector('nylas-booking-form')
-                  : null;
-              const formRoot = bookingForm && bookingForm.shadowRoot;
-              if (!formRoot || typeof formRoot.querySelectorAll !== 'function') return false;
-
-              let hiddenCount = 0;
-              Array.from(formRoot.querySelectorAll('input-component')).forEach(function (field) {
-                  if (!field || !internalFieldIds.has(field.id)) return;
-
-                  const fieldWrapper = field.parentElement || field;
-                  if (fieldWrapper.style) fieldWrapper.style.display = 'none';
-                  if (typeof fieldWrapper.setAttribute === 'function') {
-                      fieldWrapper.setAttribute('aria-hidden', 'true');
-                  }
-                  hiddenCount += 1;
-              });
-              return hiddenCount === internalFieldIds.size;
-          }
-
-          if (hideAvailableFields() || typeof window.setInterval !== 'function') return;
-
-          retryId = window.setInterval(function () {
-              attempts += 1;
-              if (!hideAvailableFields() && attempts < 50) return;
-              if (typeof window.clearInterval === 'function') window.clearInterval(retryId);
-          }, 100);
-      }
-
-      function closeInlineBooking() {
-          if (scheduler && typeof scheduler.remove === 'function') scheduler.remove();
-          calendar.innerHTML = '';
-          wrapper.style.display = 'none';
-          wrapper.setAttribute('aria-hidden', 'true');
-          scheduler = null;
-          schedulerConnector = null;
-          schedulerState = 'closed';
-          setBackMode('close');
-          freeCards.forEach(function (card) {
-              card.setAttribute('aria-expanded', 'false');
-          });
-      }
-
-      function installSchedulerStateTracking(activeScheduler) {
-          const originalOverrides = activeScheduler.eventOverrides || {};
-
-          activeScheduler.eventOverrides = Object.assign({}, originalOverrides, {
-              timeslotConfirmed: async function (event, connector) {
-                  schedulerState = 'details';
-                  schedulerConnector = connector || schedulerConnector;
-                  setBackMode('previous-step');
-                  let result;
-                  if (typeof originalOverrides.timeslotConfirmed === 'function') {
-                      result = await originalOverrides.timeslotConfirmed(event, connector);
-                  }
-                  hideInternalBookingFields(activeScheduler);
-                  return result;
-              },
-              backButtonClicked: async function (event, connector) {
-                  schedulerState = 'date-time';
-                  schedulerConnector = connector || schedulerConnector;
-                  setBackMode('close');
-                  if (typeof originalOverrides.backButtonClicked === 'function') {
-                      return originalOverrides.backButtonClicked(event, connector);
-                  }
-              },
-              bookedEventInfo: async function (event, connector) {
-                  if (event && event.detail && !event.detail.error && event.detail.data) {
-                      schedulerState = 'complete';
-                      schedulerConnector = connector || schedulerConnector;
-                      setBackMode('close');
-                  }
-                  if (typeof originalOverrides.bookedEventInfo === 'function') {
-                      return originalOverrides.bookedEventInfo(event, connector);
-                  }
-              },
-          });
-      }
-
-      function openInlineBooking(card, event) {
-          if (event) {
-              event.preventDefault();
-              if (typeof event.stopPropagation === 'function') event.stopPropagation();
-          }
-
-          closeInlineBooking();
-          wrapper.style.display = 'flex';
-          wrapper.setAttribute('aria-hidden', 'false');
-          schedulerState = 'date-time';
-          setBackMode('close');
-          card.setAttribute('aria-expanded', 'true');
-
-          // createScheduler is shared with the existing modal and selects the
-          // first [nylas-container]. Claim that selector only for this
-          // synchronous call, then restore the modal containers unchanged.
-          const modalContainers = qsa('[nylas-container]');
-          modalContainers.forEach(function (container) {
-              container.removeAttribute('nylas-container');
-          });
-          calendar.setAttribute('nylas-container', '');
-
-          try {
-              scheduler = window.createScheduler(freeConfig.config_id, brand_name || '', brand_email || '');
-          } finally {
-              calendar.removeAttribute('nylas-container');
-              modalContainers.forEach(function (container) {
-                  container.setAttribute('nylas-container', '');
-              });
-          }
-
-          if (!scheduler) {
-              closeInlineBooking();
-              console.warn('[hire-profile] inline booking stood down: scheduler did not initialize');
-              return;
-          }
-
-          installSchedulerStateTracking(scheduler);
-          if (typeof wrapper.scrollIntoView === 'function') {
-              wrapper.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          }
-      }
-
-      back.addEventListener('click', async function (event) {
-          event.preventDefault();
-
-          if (schedulerState === 'details') {
-              let connector = schedulerConnector;
-              if (!connector && scheduler && typeof scheduler.getNylasSchedulerConnector === 'function') {
-                  connector = await scheduler.getNylasSchedulerConnector();
-                  schedulerConnector = connector || null;
-              }
-
-              if (
-                  !connector ||
-                  !connector.scheduler ||
-                  typeof connector.scheduler.toggleAdditionalData !== 'function'
-              ) {
-                  console.warn('[hire-profile] inline booking back stood down: scheduler connector is unavailable');
-                  return;
-              }
-
-              await connector.scheduler.toggleAdditionalData(false);
-              schedulerState = 'date-time';
-              setBackMode('close');
-
-              const backOverride = scheduler && scheduler.eventOverrides
-                  ? scheduler.eventOverrides.backButtonClicked
-                  : null;
-              if (typeof backOverride === 'function') {
-                  await backOverride(event, connector);
-              }
-              return;
-          }
-
-          closeInlineBooking();
-      });
-
-      freeCards.forEach(function (card) {
-          // The logged-out path never reaches this initializer, so signup
-          // attribution remains untouched. Signed-in canaries use the inline
-          // panel instead of the old modal.
-          card.removeAttribute('data-modal-trigger');
-          card.setAttribute('aria-controls', 'hire-inline-calendar');
-          card.setAttribute('aria-expanded', 'false');
-          card.onclick = function (event) {
-              openInlineBooking(card, event);
-          };
-      });
-
-      wrapper.setAttribute('id', 'hire-inline-calendar');
-      setBackMode('close');
-      return {
-          cards: freeCards,
-          configId: freeConfig.config_id,
-      };
-  }
-
   async function startersBooking_handler(freelancerId, brand_name, brand_email) {
 
       // GET STARTER
@@ -741,10 +495,7 @@
           ) {
 
               initBookingComponents(freelancerId, grant_id, configs, brand_name, brand_email);
-              const inlineFreeBooking = initInlineFreeBooking(configs, brand_name, brand_email);
               const primaryConfigId = configs[0].config_id;
-              const inlineUsesPrimaryConfig = inlineFreeBooking &&
-                  inlineFreeBooking.configId === primaryConfigId;
 
               /* Next Available Slot _ Handlers */
               // loading state
@@ -755,51 +506,19 @@
                   const date = formatWithTimezone(nearestSlotTimestamp * 1000, { month: '2-digit' }).list;
 
                   // ready state
-                  nearestSlotSetup(
-                      `${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`,
-                      inlineUsesPrimaryConfig ? [] : inlineFreeBooking && inlineFreeBooking.cards,
-                  );
+                  nearestSlotSetup(`${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`);
               } else {
 
                   // empty state
-                  nearestSlotSetup(
-                      "No available slots",
-                      inlineUsesPrimaryConfig ? [] : inlineFreeBooking && inlineFreeBooking.cards,
-                  );
+                  nearestSlotSetup("No available slots");
               }
 
-              if (inlineFreeBooking && !inlineUsesPrimaryConfig) {
-                  const inlineNearestSlotTimestamp = await getNearestSlot(
-                      grant_id,
-                      inlineFreeBooking.configId,
-                  );
-                  if (inlineNearestSlotTimestamp) {
-                      const date = formatWithTimezone(
-                          inlineNearestSlotTimestamp * 1000,
-                          { month: '2-digit' },
-                      ).list;
-                      inlineNearestSlotSetup(
-                          `${date.hour}:${date.minute}${date.dayPeriod} on ${date.month}/${date.day}`,
-                      );
-                  } else {
-                      inlineNearestSlotSetup("No available slots");
-                  }
-              }
-
-              function nearestSlotSetup(timeSlot = null, excludedCards = []) {
+              function nearestSlotSetup(timeSlot = null) {
                   qsa("[booking-popup-open][data-type]").forEach(async (item) => {
-                      if (excludedCards && excludedCards.includes(item)) return;
                       const nextSlot = qs('[next-available-slot]', item);
                       if (nextSlot) {
                           nextSlot.textContent = timeSlot || "Loading...";
                       }
-                  });
-              }
-
-              function inlineNearestSlotSetup(timeSlot) {
-                  inlineFreeBooking.cards.forEach(function (item) {
-                      const nextSlot = qs('[next-available-slot]', item);
-                      if (nextSlot) nextSlot.textContent = timeSlot;
                   });
               }
 

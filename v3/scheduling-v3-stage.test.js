@@ -425,10 +425,11 @@ test('does not install on the live profile component or unrelated production pat
   assert.equal(production.window.fetch, production.nativeFetch)
 })
 
-test('installs only on the approved Hire canary and canonical dashboards across both production hosts', async () => {
+test('installs on valid Hire profiles and canonical dashboards across both production hosts', async () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
       '/hire/jp-testiz-d',
+      '/hire/sabina-rahaman',
       '/starter-dashboard',
       '/brand-dashboard',
     ]) {
@@ -437,7 +438,7 @@ test('installs only on the approved Hire canary and canonical dashboards across 
       assert.equal(approved.attributes['data-scheduling-v3-stage'], 'ready')
     }
 
-    for (const pathname of ['/hire/sabina-rahaman', '/hire/jp-test']) {
+    for (const pathname of ['/hire', '/hire/two/levels', '/hire/Bad_Slug']) {
       const otherProfile = loadStage({ hostname, pathname })
       assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
       assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
@@ -533,14 +534,14 @@ test('keeps the isolated Hire stage separate from the live CMS profile path', ()
   assert.equal(liveTemplate.window.fetch, liveTemplate.nativeFetch)
 })
 
-test('installs on only the approved Test Talent Hire profile path', () => {
+test('installs on valid TEST Hire profile paths', () => {
   const testProfile = loadStage({ pathname: '/hire/jp-dionisio' })
   assert.equal(testProfile.window.__tsSchedulingV3Stage, true)
   assert.equal(testProfile.attributes['data-scheduling-v3-stage'], 'ready')
 
   const otherProfile = loadStage({ pathname: '/hire/sabina-rahaman' })
-  assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
-  assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+  assert.equal(otherProfile.window.__tsSchedulingV3Stage, true)
+  assert.equal(otherProfile.attributes['data-scheduling-v3-stage'], 'ready')
 })
 
 test('uses Brand-safe discovery reads only on the approved real Hire canary', async () => {
