@@ -174,20 +174,21 @@ part of this canary.
 The TEST fixture's Webflow CMS item also publishes on the custom production
 domain, so its **Free Call** CMS flag must remain disabled. After the exact
 route bridge, eligible Brand plan, Nylas grant, and canonical free
-configuration all pass, the controller reuses the page's native Default
-service-card component to add one runtime Free Call card when the CMS card is
-absent. It marks that card with `data-runtime-free-call-card`, keeps the normal
-signup attribution attributes, and binds the inline calendar only for the
-signed-in canary. An unknown route, mixed or ineligible plan, missing grant,
-missing free configuration, or missing native card template adds no card and
-leaves the inline panel hidden. The controller may clone an eligible native
-card as its template, but it does not change, bind, or activate the source card
-or any other existing paid card.
+configuration all pass, the controller clones the page's hidden native Free
+Call template. That source card must carry
+`data-runtime-call-template="free"`, `hidden`, and `aria-hidden="true"`.
+The controller leaves the source hidden and inert, removes its template-only
+state from the clone, and marks exactly one visible clone with
+`data-runtime-free-call-card`. The clone keeps the normal signup attribution
+attributes and binds the inline calendar only for the signed-in canary. An
+unknown route, mixed or ineligible plan, missing grant, missing free
+configuration, or missing marked template adds no card and leaves the inline
+panel hidden. No existing paid card is used as the free-call template or
+activated by this path.
 
 Free-call access keeps the V2 product rule: any signed-in Brand, including
-Brand Free, can select and book a free call. Brand Free does not need to
-upgrade for a free call. The controller resolves the role from the active,
-stable Memberstack plan IDs defined in
+Brand Free, can select a free call without an upgrade. The controller resolves
+the role from the active, stable Memberstack plan IDs defined in
 [`ACCESS-MATRIX.md`](ACCESS-MATRIX.md), using the same map as `route-guard.js`.
 An explicit empty, inactive, unknown-only, or cross-role plan state fails
 closed. The legacy `brands-dashboard-url` field is only a compatibility
@@ -195,8 +196,9 @@ fallback when the SDK payload omits `planConnections`; it cannot override
 supplied plan state. Regression coverage in
 [`hire-profile.test.js`](hire-profile.test.js) includes Test Brand and Brand
 Free plan-only members, plus empty, inactive, and cross-role plan states.
-Paid-call selection, Stripe, reminders, transactional email, and paid-call
-activation remain held.
+Paid-call selection, Stripe, reminders, transactional email, paid-call
+activation, and live booking submission remain held. Restoring the staging
+service card does not authorize a booking-submission canary.
 
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code

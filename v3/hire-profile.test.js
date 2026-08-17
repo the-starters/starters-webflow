@@ -128,7 +128,11 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
 }
 
 /** A hire page with the elements the renderer looks for. */
-function makePage({ index = 'Freelancers3.0-production', includeFreeCard = true } = {}) {
+function makePage({
+  index = 'Freelancers3.0-production',
+  includeFreeCard = true,
+  includeNativeFreeTemplate = false,
+} = {}) {
   const root = makeElement('body')
 
   // The element algolia-environment.js rewrites per environment.
@@ -182,6 +186,20 @@ function makePage({ index = 'Freelancers3.0-production', includeFreeCard = true 
   card.appendChild(bookingContent)
   card.appendChild(makeElement('div', { 'data-millify': '', 'data-millify-raw': '0' }))
   list.appendChild(card)
+
+  let nativeFreeTemplate = null
+  if (includeNativeFreeTemplate) {
+    nativeFreeTemplate = card.cloneNode(true)
+    nativeFreeTemplate.setAttribute('data-runtime-call-template', 'free')
+    nativeFreeTemplate.setAttribute('hidden', 'hidden')
+    nativeFreeTemplate.setAttribute('aria-hidden', 'true')
+    nativeFreeTemplate.setAttribute('has-connection', 'free')
+    nativeFreeTemplate.setAttribute('booking-popup-open', '')
+    nativeFreeTemplate.setAttribute('data-type', 'free')
+    nativeFreeTemplate.setAttribute('data-signup-trigger-value', 'Free Call')
+    nativeFreeTemplate.querySelector('[data-service-card-element="title"]').textContent = 'Free Call'
+    list.appendChild(nativeFreeTemplate)
+  }
   services.appendChild(list)
 
   const inlineWrapper = makeElement('div', { 'data-availability-element': 'wrapper' })
@@ -203,6 +221,7 @@ function makePage({ index = 'Freelancers3.0-production', includeFreeCard = true 
     experience,
     client,
     inlineWrapper,
+    nativeFreeTemplate,
     back,
     calendarLive,
     popupNylasContainer,
@@ -574,11 +593,16 @@ test('a signed-in Starter refreshes empty navigation after owner cards are revea
 })
 
 test('the TEST canary creates one native free card only after canonical free config passes', async () => {
-  const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
+  const page = makePage({
+    index: 'Freelancers3.0-staging-test',
+    includeFreeCard: false,
+    includeNativeFreeTemplate: true,
+  })
   const originalPaidCard = page.servicesList.children[0]
   let schedulerCalls = 0
   const context = makeContext({
     page,
+    record: { rate: 125, 'retainer-rate': 800, 'retainer-enabled': true },
     member: {
       id: 'brand_test_member',
       auth: { email: 'brand-test@example.com' },
@@ -609,15 +633,24 @@ test('the TEST canary creates one native free card only after canonical free con
     card.hasAttribute('data-runtime-free-call-card'),
   )
   assert.equal(runtimeCards.length, 1)
+  assert.equal(
+    page.servicesList.children.filter((card) => card.hasAttribute('data-rate-card')).length,
+    2,
+    'rate cards must render without inheriting the canonical free-call marker',
+  )
   assert.equal(runtimeCards[0].getAttribute('data-type'), 'free')
   assert.equal(runtimeCards[0].getAttribute('has-connection'), 'free')
   assert.equal(runtimeCards[0].getAttribute('data-modal-trigger'), null)
+  assert.equal(runtimeCards[0].hasAttribute('hidden'), false)
+  assert.equal(runtimeCards[0].getAttribute('aria-hidden'), 'false')
   assert.equal(
     runtimeCards[0].querySelector('[data-service-card-element="title"]').textContent,
     'Free Call',
   )
   assert.equal(runtimeCards[0].querySelector('[data-millify]').getAttribute('data-millify'), '0')
   assert.equal(originalPaidCard.getAttribute('data-type'), 'paid', 'paid card type must stay unchanged')
+  assert.equal(page.nativeFreeTemplate.hasAttribute('hidden'), true, 'native template must stay hidden')
+  assert.equal(page.nativeFreeTemplate.getAttribute('data-type'), 'free')
   assert.equal(
     originalPaidCard.getAttribute('data-modal-trigger'),
     'popup-booking',
@@ -652,7 +685,11 @@ test('the runtime free card fails closed without a free config or exact route', 
       location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/someone-else' },
     },
   ]) {
-    const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
+    const page = makePage({
+      index: 'Freelancers3.0-staging-test',
+      includeFreeCard: false,
+      includeNativeFreeTemplate: true,
+    })
     const context = makeContext({
       page,
       member: {
@@ -690,7 +727,11 @@ test('the runtime free card fails closed without a free config or exact route', 
 })
 
 test('an empty canonical configuration response fails closed without booking activation', async () => {
-  const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
+  const page = makePage({
+    index: 'Freelancers3.0-staging-test',
+    includeFreeCard: false,
+    includeNativeFreeTemplate: true,
+  })
   let bookingComponentCalls = 0
   let schedulerCalls = 0
   const context = makeContext({
@@ -734,7 +775,11 @@ test('an empty canonical configuration response fails closed without booking act
 })
 
 test('the runtime free card uses its selected config when a paid config comes first', async () => {
-  const page = makePage({ index: 'Freelancers3.0-staging-test', includeFreeCard: false })
+  const page = makePage({
+    index: 'Freelancers3.0-staging-test',
+    includeFreeCard: false,
+    includeNativeFreeTemplate: true,
+  })
   const nearestSlotConfigIds = []
   let schedulerConfigId = null
   const context = makeContext({

@@ -295,6 +295,11 @@
       function buildRateCard(sourceTemplate, card) {
           const el = sourceTemplate.cloneNode(true);
 
+          el.removeAttribute('hidden');
+          el.removeAttribute('data-runtime-call-template');
+          el.removeAttribute('data-runtime-free-call-card');
+          el.setAttribute('aria-hidden', 'false');
+
           // Keep data-signup-trigger-* so signup-attribution.js opens the
           // signup modal for logged-out clicks (same as the call cards);
           // strip the booking wiring so logged-in clicks do not open an
@@ -456,7 +461,9 @@
 
       function getOrCreateInlineFreeCards() {
           const existing = Array.from(qsa('[booking-popup-open][data-type]')).filter(function (card) {
-              return card.getAttribute('data-type') === 'free';
+              return card.getAttribute('data-type') === 'free' &&
+                  card.getAttribute('data-runtime-call-template') !== 'free' &&
+                  !card.hasAttribute('hidden');
           });
           if (existing.length) return existing;
 
@@ -469,7 +476,11 @@
              missing/mixed records never reach here. */
           const list = qs('#services .services-list_wrapper');
           const template = list
-              ? Array.from(qsa('[data-service-card="component"][data-service-card-state="Default"]', list))
+              ? Array.from(qsa(
+                  '[data-service-card="component"][data-service-card-state="Default"]' +
+                  '[data-runtime-call-template="free"][hidden]',
+                  list
+              ))
                   .find(function (candidate) {
                       return !candidate.hasAttribute('data-rate-card') &&
                           !!qs('.service-card_content-wrapper', candidate);
@@ -478,6 +489,8 @@
           if (!list || !template) return [];
 
           const card = template.cloneNode(true);
+          card.removeAttribute('hidden');
+          card.setAttribute('aria-hidden', 'false');
           [
               'data-rate-card',
               'has-connection',
@@ -485,6 +498,7 @@
               'data-modal-trigger',
               'booking-popup-open',
               'data-type',
+              'data-runtime-call-template',
           ].forEach(function (attribute) {
               card.removeAttribute(attribute);
           });
