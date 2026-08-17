@@ -144,7 +144,7 @@ Do not discard local changes unless the user explicitly asks.
   see `v3/README.md` for its host, markup, and safety boundary
 - `v3/scheduling-availability-writer.js` — availability form, manager, Nylas scheduler, timezone, and calendar OAuth writer through `window.xanoAuthFetch`; the authoritative host, path, identity, and safety boundary lives in [`v3/README.md`](v3/README.md#booking-stage-availability-writer)
 - `v3/scheduling-availability-section.js` — non-modal counterpart to the writer above for the Designer "Dashboard / Calendar" section on the canonical Starter dashboard: per-item CRUD with an inline edit form per item, connect/disconnect, timezone, and a live bookable-slots preview, reusing the writer's connection/config logic without its modal steps; see [`v3/README.md`](v3/README.md#booking-stage-availability-section) for its markup contract and the OAuth-callback handoff with the writer
-- `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed legacy calls to V3, blocks unclassified routes, and retains only approved legacy Stripe calls; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
+- `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed scheduling calls to exact V3 routes, blocks unclassified routes, and retains only approved legacy Stripe calls; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
@@ -570,7 +570,7 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 
 `v3/scheduling-v3-stage.js` installs an exact hostname/path-gated compatibility
 adapter on the pages listed in the authoritative V3 scheduling boundary. It
-rewrites reviewed legacy calls to V3 and sends them through `window.xanoAuthFetch`, blocks #1553,
+rewrites reviewed scheduling calls to exact V3 routes and sends them through `window.xanoAuthFetch`, blocks #1553,
 transcription, `calendars/get_availabilities`, and every other unclassified
 scheduling route, and retains only the approved legacy Stripe provider calls.
 Use `v3/scheduling-v3-stage-component.html` as the first Code Embed in a clone

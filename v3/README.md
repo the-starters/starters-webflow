@@ -1838,18 +1838,20 @@ staging-host only. The adapter does not install on any other `/hire/*` item or
 on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
 both synchronous scripts: scheduling-group requests return HTTP `410` without
 installing authentication, discovery overrides, or booking identity. The
-adapter maps the reviewed legacy scheduling paths and the environment-bound
+adapter maps the reviewed unversioned scheduling paths and the environment-bound
 `starter/get_stripe_connect_id` lookup to their exact `/v3` routes, preserves
 request method, body, headers, and query parameters, and sends the rewritten
 request through `window.xanoAuthFetch`. The Stripe lookup follows the
 [domain-isolated environment contract](#domain-isolated-test-and-live-environments).
 
 On the exact production `/hire/jp-test` canary, and on the retained staging-only
-`/hire/jp-dionisio` canary, the two public booking-discovery
-reads use Brand-safe contracts instead of Talent-owner contracts:
-`starter/get_booking_profile/v3` returns only the Starter row ID and calendar
-grant, while `nylas_configurations/get_bookable/v3` returns the bookable
-configuration metadata. Every other installed surface uses the self-only
+`/hire/jp-dionisio` canary, the two public booking-discovery helpers use
+Brand-safe contracts instead of Talent-owner contracts. Both the unversioned
+and `/v3` forms of `starter/get_by_memberstack` are remapped to
+`starter/get_booking_profile/v3`, which returns only the Starter row ID and
+calendar grant. Both forms of `nylas_configurations/get_all` are remapped to
+`nylas_configurations/get_bookable/v3`, which returns the bookable configuration
+metadata. Every other installed surface uses the self-only
 `starter/get_by_memberstack/v3` and grant-owner-only
 `nylas_configurations/get_all/v3` routes.
 
@@ -1896,8 +1898,8 @@ Runtime contract:
   install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
   seven installed stage paths), `productionPaths` (the exact production Hire
-  canary and canonical dashboards), and `routeMap` (the legacy-to-`/v3` route
-  map).
+  canary and canonical dashboards), and `routeMap` (the effective request-to-`/v3`
+  route map).
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 

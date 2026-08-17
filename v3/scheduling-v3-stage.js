@@ -60,7 +60,9 @@
   }
   const HIRE_BOOKING_PATHS = {
     'nylas_configurations/get_all': 'nylas_configurations/get_bookable/v3',
+    'nylas_configurations/get_all/v3': 'nylas_configurations/get_bookable/v3',
     'starter/get_by_memberstack': 'starter/get_booking_profile/v3',
+    'starter/get_by_memberstack/v3': 'starter/get_booking_profile/v3',
   }
   const LEGACY_PROVIDER_PATH = /^stripe\/(?:live\/)?(?:customer|payment_intent|payment_method|setup_intent)(?:\/|$)/
 
