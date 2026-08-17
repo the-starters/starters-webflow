@@ -20,6 +20,7 @@
   let settings = null
   let busy = false
   let refreshVersion = 0
+  let bound = false
 
   function qs(selector, scope) {
     return (scope || document).querySelector(selector)
@@ -161,6 +162,32 @@
     if (nativeButton) nativeButton.disabled = !enabled
   }
 
+  function clearRenderedState(message) {
+    settings = null
+    busy = false
+    sessionMemberId = null
+    const enabledInput = field('enabled')
+    const titleInput = field('title')
+    const priceInput = field('price')
+    const durationInput = field('duration')
+    if (enabledInput) enabledInput.checked = false
+    if (titleInput) titleInput.value = ''
+    if (priceInput) priceInput.value = ''
+    if (durationInput) durationInput.value = '60'
+    qsa('[data-paid-call-prerequisite]', root).forEach(function (item) {
+      item.setAttribute('data-ready', 'false')
+    })
+    root.setAttribute('data-paid-call-enabled', 'false')
+    root.setAttribute('data-paid-call-bookable', 'false')
+    setActionEnabled(action('save'), false)
+    setActionEnabled(action('disable'), false)
+    setMessage(message)
+  }
+
+  function currentRender(version, memberId) {
+    return version === refreshVersion && memberId === sessionMemberId
+  }
+
   function render(value) {
     settings = value
     const service = canonicalService(value)
@@ -246,6 +273,8 @@
       setMessage('Complete the calendar and Stripe setup before you turn on paid calls.')
       return null
     }
+    const version = ++refreshVersion
+    const memberId = sessionMemberId
     setBusy(true)
     setStatus('saving')
     try {
@@ -269,28 +298,32 @@
       ) {
         throw new Error('Paid-call settings did not match canonical readback')
       }
+      if (!currentRender(version, memberId)) return null
       render(canonical)
       emit('starterPaidCallWriteSuccess', { action: 'upsert', configId: saved.config_id })
       return canonical
     } catch (error) {
-      setStatus('error')
-      setMessage(error && error.message ? error.message : 'Paid-call settings could not be saved.')
-      emit('starterPaidCallWriteError', { action: 'upsert', message: error && error.message })
+      if (currentRender(version, memberId)) {
+        setStatus('error')
+        setMessage(error && error.message ? error.message : 'Paid-call settings could not be saved.')
+        emit('starterPaidCallWriteError', { action: 'upsert', message: error && error.message })
+      }
       throw error
     } finally {
-      setBusy(false)
+      if (currentRender(version, memberId)) setBusy(false)
     }
   }
 
   async function refreshFromPrerequisite() {
     if (!root || !sessionMemberId || busy) return settings
     const version = ++refreshVersion
+    const memberId = sessionMemberId
     try {
       const canonical = await readCanonicalSettings()
-      if (version === refreshVersion && !busy) render(canonical)
+      if (currentRender(version, memberId) && !busy) render(canonical)
       return canonical
     } catch (error) {
-      if (version === refreshVersion && !busy) {
+      if (currentRender(version, memberId) && !busy) {
         setStatus('error')
         setMessage('Paid-call readiness could not be refreshed. Your account was not changed.')
       }
@@ -302,6 +335,8 @@
     if (busy) return null
     const service = canonicalService(settings)
     if (!service) return settings
+    const version = ++refreshVersion
+    const memberId = sessionMemberId
     setBusy(true)
     setStatus('disabling')
     try {
@@ -314,21 +349,58 @@
       if (canonicalService(canonical)) {
         throw new Error('Paid-call service remained active after canonical readback')
       }
+      if (!currentRender(version, memberId)) return null
       render(canonical)
       setMessage('Paid calls are off.')
       emit('starterPaidCallWriteSuccess', { action: 'disable', configId: service.config_id })
       return canonical
     } catch (error) {
-      setStatus('error')
-      setMessage(error && error.message ? error.message : 'Paid calls could not be turned off.')
-      emit('starterPaidCallWriteError', { action: 'disable', message: error && error.message })
+      if (currentRender(version, memberId)) {
+        setStatus('error')
+        setMessage(error && error.message ? error.message : 'Paid calls could not be turned off.')
+        emit('starterPaidCallWriteError', { action: 'disable', message: error && error.message })
+      }
       throw error
     } finally {
-      setBusy(false)
+      if (currentRender(version, memberId)) setBusy(false)
+    }
+  }
+
+  function authMember(value) {
+    return value && Object.prototype.hasOwnProperty.call(value, 'data') ? value.data : value
+  }
+
+  async function loadSession(memberValue, useSharedMember) {
+    const version = ++refreshVersion
+    clearRenderedState('Loading paid-call settings…')
+    setStatus('loading')
+    try {
+      const member = memberValue === undefined
+        ? await currentMember(!useSharedMember)
+        : authMember(memberValue)
+      if (version !== refreshVersion) return null
+      if (!member || !member.id) {
+        setStatus('error')
+        setMessage('Sign in to manage paid calls.')
+        return null
+      }
+      sessionMemberId = member.id
+      const canonical = await readCanonicalSettings()
+      if (!currentRender(version, member.id)) return null
+      return render(canonical)
+    } catch (error) {
+      if (version === refreshVersion) {
+        clearRenderedState('Paid-call settings are unavailable. Your account was not changed.')
+        setStatus('error')
+        console.warn('[paid-call-settings] initialization failed:', error && error.message)
+      }
+      return null
     }
   }
 
   function bind() {
+    if (bound) return
+    bound = true
     const form = qs('[data-paid-call-element="form"]', root)
     if (form) {
       form.addEventListener('submit', function (event) {
@@ -363,6 +435,12 @@
         refreshFromPrerequisite().catch(function () {})
       })
     })
+    const memberstack = window.$memberstackDom
+    if (memberstack && typeof memberstack.onAuthChange === 'function') {
+      memberstack.onAuthChange(function (nextMember) {
+        return loadSession(authMember(nextMember), false)
+      })
+    }
   }
 
   async function initialize() {
@@ -371,18 +449,8 @@
       setStatus('not-applicable')
       return null
     }
-    setStatus('loading')
-    try {
-      const member = await currentMember()
-      sessionMemberId = member.id
-      bind()
-      return render(await readCanonicalSettings())
-    } catch (error) {
-      setStatus('error')
-      setMessage('Paid-call settings are unavailable. Your account was not changed.')
-      console.warn('[paid-call-settings] initialization failed:', error && error.message)
-      return null
-    }
+    bind()
+    return loadSession(undefined, true)
   }
 
   window.StarterPaidCallSettings = {

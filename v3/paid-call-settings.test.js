@@ -6,6 +6,12 @@ const vm = require('node:vm')
 const SOURCE = fs.readFileSync(require.resolve('./paid-call-settings.js'), 'utf8')
 const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
 
+function deferred() {
+  let resolve
+  const promise = new Promise((done) => { resolve = done })
+  return { promise, resolve }
+}
+
 class El {
   constructor(tag = 'div', attrs = {}) {
     this.tagName = tag.toUpperCase()
@@ -98,6 +104,8 @@ function load(options = {}) {
   const windowListeners = new Map()
   const warnings = []
   let state = options.initial || canonical()
+  let activeMember = { id: options.memberId || 'member-a' }
+  let authChange = null
   const routes = options.routes || {}
 
   const document = {
@@ -115,7 +123,8 @@ function load(options = {}) {
     location: { hostname: options.hostname || 'thestarters.com' },
     crypto: { randomUUID: () => 'uuid-fixed' },
     $memberstackDom: {
-      getCurrentMember: async () => ({ data: { id: options.memberId || 'member-a' } }),
+      getCurrentMember: async () => ({ data: activeMember }),
+      onAuthChange(listener) { authChange = listener },
     },
     addEventListener(name, listener) {
       const listeners = windowListeners.get(name) || []
@@ -128,7 +137,15 @@ function load(options = {}) {
       const method = init.method
       const body = init.body ? JSON.parse(init.body) : undefined
       calls.push({ path, method, body })
-      if (routes[path]) return routes[path]({ method, body, state, setState: (next) => { state = next } })
+      if (routes[path]) {
+        return routes[path]({
+          method,
+          body,
+          member: activeMember,
+          state,
+          setState: (next) => { state = next },
+        })
+      }
       if (path === '/starter/paid-call-settings/get/v3') {
         return { ok: true, status: 200, json: async () => state }
       }
@@ -156,6 +173,11 @@ function load(options = {}) {
     warnings,
     window,
     document,
+    changeMember: async (nextMember) => {
+      activeMember = nextMember
+      if (authChange) return authChange(nextMember)
+      return null
+    },
     getState: () => state,
     dispatchWindow: async (name, detail) => {
       const event = { type: name, detail }
@@ -267,6 +289,70 @@ test('readiness events refresh canonical settings without a reload', async () =>
 
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 2)
   assert.equal(result.dom.save.disabled, false)
+})
+
+test('a newer readiness read cannot be overwritten by initial canonical state', async () => {
+  const initialRead = deferred()
+  const readinessRead = deferred()
+  let reads = 0
+  const result = load({
+    routes: {
+      '/starter/paid-call-settings/get/v3': () => {
+        reads += 1
+        const pending = reads === 1 ? initialRead : readinessRead
+        return pending.promise.then((value) => ({ ok: true, status: 200, json: async () => value }))
+      },
+    },
+  })
+  await settle(2)
+
+  const refresh = result.dispatchWindow('starterSchedulingConnectionStateChanged', { state: 'connected' })
+  await settle(2)
+  readinessRead.resolve(canonical())
+  await refresh
+  initialRead.resolve(canonical({ readiness: { calendar_connected: false } }))
+  await settle()
+
+  assert.equal(result.dom.save.disabled, false)
+  assert.equal(result.dom.status.textContent, 'Paid calls are off. Add a rate to turn them on.')
+})
+
+test('auth changes clear prior settings and load the next member canonically', async () => {
+  const memberBRead = deferred()
+  const result = load({
+    routes: {
+      '/starter/paid-call-settings/get/v3': ({ member }) => {
+        const value = member && member.id === 'member-a'
+          ? canonical({ services: [service({ title: 'Member A Call', price_cents: 12500 })] })
+          : memberBRead.promise
+        return Promise.resolve(value).then((canonicalValue) => ({
+          ok: true,
+          status: 200,
+          json: async () => canonicalValue,
+        }))
+      },
+    },
+  })
+  await settle()
+  assert.equal(result.dom.title.value, 'Member A Call')
+  assert.equal(result.dom.price.value, 125)
+
+  const memberBLoad = result.changeMember({ id: 'member-b' })
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.save.disabled, true)
+
+  memberBRead.resolve(canonical({
+    services: [service({ config_id: 'cfg-paid-b', title: 'Member B Call', price_cents: 45000 })],
+  }))
+  await memberBLoad
+  assert.equal(result.dom.title.value, 'Member B Call')
+  assert.equal(result.dom.price.value, 450)
+
+  await result.changeMember(null)
+  assert.equal(result.dom.title.value, '')
+  assert.equal(result.dom.price.value, '')
+  assert.equal(result.dom.save.disabled, true)
 })
 
 test('disable sends the canonical revision and verifies the service is inactive', async () => {
