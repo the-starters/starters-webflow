@@ -2072,7 +2072,9 @@ Webflow markup contract:
   Designer-authored; the initializer only shows/hides it and selects an
   existing native modal step. The row is complete when the live scheduling
   event reports `configurationCount > 0`. Google grant and calendar fields do
-  not control this Action Item.
+  not control this Action Item. If Webflow inserts the authored row after that
+  event, the initializer reapplies the retained canonical state when the row
+  appears.
 - The hero and Dashboard Calendar triggers share the authored
   `dialog[data-modal-target="set-availability"]`. Lumos normally owns its
   open/close lifecycle. After a trigger click has bubbled, the initializer uses
