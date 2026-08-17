@@ -200,6 +200,13 @@ Paid-call selection, Stripe, reminders, transactional email, paid-call
 activation, and live booking submission remain held. Restoring the staging
 service card does not authorize a booking-submission canary.
 
+On the Free Call details screen, the controller hides the booking-form rows for
+`brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
+timeslot. It does not remove or change either field, so both stable IDs remain
+in the Nylas booking payload for Xano environment routing and ownership checks.
+Name, Email, Add guest, and Call Context remain visible. This presentation-only
+change does not apply to Paid Consulting Call or alter payment behavior.
+
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code
 fault. Card rendering is verified on production.
