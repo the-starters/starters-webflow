@@ -297,14 +297,6 @@
 
     configureActionButtons(card, role, status)
 
-    const meetingLink = clean(booking.meeting_link)
-    card
-      .querySelectorAll('[booking-action-btn="join"], [booking-card-action-btn="join"]')
-      .forEach(function (button) {
-        const anchor = button.matches('a') ? button : button.querySelector('a')
-        if (anchor && meetingLink) anchor.href = meetingLink
-        show(button, Boolean(meetingLink) && status === 'confirmed')
-      })
     return card
   }
 
