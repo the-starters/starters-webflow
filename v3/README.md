@@ -41,9 +41,16 @@ login choices as native Webflow links:
 
 When origin is known, the other choice is hidden. When a reset email is opened
 without origin context, both remain visible. Add
-`data-password-recovery-retry` to any native “Different email?” link. The
-module updates existing forms through their canonical Memberstack attributes;
-it never generates form or link markup.
+`data-password-recovery-retry` to any native “Different email?” link. The live
+Reset Password control is a Button component whose Link already points at
+Forgot Password; component instances cannot take that attribute, so retry
+matches the published `/forgot-password` href. Mark the authored “an email”
+copy on Reset Password with `data-password-recovery-email` so a Recovery Email
+Hint (the address submitted on Forgot Password in this tab) can fill that copy;
+missing hint leaves the generic text and Reset Password still works. The module
+updates existing forms through their canonical Memberstack attributes; it never
+generates form or link markup. Do not add `data-ms-member="email"` on Reset
+Password for this reminder.
 
 Until both native login choices are present, a direct visit with no origin uses
 the neutral homepage fallback instead of silently favoring Brand or Talent. The
