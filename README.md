@@ -85,6 +85,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/patch-onboarding-status.js` — write half of the same pair: detects Webflow form success, records `onboarding_done` in Xano with retries, emits the shared privacy-safe success/failure receipt, and routes to `/starter-dashboard`; authoritative wiring lives in [`v3/README.md`](v3/README.md#onboarding-patch-status) and [`v3/ONBOARDING-PATCH-STATUS-WIRING.md`](v3/ONBOARDING-PATCH-STATUS-WIRING.md)
 - `v3/build-profile/` — source-controlled Build Profile browser controllers; the authoritative migration scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/build-profile/README.md`](v3/build-profile/README.md)
 - `v3/build-profile/profile-photo.js` — provenance-locked Build Profile photo controller
+- `v3/build-profile/canonical-profile-hydrator.js` — canonical Xano fallback for missing Memberstack/local Build Profile draft fields; loaded by the existing profile-photo asset without a Webflow block edit
 - `v3/build-profile/portfolio-crud.js` — provenance-locked Build Profile portfolio mutation controller
 - `v3/build-profile/portfolio-list.js` — provenance-locked Build Profile portfolio list controller
 - `v3/build-profile/company-autocomplete.js` — provenance-locked Build Profile company autocomplete
