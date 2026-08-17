@@ -1079,6 +1079,145 @@ test('platform setup failure shows config-request-error and writes nothing', asy
   assert.equal(result.window.STARTER_SCHEDULING_CONNECTION.state, 'error')
 })
 
+test('platform transition reuses its virtual account after partial calendar creation', async () => {
+  const availability = defaultAvailability()
+  availability.manager = 'calendar'
+  let canonicalManager = 'calendar'
+  let canonicalGrant = {
+    id: 'grant-1',
+    email: 'grant@example.com',
+    calendarId: 'cal-1',
+  }
+  let paidService = {
+    config_id: 'cfg-paid-old',
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration: 45,
+    active: true,
+  }
+  let accountCalls = 0
+  let calendarCalls = 0
+  let freeConfigCreated = false
+  const result = loadWriter({
+    availability,
+    storage: TZ_CACHED,
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: { ...availability, manager: canonicalManager },
+          nylas_grant_id: canonicalGrant && canonicalGrant.id,
+          nylas_grant_email: canonicalGrant && canonicalGrant.email,
+          nylas_calendar_id: canonicalGrant && canonicalGrant.calendarId,
+        },
+      }),
+      '/starter/paid-call-settings/get/v3': () => ({
+        status: 200,
+        body: {
+          readiness: { paid_call_enabled: Boolean(paidService) },
+          services: paidService ? [paidService] : [],
+        },
+      }),
+      '/starter/paid-call-settings/upsert/v3': (body) => {
+        paidService = {
+          config_id: 'cfg-paid-restored',
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          active: true,
+        }
+        return { status: 200, body: { service: paidService } }
+      },
+      '/nylas_configurations/get_all/v3': (body) => ({
+        status: 200,
+        body:
+          body.grant_id === 'vgrant-1' && freeConfigCreated
+            ? [{ config_id: 'cfg-free-new', grant_id: 'vgrant-1', is_paid: false, active: true }]
+            : body.grant_id === 'grant-1'
+              ? [
+                  { config_id: 'cfg-free-old', grant_id: 'grant-1', is_paid: false, active: true },
+                  { config_id: 'cfg-paid-old', grant_id: 'grant-1', is_paid: true, active: true },
+                ]
+              : [],
+      }),
+      '/grants/delete/v3': () => {
+        canonicalGrant = null
+        paidService = null
+        return {
+          status: 200,
+          body: {
+            connected: false,
+            already_disconnected: false,
+            availability: {},
+            deleted_configuration_ids: ['cfg-free-old', 'cfg-paid-old'],
+            provider_response: { status: 200 },
+          },
+        }
+      },
+      '/grants/create_virtual_account/v3': () => {
+        accountCalls += 1
+        return {
+          status: 200,
+          body: {
+            response: {
+              result: { data: { id: 'vgrant-1', email: 'virtual@example.com' } },
+            },
+          },
+        }
+      },
+      '/grants/add_virtual/v3': () => {
+        canonicalGrant = {
+          id: 'vgrant-1',
+          email: 'virtual@example.com',
+          calendarId: null,
+        }
+        return { status: 200, body: { id: 5 } }
+      },
+      '/grants/create_virtual_calendar/v3': () => {
+        calendarCalls += 1
+        if (calendarCalls === 1) return { status: 503, body: { message: 'try again' } }
+        canonicalGrant.calendarId = 'vcal-1'
+        return {
+          status: 200,
+          body: { response: { result: { data: { id: 'vcal-1' } } } },
+        }
+      },
+      '/scheduler/configurations/create/v3': () => {
+        freeConfigCreated = true
+        return { status: 200, body: { response: { status: 200 } } }
+      },
+      '/starter/update_availability/v3': (body) => {
+        canonicalManager = body.availability.manager
+        return { status: 200, body: { id: 1 } }
+      },
+    },
+  })
+  await settle()
+
+  result.dom.managers.platform.click()
+  result.clickAction(result.dom.buttons.managerSubmit)
+  await settle()
+  await settle()
+
+  assert.equal(accountCalls, 1)
+  assert.equal(calendarCalls, 2)
+  assert.equal(
+    result.calls.filter((call) => call.path === '/grants/add_virtual/v3').length,
+    2,
+  )
+  assert.deepEqual(paidService, {
+    config_id: 'cfg-paid-restored',
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration: 45,
+    active: true,
+  })
+  assert.equal(canonicalManager, 'platform')
+  assert.equal(result.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
+})
+
 test('an active-booking rejection stops the Google-to-Platform manager switch', async () => {
   const availability = defaultAvailability()
   availability.manager = 'calendar'

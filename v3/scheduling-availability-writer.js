@@ -835,16 +835,7 @@
       throw new Error('Canonical calendar transition is incomplete')
     }
     if (!grantId || !grantEmail || !grantCalendarId) {
-      const virtual = await createVirtualCalendarFlow(memberId, {
-        account: resumableGrant,
-        onAccount: function (account) {
-          oauthIntent.virtualRecovery = {
-            grant_id: account.id,
-            email: account.email || null,
-          }
-          persistOAuthIntent(memberId, oauthIntent)
-        },
-      })
+      const virtual = await createTransitionVirtualCalendar(memberId, oauthIntent, resumableGrant)
       if (virtual.status !== 200) throw new Error('OAuth cancellation recovery failed')
       grantId = virtual.grant_id
       grantEmail = virtual.email
@@ -1083,6 +1074,20 @@
     }
   }
 
+  async function createTransitionVirtualCalendar(memberId, oauthIntent, account) {
+    if (!oauthIntent) return createVirtualCalendarFlow(memberId)
+    return createVirtualCalendarFlow(memberId, {
+      account: account || oauthIntent.virtualRecovery || null,
+      onAccount: function (createdAccount) {
+        oauthIntent.virtualRecovery = {
+          grant_id: createdAccount.id,
+          email: createdAccount.email || null,
+        }
+        persistOAuthIntent(memberId, oauthIntent)
+      },
+    })
+  }
+
   async function clearGrant(currentGrantId, memberId) {
     if (!currentGrantId) return { paidCallIntent: null }
     await ensureTimezone()
@@ -1289,7 +1294,10 @@
         publishCalendarConnectionState('loading')
         memberId = await writeMemberId()
         transition = await clearGrant(grantId, memberId)
-        const virtual = await createVirtualCalendarFlow(memberId)
+        const virtual = await createTransitionVirtualCalendar(
+          memberId,
+          transition.oauthIntent,
+        )
         if (virtual.status === 200) {
           grantId = virtual.grant_id
           grantEmail = virtual.email
@@ -1314,6 +1322,7 @@
           publishCalendarConnectionError()
           switchStep('config-request-error')
           console.warn('[scheduling-writer] virtual calendar setup failed')
+          throw new Error('Virtual calendar setup failed')
         }
       } else {
         publishCalendarConnectionState('loading')
@@ -1358,7 +1367,10 @@
       transition = await clearGrant(grantId, memberId)
       availability.manager = null
 
-      const virtual = await createVirtualCalendarFlow(memberId)
+      const virtual = await createTransitionVirtualCalendar(
+        memberId,
+        transition.oauthIntent,
+      )
       if (virtual.status === 200) {
         grantId = virtual.grant_id
         grantEmail = virtual.email
