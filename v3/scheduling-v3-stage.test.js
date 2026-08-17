@@ -470,7 +470,15 @@ test('uses Brand-safe discovery reads only on the approved real Hire canary', as
     'starter/get_booking_profile/v3',
   )
   assert.equal(
+    hire.window.StarterSchedulingV3Stage.routeMap['starter/get_by_memberstack/v3'],
+    'starter/get_booking_profile/v3',
+  )
+  assert.equal(
     hire.window.StarterSchedulingV3Stage.routeMap['nylas_configurations/get_all'],
+    'nylas_configurations/get_bookable/v3',
+  )
+  assert.equal(
+    hire.window.StarterSchedulingV3Stage.routeMap['nylas_configurations/get_all/v3'],
     'nylas_configurations/get_bookable/v3',
   )
   assert.equal(
@@ -490,6 +498,37 @@ test('uses Brand-safe discovery reads only on the approved real Hire canary', as
     method: 'POST',
     body: JSON.stringify({ grant_id: 'test-grant' }),
   })
+  await hire.window.fetch(`${API_BASE}starter/get_by_memberstack/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ member_id: 'test-talent' }),
+  })
+  await hire.window.fetch(`${API_BASE}nylas_configurations/get_all/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ grant_id: 'test-grant' }),
+  })
+
+  assert.deepEqual(
+    hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
+    [
+      '/api:tCpV3oqd/starter/get_booking_profile/v3',
+      '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
+      '/api:tCpV3oqd/starter/get_booking_profile/v3',
+      '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
+    ],
+  )
+})
+
+test('remaps the versioned Hire helpers that call xanoAuthFetch directly', async () => {
+  const hire = loadStage({ pathname: '/hire/jp-dionisio' })
+
+  await hire.window.xanoAuthFetch(`${API_BASE}starter/get_by_memberstack/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ member_id: 'test-talent' }),
+  })
+  await hire.window.xanoAuthFetch(`${API_BASE}nylas_configurations/get_all/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ grant_id: 'test-grant' }),
+  })
 
   assert.deepEqual(
     hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
@@ -498,6 +537,37 @@ test('uses Brand-safe discovery reads only on the approved real Hire canary', as
       '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
     ],
   )
+})
+
+test('preserves reviewed Brand payment routes outside the Hire adapter', async () => {
+  const dashboard = loadStage({ pathname: '/brand-dashboard' })
+  const hire = loadStage({ pathname: '/hire/jp-dionisio' })
+  const paymentRoutes = [
+    'brand/payment-method/setup/v3',
+    'brand/payment-method/set-default/v3',
+  ]
+
+  for (const route of paymentRoutes) {
+    const dashboardResponse = await dashboard.window.xanoAuthFetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+    const hireResponse = await hire.window.xanoAuthFetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+
+    assert.equal(dashboardResponse.status, 200)
+    assert.equal(hireResponse.status, 410)
+  }
+
+  assert.deepEqual(
+    dashboard.authenticatedRequests.map((request) =>
+      new URL(typeof request === 'string' ? request : request.url).pathname
+    ),
+    paymentRoutes.map((route) => `/api:tCpV3oqd/${route}`),
+  )
+  assert.equal(hire.authenticatedRequests.length, 0)
 })
 
 test('maps every reviewed legacy route to an authenticated V3 request', async () => {
