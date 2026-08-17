@@ -466,6 +466,7 @@ function buildStatefulRoutes(initialState) {
       grantEmail: null,
       calendarId: null,
       Paid_Call_Rate: 150,
+      paidService: null,
       configs: null,
       availability: {
         items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
@@ -494,6 +495,16 @@ function buildStatefulRoutes(initialState) {
     }),
     '/starter/set_timezone/v3': () => ({ status: 200, body: { timezone: 'Asia/Manila' } }),
     '/starter/clear_calendar_data/v3': () => ({ status: 200, body: { id: 1 } }),
+    '/starter/paid-call-settings/upsert/v3': (body) => {
+      state.paidService = {
+        config_id: 'cfg-paid-restored',
+        title: body.title,
+        price_cents: body.price_cents,
+        duration: body.duration_minutes,
+        active: true,
+      }
+      return { status: 200, body: { service: state.paidService } }
+    },
     '/nylas_configurations/get_all/v3': () => ({
       status: 200,
       body: state.grantId
@@ -524,6 +535,7 @@ function buildStatefulRoutes(initialState) {
       state.grantId = null
       state.grantEmail = null
       state.calendarId = null
+      state.paidService = null
       return {
         status: 200,
         body: {
@@ -544,6 +556,13 @@ function buildStatefulRoutes(initialState) {
 
   const getRoutes = {
     '/scheduler/get_availability/v3': () => ({ status: 200, body: { time_slots: [] } }),
+    '/starter/paid-call-settings/get/v3': () => ({
+      status: 200,
+      body: {
+        readiness: { paid_call_enabled: Boolean(state.paidService) },
+        services: state.paidService ? [state.paidService] : [],
+      },
+    }),
   }
 
   return { state, postRoutes, getRoutes }
@@ -553,7 +572,7 @@ function loadSection(options = {}) {
   const dom = buildSectionDom(options.dom)
   const body = new El('body')
   body.appendChild(dom.root)
-  const { postRoutes, getRoutes } = buildStatefulRoutes(options.serverState)
+  const { state, postRoutes, getRoutes } = buildStatefulRoutes(options.serverState)
   Object.assign(postRoutes, options.postRoutes || {})
   Object.assign(getRoutes, options.getRoutes || {})
   const calls = []
@@ -611,7 +630,7 @@ function loadSection(options = {}) {
       },
     },
     sessionStorage: {
-      _map: new Map(),
+      _map: new Map(Object.entries(options.sessionStorage || {})),
       getItem(key) {
         return this._map.has(key) ? this._map.get(key) : null
       },
@@ -665,7 +684,7 @@ function loadSection(options = {}) {
     window,
   })
 
-  return { dom, calls, warnings, logs, assigned, events, window, document }
+  return { dom, calls, warnings, logs, assigned, events, state, window, document }
 }
 
 async function settle(iterations = 25) {
@@ -846,23 +865,24 @@ test('main-wrapper stays visible through a later disconnect-google switch back t
   assert.equal(dom.mainWrapper.style.display, 'grid')
 })
 
-test('#price is populated once at bootstrap from the starter record\'s Paid_Call_Rate, not the Designer data-rate placeholder', async () => {
-  const { dom } = loadSection({
+test('#price is not populated from the profile projection or Designer placeholder', async () => {
+  const { dom, window } = loadSection({
     serverState: { Paid_Call_Rate: 275 },
   })
   await settle()
 
-  assert.equal(dom.priceInput.value, 275)
-  assert.equal(dom.priceInput.dataset.rate, '150') // untouched Designer placeholder
+  assert.equal(dom.priceInput.value, '')
+  assert.equal(dom.priceInput.dataset.rate, '150')
+  assert.equal(window.localStorage._map.has('paid_call_rate'), false)
 })
 
-test('#price falls back to 0 when the starter has no Paid_Call_Rate on record', async () => {
+test('#price remains inert when the starter has no projected Paid_Call_Rate', async () => {
   const { dom } = loadSection({
     serverState: { Paid_Call_Rate: null },
   })
   await settle()
 
-  assert.equal(dom.priceInput.value, 0)
+  assert.equal(dom.priceInput.value, '')
 })
 
 test('clicking the ordinal connect-platform button (no data-availability-action yet) connects and flips visibility', async () => {
@@ -965,6 +985,13 @@ test('switching straight from Google to Platform clears the existing Google gran
       grantId: 'grant-1',
       grantEmail: 'g@example.com',
       calendarId: 'cal-1',
+      paidService: {
+        config_id: 'cfg-paid-old',
+        title: 'Paid Strategy Call',
+        price_cents: 42500,
+        duration: 45,
+        active: true,
+      },
       availability: {
         items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
         manager: 'calendar',
@@ -980,6 +1007,104 @@ test('switching straight from Google to Platform clears the existing Google gran
   assert.ok(deleteCall, 'expected the existing Google grant to be deleted')
   assert.equal(deleteCall.body.in_grant_id, 'grant-1')
   assert.deepEqual(legacyClearCalls, [], 'legacy clearGrantData must not own provider disconnect')
+  const restoreCall = calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.deepEqual(restoreCall.body, {
+    config_id: null,
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration_minutes: 45,
+    expected_revision: 0,
+    idempotency_key: 'paid-call-calendar-transition:uuid-fixed',
+  })
+  const paths = calls.map((call) => call.path)
+  assert.ok(paths.indexOf('/grants/delete/v3') < paths.indexOf('/starter/paid-call-settings/upsert/v3'))
+})
+
+test('OAuth cancellation rebuilds platform scheduling and restores the saved paid service', async () => {
+  const result = loadSection({
+    search: '?error=access_denied&error_description=cancelled&state=member-a',
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 1)
+  assert.equal(result.state.grantId, 'vgrant-1')
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.deepEqual(result.state.paidService, {
+    config_id: 'cfg-paid-restored',
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration: 45,
+    active: true,
+  })
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(
+    result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
+    false,
+  )
+})
+
+test('OAuth cancellation recovery reuses canonical resources after partial success', async () => {
+  const result = loadSection({
+    search: '?error=access_denied&error_description=cancelled&state=member-a',
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+    serverState: {
+      grantId: 'vgrant-existing',
+      grantEmail: 'virtual@example.com',
+      calendarId: 'vcal-existing',
+      configs: [
+        {
+          config_id: 'cfg-free-existing',
+          grant_id: 'vgrant-existing',
+          duration: 30,
+          is_paid: false,
+          active: true,
+        },
+      ],
+      paidService: {
+        config_id: 'cfg-paid-existing',
+        title: 'Paid Strategy Call',
+        price_cents: 42500,
+        duration: 45,
+        active: true,
+      },
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'platform',
+      },
+    },
+  })
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/scheduler/configurations/create/v3').length, 0)
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
+  assert.equal(result.window.sessionStorage._map.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(
+    result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
+    false,
+  )
 })
 
 test('an active-booking disconnect rejection stops the Google-to-Platform switch', async () => {
@@ -1008,6 +1133,108 @@ test('an active-booking disconnect rejection stops the Google-to-Platform switch
   assert.equal(calls.filter((c) => c.path === '/grants/delete/v3').length, 1)
   assert.equal(calls.filter((c) => c.path === '/grants/create_virtual_account/v3').length, 0)
   assert.equal(window.STARTER_SCHEDULING_CONNECTION.state, 'error')
+})
+
+test('an ambiguous grant deletion immediately restores the paid service', async () => {
+  let canonicalState = null
+  const result = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      paidService: {
+        config_id: 'cfg-paid-old',
+        title: 'Paid Strategy Call',
+        price_cents: 42500,
+        duration: 45,
+        active: true,
+      },
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/delete/v3': () => {
+        canonicalState.grantId = null
+        canonicalState.grantEmail = null
+        canonicalState.calendarId = null
+        canonicalState.paidService = null
+        return { status: 503, body: { message: 'response lost' } }
+      },
+    },
+  })
+  canonicalState = result.state
+  await settle()
+
+  result.dom.connectBtnWrapper.children[0].click()
+  await settle()
+  await settle()
+
+  assert.equal(result.calls.filter((call) => call.path === '/grants/delete/v3').length, 1)
+  assert.equal(
+    result.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length,
+    1,
+  )
+  assert.deepEqual(result.state.paidService, {
+    config_id: 'cfg-paid-restored',
+    title: 'Paid Strategy Call',
+    price_cents: 42500,
+    duration: 45,
+    active: true,
+  })
+  assert.equal(result.state.availability.manager, 'platform')
+  assert.equal(
+    result.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
+    false,
+  )
+})
+
+test('a failed calendar replacement retains paid intent and recovers it on reload', async () => {
+  const firstLoad = loadSection({
+    serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      paidService: {
+        config_id: 'cfg-paid-old',
+        title: 'Paid Strategy Call',
+        price_cents: 42500,
+        duration: 45,
+        active: true,
+      },
+      availability: {
+        items: { general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] } },
+        manager: 'calendar',
+      },
+    },
+    postRoutes: {
+      '/grants/create_virtual_account/v3': () => ({ status: 503, body: { message: 'try again' } }),
+    },
+  })
+  await settle()
+
+  firstLoad.dom.connectBtnWrapper.children[0].click()
+  await settle()
+
+  const retained = JSON.parse(
+    firstLoad.window.sessionStorage._map.get('starter-scheduling-oauth-intent:member-a'),
+  )
+  assert.equal(retained.paidCallIntent.title, 'Paid Strategy Call')
+  assert.equal(firstLoad.state.paidService, null)
+
+  const secondLoad = loadSection({
+    serverState: firstLoad.state,
+    sessionStorage: Object.fromEntries(firstLoad.window.sessionStorage._map),
+  })
+  await settle()
+
+  assert.equal(secondLoad.state.paidService.title, 'Paid Strategy Call')
+  assert.equal(secondLoad.state.availability.manager, 'platform')
+  assert.equal(
+    secondLoad.window.sessionStorage._map.has('starter-scheduling-oauth-intent:member-a'),
+    false,
+  )
 })
 
 test('connect-label-group and connect-info-wrapper do not flash mid-request on disconnect-google', async () => {
@@ -1621,9 +1848,15 @@ test('removing an item waits for the response before refreshing slots (not fired
   assert.notEqual(refreshedSlotsList.style.display, 'none')
 })
 
-test('open-item-remove opens the confirm modal, and confirming dims the modal buttons while the request is in flight', async () => {
-  const { dom } = loadSection({
+test('open-item-remove updates all active configurations without replacing paid fields', async () => {
+  const { dom, calls, state } = loadSection({
     serverState: {
+      grantId: 'grant-1',
+      grantEmail: 'g@example.com',
+      calendarId: 'cal-1',
+      configs: [
+        { config_id: 'cfg-free', duration: 30, is_paid: false, active: true },
+      ],
       availability: {
         items: {
           general: { days: [1, 2, 3], start: '09:00', end: '17:00', defaultDays: [1, 2, 3] },
@@ -1634,6 +1867,7 @@ test('open-item-remove opens the confirm modal, and confirming dims the modal bu
     },
   })
   await settle()
+  state.configs.push({ config_id: 'cfg-paid', duration: 60, is_paid: true, active: true })
 
   const overrideCard = dom.list.children.find((el) => el.dataset.id === 'override1')
   const removeBtn = overrideCard.children[0].children[2].children[1]
@@ -1661,6 +1895,15 @@ test('open-item-remove opens the confirm modal, and confirming dims the modal bu
   assert.equal(stillThere, undefined)
   assert.equal(dom.notif.steps['availability-removed'].style.display, '')
   assert.notEqual(group.style.pointerEvents, 'none')
+
+  const configUpdates = calls.filter((call) => call.path === '/scheduler/configurations/update/v3')
+  assert.deepEqual(configUpdates.map((call) => call.body.config_id), ['cfg-free', 'cfg-paid'])
+  assert.deepEqual(configUpdates.map((call) => call.body.in_availability.duration_minutes), [30, 60])
+  configUpdates.forEach((call) => {
+    assert.equal(call.body.in_config_name, undefined)
+    assert.equal(call.body.in_event_booking, undefined)
+    assert.equal(call.body.in_scheduler, undefined)
+  })
 })
 
 test('open-item-remove switches to the error step on failure without removing the card', async () => {

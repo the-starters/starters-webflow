@@ -2225,9 +2225,8 @@ step-scoped `[data-custom-loader]`; `setLoader` is a safe no-op on the rest
 Markup gaps found by the audit (writer degrades gracefully, flagged for
 Designer follow-up):
 
-- no `#price` input exists in the form, so the paid-call rate falls back to
-  the `paid_call_rate` localStorage value or `0` — decide where the 3.0 rate
-  comes from before enabling paid configs;
+- no `#price` input exists in the availability form; paid-call rates are owned
+  by the native paid-call settings form and its canonical Xano endpoints;
 - no `[starter-timezone]` label element exists, so the timezone text renders
   nowhere (resolution/persistence still runs);
 - no `availability-popup-close="pre-redirect"` variant exists (both close
@@ -2285,12 +2284,11 @@ row timezone is persisted through `starter/set_timezone/v3` only when the
 member submits an availability or calendar action. A member-scoped cached
 timezone can supply that value, but does not count as canonical persistence.
 
-Paid-call rate: resolved from the form's `#price` input
-(`data-rate`/value, Designer-bound like V2) with the shared `paid_call_rate`
-localStorage key as fallback. When no positive rate resolves, the paid
-configuration is **not created** (no bookable $0 paid calls); existing paid
-configs still get availability updates. The scheduling `freelancers` table
-(#12) has no rate column — wiring a durable v3 rate source is a follow-up.
+Paid-call rate: the availability controllers do not read `#price`, `data-rate`,
+or `paid_call_rate` in localStorage. They create only the free-call
+configuration. Availability edits send an availability-only update for every
+active canonical configuration, so paid title and price fields stay under the
+paid-call settings endpoints.
 
 Runtime contract:
 
