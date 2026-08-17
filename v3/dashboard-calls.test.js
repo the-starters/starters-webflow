@@ -202,6 +202,30 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
   }
 })
 
+test('only the V3-native Starter Accept action is visible on pending cards', () => {
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const decline = element({ 'booking-action-btn': 'switch-decline' })
+  const reschedule = element({ 'booking-action-btn': 'reschedule' })
+  const message = element({ 'booking-action-btn': 'message' })
+  const join = element({ 'booking-action-btn': 'join' })
+  const buttons = [accept, decline, reschedule, message, join]
+  const card = {
+    querySelectorAll(selector) {
+      assert.equal(selector, '[booking-card-action-btn], [booking-action-btn]')
+      return buttons
+    },
+  }
+
+  api.configureActionButtons(card, 'starter', 'pending')
+
+  assert.equal(accept.hidden, false)
+  assert.equal(accept.style.display, '')
+  for (const button of [decline, reschedule, message, join]) {
+    assert.equal(button.hidden, true)
+    assert.equal(button.style.display, 'none')
+  }
+})
+
 test('canonical V3 component loader includes the dashboard controller', () => {
   const loader = fs.readFileSync(
     require.resolve('./scheduling-v3-stage-component.html'),
