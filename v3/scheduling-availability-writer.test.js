@@ -1795,6 +1795,109 @@ test('OAuth callback and intent survive a transient grant save failure', async (
   assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
 })
 
+test('OAuth success resumes paid restoration without saving the grant twice', async () => {
+  let grantPersisted = false
+  let manager = null
+  let configCreated = false
+  let paidService = null
+  let rejectPaidRestore = true
+  const routes = {
+    '/grants/add/v3': () => {
+      grantPersisted = true
+      return { status: 200, body: { grant_id: 'grant-9' } }
+    },
+    '/starter/get_by_memberstack/v3': () => ({
+      status: 200,
+      body: {
+        id: 1,
+        timezone: 'Asia/Manila',
+        availability: { ...defaultAvailability(), manager },
+        nylas_grant_id: grantPersisted ? 'grant-9' : null,
+        nylas_grant_email: grantPersisted ? 'google@example.com' : null,
+        nylas_calendar_id: grantPersisted ? 'cal-9' : null,
+      },
+    }),
+    '/starter/update_availability/v3': (body) => {
+      manager = body.availability.manager
+      return { status: 200, body: { id: 1 } }
+    },
+    '/nylas_configurations/get_all/v3': () => ({
+      status: 200,
+      body: configCreated
+        ? [{ config_id: 'cfg-free', grant_id: 'grant-9', is_paid: false, active: true }]
+        : [],
+    }),
+    '/scheduler/configurations/create/v3': () => {
+      configCreated = true
+      return { status: 200, body: { response: { status: 200 } } }
+    },
+    '/starter/paid-call-settings/get/v3': () => ({
+      status: 200,
+      body: {
+        readiness: { paid_call_enabled: Boolean(paidService) },
+        services: paidService ? [paidService] : [],
+      },
+    }),
+    '/starter/paid-call-settings/upsert/v3': (body) => {
+      if (rejectPaidRestore) return { status: 503, body: { message: 'try again' } }
+      paidService = {
+        config_id: 'cfg-paid',
+        title: body.title,
+        price_cents: body.price_cents,
+        duration: body.duration_minutes,
+        active: true,
+      }
+      return { status: 200, body: { service: paidService } }
+    },
+  }
+  const firstLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?success=true&grant_id=grant-9&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+    routes,
+  })
+  await settle()
+  await settle()
+
+  assert.equal(firstLoad.calls.filter((call) => call.path === '/grants/add/v3').length, 1)
+  assert.equal(firstLoad.sessionStorage.has('starter-scheduling-oauth-callback'), true)
+  const retainedIntent = JSON.parse(
+    firstLoad.sessionStorage.get('starter-scheduling-oauth-intent:member-a'),
+  )
+  assert.equal(retainedIntent.oauthGrantSaved, true)
+
+  rejectPaidRestore = false
+  const secondLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+    storage: TZ_CACHED,
+    sessionStorage: Object.fromEntries(firstLoad.sessionStorage),
+    routes,
+  })
+  await settle()
+  await settle()
+
+  assert.equal(secondLoad.calls.filter((call) => call.path === '/grants/add/v3').length, 0)
+  assert.equal(paidService.title, 'Paid Strategy Call')
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
+})
+
 test('hosted OAuth callback without success strips its query and performs no writes', async () => {
   const result = loadWriter({
     hostname: 'thestarters.com',
@@ -2027,6 +2130,118 @@ test('OAuth cancellation keeps recovery state when platform scheduling cannot be
   assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/upsert/v3').length, 0)
   assert.equal(result.sessionStorage.has('starter-scheduling-oauth-callback'), true)
   assert.equal(result.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), true)
+})
+
+test('OAuth cancellation retries a saved virtual grant without creating another account', async () => {
+  const baseRoutes = {
+    '/starter/get_by_memberstack/v3': () => ({
+      status: 200,
+      body: {
+        id: 1,
+        timezone: 'Asia/Manila',
+        availability: { ...defaultAvailability(), manager: null },
+        nylas_grant_id: null,
+        nylas_grant_email: null,
+        nylas_calendar_id: null,
+      },
+    }),
+  }
+  const firstLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '?error=access_denied&error_description=cancelled&state=member-a',
+    storage: TZ_CACHED,
+    sessionStorage: {
+      'starter-scheduling-oauth-intent:member-a': JSON.stringify({
+        createdAt: Date.now(),
+        redirectUri: 'https://thestarters.com/starter-dashboard',
+        paidCallIntent: {
+          title: 'Paid Strategy Call',
+          price_cents: 42500,
+          duration_minutes: 45,
+        },
+      }),
+    },
+    routes: {
+      ...baseRoutes,
+      '/grants/add_virtual/v3': () => ({ status: 503, body: { message: 'try again' } }),
+    },
+  })
+  await settle()
+  await settle()
+
+  const retainedIntent = JSON.parse(
+    firstLoad.sessionStorage.get('starter-scheduling-oauth-intent:member-a'),
+  )
+  assert.deepEqual(retainedIntent.virtualRecovery, {
+    grant_id: 'vgrant-1',
+    email: 'virtual@example.com',
+  })
+
+  let virtualPersisted = false
+  let configCreated = false
+  let paidService = null
+  const secondLoad = loadWriter({
+    hostname: 'thestarters.com',
+    pathname: '/starter-dashboard',
+    origin: 'https://thestarters.com',
+    search: '',
+    storage: TZ_CACHED,
+    sessionStorage: Object.fromEntries(firstLoad.sessionStorage),
+    routes: {
+      '/starter/get_by_memberstack/v3': () => ({
+        status: 200,
+        body: {
+          id: 1,
+          timezone: 'Asia/Manila',
+          availability: { ...defaultAvailability(), manager: virtualPersisted ? 'platform' : null },
+          nylas_grant_id: virtualPersisted ? 'vgrant-1' : null,
+          nylas_grant_email: virtualPersisted ? 'virtual@example.com' : null,
+          nylas_calendar_id: virtualPersisted ? 'vcal-1' : null,
+        },
+      }),
+      '/grants/add_virtual/v3': () => {
+        virtualPersisted = true
+        return { status: 200, body: { id: 5 } }
+      },
+      '/scheduler/configurations/create/v3': () => {
+        configCreated = true
+        return { status: 200, body: { response: { status: 200 } } }
+      },
+      '/nylas_configurations/get_all/v3': () => ({
+        status: 200,
+        body: configCreated
+          ? [{ config_id: 'cfg-free', grant_id: 'vgrant-1', is_paid: false, active: true }]
+          : [],
+      }),
+      '/starter/paid-call-settings/get/v3': () => ({
+        status: 200,
+        body: {
+          readiness: { paid_call_enabled: Boolean(paidService) },
+          services: paidService ? [paidService] : [],
+        },
+      }),
+      '/starter/paid-call-settings/upsert/v3': (body) => {
+        paidService = {
+          config_id: 'cfg-paid',
+          title: body.title,
+          price_cents: body.price_cents,
+          duration: body.duration_minutes,
+          active: true,
+        }
+        return { status: 200, body: { service: paidService } }
+      },
+    },
+  })
+  await settle()
+  await settle()
+
+  assert.equal(secondLoad.calls.filter((call) => call.path === '/grants/create_virtual_account/v3').length, 0)
+  const addVirtual = secondLoad.calls.find((call) => call.path === '/grants/add_virtual/v3')
+  assert.equal(addVirtual.body.grant_id, 'vgrant-1')
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-callback'), false)
+  assert.equal(secondLoad.sessionStorage.has('starter-scheduling-oauth-intent:member-a'), false)
 })
 
 test('hosted OAuth callback for a different member performs no writes', async () => {

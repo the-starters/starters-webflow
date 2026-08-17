@@ -357,6 +357,12 @@
     }
   }
 
+  function persistOAuthIntent(memberId, intent) {
+    if (!Number.isFinite(intent.createdAt)) intent.createdAt = Date.now()
+    window.sessionStorage.setItem(OAUTH_INTENT_PREFIX + memberId, JSON.stringify(intent))
+    return intent
+  }
+
   function invalidOAuthCallback(message) {
     return Object.assign(new Error(message), { code: 'OAUTH_CALLBACK_INVALID' })
   }
@@ -812,15 +818,30 @@
     return service
   }
 
-  async function recoverPaidCallAfterOAuthCancellation(memberId, intent) {
+  async function recoverPaidCallAfterOAuthCancellation(memberId, oauthIntent) {
+    const intent = oauthIntent && oauthIntent.paidCallIntent
     if (!intent) return false
     await refreshCanonicalConnectionState()
     let createdVirtual = false
-    if (grantId && (!grantEmail || !grantCalendarId)) {
+    const recovery = oauthIntent.virtualRecovery
+    const resumableGrant =
+      recovery && recovery.grant_id && (!grantId || recovery.grant_id === grantId)
+        ? recovery
+        : null
+    if (grantId && (!grantEmail || !grantCalendarId) && !resumableGrant) {
       throw new Error('Canonical calendar transition is incomplete')
     }
-    if (!grantId) {
-      const virtual = await createVirtualCalendarFlow(memberId)
+    if (!grantId || !grantEmail || !grantCalendarId) {
+      const virtual = await createVirtualCalendarFlow(memberId, {
+        account: resumableGrant,
+        onAccount: function (account) {
+          oauthIntent.virtualRecovery = {
+            grant_id: account.id,
+            email: account.email || null,
+          }
+          persistOAuthIntent(memberId, oauthIntent)
+        },
+      })
       if (virtual.status !== 200) throw new Error('OAuth cancellation recovery failed')
       grantId = virtual.grant_id
       grantEmail = virtual.email
@@ -998,18 +1019,26 @@
   /* Virtual (platform-managed) calendar + disconnect                    */
   /* ------------------------------------------------------------------ */
 
-  async function createVirtualCalendarFlow(memberId) {
+  async function createVirtualCalendarFlow(memberId, options) {
     await ensureTimezone()
     const result = { status: 400, grant_id: null, email: null, calendar_id: null }
-    let account = null
-    try {
-      const accountResponse = await xanoPost('/grants/create_virtual_account/v3', {
-        member_id: memberId,
-      })
-      account = accountResponse && accountResponse.response && accountResponse.response.result
-    } catch (error) {
-      console.warn('[scheduling-writer] virtual account failed:', error && error.message)
-      return result
+    let account =
+      options && options.account && options.account.grant_id
+        ? { data: { id: options.account.grant_id, email: options.account.email || null } }
+        : null
+    if (!account) {
+      try {
+        const accountResponse = await xanoPost('/grants/create_virtual_account/v3', {
+          member_id: memberId,
+        })
+        account = accountResponse && accountResponse.response && accountResponse.response.result
+        if (account && account.data && options && typeof options.onAccount === 'function') {
+          options.onAccount(account.data)
+        }
+      } catch (error) {
+        console.warn('[scheduling-writer] virtual account failed:', error && error.message)
+        return result
+      }
     }
     const virtualGrantId = account && account.data && account.data.id
     if (!virtualGrantId) return result
@@ -1594,21 +1623,39 @@
           }
           oauthPaidCallIntent = oauthIntent.paidCallIntent || null
           await ensureTimezone()
-          const grantPayload = {
-            member_id: memberId,
-            in_redirect_uri: oauthIntent.redirectUri,
-            in_state: oauthState,
+          if (!oauthIntent.oauthGrantSaved) {
+            const grantPayload = {
+              member_id: memberId,
+              in_redirect_uri: oauthIntent.redirectUri,
+              in_state: oauthState,
+            }
+            if (oauthCode) grantPayload.code = oauthCode
+            else grantPayload.in_grant_id = oauthGrantId
+            const grant = await xanoPost('/grants/add/v3', grantPayload)
+            if (!(grant && grant.grant_id)) {
+              throw new Error('grants/add/v3 returned no grant')
+            }
+            oauthIntent.oauthGrantSaved = true
+            persistOAuthIntent(memberId, oauthIntent)
           }
-          if (oauthCode) grantPayload.code = oauthCode
-          else grantPayload.in_grant_id = oauthGrantId
-          const grant = await xanoPost('/grants/add/v3', grantPayload)
-          if (!(grant && grant.grant_id)) {
-            throw new Error('grants/add/v3 returned no grant')
+          await refreshCanonicalConnectionState()
+          if (!grantId || !grantEmail || !grantCalendarId) {
+            throw new Error('Canonical OAuth grant readback is incomplete')
           }
+          if (availability.manager !== 'calendar') {
+            availability.manager = 'calendar'
+            await updateAvail()
+          }
+          const hasFreeConfig = configs.some(function (config) {
+            return config && config.config_id && config.is_paid === false && config.active !== false
+          })
+          if (!hasFreeConfig) await createFreeConfig()
+          await restorePaidCallIntent(oauthPaidCallIntent)
+          await refreshCanonicalConnectionState()
           clearOAuthIntent(memberId)
           clearOAuthCallback()
-          await refreshCanonicalConnectionState()
-          connectedCalendar = connectedCalendar || 'google'
+          connectedCalendar = null
+          switchStep('default')
           emit('starterSchedulingWriteSuccess', { action: 'oauth-connect' })
         } catch (error) {
           let recovered = false
@@ -1622,7 +1669,7 @@
             try {
               recovered = await recoverPaidCallAfterOAuthCancellation(
                 memberId,
-                oauthIntent.paidCallIntent,
+                oauthIntent,
               )
             } catch (recoveryError) {
               console.warn(
