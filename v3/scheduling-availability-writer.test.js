@@ -792,10 +792,10 @@ test('form submit writes the authenticated member id and reaches the success ste
   const configUpdates = result.calls.filter(
     (c) => c.path === '/scheduler/configurations/update/v3',
   )
-  assert.equal(configUpdates.length, 2)
+  assert.equal(configUpdates.length, 1)
   assert.deepEqual(
     configUpdates.map((c) => c.body.config_id).sort(),
-    ['cfg-free', 'cfg-paid'],
+    ['cfg-free'],
   )
   for (const c of configUpdates) assert.equal(c.body.grant_id, 'grant-1')
 
@@ -1307,7 +1307,7 @@ test('production pre-redirect persists timezone and uses the canonical host', as
   })
 })
 
-test('a stored paid rate restores the free+paid config pair', async () => {
+test('a stored paid rate cannot create a paid configuration', async () => {
   const availability = defaultAvailability()
   availability.manager = null
   const result = loadWriter({
@@ -1321,10 +1321,8 @@ test('a stored paid rate restores the free+paid config pair', async () => {
   await settle()
 
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
-  assert.equal(creates.length, 2)
-  const paid = creates.find((c) => /^Paid Consultation Call/.test(c.body.in_config_name))
-  assert.ok(paid, 'expected a paid configuration')
-  assert.match(paid.body.in_config_name, /\$150$/)
+  assert.equal(creates.length, 1)
+  assert.equal(creates[0].body.in_config_name, 'Free Consultation Call - 30min')
   assert.equal(result.dom.steps.success.style.display, 'block')
 })
 
@@ -1371,7 +1369,7 @@ test('removing an override returns its days to the general schedule', async () =
   assert.equal(update.body.availability.items['ov-1'], undefined)
   assert.equal(
     result.calls.filter((c) => c.path === '/scheduler/configurations/update/v3').length,
-    2,
+    1,
   )
   const paths = result.calls.map((call) => call.path)
   const updateIndex = paths.indexOf('/starter/update_availability/v3')
@@ -1625,9 +1623,8 @@ test('production hosted OAuth callback verifies and persists the returned grant'
   assert.equal(result.historyCalls.at(-1)[2], '/starter-dashboard')
   assert.equal(result.calls.filter((c) => c.path === '/starter/update_availability/v3').length, 1)
   const creates = result.calls.filter((c) => c.path === '/scheduler/configurations/create/v3')
-  assert.equal(creates.length, 2)
-  assert.ok(creates.some((c) => c.body.in_config_name === 'Free Consultation Call - 30min'))
-  assert.ok(creates.some((c) => c.body.in_config_name === 'Paid Consultation Call - 60min - $150'))
+  assert.equal(creates.length, 1)
+  assert.equal(creates[0].body.in_config_name, 'Free Consultation Call - 30min')
 })
 
 test('OAuth callback is stripped before bootstrap failure and survives a login reload', async () => {

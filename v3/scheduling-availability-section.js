@@ -38,7 +38,6 @@
   const CONNECTION_STATUS_ATTRIBUTE = 'data-scheduling-calendar-state'
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
-  const PAID_RATE_STORAGE_KEY = 'paid_call_rate'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
@@ -560,7 +559,7 @@
   }
 
   // A member connecting a calendar for the first time (platform or Google)
-  // has no `general` item yet — left as-is, createConfigPair() would build
+  // has no `general` item yet — left as-is, createFreeConfig() would build
   // the scheduler config with empty open hours, and nobody could ever book a
   // slot. Seed a Mon-Fri 09:00-18:00 default so the connection is usable
   // right away; the member can edit it or add overrides afterward. Never
@@ -689,44 +688,21 @@
     }
   }
 
-  // `#price` is a single hidden input living directly in
-  // `[data-availability-element="list"]` (not cloned per item form) —
-  // populated once at bootstrap from the starter's own `Paid_Call_Rate`.
-  // Only its `value` is read — `[data-rate]` was a static Designer
-  // placeholder left over from the old flow and carries no live data.
-  function resolvePaidRate() {
-    const priceInput = qs('#price')
-    if (priceInput) {
-      const rate = Number(priceInput.value || 0)
-      if (rate > 0) return rate
-    }
-    try {
-      const stored = Number(window.localStorage.getItem(PAID_RATE_STORAGE_KEY) || 0)
-      if (stored > 0) return stored
-    } catch (error) {
-      /* storage unavailable */
-    }
-    return 0
-  }
-
-  async function createConfigPair() {
+  // Calendar setup owns only the free-call configuration. Paid services are
+  // created, updated, and disabled through the canonical paid-call settings
+  // endpoints, never from a DOM value or browser cache.
+  async function createFreeConfig() {
     const free = await setupConfigs('free')
     if (free === null) throw new Error('Free scheduler configuration failed')
-    if (resolvePaidRate() > 0) {
-      const paid = await setupConfigs('paid')
-      if (paid === null) throw new Error('Paid scheduler configuration failed')
-      return paid
-    }
-    console.info('[scheduling-section] no paid-call rate; skipping paid configuration')
     return free
   }
 
   async function setupConfigs(type, isUpdate, configId) {
+    if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
     await ensureTimezone()
-    const isPaidCall = type === 'paid'
     const openHours = getAvailArray()
-    const price = isPaidCall ? String(resolvePaidRate()) : '0'
-    const duration = isPaidCall ? 60 : 30
+    const price = '0'
+    const duration = 30
     const interval = 15
     const buffer = 10
 
@@ -734,10 +710,8 @@
     const lastName = memberFields['last-name'] || ''
     const memberEmail = (window.MEMBER && window.MEMBER.auth && window.MEMBER.auth.email) || ''
 
-    const tinyTitle = isPaidCall ? 'Paid Consultation Call' : 'Free Consultation Call'
-    const fullTitle = isPaidCall
-      ? tinyTitle + ' - ' + duration + 'min - $' + price
-      : tinyTitle + ' - ' + duration + 'min'
+    const tinyTitle = 'Free Consultation Call'
+    const fullTitle = tinyTitle + ' - ' + duration + 'min'
 
     const requestConfig = {}
     if (isUpdate && configId) requestConfig.config_id = configId
@@ -788,7 +762,7 @@
         additional_fields: {
           call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
           call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
-          call_type: { type: 'metadata', label: 'Call Type', default: isPaidCall ? 'paid' : 'free', required: false },
+          call_type: { type: 'metadata', label: 'Call Type', default: 'free', required: false },
           starter_name: { type: 'metadata', label: 'Starter Name', default: firstName + ' ' + lastName, required: false },
           starter_email: { type: 'metadata', label: 'Starter Email', default: memberEmail, required: false },
           call_price: { type: 'metadata', label: 'Call Price', default: price, required: false },
@@ -820,8 +794,8 @@
 
   async function updateConfigs() {
     const configsResponse = []
-    for (const record of configs) {
-      const res = await setupConfigs(record.is_paid ? 'paid' : 'free', true, record.config_id)
+    for (const record of configs.filter(function (config) { return config.is_paid === false })) {
+      const res = await setupConfigs('free', true, record.config_id)
       configsResponse.push(res)
     }
     return configsResponse.length > 0 && configsResponse.every(Boolean)
@@ -911,7 +885,7 @@
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
       ensureDefaultAvailability()
-      await createConfigPair()
+      await createFreeConfig()
       availability.manager = 'platform'
       await updateAvail()
       await refreshCanonicalConnectionState()
@@ -992,7 +966,7 @@
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
       ensureDefaultAvailability()
-      await createConfigPair()
+      await createFreeConfig()
       availability.manager = 'platform'
       await updateAvail()
       await refreshCanonicalConnectionState()
@@ -1755,7 +1729,7 @@
         const updated = await updateConfigs()
         if (!updated) throw new Error('Scheduler configuration update failed')
       } else if (grantId && configs.length === 0) {
-        await createConfigPair()
+        await createFreeConfig()
       }
 
       await refreshCanonicalConnectionState()
@@ -2340,20 +2314,6 @@
       bindNotificationModalActions()
       bindCreateTrigger()
       renderAvailabilityItems()
-
-      // Populated once here from the canonical starter record — not from the
-      // Designer's static `data-rate` placeholder — since `readStarterRecord()`
-      // already carries the freelancer's own `Paid_Call_Rate`.
-      const priceInput = qs('#price')
-      if (priceInput) {
-        const rate = Number((starterRecord && starterRecord.Paid_Call_Rate) || 0)
-        priceInput.value = rate
-        try {
-          window.localStorage.setItem(PAID_RATE_STORAGE_KEY, rate)
-        } catch (error) {
-          /* storage unavailable */
-        }
-      }
 
       const state = await refreshCanonicalConnectionState()
       renderAvailabilityItems()

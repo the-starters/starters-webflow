@@ -846,23 +846,24 @@ test('main-wrapper stays visible through a later disconnect-google switch back t
   assert.equal(dom.mainWrapper.style.display, 'grid')
 })
 
-test('#price is populated once at bootstrap from the starter record\'s Paid_Call_Rate, not the Designer data-rate placeholder', async () => {
-  const { dom } = loadSection({
+test('#price is not populated from the profile projection or Designer placeholder', async () => {
+  const { dom, window } = loadSection({
     serverState: { Paid_Call_Rate: 275 },
   })
   await settle()
 
-  assert.equal(dom.priceInput.value, 275)
-  assert.equal(dom.priceInput.dataset.rate, '150') // untouched Designer placeholder
+  assert.equal(dom.priceInput.value, '')
+  assert.equal(dom.priceInput.dataset.rate, '150')
+  assert.equal(window.localStorage._map.has('paid_call_rate'), false)
 })
 
-test('#price falls back to 0 when the starter has no Paid_Call_Rate on record', async () => {
+test('#price remains inert when the starter has no projected Paid_Call_Rate', async () => {
   const { dom } = loadSection({
     serverState: { Paid_Call_Rate: null },
   })
   await settle()
 
-  assert.equal(dom.priceInput.value, 0)
+  assert.equal(dom.priceInput.value, '')
 })
 
 test('clicking the ordinal connect-platform button (no data-availability-action yet) connects and flips visibility', async () => {

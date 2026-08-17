@@ -32,7 +32,6 @@
   // refreshes what the initializer renders on the next load.
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
-  const PAID_RATE_STORAGE_KEY = 'paid_call_rate'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
@@ -718,44 +717,21 @@
     }
   }
 
-  // The paid-call rate comes from the page's `#price` input (Designer-bound,
-  // like V2) with the shared localStorage key as fallback. Without a resolved
-  // positive rate, no paid configuration is created — a bookable $0 "paid"
-  // call is worse than the paid option being absent.
-  function resolvePaidRate() {
-    const form = qs('[availability-form]')
-    const priceInp = form ? qs('#price', form) : null
-    if (priceInp) {
-      const rate = Number(priceInp.dataset.rate || priceInp.value || 0)
-      if (rate > 0) return rate
-    }
-    try {
-      const stored = Number(window.localStorage.getItem(PAID_RATE_STORAGE_KEY) || 0)
-      if (stored > 0) return stored
-    } catch (error) {
-      /* storage unavailable */
-    }
-    return 0
-  }
-
-  async function createConfigPair() {
+  // Calendar setup owns only the free-call configuration. Paid services are
+  // owned by starter/paid-call-settings/* and must not be inferred from DOM or
+  // localStorage state.
+  async function createFreeConfig() {
     const free = await setupConfigs('free')
     if (free === null) throw new Error('Free scheduler configuration failed')
-    if (resolvePaidRate() > 0) {
-      const paid = await setupConfigs('paid')
-      if (paid === null) throw new Error('Paid scheduler configuration failed')
-      return paid
-    }
-    console.info('[scheduling-writer] no paid-call rate; skipping paid configuration')
     return free
   }
 
   async function setupConfigs(type, isUpdate, configId) {
+    if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
     await ensureTimezone()
-    const isPaidCall = type === 'paid'
     const openHours = getAvailArray()
-    const price = isPaidCall ? String(resolvePaidRate()) : '0'
-    const duration = isPaidCall ? 60 : 30
+    const price = '0'
+    const duration = 30
     const interval = 15
     const buffer = 10
 
@@ -763,10 +739,8 @@
     const lastName = memberFields['last-name'] || ''
     const memberEmail = (window.MEMBER && window.MEMBER.auth && window.MEMBER.auth.email) || ''
 
-    const tinyTitle = isPaidCall ? 'Paid Consultation Call' : 'Free Consultation Call'
-    const fullTitle = isPaidCall
-      ? tinyTitle + ' - ' + duration + 'min - $' + price
-      : tinyTitle + ' - ' + duration + 'min'
+    const tinyTitle = 'Free Consultation Call'
+    const fullTitle = tinyTitle + ' - ' + duration + 'min'
 
     const requestConfig = {}
     if (isUpdate && configId) requestConfig.config_id = configId
@@ -819,7 +793,7 @@
         additional_fields: {
           call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
           call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
-          call_type: { type: 'metadata', label: 'Call Type', default: isPaidCall ? 'paid' : 'free', required: false },
+          call_type: { type: 'metadata', label: 'Call Type', default: 'free', required: false },
           starter_name: { type: 'metadata', label: 'Starter Name', default: firstName + ' ' + lastName, required: false },
           starter_email: { type: 'metadata', label: 'Starter Email', default: memberEmail, required: false },
           call_price: { type: 'metadata', label: 'Call Price', default: price, required: false },
@@ -867,7 +841,8 @@
   async function updateConfigs(step, removeAvail) {
     const configsResponse = []
     for (const record of configs) {
-      const res = await setupConfigs(record.is_paid ? 'paid' : 'free', true, record.config_id)
+      if (record.is_paid !== false) continue
+      const res = await setupConfigs('free', true, record.config_id)
       configsResponse.push(res)
     }
     // Unlike the legacy inline writer, a failed update must not be replaced
@@ -1073,7 +1048,7 @@
           setLoader(false, step)
           return
         } else {
-          await createConfigPair()
+          await createFreeConfig()
           await refreshCanonicalConnectionState()
           renderAvail()
           emit('starterSchedulingWriteSuccess', { action: 'availability-save' })
@@ -1127,7 +1102,7 @@
           grantEmail = virtual.email
           grantCalendarId = virtual.calendar_id
 
-          await createConfigPair()
+          await createFreeConfig()
 
           availability.manager = activeManager
           await updateAvail()
@@ -1187,7 +1162,7 @@
         grantEmail = virtual.email
         grantCalendarId = virtual.calendar_id
 
-        await createConfigPair()
+        await createFreeConfig()
 
         availability.manager = 'platform'
         await updateAvail()
@@ -1435,18 +1410,6 @@
         e.preventDefault()
       })
 
-      // Populate price input from Paid Consulting Call Rate.
-      const priceInp = qs('#price', form)
-      if (priceInp) {
-        const rate = Number(priceInp.dataset.rate || 0)
-        priceInp.value = rate
-        try {
-          window.localStorage.setItem(PAID_RATE_STORAGE_KEY, rate)
-        } catch (error) {
-          /* storage unavailable */
-        }
-      }
-
       timezone = await resolveTimezone(starterRecord, isStagingHost)
       renderTimezone()
 
@@ -1512,7 +1475,7 @@
       if (grantId) {
         configs = (await getConfigs(grantId, true)) || []
         if (isStagingHost && !configs.length && !connectedCalendar) {
-          await createConfigPair()
+          await createFreeConfig()
           refreshCanonicalConnectionSoon(500)
         }
       }
@@ -1528,7 +1491,7 @@
         )
         availability.manager = 'calendar'
         await updateAvail()
-        await createConfigPair()
+        await createFreeConfig()
         await refreshCanonicalConnectionState()
         switchStep('default')
       }

@@ -322,6 +322,7 @@ test('component loader installs auth and routing synchronously before cloned log
       'scheduling-availability-init.js',
       'scheduling-availability-writer.js',
       'scheduling-availability-section.js',
+      'paid-call-settings.js',
     ],
   )
   assert.doesNotMatch(tags[0][0], /\bdefer\b/)
@@ -330,6 +331,35 @@ test('component loader installs auth and routing synchronously before cloned log
   assert.match(tags[3][0], /\bdefer\b/)
   assert.match(tags[4][0], /\bdefer\b/)
   assert.match(tags[5][0], /\bdefer\b/)
+  assert.match(tags[6][0], /\bdefer\b/)
+})
+
+test('maps paid-call settings routes only to their exact authenticated V3 endpoints', async () => {
+  const { authenticatedRequests, nativeRequests, window } = loadStage({
+    pathname: '/starter-dashboard',
+  })
+  const routes = [
+    'starter/paid-call-settings/get',
+    'starter/paid-call-settings/upsert',
+    'starter/paid-call-settings/disable',
+  ]
+
+  for (const route of routes) {
+    const result = await window.fetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+    assert.equal(result.status, 200)
+  }
+  const lookalike = await window.fetch(`${API_BASE}${routes[0]}-debug`)
+
+  assert.deepEqual(
+    authenticatedRequests.map((request) => new URL(request.url).pathname),
+    routes.map((route) => `/api:tCpV3oqd/${route}/v3`),
+  )
+  assert.equal(lookalike.status, 410)
+  assert.equal((await lookalike.json()).code, 'SCHEDULING_V3_ROUTE_BLOCKED')
+  assert.equal(nativeRequests.length, 0)
 })
 
 test('does not install on the live profile component or unrelated production paths', () => {

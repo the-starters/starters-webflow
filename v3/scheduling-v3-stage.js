@@ -55,6 +55,9 @@
     'starter/get_by_memberstack': 'starter/get_by_memberstack/v3',
     'starter/get_charges_enabled': 'starter/get_charges_enabled/v3',
     'starter/get_stripe_connect_id': 'starter/get_stripe_connect_id/v3',
+    'starter/paid-call-settings/disable': 'starter/paid-call-settings/disable/v3',
+    'starter/paid-call-settings/get': 'starter/paid-call-settings/get/v3',
+    'starter/paid-call-settings/upsert': 'starter/paid-call-settings/upsert/v3',
     'starter/set_timezone': 'starter/set_timezone/v3',
     'starter/update_availability': 'starter/update_availability/v3',
   }

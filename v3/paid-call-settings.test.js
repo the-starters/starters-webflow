@@ -1,0 +1,262 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const test = require('node:test')
+const vm = require('node:vm')
+
+const SOURCE = fs.readFileSync(require.resolve('./paid-call-settings.js'), 'utf8')
+const API_BASE = 'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
+
+class El {
+  constructor(tag = 'div', attrs = {}) {
+    this.tagName = tag.toUpperCase()
+    this.attributes = {}
+    this.style = {}
+    this.value = ''
+    this.checked = false
+    this.disabled = false
+    this.textContent = ''
+    this.listeners = new Map()
+    this.children = []
+    Object.entries(attrs).forEach(([name, value]) => this.setAttribute(name, value))
+  }
+
+  setAttribute(name, value) { this.attributes[name] = String(value) }
+  getAttribute(name) { return this.attributes[name] ?? null }
+  matches(selector) { return selector.split(',').some((part) => part.trim().toUpperCase() === this.tagName) }
+  addEventListener(name, listener) {
+    const listeners = this.listeners.get(name) || []
+    listeners.push(listener)
+    this.listeners.set(name, listeners)
+  }
+  async dispatch(name) {
+    const event = { type: name, preventDefault() {} }
+    await Promise.all((this.listeners.get(name) || []).map((listener) => listener(event)))
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null }
+  querySelectorAll(selector) {
+    return this.children.filter((child) => {
+      const match = selector.match(/^\[([^=\]]+)(?:="([^"]+)")?\]$/)
+      if (!match) return selector.split(',').some((part) => part.trim().toUpperCase() === child.tagName)
+      return child.getAttribute(match[1]) !== null && (!match[2] || child.getAttribute(match[1]) === match[2])
+    })
+  }
+}
+
+function canonical(overrides = {}) {
+  return {
+    stripe_environment: 'live',
+    readiness: {
+      calendar_connected: true,
+      availability_configured: true,
+      stripe_connect_linked: true,
+      stripe_charges_enabled: true,
+      stripe_readiness_fresh: true,
+      paid_call_enabled: false,
+      bookable: false,
+      ...(overrides.readiness || {}),
+    },
+    services: overrides.services || [],
+  }
+}
+
+function service(overrides = {}) {
+  return {
+    config_id: 'cfg-paid-1',
+    title: 'Paid Consultation Call',
+    price_cents: 35000,
+    currency: 'usd',
+    duration: 60,
+    active: true,
+    revision: 4,
+    payment_environment: 'live',
+    ...overrides,
+  }
+}
+
+function buildDom(withRoot = true) {
+  const root = withRoot ? new El('section', { 'data-paid-call-element': 'settings' }) : null
+  if (!root) return { root: null }
+  const form = new El('form', { 'data-paid-call-element': 'form' })
+  const enabled = new El('input', { 'data-paid-call-input': 'enabled' })
+  const title = new El('input', { 'data-paid-call-input': 'title' })
+  const price = new El('input', { 'data-paid-call-input': 'price' })
+  const duration = new El('select', { 'data-paid-call-input': 'duration' })
+  const save = new El('button', { 'data-paid-call-action': 'save' })
+  const disable = new El('button', { 'data-paid-call-action': 'disable' })
+  const status = new El('p', { 'data-paid-call-element': 'status' })
+  const prerequisites = ['calendar', 'availability', 'stripe', 'charges', 'fresh', 'bookable']
+    .map((name) => new El('div', { 'data-paid-call-prerequisite': name }))
+  root.children.push(form, enabled, title, price, duration, save, disable, status, ...prerequisites)
+  return { root, form, enabled, title, price, duration, save, disable, status, prerequisites }
+}
+
+function load(options = {}) {
+  const dom = buildDom(options.withRoot !== false)
+  const html = new El('html')
+  const calls = []
+  const events = []
+  const warnings = []
+  let state = options.initial || canonical()
+  const routes = options.routes || {}
+
+  const document = {
+    readyState: 'complete',
+    documentElement: html,
+    querySelector(selector) {
+      if (selector === '[data-paid-call-element="settings"]') return dom.root
+      return null
+    },
+    querySelectorAll() { return [] },
+    addEventListener() {},
+  }
+
+  const window = {
+    location: { hostname: options.hostname || 'thestarters.com' },
+    crypto: { randomUUID: () => 'uuid-fixed' },
+    $memberstackDom: {
+      getCurrentMember: async () => ({ data: { id: options.memberId || 'member-a' } }),
+    },
+    addEventListener() {},
+    dispatchEvent(event) { events.push(event) },
+    xanoAuthFetch: async (url, init) => {
+      const path = url.replace(API_BASE, '')
+      const method = init.method
+      const body = init.body ? JSON.parse(init.body) : undefined
+      calls.push({ path, method, body })
+      if (routes[path]) return routes[path]({ method, body, state, setState: (next) => { state = next } })
+      if (path === '/starter/paid-call-settings/get/v3') {
+        return { ok: true, status: 200, json: async () => state }
+      }
+      throw new Error('unrouted request ' + path)
+    },
+  }
+
+  class CustomEvent {
+    constructor(type, init) { this.type = type; this.detail = init && init.detail }
+  }
+
+  vm.runInNewContext(SOURCE, {
+    CustomEvent,
+    Date,
+    Math,
+    console: { warn: (...args) => warnings.push(args.join(' ')) },
+    document,
+    window,
+  })
+
+  return { dom, calls, events, warnings, window, document, getState: () => state }
+}
+
+async function settle(iterations = 20) {
+  for (let index = 0; index < iterations; index += 1) await new Promise(setImmediate)
+}
+
+test('is inert when the native Webflow settings form is absent', async () => {
+  const result = load({ withRoot: false })
+  await settle()
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'not-applicable')
+  assert.equal(result.calls.length, 0)
+})
+
+test('renders the active service and prerequisite state from canonical GET', async () => {
+  const active = service()
+  const result = load({ initial: canonical({
+    services: [active],
+    readiness: { paid_call_enabled: true, bookable: true },
+  }) })
+  await settle()
+
+  assert.deepEqual(result.calls.map(({ path, method }) => ({ path, method })), [
+    { path: '/starter/paid-call-settings/get/v3', method: 'GET' },
+  ])
+  assert.equal(result.dom.enabled.checked, true)
+  assert.equal(result.dom.title.value, active.title)
+  assert.equal(result.dom.price.value, 350)
+  assert.equal(result.dom.duration.value, '60')
+  assert.equal(result.dom.root.getAttribute('data-paid-call-bookable'), 'true')
+  assert.ok(result.dom.prerequisites.every((item) => item.getAttribute('data-ready') === 'true'))
+})
+
+test('upsert sends product intent and revision, then trusts canonical readback', async () => {
+  const initial = canonical()
+  const savedService = service({ price_cents: 50000, revision: 1 })
+  const result = load({
+    initial,
+    routes: {
+      '/starter/paid-call-settings/upsert/v3': ({ body, setState }) => {
+        setState(canonical({
+          services: [savedService],
+          readiness: { paid_call_enabled: true, bookable: true },
+        }))
+        return { ok: true, status: 200, json: async () => ({ service: savedService }) }
+      },
+    },
+  })
+  await settle()
+  result.dom.enabled.checked = true
+  result.dom.title.value = 'Paid Consultation Call'
+  result.dom.price.value = '500'
+  result.dom.duration.value = '60'
+
+  await result.window.StarterPaidCallSettings.save()
+
+  const upsert = result.calls.find((call) => call.path === '/starter/paid-call-settings/upsert/v3')
+  assert.deepEqual(upsert.body, {
+    config_id: null,
+    title: 'Paid Consultation Call',
+    price_cents: 50000,
+    duration_minutes: 60,
+    expected_revision: 0,
+    idempotency_key: 'paid-call-upsert:uuid-fixed',
+  })
+  assert.equal(result.calls.filter((call) => call.path === '/starter/paid-call-settings/get/v3').length, 2)
+  assert.equal(result.dom.price.value, 500)
+  assert.equal(result.dom.status.textContent, 'Paid calls are on and bookable.')
+})
+
+test('disable sends the canonical revision and verifies the service is inactive', async () => {
+  const active = service({ revision: 7 })
+  const result = load({
+    initial: canonical({ services: [active], readiness: { paid_call_enabled: true, bookable: true } }),
+    routes: {
+      '/starter/paid-call-settings/disable/v3': ({ setState }) => {
+        setState(canonical())
+        return { ok: true, status: 200, json: async () => ({ service: { active: false } }) }
+      },
+    },
+  })
+  await settle()
+
+  await result.window.StarterPaidCallSettings.disable()
+
+  const disable = result.calls.find((call) => call.path === '/starter/paid-call-settings/disable/v3')
+  assert.deepEqual(disable.body, {
+    config_id: 'cfg-paid-1',
+    expected_revision: 7,
+    idempotency_key: 'paid-call-disable:uuid-fixed',
+  })
+  assert.equal(result.dom.enabled.checked, false)
+  assert.equal(result.dom.status.textContent, 'Paid calls are off.')
+})
+
+test('blocks enable when a canonical prerequisite is missing', async () => {
+  const result = load({ initial: canonical({ readiness: { stripe_charges_enabled: false } }) })
+  await settle()
+  result.dom.enabled.checked = true
+  result.dom.title.value = 'Paid Consultation Call'
+  result.dom.price.value = '500'
+  result.dom.duration.value = '60'
+
+  const saved = await result.window.StarterPaidCallSettings.save()
+
+  assert.equal(saved, null)
+  assert.equal(result.calls.some((call) => call.path.includes('/upsert/')), false)
+  assert.equal(result.dom.save.disabled, true)
+})
+
+test('fails closed when canonical state has duplicate active paid services', async () => {
+  const result = load({ initial: canonical({ services: [service(), service({ config_id: 'cfg-paid-2' })] }) })
+  await settle()
+  assert.equal(result.document.documentElement.getAttribute('data-paid-call-settings'), 'error')
+  assert.match(result.dom.status.textContent, /unavailable/i)
+})
