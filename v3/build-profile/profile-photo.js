@@ -3,6 +3,26 @@
  * Original live inline body SHA-256: 213646b19cc04f2b87375afeb303cc7ebe1f598cd5ffa4ce471b7c4ca895cf5c
  * Captured read-only from /build-profile/consult on 2026-08-12.
  */
+;(function loadCanonicalProfileHydrator() {
+  if (window.StartersBuildProfileCanonicalHydrator || window.__tsCanonicalProfileHydratorLoading) {
+    return
+  }
+  var source = document.currentScript && document.currentScript.src
+  if (!source) return
+  var script = document.createElement('script')
+  script.src = new URL('canonical-profile-hydrator.js', source).href
+  script.async = false
+  window.__tsCanonicalProfileHydratorLoading = true
+  script.addEventListener('load', function loaded() {
+    window.__tsCanonicalProfileHydratorLoading = false
+  }, { once: true })
+  script.addEventListener('error', function failed() {
+    window.__tsCanonicalProfileHydratorLoading = false
+    console.warn('[build-profile-canonical] loader failed')
+  }, { once: true })
+  ;(document.head || document.documentElement).appendChild(script)
+})()
+
   document.addEventListener('DOMContentLoaded', () => {
     waitForMember(() => {
       if (!MEMBER.id) return;

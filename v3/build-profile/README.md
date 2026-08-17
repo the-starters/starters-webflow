@@ -18,6 +18,15 @@ The files below are source-controlled candidates for self-contained controller b
 | 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor and word limit |
 | 14 | `grouped-selects.js` | `e80bb01f28a43ebcb5b28e8ea733bac273985ddfa3235179cdfc6a9a5168ae84` | Grouped multi-select options |
 
+`canonical-profile-hydrator.js` is a supplemental fallback loaded by the
+existing `profile-photo.js` asset. It does not replace an inline block. After
+the legacy Memberstack/local draft initializes, it reads the canonical
+`starter/get` profile, verifies the stable Memberstack ID, maps the canonical
+fields to the seven-step draft shape, and fills only keys that are absent from
+the active draft. Existing draft keys always win, including intentional empty
+values. It does not persist Memberstack JSON, localStorage, or Xano data; the
+native wizard keeps ownership of capture and persistence after human input.
+
 `submit-diagnostics.js` is an additional outcome loader, not a replacement for
 an inline block. It watches the existing human click on `[form-submit]` and the
 authored `[build-profile-success]` / `[build-profile-error]` states. It does not
