@@ -65,7 +65,11 @@ function nativeModal() {
 function loadInitializer(options = {}) {
   const init = control({ 'init-availability': '' })
   const update = control({ 'update-availability': '' })
-  const connectionAction = control({ 'calendar-connection-action': '' })
+  const connectionAction = control(
+    options.legacyCalendarAction
+      ? { href: '#calendar' }
+      : { 'calendar-connection-action': '' },
+  )
   // Production still uses the documented legacy class fallback for this row.
   const connectionItem = control({ class: 'dash-hero_action-item' })
   connectionItem.hidden = false
@@ -106,7 +110,10 @@ function loadInitializer(options = {}) {
       if (selector === '[availability-step]') return steps
       if (selector === '[init-availability]') return options.withoutControls ? [] : [init]
       if (selector === '[update-availability]') return options.withoutControls ? [] : [update]
-      if (selector === '[calendar-connection-action]') {
+      if (
+        selector ===
+        '[calendar-connection-action], .dash-hero_action-item a[href="#calendar"]'
+      ) {
         return options.withoutControls ? [] : [connectionAction]
       }
       if (selector === '[init-availability], [update-availability]') {
@@ -456,6 +463,39 @@ test('removes the Calendar Action Item once the canonical connection is ready', 
   assert.equal(result.connectionItem.style.display, 'none')
   result.update.click()
   assert.equal(result.steps[0].style.display, 'block')
+})
+
+test('removes the published legacy Calendar row without the canonical action attribute', async () => {
+  const result = loadInitializer({
+    legacyCalendarAction: true,
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability: {
+          items: { general: { days: [1], start: '09:00', end: '18:00' } },
+          manager: 'platform',
+        },
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'connected',
+      configurationCount: 1,
+      manager: 'platform',
+    },
+  })
+
+  assert.equal(result.connectionAction.getAttribute('calendar-connection-action'), null)
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
 })
 
 test('removes the Calendar Action Item when Nylas availability exists without a Google connection', async () => {
