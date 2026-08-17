@@ -825,7 +825,13 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   const page = makePage()
   const bookingCalls = []
   let schedulerCalls = 0
-  const configs = [{ config_id: 'config_free', is_paid: false, active: true }]
+  const configs = [{
+    config_id: 'config_free',
+    is_paid: false,
+    active: true,
+    data_environment: 'production',
+    payment_environment: null,
+  }]
   const context = makeContext({
     page,
     record: { 'free-consulting-calls-t-f': true },
@@ -847,12 +853,94 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
 
   const freeCard = page.servicesList.children[0]
   assert.equal(bookingCalls.length, 1)
-  assert.equal(bookingCalls[0][2], configs)
+  assert.deepEqual(
+    bookingCalls[0][2].map((record) => record.config_id),
+    ['config_free'],
+  )
   assert.equal(freeCard.getAttribute('data-modal-trigger'), 'popup-booking')
   assert.equal(freeCard.getAttribute('data-type'), 'free')
   assert.equal(schedulerCalls, 0, 'the calendar waits for a modal option click')
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
+})
+
+test('booking discovery rejects inactive, mixed-environment, and duplicate configurations', async () => {
+  const scenarios = [
+    [{ config_id: 'inactive_free', is_paid: false, active: false, data_environment: 'production' }],
+    [{ config_id: 'inactive_paid', is_paid: true, active: false, data_environment: 'production', payment_environment: 'live' }],
+    [{ config_id: 'mixed_data', is_paid: false, active: true, data_environment: 'test' }],
+    [{ config_id: 'mixed_payment', is_paid: true, active: true, data_environment: 'production', payment_environment: 'test' }],
+    [{ config_id: 'unknown_payment', is_paid: null, active: true, data_environment: 'production' }],
+    [
+      { config_id: 'free_a', is_paid: false, active: true, data_environment: 'production' },
+      { config_id: 'free_b', is_paid: false, active: true, data_environment: 'production' },
+    ],
+    [
+      { config_id: 'paid_a', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
+      { config_id: 'paid_b', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
+    ],
+    [
+      { config_id: 'shared', is_paid: false, active: true, data_environment: 'production' },
+      { config_id: 'shared', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
+    ],
+  ]
+
+  for (const configs of scenarios) {
+    const page = makePage()
+    let bookingComponentCalls = 0
+    let nearestSlotCalls = 0
+    const context = makeContext({
+      page,
+      member: {
+        id: 'brand_member',
+        auth: { email: 'brand@example.com' },
+        customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+        planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+      },
+      getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+      getConfigs: async () => configs,
+      getNearestSlot: async () => { nearestSlotCalls += 1 },
+      initBookingComponents: () => { bookingComponentCalls += 1 },
+    })
+    vm.createContext(context)
+    vm.runInContext(source, context)
+    await settle()
+
+    assert.equal(bookingComponentCalls, 0)
+    assert.equal(nearestSlotCalls, 0)
+    assert.ok(context.warnings.some((line) => line.includes('No Configurations found')))
+  }
+})
+
+test('booking discovery passes one active Free and Paid configuration to the shared modal', async () => {
+  const page = makePage()
+  const bookingCalls = []
+  const configs = [
+    { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
+    { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production', payment_environment: null },
+  ]
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: async () => configs,
+    getNearestSlot: async () => null,
+    initBookingComponents: (...args) => bookingCalls.push(args),
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(bookingCalls.length, 1)
+  assert.deepEqual(
+    bookingCalls[0][2].map((record) => record.config_id),
+    ['free_live', 'paid_live'],
+  )
 })
 
 test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {

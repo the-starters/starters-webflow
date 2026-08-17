@@ -113,6 +113,44 @@
       const role = memberRole(member);
       return role === 'brand-free' || role === 'brand-paid' || role === 'legacy-brand';
   }
+
+  function selectBookableConfigurations(records) {
+      if (!Array.isArray(records)) return [];
+
+      const isTestHost = location.hostname === 'the-starters-3-0.webflow.io';
+      const isProductionHost = location.hostname === 'thestarters.com' ||
+          location.hostname === 'www.thestarters.com';
+      if (!isTestHost && !isProductionHost) return [];
+
+      const expectedDataEnvironment = isTestHost ? 'test' : 'production';
+      const expectedPaymentEnvironment = isTestHost ? 'test' : 'live';
+      const active = records.filter(function (record) {
+          if (!record || !record.config_id || record.active !== true) return false;
+          if (record.data_environment !== expectedDataEnvironment) return false;
+          if (record.is_paid === true) {
+              return record.payment_environment === expectedPaymentEnvironment;
+          }
+          return record.is_paid === false;
+      });
+      const configIds = new Set();
+      const hasDuplicateConfigId = active.some(function (record) {
+          if (configIds.has(record.config_id)) return true;
+          configIds.add(record.config_id);
+          return false;
+      });
+      const free = active.filter(function (record) { return record.is_paid !== true; });
+      const paid = active.filter(function (record) { return record.is_paid === true; });
+
+      if (hasDuplicateConfigId || free.length > 1 || paid.length > 1) {
+          console.warn('Duplicate active booking configurations require reconciliation.');
+          return [];
+      }
+
+      // Keep Free first so the shared modal's nearest-slot preview remains
+      // deterministic while each option still receives its own config ID.
+      return free.concat(paid);
+  }
+
   // Park the beside-services calendar experiment. The live Hire experience
   // uses the existing two-step modal: Book Call -> Free/Paid -> calendar.
   // Keep the authored panel available for a future opt-in, but never let
@@ -486,7 +524,7 @@
       if (grant_id) {
 
           // GET CONFIGS
-          const configs = await getConfigs(grant_id);
+          const configs = selectBookableConfigurations(await getConfigs(grant_id));
           if (
               Array.isArray(configs) &&
               configs.length &&
