@@ -83,6 +83,8 @@ function loadInitializer(options = {}) {
   const attributes = new Map()
   const storage = new Map(Object.entries(options.storage || {}))
   const events = []
+  let connectionActionAvailable = !options.lateConnectionAction
+  let mutationCallback = null
   const document = {
     body: { style: {} },
     readyState: 'complete',
@@ -102,7 +104,7 @@ function loadInitializer(options = {}) {
         selector ===
         '[init-availability], [update-availability], [calendar-connection-action]'
       ) {
-        return options.withoutControls ? null : init
+        return options.withoutControls || options.lateConnectionAction ? null : init
       }
       return null
     },
@@ -114,7 +116,7 @@ function loadInitializer(options = {}) {
         selector ===
         '[calendar-connection-action], .dash-hero_action-item a[href="#calendar"]'
       ) {
-        return options.withoutControls ? [] : [connectionAction]
+        return options.withoutControls || !connectionActionAvailable ? [] : [connectionAction]
       }
       if (selector === '[init-availability], [update-availability]') {
         return options.withoutControls ? [] : [init, update]
@@ -148,6 +150,13 @@ function loadInitializer(options = {}) {
     xanoAuthFetch: options.xanoAuthFetch,
     $memberstackDom: options.memberstack,
     lumos: options.lumos,
+    MutationObserver: class MutationObserver {
+      constructor(callback) {
+        mutationCallback = callback
+      }
+      observe() {}
+      disconnect() {}
+    },
     addEventListener(name, listener) {
       if (!windowListeners.has(name)) windowListeners.set(name, [])
       windowListeners.get(name).push(listener)
@@ -189,6 +198,10 @@ function loadInitializer(options = {}) {
     update,
     warnings,
     window,
+    insertConnectionAction() {
+      connectionActionAvailable = true
+      if (mutationCallback) mutationCallback([{ type: 'childList' }])
+    },
   }
 }
 
@@ -493,6 +506,28 @@ test('removes the published legacy Calendar row without the canonical action att
   })
 
   assert.equal(result.connectionAction.getAttribute('calendar-connection-action'), null)
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+})
+
+test('removes a late Webflow Calendar row after the connected event already fired', async () => {
+  const result = loadInitializer({ lateConnectionAction: true })
+  await settle()
+
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'not-applicable')
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'connected',
+      configurationCount: 1,
+      manager: 'platform',
+    },
+  })
+
+  result.insertConnectionAction()
+
+  assert.equal(result.connectionAction.getAttribute('data-calendar-connection-state'), 'connected')
   assert.equal(result.connectionAction.style.display, 'none')
   assert.equal(result.connectionItem.hidden, true)
   assert.equal(result.connectionItem.style.display, 'none')

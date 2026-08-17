@@ -32,6 +32,7 @@
   let activeAvailability = null
   let activeConnectionState = 'loading'
   let activeConfigurationCount = 0
+  let connectionActionObserver = null
   const CALENDAR_ACTION_SELECTOR =
     '[calendar-connection-action], .dash-hero_action-item a[href="#calendar"]'
 
@@ -315,6 +316,31 @@
     })
   }
 
+  function reconcileLateConnectionAction() {
+    if (document.querySelectorAll(CALENDAR_ACTION_SELECTOR).length) return
+    if (connectionActionObserver || typeof window.MutationObserver !== 'function') return
+
+    connectionActionObserver = new window.MutationObserver(function () {
+      if (!document.querySelectorAll(CALENDAR_ACTION_SELECTOR).length) return
+      connectionActionObserver.disconnect()
+      connectionActionObserver = null
+
+      // Webflow can add the authored dashboard row after deferred page scripts
+      // have already emitted the canonical Nylas state. Reapply that live state
+      // when the row arrives so returning users do not keep a stale action item.
+      const connection = window.STARTER_SCHEDULING_CONNECTION
+      if (connection && typeof connection === 'object') {
+        setConnectionState(connection.state, connection)
+      } else {
+        renderConnectionAction(activeConnectionState, activeAvailability)
+      }
+    })
+    connectionActionObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    })
+  }
+
   function renderState(availability, connectionState, selectInitialStep) {
     const shouldSelectStep = selectInitialStep !== false
     const initControls = Array.from(document.querySelectorAll('[init-availability]'))
@@ -461,6 +487,8 @@
     const detail = (event && event.detail) || {}
     setConnectionState(detail.state, detail)
   })
+
+  reconcileLateConnectionAction()
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initialize, { once: true })
