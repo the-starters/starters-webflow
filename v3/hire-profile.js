@@ -130,12 +130,18 @@
           if (record.is_paid === true) {
               return record.payment_environment === expectedPaymentEnvironment;
           }
-          return record.is_paid === false || record.is_paid == null;
+          return record.is_paid === false;
+      });
+      const configIds = new Set();
+      const hasDuplicateConfigId = active.some(function (record) {
+          if (configIds.has(record.config_id)) return true;
+          configIds.add(record.config_id);
+          return false;
       });
       const free = active.filter(function (record) { return record.is_paid !== true; });
       const paid = active.filter(function (record) { return record.is_paid === true; });
 
-      if (free.length > 1 || paid.length > 1) {
+      if (hasDuplicateConfigId || free.length > 1 || paid.length > 1) {
           console.warn('Duplicate active booking configurations require reconciliation.');
           return [];
       }

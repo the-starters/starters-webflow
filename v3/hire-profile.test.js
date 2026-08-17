@@ -870,13 +870,18 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
     [{ config_id: 'inactive_paid', is_paid: true, active: false, data_environment: 'production', payment_environment: 'live' }],
     [{ config_id: 'mixed_data', is_paid: false, active: true, data_environment: 'test' }],
     [{ config_id: 'mixed_payment', is_paid: true, active: true, data_environment: 'production', payment_environment: 'test' }],
+    [{ config_id: 'unknown_payment', is_paid: null, active: true, data_environment: 'production' }],
     [
       { config_id: 'free_a', is_paid: false, active: true, data_environment: 'production' },
-      { config_id: 'free_b', is_paid: null, active: true, data_environment: 'production' },
+      { config_id: 'free_b', is_paid: false, active: true, data_environment: 'production' },
     ],
     [
       { config_id: 'paid_a', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
       { config_id: 'paid_b', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
+    ],
+    [
+      { config_id: 'shared', is_paid: false, active: true, data_environment: 'production' },
+      { config_id: 'shared', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
     ],
   ]
 
