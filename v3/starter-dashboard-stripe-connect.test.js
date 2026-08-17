@@ -135,227 +135,24 @@ test('rendering selects authored state without changing its copy', () => {
   assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
 })
 
-test('connected state gets idempotent Open Stripe and disconnect controls', () => {
-  class FakeControl extends FakeElement {
-    constructor(label = 'Connect Stripe') {
-      super()
-      this.label = new FakeElement()
-      this.label.textContent = label
-      this.link = new FakeElement('A')
-      this.link.setAttribute('href', '#Stripe')
-      this.link.setAttribute('target', '_blank')
-    }
+test('connected Stripe states remove the Action Item root', () => {
+  for (const view of ['incomplete', 'ready', 'review']) {
+    const { root } = stripeRoot()
 
-    cloneNode() {
-      return new FakeControl(this.label.textContent)
-    }
+    api.renderRoots([root], view)
 
-    querySelector(value) {
-      if (value === '.button_main-text') return this.label
-      return null
-    }
-
-    querySelectorAll(value) {
-      return value === 'a, button, [role="button"]' ? [this.link] : []
-    }
+    assert.equal(root.hidden, true, view)
+    assert.equal(root.style.display, 'none', view)
   }
 
-  const { root, states } = stripeRoot()
-  const controls = []
-  const wrapper = {
-    appendChild(control) {
-      controls.push(control)
-    },
+  for (const view of ['loading', 'disconnected', 'error']) {
+    const { root } = stripeRoot()
+
+    api.renderRoots([root], view)
+
+    assert.equal(root.hidden, false, view)
+    assert.equal(root.style.display, '', view)
   }
-  const source = new FakeControl()
-  states.disconnected.querySelector = (value) =>
-    value === '.action-item_button-wrapper > *' ? source : null
-  states.ready.querySelector = (value) => {
-    if (value === '.action-item_button-wrapper') return wrapper
-    const action = value.match(/data-stripe-connect-action="([^"]+)"/)
-    return action
-      ? controls.find(
-          (control) =>
-            control.getAttribute('data-stripe-connect-action') === action[1],
-        ) || null
-      : null
-  }
-
-  const created = api.ensureConnectedControls(root)
-
-  assert.equal(created.length, 2)
-  assert.equal(controls.length, 2)
-  assert.equal(
-    controls[0].getAttribute('data-stripe-connect-action'),
-    'dashboard',
-  )
-  assert.equal(controls[0].label.textContent, 'Open Stripe')
-  assert.equal(controls[0].link.getAttribute('aria-label'), 'Open Stripe')
-  assert.equal(controls[0].link.getAttribute('href'), '#')
-  assert.equal(controls[0].link.getAttribute('target'), null)
-  assert.equal(
-    controls[1].getAttribute('data-stripe-connect-action'),
-    'disconnect',
-  )
-  assert.equal(controls[1].label.textContent, 'Disconnect Stripe')
-  assert.equal(
-    controls[1].link.getAttribute('aria-label'),
-    'Disconnect Stripe',
-  )
-
-  assert.deepEqual(api.ensureConnectedControls(root), [])
-  assert.equal(controls.length, 2)
-})
-
-test('connected state reuses the authored ready control without leaving Connect Stripe visible', () => {
-  class FakeControl extends FakeElement {
-    constructor(label = 'Connect Stripe') {
-      super()
-      this.label = new FakeElement()
-      this.label.textContent = label
-      this.link = new FakeElement('A')
-      this.link.setAttribute('href', '#Stripe')
-      this.link.setAttribute('target', '_blank')
-    }
-
-    cloneNode() {
-      return new FakeControl(this.label.textContent)
-    }
-
-    querySelector(value) {
-      if (value === '.button_main-text') return this.label
-      return null
-    }
-
-    querySelectorAll(value) {
-      return value === 'a, button, [role="button"]' ? [this.link] : []
-    }
-  }
-
-  const { root, states } = stripeRoot()
-  const authoredReadyControl = new FakeControl()
-  const controls = [authoredReadyControl]
-  const wrapper = {
-    appendChild(control) {
-      controls.push(control)
-    },
-  }
-  states.ready.querySelector = (value) => {
-    if (value === '.action-item_button-wrapper') return wrapper
-    if (value === '.action-item_button-wrapper > *') {
-      return authoredReadyControl
-    }
-    const action = value.match(/data-stripe-connect-action="([^"]+)"/)
-    return action
-      ? controls.find(
-          (control) =>
-            control.getAttribute('data-stripe-connect-action') === action[1],
-        ) || null
-      : null
-  }
-
-  const created = api.ensureConnectedControls(root)
-
-  assert.equal(created.length, 2)
-  assert.equal(controls.length, 2)
-  assert.equal(controls[0], authoredReadyControl)
-  assert.equal(
-    controls[0].getAttribute('data-stripe-connect-action'),
-    'dashboard',
-  )
-  assert.equal(controls[0].label.textContent, 'Open Stripe')
-  assert.equal(
-    controls[1].getAttribute('data-stripe-connect-action'),
-    'disconnect',
-  )
-  assert.equal(controls[1].label.textContent, 'Disconnect Stripe')
-  assert.equal(
-    controls.some((control) => control.label.textContent === 'Connect Stripe'),
-    false,
-  )
-
-  assert.deepEqual(api.ensureConnectedControls(root), [])
-  assert.equal(controls.length, 2)
-})
-
-test('incomplete and review states each receive a working disconnect control', () => {
-  class FakeControl extends FakeElement {
-    constructor(label = 'Complete Setup') {
-      super()
-      this.label = new FakeElement()
-      this.label.textContent = label
-      this.link = new FakeElement('A')
-    }
-
-    cloneNode() {
-      return new FakeControl(this.label.textContent)
-    }
-
-    querySelector(value) {
-      if (value === '.button_main-text') return this.label
-      return null
-    }
-
-    querySelectorAll(value) {
-      return value === 'a, button, [role="button"]' ? [this.link] : []
-    }
-  }
-
-  const { root, states } = stripeRoot()
-  const readyControls = []
-  const stateControls = { incomplete: [], review: [] }
-  const disconnectedSource = new FakeControl('Connect Stripe')
-  states.disconnected.querySelector = (value) =>
-    value === '.action-item_button-wrapper > *' ? disconnectedSource : null
-  states.ready.querySelector = (value) => {
-    if (value === '.action-item_button-wrapper') {
-      return { appendChild: (control) => readyControls.push(control) }
-    }
-    const action = value.match(/data-stripe-connect-action="([^"]+)"/)
-    return action
-      ? readyControls.find(
-          (control) =>
-            control.getAttribute('data-stripe-connect-action') === action[1],
-        ) || null
-      : null
-  }
-
-  const setupStateNames = ['incomplete', 'review']
-  setupStateNames.forEach((stateName) => {
-    const authored = new FakeControl()
-    const controls = stateControls[stateName]
-    states[stateName].querySelector = (value) => {
-      if (value === '.action-item_button-wrapper') {
-        return { appendChild: (control) => controls.push(control) }
-      }
-      if (value === '.action-item_button-wrapper > *') return authored
-      const action = value.match(/data-stripe-connect-action="([^"]+)"/)
-      return action
-        ? controls.find(
-            (control) =>
-              control.getAttribute('data-stripe-connect-action') === action[1],
-          ) || null
-        : null
-    }
-  })
-
-  api.ensureConnectedControls(root)
-
-  for (const stateName of ['incomplete', 'review']) {
-    assert.equal(stateControls[stateName].length, 1)
-    assert.equal(
-      stateControls[stateName][0].getAttribute('data-stripe-connect-action'),
-      'disconnect',
-    )
-    assert.equal(
-      stateControls[stateName][0].label.textContent,
-      'Disconnect Stripe',
-    )
-  }
-
-  api.ensureConnectedControls(root)
-  assert.equal(stateControls.incomplete.length, 1)
-  assert.equal(stateControls.review.length, 1)
 })
 
 test('the two authored earnings tiles resolve to disconnected and ready states', () => {

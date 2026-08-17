@@ -163,7 +163,10 @@ test('render before settle keeps loading visible and hides empty', () => {
   const loading = element({ attrs: { 'data-action-element': 'loading' } })
   const empty = element({ attrs: { 'data-action-element': 'empty' } })
   const total = element({ attrs: { 'data-action-element': 'total' }, text: '4' })
-  const scope = element({ children: [loading, empty, total] })
+  const scope = element({
+    attrs: { 'data-action-element': 'wrapper' },
+    children: [loading, empty, total],
+  })
 
   const panel = api.createPanel(scope)
   const count = panel.render()
@@ -173,6 +176,7 @@ test('render before settle keeps loading visible and hides empty', () => {
   assert.equal(empty.style.display, 'none')
   assert.equal(total.textContent, '0')
   assert.equal(scope.attributes['data-action-items-count'], '0')
+  assert.equal(scope.style.display, '')
 })
 
 test('visible items settle the panel and update the badge', () => {
@@ -192,10 +196,13 @@ test('visible items settle the panel and update the badge', () => {
   assert.equal(total.textContent, '2')
 })
 
-test('settle with zero items shows the empty card', () => {
+test('settle with zero items hides the full action-items wrapper', () => {
   const loading = element({ attrs: { 'data-action-element': 'loading' } })
   const empty = element({ attrs: { 'data-action-element': 'empty' } })
-  const scope = element({ children: [loading, empty] })
+  const scope = element({
+    attrs: { 'data-action-element': 'wrapper' },
+    children: [loading, empty],
+  })
 
   const panel = api.createPanel(scope)
   panel.render()
@@ -204,6 +211,25 @@ test('settle with zero items shows the empty card', () => {
   panel.settle()
   assert.equal(loading.style.display, 'none')
   assert.equal(empty.style.display, '')
+  assert.equal(scope.hidden, true)
+  assert.equal(scope.style.display, 'none')
+})
+
+test('a new pending item restores a wrapper hidden after settlement', () => {
+  const pending = row({ height: 0 })
+  const scope = element({
+    attrs: { 'data-action-element': 'wrapper' },
+    children: [pending],
+  })
+  const panel = api.createPanel(scope)
+
+  panel.settle()
+  assert.equal(scope.style.display, 'none')
+
+  pending.height = 20
+  assert.equal(panel.render(), 1)
+  assert.equal(scope.hidden, false)
+  assert.equal(scope.style.display, '')
 })
 
 test('render emits actionItemsChanged only when the count changes', () => {

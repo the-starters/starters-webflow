@@ -5,7 +5,8 @@
  * Connect, calendar, projects, future sections) own their individual rows and
  * show/hide them; this controller owns only the panel chrome — the loading
  * card, the "all caught up" empty card, and the live count badge. It never
- * shows, hides, or edits a feature row.
+ * shows, hides, or edits a feature row. It hides the full wrapper after the
+ * panel settles with no pending rows.
  *
  * Designer wiring (grammar authored on the brand dashboard):
  *   data-action-element="wrapper"  — panel scope root (optional; falls back
@@ -123,8 +124,15 @@
   }
 
   function createPanel(scope) {
+    const wrapper =
+      typeof scope.getAttribute === 'function' &&
+      scope.getAttribute(ELEMENT_ATTR) === 'wrapper'
+        ? scope
+        : null
     const panel = {
       scope,
+      wrapper,
+      wrapperHidden: false,
       loading: scope.querySelector(elementSelector('loading')),
       empty: scope.querySelector(elementSelector('empty')),
       total: scope.querySelector(elementSelector('total')),
@@ -133,6 +141,10 @@
     }
 
     panel.render = function render() {
+      // A controller-hidden wrapper makes every descendant rect zero. Restore
+      // it synchronously for measurement, then apply the settled result before
+      // the browser paints. The observer ignores these wrapper-only writes.
+      if (panel.wrapperHidden) show(panel.wrapper, true)
       const count = countPendingItems(scope)
       if (!panel.settled && count > 0) panel.settled = true
 
@@ -143,6 +155,8 @@
       if (countTarget && typeof countTarget.setAttribute === 'function') {
         countTarget.setAttribute(COUNT_ATTR, String(count))
       }
+      panel.wrapperHidden = Boolean(panel.wrapper && panel.settled && count === 0)
+      show(panel.wrapper, !panel.wrapperHidden)
 
       if (count !== panel.lastCount) {
         panel.lastCount = count
@@ -225,9 +239,24 @@
     }, SETTLE_TIMEOUT_MS)
 
     if (typeof global.MutationObserver === 'function') {
-      const observer = new global.MutationObserver(
-        createRenderScheduler(renderAll),
-      )
+      const scheduleRender = createRenderScheduler(renderAll)
+      const wrappers = panels
+        .map(function (panel) {
+          return panel.wrapper
+        })
+        .filter(Boolean)
+      const observer = new global.MutationObserver(function (records) {
+        const wrapperOnly =
+          records.length > 0 &&
+          records.every(function (record) {
+            return (
+              record.type === 'attributes' &&
+              wrappers.indexOf(record.target) !== -1 &&
+              (record.attributeName === 'style' || record.attributeName === 'hidden')
+            )
+          })
+        if (!wrapperOnly) scheduleRender()
+      })
       scopes.forEach(function (scope) {
         observer.observe(scope === doc ? doc.body || doc : scope, {
           subtree: true,

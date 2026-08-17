@@ -2,10 +2,10 @@
  * Starter Dashboard 3.0 — Stripe Connect status and callback controller.
  *
  * Xano reconciles Stripe-authoritative state into freelancers_v3. Webflow owns
- * the state markup, source button component, and styling; this module clones
- * the connected-state controls, selects authored states, handles Connect and
- * callback redirects, requests provider-verified Dashboard access, and submits
- * confirmed disconnects for the active Memberstack member.
+ * the state markup, source button component, and styling; this module selects
+ * authored states, handles Connect and callback redirects, and requests
+ * provider-verified Dashboard access. Connected accounts leave the Action
+ * Items list. The Starters support team owns disconnect requests.
  * Every Xano call is Bearer-authenticated: the active
  * Memberstack session is traded for a Xano token and the server derives the
  * member identity from that token, so no client-supplied member id is trusted.
@@ -13,7 +13,7 @@
  * Designer wiring:
  *   data-stripe-connect-element="root|loading|disconnected|incomplete|
  *   ready|review|error"
- *   data-stripe-connect-action="start|refresh|earnings|dashboard|disconnect"
+ *   data-stripe-connect-action="start|refresh|earnings|dashboard"
  *   data-stripe-connect-earnings-state="disconnected|ready"
  */
 ;(function (global) {
@@ -76,88 +76,11 @@
   function renderRoots(roots, view) {
     roots.forEach(function (root) {
       setView(root, view)
+      show(
+        root,
+        view !== 'incomplete' && view !== 'ready' && view !== 'review',
+      )
     })
-  }
-
-  function configureConnectedControl(control, action, label) {
-    control.setAttribute(ACTION_ATTR, action)
-    control.removeAttribute('target')
-
-    const text = control.querySelector('.button_main-text')
-    if (text) text.textContent = label
-
-    Array.prototype.slice
-      .call(control.querySelectorAll('a, button, [role="button"]'))
-      .forEach(function (interactive) {
-        interactive.setAttribute('aria-label', label)
-        if (interactive.tagName === 'A') interactive.setAttribute('href', '#')
-        interactive.removeAttribute('target')
-        interactive.removeAttribute('rel')
-      })
-
-    return control
-  }
-
-  function ensureConnectedControls(root) {
-    const ready = root.querySelector(elementSelector('ready'))
-    const disconnected = root.querySelector(elementSelector('disconnected'))
-    const wrapper = ready && ready.querySelector('.action-item_button-wrapper')
-    const authoredReadyControl =
-      ready && ready.querySelector('.action-item_button-wrapper > *')
-    const disconnectedSource =
-      disconnected &&
-      disconnected.querySelector('.action-item_button-wrapper > *')
-    const source = authoredReadyControl || disconnectedSource
-
-    if (!wrapper || !source || typeof source.cloneNode !== 'function') return []
-
-    const created = []
-    if (!ready.querySelector(actionSelector('dashboard'))) {
-      const dashboard = configureConnectedControl(
-        authoredReadyControl || source.cloneNode(true),
-        'dashboard',
-        'Open Stripe',
-      )
-      if (!authoredReadyControl) wrapper.appendChild(dashboard)
-      created.push(dashboard)
-    }
-
-    if (!ready.querySelector(actionSelector('disconnect'))) {
-      const dashboard = ready.querySelector(actionSelector('dashboard'))
-      const disconnect = configureConnectedControl(
-        (dashboard || source).cloneNode(true),
-        'disconnect',
-        'Disconnect Stripe',
-      )
-      wrapper.appendChild(disconnect)
-      created.push(disconnect)
-    }
-
-    const connectedSetupStates = ['incomplete', 'review']
-    connectedSetupStates.forEach(function (stateName) {
-      const state = root.querySelector(elementSelector(stateName))
-      const stateWrapper =
-        state && state.querySelector('.action-item_button-wrapper')
-      const stateSource =
-        state && state.querySelector('.action-item_button-wrapper > *')
-      if (
-        !stateWrapper ||
-        !stateSource ||
-        typeof stateSource.cloneNode !== 'function' ||
-        state.querySelector(actionSelector('disconnect'))
-      ) {
-        return
-      }
-      const disconnect = configureConnectedControl(
-        stateSource.cloneNode(true),
-        'disconnect',
-        'Disconnect Stripe',
-      )
-      stateWrapper.appendChild(disconnect)
-      created.push(disconnect)
-    })
-
-    return created
   }
 
   function resolveDashboardView(status, returnedFromStripe) {
@@ -1279,8 +1202,6 @@
     )
     if (!roots.length) return null
 
-    roots.forEach(ensureConnectedControls)
-
     const earningsElements = Array.prototype.slice.call(
       global.document.querySelectorAll(actionSelector('earnings')),
     )
@@ -1358,18 +1279,6 @@
             runExclusive(function () {
               return loadDashboardStatus(roots, false, earningsTiles)
             })
-          })
-        })
-        root.querySelectorAll(actionSelector('disconnect')).forEach(function (button) {
-          button.addEventListener('click', function (event) {
-            event.preventDefault()
-            handleDisconnect(
-              runExclusive,
-              button,
-              roots,
-              earningsTiles,
-              memberId,
-            )
           })
         })
       })
@@ -1475,7 +1384,6 @@
     dashboardAccess,
     disconnectConnect,
     exchangeCode,
-    ensureConnectedControls,
     fetchStatus,
     handleConnectClick,
     handleConnectKeydown,
