@@ -841,6 +841,33 @@ test('the approved production canary opens free booking inline and uses state-aw
   let scheduler
   let toggledTo = null
   let schedulerBackCalls = 0
+  const bookingFields = [
+    {
+      id: 'brand_memberstack_id',
+      value: 'brand_prod_test',
+      readOnly: true,
+      parentElement: makeElement('label'),
+    },
+    {
+      id: 'starter_memberstack_id',
+      value: 'mem_canary',
+      readOnly: true,
+      parentElement: makeElement('label'),
+    },
+    {
+      id: 'call_context',
+      value: '',
+      readOnly: false,
+      parentElement: makeElement('label'),
+    },
+  ]
+  const bookingForm = {
+    shadowRoot: {
+      querySelectorAll(selector) {
+        return selector === 'input-component' ? bookingFields : []
+      },
+    },
+  }
   const connector = {
     scheduler: {
       toggleAdditionalData: async (value) => {
@@ -870,6 +897,11 @@ test('the approved production canary opens free booking inline and uses state-aw
       assert.equal(container, page.calendarLive, 'the shared scheduler must target calendar-live')
       assert.equal(configId, 'config_free')
       scheduler = makeElement('nylas-scheduling')
+      scheduler.shadowRoot = {
+        querySelector(selector) {
+          return selector === 'nylas-booking-form' ? bookingForm : null
+        },
+      }
       scheduler.eventOverrides = {
         backButtonClicked: async () => {
           schedulerBackCalls += 1
@@ -899,6 +931,15 @@ test('the approved production canary opens free booking inline and uses state-aw
 
   await scheduler.eventOverrides.timeslotConfirmed({ detail: {} }, connector)
   assert.equal(page.back.getAttribute('data-availability-back-mode'), 'previous-step')
+  assert.equal(bookingFields[0].parentElement.style.display, 'none')
+  assert.equal(bookingFields[1].parentElement.style.display, 'none')
+  assert.equal(bookingFields[0].parentElement.getAttribute('aria-hidden'), 'true')
+  assert.equal(bookingFields[1].parentElement.getAttribute('aria-hidden'), 'true')
+  assert.equal(bookingFields[0].value, 'brand_prod_test')
+  assert.equal(bookingFields[1].value, 'mem_canary')
+  assert.equal(bookingFields[0].readOnly, true)
+  assert.equal(bookingFields[1].readOnly, true)
+  assert.notEqual(bookingFields[2].parentElement.style.display, 'none')
 
   await page.back.listeners.click[0]({ preventDefault() {} })
   assert.equal(toggledTo, false)
