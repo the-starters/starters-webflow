@@ -161,7 +161,8 @@ Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
    `Retainer`) and must **not** carry `data-modal-trigger`, `booking-popup-open`,
    or `data-type` — otherwise a logged-in click opens an unconfigured booking
    popup for a card that cannot be booked.
-3. Signed-in brand: same cards visible, no console errors, booking still gated.
+3. Eligible signed-in Brand: call cards keep the Book Call modal flow, and each
+   non-call card opens Start a Project with its exact native Services preset.
 4. `document.documentElement` carries `data-v3-algolia-status="ready"`.
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.

@@ -1786,8 +1786,8 @@ Current safety boundary:
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
   This prevents a release-time regression on non-stage staging consumers; the
-  stage adapter intercepts those paths first on its seven approved staging paths
-  and three exact production surfaces.
+  stage adapter intercepts those paths first on its explicit staging paths,
+  canonical dashboards, and valid Hire routes.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
@@ -1858,10 +1858,10 @@ adapter maps the reviewed unversioned scheduling paths and the environment-bound
 request method, body, headers, and query parameters, and sends the rewritten
 request through `window.xanoAuthFetch`. The Stripe lookup follows the
 [domain-isolated environment contract](#domain-isolated-test-and-live-environments).
-On the two approved Hire booking surfaces, the adapter owns both `window.fetch`
-and direct `window.xanoAuthFetch` calls so the shared scheduling helpers cannot
-bypass the Hire route map. The adapter does not wrap direct authenticated calls
-on the other installed surfaces.
+On valid Hire booking surfaces, the adapter owns both `window.fetch` and direct
+`window.xanoAuthFetch` calls so the shared scheduling helpers cannot bypass the
+Hire route map. The adapter does not wrap direct authenticated calls on the
+other installed surfaces.
 
 On valid Hire paths, the two public booking-discovery helpers use
 Brand-safe contracts instead of Talent-owner contracts. Both the unversioned
@@ -1964,9 +1964,15 @@ Webflow owns all call-section markup. Each section must provide:
 
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
-requests and all other rows under calls; Brand keeps one calls list. Legacy card
-action controls are hidden because V3 has no identity-safe mutation handler;
-only a confirmed row with a canonical meeting link exposes its join control.
+requests and all other rows under calls; Brand keeps pending and accepted rows
+in its calls list. The Starter pending card exposes only the Designer-authored
+Accept control. Before it calls `booking/confirm/v3`, the controller decodes the
+canonical `booking_ref`, requires its booking and configuration IDs to match the
+row, and supplies a per-attempt idempotency key. A successful response refreshes
+the canonical list, which moves the accepted row from Starter Call Requests to
+Starter Calls while it remains in Brand Calls. All other legacy mutation
+controls stay hidden; only a confirmed row with a canonical meeting link
+exposes its join control.
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for
