@@ -295,10 +295,8 @@
       function buildRateCard(sourceTemplate, card) {
           const el = sourceTemplate.cloneNode(true);
 
-          // Designer can provide an always-published native card template
-          // with the HTML hidden attribute. Clones are real service cards,
-          // so remove the template-only visibility state before rendering.
           el.removeAttribute('hidden');
+          el.removeAttribute('data-runtime-call-template');
           el.setAttribute('aria-hidden', 'false');
 
           // Keep data-signup-trigger-* so signup-attribution.js opens the
@@ -462,7 +460,9 @@
 
       function getOrCreateInlineFreeCards() {
           const existing = Array.from(qsa('[booking-popup-open][data-type]')).filter(function (card) {
-              return card.getAttribute('data-type') === 'free';
+              return card.getAttribute('data-type') === 'free' &&
+                  card.getAttribute('data-runtime-call-template') !== 'free' &&
+                  !card.hasAttribute('hidden');
           });
           if (existing.length) return existing;
 
@@ -475,7 +475,11 @@
              missing/mixed records never reach here. */
           const list = qs('#services .services-list_wrapper');
           const template = list
-              ? Array.from(qsa('[data-service-card="component"][data-service-card-state="Default"]', list))
+              ? Array.from(qsa(
+                  '[data-service-card="component"][data-service-card-state="Default"]' +
+                  '[data-runtime-call-template="free"][hidden]',
+                  list
+              ))
                   .find(function (candidate) {
                       return !candidate.hasAttribute('data-rate-card') &&
                           !!qs('.service-card_content-wrapper', candidate);
@@ -493,6 +497,7 @@
               'data-modal-trigger',
               'booking-popup-open',
               'data-type',
+              'data-runtime-call-template',
           ].forEach(function (attribute) {
               card.removeAttribute(attribute);
           });
