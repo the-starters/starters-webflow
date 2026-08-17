@@ -72,7 +72,8 @@ The booking globals are guaranteed by the verified page install order below.
   `initBookingComponents`, `formatWithTimezone`
 - jQuery `$` — used by the dropdown and anchor-scroll blocks only; each is
   individually guarded, so a missing jQuery costs those two behaviours and
-  nothing else
+  nothing else. The anchor utilities also ignore a bare `#` or an invalid hash
+  selector so a placeholder link cannot abort the remaining page utilities
 - `window.WfAlgolia` — the search client, awaited with a 30s deadline
 - `window.__startersEmptyNavRefresh` — optional, debounced refresh hook from
   `utils/section-custom-toc/hide-empty-sections.js`. After an asynchronous

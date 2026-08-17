@@ -352,19 +352,24 @@ test('the live rules stick to markup the card really ships', () => {
   )
 })
 
-test('the Designer nowrap on company names is beaten, not copied', () => {
-  // Staging ships `.expert-card_company-text { white-space: nowrap }`. Commenting
-  // out our copy of that rule does nothing; the live sheet has to say `normal`.
+test('a company name does not wrap inside itself', () => {
+  // "Xero Shoes" is one company. `white-space: normal` wraps at that space and
+  // paints "Xero" on line 1 with "Shoes, …" on line 2. nowrap keeps the name
+  // one unit; wrap still happens between inline companies.
   assert.match(
     liveCss,
-    /\.expert-card_company-list[\s\S]*?\{[^}]*white-space:\s*normal/,
-    'without this the Designer’s nowrap still clips names wider than the card',
+    /\.expert-card_company-list[\s\S]*?\{[^}]*white-space:\s*nowrap/,
+    'without nowrap a two-word company splits across the clamp'
+  )
+  assert.doesNotMatch(
+    liveCss,
+    /white-space:\s*normal/,
+    '`normal` is the backup that split "Xero Shoes"'
   )
 })
 
 test('the earlier attempt is commented out, not live', () => {
   for (const [pattern, why] of [
-    [/white-space:\s*nowrap/, 'nowrap clipped company names wider than the card'],
     [/font-size:\s*inherit/, 'font-size: inherit beat .text-size-small'],
     [/text-wrap:\s*pretty/, 'text-wrap: pretty re-balanced the two clamped lines'],
     [/--expert-card-company-line-height-unitless/, 'the line height is written directly'],

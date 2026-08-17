@@ -909,7 +909,14 @@
     $(document).ready(function () {
         $('a[href^="#"]').on('click', function (e) {
             const target = $(this).attr('href');
-            const $target = $(target);
+            if (!target || target === '#') return;
+
+            let $target;
+            try {
+                $target = $(target);
+            } catch (_error) {
+                return;
+            }
 
             if ($target.length) {
                 e.preventDefault();
@@ -932,7 +939,15 @@
       if (!navList) return;
 
       const links = [...navList.querySelectorAll('a[href^="#"]')];
-      const sections = links.map((a) => document.querySelector(a.getAttribute('href'))).filter(Boolean);
+      const sections = links.map((a) => {
+          const target = a.getAttribute('href');
+          if (!target || target === '#') return null;
+          try {
+              return document.querySelector(target);
+          } catch (_error) {
+              return null;
+          }
+      }).filter(Boolean);
 
       const scrollNavToActive = () => {
           const active = navList.querySelector('.w--current');

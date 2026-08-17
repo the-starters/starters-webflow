@@ -379,6 +379,48 @@ test('the jQuery-only blocks are skipped, not fatal, when jQuery is absent', () 
   )
 })
 
+test('a bare hash link does not enter the jQuery selector engine', () => {
+  const page = makePage()
+  const bareHash = makeElement('a', { href: '#' })
+  page.root.appendChild(bareHash)
+  const context = makeContext({ page })
+
+  const emptyChain = {
+    length: 0,
+    each() { return this },
+    find() { return this },
+    on() { return this },
+    off() { return this },
+  }
+  context.$ = function (value) {
+    if (value === context.document) {
+      return { ready(fn) { fn(); return this } }
+    }
+    if (value === 'a[href^="#"]') {
+      return {
+        on(type, fn) {
+          bareHash.addEventListener(type, fn)
+          return this
+        },
+      }
+    }
+    if (value === bareHash) {
+      return { attr: (name) => bareHash.getAttribute(name) }
+    }
+    if (value === '#') throw new Error('Syntax error, unrecognized expression: #')
+    return emptyChain
+  }
+
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  let prevented = false
+  assert.doesNotThrow(() => {
+    bareHash.listeners.click[0].call(bareHash, { preventDefault() { prevented = true } })
+  })
+  assert.equal(prevented, false, 'a placeholder hash link must retain its default no-op behavior')
+})
+
 test('the file keeps its symbols out of the page global scope', async () => {
   // The footer blocks were separate <script>s. Merging them into one file must
   // not start publishing their internals to the page, where they could collide
