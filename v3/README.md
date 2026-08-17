@@ -1771,8 +1771,9 @@ copy in page head/footer code.
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
-- On the V3 custom domains, runs only on `/hire/jp-testiz-d`,
-  `/starter-dashboard`, and `/brand-dashboard`; all other paths remain inert.
+- On the V3 custom domains, runs on valid single-segment `/hire/<slug>` paths,
+  `/starter-dashboard`, and `/brand-dashboard`. Production
+  `/hire/jp-dionisio` remains explicitly blocked.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
   origin, including the two Brand paid-call payment-method paths documented
   below. It does not use a group-wide prefix allowlist.
@@ -1838,11 +1839,11 @@ scheduling component. It installs on these exact staging paths:
 - `/hire-stage`
 - `/hire/jp-dionisio`
 
-The seventh path is the existing approved Test Talent CMS item. The exact paths
-`/hire/jp-testiz-d`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
-`thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
-staging-host only. The adapter does not install on any other `/hire/*` item or
-on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
+The seventh path is the existing Test Talent CMS item. Every valid
+single-segment `/hire/<slug>` path plus `/starter-dashboard` and
+`/brand-dashboard` is enabled on `thestarters.com` and `www.thestarters.com`;
+every `*-stage` path remains staging-host only. The adapter does not install on
+`detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
 both synchronous scripts: scheduling-group requests return HTTP `410` without
 installing authentication, discovery overrides, or booking identity. The
 adapter maps the reviewed unversioned scheduling paths and the environment-bound
@@ -1855,8 +1856,7 @@ and direct `window.xanoAuthFetch` calls so the shared scheduling helpers cannot
 bypass the Hire route map. The adapter does not wrap direct authenticated calls
 on the other installed surfaces.
 
-On the exact production `/hire/jp-testiz-d` canary, and on the retained staging-only
-`/hire/jp-dionisio` canary, the two public booking-discovery helpers use
+On valid Hire paths, the two public booking-discovery helpers use
 Brand-safe contracts instead of Talent-owner contracts. Both the unversioned
 and `/v3` forms of `starter/get_by_memberstack` are remapped to
 `starter/get_booking_profile/v3`, which returns only the Starter row ID and
@@ -1866,7 +1866,7 @@ metadata. Every other installed surface uses the self-only
 `starter/get_by_memberstack/v3` and grant-owner-only
 `nylas_configurations/get_all/v3` routes.
 
-Those two approved Hire booking surfaces also contain the post-booking Nylas
+Hire booking surfaces also contain the post-booking Nylas
 DOM race. After a successful `bookedEventInfo` event includes a `booking_id`,
 the adapter waits for the Designer-authored `[schedule-step="success"]` inside
 the same `[popup-booking]` to be visible, then detaches only that popup's

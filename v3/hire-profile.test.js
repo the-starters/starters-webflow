@@ -634,76 +634,6 @@ test('a signed-in Starter refreshes empty navigation after owner cards are revea
   )
 })
 
-test('the TEST canary creates one native free card only after canonical free config passes', async () => {
-  const page = makePage({
-    index: 'Freelancers3.0-staging-test',
-    includeFreeCard: false,
-    includeNativeFreeTemplate: true,
-  })
-  const originalPaidCard = page.servicesList.children[0]
-  let schedulerCalls = 0
-  const context = makeContext({
-    page,
-    record: { rate: 125, 'retainer-rate': 800, 'retainer-enabled': true },
-    member: {
-      id: 'brand_test_member',
-      auth: { email: 'brand-test@example.com' },
-      customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
-      planConnections: [
-        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
-      ],
-    },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
-    getConfigs: async () => [{ config_id: 'config_test_free', is_paid: false }],
-    getNearestSlot: async () => null,
-    initBookingComponents: () => {},
-    createScheduler: () => {
-      schedulerCalls += 1
-      const scheduler = makeElement('nylas-scheduling')
-      scheduler.eventOverrides = {}
-      page.calendarLive.appendChild(scheduler)
-      return scheduler
-    },
-    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
-    schedulingBridge: true,
-  })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-
-  const runtimeCards = page.servicesList.children.filter((card) =>
-    card.hasAttribute('data-runtime-free-call-card'),
-  )
-  assert.equal(runtimeCards.length, 1)
-  assert.equal(
-    page.servicesList.children.filter((card) => card.hasAttribute('data-rate-card')).length,
-    2,
-    'rate cards must render without inheriting the canonical free-call marker',
-  )
-  assert.equal(runtimeCards[0].getAttribute('data-type'), 'free')
-  assert.equal(runtimeCards[0].getAttribute('has-connection'), 'free')
-  assert.equal(runtimeCards[0].getAttribute('data-modal-trigger'), null)
-  assert.equal(runtimeCards[0].hasAttribute('hidden'), false)
-  assert.equal(runtimeCards[0].getAttribute('aria-hidden'), 'false')
-  assert.equal(
-    runtimeCards[0].querySelector('[data-service-card-element="title"]').textContent,
-    'Free Call',
-  )
-  assert.equal(runtimeCards[0].querySelector('[data-millify]').getAttribute('data-millify'), '0')
-  assert.equal(originalPaidCard.getAttribute('data-type'), 'paid', 'paid card type must stay unchanged')
-  assert.equal(page.nativeFreeTemplate.hasAttribute('hidden'), true, 'native template must stay hidden')
-  assert.equal(page.nativeFreeTemplate.getAttribute('data-type'), 'free')
-  assert.equal(
-    originalPaidCard.getAttribute('data-modal-trigger'),
-    'popup-booking',
-    'paid booking activation must stay untouched',
-  )
-
-  runtimeCards[0].onclick({ preventDefault() {}, stopPropagation() {} })
-  assert.equal(schedulerCalls, 1)
-  assert.equal(page.inlineWrapper.style.display, 'flex')
-})
-
 test('the runtime free card fails closed without a free config or exact route', async () => {
   for (const scenario of [
     {
@@ -816,245 +746,6 @@ test('an empty canonical configuration response fails closed without booking act
   assert.ok(context.warnings.some((line) => line.includes('No Configurations found')))
 })
 
-test('the runtime free card uses its selected config when a paid config comes first', async () => {
-  const page = makePage({
-    index: 'Freelancers3.0-staging-test',
-    includeFreeCard: false,
-    includeNativeFreeTemplate: true,
-  })
-  const nearestSlotConfigIds = []
-  let schedulerConfigId = null
-  const context = makeContext({
-    page,
-    member: {
-      id: 'brand_test_member',
-      auth: { email: 'brand-test@example.com' },
-      customFields: { 'free-user': 'Brand', 'last-name': 'Test' },
-      planConnections: [
-        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
-      ],
-    },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_test' }),
-    getConfigs: async () => [
-      { config_id: 'config_paid', is_paid: true, active: true },
-      { config_id: 'config_free', is_paid: false, active: true },
-    ],
-    getNearestSlot: async (_grantId, configId) => {
-      nearestSlotConfigIds.push(configId)
-      return null
-    },
-    initBookingComponents: () => {},
-    createScheduler: (configId) => {
-      schedulerConfigId = configId
-      const scheduler = makeElement('nylas-scheduling')
-      scheduler.eventOverrides = {}
-      page.calendarLive.appendChild(scheduler)
-      return scheduler
-    },
-    location: { hostname: 'the-starters-3-0.webflow.io', pathname: '/hire/jp-dionisio' },
-    schedulingBridge: true,
-  })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-
-  const runtimeCard = page.servicesList.children.find((card) =>
-    card.hasAttribute('data-runtime-free-call-card'),
-  )
-  assert.ok(runtimeCard)
-  assert.deepEqual(nearestSlotConfigIds, ['config_paid', 'config_free'])
-  assert.equal(
-    runtimeCard.querySelector('[next-available-slot]').textContent,
-    'No available slots',
-  )
-  assert.equal(
-    page.servicesList.children.find((card) => card.getAttribute('data-type') === 'paid')
-      .querySelector('[next-available-slot]').textContent,
-    '',
-    'the unbound paid template must stay untouched',
-  )
-
-  runtimeCard.onclick({ preventDefault() {}, stopPropagation() {} })
-  assert.equal(schedulerConfigId, 'config_free')
-})
-
-test('the approved production canary opens free booking inline and uses state-aware back', async () => {
-  const page = makePage()
-  let scheduler
-  let toggledTo = null
-  let schedulerBackCalls = 0
-  const bookingFields = [
-    {
-      id: 'brand_memberstack_id',
-      value: 'brand_prod_test',
-      readOnly: true,
-      parentElement: makeElement('label'),
-    },
-    {
-      id: 'starter_memberstack_id',
-      value: 'mem_canary',
-      readOnly: true,
-      parentElement: makeElement('label'),
-    },
-    {
-      id: 'call_context',
-      value: '',
-      readOnly: false,
-      parentElement: makeElement('label'),
-    },
-    {
-      id: 'name',
-      value: 'Brand Tester',
-      readOnly: false,
-      parentElement: makeElement('label'),
-    },
-    {
-      id: 'email',
-      value: 'brand@example.com',
-      readOnly: false,
-      parentElement: makeElement('label'),
-    },
-    {
-      id: 'add_guest',
-      value: '',
-      readOnly: false,
-      parentElement: makeElement('label'),
-    },
-  ]
-  const bookingForm = {
-    shadowRoot: {
-      querySelectorAll(selector) {
-        return selector === 'input-component' ? bookingFields : []
-      },
-    },
-  }
-  const connector = {
-    scheduler: {
-      toggleAdditionalData: async (value) => {
-        toggledTo = value
-      },
-    },
-  }
-  const context = makeContext({
-    page,
-    member: {
-      id: 'brand_prod_test',
-      auth: { email: 'brand@example.com' },
-      customFields: {
-        'free-user': 'Brand',
-        'last-name': 'Tester',
-      },
-      planConnections: [
-        { planId: 'pln_dorxata-test-brand-plan-777r02pa', status: 'ACTIVE' },
-      ],
-    },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
-    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
-    getNearestSlot: async () => null,
-    initBookingComponents: () => {},
-    createScheduler: (configId) => {
-      const container = page.root.querySelector('[nylas-container]')
-      assert.equal(container, page.calendarLive, 'the shared scheduler must target calendar-live')
-      assert.equal(configId, 'config_free')
-      scheduler = makeElement('nylas-scheduling')
-      scheduler.shadowRoot = {
-        querySelector(selector) {
-          return selector === 'nylas-booking-form' ? bookingForm : null
-        },
-      }
-      scheduler.eventOverrides = {
-        backButtonClicked: async () => {
-          schedulerBackCalls += 1
-        },
-      }
-      container.appendChild(scheduler)
-      return scheduler
-    },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
-    schedulingBridge: true,
-  })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-
-  const card = page.servicesList.children[0]
-  assert.equal(card.getAttribute('data-modal-trigger'), null, 'canary uses inline UI, not popup')
-  assert.equal(card.getAttribute('aria-expanded'), 'false')
-
-  card.onclick({ preventDefault() {}, stopPropagation() {} })
-  assert.equal(page.inlineWrapper.style.display, 'flex')
-  assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'false')
-  assert.equal(card.getAttribute('aria-expanded'), 'true')
-  assert.equal(page.calendarLive.getAttribute('nylas-container'), null)
-  assert.equal(page.popupNylasContainer.getAttribute('nylas-container'), '')
-  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'close')
-
-  await scheduler.eventOverrides.timeslotConfirmed({ detail: {} }, connector)
-  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'previous-step')
-  assert.equal(bookingFields[0].parentElement.style.display, 'none')
-  assert.equal(bookingFields[1].parentElement.style.display, 'none')
-  assert.equal(bookingFields[0].parentElement.getAttribute('aria-hidden'), 'true')
-  assert.equal(bookingFields[1].parentElement.getAttribute('aria-hidden'), 'true')
-  assert.equal(bookingFields[0].value, 'brand_prod_test')
-  assert.equal(bookingFields[1].value, 'mem_canary')
-  assert.equal(bookingFields[0].readOnly, true)
-  assert.equal(bookingFields[1].readOnly, true)
-  bookingFields.slice(2).forEach((field) => {
-    assert.notEqual(field.parentElement.style.display, 'none', `${field.id} must stay visible`)
-    assert.notEqual(field.parentElement.getAttribute('aria-hidden'), 'true')
-  })
-
-  await page.back.listeners.click[0]({ preventDefault() {} })
-  assert.equal(toggledTo, false)
-  assert.equal(schedulerBackCalls, 1)
-  assert.equal(page.inlineWrapper.style.display, 'flex')
-  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'close')
-
-  await page.back.listeners.click[0]({ preventDefault() {} })
-  assert.equal(page.inlineWrapper.style.display, 'none')
-  assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
-  assert.equal(card.getAttribute('aria-expanded'), 'false')
-})
-
-test('Brand Free keeps the V2 free-call booking rule on the approved canary', async () => {
-  const page = makePage()
-  let schedulerCalls = 0
-  const context = makeContext({
-    page,
-    member: {
-      id: 'brand_free_member',
-      auth: { email: 'brand-free@example.com' },
-      customFields: {
-        'free-user': 'Free',
-        'last-name': 'Brand',
-      },
-      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
-    },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
-    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
-    getNearestSlot: async () => null,
-    initBookingComponents: () => {},
-    createScheduler: () => {
-      schedulerCalls += 1
-      const scheduler = makeElement('nylas-scheduling')
-      scheduler.eventOverrides = {}
-      page.calendarLive.appendChild(scheduler)
-      return scheduler
-    },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
-    schedulingBridge: true,
-  })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-
-  const freeCard = page.servicesList.children[0]
-  freeCard.onclick({ preventDefault() {}, stopPropagation() {} })
-
-  assert.equal(schedulerCalls, 1, 'Brand Free may book the free service without an upgrade gate')
-  assert.equal(page.inlineWrapper.style.display, 'flex')
-})
-
 test('invalid, inactive, and cross-role plan records fail closed with a legacy Brand field', async () => {
   for (const planConnections of [
     null,
@@ -1130,126 +821,92 @@ test('logged-out free-call clicks keep signup attribution and never initialize i
   assert.equal(schedulerCalls, 0)
 })
 
-test('inline back recovers the Nylas connector when the timeslot callback omits it', async () => {
+test('signed-in Brand keeps Free Call in the existing modal and the inline panel stays parked', async () => {
   const page = makePage()
-  let scheduler
-  let toggledTo = null
-  const connector = {
-    scheduler: {
-      toggleAdditionalData: async (value) => {
-        toggledTo = value
-      },
-    },
-  }
+  const bookingCalls = []
+  let schedulerCalls = 0
+  const configs = [{ config_id: 'config_free', is_paid: false, active: true }]
   const context = makeContext({
     page,
+    record: { 'free-consulting-calls-t-f': true },
     member: {
-      id: 'brand_prod_test',
+      id: 'brand_member',
       auth: { email: 'brand@example.com' },
-      customFields: {
-        'brands-dashboard-url': '/brand-dashboard',
-        'free-user': 'Brand',
-        'last-name': 'Tester',
-      },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
     },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
-    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: async () => configs,
     getNearestSlot: async () => null,
-    initBookingComponents: () => {},
-    createScheduler: () => {
-      scheduler = makeElement('nylas-scheduling')
-      scheduler.eventOverrides = {}
-      scheduler.getNylasSchedulerConnector = async () => connector
-      page.calendarLive.appendChild(scheduler)
-      return scheduler
-    },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
-    schedulingBridge: true,
+    initBookingComponents: (...args) => bookingCalls.push(args),
+    createScheduler: () => { schedulerCalls += 1 },
   })
   vm.createContext(context)
   vm.runInContext(source, context)
   await settle()
 
-  page.servicesList.children[0].onclick({ preventDefault() {}, stopPropagation() {} })
-  await scheduler.eventOverrides.timeslotConfirmed({ detail: {} })
-  await page.back.listeners.click[0]({ preventDefault() {} })
-
-  assert.equal(toggledTo, false)
-  assert.equal(page.inlineWrapper.style.display, 'flex')
-  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'close')
-})
-
-test('a malformed booking callback does not mark the inline scheduler complete', async () => {
-  const page = makePage()
-  let scheduler
-  const context = makeContext({
-    page,
-    member: {
-      id: 'brand_prod_test',
-      auth: { email: 'brand@example.com' },
-      customFields: {
-        'brands-dashboard-url': '/brand-dashboard',
-        'free-user': 'Brand',
-        'last-name': 'Tester',
-      },
-    },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
-    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
-    getNearestSlot: async () => null,
-    initBookingComponents: () => {},
-    createScheduler: () => {
-      scheduler = makeElement('nylas-scheduling')
-      scheduler.eventOverrides = {}
-      page.calendarLive.appendChild(scheduler)
-      return scheduler
-    },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
-    schedulingBridge: true,
-  })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-
-  const card = page.servicesList.children[0]
-  card.onclick({ preventDefault() {}, stopPropagation() {} })
-  await scheduler.eventOverrides.timeslotConfirmed({ detail: {} })
-  await scheduler.eventOverrides.bookedEventInfo({ detail: {} })
-  assert.equal(page.back.getAttribute('data-availability-back-mode'), 'previous-step')
-
-  await page.back.listeners.click[0]({ preventDefault() {} })
-  assert.equal(page.inlineWrapper.style.display, 'flex')
-})
-
-test('inline booking stays inert when the route environment bridge is missing', async () => {
-  const page = makePage()
-  const context = makeContext({
-    page,
-    member: {
-      id: 'brand_prod_test',
-      auth: { email: 'brand@example.com' },
-      customFields: {
-        'brands-dashboard-url': '/brand-dashboard',
-        'free-user': 'Brand',
-        'last-name': 'Tester',
-      },
-    },
-    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_canary' }),
-    getConfigs: async () => [{ config_id: 'config_free', is_paid: false }],
-    getNearestSlot: async () => null,
-    initBookingComponents: () => {},
-    createScheduler: () => {
-      throw new Error('must not initialize')
-    },
-    location: { hostname: 'www.thestarters.com', pathname: '/hire/jp-testiz-d' },
-  })
-  vm.createContext(context)
-  vm.runInContext(source, context)
-  await settle()
-
-  const card = page.servicesList.children[0]
-  assert.equal(card.getAttribute('data-modal-trigger'), 'popup-booking')
+  const freeCard = page.servicesList.children[0]
+  assert.equal(bookingCalls.length, 1)
+  assert.equal(bookingCalls[0][2], configs)
+  assert.equal(freeCard.getAttribute('data-modal-trigger'), 'popup-booking')
+  assert.equal(freeCard.getAttribute('data-type'), 'free')
+  assert.equal(schedulerCalls, 0, 'the calendar waits for a modal option click')
   assert.equal(page.inlineWrapper.style.display, 'none')
-  assert.ok(context.warnings.some((line) => line.includes('environment bridge is not ready')))
+  assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
+})
+
+test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {
+  const page = makePage()
+  const cmsCard = makeElement('div', {
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'asdf',
+  })
+  const cmsTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  cmsTitle.textContent = 'asdf'
+  cmsCard.appendChild(cmsTitle)
+  page.servicesList.appendChild(cmsCard)
+
+  const serviceSelect = makeElement('select', { name: 'Services' })
+  serviceSelect.options = [
+    { value: '', textContent: 'Select one...' },
+    { value: 'Freelance work', textContent: 'Freelance work' },
+    { value: 'asdf', textContent: 'asdf' },
+  ]
+  page.root.appendChild(serviceSelect)
+  assert.equal(page.root.querySelectorAll('#services [data-service-card="component"]').includes(cmsCard), true)
+
+  const context = makeContext({
+    page,
+    record: { rate: 100 },
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => null,
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  const freelanceCard = page.servicesList.children.find((card) =>
+    card.getAttribute('data-rate-card') === 'freelance')
+  assert.ok(freelanceCard)
+  for (const [card, service] of [[freelanceCard, 'Freelance work']]) {
+    assert.equal(card.getAttribute('data-modal-trigger'), 'generate-contract', service)
+    assert.equal(card.getAttribute('data-sp-fill'), 'button')
+    assert.equal(card.getAttribute('data-sp-fill-category'), 'service')
+    assert.equal(card.getAttribute('data-sp-fill-value'), service)
+  }
+  const freeCard = page.servicesList.children.find((card) => card.getAttribute('data-type') === 'free')
+  assert.equal(
+    freeCard.getAttribute('data-modal-trigger'),
+    'popup-booking',
+    'Free Call must not be converted into a project trigger',
+  )
 })
 
 test('a page without the hide-empty hook still renders its cards', async () => {

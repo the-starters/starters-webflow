@@ -153,39 +153,21 @@ Canaries: `/hire/ashna-rana` (free + paid calls, 5000 / 4500) and
 5. The Algolia object ID matches the positive integer in
    `[data-starter-xano-id]`.
 
-## Inline free-call calendar canary
+## Call modal and project-service routing
 
-The hire template owns three native Designer elements:
+The beside-services calendar markup remains authored for possible future use,
+but runtime keeps `[data-availability-element="wrapper"]` hidden. The live flow
+uses the existing modal sequence: Book Call opens `popup-booking-main`, an
+eligible Free or Paid option opens `popup-booking`, and Nylas renders the
+calendar and times there. Valid `/hire/<slug>` paths use the host-classified
+TEST or production route map. Production `/hire/jp-dionisio` remains blocked.
 
-| Attribute | Purpose |
-| --- | --- |
-| `data-availability-element="wrapper"` | Hidden inline booking panel; the controller changes it to `display: flex` only after a valid free-call selection. |
-| `data-availability-element="calendar-live"` | Mount target for the existing Nylas Scheduling component. |
-| `data-availability-element="back"` | Context-aware navigation. It closes and resets the panel on the date/time screen, and returns from booking details to date/time on the next screen. |
-
-Activation is intentionally limited to the environment-classified V3 hire
-canaries: `/hire/jp-dionisio` on `the-starters-3-0.webflow.io` (TEST) and
-`/hire/jp-testiz-d` on the production hosts. The matching
-`scheduling-v3-stage.js` bridge must expose its controller and report
-`data-scheduling-v3-stage="ready"`; otherwise the inline controller fails
-closed and leaves the current popup handler in place. Logged-out visitors keep
-the existing signup-attribution modal. Paid-call and Stripe behavior are not
-part of this canary.
-
-The TEST fixture's Webflow CMS item also publishes on the custom production
-domain, so its **Free Call** CMS flag must remain disabled. After the exact
-route bridge, eligible Brand plan, Nylas grant, and canonical free
-configuration all pass, the controller clones the page's hidden native Free
-Call template. That source card must carry
-`data-runtime-call-template="free"`, `hidden`, and `aria-hidden="true"`.
-The controller leaves the source hidden and inert, removes its template-only
-state from the clone, and marks exactly one visible clone with
-`data-runtime-free-call-card`. The clone keeps the normal signup attribution
-attributes and binds the inline calendar only for the signed-in canary. An
-unknown route, mixed or ineligible plan, missing grant, missing free
-configuration, or missing marked template adds no card and leaves the inline
-panel hidden. No existing paid card is used as the free-call template or
-activated by this path.
+Non-call service cards open `generate-contract` for eligible signed-in Brands.
+They use the existing project-form smart-fill attributes to select an exact
+native `Services` option. Freelance and Retainer rate cards map to the authored
+`Freelance work` option. A missing or unmatched option fails closed. Logged-out
+cards keep the signup-attribution modal, and Talent or unknown roles do not get
+the Brand project trigger.
 
 Free-call access keeps the V2 product rule: any signed-in Brand, including
 Brand Free, can select a free call without an upgrade. The controller resolves
@@ -197,9 +179,9 @@ fallback when the SDK payload omits `planConnections`; it cannot override
 supplied plan state. Regression coverage in
 [`hire-profile.test.js`](hire-profile.test.js) includes Test Brand and Brand
 Free plan-only members, plus empty, inactive, and cross-role plan states.
-Paid-call selection, Stripe, reminders, transactional email, paid-call
-activation, and live booking submission remain held. Restoring the staging
-service card does not authorize a booking-submission canary.
+Paid-call selection remains gated by the existing canonical configuration and
+Stripe-readiness checks. This routing change does not trigger Stripe, reminders,
+transactional email, or a booking submission by itself.
 
 On the Free Call details screen, the controller hides the booking-form rows for
 `brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
