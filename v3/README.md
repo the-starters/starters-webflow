@@ -2085,9 +2085,11 @@ Runtime contract:
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
 - `window.STARTER_SCHEDULING_CONNECTION` contains only non-secret connection
-  state. The initializer always supplies `state`; once the writer runs, it also
-  supplies boolean grant/calendar flags, configuration count, and manager.
-  Provider identifiers are never exposed through this object.
+  state. The initializer always supplies `state` and the last canonical
+  configuration count; once the writer runs, it also supplies boolean
+  grant/calendar flags and manager. Transient loading and error events do not
+  replace the retained canonical count. Provider identifiers are never exposed
+  through this object.
 - `starterSchedulingAvailabilityReady` carries
   `{ memberId, source, state, connectionState }`;
   `source` is `starter`, `default`, or `query-test`, and `state` is
@@ -2095,8 +2097,9 @@ Runtime contract:
   `memberId` is the selected test member rather than the authenticated member.
 - `starterSchedulingConnectionStateChanged` carries the non-secret connection
   summary and repaints both the hero entry point and Calendar action row. The
-  row remains visible and actionable for loading/disconnected/reconnect/error,
-  and is hidden only after connected proof.
+  row is hidden when the retained canonical Nylas configuration count is above
+  zero and remains visible when that count is zero, regardless of loading,
+  disconnected, connected, reconnect, or error state.
 - `starterSchedulingAvailabilityError` carries `{ message }` after a failed read.
 - `window.StarterSchedulingAvailability` exposes `initialize()` for retries,
   `normalizeAvailability(value)` for the legacy object or JSON-string shape,

@@ -526,7 +526,7 @@ test('keeps the Calendar Action Item until Nylas availability exists', async () 
   assert.equal(result.connectionItem.style.display, '')
 })
 
-test('reinitializing retains the last canonical Nylas configuration count', async () => {
+test('writer reinitialization cannot replace the canonical Nylas count while loading', async () => {
   const result = loadInitializer({
     xanoAuthFetch: async () => ({
       ok: true,
@@ -545,6 +545,19 @@ test('reinitializing retains the last canonical Nylas configuration count', asyn
     detail: { state: 'connected', configurationCount: 1 },
   })
   assert.equal(result.connectionItem.hidden, true)
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'loading', configurationCount: 0 },
+  })
+
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+  assert.equal(
+    result.window.STARTER_SCHEDULING_CONNECTION.configurationCount,
+    1,
+  )
 
   await result.window.StarterSchedulingAvailability.initialize()
 

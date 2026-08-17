@@ -354,6 +354,8 @@
     const allowed = ['loading', 'disconnected', 'connected', 'reconnect', 'error']
     activeConnectionState = allowed.indexOf(state) > -1 ? state : 'error'
     if (
+      activeConnectionState !== 'loading' &&
+      activeConnectionState !== 'error' &&
       detail &&
       Object.prototype.hasOwnProperty.call(detail, 'configurationCount')
     ) {
