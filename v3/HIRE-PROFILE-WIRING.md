@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-17
+Last updated: 2026-08-18
 Status: Phase 2 native-CMS source cutover ready for release
 
 ## What this is
@@ -196,6 +196,19 @@ Free plan-only members, plus empty, inactive, and cross-role plan states.
 Paid-call selection remains gated by the existing canonical configuration and
 Stripe-readiness checks. This routing change does not trigger Stripe, reminders,
 transactional email, or a booking submission by itself.
+
+`nylas_configurations/get_bookable/v3` owns the authoritative bookable-set
+filter. `hire-profile.js` applies a second, fail-closed check before it gives
+that set to the shared modal. Each record must have a `config_id`, `active ===
+true`, and the host's exact `data_environment` (`test` on the Webflow test host,
+`production` on the production hosts). Free records must have `is_paid ===
+false`. Paid records must have `is_paid === true` and the matching
+`payment_environment` (`test` or `live`). Unknown hosts return no bookable set.
+The client excludes records from another data or payment environment. It rejects
+the complete remaining set if a `config_id` repeats or if more than one active
+Free or Paid record remains. A valid pair is ordered Free then Paid so the
+nearest-slot preview is deterministic. An empty or rejected set does not
+initialize booking components or request a nearest slot.
 
 On the Free Call details screen, the controller hides the booking-form rows for
 `brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
