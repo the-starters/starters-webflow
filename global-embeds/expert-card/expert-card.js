@@ -84,18 +84,31 @@
           el.style.maxHeight = '';
         });
 
+        // Every list is capped against ITS OWN line height. Sampling lists[0]
+        // let one list decide for the page: if the first list was hidden or
+        // computed `line-height: normal`, no list got capped and the measured
+        // overflow was written back as max-height, undoing the 2-line clamp in
+        // expert-card.css.
+        //
+        // A list whose line height cannot be read is left out entirely rather
+        // than contributing an uncapped scrollHeight. Its inline heights stay
+        // cleared, so `max-height: 2lh` in the stylesheet keeps the clamp.
+        var capped = [];
         var maxH = 0;
         lists.forEach(function (el) {
-          maxH = Math.max(maxH, el.scrollHeight);
+          var lh = parseFloat(window.getComputedStyle(el).lineHeight);
+          if (!(lh > 0)) return;
+          capped.push(el);
+          maxH = Math.max(maxH, Math.min(el.scrollHeight, lh * 2));
         });
 
-        if (maxH <= 0) {
+        if (!capped.length || maxH <= 0) {
           dispatchRelayoutDone();
           return;
         }
 
         var px = Math.ceil(maxH) + 'px';
-        lists.forEach(function (el) {
+        capped.forEach(function (el) {
           el.style.minHeight = px;
           el.style.maxHeight = px;
         });
