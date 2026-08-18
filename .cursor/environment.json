@@ -1,0 +1,4 @@
+{
+  "name": "starters-webflow",
+  "install": "npm ci --prefix code-components --omit=optional"
+}
