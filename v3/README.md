@@ -1158,11 +1158,14 @@ to provide. It is deliberately scoped to the
 `dialog[data-modal-target="generate-contract"]` modal, and generates no form
 HTML. The authoritative field, prefill, state, and release contract lives in
 [PROJECT-FORM-WIRING.md](PROJECT-FORM-WIRING.md).
+Release progress and no-submit verification are tracked in
+[PROJECT-CREATION-PROGRESS-CHECKLIST.md](PROJECT-CREATION-PROGRESS-CHECKLIST.md).
 
-Run its focused test with:
+Run its focused tests with:
 
 ```sh
-node --test v3/project-form.test.js
+node --test v3/project-form.test.js v3/project-form-workflow.test.js \
+  global-embeds/start-proj-gen-contract/contract-preview.test.js
 ```
 
 ## Starter project form

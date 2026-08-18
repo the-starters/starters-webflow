@@ -989,6 +989,41 @@
     }
   }
 
+  function syncFlatFeeDates(form) {
+    var panel = engagementPanel(form, 'flat_fee')
+    if (!panel) return
+    var start = panelField(form, panel, 'startDateInput')
+    var end = panelField(form, panel, 'endDateInput')
+    var active = readEngagement(form) === 'flat_fee'
+
+    ;[start, end].forEach(function (field) {
+      if (!field) return
+      if (active) {
+        field.required = true
+        if (field.setAttribute) field.setAttribute('required', '')
+      }
+      if (typeof field.setCustomValidity === 'function') field.setCustomValidity('')
+    })
+
+    if (!active || !start || !end || typeof end.setCustomValidity !== 'function') return
+    var startDate = dateValue(start.value)
+    var endDate = dateValue(end.value)
+    if (startDate && endDate && endDate <= startDate) {
+      end.setCustomValidity('The estimated end date must be after the start date.')
+    }
+  }
+
+  function syncWeeklyStartDate(form) {
+    var panel = engagementPanel(form, 'weekly')
+    var field = panelField(form, panel, 'startDateInput')
+    if (!field) return
+    if (field.removeAttribute) field.removeAttribute('data-input-datepicker-min')
+    var jquery = global && global.jQuery
+    if (jquery && jquery.fn && jquery.fn.datepicker && jquery(field).data('datepicker')) {
+      jquery(field).datepicker('option', 'minDate', null)
+    }
+  }
+
   function syncHoursCapFields(form) {
     var panel = engagementPanel(form, 'hourly')
     if (!panel) return
@@ -1024,6 +1059,8 @@
   }
 
   function syncDurationFields(form) {
+    syncFlatFeeDates(form)
+    syncWeeklyStartDate(form)
     syncMonthlyDurationField(form)
     syncHourlyDurationChoice(form)
     syncHoursCapFields(form)
@@ -1526,7 +1563,7 @@
         syncDurationFields(clickedForm)
         syncActiveRequired(clickedForm)
       }
-    })
+    }, true)
     documentObject.addEventListener('change', function (event) {
       // Switching fee structure or contract type swaps which conditional panel
       // is visible; keep required aligned for implicit (Enter key) submission.
@@ -1536,7 +1573,7 @@
         syncDurationFields(form)
         syncActiveRequired(form)
       }
-    })
+    }, true)
     documentObject.addEventListener('input', function (event) {
       var field = event.target
       var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
@@ -1548,7 +1585,7 @@
       formState.key = ''
       formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
-    })
+    }, true)
     documentObject.addEventListener('invalid', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
       if (!form) return

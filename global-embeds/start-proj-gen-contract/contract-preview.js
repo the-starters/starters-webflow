@@ -100,6 +100,9 @@
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i]
       if (f.disabled || f.type === 'hidden' || inHidden(f)) continue
+      // A nested preview source owns its fields. Do not also collect them into
+      // an outer source such as basic-information.
+      if (f.closest('[data-preview-contract-fields]') !== sourceEl) continue
       // A field inside a group wrapper is consumed by the group — emit the group once, in DOM order.
       var group = f.closest('[data-preview-contract-group]')
       if (group && sourceEl.contains(group)) {
@@ -131,6 +134,7 @@
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i]
       if (f.disabled || f.type === 'hidden' || inHidden(f)) continue
+      if (f.closest('[data-preview-contract-fields]') !== sourceEl) continue
       if (lower(fieldLabel(f)) !== want) continue
       var val = fieldValue(f)
       if (val === '') return null

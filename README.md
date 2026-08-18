@@ -977,8 +977,12 @@ missing or rejected contract response closes the pre-opened blank tab and shows
 only the generic `Contract is unavailable. Please try again.` message.
 Returning from PandaDoc refreshes the loaded project page range on `pageshow`,
 window `focus`, or when the page becomes visible. The `focus` path covers a
-separate PandaDoc window that never hides the dashboard. The panel repaints from
-canonical signature state without discarding pagination.
+separate PandaDoc window that never hides the dashboard. These browser signals
+often arrive as one return burst, so they share one in-flight refresh and a
+successful result stays fresh for 30 seconds. A failed refresh starts no
+freshness window, so the next signal retries immediately. Click and project
+mutation refreshes bypass this lifecycle guard and remain immediate. The panel
+repaints from canonical signature state without discarding pagination.
 
 The Webflow-authored panel and compact action fail closed from dashboard boot:
 they stay hidden while Memberstack resolves, while the project list is pending or

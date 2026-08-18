@@ -90,6 +90,16 @@ Repeated date/rate controls remain in their authored fee panels:
 | Monthly Recurring | `monthly` | `startDateInput`, `Amount`, `Number-of-Months`; the legacy `endDateInput` is hidden, disabled, and cleared by the adapter |
 | Weekly Recurring | `weekly` | `startDateInput`, `Amount`, `Number-of-Weeks` |
 
+The Flat Fee `startDateInput` and `endDateInput` controls must both have the
+native `required` attribute. The adapter temporarily removes that attribute
+while the Flat Fee panel is inactive and restores it when the panel becomes
+active. This lets the tab validator disable Continue before Review when the
+Estimated End Date is blank.
+
+The Weekly Recurring `startDateInput` must not have
+`data-input-datepicker-min="0"`. V2 permits a valid past start date for an
+ongoing Weekly Retainer, and the V3 date picker must keep that behavior.
+
 The adapter selects the visible authored conditional panel, with a nonblank
 fallback for test and preview DOMs. Hidden blank controls never replace the
 active value. The selected fee panel is resolved in exactly one place, so the
@@ -147,6 +157,20 @@ Webflow-default form as well as one marked `novalidate`.
 The adapter reads the existing Standard Contract and My Own Contract radio
 inputs. One choice is required before submission. Contract type remains
 separate from pricing:
+
+The radio-group wrapper must also have
+`data-preview-contract-fields="contract"`. It can be nested inside the outer
+`data-preview-contract-fields="basic-information"` source. The contract preview
+renderer assigns each control to its nearest preview source, so the Contract
+value updates every `data-preview-contract="contract"` Review destination and
+does not leak into Basic Information.
+
+The duplicate-modal root cause is that the Hire template contains separate
+authored project forms with similar contract controls. Apply and verify this
+source attribute on the active
+`data-modal-target="generate-contract"` form. Do not treat the separate
+navbar `data-modal-target="start-project"` form or its shared component as
+proof that the active Hire form is wired correctly.
 
 - fee structure becomes `flat_fee`, `hourly`, `monthly`, or `weekly`;
 - contract choice becomes `standard` or `own_contract`;
@@ -368,6 +392,9 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
 
 1. Verify each `data-modal-target="generate-contract"` instance contains exactly
    one target form and follows the trigger-to-form ownership contract above.
+   Inventory every duplicate project form on the page. Confirm the active Hire
+   form, not only the navbar `start-project` form, contains the Contract preview
+   source.
 2. With two modal instances present, open each responsive Hire trigger and
    confirm only its own form changes. Confirm Standard Contract hides,
    disables, unrequires, and clears that form's `confirm-contract` row while
@@ -397,21 +424,31 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    `confirm-contract`, while Standard Contract hides the complete label row and
    disables, unrequires, and clears the input without changing any conditional
    fee panel.
-6. With the approved production canary and PandaDoc create worker #33 held
+   From a fresh modal, click My Own Contract once without first clicking
+   Standard Contract. Confirm the affirmation appears and Continue reacts.
+   At Review, confirm both Contract destinations show My Own Contract and Basic
+   Information does not include an extra Contract value. Switch back to
+   Standard Contract and repeat the same checks.
+6. Select Weekly Recurring and confirm yesterday and an older valid past date
+   can be selected. Confirm today and a future date still work. Select Flat Fee
+   and leave Estimated End Date blank; Continue must remain disabled. Enter a
+   valid end date after the start date and confirm Continue enables. Confirm an
+   end date on or before the start date cannot reach a valid Review state.
+7. With the approved production canary and PandaDoc create worker #33 held
    inactive, verify exactly one authenticated `projects/create-direct/v3`
    request and no Airtable/Make/PandaDoc browser request or browser secret.
-7. Read Xano back and verify `creation_context=direct_hire`, null opportunity
+8. Read Xano back and verify `creation_context=direct_hire`, null opportunity
    and application IDs, exact Brand/Starter IDs, lifecycle event, and one
    PandaDoc outbox item.
-8. Verify no PandaDoc document ID or document exists during the no-send canary.
-9. Replay the exact request and prove `replayed=true` with no duplicate project,
+9. Verify no PandaDoc document ID or document exists during the no-send canary.
+10. Replay the exact request and prove `replayed=true` with no duplicate project,
    event, document, or outbox row.
-10. After an accepted Standard Contract response, confirm the authored success
+11. After an accepted Standard Contract response, confirm the authored success
    state reports project creation, queued contract generation, and conditional
    email delivery. After an accepted My Own Contract response, confirm it
    reports project creation and directs the Brand to the dashboard without any
    PandaDoc generation or email claim.
-11. Without issuing a project request, open the form and trigger authored and
+12. Without issuing a project request, open the form and trigger authored and
     browser validation failures. Confirm each action emits the matching PostHog
     event and leaves the authored success and error messages free of diagnostic
     IDs, receipt data, and copy interactions. In the browser console, confirm
