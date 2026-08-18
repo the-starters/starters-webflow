@@ -175,14 +175,16 @@ async function run() {
 
   {
     const { window, calls } = loadShim({ hostname: 'www.thestarters.com' })
-    for (const [path, method] of mutationCases) {
+    for (const [path, method] of mutationCases.filter(
+      ([path]) => !path.includes('/build_profile/starter/profile_image'),
+    )) {
       const response = await window.fetch(
         `https://x08a-5ko8-jj1r.n7c.xano.io${path}`,
         { method, headers: { Authorization: 'Bearer existing-token' } },
       )
       assert.equal(response.status, 200)
     }
-    assert.equal(calls.length, mutationCases.length)
+    assert.equal(calls.length, mutationCases.length - 1)
   }
 
   {
@@ -675,13 +677,16 @@ async function run() {
     const endpoint =
       'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
     const { window, calls } = loadShim({ hostname: 'thestarters.com' })
-    for (const sourceMutationId of [null, 'short id', 'person@example.com']) {
-      const body = new FormData()
-      body.append('image', new Blob(['image-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
-      if (sourceMutationId !== null) body.append('source_mutation_id', sourceMutationId)
-      const response = await window.fetch(endpoint, { method: 'POST', body })
-      assert.equal(response.status, 400)
-      assert.equal((await response.json()).code, 'PROFILE_IMAGE_MUTATION_ID_INVALID')
+    for (const authorization of [null, 'Bearer existing-token']) {
+      for (const sourceMutationId of [null, 'short id', 'person@example.com']) {
+        const body = new FormData()
+        body.append('image', new Blob(['image-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
+        if (sourceMutationId !== null) body.append('source_mutation_id', sourceMutationId)
+        const headers = authorization ? { Authorization: authorization } : undefined
+        const response = await window.fetch(endpoint, { method: 'POST', headers, body })
+        assert.equal(response.status, 400)
+        assert.equal((await response.json()).code, 'PROFILE_IMAGE_MUTATION_ID_INVALID')
+      }
     }
     assert.equal(calls.length, 0)
   }
@@ -741,7 +746,11 @@ async function run() {
     body.append('image', new Blob(['same-upload-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
     body.append('source_mutation_id', sourceMutationId)
     body.append('member_id', 'legacy-member-id-must-not-pass')
-    const response = await window.fetch(endpoint, { method: 'POST', body })
+    const response = await window.fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer existing-token' },
+      body,
+    })
     assert.equal(response.status, 200)
     assert.equal(tradeCount, 2)
     assert.equal(bitmapCount, 1)

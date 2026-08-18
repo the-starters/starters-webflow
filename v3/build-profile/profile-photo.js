@@ -126,38 +126,19 @@
         return id;
       }
 
-      function filesMatch(left, right) {
-        return Boolean(
-          left &&
-          right &&
-          left.name === right.name &&
-          left.type === right.type &&
-          left.size === right.size &&
-          (left.lastModified || 0) === (right.lastModified || 0)
-        );
-      }
-
-      function uploadIntentFor(file) {
-        if (pendingUploadIntent && filesMatch(pendingUploadIntent.file, file)) {
-          return pendingUploadIntent;
-        }
-        pendingUploadIntent = {
-          file,
-          sourceMutationId: createSourceMutationId(),
-        };
-        return pendingUploadIntent;
-      }
-
-      async function handleFile(file) {
+      async function handleFile(file, { retry = false } = {}) {
         label.classList.remove('dropping');
 
         // hide error block
         showError("text", false);
 
-        if (!file) return;
-        if (pendingUploadIntent && !filesMatch(pendingUploadIntent.file, file)) {
+        if (retry) {
+          if (!pendingUploadIntent) return;
+          file = pendingUploadIntent.file;
+        } else {
           pendingUploadIntent = null;
         }
+        if (!file) return;
 
         const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/avif', 'image/bmp'];
 
@@ -180,10 +161,15 @@
         preview.style.display = 'block';
 
         // upload the image to Xano/Webflow and update the profile data with Webflow photo URL
-        let uploadIntent;
+        const uploadIntent = retry
+          ? pendingUploadIntent
+          : {
+              file,
+              sourceMutationId: createSourceMutationId(),
+            };
+        pendingUploadIntent = uploadIntent;
         let wf_photo_data;
         try {
-          uploadIntent = uploadIntentFor(file);
           wf_photo_data = await uploadImage(
             uploadIntent.file,
             uploadIntent.sourceMutationId,
@@ -269,7 +255,7 @@
           pendingUploadIntent &&
           event.target?.classList?.contains('upload-error')
         ) {
-          handleFile(pendingUploadIntent.file);
+          handleFile(null, { retry: true });
         }
       });
 

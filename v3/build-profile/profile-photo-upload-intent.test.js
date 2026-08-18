@@ -78,6 +78,7 @@ function createHarness() {
     '123e4567-e89b-12d3-a456-426614174000',
     '123e4567-e89b-12d3-a456-426614174001',
     '123e4567-e89b-12d3-a456-426614174002',
+    '123e4567-e89b-12d3-a456-426614174003',
   ];
   let uuidIndex = 0;
   const document = {
@@ -171,16 +172,18 @@ async function run() {
   assert.equal(uploads[0].memberId, null);
   assert.equal(uploads[1].memberId, null);
 
-  input.files = [{
+  const replacementWithSameMetadata = {
     name: 'photo.jpg',
     type: 'image/jpeg',
     size: 100,
     lastModified: 123,
-  }];
+  };
+  input.files = [replacementWithSameMetadata];
   input.listeners.get('change')();
   await settle();
   assert.equal(uploads.length, 3);
-  assert.equal(uploads[2].sourceMutationId, uploads[1].sourceMutationId);
+  assert.notEqual(uploads[2].sourceMutationId, uploads[1].sourceMutationId);
+  assert.equal(uploads[2].image, replacementWithSameMetadata);
 
   const secondFile = { name: 'new-photo.jpg', type: 'image/jpeg', size: 100 };
   input.files = [secondFile];

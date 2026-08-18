@@ -415,14 +415,13 @@
 
     if (
       !matchesXanoPath(url, [ENDPOINT_PATH]) ||
-      method !== 'POST' ||
-      hasAuthHeader(inspected)
+      method !== 'POST'
     ) {
       return originalFetch(inspected.input, inspected.init)
     }
 
     return (async () => {
-      log('intercepting unauthenticated upload to', ENDPOINT_PATH)
+      log('intercepting upload to', ENDPOINT_PATH)
       const body = (init && init.body) || (input && input.body)
       let image = null
       let sourceMutationId = null
