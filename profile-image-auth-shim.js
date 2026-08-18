@@ -10,8 +10,7 @@
  * GitHub controller candidate supplies `source_mutation_id`; older requests
  * fail closed until that controller and this shim cut over together.
  *
- * This shim wraps window.fetch and, ONLY for unauthenticated POSTs to that
- * endpoint:
+ * This shim wraps window.fetch for POSTs to that endpoint and:
  *   1. trades the Memberstack JWT for a user_v3 token
  *      (api:g1vmSLWh/auth/trade-token/v3 — same bridge as opportunities-3.0.js)
  *   2. downscales the image client-side (longest side ≤ 800px, JPEG q0.8)
@@ -20,9 +19,9 @@
  *   4. re-issues the request with the Authorization header and without
  *      `member_id`; one 401 retrade reuses the same resized bytes and ID
  *
- * Requests that already carry an Authorization header (e.g.
- * complete-profile-photo.js v1.18.0) and every other URL pass through
- * untouched, so the shim is safe to load on any page.
+ * Upload validation and rebuilding also apply when the caller supplies an
+ * Authorization header. Every other URL passes through untouched, so the shim
+ * is safe to load on any page.
  *
  * 2026-07-20 (Phase-2 writer cutover): ALSO injects the Authorization header
  * into the profile-update family so those endpoints can be auth-gated

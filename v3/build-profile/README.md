@@ -33,12 +33,13 @@ input.
 
 `profile-photo.js` creates a secure opaque `source_mutation_id` for each file
 selection or drop and sends only that ID and the image in the upload body. A
-user retry of the same pending file keeps the same upload intent; selecting or
-dropping a different file creates a new one. If the browser cannot create a
-valid ID, the controller fails closed before it starts the upload.
+user retry of the same pending file keeps the same upload intent. Every explicit
+selection or drop creates a new intent, even when the file metadata matches a
+prior choice. If the browser cannot create a valid ID, the controller fails
+closed before it starts the upload.
 
-`profile-image-auth-shim.js` owns authentication and resizing for this legacy
-unauthenticated request. It rejects a missing or malformed
+`profile-image-auth-shim.js` owns authentication and resizing for this upload
+request. It rejects a missing or malformed
 `source_mutation_id` before token trade or upload, removes any legacy
 `member_id`, and resizes the image once. On the one allowed `401` retrade, it
 reuses the exact resized bytes and `source_mutation_id`; it does not create a
