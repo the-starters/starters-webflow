@@ -1357,6 +1357,7 @@
     if (!form) return false
     var formState = state(form)
     if (formState.active) return false
+    ensureProjectTabsObserver(form, globalObject)
     form.style.display = ''
     var wrapper = formContainer(form)
     var priorSuccess = wrapper && (wrapper.querySelector(SUCCESS_SELECTOR) || wrapper.querySelector('.w-form-done'))
@@ -1394,7 +1395,7 @@
     return true
   }
 
-  function syncProjectFormInModal(modal) {
+  function projectFormInModal(modal) {
     if (!modal || !modal.getAttribute || clean(modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
     // `modal` is already the dialog scope. Do not reuse FORM_SELECTOR here: it
     // starts with that same dialog ancestor, and Element.querySelectorAll only
@@ -1403,9 +1404,14 @@
     var forms = modal.querySelectorAll
       ? Array.prototype.slice.call(modal.querySelectorAll('[data-project-form-v3="brand"] form'))
       : []
-    if (forms.length !== 1) return false
-    syncDurationFields(forms[0])
-    syncActiveRequired(forms[0])
+    return forms.length === 1 ? forms[0] : null
+  }
+
+  function syncProjectFormInModal(modal) {
+    var form = projectFormInModal(modal)
+    if (!form) return false
+    syncDurationFields(form)
+    syncActiveRequired(form)
     return true
   }
 
@@ -1413,11 +1419,128 @@
   // opener. Restore fields that are visible as soon as showModal completes.
   // Conditional fields in later tabs remain stashed until the global tabs
   // component announces that their own destination has become visible.
-  function syncOpenedProjectModal(event) {
-    return syncProjectFormInModal(event && event.detail && event.detail.modal)
+  function syncOpenedProjectModal(event, globalObject) {
+    var modal = event && event.detail && event.detail.modal
+    var form = projectFormInModal(modal)
+    if (!form) return false
+    ensureProjectTabsObserver(form, globalObject)
+    syncDurationFields(form)
+    syncActiveRequired(form)
+    syncVisibleProjectTabs(form, globalObject, true)
+    return true
   }
 
-  function syncVisibleProjectTab(event) {
+  function projectTabsContext(form) {
+    var feeStructure = engagementControl(form)
+    var tabWrap = feeStructure && feeStructure.closest
+      ? feeStructure.closest('[data-tab-component="wrapper"]')
+      : null
+    if (!tabWrap || !form.contains || !form.contains(tabWrap)) return null
+    var panelList = tabWrap.querySelector && tabWrap.querySelector('[data-tab-component="panel-list"]')
+    if (!panelList) return null
+    return {
+      tabWrap: tabWrap,
+      panelList: panelList,
+      panels: Array.prototype.slice.call(panelList.children || []).filter(function (panel) {
+        return clean(panel.getAttribute && panel.getAttribute('data-tab-component-skip')).toLowerCase() !== 'true'
+      }),
+    }
+  }
+
+  function isActiveProjectTabPanel(panel) {
+    return Boolean(panel) && (
+      clean(panel.getAttribute && panel.getAttribute('data-tab-active')).toLowerCase() === 'true' ||
+      Boolean(panel.classList && panel.classList.contains('is-active'))
+    )
+  }
+
+  function isVisibleProjectTabPanel(panel, form, globalObject) {
+    if (!panel || !form) return false
+    var modal = form.closest && form.closest('dialog[data-modal-target="generate-contract"]')
+    var boundary = modal || form
+    var node = panel
+    while (node) {
+      if (node.hidden || clean(node.getAttribute && node.getAttribute('aria-hidden')).toLowerCase() === 'true') return false
+      var inlineStyle = node.style || {}
+      if (inlineStyle.display === 'none' || inlineStyle.visibility === 'hidden') return false
+      if (globalObject && typeof globalObject.getComputedStyle === 'function') {
+        try {
+          var computed = globalObject.getComputedStyle(node)
+          if (computed && (computed.display === 'none' || computed.visibility === 'hidden')) return false
+        } catch (_) {}
+      }
+      if (node === boundary) break
+      node = node.parentElement
+    }
+    return true
+  }
+
+  function refreshProjectTabValidation(tabWrap, panel) {
+    var controller = tabWrap && tabWrap._tabController
+    if (!controller || typeof controller.updateNavState !== 'function') return false
+    var index = typeof controller.getActiveIndex === 'function'
+      ? Number(controller.getActiveIndex())
+      : -1
+    if (!(index >= 0)) {
+      var panelList = tabWrap.querySelector && tabWrap.querySelector('[data-tab-component="panel-list"]')
+      index = panelList ? Array.prototype.indexOf.call(panelList.children || [], panel) : -1
+    }
+    if (!(index >= 0)) return false
+    try {
+      controller.updateNavState(index)
+      return true
+    } catch (_) {
+      return false
+    }
+  }
+
+  function syncProjectTabPanel(form, tabWrap, panel, globalObject, force) {
+    if (!form || !tabWrap || !panel || !form.contains || !form.contains(tabWrap) ||
+      !tabWrap.contains || !tabWrap.contains(panel)) return false
+    if (!isActiveProjectTabPanel(panel) || !isVisibleProjectTabPanel(panel, form, globalObject)) return false
+    var formState = state(form)
+    if (!force && formState.syncedVisibleTabPanel === panel) return false
+    syncDurationFields(form)
+    syncActiveRequired(form)
+    formState.observedActiveTabPanel = panel
+    formState.syncedVisibleTabPanel = panel
+    refreshProjectTabValidation(tabWrap, panel)
+    return true
+  }
+
+  function syncVisibleProjectTabs(form, globalObject, force) {
+    var context = projectTabsContext(form)
+    if (!context) return false
+    var activePanel = context.panels.find(isActiveProjectTabPanel) || null
+    var formState = state(form)
+    if (formState.observedActiveTabPanel !== activePanel) {
+      formState.observedActiveTabPanel = activePanel
+      formState.syncedVisibleTabPanel = null
+    }
+    return syncProjectTabPanel(form, context.tabWrap, activePanel, globalObject, force)
+  }
+
+  function ensureProjectTabsObserver(form, globalObject) {
+    if (!form) return false
+    var formState = state(form)
+    if (formState.tabsObserver) return true
+    var Observer = globalObject && globalObject.MutationObserver
+    if (typeof Observer !== 'function') return false
+    var observer = new Observer(function () {
+      syncVisibleProjectTabs(form, globalObject, false)
+    })
+    observer.observe(form, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+      attributeFilter: ['style', 'class', 'data-tab-active', 'hidden', 'aria-hidden'],
+    })
+    formState.tabsObserver = observer
+    syncVisibleProjectTabs(form, globalObject, false)
+    return true
+  }
+
+  function syncVisibleProjectTab(event, globalObject) {
     var detail = event && event.detail
     var tabWrap = detail && detail.tabWrap
     var panel = detail && detail.panel
@@ -1430,9 +1553,8 @@
       ? Array.prototype.slice.call(modal.querySelectorAll('[data-project-form-v3="brand"] form'))
       : []
     if (forms.length !== 1 || !forms[0].contains || !forms[0].contains(tabWrap)) return false
-    syncDurationFields(forms[0])
-    syncActiveRequired(forms[0])
-    return true
+    ensureProjectTabsObserver(forms[0], globalObject)
+    return syncProjectTabPanel(forms[0], tabWrap, panel, globalObject, true)
   }
 
   function projectApi(globalObject) {
@@ -1590,9 +1712,13 @@
   function install(documentObject, globalObject) {
     if (!documentObject || !documentObject.addEventListener) return
     if (globalObject && globalObject.addEventListener) {
-      globalObject.addEventListener('modal-open', syncOpenedProjectModal)
+      globalObject.addEventListener('modal-open', function (event) {
+        syncOpenedProjectModal(event, globalObject)
+      })
     }
-    documentObject.addEventListener(TAB_PANEL_VISIBLE_EVENT, syncVisibleProjectTab)
+    documentObject.addEventListener(TAB_PANEL_VISIBLE_EVENT, function (event) {
+      syncVisibleProjectTab(event, globalObject)
+    })
     documentObject.addEventListener('click', function (event) {
       handleSmartFill(event, documentObject)
       var target = event.target
@@ -1648,6 +1774,7 @@
     var initialForms = projectForms(documentObject)
     var initialForm = initialForms.length === 1 ? initialForms[0] : null
     if (initialForm) {
+      ensureProjectTabsObserver(initialForm, globalObject)
       syncDurationFields(initialForm)
       fillCurrentDates(initialForm, globalObject)
       fillMemberName(documentObject, globalObject, 0, initialForm)
