@@ -888,6 +888,36 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
 })
 
+test('authored modal options hide synchronously without hiding Services call cards', async () => {
+  const page = makePage()
+  let resolveStarter
+  const starterReady = new Promise((resolve) => {
+    resolveStarter = resolve
+  })
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: () => starterReady,
+    getConfigs: async () => [],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), '')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+  assert.equal(page.servicesList.children[0].style.display, undefined)
+
+  resolveStarter(null)
+  await settle()
+})
+
 test('booking discovery rejects inactive, mixed-environment, and duplicate configurations', async () => {
   const scenarios = [
     [{ config_id: 'inactive_free', is_paid: false, active: false, data_environment: 'production' }],
