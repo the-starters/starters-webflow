@@ -1796,7 +1796,9 @@ Current safety boundary:
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
-  code.
+  code. It also retains its own auth-fetch reference for the stage adapter,
+  because another page bundle can replace the public compatibility global
+  after this bridge installs.
 - Dashboard controllers reuse the site-head `window.memberReady` promise for
   their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
@@ -1860,12 +1862,15 @@ installing authentication, discovery overrides, or booking identity. The
 adapter maps the reviewed unversioned scheduling paths and the environment-bound
 `starter/get_stripe_connect_id` lookup to their exact `/v3` routes, preserves
 request method, body, headers, and query parameters, and sends the rewritten
-request through `window.xanoAuthFetch`. The Stripe lookup follows the
+request through the auth bridge owned by `scheduling-auth.js`. The Stripe lookup
+follows the
 [domain-isolated environment contract](#domain-isolated-test-and-live-environments).
-On valid Hire booking surfaces, the adapter owns both `window.fetch` and direct
-`window.xanoAuthFetch` calls so the shared scheduling helpers cannot bypass the
-Hire route map. The adapter does not wrap direct authenticated calls on the
-other installed surfaces.
+On every installed surface, the adapter owns both `window.fetch` and direct
+`window.xanoAuthFetch` calls. It reclaims the auth bridge retained by
+`scheduling-auth.js` if another page bundle replaced the public global, so
+dashboard paid-call settings and shared scheduling helpers cannot bypass the
+route map. Valid Hire booking surfaces add the Brand-safe discovery overrides
+described below; the other installed surfaces keep the standard route map.
 
 On valid Hire paths, the two public booking-discovery helpers use
 Brand-safe contracts instead of Talent-owner contracts. Both the unversioned
