@@ -1976,9 +1976,11 @@ The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
 requests and all other rows under calls; Brand keeps pending and accepted rows
 in its calls list. Each card's authored status pill receives the canonical,
-role-aware lifecycle label and the matching Designer variant. The selected
-`[booking-filter]` is the only control with `is-active`, `aria-pressed="true"`,
-and the matching checked visual state.
+role-aware lifecycle label and the matching Designer variant: pending is
+`Pending` for Starter and `Requested` for Brand, confirmed is `Upcoming`, and
+completed, cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
+The selected `[booking-filter]` is the only control with `is-active`,
+`aria-pressed="true"`, and the matching checked visual state.
 
 The authored View Details trigger opens the existing `popup-booking-info`
 dialog. Before Webflow opens it, the controller binds the selected canonical
