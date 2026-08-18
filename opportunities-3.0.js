@@ -1198,12 +1198,14 @@
     })
   }
 
-  // Opportunity action pending: find [data-button-spinner] in the Button Wrap
-  // (native control and Spinner as siblings). Pending shows the Spinner
-  // (`display: flex`) and fades only the native control. Idle hides the Spinner
-  // (`display: none`) and restores the control. A wrap with no Spinner is
-  // disable-only. Never clone, never write data-opp-loading, never match
-  // loading-button.
+  // Opportunity action pending: find [data-button-spinner] in the Button Wrap.
+  // Live markup is `.button_main-wrap` > overlay `.clickable_btn` plus
+  // `.button_main-element` (label, line/arrow, Spinner). Older fixtures still
+  // put the native control and Spinner as siblings. Pending shows the Spinner
+  // (`display: flex`) and fades visible chrome (`.button_main-text` /
+  // `.button_main-line`, else the native control). Idle hides the Spinner
+  // (`display: none`) and restores. A wrap with no Spinner is disable-only.
+  // Never clone, never write data-opp-loading, never match loading-button.
   const activeActionGuards = new WeakMap()
   const pendingElementSnapshots = new WeakMap()
   const approvedCloseFlowAdvances = new WeakSet()
@@ -1235,9 +1237,24 @@
     return null
   }
 
+  function descendantSpinner(node) {
+    if (!node) return null
+    if (typeof node.matches === 'function' && node.matches('[data-button-spinner]')) return node
+    if (typeof node.querySelector === 'function') return node.querySelector('[data-button-spinner]')
+    return directChildSpinner(node)
+  }
+
+  function productButtonWrap(node) {
+    if (!node || typeof node.closest !== 'function') return null
+    const wrap = node.closest('.button_main-wrap, [data-button-theme]')
+    return wrap && !isFormNode(wrap) ? wrap : null
+  }
+
   function buttonWrapFor(control) {
     if (!control) return null
-    if (directChildSpinner(control)) return control
+    const themed = productButtonWrap(control)
+    if (themed) return themed
+    if (descendantSpinner(control)) return control
     let node = parentOf(control)
     while (node && !isFormNode(node)) {
       if (directChildSpinner(node)) return node
@@ -1246,9 +1263,26 @@
     return control
   }
 
+  function wrapForSpinner(spinner) {
+    if (!spinner) return null
+    const themed = productButtonWrap(spinner)
+    if (themed) return themed
+    const wrap = parentOf(spinner)
+    return wrap && !isFormNode(wrap) ? wrap : null
+  }
+
   function wrapOwnsAction(wrap) {
     if (!wrap || typeof wrap.matches !== 'function') return false
     if (wrap.matches('[data-opp-submit]') || wrap.matches('[type="submit"]')) return true
+    if (typeof wrap.querySelector === 'function') {
+      return !!(
+        wrap.querySelector('button') ||
+        wrap.querySelector('input[type="button"]') ||
+        wrap.querySelector('input[type="submit"]') ||
+        wrap.querySelector('[type="submit"]') ||
+        wrap.querySelector('[data-opp-submit]')
+      )
+    }
     for (const child of childrenOf(wrap)) {
       if (!child || typeof child.matches !== 'function') continue
       if (child.matches('[data-button-spinner]')) continue
@@ -1268,13 +1302,17 @@
   function prepareOpportunitySpinners() {
     $$('[data-button-spinner]').forEach((spinner) => {
       if (preparedSpinners.has(spinner)) return
-      const wrap = parentOf(spinner)
+      const wrap = wrapForSpinner(spinner)
       if (!wrap || isFormNode(wrap)) return
-      if (directChildSpinner(wrap) !== spinner) return
       if (!wrapOwnsAction(wrap)) return
       preparedSpinners.add(spinner)
       spinner.style.display = 'none'
     })
+  }
+
+  function pendingChrome(wrap) {
+    if (!wrap || typeof wrap.querySelectorAll !== 'function') return []
+    return $$('.button_main-text, .button_main-line', wrap)
   }
 
   function opportunityFormSubmitControl(form) {
@@ -1282,53 +1320,64 @@
     return $('input[type="submit"]', form) || $('[type="submit"]', form)
   }
 
-  function setPendingElement(el, pending, { fade = true } = {}) {
+  function setPendingElement(el, pending, { fade = true, lock = true } = {}) {
     if (!el) return
     if (pending) {
       if (!pendingElementSnapshots.has(el)) {
         pendingElementSnapshots.set(el, {
-          ariaBusy: el.getAttribute('aria-busy'),
-          ariaDisabled: el.getAttribute('aria-disabled'),
-          disabled: 'disabled' in el ? el.disabled : undefined,
+          ariaBusy: lock ? el.getAttribute('aria-busy') : undefined,
+          ariaDisabled: lock ? el.getAttribute('aria-disabled') : undefined,
+          disabled: lock && 'disabled' in el ? el.disabled : undefined,
           opacity: fade ? el.style.opacity : undefined,
-          pointerEvents: el.style.pointerEvents,
+          pointerEvents: lock ? el.style.pointerEvents : undefined,
           fade,
+          lock,
         })
       }
-      el.classList.add('is-wf-xano-mutating')
-      el.setAttribute('aria-busy', 'true')
-      el.setAttribute('aria-disabled', 'true')
-      if ('disabled' in el) el.disabled = true
-      el.style.pointerEvents = 'none'
+      if (lock) {
+        el.classList.add('is-wf-xano-mutating')
+        el.setAttribute('aria-busy', 'true')
+        el.setAttribute('aria-disabled', 'true')
+        if ('disabled' in el) el.disabled = true
+        el.style.pointerEvents = 'none'
+      }
       if (fade) el.style.opacity = '0.6'
       return
     }
 
     const snapshot = pendingElementSnapshots.get(el)
-    el.classList.remove('is-wf-xano-mutating')
-    if (!snapshot) return
-    if (snapshot.ariaBusy == null) el.removeAttribute('aria-busy')
-    else el.setAttribute('aria-busy', snapshot.ariaBusy)
-    if (snapshot.ariaDisabled == null) el.removeAttribute('aria-disabled')
-    else el.setAttribute('aria-disabled', snapshot.ariaDisabled)
-    if ('disabled' in el && snapshot.disabled !== undefined) el.disabled = snapshot.disabled
+    if (!snapshot) {
+      el.classList.remove('is-wf-xano-mutating')
+      return
+    }
+    if (snapshot.lock !== false) {
+      el.classList.remove('is-wf-xano-mutating')
+      if (snapshot.ariaBusy == null) el.removeAttribute('aria-busy')
+      else el.setAttribute('aria-busy', snapshot.ariaBusy)
+      if (snapshot.ariaDisabled == null) el.removeAttribute('aria-disabled')
+      else el.setAttribute('aria-disabled', snapshot.ariaDisabled)
+      if ('disabled' in el && snapshot.disabled !== undefined) el.disabled = snapshot.disabled
+      el.style.pointerEvents = snapshot.pointerEvents
+    }
     if (snapshot.fade) el.style.opacity = snapshot.opacity
-    el.style.pointerEvents = snapshot.pointerEvents
     pendingElementSnapshots.delete(el)
   }
 
   function setOpportunityActionPending(btn, pending) {
     const wrap = buttonWrapFor(btn)
-    const spinner = wrap && directChildSpinner(wrap)
+    const spinner = wrap && descendantSpinner(wrap)
     if (spinner) spinner.style.display = pending ? 'flex' : 'none'
 
     const innerNative =
       wrap && $('button, input[type="button"], input[type="submit"]', wrap)
+    const chrome = pendingChrome(wrap)
+    const fadeNative = chrome.length === 0
 
     if (spinner) {
-      if (btn && btn !== wrap) setPendingElement(btn, pending, { fade: true })
+      chrome.forEach((el) => setPendingElement(el, pending, { fade: true, lock: false }))
+      if (btn && btn !== wrap) setPendingElement(btn, pending, { fade: fadeNative })
       if (innerNative && innerNative !== btn)
-        setPendingElement(innerNative, pending, { fade: btn === wrap })
+        setPendingElement(innerNative, pending, { fade: fadeNative && btn === wrap })
       if (btn === wrap) setPendingElement(wrap, pending, { fade: false })
     } else {
       setPendingElement(wrap || btn, pending, { fade: false })

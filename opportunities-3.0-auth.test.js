@@ -2012,6 +2012,33 @@ function buttonWrapFixture({
   return { wrap, button, spinner }
 }
 
+// Live Webflow Button Wrap: empty overlay submit, visible text/line, Spinner
+// nested under .button_main-element — not a sibling of the native control.
+function productButtonWrapFixture({
+  buttonAttrs = { type: 'submit' },
+  spinnerDisplay = 'none',
+  wrapAttrs = {
+    class: 'button_main-wrap',
+    'data-button-theme': 'black',
+    'data-button-style': 'primary',
+  },
+  label = 'Submit',
+} = {}) {
+  const spinner = el('div', {
+    'data-button-spinner': '',
+    class: 'w-layout-vflex button_icon-spinner',
+  })
+  spinner.style.display = spinnerDisplay
+  const text = el('div', { class: 'button_main-text' })
+  text.textContent = label
+  const line = el('div', { class: 'button_main-line' })
+  const element = el('div', { class: 'button_main-element' }, [text, line, spinner])
+  const button = el('button', { class: 'clickable_btn', ...buttonAttrs })
+  const clickable = el('div', { class: 'clickable_wrap' }, [button])
+  const wrap = el('div', wrapAttrs, [clickable, element])
+  return { wrap, button, spinner, text, line }
+}
+
 function documentWith(root) {
   return {
     querySelector: (selector) =>
@@ -5566,4 +5593,145 @@ test('binding does not hide a Spinner that is not in a Button Wrap', async () =>
   await loadBridge(async () => response({}), documentWith(stray))
 
   assert.equal(stray.style.display, 'flex')
+})
+
+test('pending Create on the live Button Wrap shows the nested Spinner and fades text and line', async () => {
+  const { wrap, button, spinner, text, line } = productButtonWrapFixture({
+    spinnerDisplay: 'none',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-button-style': 'primary',
+      'data-opp-submit': 'create',
+    },
+  })
+  const form = el('form', { 'data-opp-form': 'create' }, [wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+
+  assert.equal(spinner.style.display, 'flex')
+  assert.equal(text.style.opacity, '0.6')
+  assert.equal(line.style.opacity, '0.6')
+  assert.equal(text.getAttribute('aria-busy'), null)
+  assert.equal(line.getAttribute('aria-busy'), null)
+  assert.equal(text.style.pointerEvents, undefined)
+  assert.equal(line.style.pointerEvents, undefined)
+  assert.equal(button.style.opacity, undefined)
+  assert.equal(button.disabled, true)
+  assert.equal(button.getAttribute('aria-busy'), 'true')
+  assert.equal(wrap.style.opacity, undefined)
+  assert.equal(spinner.style.opacity, undefined)
+  assert.equal(wrap.hasAttribute('data-opp-loading'), false)
+})
+
+test('clearing pending on the live Button Wrap restores text, line, and nested Spinner', async () => {
+  const { wrap, button, spinner, text, line } = productButtonWrapFixture({
+    spinnerDisplay: 'none',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-opp-submit': 'create',
+    },
+  })
+  const form = el('form', { 'data-opp-form': 'create' }, [wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+  bridge.window.Opp30.setOpportunityActionPending(button, false)
+
+  assert.equal(spinner.style.display, 'none')
+  assert.equal(text.style.opacity, undefined)
+  assert.equal(line.style.opacity, undefined)
+  assert.equal(text.getAttribute('aria-busy'), null)
+  assert.equal(button.disabled, false)
+  assert.equal(button.getAttribute('aria-busy'), null)
+})
+
+test('two live wraps in one footer: only the action wrap spins', async () => {
+  const submit = productButtonWrapFixture({
+    spinnerDisplay: 'none',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-button-style': 'primary',
+      'data-opp-submit': 'create',
+    },
+  })
+  const cancel = productButtonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+    label: 'Cancel',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-button-style': 'tertiary',
+    },
+  })
+  const footer = el('div', { class: 'modal_button-group' }, [cancel.wrap, submit.wrap])
+  const form = el('form', { 'data-opp-form': 'create' }, [footer])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(submit.button, true)
+
+  assert.equal(submit.spinner.style.display, 'flex')
+  assert.equal(cancel.spinner.style.display, 'none')
+  assert.equal(submit.text.style.opacity, '0.6')
+  assert.equal(cancel.text.style.opacity, undefined)
+  assert.equal(cancel.button.disabled, false)
+})
+
+test('a live wrap with no Spinner does not steal Cancel’s nested Spinner', async () => {
+  const submitButton = el('button', { type: 'submit', class: 'clickable_btn' })
+  const submitClickable = el('div', { class: 'clickable_wrap' }, [submitButton])
+  const submitText = el('div', { class: 'button_main-text' })
+  submitText.textContent = 'Submit'
+  const submitElement = el('div', { class: 'button_main-element' }, [submitText])
+  const submitWrap = el(
+    'div',
+    {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-opp-submit': 'create',
+    },
+    [submitClickable, submitElement],
+  )
+  const cancel = productButtonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+    label: 'Cancel',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-button-style': 'tertiary',
+    },
+  })
+  const footer = el('div', { class: 'modal_button-group' }, [cancel.wrap, submitWrap])
+  const childCount = footer.children.length
+  const form = el('form', { 'data-opp-form': 'create' }, [footer])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(submitButton, true)
+
+  assert.equal(cancel.spinner.style.display, 'none')
+  assert.equal(submitButton.disabled, true)
+  assert.equal(submitText.style.opacity, undefined)
+  assert.equal(submitWrap.style.opacity, undefined)
+  assert.equal(footer.children.length, childCount)
+  assert.equal(submitWrap.querySelector('[data-button-spinner]'), null)
+})
+
+test('binding a live wrap force-hides a leftover nested Spinner', async () => {
+  const { wrap, spinner } = productButtonWrapFixture({
+    spinnerDisplay: 'flex',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-opp-submit': 'create',
+    },
+  })
+  const form = el('form', { 'data-opp-form': 'create' }, [wrap])
+  await loadBridge(async () => response({}), documentWith(form))
+
+  assert.equal(spinner.style.display, 'none')
 })
