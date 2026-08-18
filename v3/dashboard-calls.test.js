@@ -220,6 +220,67 @@ test('Starter Accept sends one canonical request and blocks a double click', asy
   }
 })
 
+test('Starter Accept rechecks the response window immediately before mutation', async () => {
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const bookingRef = Buffer.concat([
+    uuidBytes(configId),
+    uuidBytes(bookingId),
+    Buffer.from('bounded-salt'),
+  ]).toString('base64url')
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    status: 'pending',
+    confirmation_expires_at: Date.now() + 60_000,
+  }
+  Object.defineProperty(booking, 'booking_ref', {
+    get() {
+      booking.confirmation_expires_at = 1
+      return bookingRef
+    },
+  })
+  const listeners = []
+  const requests = []
+  const originalDocument = global.document
+  const originalFetch = global.xanoAuthFetch
+  const card = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? bookingId : null
+    },
+  }
+  const button = {
+    __startersBookingActionKey: 'dashboard-confirm:expired-action',
+    closest(selector) {
+      return selector === '[data-booking-id]' ? card : this
+    },
+    setAttribute() {},
+  }
+
+  try {
+    global.document = {
+      addEventListener(_type, listener) {
+        listeners.push(listener)
+      },
+    }
+    global.xanoAuthFetch = async (...args) => {
+      requests.push(args)
+    }
+    api.wireBookingActions([{ rows: [booking] }], 'starter', async () => {})
+    await listeners[0]({
+      target: button,
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    })
+
+    assert.equal(requests.length, 0)
+  } finally {
+    global.document = originalDocument
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
 test('only the V3-native Starter Accept action is visible on pending cards', () => {
   const accept = element({ 'booking-action-btn': 'switch-confirm' })
   const decline = element({ 'booking-action-btn': 'switch-decline' })
@@ -626,6 +687,23 @@ test('auth changes clear identity state and stale requests cannot render', async
   const empty = element()
   const count = element()
   const filters = element()
+  const modalField = element({ 'booking-element': 'starter-name' })
+  const modalGroup = element({ 'booking-element-wrap': '' })
+  modalField.closest = (selector) => selector === '[booking-element-wrap]' ? modalGroup : null
+  const modalAction = element({ 'booking-action-btn': 'switch-close' })
+  const modal = element({
+    'popup-booking-info': '',
+    open: '',
+    'data-booking-id': 'member-a-call',
+    'data-booking-status': 'confirmed',
+    'data-booking-payment': 'paid',
+  })
+  let modalCloseCount = 0
+  modal.close = () => { modalCloseCount += 1 }
+  modal.querySelectorAll = (selector) => ({
+    '[booking-element]': [modalField],
+    '[booking-popup-content], [pending-info-text], [booking-action-btn], [booking-card-action-btn]': [modalAction],
+  })[selector] || []
   const section = element({ 'bookings-section': 'calls' })
   section.querySelector = (selector) =>
     ({
@@ -650,6 +728,7 @@ test('auth changes clear identity state and stale requests cannot render', async
           '[hero-element="brand-last-name"]': surname,
           '[hero-element="brand-company"]': company,
           '[hero-element="brand-image"]': image,
+          '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]': modal,
         }[selector] || null
       )
     },
@@ -697,6 +776,17 @@ test('auth changes clear identity state and stale requests cannot render', async
   })
   await until(() => requests.length === 1)
 
+  modal.setAttribute('open', '')
+  modal.setAttribute('data-booking-id', 'member-a-call')
+  modal.setAttribute('data-booking-status', 'confirmed')
+  modal.setAttribute('data-booking-payment', 'paid')
+  modalField.textContent = 'Member A'
+  modalField.hidden = false
+  modalField.style.display = ''
+  modalAction.hidden = false
+  modalAction.style.display = ''
+  const closesBeforeAuthChange = modalCloseCount
+
   currentMember = {
     id: 'member-b',
     customFields: { 'free-user': 'Member B', company: 'Company B' },
@@ -705,6 +795,15 @@ test('auth changes clear identity state and stale requests cannot render', async
   authChange()
   assert.equal(name.textContent, '')
   assert.equal(company.textContent, '')
+  assert.equal(modalCloseCount, closesBeforeAuthChange + 1)
+  assert.equal(modal.hasAttribute('open'), false)
+  assert.equal(modal.hasAttribute('data-booking-id'), false)
+  assert.equal(modal.hasAttribute('data-booking-status'), false)
+  assert.equal(modal.hasAttribute('data-booking-payment'), false)
+  assert.equal(modalField.textContent, '')
+  assert.equal(modalField.hidden, true)
+  assert.equal(modalGroup.hidden, true)
+  assert.equal(modalAction.hidden, true)
   await until(() => requests.length === 2 && root.attributes['data-dashboard-calls-v3'] === 'ready')
   assert.deepEqual(requests, ['member-a', 'member-b'])
   assert.equal(name.textContent, 'Member B')

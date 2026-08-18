@@ -257,6 +257,10 @@
     return !(Number.isFinite(start) && start > 0 && start <= time)
   }
 
+  function canConfirmBooking(role, booking, now) {
+    return role === 'starter' && responseWindowOpen(booking, now)
+  }
+
   function decodeBookingRef(compactString) {
     const compact = clean(compactString)
     if (!compact || typeof global.atob !== 'function') return null
@@ -313,10 +317,8 @@
       )
       const details = action === 'details'
       const accept =
-        role === 'starter' &&
-        status === 'pending' &&
         action === 'switch-confirm' &&
-        responseWindowOpen(booking || { status: status }, now)
+        canConfirmBooking(role, booking || { status: status }, now)
       // Details is read-only. Accept is the first V3-native mutation. Every
       // other legacy control stays hidden until it has a populated current
       // endpoint contract and tests. In particular, never open empty
@@ -509,10 +511,8 @@
           button.getAttribute('booking-card-action-btn'),
         )
         const accept =
-          role === 'starter' &&
-          status === 'pending' &&
           action === 'switch-confirm' &&
-          responseWindowOpen(booking, now)
+          canConfirmBooking(role, booking, now)
         show(
           button,
           action === 'switch-close' || action === 'switch-base' || accept,
@@ -588,6 +588,37 @@
       return Boolean(booking)
     })
     return booking
+  }
+
+  function resetDetailModal() {
+    if (!global.document || typeof global.document.querySelector !== 'function') return
+    const modal = global.document.querySelector(
+      '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
+    )
+    if (!modal) return
+    if (typeof modal.close === 'function') {
+      try {
+        modal.close()
+      } catch (_error) {}
+    }
+    modal.removeAttribute('open')
+    modal.removeAttribute('data-booking-id')
+    modal.removeAttribute('data-booking-status')
+    modal.removeAttribute('data-booking-payment')
+    modal.querySelectorAll('[booking-element]').forEach(function (field) {
+      field.textContent = ''
+      if ('href' in field) field.href = ''
+      show(field, false)
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (group) show(group, false)
+    })
+    modal
+      .querySelectorAll(
+        '[booking-popup-content], [pending-info-text], [booking-action-btn], [booking-card-action-btn]',
+      )
+      .forEach(function (element) {
+        show(element, false)
+      })
   }
 
   function wireBookingDetails(refs, role) {
@@ -984,7 +1015,7 @@
         }) || null
         return Boolean(booking)
       })
-      if (!booking || bookingStatus(booking) !== 'pending') return
+      if (!booking || !canConfirmBooking(role, booking)) return
 
       if (!button.__startersBookingActionKey) {
         const randomUUID = global.crypto && global.crypto.randomUUID
@@ -992,7 +1023,11 @@
         button.__startersBookingActionKey = 'dashboard-confirm:' + randomUUID.call(global.crypto)
       }
       const payload = confirmPayload(booking, button.__startersBookingActionKey)
-      if (!payload || typeof global.xanoAuthFetch !== 'function') return
+      if (
+        !payload ||
+        typeof global.xanoAuthFetch !== 'function' ||
+        !canConfirmBooking(role, booking)
+      ) return
 
       button.__startersBookingActionBusy = true
       button.setAttribute('aria-busy', 'true')
@@ -1019,6 +1054,7 @@
 
   function resetIdentityState(refs, role) {
     clearBrandHero(role)
+    resetDetailModal()
     refs.forEach(function (section) {
       section.rows = []
       section.rendered = 0
@@ -1151,12 +1187,14 @@
     bookingStatus,
     paidBooking,
     responseWindowOpen,
+    canConfirmBooking,
     statusLabel,
     statusVariantClass,
     paintStatusPill,
     paintActiveFilter,
     populateDetailModal,
     wireBookingDetails,
+    resetDetailModal,
     configureActionButtons,
     confirmPayload,
     decodeBookingRef,
