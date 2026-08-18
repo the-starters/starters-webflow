@@ -1246,12 +1246,40 @@
     return control
   }
 
+  function wrapOwnsAction(wrap) {
+    if (!wrap || typeof wrap.matches !== 'function') return false
+    if (wrap.matches('[data-opp-submit]') || wrap.matches('[type="submit"]')) return true
+    for (const child of childrenOf(wrap)) {
+      if (!child || typeof child.matches !== 'function') continue
+      if (child.matches('[data-button-spinner]')) continue
+      if (
+        child.matches('button') ||
+        child.matches('input[type="button"]') ||
+        child.matches('input[type="submit"]') ||
+        child.matches('[type="submit"]') ||
+        child.matches('[data-opp-submit]')
+      ) {
+        return true
+      }
+    }
+    return false
+  }
+
   function prepareOpportunitySpinners() {
     $$('[data-button-spinner]').forEach((spinner) => {
       if (preparedSpinners.has(spinner)) return
+      const wrap = parentOf(spinner)
+      if (!wrap || isFormNode(wrap)) return
+      if (directChildSpinner(wrap) !== spinner) return
+      if (!wrapOwnsAction(wrap)) return
       preparedSpinners.add(spinner)
       spinner.style.display = 'none'
     })
+  }
+
+  function opportunityFormSubmitControl(form) {
+    if (!form) return null
+    return $('input[type="submit"]', form) || $('[type="submit"]', form)
   }
 
   function setPendingElement(el, pending, { fade = true } = {}) {
@@ -5011,7 +5039,7 @@
       else if (status) status.textContent = m
       else if (m) console.info('[opp30:create]', m)
     }
-    const btn = $('input[type="submit"]', form) || $('[type="submit"]', form) || $('.w-button', form)
+    const btn = opportunityFormSubmitControl(form)
     let submitting = false
 
     // capture phase + stopPropagation => Webflow's own (bubble) submit handler never runs,
@@ -5262,9 +5290,7 @@
     const editModal = $('[data-modal-target="edit-opportunity"]')
     const editForm = editModal && $('form', editModal)
     const editBtn =
-      (editForm &&
-        ($('input[type="submit"]', editForm) || $('[type="submit"]', editForm))) ||
-      $('[data-opp-submit="update"]')
+      opportunityFormSubmitControl(editForm) || $('[data-opp-submit="update"]')
     if (editBtn) {
       // The Submit control lives inside a Webflow .w-form, so clicking it also
       // fires a native form submit that Webflow intercepts to flash its own

@@ -5559,3 +5559,11 @@ test('binding a wrap force-hides a leftover visible Spinner', async () => {
 
   assert.equal(spinner.style.display, 'none')
 })
+
+test('binding does not hide a Spinner that is not in a Button Wrap', async () => {
+  const stray = el('div', { 'data-button-spinner': '' })
+  stray.style.display = 'flex'
+  await loadBridge(async () => response({}), documentWith(stray))
+
+  assert.equal(stray.style.display, 'flex')
+})

@@ -814,11 +814,14 @@ While the request is pending, the script shows the Spinner (`display: flex`),
 fades only the native control to 60% opacity, and marks it busy and disabled.
 The Button Wrap itself is not faded, so the Spinner stays full opacity. Idle
 hides the Spinner (`display: none`) and restores the control. A wrap with no
-Spinner still disables and never gets a cloned one. The script does not write
-`data-opp-loading` and does not match `loading-button`.
+Spinner still disables and never gets a cloned one. The pending helper does not
+write `data-opp-loading` on Button Wraps and does not match `loading-button`.
+The talent-applied list still uses `data-opp-loading` as its own list-fetch
+flag.
 
-On bind, any authored Spinner is forced hidden once so a leftover visible node
-cannot stick. There is no minimum display delay and no fail-open hide cap.
+On bind, a Spinner that is a direct child of a Button Wrap is forced hidden
+once so a leftover visible node cannot stick. There is no minimum display delay
+and no fail-open hide cap.
 
 The Close form-flow confirmation remains identified by
 `data-close-opp="confirm-button"`. Pending prefers `[data-opp-submit="close"]` on
