@@ -29,6 +29,29 @@ or false values. It does not persist Memberstack JSON, localStorage, or Xano
 data; the native wizard keeps ownership of capture and persistence after human
 input.
 
+## Profile-photo upload contract
+
+`profile-photo.js` creates a secure opaque `source_mutation_id` for each file
+selection or drop and sends only that ID and the image in the upload body. A
+user retry of the same pending file keeps the same upload intent; selecting or
+dropping a different file creates a new one. If the browser cannot create a
+valid ID, the controller fails closed before it starts the upload.
+
+`profile-image-auth-shim.js` owns authentication and resizing for this legacy
+unauthenticated request. It rejects a missing or malformed
+`source_mutation_id` before token trade or upload, removes any legacy
+`member_id`, and resizes the image once. On the one allowed `401` retrade, it
+reuses the exact resized bytes and `source_mutation_id`; it does not create a
+second upload intent. The existing exact-host gate remains authoritative for
+`/starter-edit-profile`: non-Live hosts block known mutations and preserve
+reads, as recorded in the [V3 access matrix](../ACCESS-MATRIX.md#enforcement-layers).
+
+The GitHub assets and executable selection, drop, user-retry, auth-retrade, and
+provenance checks may be prepared before the server change. Do not create a
+semver release, publish either Webflow page, or activate the Xano writer until
+the server-side idempotency gates pass and the cutover receives separate
+approval.
+
 `submit-diagnostics.js` is an additional outcome loader, not a replacement for
 an inline block. It watches the existing human click on `[form-submit]` and the
 authored `[build-profile-success]` / `[build-profile-error]` states. It does not
@@ -88,10 +111,14 @@ This exclusion is a release boundary, not proof that the remaining inline code i
 ## Release verification
 
 1. Verify every file passes `node --check` and the exposure scan.
-2. Release through no-mistakes, semver, and jsDelivr purge.
-3. Back up every exact Webflow Code Embed block before replacement.
-4. Recapture both pages and replace only a block whose script position, character count, and SHA-256 match `live-body-provenance.json`.
-5. Publish staging first, then use human-like clicks for photo, portfolio, work history, counters, bio, and grouped selects without submitting the full profile.
-6. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
-7. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
-8. Scan both published domains for Airtable, Make, and PAT exposure patterns.
+2. Confirm the Xano writer's server-side idempotency gates have passed; until
+   then, stop after GitHub candidate validation with no semver release,
+   jsDelivr purge, or Webflow publish.
+3. After those gates pass and the cutover has separate approval, release
+   through no-mistakes, semver, and jsDelivr purge.
+4. Back up every exact Webflow Code Embed block before replacement.
+5. Recapture both pages and replace only a block whose script position, character count, and SHA-256 match `live-body-provenance.json`.
+6. Publish staging first, then use human-like clicks for photo, portfolio, work history, counters, bio, and grouped selects without submitting the full profile.
+7. Confirm each loaded response is a non-cached current release, then publish production and repeat the safe checks.
+8. With an approved Talent canary on each Build Profile route, use a human-like click to submit the native form. Confirm one writer request and clean authored success copy that stays put with no automatic navigation, then click the authored "Start onboarding" CTA and confirm it lands on `/starter-onboarding`; verify the canonical Xano record and its projection after each submit.
+9. Scan both published domains for Airtable, Make, and PAT exposure patterns.

@@ -4,9 +4,11 @@
  *
  * The endpoint was auth-hardened on 2026-07-13 (user_v3 Bearer token
  * required, `member_id` input removed, 2MB cap, jpg/png/webp only). The
- * build-profile wizard (`/build-profile/full-profile`) and
- * `/starter-edit-profile` ship inline uploaders that still POST
- * `{ image, member_id }` with no Authorization header → 401.
+ * currently published build-profile wizard (`/build-profile/full-profile`)
+ * and `/starter-edit-profile` inline uploaders still POST
+ * `{ image, member_id }` with no Authorization header → 401. The paired
+ * GitHub controller candidate supplies `source_mutation_id`; older requests
+ * fail closed until that controller and this shim cut over together.
  *
  * This shim wraps window.fetch and, ONLY for unauthenticated POSTs to that
  * endpoint:
