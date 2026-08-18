@@ -1929,6 +1929,7 @@ function el(tag, attrs = {}, children = []) {
     },
   }
   if (tag === 'button' || tag === 'input') node.disabled = false
+  if (tag === 'input' && attributes.has('checked')) node.checked = true
   children.forEach((child) => {
     child.parent = node
     child.parentNode = node
@@ -1965,6 +1966,9 @@ function descendants(node) {
 // descendant-combined simple selectors built from a tag, #id, .class and
 // [attr] / [attr="value"] terms.
 function simpleMatches(node, simple) {
+  // Honor :checked only on radios/checkboxes. Review fixtures use the same
+  // selector on a text input (Call-Rating); those still match as before.
+  if (/:checked\b/.test(simple) && 'checked' in node && !node.checked) return false
   const terms = simple.match(/^[a-z]+|#[\w-]+|\.[\w-]+|\[[^\]]+\]/gi) || []
   return terms.every((term) => {
     if (term.startsWith('#')) return node.getAttribute('id') === term.slice(1)
@@ -5422,6 +5426,267 @@ test('standalone create owner sends one request before returning to the publishe
     1,
   )
   assert.equal(bridge.location.href, '/opportunities')
+})
+
+function opportunityCreateFormFixture() {
+  const listen = (node) => {
+    const listeners = new Map()
+    node.addEventListener = (type, listener) => {
+      const list = listeners.get(type) || []
+      list.push(listener)
+      listeners.set(type, list)
+    }
+    node.dispatchEvent = (event) => {
+      for (const listener of listeners.get(event.type) || []) listener(event)
+      return true
+    }
+    node.setCustomValidity = () => {}
+    return node
+  }
+  const input = (name, value, attrs = {}) => {
+    const field = listen(el('input', { name, ...attrs }))
+    field.value = value
+    return field
+  }
+  const title = input('Opportunity-title', 'V3 canary')
+  const description = input('Description', 'Production email automation canary')
+  const requirements = input('Requirements', 'Verified Brand owner')
+  const category = input('Category-option', 'Email Automation', {
+    'data-opp30-selected-values': '["Email Automation"]',
+  })
+  const categoryValuesFromEvent = []
+  category.addEventListener('opp30:set-category-values', (event) => {
+    const values = event.detail && Array.isArray(event.detail.values) ? event.detail.values : []
+    categoryValuesFromEvent.splice(0, categoryValuesFromEvent.length, ...values)
+    category.setAttribute('data-opp30-selected-values', JSON.stringify(values))
+    category.value = values.join(', ')
+  })
+  const chip = el('button', {
+    'data-opp-role-value': 'Email Automation',
+    'aria-selected': 'true',
+  })
+  const oneTime = input('Project-Type', 'One Time', { id: 'One-Time' })
+  oneTime.id = 'One-Time'
+  oneTime.checked = false
+  const partTime = input('Project-Type', 'Ongoing Part Time', {
+    id: 'Ongoing-Part-Time',
+    checked: '',
+  })
+  partTime.id = 'Ongoing-Part-Time'
+  partTime.checked = true
+  const durationDefault = input('Duration', '≤ 1 months')
+  durationDefault.checked = false
+  const durationLong = input('Duration', '3 to 6 months', { checked: '' })
+  durationLong.checked = true
+  const oneTimeBudget = input('One-Time-Budget', '')
+  const partTimeBudget = input('Part-Time-Budget', '4000')
+  const estimatedHours = input('Estimated-Hours', '25')
+  const hoursGroup = el('div', { 'data-project-type': 'part-time' }, [estimatedHours])
+  const cancel = el('button', { type: 'button' })
+  cancel.textContent = 'Cancel'
+  const button = input('', 'Submit', { type: 'submit' })
+  const form = el('form', { 'data-opp-form': 'create' }, [
+    title,
+    description,
+    requirements,
+    category,
+    chip,
+    oneTime,
+    partTime,
+    durationDefault,
+    durationLong,
+    oneTimeBudget,
+    partTimeBudget,
+    hoursGroup,
+    cancel,
+    button,
+  ])
+  form.resetCount = 0
+  form.reset = function reset() {
+    this.resetCount += 1
+    title.value = ''
+    description.value = ''
+    requirements.value = ''
+    category.value = ''
+    oneTimeBudget.value = ''
+    partTimeBudget.value = ''
+    estimatedHours.value = ''
+    oneTime.checked = true
+    partTime.checked = false
+    durationDefault.checked = true
+    durationLong.checked = false
+  }
+  let submit
+  form.addEventListener = (type, listener) => {
+    if (type === 'submit') submit = listener
+  }
+  const successTitle = el('span', { 'data-opp-bind': 'title' })
+  successTitle.textContent = ''
+  const done = el('div', { class: 'w-form-done' }, [successTitle])
+  const wrap = el('div', { class: 'w-form' }, [form, done])
+  const modal = el('dialog', { 'data-modal-target': 'post-opportunity' }, [wrap])
+  const editTitle = input('Opportunity-title', 'Existing Opportunity')
+  const editForm = el('form', {}, [editTitle])
+  editForm.resetCount = 0
+  editForm.reset = function reset() {
+    this.resetCount += 1
+    editTitle.value = ''
+  }
+  const editModal = el('dialog', { 'data-modal-target': 'edit-opportunity' }, [editForm])
+  return {
+    cancel,
+    category,
+    categoryValuesFromEvent,
+    chip,
+    description,
+    done,
+    durationDefault,
+    durationLong,
+    editForm,
+    editModal,
+    editTitle,
+    estimatedHours,
+    form,
+    hoursGroup,
+    modal,
+    oneTime,
+    oneTimeBudget,
+    partTime,
+    partTimeBudget,
+    requirements,
+    successTitle,
+    title,
+    submit: () => submit,
+  }
+}
+
+function submitEvent() {
+  return {
+    preventDefault() {},
+    stopImmediatePropagation() {},
+    stopPropagation() {},
+  }
+}
+
+async function loadCreateFormBridge(fixture, fetchImpl) {
+  return loadBridge(fetchImpl, {
+    member: paidBrandMember,
+    pathname: '/opportunities---create',
+    querySelector: (selector) => {
+      if (selector === '[data-opp-form="create"]') return fixture.form
+      if (selector === '[data-modal-target="edit-opportunity"]') return fixture.editModal
+      if (selector === '[data-modal-target="post-opportunity"]') return fixture.modal
+      return null
+    },
+    querySelectorAll: (selector) => {
+      if (selector === '[data-opp-form="create"], [data-modal-target="edit-opportunity"] form') {
+        return [fixture.form, fixture.editForm]
+      }
+      return []
+    },
+    routeGuard: true,
+  })
+}
+
+test('successful create restores Create Form Authored Defaults and keeps Review Success title', async () => {
+  const fixture = opportunityCreateFormFixture()
+  const createBodies = []
+  const bridge = await loadCreateFormBridge(fixture, async (request, options = {}) => {
+    const url = String(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/brand/opportunities/create')) {
+      createBodies.push(JSON.parse(options.body || '{}'))
+      return response({ id: 100 + createBodies.length })
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  })
+
+  assert.ok(await waitFor(() => typeof fixture.submit() === 'function'))
+  await fixture.submit()(submitEvent())
+
+  assert.equal(fixture.successTitle.textContent, 'V3 canary')
+  assert.equal(fixture.title.value, '')
+  assert.equal(fixture.description.value, '')
+  assert.equal(fixture.requirements.value, '')
+  assert.equal(fixture.oneTimeBudget.value, '')
+  assert.equal(fixture.partTimeBudget.value, '')
+  assert.equal(fixture.estimatedHours.value, '')
+  assert.deepEqual(fixture.categoryValuesFromEvent, [])
+  assert.equal(fixture.category.getAttribute('data-opp30-selected-values'), '[]')
+  assert.equal(fixture.chip.getAttribute('aria-selected'), null)
+  assert.equal(fixture.oneTime.checked, true)
+  assert.equal(fixture.partTime.checked, false)
+  assert.equal(fixture.durationDefault.checked, true)
+  assert.equal(fixture.durationLong.checked, false)
+  assert.equal(fixture.hoursGroup.hidden, true)
+  assert.equal(fixture.form.resetCount, 1)
+  assert.equal(bridge.location.href, 'https://example.test/opportunities---create')
+  assert.equal(fixture.editTitle.value, 'Existing Opportunity')
+  assert.equal(fixture.editForm.resetCount, 0)
+
+  bridge.dispatchWindow('modal-open', { modal: fixture.modal })
+  assert.equal(fixture.title.value, '')
+  assert.equal(fixture.form.style.display, '')
+
+  fixture.title.value = 'Second opportunity'
+  fixture.description.value = 'A follow-up brief'
+  fixture.requirements.value = 'Need a writer'
+  fixture.category.setAttribute('data-opp30-selected-values', '["Paid Media"]')
+  fixture.oneTimeBudget.value = '500'
+  await fixture.submit()(submitEvent())
+
+  assert.equal(createBodies.length, 2)
+  assert.equal(createBodies[0].title, 'V3 canary')
+  assert.equal(createBodies[1].title, 'Second opportunity')
+  assert.equal(fixture.successTitle.textContent, 'Second opportunity')
+  assert.equal(fixture.title.value, '')
+
+  bridge.dispatchWindow('modal-open', { modal: fixture.editModal })
+  assert.equal(fixture.editTitle.value, 'Existing Opportunity')
+  assert.equal(fixture.editForm.resetCount, 0)
+})
+
+test('failed create submit leaves the Create Form draft in place', async () => {
+  const fixture = opportunityCreateFormFixture()
+  const bridge = await loadCreateFormBridge(fixture, async (request) => {
+    const url = String(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    if (url.includes('/brand/opportunities/create')) {
+      return response({ message: 'Xano rejected the create' }, false, 400)
+    }
+    throw new Error(`Unexpected request: ${url}`)
+  })
+
+  assert.ok(await waitFor(() => typeof fixture.submit() === 'function'))
+  await fixture.submit()(submitEvent())
+
+  assert.equal(fixture.title.value, 'V3 canary')
+  assert.equal(fixture.partTime.checked, true)
+  assert.equal(fixture.category.getAttribute('data-opp30-selected-values'), '["Email Automation"]')
+  assert.equal(fixture.form.resetCount, 0)
+  assert.equal(fixture.successTitle.textContent, '')
+  assert.equal(bridge.location.href, 'https://example.test/opportunities---create')
+})
+
+test('Cancel without a successful create leaves the Create Form draft in place', async () => {
+  const fixture = opportunityCreateFormFixture()
+  const bridge = await loadCreateFormBridge(fixture, async (request) => {
+    const url = String(request)
+    if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+    throw new Error(`Unexpected request: ${url}`)
+  })
+
+  assert.ok(await waitFor(() => typeof fixture.submit() === 'function'))
+  assert.equal(fixture.cancel.getAttribute('type'), 'button')
+  fixture.modal.style.display = 'none'
+  bridge.dispatchWindow('modal-open', { modal: fixture.modal })
+
+  assert.equal(fixture.title.value, 'V3 canary')
+  assert.equal(fixture.partTime.checked, true)
+  assert.equal(fixture.estimatedHours.value, '25')
+  assert.equal(fixture.category.getAttribute('data-opp30-selected-values'), '["Email Automation"]')
+  assert.equal(fixture.chip.getAttribute('aria-selected'), 'true')
+  assert.equal(fixture.form.resetCount, 0)
 })
 
 test('merged feed re-applies the Talent navbar role after Webflow restores the authored component value', async () => {
