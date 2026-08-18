@@ -267,16 +267,18 @@ function makeContext({
   const requestedObjectIds = []
   const requestedUrls = []
   const root = page ? page.root : makeElement('body')
+  const head = makeElement('head')
 
   if (page) page.starterXanoId.textContent = String(starterId)
 
   const documentObject = {
     documentElement: makeElement('html'),
+    head,
     body: root,
     addEventListener: (type, fn) => {
       if (type === 'DOMContentLoaded') fn()
     },
-    getElementById: (id) => root.querySelector('#' + id),
+    getElementById: (id) => head.querySelector('#' + id) || root.querySelector('#' + id),
     querySelector: (s) => root.querySelector(s),
     querySelectorAll: (s) => root.querySelectorAll(s),
     createElement: (tag) => makeElement(tag),
@@ -876,7 +878,14 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
     getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
     getConfigs: async () => configs,
     getNearestSlot: async () => null,
-    initBookingComponents: (...args) => bookingCalls.push(args),
+    initBookingComponents: (...args) => {
+      bookingCalls.push(args)
+      // Reproduce the shared initializer's later readiness callbacks trying to
+      // reopen both authored options after the page controller has discovered
+      // that only Free is available.
+      page.freeModalOption.style.display = 'block'
+      page.paidModalOption.style.display = 'block'
+    },
     createScheduler: () => { schedulerCalls += 1 },
   })
   vm.createContext(context)
@@ -893,9 +902,16 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(freeCard.getAttribute('data-type'), 'free')
   assert.equal(schedulerCalls, 0, 'the calendar waits for a modal option click')
   assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free')
-  assert.equal(page.freeModalOption.style.display, 'none', 'shared modal init owns Free visibility')
+  assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), null)
+  assert.equal(page.freeModalOption.getAttribute('aria-hidden'), null)
+  assert.equal(page.freeModalOption.style.display, 'block', 'shared modal init owns Free visibility')
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
-  assert.equal(page.paidModalOption.style.display, 'none', 'Paid fails closed without a paid config')
+  assert.equal(page.paidModalOption.style.display, 'block', 'regression callback attempted to reopen Paid')
+  assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), '')
+  assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
+  const guard = context.document.getElementById('hire-booking-modal-availability-guard')
+  assert.ok(guard)
+  assert.equal(guard.textContent, '[data-booking-unavailable]{display:none!important}')
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
 })
@@ -922,6 +938,10 @@ test('authored modal options hide synchronously without hiding Services call car
 
   assert.equal(page.freeModalOption.style.display, 'none')
   assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), '')
+  assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), '')
+  assert.equal(page.freeModalOption.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
   assert.equal(page.freeModalCta.getAttribute('data-config'), null)
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
   assert.equal(page.servicesList.children[0].style.display, undefined)
@@ -1013,6 +1033,10 @@ test('booking discovery passes one active Free and Paid configuration to the sha
   )
   assert.equal(page.freeModalCta.getAttribute('data-config'), 'free_live')
   assert.equal(page.paidModalCta.getAttribute('data-config'), 'paid_live')
+  assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), null)
+  assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), null)
+  assert.equal(page.freeModalOption.getAttribute('aria-hidden'), null)
+  assert.equal(page.paidModalOption.getAttribute('aria-hidden'), null)
   assert.equal(page.freeModalOption.style.display, 'none')
   assert.equal(page.paidModalOption.style.display, 'none')
 })
