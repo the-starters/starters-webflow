@@ -81,7 +81,25 @@ function createHarness({ cryptoApi } = {}) {
   let domReady;
   let resizeCount = 0;
   const uploads = [];
-  const uploadStatuses = [500, 500, 200, 200, 200];
+  const uploadResponses = [
+    {},
+    {
+      starter_image: 'https://example.invalid/photo.jpg',
+      starter_image_small: 'https://example.invalid/photo-small.jpg',
+    },
+    {
+      starter_image: 'https://example.invalid/photo.jpg',
+      starter_image_small: 'https://example.invalid/photo-small.jpg',
+    },
+    {
+      starter_image: 'https://example.invalid/photo.jpg',
+      starter_image_small: 'https://example.invalid/photo-small.jpg',
+    },
+    {
+      starter_image: 'https://example.invalid/photo.jpg',
+      starter_image_small: 'https://example.invalid/photo-small.jpg',
+    },
+  ];
   const uuids = [
     '123e4567-e89b-12d3-a456-426614174000',
     '123e4567-e89b-12d3-a456-426614174001',
@@ -123,12 +141,8 @@ function createHarness({ cryptoApi } = {}) {
         sourceMutationId: options.body.get('source_mutation_id'),
         memberId: options.body.get('member_id'),
       });
-      const status = uploadStatuses.shift();
-      return new Response(JSON.stringify(status === 200 ? {
-        starter_image: 'https://example.invalid/photo.jpg',
-        starter_image_small: 'https://example.invalid/photo-small.jpg',
-      } : { message: 'temporary failure' }), {
-        status,
+      return new Response(JSON.stringify(uploadResponses.shift()), {
+        status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
     }

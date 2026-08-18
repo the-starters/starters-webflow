@@ -223,7 +223,7 @@
         const formData = new FormData();
         formData.append('image', file);
         formData.append('source_mutation_id', sourceMutationId);
-        return requestJson(
+        const data = await requestJson(
           XANO_BASE_URL + '/api:KZf7nFnk/build_profile/starter/profile_image',
           {
             method: 'POST',
@@ -231,6 +231,15 @@
           },
           'Image upload failed',
         );
+        if (
+          typeof data?.starter_image !== 'string' ||
+          data.starter_image.trim() === '' ||
+          typeof data?.starter_image_small !== 'string' ||
+          data.starter_image_small.trim() === ''
+        ) {
+          throw new Error('Image upload response is incomplete');
+        }
+        return data;
       }
 
       async function requestJson(url, options, errorLabel) {
