@@ -157,3 +157,18 @@ a production project, PandaDoc document, signature, or email canary.
 
 The success event is `starters:project-created`. Its detail contains only the
 stable `project_id` and replay state.
+
+## Screen-share diagnostics
+
+Add `?starterProjectDebug=1` to the Starter Dashboard URL before the test. The
+controller then writes structured `[StarterProjectV3]` entries to the browser
+console for controller bind, Brand-option request/result/error, submit
+request/result/error, and member-scope reset.
+
+The entries can include Xano Brand or project row IDs, HTTP status, lifecycle
+state, eligible count, and the server blocked reason. They never include member
+IDs, email, tokens, idempotency keys, contract payloads, or project scope.
+
+For a multi-navigation session, an operator can set local storage key
+`starters:project-debug` to `1`. Remove it after the test. The URL flag is the
+preferred meeting option because it does not persist.

@@ -219,6 +219,7 @@ function load(options = {}) {
   const calls = { options: [], profile: [], submit: [] }
   const events = []
   const tracks = []
+  const debugLogs = []
   const mutationObservers = []
   const serializedPayload = {
     starter_memberstack_id: 'mem_starter',
@@ -249,6 +250,8 @@ function load(options = {}) {
   Object.values(form.fields).forEach((element) => { element.eventDocument = document })
   const window = {
     document: options.noDocument ? null : document,
+    location: { search: options.debug ? '?starterProjectDebug=1' : '' },
+    console: { info() { debugLogs.push(Array.from(arguments)) } },
     crypto: { randomUUID: () => 'project-key-123' },
     Event: class Event {
       constructor(type, init = {}) { this.type = type; this.bubbles = Boolean(init.bubbles) }
@@ -300,6 +303,7 @@ function load(options = {}) {
     context,
     document,
     events,
+    debugLogs,
     form,
     tracks,
     window,
@@ -311,6 +315,24 @@ function load(options = {}) {
     },
   }
 }
+
+test('emits opt-in diagnostics without member IDs, tokens, or payload fields', async () => {
+  const loaded = load({
+    noDocument: true,
+    debug: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+  })
+
+  await loaded.api.loadOptions(loaded.form, loaded.window)
+
+  const output = JSON.stringify(loaded.debugLogs)
+  assert.match(output, /options_request/)
+  assert.match(output, /options_response/)
+  assert.match(output, /eligible_count/)
+  assert.doesNotMatch(output, /mem_starter/)
+  assert.doesNotMatch(output, /idempotency_key/)
+  assert.doesNotMatch(output, /project_scope/)
+})
 
 test('normalizes and renders the authenticated Starter profile into scoped bindings', async () => {
   const loaded = load({ noDocument: true, profile: {

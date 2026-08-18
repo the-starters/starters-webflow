@@ -70,6 +70,24 @@
     return String(value == null ? '' : value).trim()
   }
 
+  function debugEnabled(globalObject) {
+    if (!globalObject) return false
+    var search = clean(globalObject.location && globalObject.location.search)
+    if (/(?:\?|&)starterProjectDebug=1(?:&|$)/.test(search)) return true
+    try {
+      return globalObject.localStorage && globalObject.localStorage.getItem('starters:project-debug') === '1'
+    } catch (error) {
+      return false
+    }
+  }
+
+  function debugLog(globalObject, eventName, detail) {
+    if (!debugEnabled(globalObject)) return
+    var logger = globalObject.console && globalObject.console.info
+    if (typeof logger !== 'function') return
+    logger.call(globalObject.console, '[StarterProjectV3]', eventName, detail || {})
+  }
+
   function positiveId(value) {
     var parsed = Number(clean(value))
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null
@@ -530,6 +548,7 @@
       return Promise.resolve([])
     }
     syncCommercialForm(form, globalObject && globalObject.document, globalObject)
+    debugLog(globalObject, 'options_request', { force_refresh: Boolean(forceRefresh) })
     setStatus(form, 'loading', '')
     setSelectState(form, 'Loading Brands...', true)
     var optionsRequest = Promise.resolve()
@@ -537,6 +556,10 @@
       .then(function (response) {
         if (generation !== current.generation || optionsGeneration !== current.optionsGeneration) return []
         current.options = normalizeOptions(response)
+        debugLog(globalObject, 'options_response', {
+          eligible_count: current.options.length,
+          blocked_reason: clean(response && response.blocked_reason) || null,
+        })
         current.optionsLoaded = true
         clearSelectedBrand(form)
         renderOptions(form, current.options)
@@ -548,8 +571,9 @@
         }
         return current.options
       })
-      .catch(function () {
+      .catch(function (requestError) {
         if (generation !== current.generation || optionsGeneration !== current.optionsGeneration) return []
+        debugLog(globalObject, 'options_error', { status: Number(requestError && requestError.status) || null })
         setSelectState(form, 'Could not load Brands', true)
         setStatus(form, 'error', 'The Brand list could not load. Try again.')
         return []
@@ -773,19 +797,27 @@
     }
     lockForm(form, true)
     setStatus(form, 'submitting', '')
+    debugLog(globalObject, 'submit_request', { selected_brand_id: positiveId(serialized.payload.brand_id) })
     var submitRequest = Promise.resolve()
       .then(function () { return request(serialized.payload) })
       .then(function (result) {
         if (generation !== current.generation) return false
         if (!createdProject(result)) {
+          debugLog(globalObject, 'submit_invalid_response', {})
           setStatus(form, 'error', safeError(), true)
           return false
         }
         showSuccess(form, result, documentObject)
+        debugLog(globalObject, 'submit_success', {
+          project_id: positiveId(result && result.project && result.project.id),
+          lifecycle_state: clean(result && result.project && result.project.lifecycle_state) || null,
+          replayed: Boolean(result && result.replayed),
+        })
         return true
       })
       .catch(function (requestError) {
         if (generation !== current.generation) return false
+        debugLog(globalObject, 'submit_error', { status: Number(requestError && requestError.status) || null })
         if (Number(requestError && requestError.status) === 403) invalidateOptions(form)
         setStatus(form, 'error', safeError(requestError), retryableSubmitError(requestError))
         return false
@@ -842,6 +874,7 @@
     // the legacy nested navigation link and duplicate modal target first so a
     // navbar click opens only the canonical Contract Generation form.
     normalizeModalMarkup(documentObject)
+    debugLog(globalObject, 'controller_bound', {})
     documentObject.addEventListener('click', function (event) {
       var review = event.target && event.target.closest ? event.target.closest(REVIEW_TRIGGER_SELECTOR) : null
       var form = review && formFromTarget(review)
@@ -887,6 +920,7 @@
     }, true)
     if (globalObject && globalObject.addEventListener) {
       globalObject.addEventListener('opp30:member-scope-reset', function () {
+        debugLog(globalObject, 'member_scope_reset', {})
         var form = documentObject.querySelector(FORM_SELECTOR)
         if (form) resetMemberState(form)
       })
@@ -896,6 +930,7 @@
 
   var api = {
     positiveId: positiveId,
+    debugEnabled: debugEnabled,
     normalizeOptions: normalizeOptions,
     normalizeProfile: normalizeProfile,
     renderProfile: renderProfile,
