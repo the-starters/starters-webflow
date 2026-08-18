@@ -47,6 +47,8 @@ function loadShim({
   memberstackToken = 'memberstack-token',
   origin = `https://${hostname}`,
   fetchImpl,
+  createImageBitmapImpl = async () => null,
+  documentImpl,
 }) {
   const calls = []
   const window = {
@@ -80,7 +82,8 @@ function loadShim({
     URL,
     JSON,
     Promise,
-    createImageBitmap: async () => null,
+    createImageBitmap: createImageBitmapImpl,
+    document: documentImpl,
   })
   vm.runInContext(source, context)
   return { window, calls, localStorage }
@@ -688,9 +691,35 @@ async function run() {
       'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
     const sourceMutationId = '123e4567-e89b-12d3-a456-426614174000'
     let tradeCount = 0
+    let bitmapCount = 0
+    let encodeCount = 0
     const attempts = []
+    const resizedBytes = 'resized-upload-bytes'
     const { window } = loadShim({
       hostname: 'thestarters.com',
+      createImageBitmapImpl: async () => {
+        bitmapCount += 1
+        return { width: 1600, height: 1200, close() {} }
+      },
+      documentImpl: {
+        createElement(name) {
+          assert.equal(name, 'canvas')
+          return {
+            getContext() {
+              return {
+                fillRect() {},
+                drawImage() {},
+              }
+            },
+            toBlob(resolve, type, quality) {
+              encodeCount += 1
+              assert.equal(type, 'image/jpeg')
+              assert.equal(quality, 0.8)
+              resolve(new Blob([resizedBytes], { type }))
+            },
+          }
+        },
+      },
       fetchImpl: async (input, init) => {
         if (String(input).includes('/auth/trade-token/v3')) {
           tradeCount += 1
@@ -715,16 +744,18 @@ async function run() {
     const response = await window.fetch(endpoint, { method: 'POST', body })
     assert.equal(response.status, 200)
     assert.equal(tradeCount, 2)
+    assert.equal(bitmapCount, 1)
+    assert.equal(encodeCount, 1)
     assert.deepEqual(attempts, [
       {
         authorization: 'Bearer stale-token',
-        imageBytes: Buffer.from('same-upload-bytes').toString('hex'),
+        imageBytes: Buffer.from(resizedBytes).toString('hex'),
         sourceMutationId,
         memberId: null,
       },
       {
         authorization: 'Bearer fresh-token',
-        imageBytes: Buffer.from('same-upload-bytes').toString('hex'),
+        imageBytes: Buffer.from(resizedBytes).toString('hex'),
         sourceMutationId,
         memberId: null,
       },

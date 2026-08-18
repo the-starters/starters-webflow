@@ -52,7 +52,7 @@
 
       const MAX_SIZE = 4 * 1024 * 1024; // 4MB
       const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
-      const uploadIntentIds = new WeakMap();
+      let pendingUploadIntent = null;
 
       const XANO_BASE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       const wrap = document.querySelector('#profile-photo-wrap');
@@ -94,6 +94,7 @@
       }
 
       function resetPhoto() {
+        pendingUploadIntent = null;
         input.value = '';
         previewImg.src = '';
         label.classList.remove('dropping');
@@ -125,12 +126,26 @@
         return id;
       }
 
-      function sourceMutationIdFor(file) {
-        const existing = uploadIntentIds.get(file);
-        if (existing) return existing;
-        const created = createSourceMutationId();
-        uploadIntentIds.set(file, created);
-        return created;
+      function filesMatch(left, right) {
+        return Boolean(
+          left &&
+          right &&
+          left.name === right.name &&
+          left.type === right.type &&
+          left.size === right.size &&
+          (left.lastModified || 0) === (right.lastModified || 0)
+        );
+      }
+
+      function uploadIntentFor(file) {
+        if (pendingUploadIntent && filesMatch(pendingUploadIntent.file, file)) {
+          return pendingUploadIntent;
+        }
+        pendingUploadIntent = {
+          file,
+          sourceMutationId: createSourceMutationId(),
+        };
+        return pendingUploadIntent;
       }
 
       async function handleFile(file) {
@@ -140,6 +155,9 @@
         showError("text", false);
 
         if (!file) return;
+        if (pendingUploadIntent && !filesMatch(pendingUploadIntent.file, file)) {
+          pendingUploadIntent = null;
+        }
 
         const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/avif', 'image/bmp'];
 
@@ -162,17 +180,22 @@
         preview.style.display = 'block';
 
         // upload the image to Xano/Webflow and update the profile data with Webflow photo URL
-        const sourceMutationId = sourceMutationIdFor(file);
+        let uploadIntent;
         let wf_photo_data;
         try {
-          wf_photo_data = await uploadImage(file, sourceMutationId);
+          uploadIntent = uploadIntentFor(file);
+          wf_photo_data = await uploadImage(
+            uploadIntent.file,
+            uploadIntent.sourceMutationId,
+          );
         } catch (error) {
           setLoader(false, preview);
-          showError('Image upload failed. Please try again.');
+          wrap.style.display = 'block';
+          showError('Image upload failed. Click here to try again.');
           console.error('Profile image upload failed:', error);
           return;
         }
-        uploadIntentIds.delete(file);
+        if (pendingUploadIntent === uploadIntent) pendingUploadIntent = null;
         waitProfileData(async () => {
           photoUrlInput.value = wf_photo_data['starter_image'];
           photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -239,6 +262,15 @@
 
       input.addEventListener('change', () => {
         handleFile(input.files[0]);
+      });
+
+      wrap.addEventListener('click', (event) => {
+        if (
+          pendingUploadIntent &&
+          event.target?.classList?.contains('upload-error')
+        ) {
+          handleFile(pendingUploadIntent.file);
+        }
       });
 
       label.addEventListener('dragenter', (e) => {

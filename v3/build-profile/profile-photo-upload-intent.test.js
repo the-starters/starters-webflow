@@ -29,9 +29,14 @@ class TestFile {
 
 function element() {
   const listeners = new Map();
+  const classes = new Set();
   return {
     style: {},
-    classList: { add() {}, remove() {} },
+    classList: {
+      add(name) { classes.add(name); },
+      remove(name) { classes.delete(name); },
+      contains(name) { return classes.has(name); },
+    },
     value: '',
     files: [],
     listeners,
@@ -46,7 +51,13 @@ function element() {
 function createHarness() {
   const label = element();
   const wrap = element();
-  wrap.querySelector = (selector) => selector === '.app-form_upload' ? label : null;
+  const uploadError = element();
+  uploadError.classList.add('upload-error');
+  wrap.querySelector = (selector) => {
+    if (selector === '.app-form_upload') return label;
+    if (selector === '.upload-error') return uploadError;
+    return null;
+  };
   const input = element();
   const preview = element();
   const previewImg = element();
@@ -62,7 +73,7 @@ function createHarness() {
   ]);
   let domReady;
   const uploads = [];
-  const uploadStatuses = [500, 200, 200, 200];
+  const uploadStatuses = [500, 500, 200, 200, 200];
   const uuids = [
     '123e4567-e89b-12d3-a456-426614174000',
     '123e4567-e89b-12d3-a456-426614174001',
@@ -129,7 +140,7 @@ function createHarness() {
   });
   vm.runInContext(source, context);
   domReady();
-  return { input, label, uploads };
+  return { input, label, uploadError, uploads, wrap };
 }
 
 async function settle() {
@@ -138,26 +149,45 @@ async function settle() {
 }
 
 async function run() {
-  const { input, label, uploads } = createHarness();
-  const firstFile = { name: 'photo.jpg', type: 'image/jpeg', size: 100 };
+  const { input, label, uploadError, uploads, wrap } = createHarness();
+  const firstFile = {
+    name: 'photo.jpg',
+    type: 'image/jpeg',
+    size: 100,
+    lastModified: 123,
+  };
   input.files = [firstFile];
   input.listeners.get('change')();
   await settle();
   assert.equal(uploads.length, 1);
+  assert.equal(wrap.style.display, 'block');
+  assert.equal(uploadError.style.display, 'block');
+  assert.equal(uploadError.textContent, 'Image upload failed. Click here to try again.');
 
-  input.listeners.get('change')();
+  wrap.listeners.get('click')({ target: uploadError });
   await settle();
   assert.equal(uploads.length, 2);
   assert.equal(uploads[0].sourceMutationId, uploads[1].sourceMutationId);
   assert.equal(uploads[0].memberId, null);
   assert.equal(uploads[1].memberId, null);
 
+  input.files = [{
+    name: 'photo.jpg',
+    type: 'image/jpeg',
+    size: 100,
+    lastModified: 123,
+  }];
+  input.listeners.get('change')();
+  await settle();
+  assert.equal(uploads.length, 3);
+  assert.equal(uploads[2].sourceMutationId, uploads[1].sourceMutationId);
+
   const secondFile = { name: 'new-photo.jpg', type: 'image/jpeg', size: 100 };
   input.files = [secondFile];
   input.listeners.get('change')();
   await settle();
-  assert.equal(uploads.length, 3);
-  assert.notEqual(uploads[2].sourceMutationId, uploads[1].sourceMutationId);
+  assert.equal(uploads.length, 4);
+  assert.notEqual(uploads[3].sourceMutationId, uploads[2].sourceMutationId);
 
   const droppedFile = { name: 'drop.jpg', type: 'image/jpeg', size: 100 };
   label.listeners.get('drop')({
@@ -165,8 +195,8 @@ async function run() {
     dataTransfer: { files: [droppedFile] },
   });
   await settle();
-  assert.equal(uploads.length, 4);
-  assert.notEqual(uploads[3].sourceMutationId, uploads[2].sourceMutationId);
+  assert.equal(uploads.length, 5);
+  assert.notEqual(uploads[4].sourceMutationId, uploads[3].sourceMutationId);
   assert.equal(uploads.every((upload) => upload.image && upload.memberId === null), true);
 }
 
