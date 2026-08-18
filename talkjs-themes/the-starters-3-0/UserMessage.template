@@ -366,8 +366,12 @@ override some properties for avatars showing/hiding
 }
 
 .by-me .action-menu {
-    background-color: #eee;
-    border: 1px solid #eee;
+    /* The circle matches the bubble it belongs to: sent bubbles are #B6D5D7
+       (see .by-me .message above), so a grey circle here read as detached.
+       The received side keeps #eee below for the same reason — its bubbles
+       are #eee. If a bubble colour ever changes, its circle changes with it. */
+    background-color: #B6D5D7;
+    border: 1px solid #B6D5D7;
     color: #1E211E;
     left: -2.25rem;
 }
@@ -378,11 +382,13 @@ override some properties for avatars showing/hiding
     right: -2.25rem;
 }
 
-.message.has-thumbnail .action-menu {
-    box-shadow: none;
-    background: none;
-    border: none;
-}
+/* Media messages (voice notes, images, video) used to strip the circle here
+   (box-shadow/background/border all none) so a bare "…" floated beside the
+   thumbnail. That strip was inherited from the stock theme, where the button
+   overlays the image; in THIS theme the button sits 2.25rem outside the
+   bubble on both sides and never overlaps media at all, so the strip only
+   made media rows inconsistent with every other row. Removed 2026-08-18
+   (ticket 08): media rows now share the same per-side circle as text rows. */
 
 .has-link-previews {
     width: 100%;
