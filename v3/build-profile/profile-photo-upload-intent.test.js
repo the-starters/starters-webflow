@@ -55,7 +55,7 @@ function element() {
   };
 }
 
-function createHarness({ cryptoApi } = {}) {
+function createHarness({ cryptoApi, uploadResponder } = {}) {
   const label = element();
   const wrap = element();
   const uploadError = element();
@@ -141,6 +141,7 @@ function createHarness({ cryptoApi } = {}) {
         sourceMutationId: options.body.get('source_mutation_id'),
         memberId: options.body.get('member_id'),
       });
+      if (uploadResponder) return uploadResponder(uploads.length - 1);
       return new Response(JSON.stringify(uploadResponses.shift()), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -221,6 +222,9 @@ function createHarness({ cryptoApi } = {}) {
     input,
     label,
     preview,
+    previewImg,
+    photoUrlInput,
+    removeBtn,
     uploadError,
     uploads,
     wrap,
@@ -314,6 +318,47 @@ async function run() {
   assert.equal(
     unavailable.uploadError.textContent,
     'Image upload failed. Click here to try again.',
+  );
+
+  const pendingResponses = [];
+  const overlapping = createHarness({
+    uploadResponder(index) {
+      return new Promise((resolve) => { pendingResponses[index] = resolve; });
+    },
+  });
+  const select = async (name) => {
+    overlapping.input.files = [{ name, type: 'image/jpeg', size: 100 }];
+    overlapping.input.dispatchEvent(new overlapping.TestEvent('change'));
+    await settle();
+  };
+  const response = (body) => new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  await select('first.jpg');
+  await select('second.jpg');
+  pendingResponses[0](response('not-json'));
+  await settle();
+  assert.equal(overlapping.uploadError.style.display, 'none');
+  assert.equal(overlapping.wrap.style.display, 'none');
+
+  await select('third.jpg');
+  pendingResponses[1](response(JSON.stringify({
+    starter_image: 'https://example.invalid/stale.jpg',
+    starter_image_small: 'https://example.invalid/stale-small.jpg',
+  })));
+  await settle();
+  assert.equal(overlapping.photoUrlInput.value, '');
+
+  pendingResponses[2](response(JSON.stringify({
+    starter_image: 'https://example.invalid/current.jpg',
+    starter_image_small: 'https://example.invalid/current-small.jpg',
+  })));
+  await settle();
+  assert.equal(
+    overlapping.photoUrlInput.value,
+    'https://example.invalid/current.jpg',
   );
 }
 

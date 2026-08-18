@@ -52,7 +52,7 @@
 
       const MAX_SIZE = 4 * 1024 * 1024; // 4MB
       const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
-      let pendingUploadIntent = null;
+      let currentUploadIntent = null;
 
       const XANO_BASE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       const wrap = document.querySelector('#profile-photo-wrap');
@@ -94,7 +94,7 @@
       }
 
       function resetPhoto() {
-        pendingUploadIntent = null;
+        currentUploadIntent = null;
         input.value = '';
         previewImg.src = '';
         label.classList.remove('dropping');
@@ -133,10 +133,10 @@
         showError("text", false);
 
         if (retry) {
-          if (!pendingUploadIntent) return;
-          file = pendingUploadIntent.file;
+          if (currentUploadIntent?.state !== 'failed') return;
+          file = currentUploadIntent.file;
         } else {
-          pendingUploadIntent = null;
+          currentUploadIntent = null;
         }
         if (!file) return;
 
@@ -164,26 +164,32 @@
         let uploadIntent;
         let wf_photo_data;
         try {
-          uploadIntent = retry
-            ? pendingUploadIntent
-            : {
-                file,
-                sourceMutationId: createSourceMutationId(),
-              };
-          pendingUploadIntent = uploadIntent;
+          if (retry) {
+            uploadIntent = currentUploadIntent;
+          } else {
+            uploadIntent = { file, state: 'uploading' };
+            currentUploadIntent = uploadIntent;
+            uploadIntent.sourceMutationId = createSourceMutationId();
+          }
+          uploadIntent.state = 'uploading';
+          currentUploadIntent = uploadIntent;
           wf_photo_data = await uploadImage(
             uploadIntent.file,
             uploadIntent.sourceMutationId,
           );
         } catch (error) {
+          if (currentUploadIntent !== uploadIntent) return;
+          uploadIntent.state = 'failed';
           setLoader(false, preview);
           wrap.style.display = 'block';
           showError('Image upload failed. Click here to try again.');
           console.error('Profile image upload failed:', error);
           return;
         }
-        if (pendingUploadIntent === uploadIntent) pendingUploadIntent = null;
+        if (currentUploadIntent !== uploadIntent) return;
+        uploadIntent.state = 'applying';
         waitProfileData(async () => {
+          if (currentUploadIntent !== uploadIntent) return;
           photoUrlInput.value = wf_photo_data['starter_image'];
           photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
           photoUrlInput.dispatchEvent(new Event('input', { bubbles: true }));
@@ -191,14 +197,18 @@
           setLoader(false, preview);
 
           const fileSmaller = await urlToFile(wf_photo_data['starter_image_small'], file.name);
+          if (currentUploadIntent !== uploadIntent) return;
           const updImgInfo = await window.$memberstackDom.updateMemberProfileImage({ profileImage: fileSmaller });
+          if (currentUploadIntent !== uploadIntent) return;
           console.log('Smaller image for Memberstack profile:', updImgInfo?.data?.profileImage);
           
           // update logo image in the nav bar
           requestAnimationFrame(() => {
+            if (currentUploadIntent !== uploadIntent) return;
             qsa('[nav-profile-image]').forEach(img => {
               img.src = img.srcset = updImgInfo?.data?.profileImage || wf_photo_data['starter_image'];
             });
+            currentUploadIntent = null;
           });
         });
       }
@@ -266,7 +276,7 @@
 
       wrap.addEventListener('click', (event) => {
         if (
-          pendingUploadIntent &&
+          currentUploadIntent?.state === 'failed' &&
           event.target?.classList?.contains('upload-error')
         ) {
           handleFile(null, { retry: true });
