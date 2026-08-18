@@ -20,6 +20,11 @@
   const PAGE_SIZE = 6
   const PROJECT_PAGE_SIZE = 12
   const PROJECT_INSTANCE_KEYS = ['dash-projects', 'dash-brand-projects']
+  const STATUS_VARIANT_CLASSES = [
+    'w-variant-34961dab-8ebb-e322-49a7-741a1936647a',
+    'w-variant-89402c65-e26d-c236-91e7-76e9135a2d42',
+    'w-variant-f48ad750-f9e7-4b94-4998-3df752bfb037',
+  ]
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
     '/starter-dashboard---availability-stage': 'starter',
@@ -189,14 +194,71 @@
     }).format(amount)
   }
 
-  function statusLabel(status) {
+  function formatDuration(value) {
+    const duration = Number(value)
+    return Number.isFinite(duration) && duration > 0 ? duration + 'min' : ''
+  }
+
+  function statusLabel(status, role) {
     return {
-      pending: 'Requested',
-      confirmed: 'Confirmed',
+      pending: role === 'starter' ? 'Pending' : 'Requested',
+      confirmed: 'Upcoming',
       completed: 'Completed',
       cancelled: 'Cancelled',
       archived: 'Archived',
     }[status]
+  }
+
+  function statusVariantClass(status) {
+    if (status === 'completed') return STATUS_VARIANT_CLASSES[1]
+    if (status === 'cancelled' || status === 'archived') {
+      return STATUS_VARIANT_CLASSES[2]
+    }
+    return STATUS_VARIANT_CLASSES[0]
+  }
+
+  function setClass(element, name, active) {
+    if (!element || !element.classList) return
+    if (typeof element.classList.toggle === 'function') {
+      element.classList.toggle(name, Boolean(active))
+    } else if (active && typeof element.classList.add === 'function') {
+      element.classList.add(name)
+    } else if (!active && typeof element.classList.remove === 'function') {
+      element.classList.remove(name)
+    }
+  }
+
+  function paintStatusPill(card, status, role) {
+    const pill = card && card.querySelector('[booking-element="status"]')
+    if (!pill) return
+    STATUS_VARIANT_CLASSES.forEach(function (className) {
+      setClass(pill, className, className === statusVariantClass(status))
+    })
+    text(pill, '[label-text]', statusLabel(status, role))
+    if (!pill.querySelector('[label-text]')) pill.textContent = statusLabel(status, role)
+    show(pill, true)
+    const group = pill.closest && pill.closest('[booking-element-wrap]')
+    if (group) show(group, true)
+  }
+
+  function paidBooking(booking) {
+    const value = booking && (
+      booking.is_paid != null ? booking.is_paid : booking.paid_meeting
+    )
+    return value === true || value === 1 || clean(value).toLowerCase() === 'true'
+  }
+
+  function responseWindowOpen(booking, now) {
+    if (bookingStatus(booking, now) !== 'pending') return false
+    const time = Number(now || Date.now())
+    const expires = normalizeTimestamp(booking && booking.confirmation_expires_at)
+    if (Number.isFinite(expires) && expires > 0 && expires <= time) return false
+    const start = normalizeTimestamp(booking && booking.start)
+    return !(Number.isFinite(start) && start > 0 && start <= time)
+  }
+
+  function canConfirmBooking(role, booking, now) {
+    return role === 'starter' && responseWindowOpen(booking, now)
   }
 
   function decodeBookingRef(compactString) {
@@ -247,15 +309,21 @@
     }
   }
 
-  function configureActionButtons(card, role, status) {
+  function configureActionButtons(card, role, status, booking, now) {
     card.querySelectorAll('[booking-card-action-btn], [booking-action-btn]').forEach(function (button) {
       const action = clean(
         button.getAttribute('booking-action-btn') ||
         button.getAttribute('booking-card-action-btn'),
       )
-      // Accept is the first V3-native mutation. Every other legacy control
-      // stays hidden until it has a current endpoint contract and tests.
-      show(button, role === 'starter' && status === 'pending' && action === 'switch-confirm')
+      const details = action === 'details'
+      const accept =
+        action === 'switch-confirm' &&
+        canConfirmBooking(role, booking || { status: status }, now)
+      // Details is read-only. Accept is the first V3-native mutation. Every
+      // other legacy control stays hidden until it has a populated current
+      // endpoint contract and tests. In particular, never open empty
+      // Reschedule UI.
+      show(button, details || accept)
     })
   }
 
@@ -266,7 +334,7 @@
     card.removeAttribute('bookings-item-template')
     card.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
     card.setAttribute('data-booking-status', status)
-    text(card, '[booking-element="status"] [label-text]', statusLabel(status))
+    paintStatusPill(card, status, role)
     text(card, '[booking-element="brand-name"]', other && other.name)
     text(card, '[booking-element="starter-name"]', other && other.name)
     text(card, '[booking-element="title"]', booking.call_context || 'Call')
@@ -275,15 +343,15 @@
       '[booking-element="start-date"]',
       formatDate(booking.start, (own && own.timezone) || (other && other.timezone)),
     )
-    text(card, '[booking-element="duration"]', clean(booking.duration) + 'min')
+    text(card, '[booking-element="duration"]', formatDuration(booking.duration))
     text(
       card,
       '[booking-element="price"]',
-      formatPrice(booking.price, booking.paid_meeting),
+      formatPrice(booking.price, paidBooking(booking)),
     )
 
     const paymentWrap = card.querySelector('[payment-status-wrap]')
-    const paymentText = booking.paid_meeting
+    const paymentText = paidBooking(booking)
       ? booking.pm_confirmed
         ? 'Payment method confirmed.'
         : 'Payment method pending.'
@@ -295,7 +363,7 @@
     text(brandStatus, '[label-text]', status === 'pending' ? 'Awaiting confirmation' : '')
     show(brandStatus, status === 'pending' && role === 'brand')
 
-    configureActionButtons(card, role, status)
+    configureActionButtons(card, role, status, booking)
 
     return card
   }
@@ -344,6 +412,30 @@
     })
   }
 
+  function filterControls(refs) {
+    return Array.prototype.slice.call(
+      refs.section.querySelectorAll('[booking-filter]'),
+    )
+  }
+
+  function paintActiveFilter(refs) {
+    filterControls(refs).forEach(function (control) {
+      const value = clean(control.getAttribute('booking-filter')).toLowerCase()
+      const active = value === refs.filter
+      const field = control.matches && control.matches('input')
+        ? control
+        : control.querySelector && control.querySelector('input')
+      const visual = control.querySelector && control.querySelector(
+        '[data-tab-filters-check], .tab-item_button',
+      )
+      if (field && 'checked' in field) field.checked = active
+      setClass(control, 'is-active', active)
+      setClass(visual, 'is-active', active)
+      setClass(visual, 'w--redirected-checked', active)
+      control.setAttribute('aria-pressed', active ? 'true' : 'false')
+    })
+  }
+
   function renderSection(refs, role, reset) {
     if (reset) {
       refs.rendered = 0
@@ -360,24 +452,204 @@
     show(refs.empty, rows.length === 0)
     show(refs.loadMore, target < rows.length)
     show(refs.filters, refs.rows.length > 0)
+    paintActiveFilter(refs)
     if (refs.count) refs.count.textContent = String(refs.rows.length)
     refs.section.setAttribute('data-bookings-state', rows.length ? 'ready' : 'empty')
   }
 
   function wireSection(refs, role) {
-    refs.section.querySelectorAll('[booking-filter]').forEach(function (control) {
+    filterControls(refs).forEach(function (control) {
       control.addEventListener('click', function (event) {
         event.preventDefault()
         refs.filter = clean(control.getAttribute('booking-filter')).toLowerCase()
         renderSection(refs, role, true)
       })
     })
+    paintActiveFilter(refs)
     if (refs.loadMore) {
       refs.loadMore.addEventListener('click', function (event) {
         event.preventDefault()
         renderSection(refs, role, false)
       })
     }
+  }
+
+  function bookingField(modal, name) {
+    return modal && modal.querySelector('[booking-element="' + name + '"]')
+  }
+
+  function setBookingField(modal, name, value, visible) {
+    const field = bookingField(modal, name)
+    if (!field) return
+    const shouldShow = visible !== false && clean(value) !== ''
+    if (shouldShow) field.textContent = clean(value)
+    show(field, shouldShow)
+    const group = field.closest && field.closest('[booking-element-wrap]')
+    if (group) show(group, shouldShow)
+  }
+
+  function hideDuplicateDetailCopy(modal) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return
+    modal.querySelectorAll('[booking-element-wrap]').forEach(function (group) {
+      if (group.querySelector && group.querySelector('[booking-element]')) return
+      const copy = clean(group.textContent).toLowerCase()
+      if (
+        copy.includes('card ending in') ||
+        copy.includes('charged for this call') ||
+        copy.includes('refunded since it')
+      ) show(group, false)
+    })
+  }
+
+  function configureDetailActions(modal, role, status, booking, now) {
+    if (!modal || typeof modal.querySelectorAll !== 'function') return
+    modal
+      .querySelectorAll('[booking-action-btn], [booking-card-action-btn]')
+      .forEach(function (button) {
+        const action = clean(
+          button.getAttribute('booking-action-btn') ||
+          button.getAttribute('booking-card-action-btn'),
+        )
+        const accept =
+          action === 'switch-confirm' &&
+          canConfirmBooking(role, booking, now)
+        show(
+          button,
+          action === 'switch-close' || action === 'switch-base' || accept,
+        )
+      })
+  }
+
+  function populateDetailModal(modal, booking, role, now) {
+    if (!modal || !booking) return false
+    const status = bookingStatus(booking, now)
+    const isPaid = paidBooking(booking)
+    const other = role === 'starter' ? booking.brand_data : booking.starter_data
+    const own = role === 'starter' ? booking.starter_data : booking.brand_data
+    const timezone = (own && own.timezone) || (other && other.timezone)
+    const paymentText = isPaid && status !== 'cancelled' && status !== 'archived'
+      ? booking.pm_confirmed
+        ? 'Payment method confirmed.'
+        : 'Payment method pending.'
+      : ''
+
+    modal.setAttribute('data-booking-id', clean(booking.booking_id || booking.id))
+    modal.setAttribute('data-booking-status', status)
+    modal.setAttribute('data-booking-payment', isPaid ? 'paid' : 'free')
+
+    modal.querySelectorAll('[booking-popup-content]').forEach(function (content) {
+      show(content, content.getAttribute('booking-popup-content') === 'base')
+    })
+    setBookingField(modal, 'paid-meeting', isPaid ? 'Paid Call' : 'Free Call', true)
+    setBookingField(modal, 'status', statusLabel(status, role), true)
+    setBookingField(modal, 'brand-name', booking.brand_data && booking.brand_data.name, true)
+    setBookingField(modal, 'starter-name', booking.starter_data && booking.starter_data.name, true)
+    setBookingField(modal, 'title', booking.call_context || 'Call', true)
+    setBookingField(modal, 'context', booking.call_context, true)
+    setBookingField(modal, 'start-date', formatDate(booking.start, timezone), true)
+    setBookingField(modal, 'duration', formatDuration(booking.duration), true)
+    setBookingField(modal, 'price', formatPrice(booking.price, isPaid), isPaid)
+    setBookingField(modal, 'payment-status-text', paymentText, isPaid)
+    setBookingField(modal, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
+    setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
+
+    const meetingLink = bookingField(modal, 'meeting-link')
+    const showMeeting = status === 'confirmed' && clean(booking.meeting_link) !== ''
+    if (meetingLink) {
+      if ('href' in meetingLink) meetingLink.href = showMeeting ? clean(booking.meeting_link) : ''
+      meetingLink.textContent = showMeeting ? clean(booking.meeting_link) : ''
+      show(meetingLink, showMeeting)
+      const group = meetingLink.closest && meetingLink.closest('[booking-element-wrap]')
+      if (group) show(group, showMeeting)
+    }
+
+    const base = modal.querySelector('[booking-popup-content="base"]') || modal
+    const pendingMessages = Array.prototype.slice.call(
+      base.querySelectorAll ? base.querySelectorAll('[pending-info-text]') : [],
+    )
+    pendingMessages.forEach(function (message, index) {
+      show(message, index === 0 && status === 'pending' && responseWindowOpen(booking, now))
+    })
+    modal.querySelectorAll('[reschedule-blocked-info]').forEach(function (info) {
+      show(info, false)
+    })
+    hideDuplicateDetailCopy(modal)
+    configureDetailActions(modal, role, status, booking, now)
+    return true
+  }
+
+  function bookingFromCard(refs, card) {
+    const bookingId = clean(card && card.getAttribute('data-booking-id'))
+    let booking = null
+    refs.some(function (section) {
+      booking = section.rows.find(function (row) {
+        return clean(row.booking_id || row.id) === bookingId
+      }) || null
+      return Boolean(booking)
+    })
+    return booking
+  }
+
+  function resetDetailModal() {
+    if (!global.document || typeof global.document.querySelector !== 'function') return
+    const modal = global.document.querySelector(
+      '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
+    )
+    if (!modal) return
+    if (typeof modal.close === 'function') {
+      try {
+        modal.close()
+      } catch (_error) {}
+    }
+    modal.removeAttribute('open')
+    modal.removeAttribute('data-booking-id')
+    modal.removeAttribute('data-booking-status')
+    modal.removeAttribute('data-booking-payment')
+    modal.querySelectorAll('[booking-element]').forEach(function (field) {
+      field.textContent = ''
+      if ('href' in field) field.href = ''
+      show(field, false)
+      const group = field.closest && field.closest('[booking-element-wrap]')
+      if (group) show(group, false)
+    })
+    modal
+      .querySelectorAll(
+        '[booking-popup-content], [pending-info-text], [booking-action-btn], [booking-card-action-btn]',
+      )
+      .forEach(function (element) {
+        show(element, false)
+      })
+  }
+
+  function wireBookingDetails(refs, role) {
+    if (!global.document || !global.document.addEventListener) return
+    global.document.addEventListener('click', function (event) {
+      const target = event && event.target
+      const reschedule = target && target.closest
+        ? target.closest('[booking-action-btn="reschedule"], [booking-card-action-btn="reschedule"]')
+        : null
+      if (reschedule) {
+        if (event.preventDefault) event.preventDefault()
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+        else if (event.stopPropagation) event.stopPropagation()
+        return
+      }
+
+      const details = target && target.closest
+        ? target.closest('[data-modal-trigger="popup-booking-info"], [booking-action-btn="details"], [booking-card-action-btn="details"], [data-booking-details]')
+        : null
+      if (!details) return
+      const card = details.closest && details.closest('[data-booking-id]')
+      const booking = bookingFromCard(refs, card)
+      const modal = global.document.querySelector(
+        '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
+      )
+      if (!booking || !modal || !populateDetailModal(modal, booking, role)) {
+        if (event.preventDefault) event.preventDefault()
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+        else if (event.stopPropagation) event.stopPropagation()
+      }
+    }, true)
   }
 
   function hideAuthoredDuplicates() {
@@ -743,7 +1015,7 @@
         }) || null
         return Boolean(booking)
       })
-      if (!booking || bookingStatus(booking) !== 'pending') return
+      if (!booking || !canConfirmBooking(role, booking)) return
 
       if (!button.__startersBookingActionKey) {
         const randomUUID = global.crypto && global.crypto.randomUUID
@@ -751,7 +1023,11 @@
         button.__startersBookingActionKey = 'dashboard-confirm:' + randomUUID.call(global.crypto)
       }
       const payload = confirmPayload(booking, button.__startersBookingActionKey)
-      if (!payload || typeof global.xanoAuthFetch !== 'function') return
+      if (
+        !payload ||
+        typeof global.xanoAuthFetch !== 'function' ||
+        !canConfirmBooking(role, booking)
+      ) return
 
       button.__startersBookingActionBusy = true
       button.setAttribute('aria-busy', 'true')
@@ -778,6 +1054,7 @@
 
   function resetIdentityState(refs, role) {
     clearBrandHero(role)
+    resetDetailModal()
     refs.forEach(function (section) {
       section.rows = []
       section.rendered = 0
@@ -865,6 +1142,7 @@
     refs.forEach(function (section) {
       wireSection(section, role)
     })
+    wireBookingDetails(refs, role)
     hideAuthoredDuplicates()
     resetIdentityState(refs, role)
 
@@ -907,6 +1185,16 @@
 
   const api = {
     bookingStatus,
+    paidBooking,
+    responseWindowOpen,
+    canConfirmBooking,
+    statusLabel,
+    statusVariantClass,
+    paintStatusPill,
+    paintActiveFilter,
+    populateDetailModal,
+    wireBookingDetails,
+    resetDetailModal,
     configureActionButtons,
     confirmPayload,
     decodeBookingRef,

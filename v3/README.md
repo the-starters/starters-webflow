@@ -1975,8 +1975,26 @@ Webflow owns all call-section markup. Each section must provide:
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
 requests and all other rows under calls; Brand keeps pending and accepted rows
-in its calls list. The Starter pending card exposes only the Designer-authored
-Accept control. Before it calls `booking/confirm/v3`, the controller decodes the
+in its calls list. Each card's authored status pill receives the canonical,
+role-aware lifecycle label and the matching Designer variant: pending is
+`Pending` for Starter and `Requested` for Brand, confirmed is `Upcoming`, and
+completed, cancelled, and archived use `Completed`, `Cancelled`, and `Archived`.
+The selected `[booking-filter]` is the only control with `is-active`,
+`aria-pressed="true"`, and the matching checked visual state.
+
+The authored View Details trigger opens the existing `popup-booking-info`
+dialog. Before Webflow opens it, the controller binds the selected canonical
+row to the authored fields. `is_paid` is authoritative when present, with
+`paid_meeting` retained as the compatibility fallback. Free calls never show
+price, payment, charge, or refund copy. Only the base content state and one
+applicable pending message can be visible. Confirmed calls can show their
+canonical meeting link; cancelled and archived calls cannot. Reschedule stays
+hidden and its delegated trigger fails closed until a populated V3 reschedule
+flow exists, so the empty authored reschedule dialog cannot open.
+
+The Starter pending card and details dialog expose only the Designer-authored
+Accept control while the canonical response window remains open. Before the
+controller calls `booking/confirm/v3`, it decodes the
 canonical `booking_ref`, requires its booking and configuration IDs to match the
 row, and supplies a per-attempt idempotency key. A successful response refreshes
 the canonical list, which moves the accepted row from Starter Call Requests to
