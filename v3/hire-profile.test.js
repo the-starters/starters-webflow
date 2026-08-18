@@ -1163,6 +1163,42 @@ test('booking discovery keeps Free on the shared modal and gives Paid to the V3 
   assert.equal(page.paidModalOption.style.display, 'none')
 })
 
+test('Paid-only discovery stays closed when the V3 controller is unavailable', async () => {
+  const page = makePage()
+  let nearestSlotCalls = 0
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_new-paid-plan-463h04ph', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: async () => ({ nylas_grant_id: 'grant_prod' }),
+    getConfigs: async () => [{
+      config_id: 'paid_live',
+      is_paid: true,
+      active: true,
+      data_environment: 'production',
+      payment_environment: 'live',
+      currency: 'USD',
+      price_cents: 1250,
+    }],
+    getNearestSlot: async () => { nearestSlotCalls += 1 },
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+  await settle()
+
+  assert.equal(page.bookingButtonWrapper.style.display, 'none')
+  assert.equal(page.bookingButtonWrapper.getAttribute('aria-hidden'), 'true')
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), null)
+  assert.equal(nearestSlotCalls, 0)
+  assert.ok(context.warnings.some((line) => line.includes('Paid Call controller is unavailable')))
+})
+
 test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {
   const page = makePage()
   const cmsCard = makeElement('div', {

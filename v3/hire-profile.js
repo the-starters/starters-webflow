@@ -621,6 +621,7 @@
               const paidConfig = configs.find(function (record) {
                   return record.is_paid === true;
               }) || null;
+              let bookingSurfaceAvailable = false;
 
               // The shared initializer still owns Free. Remove Paid before it
               // scans [data-config], otherwise its legacy customer/Stripe branch
@@ -634,6 +635,7 @@
                       brand_name,
                       brand_email
                   );
+                  bookingSurfaceAvailable = true;
               }
 
               // Restore the complete canonical chooser after the Free-only
@@ -657,12 +659,14 @@
                           brandEmail: brand_email,
                           createScheduler: window.createScheduler,
                       });
+                  bookingSurfaceAvailable = bookingSurfaceAvailable || installed === true;
                   if (!installed) {
                       primeBookingModalOptions(freeConfigs);
                       console.warn('Paid Call controller is unavailable; Paid stayed closed.');
                   }
               }
 
+              if (!bookingSurfaceAvailable) return;
               setBookingButtonAvailable(true);
               const primaryConfigId = configs[0].config_id;
 
