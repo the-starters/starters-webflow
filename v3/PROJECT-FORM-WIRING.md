@@ -98,7 +98,9 @@ Estimated End Date is blank.
 
 The Weekly Recurring `startDateInput` must not have
 `data-input-datepicker-min="0"`. V2 permits a valid past start date for an
-ongoing Weekly Retainer, and the V3 date picker must keep that behavior.
+ongoing Weekly Retainer, and the V3 date picker must keep that behavior. A
+direct pointer click must leave the picker open after project-form sync, while
+keyboard Tab focus must keep its existing behavior.
 
 The adapter selects the visible authored conditional panel, with a nonblank
 fallback for test and preview DOMs. Hidden blank controls never replace the
@@ -434,11 +436,13 @@ Load after `opportunities-3.0.js` on the `/hire/<slug>` CMS template:
    At Review, confirm both Contract destinations show My Own Contract and Basic
    Information does not include an extra Contract value. Switch back to
    Standard Contract and repeat the same checks.
-6. Select Weekly Recurring and confirm yesterday and an older valid past date
-   can be selected. Confirm today and a future date still work. Select Flat Fee
-   and leave Estimated End Date blank; Continue must remain disabled. Enter a
-   valid end date after the start date and confirm Continue enables. Confirm an
-   end date on or before the start date cannot reach a valid Review state.
+6. Select Weekly Recurring. Use a direct pointer click and confirm the picker
+   opens and stays open, then use keyboard Tab and confirm focus behavior is
+   unchanged. Confirm yesterday and an older valid past date can be selected,
+   and that today and a future date still work. Select Flat Fee and leave
+   Estimated End Date blank; Continue must remain disabled. Enter a valid end
+   date after the start date and confirm Continue enables. Confirm an end date
+   on or before the start date cannot reach a valid Review state.
 7. With the approved production canary and PandaDoc create worker #33 held
    inactive, verify exactly one authenticated `projects/create-direct/v3`
    request and no Airtable/Make/PandaDoc browser request or browser secret.

@@ -291,7 +291,12 @@ test('Flat Fee date validity gates Continue before Review', () => {
 function datepickerJquery(today) {
   const states = new WeakMap()
   function state(element) {
-    if (!states.has(element)) states.set(element, { initialized: false, options: {} })
+    if (!states.has(element)) states.set(element, {
+      initialized: false,
+      options: {},
+      open: false,
+      closeCount: 0,
+    })
     return states.get(element)
   }
   function jquery(element) {
@@ -306,6 +311,11 @@ function datepickerJquery(today) {
           return this
         }
         if (command === 'option') {
+          if (arguments.length === 2) return current.options[name] ?? null
+          if (current.open) {
+            current.open = false
+            current.closeCount += 1
+          }
           current.options[name] = value
           return this
         }
@@ -322,6 +332,10 @@ function datepickerJquery(today) {
     }
   }
   jquery.fn = { datepicker() {} }
+  jquery.open = (element) => { state(element).open = true }
+  jquery.isOpen = (element) => state(element).open
+  jquery.closeCount = (element) => state(element).closeCount
+  jquery.option = (element, name) => state(element).options[name] ?? null
   return jquery
 }
 
@@ -374,6 +388,7 @@ test('Weekly datepicker selects past, current, and future start dates', () => {
   const api = loadProjectApi(window)
   api.syncDurationFields(form)
   assert.equal(start.getAttribute('data-input-datepicker-min'), null)
+  assert.equal(jquery.option(start, 'minDate'), null)
 
   for (const expected of [
     ['08/01/2026', new Date(2026, 7, 1)],
@@ -383,4 +398,43 @@ test('Weekly datepicker selects past, current, and future start dates', () => {
     jquery(start).datepicker('setDate', expected[1])
     assert.equal(start.value, expected[0])
   }
+})
+
+test('Weekly datepicker stays open when the focus click reaches project form sync', () => {
+  const engagement = h('input', { 'data-project-field': 'engagement_type' })
+  engagement.value = 'Weekly Recurring'
+  const start = h('input', {
+    name: 'startDateInput',
+    'data-input-datepicker': '',
+  })
+  start.name = 'startDateInput'
+  const panel = h('div', { 'data-input-filter-item': 'weekly' }, [start])
+  const form = h('form', {}, [engagement, panel])
+  attachFormTarget(start, form)
+  const body = h('body', {}, [form])
+  for (const element of [body, ...body.descendants()]) element.nodeType = 1
+  const queryAll = form.querySelectorAll.bind(form)
+  form.querySelectorAll = (selector) => selector.includes('] ')
+    ? selector.includes('weekly') && selector.includes('startDateInput') ? [start] : []
+    : queryAll(selector)
+
+  const jquery = datepickerJquery(new Date(2026, 7, 18))
+  jquery(start).datepicker({ dateFormat: 'mm/dd/yy' })
+  const window = projectWindow(undefined)
+  window.jQuery = jquery
+  const document = {
+    body,
+    querySelectorAll: (selector) => body.querySelectorAll(selector),
+    addEventListener(type, handler) {
+      if (type === 'click') this.clickHandler = handler
+    },
+  }
+  window.document = document
+
+  loadProjectApi(window)
+  jquery.open(start)
+  document.clickHandler({ target: start })
+
+  assert.equal(jquery.isOpen(start), true)
+  assert.equal(jquery.closeCount(start), 0)
 })

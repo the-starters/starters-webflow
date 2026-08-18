@@ -1021,7 +1021,13 @@
     if (field.removeAttribute) field.removeAttribute('data-input-datepicker-min')
     var jquery = global && global.jQuery
     if (jquery && jquery.fn && jquery.fn.datepicker && jquery(field).data('datepicker')) {
-      jquery(field).datepicker('option', 'minDate', null)
+      var currentMinimum = jquery(field).datepicker('option', 'minDate')
+      // jQuery UI hides the active picker before every option write. Only clear
+      // a real legacy minimum; repeating minDate=null on the field's focus click
+      // makes the calendar flash open and immediately close.
+      if (currentMinimum !== null && typeof currentMinimum !== 'undefined') {
+        jquery(field).datepicker('option', 'minDate', null)
+      }
     }
   }
 
