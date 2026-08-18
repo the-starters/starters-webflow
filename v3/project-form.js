@@ -1563,7 +1563,7 @@
         syncDurationFields(clickedForm)
         syncActiveRequired(clickedForm)
       }
-    })
+    }, true)
     documentObject.addEventListener('change', function (event) {
       // Switching fee structure or contract type swaps which conditional panel
       // is visible; keep required aligned for implicit (Enter key) submission.
@@ -1573,7 +1573,7 @@
         syncDurationFields(form)
         syncActiveRequired(form)
       }
-    })
+    }, true)
     documentObject.addEventListener('input', function (event) {
       var field = event.target
       var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
@@ -1585,7 +1585,7 @@
       formState.key = ''
       formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
-    })
+    }, true)
     documentObject.addEventListener('invalid', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
       if (!form) return

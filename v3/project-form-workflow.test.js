@@ -36,17 +36,29 @@ function projectDocument() {
   const listeners = new Map()
   return {
     listeners,
-    addEventListener(type, listener) {
+    addEventListener(type, listener, options) {
       const entries = listeners.get(type) || []
-      entries.push(listener)
+      entries.push({
+        listener,
+        capture: options === true || Boolean(options && options.capture),
+      })
       listeners.set(type, entries)
     },
     querySelectorAll() { return [] },
     querySelector() { return null },
-    dispatch(type, target) {
-      for (const listener of listeners.get(type) || []) listener({ target })
+    dispatch(type, target, capture) {
+      for (const entry of listeners.get(type) || []) {
+        if (entry.capture === capture) entry.listener({ target })
+      }
     },
   }
+}
+
+function fireBubbling(document, flow, form, type, target) {
+  document.dispatch(type, target, true)
+  const event = flow.fire(form, type, target)
+  document.dispatch(type, target, false)
+  return event
 }
 
 function projectWindow(document) {
@@ -188,20 +200,18 @@ test('first Own Contract click enables Continue and reaches its Review projectio
   previewObservers.forEach((observer) => observer.callback())
   assert.equal(nextWrap.getAttribute('aria-disabled'), 'true')
 
-  document.dispatch('click', own)
   own.checked = true
-  document.dispatch('change', own)
-  flow.fire(form, 'change', own)
+  fireBubbling(document, flow, form, 'click', own)
+  fireBubbling(document, flow, form, 'change', own)
   assert.equal(affirmationRow.style.display, '')
   assert.equal(affirmation.required, true)
   assert.equal(nextWrap.getAttribute('aria-disabled'), 'true')
 
   affirmation.checked = true
-  document.dispatch('change', affirmation)
-  flow.fire(form, 'change', affirmation)
+  fireBubbling(document, flow, form, 'change', affirmation)
   assert.equal(nextWrap.getAttribute('aria-disabled'), null)
 
-  const click = flow.fire(form, 'click', next)
+  const click = fireBubbling(document, flow, form, 'click', next)
   previewObservers.forEach((observer) => observer.callback())
   assert.equal(click.defaultPrevented, true)
   assert.equal(step2.style.display, 'block')
@@ -245,37 +255,36 @@ function flatFeeFlow() {
       : selector.includes('flat_fee') && selector.includes('endDateInput') ? [end]
         : []
     : queryAll(selector)
+  for (const control of [start, end, next]) attachFormTarget(control, form)
   return { body: h('body', {}, [form]), end, form, next, nextWrap, review, start }
 }
 
 test('Flat Fee date validity gates Continue before Review', () => {
   const fixture = flatFeeFlow()
-  const api = loadProjectApi(projectWindow(undefined))
+  const document = projectDocument()
+  const api = loadProjectApi(projectWindow(document))
   api.syncDurationFields(fixture.form)
   const flow = mount(fixture.body)
 
   assert.equal(fixture.end.required, true)
   assert.equal(fixture.nextWrap.getAttribute('aria-disabled'), 'true')
-  assert.equal(flow.fire(fixture.form, 'click', fixture.next).defaultPrevented, true)
+  assert.equal(fireBubbling(document, flow, fixture.form, 'click', fixture.next).defaultPrevented, true)
   assert.equal(fixture.review.style.display, 'none')
 
   fixture.end.value = '08/19/2026'
-  api.syncDurationFields(fixture.form)
-  flow.fire(fixture.form, 'input', fixture.end)
+  fireBubbling(document, flow, fixture.form, 'input', fixture.end)
   assert.equal(fixture.nextWrap.getAttribute('aria-disabled'), 'true')
-  flow.fire(fixture.form, 'click', fixture.next)
+  fireBubbling(document, flow, fixture.form, 'click', fixture.next)
   assert.equal(fixture.review.style.display, 'none')
 
   fixture.end.value = '08/20/2026'
-  api.syncDurationFields(fixture.form)
-  flow.fire(fixture.form, 'input', fixture.end)
+  fireBubbling(document, flow, fixture.form, 'input', fixture.end)
   assert.equal(fixture.nextWrap.getAttribute('aria-disabled'), 'true')
 
   fixture.end.value = '08/21/2026'
-  api.syncDurationFields(fixture.form)
-  flow.fire(fixture.form, 'input', fixture.end)
+  fireBubbling(document, flow, fixture.form, 'input', fixture.end)
   assert.equal(fixture.nextWrap.getAttribute('aria-disabled'), null)
-  flow.fire(fixture.form, 'click', fixture.next)
+  fireBubbling(document, flow, fixture.form, 'click', fixture.next)
   assert.equal(fixture.review.style.display, 'block')
 })
 
