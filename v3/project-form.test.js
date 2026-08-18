@@ -337,8 +337,16 @@ test('clicking a Hire service trigger prefills only its owning native Services s
   ]
   const firstService = nativeField('Services', '', { tagName: 'SELECT', options: serviceOptions() })
   const secondService = nativeField('Services', '', { tagName: 'SELECT', options: serviceOptions() })
+  const taggedHelper = new Element({
+    'data-sp-fill': 'input',
+    'data-sp-fill-category': 'service',
+  })
   first.children.push(firstService)
-  second.children.push(secondService)
+  second.children.push(secondService, taggedHelper)
+  const secondQueryAll = second.querySelectorAll.bind(second)
+  second.querySelectorAll = (selector) => selector === '[data-sp-fill="input"]'
+    ? [taggedHelper]
+    : secondQueryAll(selector)
 
   const trigger = new Element({
     'data-modal-trigger': 'generate-contract',
@@ -368,6 +376,7 @@ test('clicking a Hire service trigger prefills only its owning native Services s
 
   assert.equal(firstService.value, '')
   assert.equal(secondService.value, 'Freelance work')
+  assert.equal(taggedHelper.value, '')
   assert.deepEqual(secondService.events, ['input', 'change'])
 })
 
