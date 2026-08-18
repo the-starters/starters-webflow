@@ -138,7 +138,6 @@ document.addEventListener("DOMContentLoaded", function () {
   // Keep in sync with the @release line in this file's header comment
   // (release marker convention: header + API property match the shipping tag).
   formFlowSystem.release = "v1.59.101"
-  const STEP_VISIBLE_EVENT = "starters:form-flow-step-visible"
 
   /**
    * Returns stored or computed `display` for an element, caching on first read.
@@ -188,22 +187,6 @@ document.addEventListener("DOMContentLoaded", function () {
     const display = displayOverride || getStoredDisplay(el)
     el.style.display = display
     el.setAttribute("aria-hidden", "false")
-  }
-
-  /**
-   * Announces a destination only after step-flow has made it visible. The event
-   * is synchronous by design: field owners may restore conditional `required`
-   * state before this flow's normal validation repaint runs.
-   * @param {HTMLElement} flow - Owning `[data-form-flow]` root.
-   * @param {HTMLElement} step - Step that was just shown.
-   * @param {string} flowId - Flow identifier.
-   * @param {string} stepId - Step identifier.
-   * @returns {void}
-   */
-  const announceVisibleStep = (flow, step, flowId, stepId) => {
-    window.dispatchEvent(new CustomEvent(STEP_VISIBLE_EVENT, {
-      detail: { flow, step, flowId, stepId },
-    }))
   }
 
   /**
@@ -1030,7 +1013,6 @@ document.addEventListener("DOMContentLoaded", function () {
         showEl(entryWrapper, "contents")
         state.currentGroupEl = showButtonGroup(STEP1_ID, entryWrapper)
         state.currentStepId = STEP1_ID
-        announceVisibleStep(parent, entryWrapper, flowId, STEP1_ID)
         syncStepValidation()
         maybeScrollToTop(previousStepId)
         return
@@ -1069,7 +1051,6 @@ document.addEventListener("DOMContentLoaded", function () {
       showEl(contentStep)
       state.currentGroupEl = showButtonGroup(stepId, getButtonGroupScope(stepId, scopeEl))
       state.currentStepId = stepId
-      announceVisibleStep(parent, contentStep, flowId, stepId)
       syncStepValidation()
       maybeScrollToTop(previousStepId)
     }

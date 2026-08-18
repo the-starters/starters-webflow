@@ -48,6 +48,9 @@ document.addEventListener("DOMContentLoaded", function () {
   /** @type {string} Set after the user interacts with a field; gates error UI. */
   const TOUCHED_FIELD_ATTR = "data-tab-validate-touched"
 
+  /** Scoped handoff after a destination panel is actually visible. */
+  const PANEL_VISIBLE_EVENT = "starters:tabs-panel-visible"
+
   /** Webflow-style boolean attrs use `"True"`; accept common variants. */
   const isAttrTrue = (value) => typeof value === "string" && value.toLowerCase() === "true"
 
@@ -452,6 +455,20 @@ document.addEventListener("DOMContentLoaded", function () {
       })
     }
 
+    /**
+     * Gives field owners one synchronous turn after the destination is visible,
+     * then repaints this component's validation state from the restored fields.
+     */
+    const finishActivation = (index) => {
+      const panel = panelItems[index]
+      tabWrap.dispatchEvent(new CustomEvent(PANEL_VISIBLE_EVENT, {
+        bubbles: true,
+        detail: { tabWrap, panel, index },
+      }))
+      updateNavState(index)
+      if (validateTabs) updateFieldInvalidStates(panel)
+    }
+
     const makeActive = (index, focus = false, animate = true) => {
       if (animating) return
       if (index < 0 || index >= buttonItems.length) return
@@ -473,12 +490,13 @@ document.addEventListener("DOMContentLoaded", function () {
       updatePanelTitles(index)
       if (focus) buttonItems[index].focus()
 
-      const previousPanel = panelItems[activeIndex]
+      const previousIndex = activeIndex
+      const previousPanel = panelItems[previousIndex]
       const currentPanel = panelItems[index]
       let direction = 1
-      if (activeIndex > index) direction = -1
+      if (previousIndex > index) direction = -1
 
-      if (typeof gsap !== "undefined" && animate && activeIndex !== index) {
+      if (typeof gsap !== "undefined" && animate && previousIndex !== index) {
         if (autoplayTl && !canPlay && typeof autoplayTl.restart === "function") {
           autoplayTl.restart()
         }
@@ -492,6 +510,7 @@ document.addEventListener("DOMContentLoaded", function () {
         })
         if (slideTabs) {
           tl.set(currentPanel, { display: "block", position: "relative" })
+          tl.call(() => finishActivation(index))
           if (previousPanel) tl.set(previousPanel, { position: "absolute", top: 0, left: 0, width: "100%" })
           if (previousPanel) tl.fromTo(previousPanel, { xPercent: 0 }, { xPercent: -120 * direction })
           tl.fromTo(currentPanel, { xPercent: 120 * direction }, { xPercent: 0 }, "<")
@@ -500,16 +519,18 @@ document.addEventListener("DOMContentLoaded", function () {
           if (previousPanel) tl.to(previousPanel, { opacity: 0 })
           if (previousPanel) tl.set(previousPanel, { display: "none" })
           tl.set(currentPanel, { display: "block" })
+          tl.call(() => finishActivation(index))
           tl.fromTo(currentPanel, { opacity: 0 }, { opacity: 1 })
         }
+        activeIndex = index
       } else {
         if (previousPanel) previousPanel.style.display = "none"
         if (currentPanel) currentPanel.style.display = "block"
+        activeIndex = index
+        finishActivation(index)
       }
 
-      updateNavState(index)
       scrollActiveIntoView(buttonItems[index])
-      activeIndex = index
     }
 
     makeActive(0, false, false)

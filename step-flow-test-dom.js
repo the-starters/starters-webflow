@@ -201,16 +201,6 @@ function mount(root, options = {}) {
     },
     lumos: undefined,
   }
-  const windowListeners = new Map()
-  window.addEventListener = (type, listener) => {
-    const list = windowListeners.get(type) || []
-    list.push(listener)
-    windowListeners.set(type, list)
-  }
-  window.dispatchEvent = (event) => {
-    for (const listener of windowListeners.get(event.type) || []) listener(event)
-    return true
-  }
   if (!options.noMatchMedia) {
     window.matchMedia = (query) => ({
       matches: !!options.reducedMotion && /reduced-motion/.test(query),
@@ -237,12 +227,6 @@ function mount(root, options = {}) {
     CSS: { escape: (value) => String(value) },
     HTMLElement: Element,
     HTMLInputElement: Element,
-    CustomEvent: class CustomEvent {
-      constructor(type, init = {}) {
-        this.type = type
-        this.detail = init.detail
-      }
-    },
     MutationObserver: class {
       observe() {}
     },

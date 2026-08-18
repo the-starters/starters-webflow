@@ -59,7 +59,7 @@
   var SMART_FILL_INPUT_SELECTOR = '[data-sp-fill="input"]'
   var CURRENT_DATE_SELECTOR = '[data-set-current-date]'
   var CURRENT_DATE_INIT_ATTR = 'data-set-current-date-inited'
-  var STEP_VISIBLE_EVENT = 'starters:form-flow-step-visible'
+  var TAB_PANEL_VISIBLE_EVENT = 'starters:tabs-panel-visible'
   var DEFAULT_DATE_FORMAT = 'mm/dd/yy'
   var MEMBERSTACK_POLL_MS = 100
   var MEMBERSTACK_MAX_TRIES = 50
@@ -1417,11 +1417,22 @@
     return syncProjectFormInModal(event && event.detail && event.detail.modal)
   }
 
-  function syncVisibleProjectStep(event) {
-    var flow = event && event.detail && event.detail.flow
-    if (!flow || !flow.getAttribute || clean(flow.getAttribute('data-form-flow')) !== 'generate-contract') return false
-    var modal = flow.closest && flow.closest('dialog[data-modal-target="generate-contract"]')
-    return syncProjectFormInModal(modal)
+  function syncVisibleProjectTab(event) {
+    var detail = event && event.detail
+    var tabWrap = detail && detail.tabWrap
+    var panel = detail && detail.panel
+    if (!tabWrap || !panel || !tabWrap.getAttribute ||
+      clean(tabWrap.getAttribute('data-tab-component')) !== 'wrapper') return false
+    if (!tabWrap.contains || !tabWrap.contains(panel)) return false
+    var modal = tabWrap.closest && tabWrap.closest('dialog[data-modal-target="generate-contract"]')
+    if (!modal || clean(modal.getAttribute && modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
+    var forms = modal.querySelectorAll
+      ? Array.prototype.slice.call(modal.querySelectorAll('[data-project-form-v3="brand"] form'))
+      : []
+    if (forms.length !== 1 || !forms[0].contains || !forms[0].contains(tabWrap)) return false
+    syncDurationFields(forms[0])
+    syncActiveRequired(forms[0])
+    return true
   }
 
   function projectApi(globalObject) {
@@ -1580,8 +1591,8 @@
     if (!documentObject || !documentObject.addEventListener) return
     if (globalObject && globalObject.addEventListener) {
       globalObject.addEventListener('modal-open', syncOpenedProjectModal)
-      globalObject.addEventListener(STEP_VISIBLE_EVENT, syncVisibleProjectStep)
     }
+    documentObject.addEventListener(TAB_PANEL_VISIBLE_EVENT, syncVisibleProjectTab)
     documentObject.addEventListener('click', function (event) {
       handleSmartFill(event, documentObject)
       var target = event.target
