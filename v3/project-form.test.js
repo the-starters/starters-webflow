@@ -1384,7 +1384,7 @@ test('binds the existing Hire trigger when the selected Starter identity is pres
   assert.equal(trackCalls.some((entry) => entry.name === 'project_form_opened'), true)
 })
 
-test('restores initial required fields when modal-open follows the captured Hire click', () => {
+test('restores a hidden Payment requirement only after its tabs engine shows that destination', () => {
   const form = projectForm()
   const feeStructure = nativeField('Fee-Structure', '', { tagName: 'SELECT', required: '' })
   feeStructure.form = form
@@ -1399,10 +1399,46 @@ test('restores initial required fields when modal-open follows the captured Hire
   assert.equal(feeStructure.getAttribute('data-project-required-hidden'), 'true')
 
   const modal = new Element({ 'data-modal-target': 'generate-contract', tagName: 'DIALOG' })
-  modal.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [form] : []
-  modal.querySelector = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? form : null
+  const modalSelectors = []
+  modal.querySelectorAll = (selector) => {
+    modalSelectors.push(selector)
+    return selector === '[data-project-form-v3="brand"] form' ? [form] : []
+  }
   feeStructure.offsetParent = {}
   window.dispatchEvent(new window.CustomEvent('modal-open', { detail: { modal } }))
+
+  assert.deepEqual(modalSelectors, ['[data-project-form-v3="brand"] form'])
+  assert.equal(feeStructure.required, true)
+  assert.equal(feeStructure.getAttribute('required'), '')
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), null)
+
+  // Reproduce the real sequence: Payment is hidden at modal-open, then the
+  // owning global-tabs component makes that panel visible and hands it off.
+  feeStructure.offsetParent = null
+  feeStructure.required = false
+  feeStructure.removeAttribute('required')
+  feeStructure.setAttribute('data-project-required-hidden', 'true')
+  window.dispatchEvent(new window.CustomEvent('modal-open', { detail: { modal } }))
+  assert.equal(feeStructure.required, false)
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), 'true')
+
+  const tabWrap = new Element({ 'data-tab-component': 'wrapper', tagName: 'DIV' })
+  tabWrap.closest = (selector) => selector === 'dialog[data-modal-target="generate-contract"]' ? modal : null
+  const payment = new Element({ 'data-tab-panel-title': 'Payment', tagName: 'DIV' })
+  tabWrap.contains = (node) => node === payment
+  form.contains = (node) => node === tabWrap || node === payment
+  payment.style.display = 'block'
+  feeStructure.offsetParent = {}
+
+  const unrelatedTabs = new Element({ 'data-tab-component': 'wrapper', tagName: 'DIV' })
+  unrelatedTabs.contains = (node) => node === payment
+  unrelatedTabs.closest = tabWrap.closest
+  document.listeners['starters:tabs-panel-visible'].handler({
+    detail: { tabWrap: unrelatedTabs, panel: payment, index: 1 },
+  })
+  assert.equal(feeStructure.required, false, 'an unrelated tabs component cannot restore this form')
+
+  document.listeners['starters:tabs-panel-visible'].handler({ detail: { tabWrap, panel: payment, index: 1 } })
 
   assert.equal(feeStructure.required, true)
   assert.equal(feeStructure.getAttribute('required'), '')

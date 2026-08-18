@@ -59,6 +59,7 @@
   var SMART_FILL_INPUT_SELECTOR = '[data-sp-fill="input"]'
   var CURRENT_DATE_SELECTOR = '[data-set-current-date]'
   var CURRENT_DATE_INIT_ATTR = 'data-set-current-date-inited'
+  var TAB_PANEL_VISIBLE_EVENT = 'starters:tabs-panel-visible'
   var DEFAULT_DATE_FORMAT = 'mm/dd/yy'
   var MEMBERSTACK_POLL_MS = 100
   var MEMBERSTACK_MAX_TRIES = 50
@@ -1393,17 +1394,42 @@
     return true
   }
 
-  // The delegated Hire click is captured before modal.js runs its bubble-phase
-  // opener. At that point every control still has offsetParent === null, so the
-  // native-validation guard correctly stashes `required`. Restore the authored
-  // required state only after modal.js has called showModal and published the
-  // modal-open event. Step-flow will then see the right constraints when it
-  // paints each step and decides whether Continue is enabled.
-  function syncOpenedProjectModal(event) {
-    var modal = event && event.detail && event.detail.modal
+  function syncProjectFormInModal(modal) {
     if (!modal || !modal.getAttribute || clean(modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
-    var forms = projectForms(modal)
+    // `modal` is already the dialog scope. Do not reuse FORM_SELECTOR here: it
+    // starts with that same dialog ancestor, and Element.querySelectorAll only
+    // returns descendants of its scope. Query the form relative to the opened
+    // modal so the real DOM and the duplicate-form fail-closed rule agree.
+    var forms = modal.querySelectorAll
+      ? Array.prototype.slice.call(modal.querySelectorAll('[data-project-form-v3="brand"] form'))
+      : []
     if (forms.length !== 1) return false
+    syncDurationFields(forms[0])
+    syncActiveRequired(forms[0])
+    return true
+  }
+
+  // The delegated Hire click is captured before modal.js runs its bubble-phase
+  // opener. Restore fields that are visible as soon as showModal completes.
+  // Conditional fields in later tabs remain stashed until the global tabs
+  // component announces that their own destination has become visible.
+  function syncOpenedProjectModal(event) {
+    return syncProjectFormInModal(event && event.detail && event.detail.modal)
+  }
+
+  function syncVisibleProjectTab(event) {
+    var detail = event && event.detail
+    var tabWrap = detail && detail.tabWrap
+    var panel = detail && detail.panel
+    if (!tabWrap || !panel || !tabWrap.getAttribute ||
+      clean(tabWrap.getAttribute('data-tab-component')) !== 'wrapper') return false
+    if (!tabWrap.contains || !tabWrap.contains(panel)) return false
+    var modal = tabWrap.closest && tabWrap.closest('dialog[data-modal-target="generate-contract"]')
+    if (!modal || clean(modal.getAttribute && modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
+    var forms = modal.querySelectorAll
+      ? Array.prototype.slice.call(modal.querySelectorAll('[data-project-form-v3="brand"] form'))
+      : []
+    if (forms.length !== 1 || !forms[0].contains || !forms[0].contains(tabWrap)) return false
     syncDurationFields(forms[0])
     syncActiveRequired(forms[0])
     return true
@@ -1566,6 +1592,7 @@
     if (globalObject && globalObject.addEventListener) {
       globalObject.addEventListener('modal-open', syncOpenedProjectModal)
     }
+    documentObject.addEventListener(TAB_PANEL_VISIBLE_EVENT, syncVisibleProjectTab)
     documentObject.addEventListener('click', function (event) {
       handleSmartFill(event, documentObject)
       var target = event.target
