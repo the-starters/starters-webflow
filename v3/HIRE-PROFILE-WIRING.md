@@ -218,18 +218,23 @@ CTA. It also marks unavailable options with `data-booking-unavailable` and
 even if a delayed shared-initializer callback changes their inline display.
 After discovery accepts the canonical set, the controller assigns each accepted
 Free or Paid `config_id` and removes both unavailable markers for that option.
-The shared initializer then owns which valid options become visible. A call type
-without one exact accepted configuration keeps no `data-config` and retains the
-structural hide. This keeps an authored Paid option closed during startup, on a
-missing dependency, and whenever Paid has no accepted configuration; it does
-not hide the separate Services call cards.
+The shared initializer receives only the accepted Free configuration and keeps
+the existing Free modal flow. `paid-call-brand-payment.js` receives the exact
+accepted Paid configuration and owns that authored CTA, Stripe Card Element,
+and paid booking command. A call type without one exact accepted configuration
+keeps no `data-config` and retains the structural hide. This keeps an authored
+Paid option closed during startup, when its controller is missing, and whenever
+Paid has no accepted configuration; it does not hide the separate Services call
+cards.
 
 On the Free Call details screen, the controller hides the booking-form rows for
 `brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
 timeslot. It does not remove or change either field, so both stable IDs remain
 in the Nylas booking payload for Xano environment routing and ownership checks.
 Name, Email, Add guest, and Call Context remain visible. This presentation-only
-change does not apply to Paid Consulting Call or alter payment behavior.
+change does not apply to Paid Consulting Call. Paid prevents the public Nylas
+booking mutation and submits the selected slot through the authenticated V3
+booking command described in [`README.md`](README.md#brand-paid-call-payment-method-client).
 
 Note: the staging test index does not contain production records, so a
 `404 ObjectID does not exist` on `webflow.io` is a data condition, not a code

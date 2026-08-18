@@ -1895,8 +1895,9 @@ The boundary is fail-closed:
 - `calendars/get_availabilities` remains deliberately unmapped and therefore
   blocked on every installed scheduling surface because its payload has not
   been proven compatible with `scheduler/get_availability/v3`.
-- Only the approved legacy Stripe customer, intent, setup-intent, and
-  payment-method provider routes pass through temporarily.
+- Legacy Stripe customer, intent, setup-intent, and payment-method provider
+  routes are blocked. Paid Hire booking uses only the authenticated V3
+  readiness, card-setup, default-selection, and booking-command routes.
 
 `scheduling-v3-stage-component.html` is the loader for the isolated cloned
 Webflow component used by the stage surfaces and canonical dashboards. Keep it
