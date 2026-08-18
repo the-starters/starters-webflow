@@ -277,11 +277,12 @@ reopening the modal.
 suppress the click, so the same node can also be the Hire modal trigger. Each
 category resolves to one control inside this form: `fee_structure` to the
 authored `Fee-Structure` control and `invoice_frequency` to the invoice-frequency
-control the serializer reads, and every other category — plus either of those two
-when its authored control is missing — to a `[data-sp-fill="input"]` field whose
-category matches exactly, then case- and separator-insensitively. The two remain
-independent — a fee-structure preset can never write the invoice select, and a
-CMS card may preset either, both, or neither. Values are applied the way a Brand
+control the serializer reads. Other categories first use a
+`[data-sp-fill="input"]` field whose category matches exactly, then case- and
+separator-insensitively. If `service` has no tagged target, it uses the native
+`Services` select inside the trigger's owning form. The two cutover categories
+remain independent — a fee-structure preset can never write the invoice select,
+and a CMS card may preset either, both, or neither. Values are applied the way a Brand
 would: a select matches an option by value then by visible text (case-insensitive
 fallback each time) and selects that exact option, so duplicate option values
 stay distinguishable; a radio preset widens to the whole same-named group and

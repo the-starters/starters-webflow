@@ -328,6 +328,49 @@ test('smart-fill mutates only the form that owns the clicked preset', () => {
   assert.equal(secondFee.value, 'monthly')
 })
 
+test('clicking a Hire service trigger prefills only its owning native Services select', () => {
+  const first = projectForm()
+  const second = projectForm()
+  const serviceOptions = () => [
+    { value: '', textContent: 'Select one...', selected: false },
+    { value: 'Freelance work', textContent: 'Freelance work', selected: false },
+  ]
+  const firstService = nativeField('Services', '', { tagName: 'SELECT', options: serviceOptions() })
+  const secondService = nativeField('Services', '', { tagName: 'SELECT', options: serviceOptions() })
+  first.children.push(firstService)
+  second.children.push(secondService)
+
+  const trigger = new Element({
+    'data-modal-trigger': 'generate-contract',
+    'data-sp-fill': 'button',
+    'data-sp-fill-category': 'service',
+    'data-sp-fill-value': 'Freelance work',
+  })
+  const owner = new Element()
+  const modal = new Element({ 'data-modal-target': 'generate-contract', tagName: 'DIALOG' })
+  trigger.parentElement = owner
+  modal.parentElement = owner
+  second.parentElement = modal
+  owner.querySelector = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? second : null
+  owner.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [second] : []
+
+  const clicked = new Element()
+  clicked.closest = (selector) => (
+    selector === '[data-sp-fill="button"]' || selector === '[data-modal-trigger="generate-contract"]'
+      ? trigger
+      : null
+  )
+  const document = documentFixture(first)
+  document.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [first, second] : []
+  load({ form: first, document })
+
+  document.listeners.click.handler({ target: clicked })
+
+  assert.equal(firstService.value, '')
+  assert.equal(secondService.value, 'Freelance work')
+  assert.deepEqual(secondService.events, ['input', 'change'])
+})
+
 test('smart-fill fails closed when duplicate forms have no unique owner', () => {
   const first = projectForm()
   const second = projectForm()
