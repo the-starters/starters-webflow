@@ -78,7 +78,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/starter-dashboard-messages.js` — shared Brand/Starter dashboard Messages tile; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for the authoritative data, rendering, and deep-link contract
 - `v3/starter-dashboard-points.js` — authenticated, attribute-driven `/starter-dashboard` points and rank tile; see [`v3/README.md`](v3/README.md#starter-dashboard-points-and-rank-tile) for the authoritative rendering, wiring, and ownership contract
 - `v3/starter-dashboard-stripe-connect.js` — Memberstack-scoped V3 Stripe Connect dashboard and OAuth-callback controller; the authoritative member-facing behavior and support-owned disconnect boundary live in [`v3/README.md`](v3/README.md#starter-dashboard-stripe-connect)
-- `v3/paid-call-brand-payment.js` — authenticated Brand payment-method client for paid-call booking surfaces; see [`v3/README.md`](v3/README.md#brand-paid-call-payment-method-client) for its idempotency, identity, and native-Webflow ownership contract
+- `v3/paid-call-brand-payment.js` — authenticated Brand card-setup and paid-call booking controller for Designer-authored Hire modals; see [`v3/README.md`](v3/README.md#brand-paid-call-payment-method-client) for its idempotency, identity, payment-authority, and native-Webflow ownership contract
 - `v3/dashboard-action-items.js` — shared Starter and Brand dashboard Action Items controller, including the Brand first-opportunity and `/all-starters` onboarding rows; the authoritative behavior and Designer contract live in [`v3/README.md`](v3/README.md#dashboard-action-items-panel)
 - `v3/onboarding-profile-preview.js` — onboarding self-preview `beforeRender` transform for the wf-xano list, including computed roles, category, location, bio, and endpoint-based arming; authoritative page wiring and instance rules live in [`v3/README.md`](v3/README.md#onboarding-profile-preview) and [`v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md`](v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md)
 - `v3/onboarding-done-redirect.js` — read half of the `/starter-onboarding` completion pair: redirects an already-complete member to `/starter-dashboard` and fails open; it installs only with `v3/patch-onboarding-status.js`; authoritative wiring and QA live in [`v3/README.md`](v3/README.md#onboarding-done-redirect) and [`v3/ONBOARDING-DONE-REDIRECT-WIRING.md`](v3/ONBOARDING-DONE-REDIRECT-WIRING.md)
@@ -153,7 +153,7 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/scheduling-availability-writer.js` — availability form, manager, Nylas scheduler, timezone, and calendar OAuth writer through `window.xanoAuthFetch`; the authoritative host, path, identity, and safety boundary lives in [`v3/README.md`](v3/README.md#booking-stage-availability-writer)
 - `v3/scheduling-availability-section.js` — non-modal counterpart to the writer above for the Designer "Dashboard / Calendar" section on the canonical Starter dashboard: per-item CRUD with an inline edit form per item, connect/disconnect, timezone, and a live bookable-slots preview, reusing the writer's connection/config logic without its modal steps; see [`v3/README.md`](v3/README.md#booking-stage-availability-section) for its markup contract and the OAuth-callback handoff with the writer
 - `v3/paid-call-settings.js` — native Starter paid-call settings controller backed only by canonical Xano get/upsert/disable endpoints; the authoritative Designer wiring, authority, and release gate live in [`v3/PAID-CALL-SETTINGS-WIRING.md`](v3/PAID-CALL-SETTINGS-WIRING.md)
-- `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed scheduling calls to exact V3 routes, blocks unclassified routes, and retains only approved legacy Stripe calls; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
+- `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed scheduling calls to exact V3 routes and blocks unclassified and legacy Stripe provider routes; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
@@ -583,7 +583,7 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 adapter on the pages listed in the authoritative V3 scheduling boundary. It
 rewrites reviewed scheduling calls to exact V3 routes and sends them through `window.xanoAuthFetch`, blocks #1553,
 transcription, `calendars/get_availabilities`, and every other unclassified
-scheduling route, and retains only the approved legacy Stripe provider calls.
+scheduling route, including the legacy Stripe provider routes.
 Use `v3/scheduling-v3-stage-component.html` as the first Code Embed in a clone
 of the existing scheduling component. The shared component used by `detail_hire`
 remains unchanged.
@@ -980,8 +980,12 @@ missing or rejected contract response closes the pre-opened blank tab and shows
 only the generic `Contract is unavailable. Please try again.` message.
 Returning from PandaDoc refreshes the loaded project page range on `pageshow`,
 window `focus`, or when the page becomes visible. The `focus` path covers a
-separate PandaDoc window that never hides the dashboard. The panel repaints from
-canonical signature state without discarding pagination.
+separate PandaDoc window that never hides the dashboard. These browser signals
+often arrive as one return burst, so they share one in-flight refresh and a
+successful result stays fresh for 30 seconds. A failed refresh starts no
+freshness window, so the next signal retries immediately. Click and project
+mutation refreshes bypass this lifecycle guard and remain immediate. The panel
+repaints from canonical signature state without discarding pagination.
 
 The Webflow-authored panel and compact action fail closed from dashboard boot:
 they stay hidden while Memberstack resolves, while the project list is pending or

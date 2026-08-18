@@ -172,6 +172,7 @@ function load(options = {}) {
   const consoleLogs = []
   const clipboardWrites = []
   const storage = new Map()
+  const windowListeners = new Map()
   const window = {
     document,
     crypto: { randomUUID: () => 'uuid-123' },
@@ -201,6 +202,14 @@ function load(options = {}) {
       },
     },
     console: { info(...args) { consoleLogs.push(args) } },
+    addEventListener(name, handler) {
+      const listeners = windowListeners.get(name) || []
+      listeners.push(handler)
+      windowListeners.set(name, listeners)
+    },
+    dispatchEvent(event) {
+      for (const listener of windowListeners.get(event.type) || []) listener(event)
+    },
     CustomEvent: class CustomEvent { constructor(name, init) { this.type = name; this.detail = init.detail } },
     Event: class Event { constructor(name) { this.type = name } },
     $memberstackDom: options.memberstack,
@@ -1094,6 +1103,15 @@ test('standard flat fee requires a future end date before calling Xano', () => {
   assert.match(invalidApi.validationError(invalidApi.serialize(invalid)), /must be after/)
 })
 
+test('weekly recurring accepts a valid past start date', () => {
+  const form = projectForm({ engagement_type: 'Weekly Recurring', start_date: '08/01/2026' })
+  const { api } = load({ form })
+  const serialized = api.serialize(form)
+
+  assert.equal(serialized.payload.start_date, '2026-08-01')
+  assert.equal(api.validationError(serialized), '')
+})
+
 test('keeps pricing separate from the authored own-contract choice', () => {
   const form = projectForm({ engagement_type: 'Weekly Recurring' })
   form.contractChoice = new Element({ 'data-project-contract-choice': '', value: 'My own contract' })
@@ -1364,6 +1382,67 @@ test('binds the existing Hire trigger when the selected Starter identity is pres
   assert.equal(api.bindTrigger(trigger, document, window), true)
   assert.equal(form.getAttribute('data-project-form-status'), 'ready')
   assert.equal(trackCalls.some((entry) => entry.name === 'project_form_opened'), true)
+})
+
+test('restores a hidden Payment requirement only after its tabs engine shows that destination', () => {
+  const form = projectForm()
+  const feeStructure = nativeField('Fee-Structure', '', { tagName: 'SELECT', required: '' })
+  feeStructure.form = form
+  feeStructure.offsetParent = null
+  form.children.push(feeStructure)
+  const { api, document, window } = load({ form })
+  const trigger = new Element({ 'data-modal-trigger': 'generate-contract' })
+
+  assert.equal(api.bindTrigger(trigger, document, window), true)
+  assert.equal(feeStructure.required, false)
+  assert.equal(feeStructure.getAttribute('required'), null)
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), 'true')
+
+  const modal = new Element({ 'data-modal-target': 'generate-contract', tagName: 'DIALOG' })
+  const modalSelectors = []
+  modal.querySelectorAll = (selector) => {
+    modalSelectors.push(selector)
+    return selector === '[data-project-form-v3="brand"] form' ? [form] : []
+  }
+  feeStructure.offsetParent = {}
+  window.dispatchEvent(new window.CustomEvent('modal-open', { detail: { modal } }))
+
+  assert.deepEqual(modalSelectors, ['[data-project-form-v3="brand"] form'])
+  assert.equal(feeStructure.required, true)
+  assert.equal(feeStructure.getAttribute('required'), '')
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), null)
+
+  // Reproduce the real sequence: Payment is hidden at modal-open, then the
+  // owning global-tabs component makes that panel visible and hands it off.
+  feeStructure.offsetParent = null
+  feeStructure.required = false
+  feeStructure.removeAttribute('required')
+  feeStructure.setAttribute('data-project-required-hidden', 'true')
+  window.dispatchEvent(new window.CustomEvent('modal-open', { detail: { modal } }))
+  assert.equal(feeStructure.required, false)
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), 'true')
+
+  const tabWrap = new Element({ 'data-tab-component': 'wrapper', tagName: 'DIV' })
+  tabWrap.closest = (selector) => selector === 'dialog[data-modal-target="generate-contract"]' ? modal : null
+  const payment = new Element({ 'data-tab-panel-title': 'Payment', tagName: 'DIV' })
+  tabWrap.contains = (node) => node === payment
+  form.contains = (node) => node === tabWrap || node === payment
+  payment.style.display = 'block'
+  feeStructure.offsetParent = {}
+
+  const unrelatedTabs = new Element({ 'data-tab-component': 'wrapper', tagName: 'DIV' })
+  unrelatedTabs.contains = (node) => node === payment
+  unrelatedTabs.closest = tabWrap.closest
+  document.listeners['starters:tabs-panel-visible'].handler({
+    detail: { tabWrap: unrelatedTabs, panel: payment, index: 1 },
+  })
+  assert.equal(feeStructure.required, false, 'an unrelated tabs component cannot restore this form')
+
+  document.listeners['starters:tabs-panel-visible'].handler({ detail: { tabWrap, panel: payment, index: 1 } })
+
+  assert.equal(feeStructure.required, true)
+  assert.equal(feeStructure.getAttribute('required'), '')
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), null)
 })
 
 test('binds only the clicked Starter modal when duplicate Contract Generation instances are open', () => {

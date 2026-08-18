@@ -52,6 +52,8 @@
     '/api:tCpV3oqd/booking_record/update_reschedule/v3',
     '/api:tCpV3oqd/brand/payment-method/setup/v3',
     '/api:tCpV3oqd/brand/payment-method/set-default/v3',
+    '/api:tCpV3oqd/brand/payment-readiness/v3',
+    '/api:tCpV3oqd/brand/booking/request/v3',
     '/api:tCpV3oqd/brands/customer/get/v3',
     '/api:tCpV3oqd/brands/update/customer_id/v3',
     '/api:tCpV3oqd/brands/update/payment_method/v3',

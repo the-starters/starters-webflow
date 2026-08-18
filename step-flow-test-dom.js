@@ -225,6 +225,8 @@ function mount(root, options = {}) {
     getComputedStyle,
     window,
     CSS: { escape: (value) => String(value) },
+    HTMLElement: Element,
+    HTMLInputElement: Element,
     MutationObserver: class {
       observe() {}
     },

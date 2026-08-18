@@ -58,6 +58,7 @@ async function loadBridge(
     autoLoadWorkflowDiagnostics = false,
     workflowDiagnosticsReady = null,
     setTimeoutImpl = setTimeout,
+    nowImpl = null,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -85,6 +86,7 @@ async function loadBridge(
     setAttribute: (name, value) => attributes.set(name, String(value)),
   }
   const document = {
+    visibilityState: 'visible',
     addEventListener(type, listener) {
       const listeners = documentListeners.get(type) || []
       listeners.push(listener)
@@ -167,6 +169,9 @@ async function loadBridge(
     pathname,
     search,
   }
+  const ContextDate = nowImpl
+    ? class extends Date { static now() { return nowImpl() } }
+    : Date
   context = vm.createContext({
     CustomEvent: class CustomEvent {
       constructor(type, options) {
@@ -182,6 +187,7 @@ async function loadBridge(
     },
     FormData,
     Headers,
+    Date: ContextDate,
     MutationObserver: class MutationObserver {
       constructor(callback) {
         this.callback = callback
@@ -2832,7 +2838,7 @@ test('contract panel paints one badge per party and only the authorized role act
 
 })
 
-test('contract panel refreshes canonical signing state after returning from PandaDoc', async () => {
+test('contract panel refreshes once for a dashboard lifecycle return burst', async () => {
   const title = el('div', { 'data-project-contract-title': '' })
   const body = el('div', { 'data-project-contract-body': '' })
   const badges = [
@@ -2849,6 +2855,7 @@ test('contract panel refreshes canonical signing state after returning from Pand
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '708' }, [panel])
   const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
   let listRequests = 0
+  let now = 10_000
 
   const bridge = await loadBridge(
     async (input) => {
@@ -2879,6 +2886,7 @@ test('contract panel refreshes canonical signing state after returning from Pand
       querySelectorAll: (selector) =>
         [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
       routeGuard: true,
+      nowImpl: () => now,
     },
   )
 
@@ -2896,8 +2904,20 @@ test('contract panel refreshes canonical signing state after returning from Pand
     .map((badge) => badge.getAttribute('data-project-contract-badge'))
   assert.deepEqual(visibleBadges, ['brand-signed', 'starter-pending'])
 
-  // PandaDoc can open in a separate window without hiding the dashboard.
-  // Returning to the dashboard fires focus rather than pageshow.
+  // One browser return can emit pageshow, focus, and visible visibilitychange.
+  // The first signal refreshes canonical state; the rest belong to that burst.
+  bridge.dispatchWindow('focus')
+  bridge.dispatchDocument('visibilitychange', {})
+  await new Promise(setImmediate)
+  assert.equal(listRequests, 2)
+
+  // A distinct refocus while the lifecycle result is still fresh stays local.
+  now += 15_000
+  bridge.dispatchWindow('focus')
+  await new Promise(setImmediate)
+  assert.equal(listRequests, 2)
+
+  now += 15_001
   bridge.dispatchWindow('focus')
   assert.ok(await waitFor(() => listRequests === 3))
 })
@@ -2917,7 +2937,7 @@ test('contract panel fails closed when its return refresh fails', async () => {
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
       if (url.includes('/brand/projects/mine')) {
         listRequests += 1
-        if (listRequests > 1) throw new Error('Temporary project list failure')
+        if (listRequests === 2) throw new Error('Temporary project list failure')
         return response({
           items: [{
             id: 708,
@@ -2951,6 +2971,11 @@ test('contract panel fails closed when its return refresh fails', async () => {
   assert.equal(panel.getAttribute('aria-hidden'), 'true')
   assert.equal(signWrap.style.display, 'none')
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /focus projection refresh failed/)
+
+  // A failed lifecycle refresh never starts the freshness window. The next
+  // focus retries immediately and can restore the canonical projection.
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => listRequests === 3 && signWrap.style.display === ''))
 })
 
 test('View Contract fails closed when the canonical refresh transiently fails', async () => {

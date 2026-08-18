@@ -59,6 +59,7 @@
   var SMART_FILL_INPUT_SELECTOR = '[data-sp-fill="input"]'
   var CURRENT_DATE_SELECTOR = '[data-set-current-date]'
   var CURRENT_DATE_INIT_ATTR = 'data-set-current-date-inited'
+  var TAB_PANEL_VISIBLE_EVENT = 'starters:tabs-panel-visible'
   var DEFAULT_DATE_FORMAT = 'mm/dd/yy'
   var MEMBERSTACK_POLL_MS = 100
   var MEMBERSTACK_MAX_TRIES = 50
@@ -989,6 +990,41 @@
     }
   }
 
+  function syncFlatFeeDates(form) {
+    var panel = engagementPanel(form, 'flat_fee')
+    if (!panel) return
+    var start = panelField(form, panel, 'startDateInput')
+    var end = panelField(form, panel, 'endDateInput')
+    var active = readEngagement(form) === 'flat_fee'
+
+    ;[start, end].forEach(function (field) {
+      if (!field) return
+      if (active) {
+        field.required = true
+        if (field.setAttribute) field.setAttribute('required', '')
+      }
+      if (typeof field.setCustomValidity === 'function') field.setCustomValidity('')
+    })
+
+    if (!active || !start || !end || typeof end.setCustomValidity !== 'function') return
+    var startDate = dateValue(start.value)
+    var endDate = dateValue(end.value)
+    if (startDate && endDate && endDate <= startDate) {
+      end.setCustomValidity('The estimated end date must be after the start date.')
+    }
+  }
+
+  function syncWeeklyStartDate(form) {
+    var panel = engagementPanel(form, 'weekly')
+    var field = panelField(form, panel, 'startDateInput')
+    if (!field) return
+    if (field.removeAttribute) field.removeAttribute('data-input-datepicker-min')
+    var jquery = global && global.jQuery
+    if (jquery && jquery.fn && jquery.fn.datepicker && jquery(field).data('datepicker')) {
+      jquery(field).datepicker('option', 'minDate', null)
+    }
+  }
+
   function syncHoursCapFields(form) {
     var panel = engagementPanel(form, 'hourly')
     if (!panel) return
@@ -1024,6 +1060,8 @@
   }
 
   function syncDurationFields(form) {
+    syncFlatFeeDates(form)
+    syncWeeklyStartDate(form)
     syncMonthlyDurationField(form)
     syncHourlyDurationChoice(form)
     syncHoursCapFields(form)
@@ -1356,6 +1394,47 @@
     return true
   }
 
+  function syncProjectFormInModal(modal) {
+    if (!modal || !modal.getAttribute || clean(modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
+    // `modal` is already the dialog scope. Do not reuse FORM_SELECTOR here: it
+    // starts with that same dialog ancestor, and Element.querySelectorAll only
+    // returns descendants of its scope. Query the form relative to the opened
+    // modal so the real DOM and the duplicate-form fail-closed rule agree.
+    var forms = modal.querySelectorAll
+      ? Array.prototype.slice.call(modal.querySelectorAll('[data-project-form-v3="brand"] form'))
+      : []
+    if (forms.length !== 1) return false
+    syncDurationFields(forms[0])
+    syncActiveRequired(forms[0])
+    return true
+  }
+
+  // The delegated Hire click is captured before modal.js runs its bubble-phase
+  // opener. Restore fields that are visible as soon as showModal completes.
+  // Conditional fields in later tabs remain stashed until the global tabs
+  // component announces that their own destination has become visible.
+  function syncOpenedProjectModal(event) {
+    return syncProjectFormInModal(event && event.detail && event.detail.modal)
+  }
+
+  function syncVisibleProjectTab(event) {
+    var detail = event && event.detail
+    var tabWrap = detail && detail.tabWrap
+    var panel = detail && detail.panel
+    if (!tabWrap || !panel || !tabWrap.getAttribute ||
+      clean(tabWrap.getAttribute('data-tab-component')) !== 'wrapper') return false
+    if (!tabWrap.contains || !tabWrap.contains(panel)) return false
+    var modal = tabWrap.closest && tabWrap.closest('dialog[data-modal-target="generate-contract"]')
+    if (!modal || clean(modal.getAttribute && modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
+    var forms = modal.querySelectorAll
+      ? Array.prototype.slice.call(modal.querySelectorAll('[data-project-form-v3="brand"] form'))
+      : []
+    if (forms.length !== 1 || !forms[0].contains || !forms[0].contains(tabWrap)) return false
+    syncDurationFields(forms[0])
+    syncActiveRequired(forms[0])
+    return true
+  }
+
   function projectApi(globalObject) {
     var api = globalObject && globalObject.Opp30 && globalObject.Opp30.API
     return api && typeof api.projectDirectCreate === 'function' ? api.projectDirectCreate : null
@@ -1510,6 +1589,10 @@
 
   function install(documentObject, globalObject) {
     if (!documentObject || !documentObject.addEventListener) return
+    if (globalObject && globalObject.addEventListener) {
+      globalObject.addEventListener('modal-open', syncOpenedProjectModal)
+    }
+    documentObject.addEventListener(TAB_PANEL_VISIBLE_EVENT, syncVisibleProjectTab)
     documentObject.addEventListener('click', function (event) {
       handleSmartFill(event, documentObject)
       var target = event.target
@@ -1526,7 +1609,7 @@
         syncDurationFields(clickedForm)
         syncActiveRequired(clickedForm)
       }
-    })
+    }, true)
     documentObject.addEventListener('change', function (event) {
       // Switching fee structure or contract type swaps which conditional panel
       // is visible; keep required aligned for implicit (Enter key) submission.
@@ -1536,7 +1619,7 @@
         syncDurationFields(form)
         syncActiveRequired(form)
       }
-    })
+    }, true)
     documentObject.addEventListener('input', function (event) {
       var field = event.target
       var form = field && field.closest ? field.closest(FORM_SELECTOR) : null
@@ -1548,7 +1631,7 @@
       formState.key = ''
       formState.keyPayload = ''
       setField(form, 'idempotency_key', '')
-    })
+    }, true)
     documentObject.addEventListener('invalid', function (event) {
       var form = event.target && event.target.closest ? event.target.closest(FORM_SELECTOR) : null
       if (!form) return

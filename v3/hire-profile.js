@@ -587,7 +587,57 @@
               configs[0].config_id
           ) {
 
-              initBookingComponents(freelancerId, grant_id, configs, brand_name, brand_email);
+              const freeConfigs = configs.filter(function (record) {
+                  return record.is_paid === false;
+              });
+              const paidConfig = configs.find(function (record) {
+                  return record.is_paid === true;
+              }) || null;
+
+              // The shared initializer still owns Free. Remove Paid before it
+              // scans [data-config], otherwise its legacy customer/Stripe branch
+              // can capture the authored Paid CTA and bypass the V3 controller.
+              primeBookingModalOptions(freeConfigs);
+              if (freeConfigs.length) {
+                  initBookingComponents(
+                      freelancerId,
+                      grant_id,
+                      freeConfigs,
+                      brand_name,
+                      brand_email
+                  );
+              }
+
+              // Restore the complete canonical chooser after the Free-only
+              // initializer finishes, then give Paid to the authenticated V3
+              // payment and booking controller.
+              primeBookingModalOptions(configs);
+              qsa('[call-type-item] [booking-popup-open][data-type="free"][data-config]').forEach(function (cta) {
+                  const item = cta.closest('[call-type-item]');
+                  if (item) item.style.display = 'block';
+              });
+              if (paidConfig) {
+                  const paidController = window.StartersPaidCallBrandPayment;
+                  const installed = paidController &&
+                      typeof paidController.installPaidBookingController === 'function' &&
+                      paidController.installPaidBookingController({
+                          config: paidConfig,
+                          starterSlug: decodeURIComponent(
+                              window.location.pathname.replace(/^\/hire\//, '').replace(/\/+$/, '')
+                          ),
+                          brandName: brand_name,
+                          brandEmail: brand_email,
+                          createScheduler: window.createScheduler,
+                      });
+                  if (!installed) {
+                      primeBookingModalOptions(freeConfigs);
+                      console.warn('Paid Call controller is unavailable; Paid stayed closed.');
+                  }
+              }
+
+              qsa('[booking-button-wrapper]').forEach(function (wrapper) {
+                  wrapper.style.display = 'flex';
+              });
               const primaryConfigId = configs[0].config_id;
 
               /* Next Available Slot _ Handlers */
