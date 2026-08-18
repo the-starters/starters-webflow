@@ -2213,6 +2213,11 @@
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
   ]
+  // Browsers commonly emit pageshow, focus, and visible visibilitychange for
+  // one return to a dashboard. Refresh on the first signal, then treat the
+  // remaining signals as one lifecycle burst. Project mutations bypass this
+  // guard and continue to refresh immediately.
+  const PROJECT_LIFECYCLE_REFRESH_FRESH_MS = 30000
   let projectWorkflowRole = ''
   let projectWorkflowItems = new Map()
   let projectWorkflowRefresh = null
@@ -3105,6 +3110,32 @@
     }
   }
 
+  function refreshProjectWorkflowForLifecycle(binding, operation) {
+    if (!projectWorkflowBindingCurrent(binding)) return Promise.resolve(false)
+    if (binding.lifecycleRefresh) return binding.lifecycleRefresh
+
+    const now = Date.now()
+    if (now - binding.lifecycleRefreshAt < PROJECT_LIFECYCLE_REFRESH_FRESH_MS) {
+      return Promise.resolve(true)
+    }
+
+    const request = refreshProjectWorkflowBestEffort(binding.role, operation)
+    binding.lifecycleRefresh = request
+    request.then((refreshed) => {
+      // A failed refresh is not fresh. Let the next lifecycle signal retry
+      // immediately instead of preserving a fail-closed projection for 30s.
+      if (refreshed && projectWorkflowBindingCurrent(binding)) {
+        binding.lifecycleRefreshAt = Date.now()
+      }
+    })
+    request.finally(() => {
+      // A completed request from an old, unwired binding must not touch the
+      // current binding's freshness state.
+      if (binding.lifecycleRefresh === request) binding.lifecycleRefresh = null
+    })
+    return request
+  }
+
   function projectLifecycleVersion(project) {
     if (!project || project.lifecycle_version == null || project.lifecycle_version === '') {
       return null
@@ -3701,6 +3732,8 @@
       pageshow: null,
       focus: null,
       visibility: null,
+      lifecycleRefresh: null,
+      lifecycleRefreshAt: -Infinity,
     }
     binding.click = async (event) => {
       if (!projectWorkflowBindingCurrent(binding)) {
@@ -3725,17 +3758,17 @@
     document.addEventListener('click', binding.click, true)
     binding.pageshow = () => {
       if (projectWorkflowBindingCurrent(binding)) {
-        refreshProjectWorkflowBestEffort(role, 'pageshow')
+        refreshProjectWorkflowForLifecycle(binding, 'pageshow')
       }
     }
     binding.focus = () => {
       if (projectWorkflowBindingCurrent(binding)) {
-        refreshProjectWorkflowBestEffort(role, 'focus')
+        refreshProjectWorkflowForLifecycle(binding, 'focus')
       }
     }
     binding.visibility = () => {
       if (document.visibilityState === 'visible' && projectWorkflowBindingCurrent(binding)) {
-        refreshProjectWorkflowBestEffort(role, 'visibility')
+        refreshProjectWorkflowForLifecycle(binding, 'visibility')
       }
     }
     window.addEventListener('pageshow', binding.pageshow)

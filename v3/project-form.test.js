@@ -1094,6 +1094,15 @@ test('standard flat fee requires a future end date before calling Xano', () => {
   assert.match(invalidApi.validationError(invalidApi.serialize(invalid)), /must be after/)
 })
 
+test('weekly recurring accepts a valid past start date', () => {
+  const form = projectForm({ engagement_type: 'Weekly Recurring', start_date: '08/01/2026' })
+  const { api } = load({ form })
+  const serialized = api.serialize(form)
+
+  assert.equal(serialized.payload.start_date, '2026-08-01')
+  assert.equal(api.validationError(serialized), '')
+})
+
 test('keeps pricing separate from the authored own-contract choice', () => {
   const form = projectForm({ engagement_type: 'Weekly Recurring' })
   form.contractChoice = new Element({ 'data-project-contract-choice': '', value: 'My own contract' })
