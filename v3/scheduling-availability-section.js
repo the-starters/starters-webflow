@@ -38,7 +38,6 @@
   const CONNECTION_STATUS_ATTRIBUTE = 'data-scheduling-calendar-state'
   const CACHE_PREFIX = 'starter-scheduling-availability:'
   const TIMEZONE_CACHE_PREFIX = 'starter-timezone:'
-  const PAID_RATE_STORAGE_KEY = 'paid_call_rate'
   const OAUTH_INTENT_PREFIX = 'starter-scheduling-oauth-intent:'
   const OAUTH_CALLBACK_KEY = 'starter-scheduling-oauth-callback'
   const OAUTH_INTENT_MAX_AGE = 15 * 60 * 1000
@@ -91,6 +90,10 @@
   let connectBusy = false
   let cachedItemTemplate = null
   let creatingDraft = false
+  let selectedPreviewConfigId = null
+  let selectedPreviewDateKey = null
+  let selectedPreviewSlotStart = null
+  let previewRenderVersion = 0
   // Set by the per-item "open-item-remove" trigger, consumed by the
   // notification modal's "item-remove" confirm button.
   let pendingRemoveId = null
@@ -116,6 +119,7 @@
           Date.now() - stored.capturedAt <= OAUTH_INTENT_MAX_AGE &&
           (stored.code || stored.grantId || stored.hasError)
         ) {
+          stored.resumed = true
           stored.remainingQuery = window.location.search.replace(/^\?/, '')
           return stored
         }
@@ -354,20 +358,25 @@
       : 'https://' + window.location.hostname + PRODUCTION_PATH
   }
 
-  function rememberOAuthIntent(memberId, redirectUri) {
+  function rememberOAuthIntent(memberId, redirectUri, paidCallIntent) {
+    const intent = {
+      createdAt: Date.now(),
+      redirectUri: redirectUri,
+      paidCallIntent: paidCallIntent || null,
+    }
     try {
       window.sessionStorage.setItem(
         OAUTH_INTENT_PREFIX + memberId,
-        JSON.stringify({ createdAt: Date.now(), redirectUri: redirectUri }),
+        JSON.stringify(intent),
       )
+      return intent
     } catch (error) {
-      /* storage unavailable */
+      return null
     }
   }
 
   function readOAuthIntent(memberId) {
     const redirectUri = oauthRedirectUri()
-    if (isStagingHost) return { redirectUri: redirectUri }
     const key = OAUTH_INTENT_PREFIX + memberId
     try {
       const raw = window.sessionStorage.getItem(key)
@@ -382,14 +391,14 @@
         return intent
       }
       window.sessionStorage.removeItem(key)
-      return null
+      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
     } catch (error) {
       try {
         window.sessionStorage.removeItem(key)
       } catch (storageError) {
         /* storage unavailable */
       }
-      return null
+      return isStagingHost ? { redirectUri: redirectUri, paidCallIntent: null } : null
     }
   }
 
@@ -399,6 +408,12 @@
     } catch (error) {
       /* storage unavailable */
     }
+  }
+
+  function persistOAuthIntent(memberId, intent) {
+    if (!Number.isFinite(intent.createdAt)) intent.createdAt = Date.now()
+    window.sessionStorage.setItem(OAUTH_INTENT_PREFIX + memberId, JSON.stringify(intent))
+    return intent
   }
 
   function invalidOAuthCallback(message) {
@@ -556,7 +571,7 @@
   }
 
   // A member connecting a calendar for the first time (platform or Google)
-  // has no `general` item yet — left as-is, createConfigPair() would build
+  // has no `general` item yet — left as-is, createFreeConfig() would build
   // the scheduler config with empty open hours, and nobody could ever book a
   // slot. Seed a Mon-Fri 09:00-18:00 default so the connection is usable
   // right away; the member can edit it or add overrides afterward. Never
@@ -685,44 +700,128 @@
     }
   }
 
-  // `#price` is a single hidden input living directly in
-  // `[data-availability-element="list"]` (not cloned per item form) —
-  // populated once at bootstrap from the starter's own `Paid_Call_Rate`.
-  // Only its `value` is read — `[data-rate]` was a static Designer
-  // placeholder left over from the old flow and carries no live data.
-  function resolvePaidRate() {
-    const priceInput = qs('#price')
-    if (priceInput) {
-      const rate = Number(priceInput.value || 0)
-      if (rate > 0) return rate
-    }
-    try {
-      const stored = Number(window.localStorage.getItem(PAID_RATE_STORAGE_KEY) || 0)
-      if (stored > 0) return stored
-    } catch (error) {
-      /* storage unavailable */
-    }
-    return 0
-  }
-
-  async function createConfigPair() {
+  // Calendar setup owns only the free-call configuration. Paid services are
+  // created, updated, and disabled through the canonical paid-call settings
+  // endpoints, never from a DOM value or browser cache.
+  async function createFreeConfig() {
     const free = await setupConfigs('free')
     if (free === null) throw new Error('Free scheduler configuration failed')
-    if (resolvePaidRate() > 0) {
-      const paid = await setupConfigs('paid')
-      if (paid === null) throw new Error('Paid scheduler configuration failed')
-      return paid
-    }
-    console.info('[scheduling-section] no paid-call rate; skipping paid configuration')
     return free
   }
 
-  async function setupConfigs(type, isUpdate, configId) {
+  function paidCallService(value) {
+    if (!value || !Array.isArray(value.services) || !value.readiness) {
+      throw new Error('Paid-call settings reader returned an invalid response')
+    }
+    const active = value.services.filter(function (service) {
+      return service && service.active === true
+    })
+    if (active.length > 1) throw new Error('Multiple active paid-call services require support')
+    return active[0] || null
+  }
+
+  async function capturePaidCallIntent() {
+    const service = paidCallService(await xanoGet('/starter/paid-call-settings/get/v3'))
+    if (!service) return null
+    const intent = {
+      title: String(service.title || '').trim(),
+      price_cents: Number(service.price_cents),
+      duration_minutes: Number(service.duration),
+    }
+    if (
+      intent.title.length < 3 ||
+      !Number.isInteger(intent.price_cents) ||
+      intent.price_cents < 500 ||
+      [15, 30, 45, 60].indexOf(intent.duration_minutes) === -1
+    ) {
+      throw new Error('Canonical paid-call service cannot be preserved')
+    }
+    return intent
+  }
+
+  async function restorePaidCallIntent(intent) {
+    if (!intent) return null
+    const existing = paidCallService(await xanoGet('/starter/paid-call-settings/get/v3'))
+    if (existing) {
+      if (
+        existing.title === intent.title &&
+        Number(existing.price_cents) === intent.price_cents &&
+        Number(existing.duration) === intent.duration_minutes
+      ) {
+        return existing
+      }
+      throw new Error('Canonical paid-call service conflicts with transition intent')
+    }
+    await xanoPost('/starter/paid-call-settings/upsert/v3', {
+      config_id: null,
+      title: intent.title,
+      price_cents: intent.price_cents,
+      duration_minutes: intent.duration_minutes,
+      expected_revision: 0,
+      idempotency_key: 'paid-call-calendar-transition:' + crypto.randomUUID(),
+    })
+    const service = paidCallService(await xanoGet('/starter/paid-call-settings/get/v3'))
+    if (
+      !service ||
+      service.title !== intent.title ||
+      Number(service.price_cents) !== intent.price_cents ||
+      Number(service.duration) !== intent.duration_minutes
+    ) {
+      throw new Error('Paid-call service did not match canonical transition readback')
+    }
+    return service
+  }
+
+  async function recoverPaidCallAfterOAuthCancellation(memberId, oauthIntent) {
+    const intent = oauthIntent && oauthIntent.paidCallIntent
+    if (!intent) return false
+    await refreshCanonicalConnectionState()
+    let createdVirtual = false
+    const recovery = oauthIntent.virtualRecovery
+    const resumableGrant =
+      recovery && recovery.grant_id && (!grantId || recovery.grant_id === grantId)
+        ? recovery
+        : null
+    if (grantId && (!grantEmail || !grantCalendarId) && !resumableGrant) {
+      throw new Error('Canonical calendar transition is incomplete')
+    }
+    if (!grantId || !grantEmail || !grantCalendarId) {
+      const virtual = await createTransitionVirtualCalendar(memberId, oauthIntent, resumableGrant)
+      if (virtual.status !== 200) throw new Error('OAuth cancellation recovery failed')
+      grantId = virtual.grant_id
+      grantEmail = virtual.email
+      grantCalendarId = virtual.calendar_id
+      configs = []
+      createdVirtual = true
+    }
+    ensureDefaultAvailability()
+    if (activeFreeConfigs().length === 0) await createFreeConfig()
+    if (createdVirtual || availability.manager === null) {
+      availability.manager = 'platform'
+      await updateAvail()
+    }
+    await restorePaidCallIntent(intent)
+    await refreshCanonicalConnectionState()
+    return true
+  }
+
+  async function recoverFailedCalendarTransition(memberId, transition, error) {
+    const recoveryTransition = transition || (error && error.calendarTransition)
+    if (!(memberId && recoveryTransition && recoveryTransition.oauthIntent)) return false
+    const recovered = await recoverPaidCallAfterOAuthCancellation(
+      memberId,
+      recoveryTransition.oauthIntent,
+    )
+    if (recovered) clearOAuthIntent(memberId)
+    return recovered
+  }
+
+  async function setupConfigs(type) {
+    if (type !== 'free') throw new Error('Paid configurations require the paid-call settings endpoint')
     await ensureTimezone()
-    const isPaidCall = type === 'paid'
     const openHours = getAvailArray()
-    const price = isPaidCall ? String(resolvePaidRate()) : '0'
-    const duration = isPaidCall ? 60 : 30
+    const price = '0'
+    const duration = 30
     const interval = 15
     const buffer = 10
 
@@ -730,17 +829,12 @@
     const lastName = memberFields['last-name'] || ''
     const memberEmail = (window.MEMBER && window.MEMBER.auth && window.MEMBER.auth.email) || ''
 
-    const tinyTitle = isPaidCall ? 'Paid Consultation Call' : 'Free Consultation Call'
-    const fullTitle = isPaidCall
-      ? tinyTitle + ' - ' + duration + 'min - $' + price
-      : tinyTitle + ' - ' + duration + 'min'
-
-    const requestConfig = {}
-    if (isUpdate && configId) requestConfig.config_id = configId
+    const tinyTitle = 'Free Consultation Call'
+    const fullTitle = tinyTitle + ' - ' + duration + 'min'
 
     const redirectURL = window.location.origin + window.location.pathname
 
-    const payload = Object.assign({}, requestConfig, {
+    const payload = {
       grant_id: grantId,
       in_config_name: fullTitle,
       in_availability: {
@@ -784,7 +878,7 @@
         additional_fields: {
           call_full_title: { type: 'metadata', label: 'Call Full Title', default: fullTitle, required: false },
           call_tiny_title: { type: 'metadata', label: 'Call Tiny Title', default: tinyTitle, required: false },
-          call_type: { type: 'metadata', label: 'Call Type', default: isPaidCall ? 'paid' : 'free', required: false },
+          call_type: { type: 'metadata', label: 'Call Type', default: 'free', required: false },
           starter_name: { type: 'metadata', label: 'Starter Name', default: firstName + ' ' + lastName, required: false },
           starter_email: { type: 'metadata', label: 'Starter Email', default: memberEmail, required: false },
           call_price: { type: 'metadata', label: 'Call Price', default: price, required: false },
@@ -796,11 +890,11 @@
           from_stage: { type: 'text', label: 'Is From Stage', default: '', required: false },
         },
       },
-    })
+    }
 
     try {
       const res = await xanoPost(
-        '/scheduler/configurations/' + (isUpdate ? 'update/v3' : 'create/v3'),
+        '/scheduler/configurations/create/v3',
         payload,
       )
       if (res && res.response && res.response.status === 200) return true
@@ -814,10 +908,35 @@
     }
   }
 
+  async function updateConfigAvailability(record) {
+    await ensureTimezone()
+    const duration = Number(record && record.duration)
+    if (!record || !record.config_id || !Number.isFinite(duration) || duration <= 0) {
+      throw new Error('Canonical scheduler configuration is missing update fields')
+    }
+    const res = await xanoPost('/scheduler/configurations/update/v3', {
+      config_id: record.config_id,
+      grant_id: grantId,
+      in_availability: {
+        duration_minutes: duration,
+        interval_minutes: 15,
+        availability_rules: {
+          availability_method: 'collective',
+          buffer: { before: 10, after: 10 },
+          default_open_hours: getAvailArray(),
+        },
+      },
+    })
+    if (res && res.response && res.response.status === 200) return true
+    publishCalendarConnectionError()
+    return null
+  }
+
   async function updateConfigs() {
+    configs = await getConfigs(grantId, true)
     const configsResponse = []
-    for (const record of configs) {
-      const res = await setupConfigs(record.is_paid ? 'paid' : 'free', true, record.config_id)
+    for (const record of configs.filter(function (config) { return config.active !== false })) {
+      const res = await updateConfigAvailability(record)
       configsResponse.push(res)
     }
     return configsResponse.length > 0 && configsResponse.every(Boolean)
@@ -827,18 +946,26 @@
   /* Virtual (platform-managed) calendar + disconnect                    */
   /* ------------------------------------------------------------------ */
 
-  async function createVirtualCalendarFlow(memberId) {
+  async function createVirtualCalendarFlow(memberId, options) {
     await ensureTimezone()
     const result = { status: 400, grant_id: null, email: null, calendar_id: null }
-    let account = null
-    try {
-      const accountResponse = await xanoPost('/grants/create_virtual_account/v3', {
-        member_id: memberId,
-      })
-      account = accountResponse && accountResponse.response && accountResponse.response.result
-    } catch (error) {
-      console.warn('[scheduling-section] virtual account failed:', error && error.message)
-      return result
+    let account =
+      options && options.account && options.account.grant_id
+        ? { data: { id: options.account.grant_id, email: options.account.email || null } }
+        : null
+    if (!account) {
+      try {
+        const accountResponse = await xanoPost('/grants/create_virtual_account/v3', {
+          member_id: memberId,
+        })
+        account = accountResponse && accountResponse.response && accountResponse.response.result
+        if (account && account.data && options && typeof options.onAccount === 'function') {
+          options.onAccount(account.data)
+        }
+      } catch (error) {
+        console.warn('[scheduling-section] virtual account failed:', error && error.message)
+        return result
+      }
     }
     const virtualGrantId = account && account.data && account.data.id
     if (!virtualGrantId) return result
@@ -869,20 +996,48 @@
     }
   }
 
-  async function clearGrant(currentGrantId) {
-    if (!currentGrantId) return
+  async function createTransitionVirtualCalendar(memberId, oauthIntent, account) {
+    if (!oauthIntent) return createVirtualCalendarFlow(memberId)
+    return createVirtualCalendarFlow(memberId, {
+      account: account || oauthIntent.virtualRecovery || null,
+      onAccount: function (createdAccount) {
+        oauthIntent.virtualRecovery = {
+          grant_id: createdAccount.id,
+          email: createdAccount.email || null,
+        }
+        persistOAuthIntent(memberId, oauthIntent)
+      },
+    })
+  }
+
+  async function clearGrant(currentGrantId, memberId) {
+    if (!currentGrantId) return { paidCallIntent: null }
     await ensureTimezone()
+    const paidCallIntent = await capturePaidCallIntent()
+    const oauthIntent = paidCallIntent
+      ? rememberOAuthIntent(memberId, oauthRedirectUri(), paidCallIntent)
+      : null
+    if (paidCallIntent && !oauthIntent) {
+      throw new Error('Paid-call calendar transition could not be retained')
+    }
+    const transition = { paidCallIntent: paidCallIntent, oauthIntent: oauthIntent }
     // The authenticated Xano route owns the complete provider-first lifecycle:
     // active-booking guard, Nylas grant deletion, configuration cleanup,
     // canonical availability cleanup, and Memberstack reconciliation. Never
     // call the page's legacy clearGrantData helper or clear canonical fields
     // before this request, because doing so removes the ownership proof that
     // the composite route needs to delete the provider grant safely.
-    const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
-    if (!result || result.connected !== false) {
-      throw new Error('grants/delete/v3 returned an invalid disconnected state')
+    try {
+      const result = await xanoPost('/grants/delete/v3', { in_grant_id: currentGrantId })
+      if (!result || result.connected !== false) {
+        throw new Error('grants/delete/v3 returned an invalid disconnected state')
+      }
+      return Object.assign({ result: result }, transition)
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error('grants/delete/v3 failed')
+      failure.calendarTransition = transition
+      throw failure
     }
-    return result
   }
 
   /* ------------------------------------------------------------------ */
@@ -894,28 +1049,40 @@
     connectBusy = true
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
+    let memberId = null
+    let transition = null
     try {
-      const memberId = await writeMemberId()
+      memberId = await writeMemberId()
       // Switching straight from Google to Platform (connect-platform stays
       // clickable while manager === 'calendar') must clear the existing
       // Google grant first — otherwise it's orphaned, still connected in
       // Nylas, while the local state moves on to platform.
-      await clearGrant(grantId)
-      const virtual = await createVirtualCalendarFlow(memberId)
+      transition = await clearGrant(grantId, memberId)
+      const virtual = await createTransitionVirtualCalendar(
+        memberId,
+        transition.oauthIntent,
+      )
       if (virtual.status !== 200) throw new Error('Virtual calendar setup failed')
       grantId = virtual.grant_id
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
       ensureDefaultAvailability()
-      await createConfigPair()
+      await createFreeConfig()
       availability.manager = 'platform'
       await updateAvail()
+      await restorePaidCallIntent(transition.paidCallIntent)
       await refreshCanonicalConnectionState()
+      if (transition.oauthIntent) clearOAuthIntent(memberId)
       renderAvailabilityItems()
       renderSlotsPreview()
       console.log('[scheduling-section] connected to platform calendar')
       return true
     } catch (error) {
+      try {
+        await recoverFailedCalendarTransition(memberId, transition, error)
+      } catch (recoveryError) {
+        console.warn('[scheduling-section] connect-platform recovery failed:', recoveryError && recoveryError.message)
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] connect-platform failed:', error && error.message)
       return false
@@ -930,9 +1097,11 @@
     connectBusy = true
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
+    let memberId = null
+    let transition = null
     try {
-      const memberId = await writeMemberId()
-      await clearGrant(grantId)
+      memberId = await writeMemberId()
+      transition = await clearGrant(grantId, memberId)
       grantId = null
       grantEmail = null
       grantCalendarId = null
@@ -951,11 +1120,16 @@
       }
       await refreshCanonicalConnectionState()
       console.log('[scheduling-section] redirecting to Google Calendar OAuth')
-      await handlePreRedirect()
+      await handlePreRedirect(transition.paidCallIntent)
       // On success handlePreRedirect navigates away, so connectBusy is
       // intentionally left set; a fresh page load resets module state.
       return true
     } catch (error) {
+      try {
+        await recoverFailedCalendarTransition(memberId, transition, error)
+      } catch (recoveryError) {
+        console.warn('[scheduling-section] connect-google recovery failed:', recoveryError && recoveryError.message)
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] connect-google failed:', error && error.message)
       connectBusy = false
@@ -969,12 +1143,17 @@
     connectBusy = true
     setRequestBusy(true)
     publishCalendarConnectionState('loading')
+    let memberId = null
+    let transition = null
     try {
-      const memberId = await writeMemberId()
-      await clearGrant(grantId)
+      memberId = await writeMemberId()
+      transition = await clearGrant(grantId, memberId)
       availability.manager = null
 
-      const virtual = await createVirtualCalendarFlow(memberId)
+      const virtual = await createTransitionVirtualCalendar(
+        memberId,
+        transition.oauthIntent,
+      )
       if (virtual.status !== 200) {
         grantId = null
         grantEmail = null
@@ -988,15 +1167,22 @@
       grantEmail = virtual.email
       grantCalendarId = virtual.calendar_id
       ensureDefaultAvailability()
-      await createConfigPair()
+      await createFreeConfig()
       availability.manager = 'platform'
       await updateAvail()
+      await restorePaidCallIntent(transition.paidCallIntent)
       await refreshCanonicalConnectionState()
+      if (transition.oauthIntent) clearOAuthIntent(memberId)
       renderAvailabilityItems()
       renderSlotsPreview()
       console.log('[scheduling-section] disconnected Google Calendar, reverted to platform')
       return true
     } catch (error) {
+      try {
+        await recoverFailedCalendarTransition(memberId, transition, error)
+      } catch (recoveryError) {
+        console.warn('[scheduling-section] disconnect-google recovery failed:', recoveryError && recoveryError.message)
+      }
       publishCalendarConnectionError()
       console.warn('[scheduling-section] disconnect-google failed:', error && error.message)
       return false
@@ -1006,7 +1192,7 @@
     }
   }
 
-  async function handlePreRedirect() {
+  async function handlePreRedirect(paidCallIntent) {
     try {
       const memberId = await writeMemberId()
       await ensureTimezone()
@@ -1023,7 +1209,9 @@
         response.response.result.data &&
         response.response.result.data.url
       if (!url) throw new Error('grants/oauth returned no URL')
-      rememberOAuthIntent(memberId, redirectUri)
+      if (!rememberOAuthIntent(memberId, redirectUri, paidCallIntent)) {
+        throw new Error('OAuth transition could not be retained')
+      }
       window.location.assign(url)
     } catch (error) {
       publishCalendarConnectionError()
@@ -1036,44 +1224,99 @@
     const oauthCode = oauthCallback.code
     const oauthGrantId = oauthCallback.grantId
     const oauthState = oauthCallback.state
+    let memberId = null
+    let oauthIntent = null
+    let trustedState = false
     try {
-      const memberId = await writeMemberId()
+      memberId = await writeMemberId()
       if (!oauthState || oauthState !== memberId) {
         throw invalidOAuthCallback('OAuth state does not match the logged-in member')
       }
+      trustedState = true
+      oauthIntent = readOAuthIntent(memberId)
       if (oauthCallback.hasError) {
         throw invalidOAuthCallback('OAuth authorization was cancelled or failed')
       }
       if (oauthGrantId && oauthCallback.success !== 'true') {
         throw invalidOAuthCallback('Hosted OAuth did not report success')
       }
-      const oauthIntent = readOAuthIntent(memberId)
       if (!oauthIntent) {
         throw invalidOAuthCallback('OAuth return was not initiated by this session')
       }
       await ensureTimezone()
-      const grantPayload = {
-        member_id: memberId,
-        in_redirect_uri: oauthIntent.redirectUri,
-        in_state: oauthState,
+      if (!oauthIntent.oauthGrantSaved && oauthCallback.resumed) {
+        await refreshCanonicalConnectionState()
+        if (
+          grantId &&
+          grantEmail &&
+          grantCalendarId &&
+          (!oauthGrantId || grantId === oauthGrantId)
+        ) {
+          oauthIntent.oauthGrantSaved = true
+          persistOAuthIntent(memberId, oauthIntent)
+        }
       }
-      if (oauthCode) grantPayload.code = oauthCode
-      else grantPayload.in_grant_id = oauthGrantId
-      const grant = await xanoPost('/grants/add/v3', grantPayload)
-      if (!(grant && grant.grant_id)) throw new Error('grants/add/v3 returned no grant')
+      if (!oauthIntent.oauthGrantSaved) {
+        const grantPayload = {
+          member_id: memberId,
+          in_redirect_uri: oauthIntent.redirectUri,
+          in_state: oauthState,
+        }
+        if (oauthCode) grantPayload.code = oauthCode
+        else grantPayload.in_grant_id = oauthGrantId
+        const grant = await xanoPost('/grants/add/v3', grantPayload)
+        if (!(grant && grant.grant_id)) throw new Error('grants/add/v3 returned no grant')
+        oauthIntent.oauthGrantSaved = true
+        persistOAuthIntent(memberId, oauthIntent)
+      }
+      await refreshCanonicalConnectionState()
+      if (!grantId || !grantEmail || !grantCalendarId) {
+        throw new Error('Canonical OAuth grant readback is incomplete')
+      }
       // Mirror activatePlatformManager/disconnectGoogleManager: the manager
       // switch must be persisted here, not just left for the caller — this is
       // the only place that observes the freshly-added Google grant.
-      availability.manager = 'calendar'
       ensureDefaultAvailability()
-      await updateAvail()
+      if (availability.manager !== 'calendar') {
+        availability.manager = 'calendar'
+        await updateAvail()
+      }
+      if (activeFreeConfigs().length === 0) await createFreeConfig()
+      await restorePaidCallIntent(oauthIntent.paidCallIntent)
+      await refreshCanonicalConnectionState()
       clearOAuthIntent(memberId)
       clearOAuthCallback()
-      await refreshCanonicalConnectionState()
       console.log('[scheduling-section] Google Calendar connected via OAuth')
     } catch (error) {
+      let recovered = false
+      if (
+        error &&
+        error.code === 'OAUTH_CALLBACK_INVALID' &&
+        trustedState &&
+        oauthIntent &&
+        oauthIntent.paidCallIntent
+      ) {
+        try {
+          recovered = await recoverPaidCallAfterOAuthCancellation(
+            memberId,
+            oauthIntent,
+          )
+        } catch (recoveryError) {
+          console.warn(
+            '[scheduling-section] OAuth cancellation recovery failed:',
+            recoveryError && recoveryError.message,
+          )
+        }
+      }
       publishCalendarConnectionError()
-      if (error && error.code === 'OAUTH_CALLBACK_INVALID') clearOAuthCallback()
+      if (
+        error &&
+        error.code === 'OAUTH_CALLBACK_INVALID' &&
+        (!trustedState || !oauthIntent || !oauthIntent.paidCallIntent || recovered)
+      ) {
+        if (trustedState && memberId) clearOAuthIntent(memberId)
+        clearOAuthCallback()
+      }
       console.warn('[scheduling-section] OAuth grant save failed:', error && error.message)
     }
   }
@@ -1747,11 +1990,15 @@
       availability.items[availId] = avail
       await updateAvail()
 
-      if (grantId && configs.length !== 0) {
+      if (grantId) {
         const updated = await updateConfigs()
-        if (!updated) throw new Error('Scheduler configuration update failed')
-      } else if (grantId && configs.length === 0) {
-        await createConfigPair()
+        if (!updated) {
+          const activeConfigs = configs.filter(function (config) {
+            return config.active !== false
+          })
+          if (activeConfigs.length === 0) await createFreeConfig()
+          else throw new Error('Scheduler configuration update failed')
+        }
       }
 
       await refreshCanonicalConnectionState()
@@ -1786,9 +2033,15 @@
     setRequestBusy(true)
     try {
       await updateAvail()
-      if (grantId && configs.length !== 0) {
+      if (grantId) {
         const updated = await updateConfigs()
-        if (!updated) throw new Error('Scheduler configuration update failed')
+        if (!updated) {
+          const activeConfigs = configs.filter(function (config) {
+            return config.active !== false
+          })
+          if (activeConfigs.length === 0) await createFreeConfig()
+          else throw new Error('Scheduler configuration update failed')
+        }
       }
       await refreshCanonicalConnectionState()
       renderAvailabilityItems()
@@ -1816,7 +2069,7 @@
     const grant = opts.grantId
     const configId = opts.configId
     const searchDays = opts.searchDays || SLOTS_SEARCH_DAYS
-    const limit = opts.limit || SLOTS_LIMIT
+    const limit = opts.limit === undefined ? SLOTS_LIMIT : Number(opts.limit)
     const region = opts.region || 'us'
     if (!grant || !configId) return []
 
@@ -1833,7 +2086,7 @@
       })
       const timeSlots = (response && response.time_slots) || []
       if (!Array.isArray(timeSlots)) return []
-      return timeSlots
+      const sortedSlots = timeSlots
         .map(function (slot) {
           return Number(slot && slot.start_time)
         })
@@ -1843,7 +2096,7 @@
         .sort(function (a, b) {
           return a - b
         })
-        .slice(0, limit)
+      return Number.isFinite(limit) && limit > 0 ? sortedSlots.slice(0, limit) : sortedSlots
     } catch (error) {
       console.warn('[scheduling-section] getUpcomingTimeSlots failed:', error && error.message)
       return []
@@ -1860,14 +2113,235 @@
         hour: '2-digit',
         minute: '2-digit',
         hour12: true,
+        timeZone: timezone || undefined,
       }).format(date)
     } catch (error) {
       return date.toString()
     }
   }
 
-  // Renders as a plain list built directly by this script — the 2 existing
-  // (empty) HtmlEmbeds inside `slots-wrapper` are out of scope and ignored.
+  function slotDateKey(startTimeSeconds) {
+    const date = new Date(startTimeSeconds * 1000)
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        timeZone: timezone || undefined,
+      }).formatToParts(date)
+      const values = {}
+      parts.forEach(function (part) {
+        values[part.type] = part.value
+      })
+      return [values.year, values.month, values.day].join('-')
+    } catch (error) {
+      return date.toISOString().slice(0, 10)
+    }
+  }
+
+  function formatSlotDate(startTimeSeconds) {
+    const date = new Date(startTimeSeconds * 1000)
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        timeZone: timezone || undefined,
+      }).format(date)
+    } catch (error) {
+      return date.toDateString()
+    }
+  }
+
+  function formatSlotTimeOnly(startTimeSeconds) {
+    const date = new Date(startTimeSeconds * 1000)
+    try {
+      return new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: timezone || undefined,
+      }).format(date)
+    } catch (error) {
+      return date.toTimeString().slice(0, 5)
+    }
+  }
+
+  function localDateFromKey(key) {
+    const parts = String(key || '').split('-').map(Number)
+    return new Date(parts[0], parts[1] - 1, parts[2])
+  }
+
+  function localDateKey(date) {
+    return [
+      String(date.getFullYear()),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-')
+  }
+
+  function activeFreeConfigs() {
+    return configs.filter(function (config) {
+      return Boolean(
+        config &&
+          config.config_id &&
+          config.is_paid === false &&
+          config.active !== false,
+      )
+    })
+  }
+
+  function applyStyles(node, styles) {
+    Object.keys(styles).forEach(function (name) {
+      node.style[name] = styles[name]
+    })
+    return node
+  }
+
+  function previewText(tag, text, styles) {
+    const node = document.createElement(tag)
+    node.textContent = text
+    return applyStyles(node, styles || {})
+  }
+
+  function renderServicesPreview(mount, services, selectedConfig) {
+    mount.innerHTML = ''
+    mount.setAttribute('data-scheduling-preview-state', services.length ? 'ready' : 'empty')
+
+    const shell = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gap: '16px',
+    })
+    shell.setAttribute(EL, 'services-calendar-preview')
+
+    if (!services.length) {
+      shell.appendChild(
+        previewText('div', 'No active free service is available for preview.', {
+          padding: '18px',
+          border: '1px solid #e2e2e2',
+          borderRadius: '8px',
+        }),
+      )
+      mount.appendChild(shell)
+      return null
+    }
+
+    const servicesWrap = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: services.length > 1 ? 'repeat(2, minmax(0, 1fr))' : '1fr',
+      gap: '8px',
+    })
+    servicesWrap.setAttribute(EL, 'preview-services')
+    services.forEach(function (config) {
+      const selected = config.config_id === selectedConfig.config_id
+      const button = applyStyles(document.createElement('button'), {
+        padding: '12px 14px',
+        border: selected ? '2px solid #1f211d' : '1px solid #d9d9d9',
+        borderRadius: '8px',
+        background: '#ffffff',
+        color: '#1f211d',
+        textAlign: 'left',
+        cursor: 'pointer',
+      })
+      button.setAttribute('type', 'button')
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false')
+      button.setAttribute('data-preview-config-id', config.config_id)
+      button.appendChild(
+        previewText('strong', config.title || 'Free Consultation Call', {
+          display: 'block',
+          fontSize: '14px',
+        }),
+      )
+      button.appendChild(
+        previewText('span', String(Number(config.duration) || 30) + ' minutes · Free', {
+          display: 'block',
+          marginTop: '4px',
+          color: '#6f746d',
+          fontSize: '12px',
+        }),
+      )
+      button.addEventListener('click', function () {
+        if (selectedPreviewConfigId !== config.config_id) {
+          selectedPreviewDateKey = null
+          selectedPreviewSlotStart = null
+        }
+        selectedPreviewConfigId = config.config_id
+        renderSlotsPreview()
+      })
+      servicesWrap.appendChild(button)
+    })
+    shell.appendChild(servicesWrap)
+
+    const calendar = applyStyles(document.createElement('div'), {
+      padding: '14px',
+      border: '1px solid #e2e2e2',
+      borderRadius: '8px',
+      background: '#ffffff',
+    })
+    calendar.setAttribute(EL, 'preview-calendar')
+    const heading = applyStyles(document.createElement('div'), {
+      display: 'flex',
+      justifyContent: 'space-between',
+      gap: '12px',
+      alignItems: 'baseline',
+      marginBottom: '10px',
+    })
+    heading.appendChild(previewText('strong', 'Next available times', { fontSize: '14px' }))
+    heading.appendChild(previewText('span', timezone || '', { color: '#6f746d', fontSize: '11px' }))
+    calendar.appendChild(heading)
+    shell.appendChild(calendar)
+    mount.appendChild(shell)
+    return calendar
+  }
+
+  // Renders inside the Designer-owned calendar-preview mount. The generated
+  // nodes are read-only and use canonical configuration and availability data.
+  function renderMonthCalendar(container, groupedSlots, dateKeys, slots, wrapper) {
+    const $ = window.jQuery
+    if (!$ || !$.fn || !$.fn.datepicker) return false
+
+    const calendarHost = applyStyles(document.createElement('div'), {
+      minWidth: '0',
+      width: '100%',
+    })
+    calendarHost.setAttribute(EL, 'preview-month-calendar')
+    container.appendChild(calendarHost)
+
+    $(calendarHost).datepicker({
+      dateFormat: 'yy-mm-dd',
+      defaultDate: localDateFromKey(selectedPreviewDateKey),
+      minDate: localDateFromKey(dateKeys[0]),
+      maxDate: localDateFromKey(dateKeys[dateKeys.length - 1]),
+      showOtherMonths: true,
+      selectOtherMonths: false,
+      beforeShowDay: function (date) {
+        const key = localDateKey(date)
+        const available = Boolean(groupedSlots[key])
+        return [
+          available,
+          available ? 'scheduling-preview-available-date' : '',
+          available ? 'Available' : 'Unavailable',
+        ]
+      },
+      onSelect: function (dateText) {
+        selectedPreviewDateKey = dateText
+        selectedPreviewSlotStart = null
+        renderSlotsList(wrapper, slots)
+      },
+    })
+    $(calendarHost).datepicker('setDate', localDateFromKey(selectedPreviewDateKey))
+
+    const inlineCalendar = calendarHost.querySelector('.ui-datepicker-inline')
+    if (inlineCalendar) {
+      applyStyles(inlineCalendar, {
+        display: 'block',
+        width: '100%',
+        boxShadow: 'none',
+      })
+    }
+    return true
+  }
+
   function renderSlotsList(wrapper, slots) {
     let list = qs(elSel('slots-list'), wrapper)
     if (!list) {
@@ -1879,36 +2353,158 @@
     if (!slots.length) {
       const empty = document.createElement('div')
       empty.textContent = 'No upcoming open slots found.'
+      applyStyles(empty, { color: '#6f746d', fontSize: '12px' })
       list.appendChild(empty)
       return
     }
+    const groupedSlots = {}
+    const dateKeys = []
     slots.forEach(function (startTime) {
-      const row = document.createElement('div')
-      row.textContent = formatSlotTime(startTime)
-      list.appendChild(row)
+      const key = slotDateKey(startTime)
+      if (!groupedSlots[key]) {
+        groupedSlots[key] = []
+        dateKeys.push(key)
+      }
+      groupedSlots[key].push(startTime)
     })
+    if (!groupedSlots[selectedPreviewDateKey]) {
+      selectedPreviewDateKey = dateKeys[0]
+      selectedPreviewSlotStart = null
+    }
+
+    applyStyles(list, { display: 'grid', gap: '14px' })
+    const pickerLayout = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: 'minmax(0, 1fr)',
+      gap: '14px',
+      alignItems: 'start',
+    })
+    pickerLayout.setAttribute(EL, 'preview-picker-layout')
+
+    const calendarColumn = document.createElement('div')
+    calendarColumn.setAttribute(EL, 'preview-calendar-column')
+    const hasMonthCalendar = renderMonthCalendar(
+      calendarColumn,
+      groupedSlots,
+      dateKeys,
+      slots,
+      wrapper,
+    )
+
+    const dates = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(82px, 1fr))',
+      gap: '7px',
+    })
+    dates.setAttribute(EL, 'preview-dates')
+    if (hasMonthCalendar) dates.style.display = 'none'
+    dateKeys.forEach(function (key) {
+      const dateSlots = groupedSlots[key]
+      const selected = key === selectedPreviewDateKey
+      const dateButton = applyStyles(document.createElement('button'), {
+        padding: '9px 8px',
+        border: selected ? '2px solid #1f211d' : '1px solid #d9d9d9',
+        borderRadius: '7px',
+        background: selected ? '#f0ffc0' : '#ffffff',
+        color: '#1f211d',
+        cursor: 'pointer',
+        fontSize: '12px',
+      })
+      dateButton.setAttribute('type', 'button')
+      dateButton.setAttribute('data-preview-date', key)
+      dateButton.setAttribute('aria-pressed', selected ? 'true' : 'false')
+      dateButton.textContent = formatSlotDate(dateSlots[0])
+      dateButton.addEventListener('click', function () {
+        selectedPreviewDateKey = key
+        selectedPreviewSlotStart = null
+        renderSlotsList(wrapper, slots)
+      })
+      dates.appendChild(dateButton)
+    })
+    calendarColumn.appendChild(dates)
+    pickerLayout.appendChild(calendarColumn)
+
+    const timesColumn = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gap: '9px',
+    })
+    timesColumn.setAttribute(EL, 'preview-times-column')
+    timesColumn.appendChild(
+      previewText('strong', formatSlotDate(groupedSlots[selectedPreviewDateKey][0]), {
+        fontSize: '13px',
+      }),
+    )
+    const times = applyStyles(document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(104px, 1fr))',
+      gap: '7px',
+    })
+    times.setAttribute(EL, 'preview-times')
+    groupedSlots[selectedPreviewDateKey].forEach(function (startTime) {
+      const selected = startTime === selectedPreviewSlotStart
+      const timeButton = applyStyles(document.createElement('button'), {
+        padding: '10px 11px',
+        border: selected ? '2px solid #1f211d' : '1px solid transparent',
+        borderRadius: '6px',
+        background: selected ? '#1f211d' : '#f3f4ef',
+        color: selected ? '#ffffff' : '#1f211d',
+        cursor: 'pointer',
+        fontSize: '12px',
+      })
+      timeButton.setAttribute('type', 'button')
+      timeButton.setAttribute('data-preview-slot-start', String(startTime))
+      timeButton.setAttribute('aria-pressed', selected ? 'true' : 'false')
+      timeButton.textContent = formatSlotTimeOnly(startTime)
+      timeButton.addEventListener('click', function () {
+        selectedPreviewSlotStart = startTime
+        renderSlotsList(wrapper, slots)
+      })
+      times.appendChild(timeButton)
+    })
+    timesColumn.appendChild(times)
+    pickerLayout.appendChild(timesColumn)
+    list.appendChild(pickerLayout)
+
+    if (selectedPreviewSlotStart) {
+      const selectedSummary = previewText(
+        'div',
+        'Selected: ' + formatSlotTime(selectedPreviewSlotStart),
+        { color: '#1f211d', fontSize: '12px', fontWeight: '600' },
+      )
+      selectedSummary.setAttribute(EL, 'preview-selection')
+      list.appendChild(selectedSummary)
+    }
   }
 
   async function renderSlotsPreview() {
     const wrapper = qs(elSel('slots-wrapper'))
     if (!wrapper) return
+    const mount = qs(elSel('calendar-preview'), wrapper) || wrapper
+    const renderVersion = ++previewRenderVersion
     setElementVisible('slots-list', false)
     setElementVisible('loading-slots', true)
-    const generalConfig =
-      configs.filter(function (c) {
-        return !c.is_paid
-      })[0] || configs[0]
-    if (!grantId || !generalConfig) {
+    const services = activeFreeConfigs()
+    const selectedConfig =
+      services.filter(function (config) {
+        return config.config_id === selectedPreviewConfigId
+      })[0] || services[0]
+    selectedPreviewConfigId = selectedConfig ? selectedConfig.config_id : null
+    const calendar = renderServicesPreview(mount, services, selectedConfig)
+    if (!grantId || !selectedConfig || !calendar) {
       setElementVisible('loading-slots', false)
       return
     }
     const slots = await getUpcomingTimeSlots({
       grantId: grantId,
-      configId: generalConfig.config_id,
+      configId: selectedConfig.config_id,
       searchDays: SLOTS_SEARCH_DAYS,
-      limit: SLOTS_LIMIT,
+      // The provider configuration already enforces the canonical 14-day
+      // booking window. Keep every returned slot so dense 15-minute schedules
+      // do not make later bookable dates disappear from the month calendar.
+      limit: 0,
     })
-    renderSlotsList(wrapper, slots)
+    if (renderVersion !== previewRenderVersion) return
+    renderSlotsList(calendar, slots)
     setElementVisible('loading-slots', false)
     setElementVisible('slots-list', true)
   }
@@ -1960,6 +2556,10 @@
       timezonePersisted = false
       connectionError = false
       configs = []
+      selectedPreviewConfigId = null
+      selectedPreviewDateKey = null
+      selectedPreviewSlotStart = null
+      previewRenderVersion = 0
       grantId = null
       grantEmail = null
       grantCalendarId = null
@@ -1979,6 +2579,15 @@
 
       if (oauthCallback) {
         await consumeOAuthCallback()
+      } else {
+        const pendingTransition = readOAuthIntent(sessionMemberId)
+        if (pendingTransition && pendingTransition.paidCallIntent) {
+          const recovered = await recoverPaidCallAfterOAuthCancellation(
+            sessionMemberId,
+            pendingTransition,
+          )
+          if (recovered) clearOAuthIntent(sessionMemberId)
+        }
       }
 
       if (grantId) {
@@ -1989,20 +2598,6 @@
       bindNotificationModalActions()
       bindCreateTrigger()
       renderAvailabilityItems()
-
-      // Populated once here from the canonical starter record — not from the
-      // Designer's static `data-rate` placeholder — since `readStarterRecord()`
-      // already carries the freelancer's own `Paid_Call_Rate`.
-      const priceInput = qs('#price')
-      if (priceInput) {
-        const rate = Number((starterRecord && starterRecord.Paid_Call_Rate) || 0)
-        priceInput.value = rate
-        try {
-          window.localStorage.setItem(PAID_RATE_STORAGE_KEY, rate)
-        } catch (error) {
-          /* storage unavailable */
-        }
-      }
 
       const state = await refreshCanonicalConnectionState()
       renderAvailabilityItems()

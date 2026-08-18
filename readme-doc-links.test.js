@@ -160,6 +160,7 @@ const NON_BROWSER_SCRIPTS = new Set([
   // Node tooling and test harnesses: never served to a browser.
   'build-profile-wiring-audit.js',
   'step-flow-test-dom.js',
+  'v3/starter-edit-profile/published-form-contract.js',
   // Read-only Slater.app exports kept as the readable reference for
   // v2/contract.js. Generated artifacts, never edited and never loaded.
   'slater/4885.readable.js',

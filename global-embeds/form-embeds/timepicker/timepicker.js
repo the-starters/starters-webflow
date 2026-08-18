@@ -25,10 +25,30 @@
       return v === null || v === '' ? fallback : v
     }
 
-    /** Format a Date's time as HH:mm:ss for use as a minTime/maxTime bound. */
-    var toBound = function (dt) {
+    /** Normalize a Date or time string as HH:mm:ss for a minTime/maxTime bound. */
+    var toBound = function (value) {
       var pad = function (n) { return (n < 10 ? '0' : '') + n }
-      return pad(dt.getHours()) + ':' + pad(dt.getMinutes()) + ':' + pad(dt.getSeconds())
+      if (value instanceof Date && !isNaN(value.getTime())) {
+        return pad(value.getHours()) + ':' + pad(value.getMinutes()) + ':' + pad(value.getSeconds())
+      }
+      if (typeof value !== 'string') return null
+
+      var match = value.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?$/i)
+      if (!match) return null
+
+      var hour = parseInt(match[1], 10)
+      var minute = parseInt(match[2], 10)
+      var second = parseInt(match[3] || '0', 10)
+      var meridiem = (match[4] || '').toLowerCase()
+      if (minute > 59 || second > 59) return null
+      if (meridiem) {
+        if (hour < 1 || hour > 12) return null
+        if (meridiem === 'am' && hour === 12) hour = 0
+        if (meridiem === 'pm' && hour !== 12) hour += 12
+      } else if (hour > 23) {
+        return null
+      }
+      return pad(hour) + ':' + pad(minute) + ':' + pad(second)
     }
 
     // Tracks the input the open picker belongs to, plus its scroll/resize handler.
@@ -167,8 +187,9 @@
         var startOpts = baseOptions($, startEl)
         startOpts.onSelect = function () {
           var dt = $start.timepicker('getDate')
-          if (!dt) return
-          $end.timepicker('option', 'minTime', toBound(dt))
+          var bound = toBound(dt)
+          if (!bound) return
+          $end.timepicker('option', 'minTime', bound)
         }
         $start.timepicker(startOpts)
         markInited($, startEl)
@@ -178,8 +199,9 @@
         var endOpts = baseOptions($, endEl)
         endOpts.onSelect = function () {
           var dt = $end.timepicker('getDate')
-          if (!dt) return
-          $start.timepicker('option', 'maxTime', toBound(dt))
+          var bound = toBound(dt)
+          if (!bound) return
+          $start.timepicker('option', 'maxTime', bound)
         }
         $end.timepicker(endOpts)
         markInited($, endEl)

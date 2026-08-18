@@ -64,6 +64,8 @@
     'thestarters.com',
     'www.thestarters.com',
   ])
+  var BRAND_ACTION_ITEMS_JSON_KEY = 'brandActionItems'
+  var BRAND_ALL_STARTERS_VISITED_AT_KEY = 'allStartersVisitedAt'
 
   // Identical to v3/auth-route.js and opportunities-3.0.js (MS_PLAN_ROLES).
   var PLAN_ROLES = {
@@ -406,6 +408,65 @@
 
   function memberRoleError(member) {
     return roleResolution(member).error
+  }
+
+  function memberJson(response) {
+    if (response && response.data && typeof response.data === 'object') {
+      return response.data
+    }
+    return response && typeof response === 'object' ? response : {}
+  }
+
+  async function recordBrandAllStartersVisit(memberstack, member) {
+    var role = memberRole(member)
+    if (
+      (role !== 'brand-paid' && role !== 'brand-free') ||
+      !member ||
+      !member.id ||
+      !memberstack ||
+      typeof memberstack.getMemberJSON !== 'function' ||
+      typeof memberstack.updateMemberJSON !== 'function'
+    ) {
+      return false
+    }
+    try {
+      var json = memberJson(await memberstack.getMemberJSON())
+      var actionItems = {}
+      var existing = json[BRAND_ACTION_ITEMS_JSON_KEY]
+      if (existing && typeof existing === 'object') {
+        Object.keys(existing).forEach(function (key) {
+          actionItems[key] = existing[key]
+        })
+      }
+      actionItems[BRAND_ALL_STARTERS_VISITED_AT_KEY] = new Date().toISOString()
+      json[BRAND_ACTION_ITEMS_JSON_KEY] = actionItems
+      await memberstack.updateMemberJSON({ json: json })
+      return true
+    } catch (error) {
+      return false
+    }
+  }
+
+  async function hasBrandAllStartersVisit(memberstack, member) {
+    var role = memberRole(member)
+    if (
+      (role !== 'brand-paid' && role !== 'brand-free') ||
+      !memberstack ||
+      typeof memberstack.getMemberJSON !== 'function'
+    ) {
+      return false
+    }
+    try {
+      var json = memberJson(await memberstack.getMemberJSON())
+      var actionItems = json[BRAND_ACTION_ITEMS_JSON_KEY]
+      return !!(
+        actionItems &&
+        typeof actionItems === 'object' &&
+        actionItems[BRAND_ALL_STARTERS_VISITED_AT_KEY]
+      )
+    } catch (error) {
+      return false
+    }
   }
 
   function roleHome(member) {
@@ -902,6 +963,13 @@
       )
       return
     }
+    if (
+      !target &&
+      (window.location.pathname === '/all-starters' ||
+        window.location.pathname === '/all-starters/')
+    ) {
+      await recordBrandAllStartersVisit(memberstack, member)
+    }
     if (target) replaceLocation(target)
   }
 
@@ -913,6 +981,8 @@
     roleResolution: roleResolution,
     memberRole: memberRole,
     memberRoleError: memberRoleError,
+    recordBrandAllStartersVisit: recordBrandAllStartersVisit,
+    hasBrandAllStartersVisit: hasBrandAllStartersVisit,
     roleHome: roleHome,
     hasCompletedQuiz: hasCompletedQuiz,
     hasReadyPendingQuiz: hasReadyPendingQuiz,

@@ -41,9 +41,16 @@ login choices as native Webflow links:
 
 When origin is known, the other choice is hidden. When a reset email is opened
 without origin context, both remain visible. Add
-`data-password-recovery-retry` to any native “Different email?” link. The
-module updates existing forms through their canonical Memberstack attributes;
-it never generates form or link markup.
+`data-password-recovery-retry` to any native “Different email?” link. The live
+Reset Password control is a Button component whose Link already points at
+Forgot Password; component instances cannot take that attribute, so retry
+matches the published `/forgot-password` href. Mark the authored “an email”
+copy on Reset Password with `data-password-recovery-email` so a Recovery Email
+Hint (the address submitted on Forgot Password in this tab) can fill that copy;
+missing hint leaves the generic text and Reset Password still works. The module
+updates existing forms through their canonical Memberstack attributes; it never
+generates form or link markup. Do not add `data-ms-member="email"` on Reset
+Password for this reminder.
 
 Until both native login choices are present, a direct visit with no origin uses
 the neutral homepage fallback instead of silently favoring Brand or Talent. The
@@ -1151,11 +1158,15 @@ to provide. It is deliberately scoped to the
 `dialog[data-modal-target="generate-contract"]` modal, and generates no form
 HTML. The authoritative field, prefill, state, and release contract lives in
 [PROJECT-FORM-WIRING.md](PROJECT-FORM-WIRING.md).
+Release progress and no-submit verification are tracked in
+[PROJECT-CREATION-PROGRESS-CHECKLIST.md](PROJECT-CREATION-PROGRESS-CHECKLIST.md).
 
-Run its focused test with:
+Run its focused tests with:
 
 ```sh
-node --test v3/project-form.test.js
+node --test v3/project-form.test.js v3/project-form-workflow.test.js \
+  global-embeds/start-proj-gen-contract/contract-preview.test.js \
+  tabs-project-gating.test.js
 ```
 
 ## Starter project form
@@ -1761,24 +1772,33 @@ copy in page head/footer code.
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 ```
 
+The live `detail_hire` template is the timing exception. Install
+[`scheduling-v3-hire-template-head.html`](scheduling-v3-hire-template-head.html)
+in its Page Settings head so `scheduling-auth.js` and
+`scheduling-v3-stage.js` execute synchronously before the shared scheduling
+component. A deferred adapter can lose the first legacy scheduling request.
+
 Current safety boundary:
 
 - Runs across `the-starters-3-0.webflow.io`.
-- On the V3 custom domains, runs only on `/hire/jp-test`,
-  `/starter-dashboard`, and `/brand-dashboard`; all other paths remain inert.
+- On the V3 custom domains, runs on valid single-segment `/hire/<slug>` paths,
+  `/starter-dashboard`, and `/brand-dashboard`. Production
+  `/hire/jp-dionisio` remains explicitly blocked.
 - Authenticates only explicit reviewed `/v3` routes on the configured Xano
   origin, including the two Brand paid-call payment-method paths documented
   below. It does not use a group-wide prefix allowlist.
 - Temporarily retains the exact legacy configuration, availability, and Starter
   paths that this shared module authenticated before the stage adapter existed.
   This prevents a release-time regression on non-stage staging consumers; the
-  stage adapter intercepts those paths first on its seven approved staging paths
-  and three exact production surfaces.
+  stage adapter intercepts those paths first on its explicit staging paths,
+  canonical dashboards, and valid Hire routes.
 - Caches the Xano token and retries once after a `401`; a failed refresh returns
   the original `401`.
 - Invalidates cached and in-flight authentication when the Memberstack session changes.
 - Exposes `window.getXanoAuthToken` and `window.xanoAuthFetch` for page-owned
-  code.
+  code. It also retains its own auth-fetch reference for the stage adapter,
+  because another page bundle can replace the public compatibility global
+  after this bridge installs.
 - Dashboard controllers reuse the site-head `window.memberReady` promise for
   their initial identity snapshot and `window.getXanoAuthToken` for the
   Opportunities, Points, Messages, and Stripe reads. This keeps one shared
@@ -1831,29 +1851,38 @@ scheduling component. It installs on these exact staging paths:
 - `/hire-stage`
 - `/hire/jp-dionisio`
 
-The seventh path is the existing approved Test Talent CMS item. The exact paths
-`/hire/jp-test`, `/starter-dashboard`, and `/brand-dashboard` are enabled on
-`thestarters.com` and `www.thestarters.com`; every `*-stage` path remains
-staging-host only. The adapter does not install on any other `/hire/*` item or
-on `detail_hire`. Production `/hire/jp-dionisio` is explicitly contained by
+The seventh path is the existing Test Talent CMS item. Every valid
+single-segment `/hire/<slug>` path plus `/starter-dashboard` and
+`/brand-dashboard` is enabled on `thestarters.com` and `www.thestarters.com`;
+every `*-stage` path remains staging-host only. The live `detail_hire` template
+loads the adapter, which activates from the rendered `/hire/<slug>` URL.
+Production `/hire/jp-dionisio` is explicitly contained by
 both synchronous scripts: scheduling-group requests return HTTP `410` without
 installing authentication, discovery overrides, or booking identity. The
-adapter maps the reviewed legacy scheduling paths and the environment-bound
+adapter maps the reviewed unversioned scheduling paths and the environment-bound
 `starter/get_stripe_connect_id` lookup to their exact `/v3` routes, preserves
 request method, body, headers, and query parameters, and sends the rewritten
-request through `window.xanoAuthFetch`. The Stripe lookup follows the
+request through the auth bridge owned by `scheduling-auth.js`. The Stripe lookup
+follows the
 [domain-isolated environment contract](#domain-isolated-test-and-live-environments).
+On every installed surface, the adapter owns both `window.fetch` and direct
+`window.xanoAuthFetch` calls. It reclaims the auth bridge retained by
+`scheduling-auth.js` if another page bundle replaced the public global, so
+dashboard paid-call settings and shared scheduling helpers cannot bypass the
+route map. Valid Hire booking surfaces add the Brand-safe discovery overrides
+described below; the other installed surfaces keep the standard route map.
 
-On the exact production `/hire/jp-test` canary, and on the retained staging-only
-`/hire/jp-dionisio` canary, the two public booking-discovery
-reads use Brand-safe contracts instead of Talent-owner contracts:
-`starter/get_booking_profile/v3` returns only the Starter row ID and calendar
-grant, while `nylas_configurations/get_bookable/v3` returns the bookable
-configuration metadata. Every other installed surface uses the self-only
+On valid Hire paths, the two public booking-discovery helpers use
+Brand-safe contracts instead of Talent-owner contracts. Both the unversioned
+and `/v3` forms of `starter/get_by_memberstack` are remapped to
+`starter/get_booking_profile/v3`, which returns only the Starter row ID and
+calendar grant. Both forms of `nylas_configurations/get_all` are remapped to
+`nylas_configurations/get_bookable/v3`, which returns the bookable configuration
+metadata. Every other installed surface uses the self-only
 `starter/get_by_memberstack/v3` and grant-owner-only
 `nylas_configurations/get_all/v3` routes.
 
-Those two approved Hire booking surfaces also contain the post-booking Nylas
+Hire booking surfaces also contain the post-booking Nylas
 DOM race. After a successful `bookedEventInfo` event includes a `booking_id`,
 the adapter waits for the Designer-authored `[schedule-step="success"]` inside
 the same `[popup-booking]` to be visible, then detaches only that popup's
@@ -1872,8 +1901,9 @@ The boundary is fail-closed:
 - `calendars/get_availabilities` remains deliberately unmapped and therefore
   blocked on every installed scheduling surface because its payload has not
   been proven compatible with `scheduler/get_availability/v3`.
-- Only the approved legacy Stripe customer, intent, setup-intent, and
-  payment-method provider routes pass through temporarily.
+- Legacy Stripe customer, intent, setup-intent, and payment-method provider
+  routes are blocked. Paid Hire booking uses only the authenticated V3
+  readiness, card-setup, default-selection, and booking-command routes.
 
 `scheduling-v3-stage-component.html` is the loader for the isolated cloned
 Webflow component used by the stage surfaces and canonical dashboards. Keep it
@@ -1886,6 +1916,11 @@ not replace the shared `Call Scheduling - Global Code` component while the live
 stage surfaces and both canonical dashboards; releases update its Git-owned
 files through the reviewed semver tag and jsDelivr purge flow.
 
+`scheduling-v3-hire-template-head.html` separately owns the live Hire-template
+boundary. Install it in the `detail_hire` Page Settings head, before the shared
+component renders. It contains only the synchronous auth and route adapter, so
+dashboard-only modules remain owned by the isolated component loader.
+
 Runtime contract:
 
 - `data-scheduling-v3-stage` on the document root reports `ready` once the
@@ -1895,9 +1930,9 @@ Runtime contract:
   otherwise, the attribute is not set on pages where the adapter does not
   install.
 - `window.StarterSchedulingV3Stage` is a frozen object exposing `paths` (the
-  seven installed stage paths), `productionPaths` (the exact production Hire
-  canary and canonical dashboards), and `routeMap` (the legacy-to-`/v3` route
-  map).
+  explicit stage paths), `productionPaths` (the canonical dashboards), and
+  `routeMap` (the effective request-to-`/v3` route map). Valid Hire paths are
+  selected by the route grammar and are not enumerated in either path array.
 - `window.__tsSchedulingV3StageOriginalFetch` retains the pre-adapter
   `window.fetch` for provider and non-scheduling passthrough.
 
@@ -1939,9 +1974,15 @@ Webflow owns all call-section markup. Each section must provide:
 
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
-requests and all other rows under calls; Brand keeps one calls list. Legacy card
-action controls are hidden because V3 has no identity-safe mutation handler;
-only a confirmed row with a canonical meeting link exposes its join control.
+requests and all other rows under calls; Brand keeps pending and accepted rows
+in its calls list. The Starter pending card exposes only the Designer-authored
+Accept control. Before it calls `booking/confirm/v3`, the controller decodes the
+canonical `booking_ref`, requires its booking and configuration IDs to match the
+row, and supplies a per-attempt idempotency key. A successful response refreshes
+the canonical list, which moves the accepted row from Starter Call Requests to
+Starter Calls while it remains in Brand Calls. All other legacy mutation
+controls, including Decline, Reschedule, Message, and Join, stay hidden until
+they have current V3-safe endpoint contracts.
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for
@@ -2052,9 +2093,16 @@ Webflow markup contract:
 - The first-time and saved-schedule controls use `[init-availability]` and
   `[update-availability]`, respectively.
 - The Dashboard Calendar action row uses `[calendar-connection-action]` and its
-  clickable component carries `data-modal-trigger="set-availability"`. The row
-  stays Designer-authored; the initializer only shows/hides it and selects an
-  existing native modal step.
+  clickable component carries `data-modal-trigger="set-availability"`. Until
+  that canonical attribute reaches the published Starter dashboard, the
+  initializer also matches only the existing
+  `.dash-hero_action-item a[href="#calendar"]` link. The row stays
+  Designer-authored; the initializer only shows/hides it and selects an
+  existing native modal step. The row is complete when the live scheduling
+  event reports `configurationCount > 0`. Google grant and calendar fields do
+  not control this Action Item. If Webflow inserts the authored row after that
+  event, the initializer reapplies the retained canonical state when the row
+  appears.
 - The hero and Dashboard Calendar triggers share the authored
   `dialog[data-modal-target="set-availability"]`. Lumos normally owns its
   open/close lifecycle. After a trigger click has bubbled, the initializer uses
@@ -2077,9 +2125,11 @@ Runtime contract:
 - `window.STARTER_AVAILABILITY` contains the normalized availability after a
   successful read and is `null` after an error.
 - `window.STARTER_SCHEDULING_CONNECTION` contains only non-secret connection
-  state. The initializer always supplies `state`; once the writer runs, it also
-  supplies boolean grant/calendar flags, configuration count, and manager.
-  Provider identifiers are never exposed through this object.
+  state. The initializer always supplies `state` and the last canonical
+  configuration count; once the writer runs, it also supplies boolean
+  grant/calendar flags and manager. Transient loading and error events do not
+  replace the retained canonical count. Provider identifiers are never exposed
+  through this object.
 - `starterSchedulingAvailabilityReady` carries
   `{ memberId, source, state, connectionState }`;
   `source` is `starter`, `default`, or `query-test`, and `state` is
@@ -2087,8 +2137,9 @@ Runtime contract:
   `memberId` is the selected test member rather than the authenticated member.
 - `starterSchedulingConnectionStateChanged` carries the non-secret connection
   summary and repaints both the hero entry point and Calendar action row. The
-  row remains visible and actionable for loading/disconnected/reconnect/error,
-  and is hidden only after connected proof.
+  row is hidden when the retained canonical Nylas configuration count is above
+  zero and remains visible when that count is zero, regardless of loading,
+  disconnected, connected, reconnect, or error state.
 - `starterSchedulingAvailabilityError` carries `{ message }` after a failed read.
 - `window.StarterSchedulingAvailability` exposes `initialize()` for retries,
   `normalizeAvailability(value)` for the legacy object or JSON-string shape,
@@ -2202,9 +2253,8 @@ step-scoped `[data-custom-loader]`; `setLoader` is a safe no-op on the rest
 Markup gaps found by the audit (writer degrades gracefully, flagged for
 Designer follow-up):
 
-- no `#price` input exists in the form, so the paid-call rate falls back to
-  the `paid_call_rate` localStorage value or `0` — decide where the 3.0 rate
-  comes from before enabling paid configs;
+- no `#price` input exists in the availability form; paid-call rates are owned
+  by the native paid-call settings form and its canonical Xano endpoints;
 - no `[starter-timezone]` label element exists, so the timezone text renders
   nowhere (resolution/persistence still runs);
 - no `availability-popup-close="pre-redirect"` variant exists (both close
@@ -2262,12 +2312,11 @@ row timezone is persisted through `starter/set_timezone/v3` only when the
 member submits an availability or calendar action. A member-scoped cached
 timezone can supply that value, but does not count as canonical persistence.
 
-Paid-call rate: resolved from the form's `#price` input
-(`data-rate`/value, Designer-bound like V2) with the shared `paid_call_rate`
-localStorage key as fallback. When no positive rate resolves, the paid
-configuration is **not created** (no bookable $0 paid calls); existing paid
-configs still get availability updates. The scheduling `freelancers` table
-(#12) has no rate column — wiring a durable v3 rate source is a follow-up.
+Paid-call rate: the availability controllers do not read `#price`, `data-rate`,
+or `paid_call_rate` in localStorage. They create only the free-call
+configuration. Availability edits send an availability-only update for every
+active canonical configuration, so paid title and price fields stay under the
+paid-call settings endpoints.
 
 Runtime contract:
 
@@ -2688,29 +2737,20 @@ root, use these values:
 | --- | --- |
 | `loading` | Immediate loading state while Memberstack and Xano resolve |
 | `disconnected` | No connected Stripe account; contains the authored connect CTA |
-| `incomplete` | Connected account whose charges are not enabled; contains the authored “Complete setup” CTA |
+| `incomplete` | Connected account whose charges are not enabled; used by the hero earnings tile while the Action Item root is hidden |
 | `ready` | Stripe reports `charges_enabled: true` |
 | `review` | The user just returned from Stripe, but the authoritative enabled flag has not settled after short polling |
 | `error` | Designer-owned safe failure state; on the callback page this remains visible instead of losing a failed one-time code |
 
-Give every Connect or Complete setup control
-`data-stripe-connect-action="start"`. An optional retry control can use
-`data-stripe-connect-action="refresh"`. Keep an
-`.action-item_button-wrapper` in the `ready` state. If its first child is an
-authored Webflow button component, the controller reuses that component as the
-accessible `Open Stripe` control, so the ready state cannot retain a conflicting
-`Connect Stripe` CTA. Otherwise, keep an existing Webflow button component as
-the first child of the disconnected state's `.action-item_button-wrapper`; the
-controller clones it into the ready wrapper. The controller clones the resolved
-Open Stripe component for `Disconnect Stripe`, assigns
-`data-stripe-connect-action="dashboard"` and
-`data-stripe-connect-action="disconnect"`, respectively, and does not add a
-second copy if either action already exists. Open Stripe requests the exact
-provider-verified connected account destination. Disconnect Stripe asks for an
-explicit browser confirmation before it sends the authenticated disconnect.
-The controller also clones that action into the `incomplete` and `review`
-wrappers, so a member can disconnect and restart even before charges are
-enabled.
+Give every Connect control `data-stripe-connect-action="start"`. An optional
+retry control can use `data-stripe-connect-action="refresh"`. The Action Item
+root is visible for `loading`, `disconnected`, and `error` until canonical
+status proves a connection. It is hidden for every provider-connected state:
+`incomplete`, `review`, and `ready`, and stays hidden during later loading or
+error states until canonical status reports `disconnected`. The controller does
+not create or bind a disconnect control. Members must contact The Starters
+support team to disconnect Stripe.
+
 The hero can keep its two authored Stripe tiles, both with
 `data-stripe-connect-action="earnings"`, but the controller uses only one blue
 tile for the full lifecycle. Mark the original Connect Stripe tile with
@@ -2767,8 +2807,8 @@ confirmation returns to the canonical disconnected or incomplete state. If the
 browser exposes none of the return-watcher APIs, the controller releases the
 pending state and guard after the successful tab navigation.
 
-A single in-flight guard is shared across every start, refresh, Earnings, Open
-Stripe, and disconnect control in the dashboard, so a second click on any
+A single in-flight guard is shared across every start, refresh, Earnings, and
+Open Stripe control in the dashboard, so a second click on any
 control is ignored while an authenticated action is resolving. Start
 posts the dashboard `return_url` plus an explicit `callback_url` —
 `/stripe-connect-callback` on the same origin — so `start/v3` returns an OAuth
@@ -2782,10 +2822,12 @@ navigating the reserved tab. Exact backend replays with `mode="connected"` or
 close the reserved tab and refresh canonical status instead of displaying a
 false invalid-URL error.
 
-Dashboard access and disconnect each send their own bounded idempotency key.
-A retry after a network-ambiguous, timeout, conflict, rate-limit, or server
-outcome reuses the action's key. A definitive provider result or non-retryable
-response clears it, so a later intentional action starts a new attempt.
+Dashboard access sends a bounded idempotency key. A retry after a
+network-ambiguous, timeout, conflict, rate-limit, or server outcome reuses the
+key. A definitive provider result or non-retryable response clears it, so a
+later intentional action starts a new attempt. The authenticated disconnect
+endpoint remains available to the support-owned workflow, but the dashboard
+does not expose it.
 
 The dashboard calls provider-aware `status/v3` immediately. It repairs a
 readiness mismatch and clears a stale projection only when Stripe returns a
@@ -2846,8 +2888,9 @@ Staging uses the same authenticated `status/v3`, `start/v3`, `dashboard/v3`,
 `disconnect/v3`, `oauth_exchange/v3`, and
 `starter/get_stripe_connect_id/v3` endpoints as production. This gives a Test
 Data member the full persistent Connect lifecycle and environment-bound account
-lookup, including Complete setup, Open Stripe, Disconnect Stripe, callback
-processing, and TEST reconciliation, without touching LIVE account fields. The
+lookup, including Complete setup, Open Stripe, callback processing, and TEST
+reconciliation, without touching LIVE account fields. Provider disconnect stays
+in the support-owned flow. The
 signed Connect webhook independently derives its environment from Stripe event
 `livemode` and keeps TEST and LIVE updates isolated. The reconciliation
 operator must supply one explicit environment per run; there is no shared
@@ -2861,25 +2904,26 @@ node --test v3/starter-dashboard-stripe-connect.test.js
 
 ## Brand paid-call payment method client
 
-`paid-call-brand-payment.js` supplies the authenticated Xano calls needed by a
-native Brand booking UI. It does not create form markup or initialize Stripe
-Elements. Load it after `scheduling-auth.js` only on the approved host and path
-surfaces in the [scheduling auth](#scheduling-auth) boundary. A production Hire
-surface must be added to that boundary before this client can authenticate
-there:
+`paid-call-brand-payment.js` owns the authenticated Paid option inside the
+Designer-authored Book Call modal. It creates no application form markup. It
+mounts Stripe's secure Card Element in `[card-element]`, then replaces the
+Nylas paid-booking submit boundary with the canonical Xano booking command.
+Load it after `scheduling-auth.js` on the approved Hire surfaces:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/paid-call-brand-payment.js"></script>
 ```
 
-The scheduling auth bridge allowlists only these two new paid-call paths:
+The scheduling auth bridge allowlists these paid-call paths:
 
 - `POST /brand/payment-method/setup/v3`
 - `POST /brand/payment-method/set-default/v3`
+- `GET /brand/payment-readiness/v3`
+- `POST /brand/booking/request/v3`
 
 Xano derives the Brand identity and payment environment from the Bearer token.
-The browser sends neither field. A booking controller should use this sequence:
+The browser sends neither field. The controller uses this sequence:
 
 1. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
    card-setup attempt.
@@ -2893,6 +2937,20 @@ The browser sends neither field. A booking controller should use this sequence:
 5. Retry the returned selection attempt through `.run()` with its captured key.
    Create a new attempt for every later intentional selection, including an
    A-to-B-to-A sequence.
+6. Read readiness again. Only a canonical `bookable=true` result opens the paid
+   calendar.
+7. On the Nylas `detailsConfirmed` event, call `preventDefault()` before any
+   asynchronous work. Submit the selected slot to
+   `brand/booking/request/v3`; never let the public component book the paid call
+   directly.
+
+`hire-profile.js` passes only Free configurations to the legacy shared modal
+initializer. It gives the exact active Paid configuration to this controller.
+The adapter blocks legacy Stripe provider routes on V3 scheduling surfaces.
+The booking payload contains only the Starter slug, configuration ID, selected
+slot, timezone, optional topic/context, and a bounded idempotency key. Price,
+payment method, Brand identity, Starter ownership, and environment stay
+server-owned.
 
 The client validates bounded keys and PaymentMethod IDs before network work.
 It uses `xanoAuthFetch` when the shared bridge is present and otherwise uses the
@@ -2908,11 +2966,11 @@ node --test v3/scheduling-auth.test.js v3/paid-call-brand-payment.test.js
 ## Dashboard Action Items panel
 
 `dashboard-action-items.js` owns the chrome of the Action Items panel on the
-Starter and Brand dashboards. The panel itself is shared infrastructure: the
-feature scripts that contribute rows (Stripe Connect, calls, projects, and
-future sections) still own their own rows and show or hide them themselves.
-This controller never shows, hides, or edits a feature row. It only renders the
-loading card, the "all caught up" empty card, and the live count.
+Starter and Brand dashboards. Starter feature scripts still own their Stripe,
+Calendar, calls, and project rows. The controller also owns two Brand onboarding
+rows: post the first opportunity, and visit `/all-starters`. It renders the
+loading card, the "all caught up" empty card, and the live count. After a scoped
+wrapper settles with zero items, it hides that full wrapper with `display:none`.
 
 Load it on `/starter-dashboard` and `/brand-dashboard`:
 
@@ -2925,7 +2983,7 @@ the Brand dashboard:
 
 | Value | Purpose |
 | --- | --- |
-| `wrapper` | Panel scope root. Optional; with no wrapper anywhere on the page the controller falls back to a single document-wide panel whenever any `loading`, `empty`, or `total` chrome is authored, which is what the Starter dashboard still uses. A page with neither a wrapper nor chrome stays untouched |
+| `wrapper` | Panel scope root. Optional; hidden after settlement when its pending count is zero. With no wrapper anywhere on the page the controller falls back to a single document-wide panel whenever any `loading`, `empty`, or `total` chrome is authored, which is what the Starter dashboard still uses. A page with neither a wrapper nor chrome stays untouched |
 | `list` | List container; informational only |
 | `loading` | Loading card, visible until the panel first settles |
 | `empty` | "All caught up" card, visible once settled with zero items |
@@ -2946,12 +3004,34 @@ today, including component-driven ones that cannot take the attribute yet. It
 is also recorded in the module header. Remove the fallback once every row
 carries `data-action-element="item"`.
 
-The panel settles — and only then may the empty card appear — at the first of:
-an item becoming visible, a Stripe readiness/error event, a terminal Calendar
-connection state or availability error event, or a 4-second timeout. A Calendar
-`loading` event alone does not settle the panel. Until it settles the loading
-card stays up, so a slow feature controller never flashes a false "all caught
-up".
+On `/brand-dashboard`, the controller finds the first-opportunity row through
+`[data-project-proposal-template="true"]`, then resolves that authored inner
+template to its closest `.dash-hero_action-item` so the full outer row hides. If
+there is no outer row, it uses the template itself as a compatibility fallback.
+It requests the first owned opportunity through
+`Opp30.API.brandOppList('', 1, 1)` and hides the resolved target when the
+response has at least one item. A successful opportunity create also emits
+`starters:opportunity-created`, so the resolved target disappears without a
+reload.
+`opportunities-3.0.js` emits `starters:opp30-ready` after exposing its API; the
+controller waits up to four seconds for that signal, so either deferred script
+order works.
+
+The browse row is the `.dash-hero_action-item` containing an exact
+`href="/all-starters"` link. When a paid or free Brand visits `/all-starters`,
+the sitewide `route-guard.js` records the visit in Memberstack JSON. The Brand
+dashboard reads that completion marker and hides the browse row. See
+[ROUTE-GUARD-WIRING.md](ROUTE-GUARD-WIRING.md#brand-action-items-completion-marker)
+for the marker, role, preservation, and failure contracts.
+
+The panel settles at the first of: an item becoming visible, a Stripe
+readiness/error event, a terminal Calendar connection state or availability
+error event, Brand action-item readiness/error, or a 4-second timeout. A
+Calendar `loading` event alone does not settle the panel. Until it settles the
+loading card stays up, so a slow feature controller never flashes a false "all
+caught up". A scoped wrapper with no remaining items is hidden, including its
+empty card. The document-wide Starter fallback can still show the empty card
+because it has no wrapper to hide.
 
 Every render also writes the count to `data-action-items-count` on the scope
 (on `<body>`, or `<html>` if there is no body, when the scope is the document)
@@ -2965,4 +3045,67 @@ Run its focused tests with:
 
 ```sh
 node --test v3/dashboard-action-items.test.js
+```
+
+## Invited Starter review form
+
+`starter-review-form.js` binds the native `/review-starter` Designer form to
+the V3 invited-review endpoints. Load it synchronously in the page head, before
+the site PostHog initialization:
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
+```
+
+The controller reads the private capability token from the URL fragment,
+immediately removes the fragment with `history.replaceState`, and keeps the
+token only in a function closure. It never writes the token to the DOM,
+storage, PostHog properties, or a query string. Context resolves through
+`POST /starter/reviews/invited/context/resolve`; submission uses
+`POST /starter/reviews/invited/submit`. Both calls omit credentials and referrer
+data. URL cleanup removes a legacy `token` query value and preserves every other
+query field unchanged, including the one manually authored UTM set. The native
+form contract is:
+
+| Attribute or name | Purpose |
+| --- | --- |
+| `data-starter-review` | One page root |
+| `data-starter-review-state="loading|form|success|unavailable|error"` | State blocks |
+| `form[data-starter-review-form]` | Native Webflow form |
+| `rating` | Required 1–5 radio group |
+| `review_text` | Required 10–4,000 character review |
+| `private_feedback` | Optional private feedback, maximum 2,000 characters |
+| `data-starter-review-name` | Safe Starter display name |
+| `data-starter-review-photo` | Public HTTPS Starter image |
+| `data-starter-review-headline` | Safe Starter headline |
+| `data-starter-review-profile-link` | Optional `/hire/<slug>` link |
+| `data-starter-review-error` | Inline validation or submission error |
+
+Pass the controller's redaction hook at the site-level PostHog initialization
+boundary. If the site already has a `before_send` callback, assign that callback
+to the hook name before loading this controller. The controller replaces it
+with a redacting wrapper and calls the prior callback with the redacted event:
+
+```js
+window.__startersV3ReviewPosthogBeforeSend = existingBeforeSend
+```
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/starter-review-form.js"></script>
+```
+
+```js
+posthog.init(POSTHOG_KEY, {
+    before_send: window.__startersV3ReviewPosthogBeforeSend,
+})
+```
+
+Omit the first assignment when there is no existing callback. The controller
+accepts capability tokens from the fragment only; it never uses the removed
+legacy query value. After an ambiguous submission failure, the form locks the
+review fields and retries the exact first payload with the same idempotency key.
+Run the focused tests with:
+
+```sh
+node --test v3/starter-review-form.test.js
 ```

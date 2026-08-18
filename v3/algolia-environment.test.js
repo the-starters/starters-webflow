@@ -95,6 +95,31 @@ function load(options = {}) {
     'data-starters-v3-algolia-resource': options.extraResource,
     'wf-algolia-index': 'unsafe-index',
   }) : null
+  const staticListOptions = options.staticList
+  const staticList = staticListOptions
+    ? element({
+        'wf-algolia-element': 'browse',
+        'wf-algolia-disable-filters': 'true',
+        'wf-algolia-index': staticListOptions.index || 'Freelancers3.0-dev',
+        'data-starters-v3-algolia-resource':
+          staticListOptions.resource || 'starters',
+        ...(Object.prototype.hasOwnProperty.call(staticListOptions, 'sort')
+          ? { 'data-starters-v3-algolia-sort': staticListOptions.sort }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(staticListOptions, 'sortIndex')
+          ? { 'wf-algolia-sort-index': staticListOptions.sortIndex }
+          : {}),
+      })
+    : null
+  const staticListChild = staticListOptions && staticListOptions.child
+    ? element({
+        'data-starters-v3-algolia-resource': 'starters',
+        'wf-algolia-index': 'Freelancers3.0-dev',
+      })
+    : null
+  if (staticList && staticList.getAttribute('wf-algolia-sort-index') !== null) {
+    sortItems.push(staticList)
+  }
   const root = element()
   const events = []
   const document = {
@@ -116,6 +141,8 @@ function load(options = {}) {
             ? [unexpectedIndex]
             : []),
           ...(extra ? [extra] : []),
+          ...(staticList ? [staticList] : []),
+          ...(staticListChild ? [staticListChild] : []),
         ]
       }
       if (selector === '[wf-algolia-index]') {
@@ -125,6 +152,8 @@ function load(options = {}) {
           ...sharedIndexes,
           ...(unexpectedIndex ? [unexpectedIndex] : []),
           ...(extra ? [extra] : []),
+          ...(staticList ? [staticList] : []),
+          ...(staticListChild ? [staticListChild] : []),
         ].filter((item) => item.getAttribute('wf-algolia-index') !== null)
       }
       if (selector === '[wf-algolia-sort-index]') return sortItems
@@ -176,6 +205,8 @@ function load(options = {}) {
     sortItems,
     sharedIndexes,
     starters,
+    staticList,
+    staticListChild,
     tabCount,
     unexpectedIndex,
     unmanaged,
@@ -462,6 +493,144 @@ test('replica mapping is idempotent', () => {
   assert.equal(
     runtime.sortItems[2].getAttribute('wf-algolia-sort-index'),
     'Freelancers3.0-staging-test__rate_asc',
+  )
+})
+
+test('a Static List with a logical sort searches the host Sort Replica', () => {
+  const runtime = load({
+    hostname: 'www.thestarters.com',
+    staticList: { sort: 'published_desc' },
+  })
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-production__published_desc',
+  )
+  assert.equal(
+    runtime.staticList.getAttribute('data-starters-v3-algolia-sort'),
+    'published_desc',
+  )
+  assert.equal(
+    runtime.staticList.getAttribute('data-starters-v3-algolia-environment'),
+    'production',
+  )
+  assert.equal(runtime.staticList.getAttribute('data-starters-v3-algolia-blocked'), null)
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('a Static List Sort Replica stays inside the staging environment', () => {
+  const runtime = load({ staticList: { sort: 'published_desc' } })
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-staging-test__published_desc',
+  )
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('every known logical sort maps to its host Sort Replica', () => {
+  for (const logicalName of [
+    'name-AtoZ',
+    'rate_asc',
+    'rate_desc',
+    'published_asc',
+    'published_desc',
+  ]) {
+    const runtime = load({ staticList: { sort: logicalName } })
+    assert.equal(
+      runtime.staticList.getAttribute('wf-algolia-index'),
+      `Freelancers3.0-staging-test__${logicalName}`,
+    )
+  }
+})
+
+test('wf-algolia-sort-index on the Static List itself selects the Sort Replica', () => {
+  const runtime = load({
+    hostname: 'www.thestarters.com',
+    staticList: { sortIndex: 'published_desc' },
+  })
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-production__published_desc',
+  )
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-sort-index'),
+    'Freelancers3.0-production__published_desc',
+  )
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('a starters resource without a sort attribute stays on the Starter Index', () => {
+  const runtime = load({ hostname: 'www.thestarters.com', staticList: {} })
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-production',
+  )
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('an authored replica name alone does not restore a Sort Replica', () => {
+  const runtime = load({
+    hostname: 'www.thestarters.com',
+    staticList: { index: 'Freelancers3.0-production__published_asc' },
+  })
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-production',
+  )
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('an unknown Static List sort blocks the whole managed Algolia surface', () => {
+  const runtime = load({ staticList: { sort: 'price_asc' } })
+  assert.equal(runtime.client.getAttribute('data-search-key'), null)
+  assert.equal(runtime.starters.getAttribute('wf-algolia-index'), null)
+  assert.equal(runtime.staticList.getAttribute('wf-algolia-index'), null)
+  assert.equal(
+    runtime.root.getAttribute('data-v3-algolia-block-reason'),
+    'unknown_resource_or_sort_index',
+  )
+})
+
+test('a sorted Static List does not move its unsorted starters children', () => {
+  const runtime = load({
+    hostname: 'www.thestarters.com',
+    staticList: { sort: 'published_desc', child: true },
+  })
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-production__published_desc',
+  )
+  assert.equal(
+    runtime.staticListChild.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-production',
+  )
+  assert.equal(
+    runtime.staticListChild.getAttribute('data-starters-v3-algolia-sort'),
+    null,
+  )
+})
+
+test('an opportunities resource ignores Starter Sort Replicas', () => {
+  const runtime = load({
+    hostname: 'www.thestarters.com',
+    staticList: { resource: 'opportunities', sort: 'published_desc' },
+  })
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'opportunities_v3_production',
+  )
+  assert.equal(runtime.root.getAttribute('data-v3-algolia-status'), 'ready')
+})
+
+test('Static List Sort Replica mapping is idempotent', () => {
+  const runtime = load({
+    hostname: 'www.thestarters.com',
+    staticList: { sort: 'published_desc' },
+  })
+  const resolution = runtime.api.resolve('www.thestarters.com', config())
+  assert.equal(runtime.api.apply(runtime.document, resolution), true)
+  assert.equal(
+    runtime.staticList.getAttribute('wf-algolia-index'),
+    'Freelancers3.0-production__published_desc',
   )
 })
 

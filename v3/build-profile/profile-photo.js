@@ -3,6 +3,49 @@
  * Original live inline body SHA-256: 213646b19cc04f2b87375afeb303cc7ebe1f598cd5ffa4ce471b7c4ca895cf5c
  * Captured read-only from /build-profile/consult on 2026-08-12.
  */
+;(function loadCanonicalProfileHydrator() {
+  if (window.StartersBuildProfileCanonicalHydrator || window.__tsCanonicalProfileHydratorLoading) {
+    return
+  }
+  var buildProfilePaths = ['/build-profile/full-profile', '/build-profile/consult']
+  var isBuildProfile = buildProfilePaths.includes(String(window.location && window.location.pathname || ''))
+  var originalWaitForProfile = window.waitProfileData
+  var waitingForCanonical = []
+  var canonicalReleased = false
+  if (isBuildProfile && typeof originalWaitForProfile === 'function') {
+    window.waitProfileData = function waitForCanonicalProfile(callback) {
+      if (canonicalReleased) return originalWaitForProfile(callback)
+      waitingForCanonical.push(callback)
+    }
+    window.__tsReleaseBuildProfileCanonical = function releaseCanonicalProfile() {
+      if (canonicalReleased) return
+      canonicalReleased = true
+      window.waitProfileData = originalWaitForProfile
+      waitingForCanonical.splice(0).forEach(function resumeProfileConsumer(callback) {
+        originalWaitForProfile(callback)
+      })
+    }
+  }
+  var source = document.currentScript && document.currentScript.src
+  if (!source) {
+    if (window.__tsReleaseBuildProfileCanonical) window.__tsReleaseBuildProfileCanonical()
+    return
+  }
+  var script = document.createElement('script')
+  script.src = new URL('canonical-profile-hydrator.js', source).href
+  script.async = false
+  window.__tsCanonicalProfileHydratorLoading = true
+  script.addEventListener('load', function loaded() {
+    window.__tsCanonicalProfileHydratorLoading = false
+  }, { once: true })
+  script.addEventListener('error', function failed() {
+    window.__tsCanonicalProfileHydratorLoading = false
+    if (window.__tsReleaseBuildProfileCanonical) window.__tsReleaseBuildProfileCanonical()
+    console.warn('[build-profile-canonical] loader failed')
+  }, { once: true })
+  ;(document.head || document.documentElement).appendChild(script)
+})()
+
   document.addEventListener('DOMContentLoaded', () => {
     waitForMember(() => {
       if (!MEMBER.id) return;

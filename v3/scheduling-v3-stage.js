@@ -13,7 +13,6 @@
     '/hire/jp-dionisio',
   ]
   const PRODUCTION_PATHS = [
-    '/hire/jp-test',
     '/starter-dashboard',
     '/brand-dashboard',
   ]
@@ -35,6 +34,10 @@
     'booking_record/update_paid_booking_price': 'booking_record/update_paid_booking_price/v3',
     'booking_record/update_payment_status': 'booking_record/update_payment_status/v3',
     'booking_record/update_reschedule': 'booking_record/update_reschedule/v3',
+    'brand/booking/request': 'brand/booking/request/v3',
+    'brand/payment-method/setup': 'brand/payment-method/setup/v3',
+    'brand/payment-method/set-default': 'brand/payment-method/set-default/v3',
+    'brand/payment-readiness': 'brand/payment-readiness/v3',
     'brands/customer/get': 'brands/customer/get/v3',
     'brands/update/customer_id': 'brands/update/customer_id/v3',
     'brands/update/payment_method': 'brands/update/payment_method/v3',
@@ -55,12 +58,17 @@
     'starter/get_by_memberstack': 'starter/get_by_memberstack/v3',
     'starter/get_charges_enabled': 'starter/get_charges_enabled/v3',
     'starter/get_stripe_connect_id': 'starter/get_stripe_connect_id/v3',
+    'starter/paid-call-settings/disable': 'starter/paid-call-settings/disable/v3',
+    'starter/paid-call-settings/get': 'starter/paid-call-settings/get/v3',
+    'starter/paid-call-settings/upsert': 'starter/paid-call-settings/upsert/v3',
     'starter/set_timezone': 'starter/set_timezone/v3',
     'starter/update_availability': 'starter/update_availability/v3',
   }
   const HIRE_BOOKING_PATHS = {
     'nylas_configurations/get_all': 'nylas_configurations/get_bookable/v3',
+    'nylas_configurations/get_all/v3': 'nylas_configurations/get_bookable/v3',
     'starter/get_by_memberstack': 'starter/get_booking_profile/v3',
+    'starter/get_by_memberstack/v3': 'starter/get_booking_profile/v3',
   }
   const LEGACY_PROVIDER_PATH = /^stripe\/(?:live\/)?(?:customer|payment_intent|payment_method|setup_intent)(?:\/|$)/
 
@@ -70,19 +78,20 @@
 
   const activePath = normalizedPagePath()
   const activeHost = window.location.hostname
+  const isHirePath = /^\/hire\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(activePath)
   const isBlockedProductionPath =
     PRODUCTION_HOSTS.has(activeHost) && BLOCKED_PRODUCTION_PATHS.includes(activePath)
   if (isBlockedProductionPath) {
     installBlockedRoute()
     return
   }
-  const isStagingPath = activeHost === STAGING_HOST && STAGE_PATHS.includes(activePath)
+  const isStagingPath =
+    activeHost === STAGING_HOST && (STAGE_PATHS.includes(activePath) || isHirePath)
   const isProductionPath =
-    PRODUCTION_HOSTS.has(activeHost) && PRODUCTION_PATHS.includes(activePath)
+    PRODUCTION_HOSTS.has(activeHost) && (PRODUCTION_PATHS.includes(activePath) || isHirePath)
   if (!isStagingPath && !isProductionPath) return
-  const isHireBookingPath =
-    (activeHost === STAGING_HOST && activePath === '/hire/jp-dionisio') ||
-    (PRODUCTION_HOSTS.has(activeHost) && activePath === '/hire/jp-test')
+  const isHireBookingPath = isHirePath &&
+    (activeHost === STAGING_HOST || PRODUCTION_HOSTS.has(activeHost))
   if (window.__tsSchedulingV3Stage) return
   window.__tsSchedulingV3Stage = true
 
@@ -93,6 +102,13 @@
   const activeV3Targets = new Set(Object.values(activeRouteMap))
 
   const originalFetch = window.fetch.bind(window)
+  const authoritativeXanoAuthFetch =
+    typeof window.__tsSchedulingAuthFetch === 'function'
+      ? window.__tsSchedulingAuthFetch
+      : window.xanoAuthFetch
+  const originalXanoAuthFetch = typeof authoritativeXanoAuthFetch === 'function'
+    ? authoritativeXanoAuthFetch.bind(window)
+    : null
 
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
@@ -289,28 +305,51 @@
 
     const target = activeRouteMap[scheduling.route]
     if (target) {
-      if (typeof window.xanoAuthFetch !== 'function') {
+      if (!originalXanoAuthFetch) {
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
       }
       scheduling.url.pathname = API_PREFIX + target
-      return window.xanoAuthFetch(requestAt(request, scheduling.url))
+      return originalXanoAuthFetch(requestAt(request, scheduling.url))
     }
 
     if (activeV3Targets.has(scheduling.route)) {
-      if (typeof window.xanoAuthFetch !== 'function') {
+      if (!originalXanoAuthFetch) {
         setStatus('auth-unavailable')
         return blockedResponse(scheduling.route)
       }
-      return window.xanoAuthFetch(request)
+      return originalXanoAuthFetch(request)
     }
 
-    if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return originalFetch(request)
+    if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return blockedResponse(scheduling.route)
+
+    return blockedResponse(scheduling.route)
+  }
+
+  async function stageXanoAuthFetch(input, init) {
+    const request = new Request(input, init)
+    const scheduling = schedulingRoute(request)
+    if (!scheduling) return originalXanoAuthFetch(request)
+
+    const target = activeRouteMap[scheduling.route]
+    if (target) {
+      scheduling.url.pathname = API_PREFIX + target
+      return originalXanoAuthFetch(requestAt(request, scheduling.url))
+    }
+
+    if (activeV3Targets.has(scheduling.route)) {
+      return originalXanoAuthFetch(request)
+    }
+
+    if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return blockedResponse(scheduling.route)
 
     return blockedResponse(scheduling.route)
   }
 
   window.fetch = stageFetch
+  if (originalXanoAuthFetch) {
+    window.xanoAuthFetch = stageXanoAuthFetch
+  }
   window.__tsSchedulingV3StageOriginalFetch = originalFetch
   window.StarterSchedulingV3Stage = Object.freeze({
     paths: STAGE_PATHS.slice(),

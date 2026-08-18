@@ -4,7 +4,6 @@
   const STAGING_HOST = 'the-starters-3-0.webflow.io'
   const PRODUCTION_HOSTS = new Set(['thestarters.com', 'www.thestarters.com'])
   const PRODUCTION_PATHS = new Set([
-    '/hire/jp-test',
     '/starter-dashboard',
     '/brand-dashboard',
   ])
@@ -12,12 +11,14 @@
   const XANO_ORIGIN = 'https://x08a-5ko8-jj1r.n7c.xano.io'
   const API_PREFIX = '/api:tCpV3oqd/'
   const activePath = window.location.pathname.replace(/\/+$/, '') || '/'
+  const isHirePath = /^\/hire\/[a-z0-9]+(?:-[a-z0-9]+)*$/.test(activePath)
   const isStagingHost = window.location.hostname === STAGING_HOST
   const isBlockedProductionPath =
     PRODUCTION_HOSTS.has(window.location.hostname) &&
     BLOCKED_PRODUCTION_PATHS.has(activePath)
   const isApprovedProductionPath =
-    PRODUCTION_HOSTS.has(window.location.hostname) && PRODUCTION_PATHS.has(activePath)
+    PRODUCTION_HOSTS.has(window.location.hostname) &&
+    (PRODUCTION_PATHS.has(activePath) || isHirePath)
   if (isBlockedProductionPath) {
     installBlockedRoute()
     return
@@ -51,6 +52,8 @@
     '/api:tCpV3oqd/booking_record/update_reschedule/v3',
     '/api:tCpV3oqd/brand/payment-method/setup/v3',
     '/api:tCpV3oqd/brand/payment-method/set-default/v3',
+    '/api:tCpV3oqd/brand/payment-readiness/v3',
+    '/api:tCpV3oqd/brand/booking/request/v3',
     '/api:tCpV3oqd/brands/customer/get/v3',
     '/api:tCpV3oqd/brands/update/customer_id/v3',
     '/api:tCpV3oqd/brands/update/payment_method/v3',
@@ -73,6 +76,9 @@
     '/api:tCpV3oqd/starter/get_by_memberstack/v3',
     '/api:tCpV3oqd/starter/get_charges_enabled/v3',
     '/api:tCpV3oqd/starter/get_stripe_connect_id/v3',
+    '/api:tCpV3oqd/starter/paid-call-settings/disable/v3',
+    '/api:tCpV3oqd/starter/paid-call-settings/get/v3',
+    '/api:tCpV3oqd/starter/paid-call-settings/upsert/v3',
     '/api:tCpV3oqd/starter/set_timezone/v3',
     '/api:tCpV3oqd/starter/update_availability/v3',
   ]
@@ -307,6 +313,10 @@
 
   function installBridge() {
     window.getXanoAuthToken = getXanoAuthToken
+    // Keep an owner-specific reference for the routing adapter. Other page
+    // bundles still expose compatibility bridges on window.xanoAuthFetch and
+    // can replace that mutable global after this script has installed.
+    window.__tsSchedulingAuthFetch = xanoAuthFetch
     window.xanoAuthFetch = xanoAuthFetch
     window.fetch = authenticatedFetch
     window.__tsSchedulingAuthBridge = true

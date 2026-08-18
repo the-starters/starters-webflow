@@ -21,8 +21,26 @@ function element(attributes = {}) {
   }
 }
 
+function formWithEmail(email, options = {}) {
+  const input = { value: email }
+  const listeners = []
+  const form = element({ 'data-ms-form': 'forgot-password' })
+  form.querySelector = (selector) =>
+    selector === '[data-ms-member="email"]' ? input : null
+  form.addEventListener = (type, handler, settings) => {
+    listeners.push({ type, handler, settings })
+  }
+  form.checkValidity = () => (options.valid === false ? false : true)
+  form.submit = () => {
+    listeners
+      .filter((listener) => listener.type === 'submit')
+      .forEach((listener) => listener.handler({ type: 'submit' }))
+  }
+  return { form, input }
+}
+
 function load(options = {}) {
-  const storage = new Map()
+  const storage = options.storage || new Map()
   const listeners = []
   const selectors = Object.assign({}, options.selectors)
   if (options.storedOrigin) {
@@ -59,6 +77,10 @@ function load(options = {}) {
       setItem(key, value) {
         if (options.storageFailure === 'set') throw new Error('blocked')
         storage.set(key, String(value))
+      },
+      removeItem(key) {
+        if (options.storageFailure === 'remove') throw new Error('blocked')
+        storage.delete(key)
       },
     },
   }
@@ -356,4 +378,339 @@ test('boot guard makes a second evaluation a complete no-op', () => {
 
   assert.equal(result.api, undefined)
   assert.equal(result.location.replaced, undefined)
+})
+
+test('Reset Password shows the Recovery Email Hint from Forgot Password submit', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    search: '?from=brand',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  const reset = element({ 'data-ms-form': 'reset-password' })
+  load({
+    pathname: '/reset-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="reset-password"]': [reset],
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(surface.textContent, 'ada@example.com')
+  assert.equal(reset.getAttribute('redirect'), '/password-success?from=brand')
+})
+
+test('Reset Password keeps generic copy when no Recovery Email Hint exists', () => {
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  const reset = element({ 'data-ms-form': 'reset-password' })
+  load({
+    pathname: '/reset-password',
+    selectors: {
+      'form[data-ms-form="reset-password"]': [reset],
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(surface.textContent, 'an email')
+  assert.equal(reset.getAttribute('redirect'), '/password-success')
+})
+
+test('typing on Forgot Password without submit does not create a Recovery Email Hint', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  load({
+    pathname: '/reset-password',
+    storage,
+    selectors: {
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(surface.textContent, 'an email')
+})
+
+test('invalid Forgot Password submit does not create a Recovery Email Hint', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('not-an-email', { valid: false })
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  load({
+    pathname: '/reset-password',
+    storage,
+    selectors: {
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(surface.textContent, 'an email')
+})
+
+test('Forgot Password redirect does not put the Recovery Email Hint in the URL', () => {
+  const { form } = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    search: '?from=brand',
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  assert.equal(form.getAttribute('redirect'), '/reset-password?from=brand')
+  assert.equal(form.getAttribute('data-redirect'), '/reset-password?from=brand')
+})
+
+test('Reset Password keeps generic copy when Recovery Email Hint storage fails', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    storage,
+    storageFailure: 'set',
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  const reset = element({ 'data-ms-form': 'reset-password' })
+  load({
+    pathname: '/reset-password',
+    storage,
+    storageFailure: 'get',
+    selectors: {
+      'form[data-ms-form="reset-password"]': [reset],
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(surface.textContent, 'an email')
+  assert.equal(reset.getAttribute('redirect'), '/password-success')
+  assert.equal(reset.getAttribute('data-redirect'), '/password-success')
+})
+
+test('Reset Password updates the authored Recovery Email Hint text node', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  const textNode = { nodeType: 3, nodeValue: 'an email' }
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.firstChild = textNode
+  surface.textContent = 'an email'
+  load({
+    pathname: '/reset-password',
+    storage,
+    selectors: {
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(textNode.nodeValue, 'ada@example.com')
+  assert.equal(surface.textContent, 'an email')
+})
+
+test('Reset Password shows a mistyped Recovery Email Hint', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('ada@gmial.com')
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  load({
+    pathname: '/reset-password',
+    storage,
+    selectors: {
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(surface.textContent, 'ada@gmial.com')
+})
+
+test('Forgot Password email is filled from the Recovery Email Hint', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    search: '?from=talent',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  const retryInput = { value: '' }
+  const retryForm = element({ 'data-ms-form': 'forgot-password' })
+  retryForm.querySelector = (selector) =>
+    selector === '[data-ms-member="email"]' ? retryInput : null
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [retryForm],
+    },
+  })
+
+  assert.equal(retryInput.value, 'ada@example.com')
+})
+
+test('a second Forgot Password submit replaces the Recovery Email Hint', () => {
+  const storage = new Map()
+  const first = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [first.form],
+    },
+  })
+  first.form.submit()
+
+  const second = formWithEmail('')
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [second.form],
+    },
+  })
+  assert.equal(second.input.value, 'ada@example.com')
+  second.input.value = 'ada@thestarters.com'
+  second.form.submit()
+
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  load({
+    pathname: '/reset-password',
+    storage,
+    selectors: {
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(surface.textContent, 'ada@thestarters.com')
+})
+
+test('abandoning Forgot Password without a new submit keeps the Recovery Email Hint', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  const retryInput = { value: '' }
+  const retryForm = element({ 'data-ms-form': 'forgot-password' })
+  retryForm.querySelector = (selector) =>
+    selector === '[data-ms-member="email"]' ? retryInput : null
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [retryForm],
+    },
+  })
+
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  load({
+    pathname: '/reset-password',
+    storage,
+    selectors: {
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(retryInput.value, 'ada@example.com')
+  assert.equal(surface.textContent, 'ada@example.com')
+})
+
+test('Password Success clears the Recovery Email Hint', () => {
+  const storage = new Map()
+  const { form } = formWithEmail('ada@example.com')
+  load({
+    pathname: '/forgot-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="forgot-password"]': [form],
+    },
+  })
+  form.submit()
+
+  const successSurface = element({ 'data-password-recovery-email': '' })
+  successSurface.textContent = 'an email'
+  load({
+    pathname: '/password-success',
+    storage,
+    selectors: {
+      '[data-password-recovery-email]': [successSurface],
+    },
+  })
+
+  const surface = element({ 'data-password-recovery-email': '' })
+  surface.textContent = 'an email'
+  const reset = element({ 'data-ms-form': 'reset-password' })
+  load({
+    pathname: '/reset-password',
+    storage,
+    selectors: {
+      'form[data-ms-form="reset-password"]': [reset],
+      '[data-password-recovery-email]': [surface],
+    },
+  })
+
+  assert.equal(successSurface.textContent, 'an email')
+  assert.equal(surface.textContent, 'an email')
+  assert.equal(reset.getAttribute('redirect'), '/password-success')
 })

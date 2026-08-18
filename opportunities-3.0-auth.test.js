@@ -58,6 +58,7 @@ async function loadBridge(
     autoLoadWorkflowDiagnostics = false,
     workflowDiagnosticsReady = null,
     setTimeoutImpl = setTimeout,
+    nowImpl = null,
   } = {},
 ) {
   const documentListeners = new Map()
@@ -85,6 +86,7 @@ async function loadBridge(
     setAttribute: (name, value) => attributes.set(name, String(value)),
   }
   const document = {
+    visibilityState: 'visible',
     addEventListener(type, listener) {
       const listeners = documentListeners.get(type) || []
       listeners.push(listener)
@@ -118,6 +120,7 @@ async function loadBridge(
     readyState: 'loading',
   }
   const trackCalls = []
+  const dispatchedEvents = []
   const diagnosticStorage = new Map()
   const copiedDiagnostics = []
   const window = {
@@ -137,6 +140,7 @@ async function loadBridge(
     clearInterval,
     clearTimeout,
     dispatchEvent(event) {
+      dispatchedEvents.push(event)
       for (const listener of windowListeners.get(event.type) || []) listener(event)
     },
     removeEventListener(type, listener) {
@@ -145,6 +149,12 @@ async function loadBridge(
     },
     setInterval,
     setTimeout: setTimeoutImpl,
+  }
+  window.CustomEvent = class CustomEvent {
+    constructor(type, options) {
+      this.type = type
+      this.detail = options?.detail
+    }
   }
   if (workflowDiagnosticsReady) {
     window.__startersWorkflowDiagnosticsReady = workflowDiagnosticsReady
@@ -159,6 +169,9 @@ async function loadBridge(
     pathname,
     search,
   }
+  const ContextDate = nowImpl
+    ? class extends Date { static now() { return nowImpl() } }
+    : Date
   context = vm.createContext({
     CustomEvent: class CustomEvent {
       constructor(type, options) {
@@ -166,8 +179,15 @@ async function loadBridge(
         this.detail = options?.detail
       }
     },
+    Event: class Event {
+      constructor(type, options) {
+        this.type = type
+        this.bubbles = options?.bubbles
+      }
+    },
     FormData,
     Headers,
+    Date: ContextDate,
     MutationObserver: class MutationObserver {
       constructor(callback) {
         this.callback = callback
@@ -222,6 +242,7 @@ async function loadBridge(
     fetch: window.fetch,
     location,
     trackCalls,
+    dispatchedEvents,
     diagnosticStorage,
     copiedDiagnostics,
     appendedScripts,
@@ -489,6 +510,36 @@ test('failed mutation exposes a safe diagnostic on the thrown error', async () =
       return true
     },
   )
+  assert.equal(
+    bridge.dispatchedEvents.some(
+      (event) => event.type === 'starters:opportunity-created',
+    ),
+    false,
+  )
+})
+
+test('a successful opportunity create emits the Brand action completion event', async () => {
+  const bridge = await loadBridge(
+    async (input) => {
+      const url = String(input)
+      if (url.includes('/auth/trade-token/v3')) {
+        return response({ authToken: 'xano-token' })
+      }
+      if (url.includes('/brand/opportunities/create')) {
+        return response({ id: 712 }, true, 201)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    { member: paidBrandMember },
+  )
+
+  await bridge.API.brandOppCreate({ title: 'First opportunity' })
+
+  const created = bridge.dispatchedEvents.filter(
+    (event) => event.type === 'starters:opportunity-created',
+  )
+  assert.equal(created.length, 1)
+  assert.equal(created[0].detail.opportunityId, 712)
 })
 
 test('loads the matching-version diagnostic helper before an opportunity mutation', async () => {
@@ -1426,7 +1477,7 @@ test('project contract lock follows replacement controls during replay', async (
   ))
   bridge.dispatchDocument('click', clickEvent(live.contract).event)
   await new Promise(setImmediate)
-  assert.equal(opened, 0)
+  assert.equal(opened, 1)
   assert.equal(linkRequests, 0)
 
   firstPageTwo.resolve()
@@ -1946,6 +1997,55 @@ function selectorMatches(node, selector) {
       }
       return true
     })
+}
+
+function buttonWrapFixture({
+  buttonAttrs = { type: 'submit' },
+  buttonTag = 'button',
+  spinnerDisplay = 'flex',
+  wrapAttrs = {},
+} = {}) {
+  const spinner = el('div', { 'data-button-spinner': '' })
+  spinner.style.display = spinnerDisplay
+  const button = el(buttonTag, buttonAttrs)
+  const wrap = el('div', wrapAttrs, [button, spinner])
+  return { wrap, button, spinner }
+}
+
+// Live Webflow Button Wrap: empty overlay submit, visible text/line, Spinner
+// nested under .button_main-element — not a sibling of the native control.
+function productButtonWrapFixture({
+  buttonAttrs = { type: 'submit' },
+  spinnerDisplay = 'none',
+  wrapAttrs = {
+    class: 'button_main-wrap',
+    'data-button-theme': 'black',
+    'data-button-style': 'primary',
+  },
+  label = 'Submit',
+} = {}) {
+  const spinner = el('div', {
+    'data-button-spinner': '',
+    class: 'w-layout-vflex button_icon-spinner',
+  })
+  spinner.style.display = spinnerDisplay
+  const text = el('div', { class: 'button_main-text' })
+  text.textContent = label
+  const line = el('div', { class: 'button_main-line' })
+  const element = el('div', { class: 'button_main-element' }, [text, line, spinner])
+  const button = el('button', { class: 'clickable_btn', ...buttonAttrs })
+  const clickable = el('div', { class: 'clickable_wrap' }, [button])
+  const wrap = el('div', wrapAttrs, [clickable, element])
+  return { wrap, button, spinner, text, line }
+}
+
+function documentWith(root) {
+  return {
+    querySelector: (selector) =>
+      selectorMatches(root, selector) ? root : root.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+  }
 }
 
 // The Generate Invoice modal as the shared Webflow button component renders it:
@@ -2787,7 +2887,7 @@ test('contract panel paints one badge per party and only the authorized role act
 
 })
 
-test('contract panel refreshes canonical signing state after returning from PandaDoc', async () => {
+test('contract panel refreshes once for a dashboard lifecycle return burst', async () => {
   const title = el('div', { 'data-project-contract-title': '' })
   const body = el('div', { 'data-project-contract-body': '' })
   const badges = [
@@ -2804,6 +2904,7 @@ test('contract panel refreshes canonical signing state after returning from Pand
   const card = el('div', { class: 'project_item', 'data-wf-xano-id': '708' }, [panel])
   const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
   let listRequests = 0
+  let now = 10_000
 
   const bridge = await loadBridge(
     async (input) => {
@@ -2834,6 +2935,7 @@ test('contract panel refreshes canonical signing state after returning from Pand
       querySelectorAll: (selector) =>
         [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
       routeGuard: true,
+      nowImpl: () => now,
     },
   )
 
@@ -2851,8 +2953,20 @@ test('contract panel refreshes canonical signing state after returning from Pand
     .map((badge) => badge.getAttribute('data-project-contract-badge'))
   assert.deepEqual(visibleBadges, ['brand-signed', 'starter-pending'])
 
-  // PandaDoc can open in a separate window without hiding the dashboard.
-  // Returning to the dashboard fires focus rather than pageshow.
+  // One browser return can emit pageshow, focus, and visible visibilitychange.
+  // The first signal refreshes canonical state; the rest belong to that burst.
+  bridge.dispatchWindow('focus')
+  bridge.dispatchDocument('visibilitychange', {})
+  await new Promise(setImmediate)
+  assert.equal(listRequests, 2)
+
+  // A distinct refocus while the lifecycle result is still fresh stays local.
+  now += 15_000
+  bridge.dispatchWindow('focus')
+  await new Promise(setImmediate)
+  assert.equal(listRequests, 2)
+
+  now += 15_001
   bridge.dispatchWindow('focus')
   assert.ok(await waitFor(() => listRequests === 3))
 })
@@ -2872,7 +2986,7 @@ test('contract panel fails closed when its return refresh fails', async () => {
       if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
       if (url.includes('/brand/projects/mine')) {
         listRequests += 1
-        if (listRequests > 1) throw new Error('Temporary project list failure')
+        if (listRequests === 2) throw new Error('Temporary project list failure')
         return response({
           items: [{
             id: 708,
@@ -2906,6 +3020,11 @@ test('contract panel fails closed when its return refresh fails', async () => {
   assert.equal(panel.getAttribute('aria-hidden'), 'true')
   assert.equal(signWrap.style.display, 'none')
   assert.match(String(bridge.consoleErrors.at(-1)[0]), /focus projection refresh failed/)
+
+  // A failed lifecycle refresh never starts the freshness window. The next
+  // focus retries immediately and can restore the canonical projection.
+  bridge.dispatchWindow('focus')
+  assert.ok(await waitFor(() => listRequests === 3 && signWrap.style.display === ''))
 })
 
 test('View Contract fails closed when the canonical refresh transiently fails', async () => {
@@ -2955,7 +3074,12 @@ test('View Contract fails closed when the canonical refresh transiently fails', 
       routeGuard: true,
     },
   )
-  const contractWindow = { closed: false, location: {}, opener: bridge.window }
+  const contractWindow = {
+    closed: false,
+    location: {},
+    opener: bridge.window,
+    close() { this.closed = true },
+  }
   bridge.window.open = () => contractWindow
   assert.ok(await waitFor(() => listCount === 1))
 
@@ -2965,7 +3089,8 @@ test('View Contract fails closed when the canonical refresh transiently fails', 
   assert.equal(listCount, 2)
   assert.deepEqual(requests, [])
   assert.deepEqual(contractWindow.location, {})
-  assert.equal(contractWindow.opener, bridge.window)
+  assert.equal(contractWindow.opener, null)
+  assert.equal(contractWindow.closed, true)
   assert.equal(wrap.style.display, 'none')
   assert.equal(wrap.getAttribute('aria-hidden'), 'true')
   assert.equal(label.textContent, 'Contract is unavailable. Please try again.')
@@ -3184,52 +3309,81 @@ test('View Contract closes its blank popup and reports a safe error when Xano re
   assert.equal(label.textContent, 'Contract is unavailable. Please try again.')
 })
 
-test('View Contract uses the authorized session in the current tab when popups are blocked', async () => {
-  const contract = el('a', { href: '#contract' })
-  const label = el('div', { class: 'button_main-text' })
-  label.textContent = 'View Contract'
-  const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
-  const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
-  const root = el('div', { 'wf-xano-instance': 'dash-projects' }, [card])
-  const sessionUrl = 'https://app.pandadoc.com/s/popup-blocked-contract'
-  const bridge = await loadBridge(
-    async (input) => {
-      const url = String(input)
-      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
-      if (url.includes('/starter/projects/mine')) {
-        return response({
-          items: [{
-            id: 675,
-            sync_origin: 'v3',
-            contract_source: 'standard',
-            brand_signed_at: '2026-08-12T01:00:00Z',
-            lifecycle_state: 'contract_sent',
-            pandadoc_document_id: 'doc-675',
-            contract_status: 'viewed',
-          }],
-        })
-      }
-      if (url.includes('/contracts/link/v3')) return response({ url: sessionUrl })
-      throw new Error(`Unexpected request: ${url}`)
-    },
+test('View Contract never replaces either dashboard when popups are blocked', async () => {
+  for (const dashboard of [
     {
       member: talentMember,
       pathname: '/starter-dashboard',
-      querySelector: (selector) =>
-        selectorMatches(root, selector) ? root : root.querySelector(selector),
-      querySelectorAll: (selector) =>
-        [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
-      routeGuard: true,
+      instance: 'dash-projects',
+      endpoint: '/starter/projects/mine',
     },
-  )
-  bridge.window.location = bridge.location
-  bridge.window.open = () => null
-  assert.ok(await waitFor(() => wrap.style.display === ''))
+    {
+      member: paidBrandMember,
+      pathname: '/brand-dashboard',
+      instance: 'dash-brand-projects',
+      endpoint: '/brand/projects/mine',
+    },
+  ]) {
+    const contract = el('a', { href: '#contract' })
+    const label = el('div', { class: 'button_main-text' })
+    label.textContent = 'View Contract'
+    const wrap = el('div', { class: 'button_main-wrap' }, [contract, label])
+    const card = el('div', { class: 'project_item', 'data-wf-xano-id': '675' }, [wrap])
+    const root = el('div', { 'wf-xano-instance': dashboard.instance }, [card])
+    let contractRequests = 0
+    const bridge = await loadBridge(
+      async (input) => {
+        const url = String(input)
+        if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+        if (url.includes(dashboard.endpoint)) {
+          return response({
+            items: [{
+              id: 675,
+              sync_origin: 'v3',
+              contract_source: 'standard',
+              brand_signed_at: '2026-08-12T01:00:00Z',
+              lifecycle_state: 'contract_sent',
+              pandadoc_document_id: 'doc-675',
+              contract_status: 'viewed',
+            }],
+          })
+        }
+        if (url.includes('/contracts/link/v3')) {
+          contractRequests += 1
+          return response({ url: 'https://app.pandadoc.com/s/popup-blocked-contract' })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      },
+      {
+        member: dashboard.member,
+        pathname: dashboard.pathname,
+        querySelector: (selector) =>
+          selectorMatches(root, selector) ? root : root.querySelector(selector),
+        querySelectorAll: (selector) =>
+          [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+        routeGuard: true,
+      },
+    )
+    bridge.window.location = bridge.location
+    let popupAttempts = 0
+    bridge.window.open = () => {
+      popupAttempts += 1
+      return null
+    }
+    assert.ok(await waitFor(() => wrap.style.display === ''), dashboard.pathname)
+    const originalHref = bridge.location.href
 
-  bridge.dispatchDocument('click', clickEvent(contract).event)
+    bridge.dispatchDocument('click', clickEvent(contract).event)
 
-  assert.ok(await waitFor(() => bridge.location.href === sessionUrl))
-  assert.notEqual(wrap.getAttribute('data-project-action-result'), 'error')
+    assert.equal(popupAttempts, 1, dashboard.pathname)
+    assert.ok(
+      await waitFor(() => wrap.getAttribute('data-project-action-result') === 'error'),
+      dashboard.pathname,
+    )
+    assert.equal(bridge.location.href, originalHref, dashboard.pathname)
+    assert.equal(contractRequests, 0, dashboard.pathname)
+    assert.equal(label.textContent, 'Allow pop-ups to open the contract in a new tab.')
+  }
 })
 
 test('project action context includes every canonical project page', async () => {
@@ -5185,6 +5339,91 @@ test('merged feed for a paid brand: brand wrapper + only the brand feed activate
   assert.equal(bridge.window.__opp30CreatePage, true, 'brand create form binder ran')
 })
 
+test('standalone create owner sends one request before returning to the published feed', async () => {
+  let submit
+  const input = (name, value, attrs = {}) => {
+    const field = el('input', { name, ...attrs })
+    field.value = value
+    field.addEventListener = () => {}
+    field.dispatchEvent = () => true
+    field.setCustomValidity = () => {}
+    return field
+  }
+  const title = input('Opportunity-title', 'V3 canary')
+  const description = input('Description', 'Production email automation canary')
+  const requirements = input('Requirements', 'Verified Brand owner')
+  const category = input('Category-option', '', {
+    'data-opp30-selected-values': '["Email Automation"]',
+  })
+  const projectType = input('Project-Type', 'One Time', {
+    id: 'One-Time',
+    checked: '',
+  })
+  projectType.id = 'One-Time'
+  const duration = input('Duration', '≤ 1 month', { checked: '' })
+  const budget = input('One-Time-Budget', '1000')
+  const button = input('', 'Submit', { type: 'submit' })
+  const form = el('form', { 'data-opp-form': 'create' }, [
+    title,
+    description,
+    requirements,
+    category,
+    projectType,
+    duration,
+    budget,
+    button,
+  ])
+  form.addEventListener = (type, listener) => {
+    if (type === 'submit') submit = listener
+  }
+
+  const createResponse = deferred()
+  const requests = []
+  const bridge = await loadBridge(
+    async (request) => {
+      const url = String(request)
+      requests.push(url)
+      if (url.includes('/auth/trade-token/v3')) return response({ authToken: 'xano-token' })
+      if (url.includes('/brand/opportunities/create')) return createResponse.promise
+      throw new Error(`Unexpected request: ${url}`)
+    },
+    {
+      member: paidBrandMember,
+      pathname: '/opportunities---create',
+      querySelector: (selector) => selector === '[data-opp-form="create"]' ? form : null,
+      querySelectorAll: (selector) =>
+        selector === '[data-opp-form="create"], [data-modal-target="edit-opportunity"] form'
+          ? [form]
+          : [],
+      routeGuard: true,
+    },
+  )
+
+  assert.ok(await waitFor(() => typeof submit === 'function'))
+  const event = {
+    preventDefault() {},
+    stopImmediatePropagation() {},
+    stopPropagation() {},
+  }
+  const firstSubmit = submit(event)
+  const duplicateSubmit = submit(event)
+  assert.ok(
+    await waitFor(
+      () => requests.filter((url) => url.includes('/brand/opportunities/create')).length === 1,
+    ),
+  )
+  assert.equal(bridge.location.href, 'https://example.test/opportunities---create')
+
+  createResponse.resolve(response({ id: 123 }))
+  await Promise.all([firstSubmit, duplicateSubmit])
+
+  assert.equal(
+    requests.filter((url) => url.includes('/brand/opportunities/create')).length,
+    1,
+  )
+  assert.equal(bridge.location.href, '/opportunities')
+})
+
 test('merged feed re-applies the Talent navbar role after Webflow restores the authored component value', async () => {
   const roots = { talent: deferredRoot('talent'), brand: deferredRoot('brand') }
   const dom = mergedFeedDom(roots)
@@ -5228,4 +5467,271 @@ test('activateDeferredFeed runs immediately when wf-xano is already loaded', asy
   const root = deferredRoot('talent')
   bridge.window.Opp30.activateDeferredFeed(root)
   assert.deepEqual(inits, [root])
+})
+
+test('pending Create submit shows the Spinner and fades only the native control', async () => {
+  const { wrap, button, spinner } = buttonWrapFixture({ spinnerDisplay: 'none' })
+  const form = el('form', { 'data-opp-form': 'create' }, [wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+
+  assert.equal(spinner.style.display, 'flex')
+  assert.equal(button.style.opacity, '0.6')
+  assert.equal(button.disabled, true)
+  assert.equal(button.getAttribute('aria-busy'), 'true')
+  assert.equal(button.style.pointerEvents, 'none')
+  assert.equal(wrap.style.opacity, undefined)
+  assert.equal(wrap.hasAttribute('data-opp-loading'), false)
+  assert.equal(button.hasAttribute('data-opp-loading'), false)
+})
+
+test('clearing pending hides the Spinner and restores the native control', async () => {
+  const { button, spinner } = buttonWrapFixture({ spinnerDisplay: 'none' })
+  const bridge = await loadBridge(async () => response({}), documentWith(button.parent))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+  bridge.window.Opp30.setOpportunityActionPending(button, false)
+
+  assert.equal(spinner.style.display, 'none')
+  assert.equal(button.style.opacity, undefined)
+  assert.equal(button.disabled, false)
+  assert.equal(button.getAttribute('aria-busy'), null)
+  assert.equal(button.style.pointerEvents, undefined)
+})
+
+test('pending Close confirm that is not a submit shows its Spinner and fades the inner native control', async () => {
+  const { wrap, button, spinner } = buttonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+    wrapAttrs: { 'data-opp-submit': 'close' },
+  })
+  const modal = el('div', { 'data-modal-target': 'close-opportunity' }, [wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(modal))
+
+  bridge.window.Opp30.setOpportunityActionPending(wrap, true)
+
+  assert.equal(spinner.style.display, 'flex')
+  assert.equal(button.style.opacity, '0.6')
+  assert.equal(button.disabled, true)
+  assert.equal(button.getAttribute('aria-busy'), 'true')
+  assert.equal(wrap.style.opacity, undefined)
+  assert.equal(wrap.getAttribute('aria-busy'), 'true')
+  assert.equal(wrap.style.pointerEvents, 'none')
+  assert.equal(wrap.hasAttribute('data-opp-loading'), false)
+})
+
+test('a wrap with no Spinner still disables and never clones one', async () => {
+  const button = el('button', { type: 'submit' })
+  const wrap = el('div', {}, [button])
+  const childCount = wrap.children.length
+  const bridge = await loadBridge(async () => response({}), documentWith(wrap))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+
+  assert.equal(button.disabled, true)
+  assert.equal(button.style.opacity, undefined)
+  assert.equal(wrap.children.length, childCount)
+  assert.equal(
+    wrap.querySelector('[data-button-spinner]'),
+    null,
+  )
+  assert.equal(wrap.hasAttribute('data-opp-loading'), false)
+})
+
+test('two wraps in one footer: only the action wrap spins', async () => {
+  const submit = buttonWrapFixture({
+    buttonAttrs: { type: 'submit' },
+    spinnerDisplay: 'none',
+  })
+  const cancel = buttonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+  })
+  const footer = el('div', {}, [submit.wrap, cancel.wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(footer))
+
+  bridge.window.Opp30.setOpportunityActionPending(submit.button, true)
+
+  assert.equal(submit.spinner.style.display, 'flex')
+  assert.equal(cancel.spinner.style.display, 'none')
+  assert.equal(submit.button.style.opacity, '0.6')
+  assert.equal(cancel.button.style.opacity, undefined)
+  assert.equal(cancel.button.disabled, false)
+})
+
+test('a wrap with no Spinner does not steal a neighbour Spinner', async () => {
+  const submitButton = el('button', { type: 'submit' })
+  const submitWrap = el('div', {}, [submitButton])
+  const cancel = buttonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+  })
+  const footer = el('div', {}, [submitWrap, cancel.wrap])
+  const childCount = footer.children.length
+  const bridge = await loadBridge(async () => response({}), documentWith(footer))
+
+  bridge.window.Opp30.setOpportunityActionPending(submitButton, true)
+
+  assert.equal(cancel.spinner.style.display, 'none')
+  assert.equal(submitButton.disabled, true)
+  assert.equal(submitWrap.style.opacity, undefined)
+  assert.equal(footer.children.length, childCount)
+  assert.equal(submitWrap.querySelector('[data-button-spinner]'), null)
+})
+
+test('binding a wrap force-hides a leftover visible Spinner', async () => {
+  const { spinner } = buttonWrapFixture({ spinnerDisplay: 'flex' })
+  await loadBridge(async () => response({}), documentWith(spinner.parent))
+
+  assert.equal(spinner.style.display, 'none')
+})
+
+test('binding does not hide a Spinner that is not in a Button Wrap', async () => {
+  const stray = el('div', { 'data-button-spinner': '' })
+  stray.style.display = 'flex'
+  await loadBridge(async () => response({}), documentWith(stray))
+
+  assert.equal(stray.style.display, 'flex')
+})
+
+test('pending Create on the live Button Wrap shows the nested Spinner and fades text and line', async () => {
+  const { wrap, button, spinner, text, line } = productButtonWrapFixture({
+    spinnerDisplay: 'none',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-button-style': 'primary',
+      'data-opp-submit': 'create',
+    },
+  })
+  const form = el('form', { 'data-opp-form': 'create' }, [wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+
+  assert.equal(spinner.style.display, 'flex')
+  assert.equal(text.style.opacity, '0.6')
+  assert.equal(line.style.opacity, '0.6')
+  assert.equal(text.getAttribute('aria-busy'), null)
+  assert.equal(line.getAttribute('aria-busy'), null)
+  assert.equal(text.style.pointerEvents, undefined)
+  assert.equal(line.style.pointerEvents, undefined)
+  assert.equal(button.style.opacity, undefined)
+  assert.equal(button.disabled, true)
+  assert.equal(button.getAttribute('aria-busy'), 'true')
+  assert.equal(wrap.style.opacity, undefined)
+  assert.equal(spinner.style.opacity, undefined)
+  assert.equal(wrap.hasAttribute('data-opp-loading'), false)
+})
+
+test('clearing pending on the live Button Wrap restores text, line, and nested Spinner', async () => {
+  const { wrap, button, spinner, text, line } = productButtonWrapFixture({
+    spinnerDisplay: 'none',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-opp-submit': 'create',
+    },
+  })
+  const form = el('form', { 'data-opp-form': 'create' }, [wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+  bridge.window.Opp30.setOpportunityActionPending(button, false)
+
+  assert.equal(spinner.style.display, 'none')
+  assert.equal(text.style.opacity, undefined)
+  assert.equal(line.style.opacity, undefined)
+  assert.equal(text.getAttribute('aria-busy'), null)
+  assert.equal(button.disabled, false)
+  assert.equal(button.getAttribute('aria-busy'), null)
+})
+
+test('two live wraps in one footer: only the action wrap spins', async () => {
+  const submit = productButtonWrapFixture({
+    spinnerDisplay: 'none',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-button-style': 'primary',
+      'data-opp-submit': 'create',
+    },
+  })
+  const cancel = productButtonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+    label: 'Cancel',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-button-style': 'tertiary',
+    },
+  })
+  const footer = el('div', { class: 'modal_button-group' }, [cancel.wrap, submit.wrap])
+  const form = el('form', { 'data-opp-form': 'create' }, [footer])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(submit.button, true)
+
+  assert.equal(submit.spinner.style.display, 'flex')
+  assert.equal(cancel.spinner.style.display, 'none')
+  assert.equal(submit.text.style.opacity, '0.6')
+  assert.equal(cancel.text.style.opacity, undefined)
+  assert.equal(cancel.button.disabled, false)
+})
+
+test('a live wrap with no Spinner does not steal Cancel’s nested Spinner', async () => {
+  const submitButton = el('button', { type: 'submit', class: 'clickable_btn' })
+  const submitClickable = el('div', { class: 'clickable_wrap' }, [submitButton])
+  const submitText = el('div', { class: 'button_main-text' })
+  submitText.textContent = 'Submit'
+  const submitElement = el('div', { class: 'button_main-element' }, [submitText])
+  const submitWrap = el(
+    'div',
+    {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-opp-submit': 'create',
+    },
+    [submitClickable, submitElement],
+  )
+  const cancel = productButtonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+    label: 'Cancel',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-button-style': 'tertiary',
+    },
+  })
+  const footer = el('div', { class: 'modal_button-group' }, [cancel.wrap, submitWrap])
+  const childCount = footer.children.length
+  const form = el('form', { 'data-opp-form': 'create' }, [footer])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(submitButton, true)
+
+  assert.equal(cancel.spinner.style.display, 'none')
+  assert.equal(submitButton.disabled, true)
+  assert.equal(submitText.style.opacity, undefined)
+  assert.equal(submitWrap.style.opacity, undefined)
+  assert.equal(footer.children.length, childCount)
+  assert.equal(submitWrap.querySelector('[data-button-spinner]'), null)
+})
+
+test('binding a live wrap force-hides a leftover nested Spinner', async () => {
+  const { wrap, spinner } = productButtonWrapFixture({
+    spinnerDisplay: 'flex',
+    wrapAttrs: {
+      class: 'button_main-wrap',
+      'data-button-theme': 'black',
+      'data-opp-submit': 'create',
+    },
+  })
+  const form = el('form', { 'data-opp-form': 'create' }, [wrap])
+  await loadBridge(async () => response({}), documentWith(form))
+
+  assert.equal(spinner.style.display, 'none')
 })

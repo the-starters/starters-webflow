@@ -79,25 +79,45 @@
         // paint never observes the cleared (collapsed) heights. If the clear ran
         // in an earlier task, the browser would paint 1-2 frames of collapsed
         // lists — the visible "tweak for no reason" on visible relayouts (resize).
+        //
+        // maxHeight is cleared but never written: this pass no longer sets one,
+        // and clearing it removes any left by another script on the page.
         lists.forEach(function (el) {
           el.style.minHeight = '';
           el.style.maxHeight = '';
         });
 
+        // Every list is capped against ITS OWN line height. Sampling lists[0]
+        // let one list decide for the page: if the first list was hidden or
+        // computed `line-height: normal`, no list got capped and the measured
+        // overflow was written back as a height, undoing the 2-line clamp in
+        // expert-card.css.
+        //
+        // A list whose line height cannot be read is left out entirely rather
+        // than contributing an uncapped scrollHeight. Its inline heights stay
+        // cleared, so `-webkit-line-clamp: 2` in the stylesheet keeps the clamp.
+        var capped = [];
         var maxH = 0;
         lists.forEach(function (el) {
-          maxH = Math.max(maxH, el.scrollHeight);
+          var lh = parseFloat(window.getComputedStyle(el).lineHeight);
+          if (!(lh > 0)) return;
+          capped.push(el);
+          maxH = Math.max(maxH, Math.min(el.scrollHeight, lh * 2));
         });
 
-        if (maxH <= 0) {
+        if (!capped.length || maxH <= 0) {
           dispatchRelayoutDone();
           return;
         }
 
+        // min-height ONLY. Row alignment needs a floor, and that is all this
+        // pass is for; the ceiling belongs to `-webkit-line-clamp: 2` in
+        // expert-card.css. An inline max-height in px is what ate the ellipsis:
+        // it clips the box at the same two lines but paints no `…`, so a
+        // clamped list looked complete. Never write maxHeight here.
         var px = Math.ceil(maxH) + 'px';
-        lists.forEach(function (el) {
+        capped.forEach(function (el) {
           el.style.minHeight = px;
-          el.style.maxHeight = px;
         });
 
         dispatchRelayoutDone();

@@ -57,6 +57,13 @@ The controller binds these existing elements:
   containing `[element="profile_photo"]`;
 - runtime modal: `dialog[data-project-form-v3="starter"][data-modal-target="start-project"]`;
 - form: the native form inside that dialog;
+- Confirm submitter: keep the Designer-authored submit button, input, or
+  `[data-project-submit]` control inside `.button-group.is-confirm`. The
+  controller enables only this Confirm control while the form is `ready` or
+  after a retryable submit failure. It keeps Confirm disabled while the form is
+  idle, loading, blocked, submitting, or successful, and after validation,
+  authorization, conflict, or session failures. The controller also reasserts
+  that state if a delayed Turnstile update changes the authored control;
 - the controller adds `data-starters-turnstile-fix="true"` to that native form
   during boot so the sitewide Turnstile repair targets the form, not a visual
   wrapper;
