@@ -28,6 +28,11 @@
  * field or a wrapping group to exempt it; hidden required fields are skipped
  * automatically.
  *
+ * After a destination panel is set to `display: block`, its wrapper dispatches
+ * the bubbling `starters:tabs-panel-visible` event with `{ tabWrap, panel, index }`.
+ * Listeners can synchronously restore panel-owned native constraints; this
+ * component then revalidates before it can enable Next.
+ *
  * Optional panel titles:
  * - `data-tab-element="title"` on any text element anywhere inside the wrapper —
  *   its text is set to the active panel's `data-tab-panel-title` on every activation.

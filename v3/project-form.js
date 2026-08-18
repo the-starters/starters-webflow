@@ -1411,8 +1411,8 @@
 
   // The delegated Hire click is captured before modal.js runs its bubble-phase
   // opener. Restore fields that are visible as soon as showModal completes.
-  // Conditional fields in later steps remain stashed until step-flow announces
-  // that their own destination has become visible.
+  // Conditional fields in later tabs remain stashed until the global tabs
+  // component announces that their own destination has become visible.
   function syncOpenedProjectModal(event) {
     return syncProjectFormInModal(event && event.detail && event.detail.modal)
   }

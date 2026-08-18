@@ -1165,7 +1165,8 @@ Run its focused tests with:
 
 ```sh
 node --test v3/project-form.test.js v3/project-form-workflow.test.js \
-  global-embeds/start-proj-gen-contract/contract-preview.test.js
+  global-embeds/start-proj-gen-contract/contract-preview.test.js \
+  tabs-project-gating.test.js
 ```
 
 ## Starter project form
