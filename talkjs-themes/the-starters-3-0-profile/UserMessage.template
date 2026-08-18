@@ -2,11 +2,19 @@
 Renders a message sent by a user.
 -->
 <template>
-    <div class="message-row {{ sender.isMe | then: 'by-me' | else: 'by-other' }} {{ body.type }} {{ sender.id == previousSenderId | then: 'previous-same' }}">
+    <div class="message-row {{ sender.isMe | then: 'by-me' | else: 'by-other' }} {{ body.type }} {{ grouped | then: 'previous-same' }}">
 
-        <!-- show the avatar, but only if the previous message was by a different sender -->
+        <!-- The first message of each Message Group draws the avatar. A group
+             is a run by one sender WITHIN ONE CALENDAR DAY. See the inbox
+             theme's UserMessage for why the day half is load-bearing; this
+             modal shows the same history and had the same defect. Kept
+             deliberately identical to that file so the two cannot drift. -->
         <t:set t:if="{{ previousMessage and previousMessage.sender }}" previousSenderId="{{ previousMessage.sender.id }}"/>
-        <Avatar t:if="{{ sender.id != previousSenderId }}"
+        <t:set t:if="{{ previousMessage }}" previousDay="{{ previousMessage.timestamp | date: '%Y-%m-%d' }}"/>
+        <t:set thisDay="{{ timestamp | date: '%Y-%m-%d' }}"/>
+        <t:set grouped="{{ sender.id == previousSenderId and thisDay == previousDay }}"/>
+        <t:set showAvatar="{{ grouped == false }}"/>
+        <Avatar t:if="{{ showAvatar }}"
             photoUrl="{{ sender.photoUrl }}"
         />
 
@@ -164,9 +172,10 @@ override some properties for avatars showing/hiding
 - balloons get whatever width is left after the avatar columns on both sides
 - we could avoid some of this math at the cost of inserting another div, but we prefer a lighter DOM.
 */
-/* Only the first row of a run of messages from the same sender draws an avatar.
-   The rows that drop it still have to reserve the avatar's width, or their
-   bubbles slide into the avatar column and the group reads as a ragged
+/* Only the first row of a Message Group draws an avatar; what makes a group,
+   and why its calendar-day half is load-bearing, is stated once at the top of
+   this file. The rows that drop the avatar still have to reserve its width, or
+   their bubbles slide into the avatar column and the group reads as a ragged
    stagger instead of one tidy edge. A message-row avatar is 2rem (GlobalCSS
    overrides the Avatar component's 3.25rem for this context) plus the bubble's
    own 0.50rem gap, so the offset an ungrouped row ends up with is 2.5rem.
