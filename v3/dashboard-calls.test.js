@@ -15,6 +15,7 @@ function deferred() {
 }
 
 function element(attributes = {}) {
+  const classes = new Set()
   return {
     attributes: { ...attributes },
     hidden: false,
@@ -33,7 +34,24 @@ function element(attributes = {}) {
       return Object.prototype.hasOwnProperty.call(this.attributes, name)
     },
     classList: {
-      toggle() {},
+      add(...names) {
+        names.forEach((name) => classes.add(name))
+      },
+      contains(name) {
+        return classes.has(name)
+      },
+      remove(...names) {
+        names.forEach((name) => classes.delete(name))
+      },
+      toggle(name, force) {
+        const active = force == null ? !classes.has(name) : Boolean(force)
+        if (active) classes.add(name)
+        else classes.delete(name)
+        return active
+      },
+    },
+    matches() {
+      return false
     },
     querySelector() {
       return null
@@ -223,6 +241,292 @@ test('only the V3-native Starter Accept action is visible on pending cards', () 
   for (const button of [decline, reschedule, message, join]) {
     assert.equal(button.hidden, true)
     assert.equal(button.style.display, 'none')
+  }
+})
+
+test('read-only details stay available while expired requests cannot be accepted', () => {
+  const details = element({ 'booking-card-action-btn': 'details' })
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const reschedule = element({ 'booking-action-btn': 'reschedule' })
+  const card = {
+    querySelectorAll() {
+      return [details, accept, reschedule]
+    },
+  }
+  const now = 2_000_000_000_000
+
+  api.configureActionButtons(card, 'starter', 'pending', {
+    status: 'pending',
+    start: 3_000_000_000_000,
+    confirmation_expires_at: 1_000_000_000_000,
+  }, now)
+
+  assert.equal(details.hidden, false)
+  assert.equal(accept.hidden, true)
+  assert.equal(reschedule.hidden, true)
+})
+
+test('status pills show the role-aware canonical lifecycle and exact variant', () => {
+  const label = element()
+  const group = element()
+  const pill = element({ 'booking-element': 'status' })
+  pill.querySelector = (selector) => selector === '[label-text]' ? label : null
+  pill.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
+  const card = {
+    querySelector(selector) {
+      return selector === '[booking-element="status"]' ? pill : null
+    },
+  }
+
+  api.paintStatusPill(card, 'pending', 'starter')
+  assert.equal(label.textContent, 'Pending')
+  assert.equal(pill.hidden, false)
+  assert.equal(
+    pill.classList.contains('w-variant-34961dab-8ebb-e322-49a7-741a1936647a'),
+    true,
+  )
+
+  api.paintStatusPill(card, 'completed', 'brand')
+  assert.equal(label.textContent, 'Completed')
+  assert.equal(
+    pill.classList.contains('w-variant-34961dab-8ebb-e322-49a7-741a1936647a'),
+    false,
+  )
+  assert.equal(
+    pill.classList.contains('w-variant-89402c65-e26d-c236-91e7-76e9135a2d42'),
+    true,
+  )
+})
+
+function detailModalHarness() {
+  const fields = {}
+  const groups = []
+  ;[
+    'paid-meeting',
+    'status',
+    'brand-name',
+    'starter-name',
+    'title',
+    'context',
+    'start-date',
+    'duration',
+    'price',
+    'payment-status-text',
+    'reschedule-reason',
+    'cancel-reason',
+    'meeting-link',
+  ].forEach((name) => {
+    const field = element({ 'booking-element': name })
+    const group = element({ 'booking-element-wrap': '' })
+    group.querySelector = (selector) => selector === '[booking-element]' ? field : null
+    field.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
+    if (name === 'meeting-link') field.href = 'stale'
+    fields[name] = field
+    groups.push(group)
+  })
+  const duplicatePayment = element({ 'booking-element-wrap': '' })
+  duplicatePayment.textContent = 'Your card ending in 1234 will be charged for this call.'
+  duplicatePayment.querySelector = () => null
+  groups.push(duplicatePayment)
+
+  const base = element({ 'booking-popup-content': 'base' })
+  const confirmation = element({ 'booking-popup-content': 'confirmed' })
+  const pendingOne = element({ 'pending-info-text': '' })
+  const pendingDuplicate = element({ 'pending-info-text': '' })
+  base.querySelectorAll = (selector) =>
+    selector === '[pending-info-text]' ? [pendingOne, pendingDuplicate] : []
+  const blocked = element({ 'reschedule-blocked-info': '' })
+  const close = element({ 'booking-action-btn': 'switch-close' })
+  const back = element({ 'booking-action-btn': 'switch-base' })
+  const cancel = element({ 'booking-action-btn': 'cancel' })
+  const reschedule = element({ 'booking-action-btn': 'reschedule' })
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const actions = [close, back, cancel, reschedule, accept]
+  const modal = element({ 'popup-booking-info': '' })
+  modal.querySelector = (selector) => {
+    const match = selector.match(/^\[booking-element="(.+)"\]$/)
+    if (match) return fields[match[1]] || null
+    if (selector === '[booking-popup-content="base"]') return base
+    return null
+  }
+  modal.querySelectorAll = (selector) => ({
+    '[booking-popup-content]': [base, confirmation],
+    '[booking-element-wrap]': groups,
+    '[booking-action-btn], [booking-card-action-btn]': actions,
+    '[reschedule-blocked-info]': [blocked],
+  })[selector] || []
+
+  return {
+    actions,
+    base,
+    blocked,
+    confirmation,
+    duplicatePayment,
+    fields,
+    modal,
+    pendingDuplicate,
+    pendingOne,
+  }
+}
+
+test('Free Call details hide paid copy, duplicate copy, and unsupported actions', () => {
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'free-one',
+    status: 'pending',
+    start: 10_000,
+    confirmation_expires_at: 9_000,
+    paid_meeting: false,
+    price: 0,
+    duration: 30,
+    call_context: 'Discuss launch',
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+
+  assert.equal(api.populateDetailModal(view.modal, booking, 'starter', 2_000), true)
+  assert.equal(view.fields['paid-meeting'].textContent, 'Free Call')
+  assert.equal(view.fields.status.textContent, 'Pending')
+  assert.equal(view.fields.price.hidden, true)
+  assert.equal(view.fields['payment-status-text'].hidden, true)
+  assert.equal(view.duplicatePayment.hidden, true)
+  assert.equal(view.base.hidden, false)
+  assert.equal(view.confirmation.hidden, true)
+  assert.equal(view.pendingOne.hidden, false)
+  assert.equal(view.pendingDuplicate.hidden, true)
+  assert.equal(view.actions[0].hidden, false)
+  assert.equal(view.actions[1].hidden, false)
+  assert.equal(view.actions[2].hidden, true)
+  assert.equal(view.actions[3].hidden, true)
+  assert.equal(view.actions[4].hidden, false)
+
+  booking.confirmation_expires_at = 1
+  api.populateDetailModal(view.modal, booking, 'starter', 2_000)
+  assert.equal(view.pendingOne.hidden, true)
+  assert.equal(view.actions[4].hidden, true)
+})
+
+test('Paid Call details show canonical price and meeting link but hide stale status copy', () => {
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'paid-one',
+    status: 'confirmed',
+    start: Date.now() + 60_000,
+    paid_meeting: true,
+    price: 25,
+    duration: 30,
+    pm_confirmed: true,
+    meeting_link: 'https://meet.example/current',
+    brand_data: { name: 'Brand', timezone: 'UTC' },
+    starter_data: { name: 'Starter', timezone: 'UTC' },
+  }
+
+  api.populateDetailModal(view.modal, booking, 'brand')
+  assert.equal(view.fields['paid-meeting'].textContent, 'Paid Call')
+  assert.equal(view.fields.status.textContent, 'Upcoming')
+  assert.equal(view.fields.price.textContent, '$25.00')
+  assert.equal(view.fields.price.hidden, false)
+  assert.equal(view.fields['payment-status-text'].textContent, 'Payment method confirmed.')
+  assert.equal(view.fields['payment-status-text'].hidden, false)
+  assert.equal(view.fields['meeting-link'].href, 'https://meet.example/current')
+  assert.equal(view.pendingOne.hidden, true)
+  assert.equal(view.pendingDuplicate.hidden, true)
+  assert.equal(view.actions[4].hidden, true)
+
+  booking.status = 'cancelled'
+  api.populateDetailModal(view.modal, booking, 'brand')
+  assert.equal(view.fields.status.textContent, 'Cancelled')
+  assert.equal(view.fields['payment-status-text'].hidden, true)
+  assert.equal(view.fields['meeting-link'].hidden, true)
+})
+
+test('delegated View Details binds the selected canonical booking before Webflow opens', () => {
+  let clickListener
+  const originalDocument = global.document
+  const view = detailModalHarness()
+  const booking = {
+    booking_id: 'selected-paid',
+    status: 'confirmed',
+    start: Date.now() + 60_000,
+    is_paid: true,
+    paid_meeting: false,
+    price: 45,
+    duration: 45,
+    brand_data: { name: 'Selected Brand', timezone: 'UTC' },
+    starter_data: { name: 'Selected Starter', timezone: 'UTC' },
+  }
+  const card = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? 'selected-paid' : null
+    },
+  }
+  const details = {
+    closest(selector) {
+      return selector === '[data-booking-id]' ? card : null
+    },
+  }
+  try {
+    global.document = {
+      addEventListener(name, listener, capture) {
+        assert.equal(name, 'click')
+        assert.equal(capture, true)
+        clickListener = listener
+      },
+      querySelector(selector) {
+        assert.equal(
+          selector,
+          '[popup-booking-info], dialog[data-modal-target="popup-booking-info"]',
+        )
+        return view.modal
+      },
+    }
+    api.wireBookingDetails([{ rows: [booking] }], 'brand')
+    clickListener({
+      target: {
+        closest(selector) {
+          if (selector.includes('reschedule')) return null
+          if (selector.includes('popup-booking-info')) return details
+          return null
+        },
+      },
+    })
+
+    assert.equal(view.modal.attributes['data-booking-id'], 'selected-paid')
+    assert.equal(view.fields['paid-meeting'].textContent, 'Paid Call')
+    assert.equal(view.fields.price.textContent, '$45.00')
+    assert.equal(view.fields['starter-name'].textContent, 'Selected Starter')
+  } finally {
+    global.document = originalDocument
+  }
+})
+
+test('delegated Reschedule is stopped before an empty modal can open', () => {
+  let clickListener
+  const originalDocument = global.document
+  try {
+    global.document = {
+      addEventListener(name, listener, capture) {
+        assert.equal(name, 'click')
+        assert.equal(capture, true)
+        clickListener = listener
+      },
+    }
+    api.wireBookingDetails([], 'brand')
+    let prevented = 0
+    let stopped = 0
+    clickListener({
+      target: {
+        closest(selector) {
+          return selector.includes('reschedule') ? {} : null
+        },
+      },
+      preventDefault() { prevented += 1 },
+      stopImmediatePropagation() { stopped += 1 },
+    })
+    assert.equal(prevented, 1)
+    assert.equal(stopped, 1)
+  } finally {
+    global.document = originalDocument
   }
 })
 
@@ -694,12 +998,19 @@ test('call filters remain visible when the selected status alone has no matches'
   await until(() => root.attributes['data-dashboard-calls-v3'] === 'ready')
   assert.equal(filters.hidden, false)
   assert.equal(renderedCards.length, 1)
+  assert.equal(allFilter.classList.contains('is-active'), true)
+  assert.equal(allFilter.attributes['aria-pressed'], 'true')
+  assert.equal(completedFilter.classList.contains('is-active'), false)
 
   listeners.completed({ preventDefault() {} })
   assert.equal(renderedCards.length, 1)
   assert.equal(list.hidden, true)
   assert.equal(empty.hidden, false)
   assert.equal(filters.hidden, false)
+  assert.equal(allFilter.classList.contains('is-active'), false)
+  assert.equal(allFilter.attributes['aria-pressed'], 'false')
+  assert.equal(completedFilter.classList.contains('is-active'), true)
+  assert.equal(completedFilter.attributes['aria-pressed'], 'true')
 })
 
 test('project filters hide only after an authoritative unfiltered empty result', () => {
