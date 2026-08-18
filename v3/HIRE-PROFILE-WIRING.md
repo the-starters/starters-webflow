@@ -210,6 +210,14 @@ Free or Paid record remains. A valid pair is ordered Free then Paid so the
 nearest-slot preview is deterministic. An empty or rejected set does not
 initialize booking components or request a nearest slot.
 
+Before it checks page helpers or member identity, `hire-profile.js` hides every
+Designer-authored `[call-type-item]` and clears its booking CTA's `data-config`.
+After discovery accepts the canonical set, it assigns each accepted Free or
+Paid `config_id` while the options remain hidden. The shared booking initializer
+alone owns which valid options become visible. This keeps an authored Paid
+option closed during startup, on a missing dependency, and whenever Paid has no
+accepted configuration; it does not hide the separate Services call cards.
+
 On the Free Call details screen, the controller hides the booking-form rows for
 `brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
 timeslot. It does not remove or change either field, so both stable IDs remain

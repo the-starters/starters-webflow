@@ -214,6 +214,22 @@ function makePage({
   const popupNylasContainer = makeElement('div', { 'nylas-container': '' })
   root.appendChild(popupNylasContainer)
 
+  const freeModalOption = makeElement('div', { 'call-type-item': '' })
+  const freeModalCta = makeElement('button', {
+    'booking-popup-open': '',
+    'data-type': 'free',
+  })
+  freeModalOption.appendChild(freeModalCta)
+  root.appendChild(freeModalOption)
+
+  const paidModalOption = makeElement('div', { 'call-type-item': '' })
+  const paidModalCta = makeElement('button', {
+    'booking-popup-open': '',
+    'data-type': 'paid',
+  })
+  paidModalOption.appendChild(paidModalCta)
+  root.appendChild(paidModalOption)
+
   return {
     root,
     servicesList: list,
@@ -225,6 +241,10 @@ function makePage({
     back,
     calendarLive,
     popupNylasContainer,
+    freeModalOption,
+    freeModalCta,
+    paidModalOption,
+    paidModalCta,
   }
 }
 
@@ -342,7 +362,8 @@ async function settle(times = 30) {
 /* ---------------------------------------------------------------- tests --- */
 
 test('a page missing the Memberstack helpers stands down instead of throwing', () => {
-  const context = makeContext()
+  const page = makePage()
+  const context = makeContext({ page })
   delete context.qs
   delete context.qsa
   delete context.waitForMember
@@ -353,10 +374,16 @@ test('a page missing the Memberstack helpers stands down instead of throwing', (
     context.warnings.some((l) => l.includes('[hire-profile]') && l.includes('stood down')),
     'expected a stand-down warning, got: ' + JSON.stringify(context.warnings),
   )
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), '')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+  assert.equal(page.servicesList.children[0].style.display, undefined)
 })
 
 test('a page missing starter_memberstack_id stands down instead of throwing', () => {
-  const context = makeContext()
+  const page = makePage()
+  const context = makeContext({ page })
   delete context.starter_memberstack_id
   vm.createContext(context)
 
@@ -365,6 +392,11 @@ test('a page missing starter_memberstack_id stands down instead of throwing', ()
     context.warnings.some((l) => l.includes('starter_memberstack_id')),
     'expected a warning naming the missing global, got: ' + JSON.stringify(context.warnings),
   )
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), '')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+  assert.equal(page.servicesList.children[0].style.display, undefined)
 })
 
 test('the jQuery-only blocks are skipped, not fatal, when jQuery is absent', () => {
@@ -860,8 +892,42 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(freeCard.getAttribute('data-modal-trigger'), 'popup-booking')
   assert.equal(freeCard.getAttribute('data-type'), 'free')
   assert.equal(schedulerCalls, 0, 'the calendar waits for a modal option click')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free')
+  assert.equal(page.freeModalOption.style.display, 'none', 'shared modal init owns Free visibility')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+  assert.equal(page.paidModalOption.style.display, 'none', 'Paid fails closed without a paid config')
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
+})
+
+test('authored modal options hide synchronously without hiding Services call cards', async () => {
+  const page = makePage()
+  let resolveStarter
+  const starterReady = new Promise((resolve) => {
+    resolveStarter = resolve
+  })
+  const context = makeContext({
+    page,
+    member: {
+      id: 'brand_member',
+      auth: { email: 'brand@example.com' },
+      customFields: { 'free-user': 'Brand', 'last-name': 'Member' },
+      planConnections: [{ planId: 'pln_free-plan-f6kn0dxz', status: 'ACTIVE' }],
+    },
+    getStarterByMemberId: () => starterReady,
+    getConfigs: async () => [],
+  })
+  vm.createContext(context)
+  vm.runInContext(source, context)
+
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), '')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+  assert.equal(page.servicesList.children[0].style.display, undefined)
+
+  resolveStarter(null)
+  await settle()
 })
 
 test('booking discovery rejects inactive, mixed-environment, and duplicate configurations', async () => {
@@ -908,6 +974,10 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
 
     assert.equal(bookingComponentCalls, 0)
     assert.equal(nearestSlotCalls, 0)
+    assert.equal(page.freeModalCta.getAttribute('data-config'), '')
+    assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+    assert.equal(page.freeModalOption.style.display, 'none')
+    assert.equal(page.paidModalOption.style.display, 'none')
     assert.ok(context.warnings.some((line) => line.includes('No Configurations found')))
   }
 })
@@ -941,6 +1011,10 @@ test('booking discovery passes one active Free and Paid configuration to the sha
     bookingCalls[0][2].map((record) => record.config_id),
     ['free_live', 'paid_live'],
   )
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'free_live')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), 'paid_live')
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
 })
 
 test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {
