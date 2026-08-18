@@ -2,6 +2,8 @@
  * GitHub-owned copy of the Build Profile Webflow controller block.
  * Original live inline body SHA-256: decbf5b49d1006f8a857602a33e2d89a6270fa8b9355d6311d16188f6a4bfe83
  * Captured read-only from /build-profile/consult on 2026-08-12.
+ *
+ * @release v1.59.310
  */
 	function counterFields(wrapper = null) {
 		const inputs = qsa(
@@ -12,6 +14,10 @@
 		inputs.forEach((input) => {
 			const wrapper = input.closest('.form_input-wr');
 			if (!wrapper) return;
+
+			// A rich-text editor in this group owns its own counter: the textarea is a
+			// mirror, so counting it here would fight the editor script over the span.
+			if (qs('[data-editor-id]', wrapper)) return;
 
 			const countSpan = qs('.count-input', wrapper);
 			if (!countSpan) return;

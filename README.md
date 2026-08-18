@@ -91,8 +91,8 @@ Do not discard local changes unless the user explicitly asks.
 - `v3/build-profile/company-autocomplete.js` — provenance-locked Build Profile company autocomplete
 - `v3/build-profile/work-dates.js` — provenance-locked Build Profile work-date controller
 - `v3/build-profile/company-experience-crud.js` — provenance-locked Build Profile company-experience controller
-- `v3/build-profile/field-counters.js` — provenance-locked Build Profile field counters
-- `v3/build-profile/bio-editor.js` — provenance-locked Build Profile bio editor
+- `v3/build-profile/field-counters.js` — provenance-locked Build Profile field counters; skips any `.form_input-wr` group that contains a `[data-editor-id]` element, because a rich-text editor there owns its own counter
+- `v3/build-profile/bio-editor.js` — provenance-locked Build Profile bio editor; enforces a **character** limit (`data-max-chars` on `#bio-plain`, default 1500) rather than a word limit, and owns the bio counter UI: it drops the legacy `count-by-words` attribute, rewrites the counter denominator, and writes the live character count last on every sync
 - `v3/build-profile/grouped-selects.js` — provenance-locked Build Profile grouped-select controller
 - `v3/build-profile/submit-diagnostics.js` — Build Profile submit outcome observer; it keeps diagnostics in the console, leaves the coupled writer unchanged, and never navigates: the authored success-state CTA owns the move to `/starter-onboarding`
 - `v3/starter-edit-profile/` — source-controlled Starter Edit Profile browser controllers; the authoritative extraction scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md)
@@ -142,6 +142,11 @@ Do not discard local changes unless the user explicitly asks.
   `guardSecurityForm: 'identity'`; it alone writes a changed Memberstack login
   email, then replays this controller's Xano profile save.
   It uses the shared diagnostic receipt contract above.
+  Its embedded bio editor enforces a **character** limit (`data-max-chars` on
+  `#bio-plain`, default 1500) rather than a word limit and owns that field's
+  counter, matching `v3/build-profile/bio-editor.js`; its embedded
+  `counterFields()` skips any `.form_input-wr` group containing a
+  `[data-editor-id]` element for the same reason.
 - `v3/scheduling-auth.js` — availability and scheduling authentication bridge;
   see `v3/README.md` for its authoritative host and path boundary
 - `v3/dashboard-calls.js` — authenticated canonical call-section and Brand hero

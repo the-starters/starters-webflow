@@ -4,6 +4,8 @@
  * Loaded by Webflow after intl-tel-input and Quill. Keep the page footer thin;
  * GitHub and jsDelivr are the source and delivery path for this browser code.
  * Each section must initialize whether this script runs before or after DOMContentLoaded.
+ *
+ * @release v1.59.310
  */
 
 (() => {
@@ -830,6 +832,10 @@ function counterFields(wrapper = null) {
 			const wrapper = input.closest('.form_input-wr');
 			if (!wrapper) return;
 
+			// A rich-text editor in this group owns its own counter: the textarea is a
+			// mirror, so counting it here would fight the editor script over the span.
+			if (qs('[data-editor-id]', wrapper)) return;
+
 			const countSpan = qs('.count-input', wrapper);
 			if (!countSpan) return;
 
@@ -979,15 +985,27 @@ function counterFields(wrapper = null) {
 	onDomReady(() => counterFields());
 
 // Inline block 3
+// Bio length contract: CHARACTERS, not words. The limit reads `data-max-chars` on
+// `#bio-plain` and defaults to 1500. A character is one code unit of the Quill plain
+// text with the single trailing newline stripped, so newlines inside the bio count.
+// This block also owns the bio counter UI — see v3/build-profile/bio-editor.js, which
+// carries the same implementation for the Build Profile surface.
 onDomReady(() => {
 		const outputPlain = qs('#bio-plain');
 		const outputHtml = qs('#bio-html');
 		if (!outputHtml || !outputPlain) return;
 
-		const MAX_WORDS = Number(outputPlain.dataset.maxWords) || 300;
+		const MAX_CHARS = Number(outputPlain.dataset.maxChars) || 1500;
 		let isCleaning = false;
 		let prevContents = null;
-		let prevWordCount = 0;
+
+		// Counter takeover: this block, not counterFields(), owns this counter group.
+		outputPlain.removeAttribute('count-by-words');
+
+		const counterWrapper = outputPlain.closest('.form_input-wr');
+		const counterSpan = counterWrapper ? qs('.count-input', counterWrapper) : null;
+
+		setCounterDenominator(counterSpan, MAX_CHARS);
 
 		const bioEditor = new Quill('#bio-editor', {
 			theme: 'snow',
@@ -1034,25 +1052,17 @@ onDomReady(() => {
 				syncQuillValue();
 
 				prevContents = bioEditor.getContents();
-				prevWordCount = getQuillWordCount(bioEditor);
 			}
 		});
 
 		prevContents = bioEditor.getContents();
-		prevWordCount = getQuillWordCount(bioEditor);
 
 		bioEditor.root.addEventListener('paste', handleQuillPaste);
 
-		bioEditor.on('text-change', (delta) => {
+		bioEditor.on('text-change', () => {
 			if (isCleaning) return;
 
-			const wordCount = getQuillWordCount(bioEditor);
-			const isWhitespaceInsert = hasOnlyWhitespaceInsert(delta);
-
-			if (
-				wordCount > MAX_WORDS ||
-				(prevWordCount >= MAX_WORDS && isWhitespaceInsert && wordCount > prevWordCount)
-			) {
+			if (getQuillCharCount(bioEditor) > MAX_CHARS) {
 				const selection = bioEditor.getSelection();
 
 				isCleaning = true;
@@ -1078,12 +1088,13 @@ onDomReady(() => {
 				syncQuillValue();
 
 				prevContents = bioEditor.getContents();
-				prevWordCount = getQuillWordCount(bioEditor);
 			});
 		});
 
 		function handleQuillPaste(event) {
-			const pastedText = event.clipboardData?.getData('text/plain') || '';
+			// An empty text/plain means a rich-only clipboard; let the text-change
+			// revert catch any overflow instead of guessing at the payload here.
+			const pastedText = normalizeCountText(event.clipboardData?.getData('text/plain') || '');
 			if (!pastedText.trim()) return;
 
 			const range = bioEditor.getSelection(true);
@@ -1094,23 +1105,21 @@ onDomReady(() => {
 			const before = currentText.slice(0, range.index);
 			const after = currentText.slice(range.index + range.length);
 
-			const baseWordCount = countWordsFromText(before + after);
-			const availableWords = MAX_WORDS - baseWordCount;
+			const baseCharCount = countCharsFromText(stripTrailingNewline(before + after));
+			const availableChars = MAX_CHARS - baseCharCount;
 
-			if (availableWords <= 0) {
+			if (availableChars <= 0) {
 				event.preventDefault();
 				return;
 			}
 
-			const pastedWordCount = countWordsFromText(pastedText);
-
-			if (baseWordCount + pastedWordCount <= MAX_WORDS) {
+			if (baseCharCount + pastedText.length <= MAX_CHARS) {
 				return;
 			}
 
 			event.preventDefault();
 
-			const allowedPaste = trimTextToWords(pastedText, availableWords);
+			const allowedPaste = pastedText.slice(0, availableChars);
 			if (!allowedPaste) return;
 
 			isCleaning = true;
@@ -1128,69 +1137,38 @@ onDomReady(() => {
 			syncQuillValue();
 
 			prevContents = bioEditor.getContents();
-			prevWordCount = getQuillWordCount(bioEditor);
+		}
+
+		function stripTrailingNewline(text) {
+			return (text || '').replace(/\n$/, '');
 		}
 
 		function getPlainQuillText(quillInstance) {
-			const plainText = quillInstance.getText().replace(/\n$/, '');
-			return plainText;
+			return stripTrailingNewline(quillInstance.getText());
 		}
 
-		function getQuillWords(quillInstance) {
-			return getWordsFromText(quillInstance.getText());
-		}
-
-		function getQuillWordCount(quillInstance) {
-			return getQuillWords(quillInstance).length;
-		}
-
-		function getWordsFromText(text) {
-			const plainText = (text || '')
-				.replace(/\uFEFF/g, '')
-				.replace(/\u00A0/g, ' ')
-				.replace(/[\r\n]+/g, ' ')
-				.trim();
-
-			if (!plainText) return [];
-
-			return plainText.match(/\S+/g) || [];
-		}
-
-		function countWordsFromText(text) {
-			return getWordsFromText(text).length;
-		}
-
-		function trimTextToWords(text, maxWords) {
-			if (maxWords <= 0) return '';
-
-			const normalizedText = (text || '')
+		function normalizeCountText(text) {
+			return (text || '')
 				.replace(/\uFEFF/g, '')
 				.replace(/\u00A0/g, ' ');
-
-			const tokenRegex = /\S+/g;
-
-			let match;
-			let wordsCount = 0;
-			let endIndex = 0;
-
-			while ((match = tokenRegex.exec(normalizedText)) !== null) {
-				wordsCount++;
-				endIndex = match.index + match[0].length;
-
-				if (wordsCount >= maxWords) {
-					break;
-				}
-			}
-
-			if (!endIndex) return '';
-
-			return normalizedText.slice(0, endIndex).trim();
 		}
 
-		function hasOnlyWhitespaceInsert(delta) {
-			return delta.ops.some((op) => {
-				return typeof op.insert === 'string' && /^\s+$/.test(op.insert);
-			});
+		function countCharsFromText(text) {
+			return normalizeCountText(text).length;
+		}
+
+		function getQuillCharCount(quillInstance) {
+			return countCharsFromText(getPlainQuillText(quillInstance));
+		}
+
+		function setCounterDenominator(span, maxChars) {
+			const denominator = span?.nextSibling;
+			if (!denominator || denominator.nodeType !== 3) return;
+
+			const match = (denominator.nodeValue || '').match(/^(\s*)\/\d+(\s*)$/);
+			if (!match) return;
+
+			denominator.nodeValue = `${match[1]}/${maxChars}${match[2]}`;
 		}
 
 		function hasAdjacentSpace(quillInstance, index) {
@@ -1251,6 +1229,12 @@ onDomReady(() => {
 			outputHtml.value = getCleanQuillHTML(bioEditor);
 			outputHtml.dispatchEvent(new Event('change', { bubbles: true }));
 			outputHtml.dispatchEvent(new Event('input', { bubbles: true }));
+
+			// Last write wins: any counter listener reacting to the events above
+			// counts the textarea value, which is only ever the plain-text mirror.
+			if (counterSpan) {
+				counterSpan.textContent = String(getQuillCharCount(bioEditor)).padStart(2, '0');
+			}
 		}
 
 		syncQuillValue();
