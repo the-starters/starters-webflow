@@ -138,14 +138,16 @@ focusable"). Following the same pattern as
 `global-embeds/form-embeds/form-input-filter`, the adapter removes `required`
 from inactive controls and marks them with `data-project-required-hidden`,
 restoring the authored attribute as soon as the branch becomes visible. The sync
-runs on `input`, on `change`, on click (before the browser validates the
-submit), and again in the adapter's own pre-submit validity check before it
-delegates to native `reportValidity()`. The duration sync described above runs
-alongside it at each of those points, plus once when the adapter installs, so
-the Monthly end date is already hidden and cleared before the first
-interaction. The adapter owns the `confirm-contract` checkbox policy separately
-from that generic required-state sync. My Own Contract shows, enables, and
-requires the checkbox. Its exact authored row is the owning
+runs when `modal.js` publishes `modal-open`, on `input`, on `change`, on click
+(before the browser validates the submit), and again in the adapter's own
+pre-submit validity check before it delegates to native `reportValidity()`.
+The modal-open sync restores authored requirements that the captured Hire click
+temporarily removed while the modal was still hidden. The duration sync
+described above runs alongside it at each of those points, plus once when the
+adapter installs, so the Monthly end date is already hidden and cleared before
+the first interaction. The adapter owns the `confirm-contract` checkbox policy
+separately from that generic required-state sync. My Own Contract shows,
+enables, and requires the checkbox. Its exact authored row is the owning
 `<label data-input-filter-item="My own contract">`, containing the native
 `confirm-contract` input and its visible affirmation span. Standard Contract
 hides that complete label row, disables, unrequires, and clears the input,
