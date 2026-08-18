@@ -212,13 +212,16 @@ initialize booking components or request a nearest slot.
 
 Before it checks page helpers or member identity, `hire-profile.js` hides every
 Designer-authored `[call-type-item]` and removes `data-config` from its booking
-CTA. After discovery accepts the canonical set, it assigns each accepted Free
-or Paid `config_id` while the options remain hidden. A call type without one
-exact accepted configuration keeps no `data-config`, so the shared booking
-initializer cannot register or reopen it. The initializer alone owns which
-valid options become visible. This keeps an authored Paid option closed during
-startup, on a missing dependency, and whenever Paid has no accepted
-configuration; it does not hide the separate Services call cards.
+CTA. It also marks unavailable options with `data-booking-unavailable` and
+`aria-hidden="true"`; an injected `!important` guard keeps those options hidden
+even if a delayed shared-initializer callback changes their inline display.
+After discovery accepts the canonical set, the controller assigns each accepted
+Free or Paid `config_id` and removes both unavailable markers for that option.
+The shared initializer then owns which valid options become visible. A call type
+without one exact accepted configuration keeps no `data-config` and retains the
+structural hide. This keeps an authored Paid option closed during startup, on a
+missing dependency, and whenever Paid has no accepted configuration; it does
+not hide the separate Services call cards.
 
 On the Free Call details screen, the controller hides the booking-form rows for
 `brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
