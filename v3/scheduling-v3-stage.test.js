@@ -622,7 +622,7 @@ test('remaps the versioned Hire helpers that call xanoAuthFetch directly', async
   )
 })
 
-test('preserves reviewed Brand payment routes outside the Hire adapter', async () => {
+test('allows reviewed Brand payment routes on dashboards and Hire', async () => {
   const dashboard = loadStage({ pathname: '/brand-dashboard' })
   const hire = loadStage({ pathname: '/hire/jp-dionisio' })
   const paymentRoutes = [
@@ -641,7 +641,7 @@ test('preserves reviewed Brand payment routes outside the Hire adapter', async (
     })
 
     assert.equal(dashboardResponse.status, 200)
-    assert.equal(hireResponse.status, 410)
+    assert.equal(hireResponse.status, 200)
   }
 
   assert.deepEqual(
@@ -650,7 +650,10 @@ test('preserves reviewed Brand payment routes outside the Hire adapter', async (
     ),
     paymentRoutes.map((route) => `/api:tCpV3oqd/${route}`),
   )
-  assert.equal(hire.authenticatedRequests.length, 0)
+  assert.deepEqual(
+    hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
+    paymentRoutes.map((route) => `/api:tCpV3oqd/${route}`),
+  )
 })
 
 test('maps every reviewed legacy route to an authenticated V3 request', async () => {
@@ -820,17 +823,17 @@ test('routes direct reviewed V3 calls through the auth bridge', async () => {
   assert.equal(new URL(authenticatedRequests[0].url).pathname, '/api:tCpV3oqd/booking/cancel/v3')
 })
 
-test('retains only approved legacy Stripe provider calls', async () => {
+test('blocks legacy Stripe provider calls', async () => {
   const { authenticatedRequests, nativeRequests, window } = loadStage()
 
-  await window.fetch(`${API_BASE}stripe/live/payment_intent/get`, {
+  const response = await window.fetch(`${API_BASE}stripe/live/payment_intent/get`, {
     method: 'POST',
     body: '{}',
   })
 
   assert.equal(authenticatedRequests.length, 0)
-  assert.equal(nativeRequests.length, 1)
-  assert.equal(new URL(nativeRequests[0].url).pathname, '/api:tCpV3oqd/stripe/live/payment_intent/get')
+  assert.equal(nativeRequests.length, 0)
+  assert.equal(response.status, 410)
 })
 
 test('fails closed for held, unsafe, and unclassified scheduling routes', async () => {

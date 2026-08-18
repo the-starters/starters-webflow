@@ -118,3 +118,265 @@ test('the shared token bridge fallback sends a Bearer-authenticated request', as
     global.xanoAuthFetch = previous.xanoAuthFetch
   }
 })
+
+test('readiness uses an authenticated GET with no browser authority payload', async () => {
+  const previous = global.xanoAuthFetch
+  const requests = []
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, options })
+    return response({ environment: 'live', bookable: true })
+  }
+  try {
+    const result = await api.getReadiness()
+    assert.equal(result.bookable, true)
+    assert.equal(requests[0].url, api.XANO_BASE + api.READINESS_PATH)
+    assert.equal(requests[0].options.method, 'GET')
+    assert.equal(requests[0].options.body, undefined)
+  } finally {
+    global.xanoAuthFetch = previous
+  }
+})
+
+test('booking retries reuse one key and omit identity, price, card, and environment authority', async () => {
+  const previous = global.xanoAuthFetch
+  const requests = []
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, options })
+    return response({ booking_id: 'booking_one', status: 'pending' })
+  }
+  try {
+    const attempt = api.createBookingAttempt({
+      starter_slug: 'jp-testiz-d',
+      config_id: 'config_paid',
+      start: 1787000000000,
+      end: 1787001800000,
+      timezone: 'Asia/Manila',
+      topic: 'Audit',
+      context: 'Review the account',
+      member_id: 'must-not-send',
+      environment: 'must-not-send',
+      price: 1,
+      payment_method_id: 'must-not-send',
+    }, 'paid-booking-123')
+    await attempt.run()
+    await attempt.run()
+    assert.equal(requests.length, 2)
+    assert.equal(requests[0].url, api.XANO_BASE + api.BOOKING_PATH)
+    assert.deepEqual(JSON.parse(requests[0].options.body), {
+      starter_slug: 'jp-testiz-d',
+      config_id: 'config_paid',
+      start: 1787000000000,
+      end: 1787001800000,
+      timezone: 'Asia/Manila',
+      topic: 'Audit',
+      context: 'Review the account',
+      idempotency_key: 'paid-booking-123',
+    })
+    assert.equal(requests[1].options.body, requests[0].options.body)
+  } finally {
+    global.xanoAuthFetch = previous
+  }
+})
+
+test('paid Scheduler final submit is prevented and owned by one canonical Xano command', async () => {
+  const previous = {
+    document: global.document,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const requests = []
+  let resolveReadiness
+  const item = { style: {}, setAttribute() {} }
+  const cta = {
+    attrs: { 'data-config': 'config_paid' },
+    getAttribute(name) { return this.attrs[name] || null },
+    setAttribute(name, value) { this.attrs[name] = value },
+    closest() { return item },
+  }
+  const successText = { textContent: '' }
+  const paidText = { textContent: '' }
+  const steps = [
+    { style: {}, getAttribute: () => 'default' },
+    { style: {}, getAttribute: () => 'success' },
+  ]
+  const container = {}
+  const popup = {
+    querySelector(selector) {
+      if (selector === '[nylas-container]') return container
+      if (selector === '[booking-success-text]') return successText
+      if (selector === '[paid-call-text]') return paidText
+      return null
+    },
+    querySelectorAll() { return steps },
+  }
+  global.document = {
+    querySelector(selector) {
+      if (selector === '[popup-booking]') return popup
+      return null
+    },
+    querySelectorAll() { return [cta] },
+  }
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, options })
+    if (url.endsWith(api.READINESS_PATH)) {
+      return new Promise((resolve) => {
+        resolveReadiness = () => resolve(response({ environment: 'live', bookable: true }))
+      })
+    }
+    return response({ booking_id: 'booking_one', status: 'pending' })
+  }
+  let scheduler
+  let schedulerCount = 0
+  try {
+    assert.equal(api.installPaidBookingController({
+      config: { config_id: 'config_paid', is_paid: true },
+      starterSlug: 'jp-testiz-d',
+      brandName: 'Brand Test',
+      brandEmail: 'brand@example.com',
+      createScheduler() {
+        schedulerCount += 1
+        scheduler = { eventOverrides: {} }
+        return scheduler
+      },
+    }), true)
+    const firstClick = cta.onclick({ preventDefault() {} })
+    const secondClick = cta.onclick({ preventDefault() {} })
+    assert.equal(requests.filter(({ url }) => url.endsWith(api.READINESS_PATH)).length, 1)
+    resolveReadiness()
+    await Promise.all([firstClick, secondClick])
+    assert.equal(schedulerCount, 1)
+    assert.equal(typeof scheduler.eventOverrides.detailsConfirmed, 'function')
+
+    let prevented = false
+    const connector = {
+      scheduler: {
+        bookTimeslot() { throw new Error('direct Nylas booking must not run') },
+      },
+      schedulerStore: {
+        get(name) {
+          if (name === 'selectedTimezone') return 'Pacific/Auckland'
+          return {
+            start_time: new Date(1787000000000),
+            end_time: new Date(1787001800000),
+          }
+        },
+      },
+    }
+    scheduler.eventOverrides.detailsConfirmed({
+      preventDefault() { prevented = true },
+    }, connector)
+    assert.equal(prevented, true, 'preventDefault must run synchronously')
+    await new Promise((resolve) => setImmediate(resolve))
+    const bookingRequests = requests.filter(({ url }) => url.endsWith(api.BOOKING_PATH))
+    assert.equal(bookingRequests.length, 1)
+    assert.equal(JSON.parse(bookingRequests[0].options.body).timezone, 'Pacific/Auckland')
+    assert.equal(successText.textContent.includes('paid call request was sent'), true)
+    assert.equal(steps[1].style.display, 'flex')
+  } finally {
+    global.document = previous.document
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
+test('card setup retries reuse the same setup and default-selection attempts', async () => {
+  const previous = {
+    document: global.document,
+    Stripe: global.Stripe,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const requests = []
+  const listeners = {}
+  const item = { style: {} }
+  const cta = {
+    attrs: { 'data-config': 'config_paid' },
+    getAttribute(name) { return this.attrs[name] || null },
+    setAttribute(name, value) { this.attrs[name] = value },
+    closest() { return item },
+  }
+  const popup = {
+    querySelector(selector) {
+      if (selector === '[nylas-container]') return {}
+      return null
+    },
+  }
+  const save = {
+    disabled: false,
+    addEventListener(name, listener) { listeners[name] = listener },
+  }
+  const cardMount = {}
+  const errorText = { textContent: '' }
+  const statusText = { textContent: '' }
+  const openCard = { click() {} }
+  const closeCard = { click() {} }
+  global.document = {
+    querySelector(selector) {
+      if (selector === '[popup-booking]') return popup
+      if (selector.includes('[card-element]')) return cardMount
+      if (selector.includes('[save-card-btn]')) return save
+      if (selector.includes('[card-error]')) return errorText
+      if (selector.includes('[save-card-status]')) return statusText
+      if (selector === '[popup-stripe-card-open]') return openCard
+      if (selector === '[popup-stripe-card-close]') return closeCard
+      return null
+    },
+    querySelectorAll() { return [cta] },
+  }
+  const card = { mount() {}, on() {} }
+  global.Stripe = () => ({
+    elements: () => ({ create: () => card }),
+    confirmCardSetup: async () => ({
+      setupIntent: { payment_method: 'pm_retry_card' },
+    }),
+  })
+  let readinessCount = 0
+  let defaultCount = 0
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, options })
+    if (url.endsWith(api.READINESS_PATH)) {
+      readinessCount += 1
+      return response({
+        environment: 'test',
+        bookable: readinessCount >= 3,
+      })
+    }
+    if (url.endsWith(api.SET_DEFAULT_PATH)) {
+      defaultCount += 1
+      if (defaultCount === 1) throw new Error('network timeout')
+      return response({ readiness: 'ready' })
+    }
+    if (url.endsWith(api.SETUP_PATH)) {
+      return response({ client_secret: 'seti_retry_secret' })
+    }
+    throw new Error('Unexpected request: ' + url)
+  }
+
+  try {
+    assert.equal(api.installPaidBookingController({
+      config: { config_id: 'config_paid', is_paid: true },
+      starterSlug: 'jp-testiz-d',
+      createScheduler() { return { eventOverrides: {} } },
+    }), true)
+    await cta.onclick({ preventDefault() {} })
+    const saveEvent = {
+      preventDefault() {},
+      stopImmediatePropagation() {},
+    }
+    await listeners.click(saveEvent)
+    await listeners.click(saveEvent)
+
+    const setupBodies = requests
+      .filter(({ url }) => url.endsWith(api.SETUP_PATH))
+      .map(({ options }) => options.body)
+    const defaultBodies = requests
+      .filter(({ url }) => url.endsWith(api.SET_DEFAULT_PATH))
+      .map(({ options }) => options.body)
+    assert.equal(setupBodies.length, 2)
+    assert.equal(new Set(setupBodies).size, 1)
+    assert.equal(defaultBodies.length, 2)
+    assert.equal(new Set(defaultBodies).size, 1)
+    assert.equal(statusText.textContent, 'Card saved.')
+  } finally {
+    global.document = previous.document
+    global.Stripe = previous.Stripe
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
