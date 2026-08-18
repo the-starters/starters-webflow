@@ -362,7 +362,8 @@ async function settle(times = 30) {
 /* ---------------------------------------------------------------- tests --- */
 
 test('a page missing the Memberstack helpers stands down instead of throwing', () => {
-  const context = makeContext()
+  const page = makePage()
+  const context = makeContext({ page })
   delete context.qs
   delete context.qsa
   delete context.waitForMember
@@ -373,10 +374,16 @@ test('a page missing the Memberstack helpers stands down instead of throwing', (
     context.warnings.some((l) => l.includes('[hire-profile]') && l.includes('stood down')),
     'expected a stand-down warning, got: ' + JSON.stringify(context.warnings),
   )
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), '')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+  assert.equal(page.servicesList.children[0].style.display, undefined)
 })
 
 test('a page missing starter_memberstack_id stands down instead of throwing', () => {
-  const context = makeContext()
+  const page = makePage()
+  const context = makeContext({ page })
   delete context.starter_memberstack_id
   vm.createContext(context)
 
@@ -385,6 +392,11 @@ test('a page missing starter_memberstack_id stands down instead of throwing', ()
     context.warnings.some((l) => l.includes('starter_memberstack_id')),
     'expected a warning naming the missing global, got: ' + JSON.stringify(context.warnings),
   )
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), '')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+  assert.equal(page.servicesList.children[0].style.display, undefined)
 })
 
 test('the jQuery-only blocks are skipped, not fatal, when jQuery is absent', () => {

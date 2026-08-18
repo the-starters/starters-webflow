@@ -46,6 +46,26 @@
 (function () {
   'use strict';
 
+  function primeBookingModalOptions(configs) {
+      const records = Array.isArray(configs) ? configs : [];
+
+      document.querySelectorAll('[call-type-item]').forEach(function (item) {
+          item.querySelectorAll('[booking-popup-open][data-type]').forEach(function (cta) {
+              const type = cta.getAttribute('data-type');
+              const record = records.find(function (candidate) {
+                  if (type === 'paid') return candidate.is_paid === true;
+                  if (type === 'free') return candidate.is_paid === false;
+                  return false;
+              });
+
+              cta.setAttribute('data-config', record ? record.config_id : '');
+          });
+          item.style.display = 'none';
+      });
+  }
+
+  primeBookingModalOptions([]);
+
   // Page-embed contract. This file is deferred, so all of these are already
   // defined in the normal case; stand down loudly rather than throwing if not.
   var qs = window.qs;
@@ -150,26 +170,6 @@
       // deterministic while each option still receives its own config ID.
       return free.concat(paid);
   }
-
-  function primeBookingModalOptions(configs) {
-      const records = Array.isArray(configs) ? configs : [];
-
-      qsa('[call-type-item]').forEach(function (item) {
-          qsa('[booking-popup-open][data-type]', item).forEach(function (cta) {
-              const type = cta.getAttribute('data-type');
-              const record = records.find(function (candidate) {
-                  if (type === 'paid') return candidate.is_paid === true;
-                  if (type === 'free') return candidate.is_paid === false;
-                  return false;
-              });
-
-              cta.setAttribute('data-config', record ? record.config_id : '');
-          });
-          item.style.display = 'none';
-      });
-  }
-
-  primeBookingModalOptions([]);
 
   // Park the beside-services calendar experiment. The live Hire experience
   // uses the existing two-step modal: Book Call -> Free/Paid -> calendar.
