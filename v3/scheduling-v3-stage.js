@@ -102,8 +102,12 @@
   const activeV3Targets = new Set(Object.values(activeRouteMap))
 
   const originalFetch = window.fetch.bind(window)
-  const originalXanoAuthFetch = typeof window.xanoAuthFetch === 'function'
-    ? window.xanoAuthFetch.bind(window)
+  const authoritativeXanoAuthFetch =
+    typeof window.__tsSchedulingAuthFetch === 'function'
+      ? window.__tsSchedulingAuthFetch
+      : window.xanoAuthFetch
+  const originalXanoAuthFetch = typeof authoritativeXanoAuthFetch === 'function'
+    ? authoritativeXanoAuthFetch.bind(window)
     : null
 
   function setStatus(value) {
@@ -343,7 +347,7 @@
   }
 
   window.fetch = stageFetch
-  if (originalXanoAuthFetch && isHireBookingPath) {
+  if (originalXanoAuthFetch) {
     window.xanoAuthFetch = stageXanoAuthFetch
   }
   window.__tsSchedulingV3StageOriginalFetch = originalFetch

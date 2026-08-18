@@ -581,7 +581,8 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 
 `v3/scheduling-v3-stage.js` installs an exact hostname/path-gated compatibility
 adapter on the pages listed in the authoritative V3 scheduling boundary. It
-rewrites reviewed scheduling calls to exact V3 routes and sends them through `window.xanoAuthFetch`, blocks #1553,
+rewrites reviewed scheduling calls to exact V3 routes and sends them through the
+reviewed scheduling auth bridge, blocks #1553,
 transcription, `calendars/get_availabilities`, and every other unclassified
 scheduling route, including the legacy Stripe provider routes.
 Use `v3/scheduling-v3-stage-component.html` as the first Code Embed in a clone

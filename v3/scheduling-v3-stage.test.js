@@ -756,6 +756,77 @@ test('the real auth bridge authorizes every mapped V3 target', async () => {
   assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
 })
 
+test('dashboard routing reclaims the reviewed auth bridge from a competing page bridge', async () => {
+  const requests = []
+  let tradeCount = 0
+  let competingBridgeCount = 0
+  const attributes = {}
+  const window = {
+    location: {
+      hostname: 'the-starters-3-0.webflow.io',
+      pathname: '/starter-dashboard',
+      href: 'https://the-starters-3-0.webflow.io/starter-dashboard',
+    },
+    fetch: async (request) => {
+      const url = typeof request === 'string' ? request : request.url
+      if (url.includes('/auth/trade-token/v3')) {
+        tradeCount += 1
+        return response({ authToken: 'xano-paid-settings' })
+      }
+      requests.push(request)
+      return response({ ready: true })
+    },
+    setTimeout() {},
+    $memberstackDom: {
+      getMemberCookie: async () => 'memberstack-test-starter',
+      onAuthChange() {},
+    },
+  }
+  const context = {
+    console: { info() {}, warn() {} },
+    document: {
+      documentElement: {
+        setAttribute(name, value) {
+          attributes[name] = value
+        },
+      },
+    },
+    Headers,
+    Object,
+    Request,
+    Response,
+    Set,
+    URL,
+    window,
+  }
+
+  vm.runInNewContext(authSource, context)
+  window.xanoAuthFetch = async (input, init) => {
+    competingBridgeCount += 1
+    return window.fetch(input, init)
+  }
+  vm.runInNewContext(source, context)
+
+  const result = await window.xanoAuthFetch(
+    `${API_BASE}starter/paid-call-settings/get/v3`,
+  )
+  const lookalike = await window.xanoAuthFetch(
+    `${API_BASE}starter/paid-call-settings/get/v3-debug`,
+  )
+
+  assert.equal(result.status, 200)
+  assert.equal(tradeCount, 1)
+  assert.equal(competingBridgeCount, 0)
+  assert.equal(requests.length, 1)
+  assert.equal(
+    requests[0].headers.get('Authorization'),
+    'Bearer xano-paid-settings',
+  )
+  assert.equal(lookalike.status, 410)
+  assert.equal((await lookalike.json()).code, 'SCHEDULING_V3_ROUTE_BLOCKED')
+  assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
+})
+
 test('the real auth bridge authorizes the Brand-safe Hire discovery overrides', async () => {
   const requests = []
   const window = {
