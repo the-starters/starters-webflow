@@ -116,7 +116,11 @@ function makeElement(tag = 'div', attrs = {}, classes = []) {
     return out
   }
   el.descendants = () => walk(el)
-  el.querySelectorAll = (s) => walk(el).filter(compile(s))
+  el.querySelectorAll = (s) => {
+    const selectors = String(s).split(',').map((part) => part.trim()).filter(Boolean)
+    const matches = selectors.map(compile)
+    return walk(el).filter((node) => matches.some((match) => match(node)))
+  }
   el.querySelector = (s) => el.querySelectorAll(s)[0] || null
   el.cloneNode = () => {
     const copy = makeElement(el.tag, el.attributes, el.classes)
@@ -1066,18 +1070,45 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
   cmsCard.appendChild(cmsTitle)
   page.servicesList.appendChild(cmsCard)
 
+  const unknownCard = makeElement('div', {
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Unknown Advisory',
+  })
+  const unknownTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  unknownTitle.textContent = 'Unknown Advisory'
+  unknownCard.appendChild(unknownTitle)
+  page.servicesList.appendChild(unknownCard)
+
+  const paidCard = makeElement('div', {
+    'data-service-card': 'component',
+    'data-service-card-state': 'Default',
+    'data-modal-trigger': 'popup-booking',
+    'booking-popup-open': '',
+    'data-type': 'paid',
+    'data-signup-trigger-element': 'service',
+    'data-signup-trigger-value': 'Paid Consulting Call',
+  })
+  const paidTitle = makeElement('div', { 'data-service-card-element': 'title' })
+  paidTitle.textContent = 'Paid Consulting Call'
+  paidCard.appendChild(paidTitle)
+  page.servicesList.appendChild(paidCard)
+
   const serviceSelect = makeElement('select', { name: 'Services' })
   serviceSelect.options = [
     { value: '', textContent: 'Select one...' },
     { value: 'Freelance work', textContent: 'Freelance work' },
     { value: 'asdf', textContent: 'asdf' },
+    { value: 'Free Call', textContent: 'Free Call' },
+    { value: 'Paid Consulting Call', textContent: 'Paid Consulting Call' },
   ]
   page.root.appendChild(serviceSelect)
   assert.equal(page.root.querySelectorAll('#services [data-service-card="component"]').includes(cmsCard), true)
 
   const context = makeContext({
     page,
-    record: { rate: 100 },
+    record: { rate: 100, 'retainer-rate': '2500', 'retainer-enabled': true },
     member: {
       id: 'brand_member',
       auth: { email: 'brand@example.com' },
@@ -1092,19 +1123,49 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
 
   const freelanceCard = page.servicesList.children.find((card) =>
     card.getAttribute('data-rate-card') === 'freelance')
+  const retainerCard = page.servicesList.children.find((card) =>
+    card.getAttribute('data-rate-card') === 'retainer')
   assert.ok(freelanceCard)
-  for (const [card, service] of [[freelanceCard, 'Freelance work']]) {
+  assert.ok(retainerCard)
+  for (const [card, service] of [
+    [freelanceCard, 'Freelance work'],
+    [retainerCard, 'Freelance work'],
+    [cmsCard, 'asdf'],
+  ]) {
     assert.equal(card.getAttribute('data-modal-trigger'), 'generate-contract', service)
     assert.equal(card.getAttribute('data-sp-fill'), 'button')
     assert.equal(card.getAttribute('data-sp-fill-category'), 'service')
     assert.equal(card.getAttribute('data-sp-fill-value'), service)
   }
+
+  for (const attribute of [
+    'data-modal-trigger',
+    'data-sp-fill',
+    'data-sp-fill-category',
+    'data-sp-fill-value',
+  ]) {
+    assert.equal(
+      unknownCard.getAttribute(attribute),
+      null,
+      `unknown native service option must fail closed for ${attribute}`,
+    )
+  }
+
   const freeCard = page.servicesList.children.find((card) => card.getAttribute('data-type') === 'free')
   assert.equal(
     freeCard.getAttribute('data-modal-trigger'),
     'popup-booking',
     'Free Call must not be converted into a project trigger',
   )
+  assert.equal(freeCard.getAttribute('data-sp-fill'), null)
+  assert.equal(freeCard.getAttribute('data-sp-fill-value'), null)
+  assert.equal(
+    paidCard.getAttribute('data-modal-trigger'),
+    'popup-booking',
+    'Paid Call must not be converted into a project trigger',
+  )
+  assert.equal(paidCard.getAttribute('data-sp-fill'), null)
+  assert.equal(paidCard.getAttribute('data-sp-fill-value'), null)
 })
 
 test('a page without the hide-empty hook still renders its cards', async () => {
