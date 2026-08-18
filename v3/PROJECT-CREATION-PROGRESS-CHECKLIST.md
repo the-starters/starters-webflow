@@ -24,6 +24,7 @@ workspace operator checklist tracks live Webflow and browser evidence.
 - [x] Own Contract affirmation gates Continue.
 - [x] Standard to Own to Standard updates both Contract destinations.
 - [x] Weekly datepicker accepts past, current, and future dates.
+- [x] Weekly datepicker stays open through captured focus-to-click sync.
 - [x] Blank Flat Fee end date keeps Continue disabled.
 - [x] End date on or before the start date keeps Review unreachable.
 - [x] Valid Flat Fee date order enables Continue and reaches Review.
