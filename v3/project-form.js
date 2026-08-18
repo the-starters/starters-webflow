@@ -464,6 +464,7 @@
       // unresolvable one swallow a correctly tagged field.
       var native = normalized === 'fee_structure' ? engagementControl(form)
         : normalized === 'invoice_frequency' ? invoiceFrequencyControl(form)
+        : normalized === 'service' ? namedField(form, 'Services')
         : null
       if (native) return native
     }
