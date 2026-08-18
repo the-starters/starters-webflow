@@ -51,6 +51,8 @@
       if (!MEMBER.id) return;
 
       const MAX_SIZE = 4 * 1024 * 1024; // 4MB
+      const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/;
+      const uploadIntentIds = new WeakMap();
 
       const XANO_BASE_URL = 'https://x08a-5ko8-jj1r.n7c.xano.io';
       const wrap = document.querySelector('#profile-photo-wrap');
@@ -104,6 +106,33 @@
         wrap.style.display = 'block';
       }
 
+      function createSourceMutationId() {
+        const cryptoApi = window.crypto;
+        let id = '';
+
+        if (typeof cryptoApi?.randomUUID === 'function') {
+          id = cryptoApi.randomUUID();
+        } else if (typeof cryptoApi?.getRandomValues === 'function') {
+          const bytes = cryptoApi.getRandomValues(new Uint8Array(24));
+          let binary = '';
+          bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+          id = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+        }
+
+        if (!SOURCE_MUTATION_ID_PATTERN.test(id)) {
+          throw new Error('Secure upload intent ID is unavailable');
+        }
+        return id;
+      }
+
+      function sourceMutationIdFor(file) {
+        const existing = uploadIntentIds.get(file);
+        if (existing) return existing;
+        const created = createSourceMutationId();
+        uploadIntentIds.set(file, created);
+        return created;
+      }
+
       async function handleFile(file) {
         label.classList.remove('dropping');
 
@@ -133,7 +162,17 @@
         preview.style.display = 'block';
 
         // upload the image to Xano/Webflow and update the profile data with Webflow photo URL
-        const wf_photo_data = await uploadImage(file, MEMBER.id);
+        const sourceMutationId = sourceMutationIdFor(file);
+        let wf_photo_data;
+        try {
+          wf_photo_data = await uploadImage(file, sourceMutationId);
+        } catch (error) {
+          setLoader(false, preview);
+          showError('Image upload failed. Please try again.');
+          console.error('Profile image upload failed:', error);
+          return;
+        }
+        uploadIntentIds.delete(file);
         waitProfileData(async () => {
           photoUrlInput.value = wf_photo_data['starter_image'];
           photoUrlInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -170,10 +209,10 @@
         });
       }
 
-      async function uploadImage(file, member_id) {
+      async function uploadImage(file, sourceMutationId) {
         const formData = new FormData();
         formData.append('image', file);
-        formData.append('member_id', member_id);
+        formData.append('source_mutation_id', sourceMutationId);
         return requestJson(
           XANO_BASE_URL + '/api:KZf7nFnk/build_profile/starter/profile_image',
           {

@@ -80,6 +80,7 @@ function loadShim({
     URL,
     JSON,
     Promise,
+    createImageBitmap: async () => null,
   })
   vm.runInContext(source, context)
   return { window, calls, localStorage }
@@ -665,6 +666,69 @@ async function run() {
       new Headers(calls[1].init.headers).get('Authorization'),
       'Bearer xano-token',
     )
+  }
+
+  {
+    const endpoint =
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    for (const sourceMutationId of [null, 'short id', 'person@example.com']) {
+      const body = new FormData()
+      body.append('image', new Blob(['image-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
+      if (sourceMutationId !== null) body.append('source_mutation_id', sourceMutationId)
+      const response = await window.fetch(endpoint, { method: 'POST', body })
+      assert.equal(response.status, 400)
+      assert.equal((await response.json()).code, 'PROFILE_IMAGE_MUTATION_ID_INVALID')
+    }
+    assert.equal(calls.length, 0)
+  }
+
+  {
+    const endpoint =
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
+    const sourceMutationId = '123e4567-e89b-12d3-a456-426614174000'
+    let tradeCount = 0
+    const attempts = []
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      fetchImpl: async (input, init) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          tradeCount += 1
+          return new Response(JSON.stringify({
+            authToken: tradeCount === 1 ? 'stale-token' : 'fresh-token',
+          }), { status: 200 })
+        }
+        const image = init.body.get('image')
+        attempts.push({
+          authorization: new Headers(init.headers).get('Authorization'),
+          imageBytes: Buffer.from(await image.arrayBuffer()).toString('hex'),
+          sourceMutationId: init.body.get('source_mutation_id'),
+          memberId: init.body.get('member_id'),
+        })
+        return new Response('{}', { status: attempts.length === 1 ? 401 : 200 })
+      },
+    })
+    const body = new FormData()
+    body.append('image', new Blob(['same-upload-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
+    body.append('source_mutation_id', sourceMutationId)
+    body.append('member_id', 'legacy-member-id-must-not-pass')
+    const response = await window.fetch(endpoint, { method: 'POST', body })
+    assert.equal(response.status, 200)
+    assert.equal(tradeCount, 2)
+    assert.deepEqual(attempts, [
+      {
+        authorization: 'Bearer stale-token',
+        imageBytes: Buffer.from('same-upload-bytes').toString('hex'),
+        sourceMutationId,
+        memberId: null,
+      },
+      {
+        authorization: 'Bearer fresh-token',
+        imageBytes: Buffer.from('same-upload-bytes').toString('hex'),
+        sourceMutationId,
+        memberId: null,
+      },
+    ])
   }
 
   {

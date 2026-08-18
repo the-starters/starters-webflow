@@ -14,8 +14,9 @@
  *      (api:g1vmSLWh/auth/trade-token/v3 — same bridge as opportunities-3.0.js)
  *   2. downscales the image client-side (longest side ≤ 800px, JPEG q0.8)
  *      so the server's 2MB cap is never the user's problem
- *   3. re-issues the request with the Authorization header and without
- *      `member_id`
+ *   3. validates and forwards the opaque `source_mutation_id`
+ *   4. re-issues the request with the Authorization header and without
+ *      `member_id`; one 401 retrade reuses the same resized bytes and ID
  *
  * Requests that already carry an Authorization header (e.g.
  * complete-profile-photo.js v1.18.0) and every other URL pass through
@@ -102,6 +103,7 @@
   const MAX_DIMENSION = 800 // px, longest side after resize
   const JPEG_QUALITY = 0.8
   const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 // server precondition
+  const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/
 
   /* ===================== DOMAIN WRITE MODE ======================= */
   const hostname = String(window.location.hostname || '').toLowerCase()
@@ -421,31 +423,50 @@
       log('intercepting unauthenticated upload to', ENDPOINT_PATH)
       const body = (init && init.body) || (input && input.body)
       let image = null
+      let sourceMutationId = null
       if (typeof FormData !== 'undefined' && body instanceof FormData) {
         image = body.get('image')
+        sourceMutationId = body.get('source_mutation_id')
       }
       if (!image) {
-        log('no image field found, passing through with auth header only')
+        log('blocked upload without image')
+        return new Response(JSON.stringify({
+          message: 'Image upload request is incomplete.',
+          code: 'PROFILE_IMAGE_INPUT_INVALID',
+        }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (
+        typeof sourceMutationId !== 'string' ||
+        !SOURCE_MUTATION_ID_PATTERN.test(sourceMutationId)
+      ) {
+        log('blocked upload without a valid source mutation ID')
+        return new Response(JSON.stringify({
+          message: 'Image upload request is incomplete.',
+          code: 'PROFILE_IMAGE_MUTATION_ID_INVALID',
+        }), { status: 400, headers: { 'Content-Type': 'application/json' } })
       }
 
-      const token = await ensureXanoToken(originalFetch)
-
-      const outgoing = new FormData()
-      if (image) {
-        const blob = await resizeImage(image)
-        const filename =
-          blob === image && image.name ? image.name : 'profile-photo.jpg'
+      const blob = await resizeImage(image)
+      const filename =
+        blob === image && image.name ? image.name : 'profile-photo.jpg'
+      const upload = async (token) => {
+        const outgoing = new FormData()
         outgoing.append('image', blob, filename)
+        outgoing.append('source_mutation_id', sourceMutationId)
+        return originalFetch(url, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: outgoing,
+        })
       }
 
-      // deliberately NOT forwarding member_id — the endpoint derives the
-      // caller from the token and ignores it; keep the request minimal
-      const res = await originalFetch(url, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: outgoing,
-      })
-      if (res.status === 401) invalidateXanoToken(token)
+      let token = await ensureXanoToken(originalFetch)
+      let res = await upload(token)
+      if (res.status === 401) {
+        invalidateXanoToken(token)
+        token = await ensureXanoToken(originalFetch)
+        res = await upload(token)
+      }
       log('upload response', res.status)
       // Inline edit-profile uploader is a click-driven fetch (not a native WF
       // submit), so the sitewide posthog-track.js form hook can't see it —
