@@ -1198,72 +1198,91 @@
     })
   }
 
-  // Opportunity lifecycle controls use valued Webflow-safe attributes:
-  //   data-opp-element="loading-button|loading-spinner"
-  //   data-opp-element="loading-label|loading-hide" (optional CSS hide targets)
-  //   data-opp-loading="false|true"
-  // Keep the authored Close/Reopen markup in charge of appearance while
-  // matching wf-xano's proven pending-state contract (busy/disabled ARIA,
-  // native disabled restoration, mutation class, and duplicate suppression).
-  // Close is confirmed inside a form-flow modal, so upgrade that confirmation
-  // control with a clone of the authored Close spinner when Designer markup
-  // only carries the loading parts on the page-level state button.
+  // Opportunity action pending: find [data-button-spinner] in the Button Wrap
+  // (native control and Spinner as siblings). Pending shows the Spinner
+  // (`display: flex`) and fades only the native control. Idle hides the Spinner
+  // (`display: none`) and restores the control. A wrap with no Spinner is
+  // disable-only. Never clone, never write data-opp-loading, never match
+  // loading-button.
   const activeActionGuards = new WeakMap()
   const pendingElementSnapshots = new WeakMap()
   const approvedCloseFlowAdvances = new WeakSet()
+  const preparedSpinners = new WeakSet()
 
-  // Upgrade a confirmation control into the loading-button contract and give it
-  // a spinner when the Designer authored none: mark it loading-button, seed
-  // data-opp-loading, then (if it has no spinner of its own) clone one from the
-  // first spinnerSources selector that resolves. Idempotent — the spinner guard
-  // keeps repeat calls (modal-open, loadingControlFor) from stacking spinners.
-  function upgradeConfirmLoadingButton(confirm, ...spinnerSources) {
-    if (!confirm) return
-    if (!confirm.hasAttribute('data-opp-element'))
-      confirm.setAttribute('data-opp-element', 'loading-button')
-    if (!confirm.hasAttribute('data-opp-loading')) confirm.setAttribute('data-opp-loading', 'false')
-    if ($('[data-opp-element="loading-spinner"]', confirm)) return
-    for (const selector of spinnerSources) {
-      const source = $(selector)
-      if (source) {
-        confirm.appendChild(source.cloneNode(true))
-        return
+  function parentOf(node) {
+    return (node && (node.parentElement || node.parentNode || node.parent)) || null
+  }
+
+  function nodeTag(node) {
+    return String((node && (node.tagName || node.tag)) || '').toLowerCase()
+  }
+
+  function isFormNode(node) {
+    return nodeTag(node) === 'form'
+  }
+
+  function childrenOf(node) {
+    if (!node) return []
+    if (Array.isArray(node.children)) return node.children
+    return Array.from(node.children || [])
+  }
+
+  function directChildSpinner(node) {
+    for (const child of childrenOf(node)) {
+      if (child && typeof child.matches === 'function' && child.matches('[data-button-spinner]'))
+        return child
+    }
+    return null
+  }
+
+  function buttonWrapFor(control) {
+    if (!control) return null
+    if (directChildSpinner(control)) return control
+    let node = parentOf(control)
+    while (node && !isFormNode(node)) {
+      if (directChildSpinner(node)) return node
+      node = parentOf(node)
+    }
+    return control
+  }
+
+  function wrapOwnsAction(wrap) {
+    if (!wrap || typeof wrap.matches !== 'function') return false
+    if (wrap.matches('[data-opp-submit]') || wrap.matches('[type="submit"]')) return true
+    for (const child of childrenOf(wrap)) {
+      if (!child || typeof child.matches !== 'function') continue
+      if (child.matches('[data-button-spinner]')) continue
+      if (
+        child.matches('button') ||
+        child.matches('input[type="button"]') ||
+        child.matches('input[type="submit"]') ||
+        child.matches('[type="submit"]') ||
+        child.matches('[data-opp-submit]')
+      ) {
+        return true
       }
     }
+    return false
   }
 
-  function prepareOpportunityLoadingControls() {
-    $$('[data-opp-element="loading-button"]').forEach((control) => {
-      if (!control.hasAttribute('data-opp-loading'))
-        control.setAttribute('data-opp-loading', 'false')
+  function prepareOpportunitySpinners() {
+    $$('[data-button-spinner]').forEach((spinner) => {
+      if (preparedSpinners.has(spinner)) return
+      const wrap = parentOf(spinner)
+      if (!wrap || isFormNode(wrap)) return
+      if (directChildSpinner(wrap) !== spinner) return
+      if (!wrapOwnsAction(wrap)) return
+      preparedSpinners.add(spinner)
+      spinner.style.display = 'none'
     })
-
-    // CLOSE confirm is a plain <div> with no authored spinner — synthesize one
-    // from the close trigger's spinner.
-    upgradeConfirmLoadingButton(
-      $('[data-close-opp="confirm-button"]'),
-      '[data-modal-trigger="close-opportunity"] [data-opp-element="loading-spinner"]',
-    )
-
-    // REOPEN confirm gets the same guarantee: spin whether or not the Designer
-    // authored loading markup on it. Prefer the reopen trigger's own spinner,
-    // then fall back to the close trigger's (the known-good source). On the
-    // detail page [data-opp-submit="reopen"] is the reopen trigger itself
-    // (prepareOpportunityStatusControls stamps it), which already carries a
-    // spinner — the guard above skips synthesis there, so no double spinner.
-    upgradeConfirmLoadingButton(
-      $('[data-opp-submit="reopen"]'),
-      '[data-modal-trigger="reopen-opportunity"] [data-opp-element="loading-spinner"]',
-      '[data-modal-trigger="close-opportunity"] [data-opp-element="loading-spinner"]',
-    )
   }
 
-  function loadingControlFor(btn) {
-    prepareOpportunityLoadingControls()
-    return (btn && btn.closest('[data-opp-element="loading-button"]')) || btn
+  function opportunityFormSubmitControl(form) {
+    if (!form) return null
+    return $('input[type="submit"]', form) || $('[type="submit"]', form)
   }
 
-  function setPendingElement(el, pending, isLoadingControl) {
+  function setPendingElement(el, pending, { fade = true } = {}) {
     if (!el) return
     if (pending) {
       if (!pendingElementSnapshots.has(el)) {
@@ -1271,8 +1290,9 @@
           ariaBusy: el.getAttribute('aria-busy'),
           ariaDisabled: el.getAttribute('aria-disabled'),
           disabled: 'disabled' in el ? el.disabled : undefined,
-          opacity: el.style.opacity,
+          opacity: fade ? el.style.opacity : undefined,
           pointerEvents: el.style.pointerEvents,
+          fade,
         })
       }
       el.classList.add('is-wf-xano-mutating')
@@ -1280,39 +1300,43 @@
       el.setAttribute('aria-disabled', 'true')
       if ('disabled' in el) el.disabled = true
       el.style.pointerEvents = 'none'
-      if (isLoadingControl) el.setAttribute('data-opp-loading', 'true')
-      else el.style.opacity = '0.6'
+      if (fade) el.style.opacity = '0.6'
       return
     }
 
     const snapshot = pendingElementSnapshots.get(el)
     el.classList.remove('is-wf-xano-mutating')
-    if (isLoadingControl) el.setAttribute('data-opp-loading', 'false')
     if (!snapshot) return
     if (snapshot.ariaBusy == null) el.removeAttribute('aria-busy')
     else el.setAttribute('aria-busy', snapshot.ariaBusy)
     if (snapshot.ariaDisabled == null) el.removeAttribute('aria-disabled')
     else el.setAttribute('aria-disabled', snapshot.ariaDisabled)
     if ('disabled' in el && snapshot.disabled !== undefined) el.disabled = snapshot.disabled
-    el.style.opacity = snapshot.opacity
+    if (snapshot.fade) el.style.opacity = snapshot.opacity
     el.style.pointerEvents = snapshot.pointerEvents
     pendingElementSnapshots.delete(el)
   }
 
   function setOpportunityActionPending(btn, pending) {
-    const control = loadingControlFor(btn)
-    const hasLoadingUi =
-      control && control.matches('[data-opp-element="loading-button"]')
-    setPendingElement(control, pending, hasLoadingUi)
-    // Close's delegated click resolves to the inner native button while the
-    // loading UI lives on the outer confirmation control. Disable both so
-    // keyboard activation cannot bypass the visual pointer lock.
-    if (btn && btn !== control) setPendingElement(btn, pending, false)
-    const nativeControl =
-      control && $('button, input[type="button"], input[type="submit"]', control)
-    if (nativeControl && nativeControl !== btn)
-      setPendingElement(nativeControl, pending, false)
-    return control
+    const wrap = buttonWrapFor(btn)
+    const spinner = wrap && directChildSpinner(wrap)
+    if (spinner) spinner.style.display = pending ? 'flex' : 'none'
+
+    const innerNative =
+      wrap && $('button, input[type="button"], input[type="submit"]', wrap)
+
+    if (spinner) {
+      if (btn && btn !== wrap) setPendingElement(btn, pending, { fade: true })
+      if (innerNative && innerNative !== btn)
+        setPendingElement(innerNative, pending, { fade: btn === wrap })
+      if (btn === wrap) setPendingElement(wrap, pending, { fade: false })
+    } else {
+      setPendingElement(wrap || btn, pending, { fade: false })
+      if (btn && btn !== wrap) setPendingElement(btn, pending, { fade: false })
+      if (innerNative && innerNative !== btn && innerNative !== wrap)
+        setPendingElement(innerNative, pending, { fade: false })
+    }
+    return wrap
   }
 
   /* ============== MEMBERSTACK GATE (reused from v2) ============== */
@@ -5015,19 +5039,7 @@
       else if (status) status.textContent = m
       else if (m) console.info('[opp30:create]', m)
     }
-    const btn = $('input[type="submit"]', form) || $('[type="submit"]', form) || $('.w-button', form)
-    const setBtn = (txt) => {
-      if (!btn) return
-      if (btn.value !== undefined && btn.tagName === 'INPUT') btn.value = txt
-      else btn.textContent = txt
-    }
-    const origLabel = btn ? (btn.value !== undefined && btn.tagName === 'INPUT' ? btn.value : btn.textContent) : ''
-    // Design-system submit buttons carry the authored loading contract
-    // (data-opp-element="loading-button" with a loading-spinner + loading-hide).
-    // When present, drive that contract (spinner shows, label/icon hide) instead
-    // of writing "Submitting…" into the empty cover <button>, which rendered as
-    // stray text over the styled button. Plain full-page inputs fall back to text.
-    const loadingWrap = btn && btn.closest('[data-opp-element="loading-button"]')
+    const btn = opportunityFormSubmitControl(form)
     let submitting = false
 
     // capture phase + stopPropagation => Webflow's own (bubble) submit handler never runs,
@@ -5048,12 +5060,7 @@
           )
         }
         submitting = true
-        if (loadingWrap) setOpportunityActionPending(btn, true)
-        else if (btn) {
-          btn.disabled = true
-          btn.style.opacity = '0.6'
-          setBtn('Submitting…')
-        }
+        if (btn) setOpportunityActionPending(btn, true)
         say('Submitting…')
         try {
           const result = await API.brandOppCreate(payload)
@@ -5075,7 +5082,7 @@
             // Reset the submit state so a follow-up create (after the modal is
             // reopened and rewound to the form) works, and clear the spinner.
             submitting = false
-            if (loadingWrap) setOpportunityActionPending(btn, false)
+            if (btn) setOpportunityActionPending(btn, false)
             // Bring the new opportunity into the wf-xano brand feed behind the modal.
             try {
               if (window.WfXano && typeof window.WfXano.refresh === 'function') window.WfXano.refresh()
@@ -5098,12 +5105,7 @@
             diagnosticForError(err),
           )
           submitting = false
-          if (loadingWrap) setOpportunityActionPending(btn, false)
-          else if (btn) {
-            btn.disabled = false
-            btn.style.opacity = ''
-            setBtn(origLabel)
-          }
+          if (btn) setOpportunityActionPending(btn, false)
         }
       },
       true,
@@ -5209,7 +5211,7 @@
 
   window.addEventListener('modal-open', (e) => {
     const modal = e.detail && e.detail.modal
-    prepareOpportunityLoadingControls()
+    prepareOpportunitySpinners()
     if (modal) {
       prepareOpportunityForms(modal)
       initOpportunityCategorySelects(modal)
@@ -5266,16 +5268,19 @@
     if (createBtn && !createPageForm && !onCreatePage)
       createBtn.addEventListener('click', async () => {
         const modal = $('[data-modal-target="post-opportunity"]')
+        const form =
+          (modal && $('[data-opp-form="create"]', modal)) || $('[data-opp-form="create"]')
+        const pendingBtn = opportunityFormSubmitControl(form) || createBtn
         const payload = readOpportunityForm(modal)
         const validationMessage = validateOpportunityPayload(payload)
         if (validationMessage) {
           return showOpportunityError(
-            createBtn,
+            pendingBtn,
             validationMessage,
             validationDiagnostic('opportunity_create', 'opportunity', 'INVALID_FORM'),
           )
         }
-        await guard(createBtn, () => API.brandOppCreate(payload))
+        await guard(pendingBtn, () => API.brandOppCreate(payload))
       })
     else if (createBtn && (createPageForm || onCreatePage)) {
       log('skipped generic create click binding on full-page create form')
@@ -5285,15 +5290,16 @@
     // ("pending for review") screen instead of reloading. The update endpoint
     // keeps existing values for any empty input (so a partial edit never wipes
     // the opp), and the modal is prefilled with current values on load.
-    const editBtn = $('[data-opp-submit="update"]')
+    const editModal = $('[data-modal-target="edit-opportunity"]')
+    const editForm = editModal && $('form', editModal)
+    const editBtn =
+      opportunityFormSubmitControl(editForm) || $('[data-opp-submit="update"]')
     if (editBtn) {
-      const editModal = $('[data-modal-target="edit-opportunity"]')
       // The Submit control lives inside a Webflow .w-form, so clicking it also
       // fires a native form submit that Webflow intercepts to flash its own
       // inline .w-form-done/.w-form-fail toast (and can trigger a reload). Kill
       // that in the capture phase (same technique as initBrandCreatePage) so
       // ONLY our own success screen shows, after the real API call resolves.
-      const editForm = editModal && $('form', editModal)
       if (editForm)
         editForm.addEventListener(
           'submit',
@@ -5444,7 +5450,7 @@
   // Disables a button while its action runs; on success runs onSuccess when
   // given, else reloads (simple v1 behavior kept as the default/fallback).
   function guard(btn, fn, onSuccess) {
-    const control = loadingControlFor(btn)
+    const control = buttonWrapFor(btn)
     const guardKey = control || btn
     if (guardKey && activeActionGuards.has(guardKey)) return activeActionGuards.get(guardKey)
 
@@ -5456,7 +5462,7 @@
         if (onSuccess) {
           await onSuccess(result)
           // No-reload flows can expose the same control again later (for
-          // example Reopen -> Close -> Reopen). Restore the valued loading
+          // example Reopen -> Close -> Reopen). Restore the Spinner pending
           // state after the authoritative repaint/success transition.
           setOpportunityActionPending(btn, false)
         } else location.reload()
@@ -5732,12 +5738,10 @@
     }
   }
 
-  // The close-opportunity modal's confirm button is a plain <div> (not tagged
-  // data-opp-submit), and Finsweet relocates the modal after boot — so use
-  // DOCUMENT-level delegation: a "Confirm" click inside the close-opportunity modal
-  // -> brandOppClose(activeOpp) (activeOpp set by the card-click listener). Wired on the
-  // brand list page independently of the wf-algolia bridge, so closing works whether the
-  // feed renders via Xano (data-opp-list="brand-opps") or the legacy wf-algolia markup.
+  // The close-opportunity modal's confirm lives behind form-flow, and Finsweet
+  // relocates the modal after boot — so use DOCUMENT-level delegation. Prefer
+  // [data-opp-submit="close"] as the pending starting node; fall back to the
+  // form-flow confirm when Designer has not stamped it yet.
   function wireCloseOpportunityModal() {
     if (window.__opp30CloseWired) return
     window.__opp30CloseWired = true
@@ -5758,6 +5762,8 @@
         e.stopPropagation()
 
         const btn =
+          flowConfirm.closest('[data-opp-submit="close"]') ||
+          e.target.closest('[data-opp-submit="close"]') ||
           e.target.closest('a, button, [role="button"], .button_main-wrap, [data-w-id]') ||
           flowConfirm
         guard(btn, () => API.brandOppClose(activeOpp), (closedOpportunity) => {
@@ -5949,7 +5955,7 @@
     wireMemberScopeAuthChange()
     initOpportunityCategorySelects()
     prepareOpportunityStatusControls()
-    prepareOpportunityLoadingControls()
+    prepareOpportunitySpinners()
     wireModals()
     const p = location.pathname
     const normalizedPath = normalizedPagePath(p)
@@ -6060,6 +6066,7 @@
     initOpportunityCategorySelects,
     readOpportunityForm,
     validateOpportunityPayload,
+    setOpportunityActionPending,
   }
   if (
     typeof window.CustomEvent === 'function' &&

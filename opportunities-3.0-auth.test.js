@@ -1999,6 +1999,28 @@ function selectorMatches(node, selector) {
     })
 }
 
+function buttonWrapFixture({
+  buttonAttrs = { type: 'submit' },
+  buttonTag = 'button',
+  spinnerDisplay = 'flex',
+  wrapAttrs = {},
+} = {}) {
+  const spinner = el('div', { 'data-button-spinner': '' })
+  spinner.style.display = spinnerDisplay
+  const button = el(buttonTag, buttonAttrs)
+  const wrap = el('div', wrapAttrs, [button, spinner])
+  return { wrap, button, spinner }
+}
+
+function documentWith(root) {
+  return {
+    querySelector: (selector) =>
+      selectorMatches(root, selector) ? root : root.querySelector(selector),
+    querySelectorAll: (selector) =>
+      [root, ...descendants(root)].filter((node) => selectorMatches(node, selector)),
+  }
+}
+
 // The Generate Invoice modal as the shared Webflow button component renders it:
 // the visible Send Invoice control is a .button_main-wrap wrapper carrying the
 // theme attributes, and the element inside it is type="button", so no native
@@ -5418,4 +5440,130 @@ test('activateDeferredFeed runs immediately when wf-xano is already loaded', asy
   const root = deferredRoot('talent')
   bridge.window.Opp30.activateDeferredFeed(root)
   assert.deepEqual(inits, [root])
+})
+
+test('pending Create submit shows the Spinner and fades only the native control', async () => {
+  const { wrap, button, spinner } = buttonWrapFixture({ spinnerDisplay: 'none' })
+  const form = el('form', { 'data-opp-form': 'create' }, [wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(form))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+
+  assert.equal(spinner.style.display, 'flex')
+  assert.equal(button.style.opacity, '0.6')
+  assert.equal(button.disabled, true)
+  assert.equal(button.getAttribute('aria-busy'), 'true')
+  assert.equal(button.style.pointerEvents, 'none')
+  assert.equal(wrap.style.opacity, undefined)
+  assert.equal(wrap.hasAttribute('data-opp-loading'), false)
+  assert.equal(button.hasAttribute('data-opp-loading'), false)
+})
+
+test('clearing pending hides the Spinner and restores the native control', async () => {
+  const { button, spinner } = buttonWrapFixture({ spinnerDisplay: 'none' })
+  const bridge = await loadBridge(async () => response({}), documentWith(button.parent))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+  bridge.window.Opp30.setOpportunityActionPending(button, false)
+
+  assert.equal(spinner.style.display, 'none')
+  assert.equal(button.style.opacity, undefined)
+  assert.equal(button.disabled, false)
+  assert.equal(button.getAttribute('aria-busy'), null)
+  assert.equal(button.style.pointerEvents, undefined)
+})
+
+test('pending Close confirm that is not a submit shows its Spinner and fades the inner native control', async () => {
+  const { wrap, button, spinner } = buttonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+    wrapAttrs: { 'data-opp-submit': 'close' },
+  })
+  const modal = el('div', { 'data-modal-target': 'close-opportunity' }, [wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(modal))
+
+  bridge.window.Opp30.setOpportunityActionPending(wrap, true)
+
+  assert.equal(spinner.style.display, 'flex')
+  assert.equal(button.style.opacity, '0.6')
+  assert.equal(button.disabled, true)
+  assert.equal(button.getAttribute('aria-busy'), 'true')
+  assert.equal(wrap.style.opacity, undefined)
+  assert.equal(wrap.getAttribute('aria-busy'), 'true')
+  assert.equal(wrap.style.pointerEvents, 'none')
+  assert.equal(wrap.hasAttribute('data-opp-loading'), false)
+})
+
+test('a wrap with no Spinner still disables and never clones one', async () => {
+  const button = el('button', { type: 'submit' })
+  const wrap = el('div', {}, [button])
+  const childCount = wrap.children.length
+  const bridge = await loadBridge(async () => response({}), documentWith(wrap))
+
+  bridge.window.Opp30.setOpportunityActionPending(button, true)
+
+  assert.equal(button.disabled, true)
+  assert.equal(button.style.opacity, undefined)
+  assert.equal(wrap.children.length, childCount)
+  assert.equal(
+    wrap.querySelector('[data-button-spinner]'),
+    null,
+  )
+  assert.equal(wrap.hasAttribute('data-opp-loading'), false)
+})
+
+test('two wraps in one footer: only the action wrap spins', async () => {
+  const submit = buttonWrapFixture({
+    buttonAttrs: { type: 'submit' },
+    spinnerDisplay: 'none',
+  })
+  const cancel = buttonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+  })
+  const footer = el('div', {}, [submit.wrap, cancel.wrap])
+  const bridge = await loadBridge(async () => response({}), documentWith(footer))
+
+  bridge.window.Opp30.setOpportunityActionPending(submit.button, true)
+
+  assert.equal(submit.spinner.style.display, 'flex')
+  assert.equal(cancel.spinner.style.display, 'none')
+  assert.equal(submit.button.style.opacity, '0.6')
+  assert.equal(cancel.button.style.opacity, undefined)
+  assert.equal(cancel.button.disabled, false)
+})
+
+test('a wrap with no Spinner does not steal a neighbour Spinner', async () => {
+  const submitButton = el('button', { type: 'submit' })
+  const submitWrap = el('div', {}, [submitButton])
+  const cancel = buttonWrapFixture({
+    buttonAttrs: { type: 'button' },
+    spinnerDisplay: 'none',
+  })
+  const footer = el('div', {}, [submitWrap, cancel.wrap])
+  const childCount = footer.children.length
+  const bridge = await loadBridge(async () => response({}), documentWith(footer))
+
+  bridge.window.Opp30.setOpportunityActionPending(submitButton, true)
+
+  assert.equal(cancel.spinner.style.display, 'none')
+  assert.equal(submitButton.disabled, true)
+  assert.equal(submitWrap.style.opacity, undefined)
+  assert.equal(footer.children.length, childCount)
+  assert.equal(submitWrap.querySelector('[data-button-spinner]'), null)
+})
+
+test('binding a wrap force-hides a leftover visible Spinner', async () => {
+  const { spinner } = buttonWrapFixture({ spinnerDisplay: 'flex' })
+  await loadBridge(async () => response({}), documentWith(spinner.parent))
+
+  assert.equal(spinner.style.display, 'none')
+})
+
+test('binding does not hide a Spinner that is not in a Button Wrap', async () => {
+  const stray = el('div', { 'data-button-spinner': '' })
+  stray.style.display = 'flex'
+  await loadBridge(async () => response({}), documentWith(stray))
+
+  assert.equal(stray.style.display, 'flex')
 })

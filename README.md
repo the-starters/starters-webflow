@@ -794,71 +794,41 @@ await window.Opp30.diagnoseOpportunityMatching()
 
 ## Opportunities 3.0 Lifecycle Loading States
 
-Close and Reopen controls can keep their loading appearance in Webflow by using
-valued attributes (Webflow does not reliably preserve empty custom attributes):
+Create, Edit, Close, and Reopen (and any other Opportunity wrap that authored a
+Spinner) use a Button Wrap: the native control and `[data-button-spinner]` sit
+as siblings. Designer owns the right-side layout. The script only toggles
+visibility.
 
 ```html
-<div data-opp-element="loading-button" data-opp-loading="false">
-  <span data-opp-element="loading-label">Reopen opportunity</span>
-  <span data-opp-element="loading-hide">Optional helper or icon</span>
-  <span data-opp-element="loading-spinner">...</span>
+<div>
+  <button type="submit">Submit</button>
+  <div data-button-spinner><!-- Designer-authored Spinner --></div>
 </div>
 ```
 
-Style the label and spinner from the loading-button wrapper's
-`data-opp-loading="false|true"` value. This stable-layout CSS keeps the spinner
-centered without changing the button's dimensions:
+Create and Edit start at `type="submit"` inside that Opportunity form. Close and
+Reopen start at `data-opp-submit` (`reopen` exists; stamp `close` on the Close
+confirm when it is not a submit). Cancel is never chosen.
 
-```css
-[data-opp-element='loading-button'] {
-  position: relative;
-}
+While the request is pending, the script shows the Spinner (`display: flex`),
+fades only the native control to 60% opacity, and marks it busy and disabled.
+The Button Wrap itself is not faded, so the Spinner stays full opacity. Idle
+hides the Spinner (`display: none`) and restores the control. A wrap with no
+Spinner still disables and never gets a cloned one. The pending helper does not
+write `data-opp-loading` on Button Wraps and does not match `loading-button`.
+The talent-applied list still uses `data-opp-loading` as its own list-fetch
+flag.
 
-[data-opp-element='loading-button'] [data-opp-element='loading-spinner'] {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  visibility: hidden;
-  opacity: 0;
-}
-
-[data-opp-element='loading-button'][data-opp-loading='true'] {
-  cursor: wait;
-}
-
-[data-opp-element='loading-button'][data-opp-loading='true']
-  [data-opp-element='loading-spinner'] {
-  visibility: visible;
-  opacity: 1;
-}
-
-[data-opp-element='loading-button'][data-opp-loading='true']
-  [data-opp-element='loading-label'],
-[data-opp-element='loading-button'][data-opp-loading='true']
-  [data-opp-element='loading-hide'] {
-  visibility: hidden;
-}
-```
-
-While the lifecycle request is pending, `opportunities-3.0.js` sets the value to
-`true`, adds `is-wf-xano-mutating`, marks the control busy and disabled for
-assistive technology, disables any nested native control, and suppresses
-duplicate writes. The original state is restored after an error or a successful
-no-reload Close/Reopen repaint.
-
-Hiding authored content is opt-in. Use
-`data-opp-element="loading-label"` for the button label or
-`data-opp-element="loading-hide"` for any other child that should become
-invisible while loading. Both use `visibility: hidden` to preserve the button's
-dimensions. Untagged button content remains visible while the spinner runs; the
-script does not add either attribute automatically.
+On bind, a Spinner that is a direct child of a Button Wrap is forced hidden
+once so a leftover visible node cannot stick. There is no minimum display delay
+and no fail-open hide cap. Pending is also exported as
+`window.Opp30.setOpportunityActionPending(control, pending)` for the Opportunity
+test bridge.
 
 The Close form-flow confirmation remains identified by
-`data-close-opp="confirm-button"`. The script upgrades it to a loading button and,
-when necessary, clones the spinner authored inside the page-level
-`data-modal-trigger="close-opportunity"` control. The form-flow advances only after
-the Close request succeeds; an error leaves the confirmation step open and usable.
+`data-close-opp="confirm-button"`. Pending prefers `[data-opp-submit="close"]` on
+that confirm when present. The form-flow advances only after the Close request
+succeeds; an error leaves the confirmation step open and usable.
 
 The Close modal's shared nav header may remain outside the form-flow steps. Author
 its confirmation title with `data-opp-status="active"` and its success title with
