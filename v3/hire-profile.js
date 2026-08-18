@@ -46,10 +46,22 @@
 (function () {
   'use strict';
 
+  function ensureBookingModalAvailabilityGuard() {
+      const guardId = 'hire-booking-modal-availability-guard';
+      if (document.getElementById(guardId)) return;
+
+      const style = document.createElement('style');
+      style.setAttribute('id', guardId);
+      style.textContent = '[data-booking-unavailable]{display:none!important}';
+      (document.head || document.documentElement).appendChild(style);
+  }
+
   function primeBookingModalOptions(configs) {
       const records = Array.isArray(configs) ? configs : [];
 
       document.querySelectorAll('[call-type-item]').forEach(function (item) {
+          let available = false;
+
           item.querySelectorAll('[booking-popup-open][data-type]').forEach(function (cta) {
               const type = cta.getAttribute('data-type');
               const record = records.find(function (candidate) {
@@ -60,6 +72,7 @@
 
               if (record) {
                   cta.setAttribute('data-config', record.config_id);
+                  available = true;
               } else {
                   // The shared initializer registers every CTA that merely has
                   // data-config, including an empty value. Remove the attribute
@@ -68,10 +81,23 @@
                   cta.removeAttribute('data-config');
               }
           });
+
+          if (available) {
+              item.removeAttribute('data-booking-unavailable');
+              item.removeAttribute('aria-hidden');
+          } else {
+              // Global Code can capture Designer-authored empty config attributes
+              // before this controller finishes discovery, then reopen Paid in an
+              // asynchronous Stripe callback. Keep unavailable types structurally
+              // fail-closed even if that older callback changes inline display.
+              item.setAttribute('data-booking-unavailable', '');
+              item.setAttribute('aria-hidden', 'true');
+          }
           item.style.display = 'none';
       });
   }
 
+  ensureBookingModalAvailabilityGuard();
   primeBookingModalOptions([]);
 
   // Page-embed contract. This file is deferred, so all of these are already
