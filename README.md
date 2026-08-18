@@ -795,14 +795,21 @@ await window.Opp30.diagnoseOpportunityMatching()
 ## Opportunities 3.0 Lifecycle Loading States
 
 Create, Edit, Close, and Reopen (and any other Opportunity wrap that authored a
-Spinner) use a Button Wrap: the native control and `[data-button-spinner]` sit
-as siblings. Designer owns the right-side layout. The script only toggles
-visibility.
+Spinner) use a Button Wrap (`.button_main-wrap`). The native control is an empty
+overlay `.clickable_btn`; the visible label, line/arrow, and
+`[data-button-spinner]` sit together in `.button_main-element`. Designer owns
+the right-side layout. The script only toggles visibility.
 
 ```html
-<div>
-  <button type="submit">Submit</button>
-  <div data-button-spinner><!-- Designer-authored Spinner --></div>
+<div class="button_main-wrap" data-button-theme="black" data-opp-submit="create">
+  <div class="clickable_wrap">
+    <button type="submit" class="clickable_btn"></button>
+  </div>
+  <div class="button_main-element">
+    <div class="button_main-text">Submit</div>
+    <div class="button_main-line"></div>
+    <div data-button-spinner><!-- Designer-authored Spinner --></div>
+  </div>
 </div>
 ```
 
@@ -811,17 +818,18 @@ Reopen start at `data-opp-submit` (`reopen` exists; stamp `close` on the Close
 confirm when it is not a submit). Cancel is never chosen.
 
 While the request is pending, the script shows the Spinner (`display: flex`),
-fades only the native control to 60% opacity, and marks it busy and disabled.
-The Button Wrap itself is not faded, so the Spinner stays full opacity. Idle
-hides the Spinner (`display: none`) and restores the control. A wrap with no
-Spinner still disables and never gets a cloned one. The pending helper does not
-write `data-opp-loading` on Button Wraps and does not match `loading-button`.
-The talent-applied list still uses `data-opp-loading` as its own list-fetch
-flag.
+fades `.button_main-text` and `.button_main-line` to 60% opacity (or the native
+control when those nodes are absent), and marks the native control busy and
+disabled. The Button Wrap itself is not faded, so the Spinner stays full
+opacity. Idle hides the Spinner (`display: none`) and restores the chrome. A
+wrap with no Spinner still disables and never gets a cloned one. The pending
+helper does not write `data-opp-loading` on Button Wraps and does not match
+`loading-button`. The talent-applied list still uses `data-opp-loading` as its
+own list-fetch flag.
 
-On bind, a Spinner that is a direct child of a Button Wrap is forced hidden
-once so a leftover visible node cannot stick. There is no minimum display delay
-and no fail-open hide cap. Pending is also exported as
+On bind, a Spinner inside a Button Wrap is forced hidden once so a leftover
+visible node cannot stick. There is no minimum display delay and no fail-open
+hide cap. Pending is also exported as
 `window.Opp30.setOpportunityActionPending(control, pending)` for the Opportunity
 test bridge.
 
