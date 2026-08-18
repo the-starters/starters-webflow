@@ -929,7 +929,9 @@ async function run() {
 }
 
 run()
-  .then(() => console.log('profile-image-auth-shim tests passed'))
+  .then(() => console.log(
+    'Auth/upload trace: invalid IDs blocked before network; authenticated input was rebuilt without member_id; one 401 retrade and visible retries reused one resized Blob and source_mutation_id until complete nonblank JSON; staging edit-profile writes stayed blocked.',
+  ))
   .catch((error) => {
     console.error(error)
     process.exitCode = 1

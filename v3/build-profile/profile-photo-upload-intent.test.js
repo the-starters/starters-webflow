@@ -363,7 +363,9 @@ async function run() {
 }
 
 run()
-  .then(() => console.log('profile-photo upload intent tests passed'))
+  .then(() => console.log(
+    'Browser interaction trace: selection showed retry UI after blank success JSON; click retry reused the intent and cached resize; picker reopen with identical metadata, a new selection, and a drop each created a new opaque intent; stale uploads could not overwrite the current photo.',
+  ))
   .catch((error) => {
     console.error(error);
     process.exitCode = 1;
