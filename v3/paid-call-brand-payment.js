@@ -211,6 +211,10 @@
     let scheduler = null
     let cardElement = null
     let cardSetupInstalled = false
+    let cardSetupAttempt = null
+    let defaultSelectionAttempt = null
+    let defaultSelectionPaymentMethod = ''
+    let paidClickLock = false
     let bookingLock = false
     let bookingAttempt = null
     let bookingFingerprint = ''
@@ -240,8 +244,9 @@
           // component, owns the paid booking mutation.
           event.preventDefault()
           if (bookingLock) return
-          const slot = connector && connector.schedulerStore &&
-            connector.schedulerStore.get('selectedTimeslot')
+          const store = connector && connector.schedulerStore
+          const slot = store && store.get('selectedTimeslot')
+          const selectedTimezone = store && store.get('selectedTimezone')
           const start = slot && new Date(slot.start_time).getTime()
           const end = slot && new Date(slot.end_time).getTime()
           const fingerprint = String(start) + '|' + String(end)
@@ -252,7 +257,7 @@
               config_id: config.config_id,
               start,
               end,
-              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              timezone: selectedTimezone,
               topic: fieldValue('[name="topic"], [booking-topic]'),
               context: fieldValue('[name="context"], [booking-context]'),
             })
@@ -298,7 +303,8 @@
         errorText.textContent = ''
         statusText.textContent = 'Saving...'
         try {
-          const setup = await createSetupAttempt().run()
+          if (!cardSetupAttempt) cardSetupAttempt = createSetupAttempt()
+          const setup = await cardSetupAttempt.run()
           const confirmed = await stripe.confirmCardSetup(setup.client_secret, {
             payment_method: {
               card: cardElement,
@@ -310,9 +316,16 @@
           })
           if (confirmed.error) throw new Error(confirmed.error.message || 'Card setup failed')
           const paymentMethod = confirmed.setupIntent && confirmed.setupIntent.payment_method
-          await createDefaultSelectionAttempt(paymentMethod).run()
+          if (!defaultSelectionAttempt || defaultSelectionPaymentMethod !== paymentMethod) {
+            defaultSelectionPaymentMethod = paymentMethod
+            defaultSelectionAttempt = createDefaultSelectionAttempt(paymentMethod)
+          }
+          await defaultSelectionAttempt.run()
           const readiness = await getReadiness()
           if (!readiness.bookable) throw new Error('The payment method is not ready')
+          cardSetupAttempt = null
+          defaultSelectionAttempt = null
+          defaultSelectionPaymentMethod = ''
           statusText.textContent = 'Card saved.'
           const close = document.querySelector('[popup-stripe-card-close]')
           if (close) close.click()
@@ -329,6 +342,8 @@
 
     async function paidClick(event) {
       event.preventDefault()
+      if (paidClickLock) return
+      paidClickLock = true
       try {
         const readiness = await getReadiness()
         if (readiness.bookable) {
@@ -341,6 +356,8 @@
         openCard.click()
       } catch (error) {
         showBookingError(error)
+      } finally {
+        paidClickLock = false
       }
     }
 
