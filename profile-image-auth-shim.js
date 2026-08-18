@@ -229,9 +229,9 @@
     return Boolean(
       data &&
       typeof data.starter_image === 'string' &&
-      data.starter_image.length > 0 &&
+      data.starter_image.trim().length > 0 &&
       typeof data.starter_image_small === 'string' &&
-      data.starter_image_small.length > 0
+      data.starter_image_small.trim().length > 0
     )
   }
 

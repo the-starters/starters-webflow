@@ -82,7 +82,7 @@ function createHarness({ cryptoApi } = {}) {
   let resizeCount = 0;
   const uploads = [];
   const uploadResponses = [
-    {},
+    { starter_image: '   ', starter_image_small: '\n' },
     {
       starter_image: 'https://example.invalid/photo.jpg',
       starter_image_small: 'https://example.invalid/photo-small.jpg',

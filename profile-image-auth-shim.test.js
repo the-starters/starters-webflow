@@ -811,7 +811,12 @@ async function run() {
           imageBytes: Buffer.from(await image.arrayBuffer()).toString('hex'),
           sourceMutationId: init.body.get('source_mutation_id'),
         })
-        if (uploadCount === 1) return new Response('not-json', { status: 200 })
+        if (uploadCount === 1) {
+          return new Response(JSON.stringify({
+            starter_image: '   ',
+            starter_image_small: '\n',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
         return new Response(JSON.stringify({
           starter_image: 'https://example.invalid/photo.jpg',
           starter_image_small: 'https://example.invalid/photo-small.jpg',
@@ -825,7 +830,10 @@ async function run() {
       return body
     }
     const incomplete = await window.fetch(endpoint, { method: 'POST', body: makeBody() })
-    await assert.rejects(() => incomplete.json())
+    assert.deepEqual(await incomplete.json(), {
+      starter_image: '   ',
+      starter_image_small: '\n',
+    })
     const completed = await window.fetch(endpoint, { method: 'POST', body: makeBody() })
     assert.equal(completed.status, 200)
     assert.equal(bitmapCount, 1)
