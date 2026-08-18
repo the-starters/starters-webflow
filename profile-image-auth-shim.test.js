@@ -772,6 +772,69 @@ async function run() {
   }
 
   {
+    const endpoint =
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
+    const sourceMutationId = '123e4567-e89b-12d3-a456-426614174010'
+    let bitmapCount = 0
+    let encodeCount = 0
+    let uploadCount = 0
+    const attempts = []
+    const resizedBytes = 'resized-visible-retry-bytes'
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      createImageBitmapImpl: async () => {
+        bitmapCount += 1
+        return { width: 1600, height: 1200, close() {} }
+      },
+      documentImpl: {
+        createElement() {
+          return {
+            getContext() {
+              return { fillRect() {}, drawImage() {} }
+            },
+            toBlob(resolve) {
+              encodeCount += 1
+              resolve(new Blob([resizedBytes], { type: 'image/jpeg' }))
+            },
+          }
+        },
+      },
+      fetchImpl: async (input, init) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          return new Response(JSON.stringify({ authToken: 'xano-token' }), {
+            status: 200,
+          })
+        }
+        uploadCount += 1
+        const image = init.body.get('image')
+        attempts.push({
+          imageBytes: Buffer.from(await image.arrayBuffer()).toString('hex'),
+          sourceMutationId: init.body.get('source_mutation_id'),
+        })
+        if (uploadCount === 1) return new Response('not-json', { status: 200 })
+        return new Response(JSON.stringify({
+          starter_image: 'https://example.invalid/photo.jpg',
+          starter_image_small: 'https://example.invalid/photo-small.jpg',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      },
+    })
+    const makeBody = () => {
+      const body = new FormData()
+      body.append('image', new Blob(['original-upload-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
+      body.append('source_mutation_id', sourceMutationId)
+      return body
+    }
+    const incomplete = await window.fetch(endpoint, { method: 'POST', body: makeBody() })
+    await assert.rejects(() => incomplete.json())
+    const completed = await window.fetch(endpoint, { method: 'POST', body: makeBody() })
+    assert.equal(completed.status, 200)
+    assert.equal(bitmapCount, 1)
+    assert.equal(encodeCount, 1)
+    assert.equal(attempts.length, 2)
+    assert.deepEqual(attempts[0], attempts[1])
+  }
+
+  {
     const { window, localStorage, calls } = loadShim({
       hostname: 'the-starters-3-0.webflow.io',
       pathname: '/build-profile/full-profile',

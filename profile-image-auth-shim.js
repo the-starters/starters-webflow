@@ -105,6 +105,7 @@
   const JPEG_QUALITY = 0.8
   const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 // server precondition
   const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/
+  const MAX_RESIZED_UPLOAD_INTENTS = 8
   const resizedUploadIntents = new Map()
 
   /* ===================== DOMAIN WRITE MODE ======================= */
@@ -205,6 +206,9 @@
   function resizedUploadIntent(sourceMutationId, image) {
     let intent = resizedUploadIntents.get(sourceMutationId)
     if (!intent) {
+      while (resizedUploadIntents.size >= MAX_RESIZED_UPLOAD_INTENTS) {
+        resizedUploadIntents.delete(resizedUploadIntents.keys().next().value)
+      }
       intent = resizeImage(image).then((blob) => ({
         blob: blob,
         filename: blob === image && image.name ? image.name : 'profile-photo.jpg',
@@ -217,6 +221,18 @@
       })
     }
     return intent
+  }
+
+  async function uploadResponseComplete(response) {
+    if (!response.ok) return false
+    const data = await response.clone().json().catch(() => null)
+    return Boolean(
+      data &&
+      typeof data.starter_image === 'string' &&
+      data.starter_image.length > 0 &&
+      typeof data.starter_image_small === 'string' &&
+      data.starter_image_small.length > 0
+    )
   }
 
   /* ==================== AUTH-ONLY INJECTION ======================= */
@@ -494,7 +510,9 @@
           via: 'edit-profile-shim',
         })
       }
-      if (res.ok) resizedUploadIntents.delete(sourceMutationId)
+      if (await uploadResponseComplete(res)) {
+        resizedUploadIntents.delete(sourceMutationId)
+      }
       return res
     })()
   }
