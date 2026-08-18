@@ -84,10 +84,20 @@ That way, your style for that component will continue to work reliably.
   padding: .5rem .5rem 0;
 }
 
+/* The voice-note player is a darker shade of the bubble it sits in — that is
+   the design rule, stated here so the next bubble-colour change knows to move
+   the player with it. Sent bubbles are #B6D5D7, so their player is #85B1B3;
+   received bubbles are #eee, so their player is #D6D6D6. Before 2026-08-18
+   this was one hardcoded teal for both sides, which painted received voice
+   notes in the sent colour. The base rule is the received shade so an audio
+   player in any unforeseen context degrades to neutral, not to teal. */
 .audio-player {
-  background-color: #85B1B3;
+  background-color: #D6D6D6;
   padding: .5rem;
   border-radius: .25rem;
+}
+.UserMessage__by-me .audio-player {
+  background-color: #85B1B3;
 }
 
 .action-menu:has(.playback-heading) {
