@@ -1402,7 +1402,13 @@
   function syncOpenedProjectModal(event) {
     var modal = event && event.detail && event.detail.modal
     if (!modal || !modal.getAttribute || clean(modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
-    var forms = projectForms(modal)
+    // `modal` is already the dialog scope. Do not reuse FORM_SELECTOR here: it
+    // starts with that same dialog ancestor, and Element.querySelectorAll only
+    // returns descendants of its scope. Query the form relative to the opened
+    // modal so the real DOM and the duplicate-form fail-closed rule agree.
+    var forms = modal.querySelectorAll
+      ? Array.prototype.slice.call(modal.querySelectorAll('[data-project-form-v3="brand"] form'))
+      : []
     if (forms.length !== 1) return false
     syncDurationFields(forms[0])
     syncActiveRequired(forms[0])

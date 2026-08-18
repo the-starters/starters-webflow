@@ -1384,7 +1384,7 @@ test('binds the existing Hire trigger when the selected Starter identity is pres
   assert.equal(trackCalls.some((entry) => entry.name === 'project_form_opened'), true)
 })
 
-test('restores initial required fields when modal-open follows the captured Hire click', () => {
+test('restores initial required fields with a selector relative to the opened modal', () => {
   const form = projectForm()
   const feeStructure = nativeField('Fee-Structure', '', { tagName: 'SELECT', required: '' })
   feeStructure.form = form
@@ -1399,11 +1399,15 @@ test('restores initial required fields when modal-open follows the captured Hire
   assert.equal(feeStructure.getAttribute('data-project-required-hidden'), 'true')
 
   const modal = new Element({ 'data-modal-target': 'generate-contract', tagName: 'DIALOG' })
-  modal.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [form] : []
-  modal.querySelector = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? form : null
+  const modalSelectors = []
+  modal.querySelectorAll = (selector) => {
+    modalSelectors.push(selector)
+    return selector === '[data-project-form-v3="brand"] form' ? [form] : []
+  }
   feeStructure.offsetParent = {}
   window.dispatchEvent(new window.CustomEvent('modal-open', { detail: { modal } }))
 
+  assert.deepEqual(modalSelectors, ['[data-project-form-v3="brand"] form'])
   assert.equal(feeStructure.required, true)
   assert.equal(feeStructure.getAttribute('required'), '')
   assert.equal(feeStructure.getAttribute('data-project-required-hidden'), null)
