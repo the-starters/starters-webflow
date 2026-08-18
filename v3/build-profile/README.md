@@ -41,11 +41,14 @@ closed before it starts the upload.
 `profile-image-auth-shim.js` owns authentication and resizing for this upload
 request. It rejects a missing or malformed
 `source_mutation_id` before token trade or upload, removes any legacy
-`member_id`, and resizes the image once. On the one allowed `401` retrade, it
-reuses the exact resized bytes and `source_mutation_id`; it does not create a
-second upload intent. The existing exact-host gate remains authoritative for
-`/starter-edit-profile`: non-Live hosts block known mutations and preserve
-reads, as recorded in the [V3 access matrix](../ACCESS-MATRIX.md#enforcement-layers).
+`member_id`, and resizes the image once. It caches that exact resized Blob for
+the upload intent across visible user retries and clears it only after a `2xx`
+JSON body contains non-empty `starter_image` and `starter_image_small` values.
+On the one allowed `401` retrade, it reuses the same Blob and
+`source_mutation_id`; it does not create a second upload intent. The existing
+exact-host gate remains authoritative for `/starter-edit-profile`: non-Live
+hosts block known mutations and preserve reads, as recorded in the
+[V3 access matrix](../ACCESS-MATRIX.md#enforcement-layers).
 
 The GitHub assets and executable selection, drop, user-retry, auth-retrade, and
 provenance checks may be prepared before the server change. Do not create a
