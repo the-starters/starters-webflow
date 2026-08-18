@@ -165,8 +165,9 @@ renderer assigns each control to its nearest preview source, so the Contract
 value updates every `data-preview-contract="contract"` Review destination and
 does not leak into Basic Information.
 
-The Hire template currently has more than one authored project modal. Apply
-and verify this source attribute on the active
+The duplicate-modal root cause is that the Hire template contains separate
+authored project forms with similar contract controls. Apply and verify this
+source attribute on the active
 `data-modal-target="generate-contract"` form. Do not treat the separate
 navbar `data-modal-target="start-project"` form or its shared component as
 proof that the active Hire form is wired correctly.

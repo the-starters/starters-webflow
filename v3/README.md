@@ -1159,10 +1159,11 @@ to provide. It is deliberately scoped to the
 HTML. The authoritative field, prefill, state, and release contract lives in
 [PROJECT-FORM-WIRING.md](PROJECT-FORM-WIRING.md).
 
-Run its focused test with:
+Run its focused tests with:
 
 ```sh
-node --test v3/project-form.test.js
+node --test v3/project-form.test.js v3/project-form-workflow.test.js \
+  global-embeds/start-proj-gen-contract/contract-preview.test.js
 ```
 
 ## Starter project form
