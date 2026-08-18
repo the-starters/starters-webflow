@@ -997,11 +997,37 @@
   function setOpportunityCategoryValues(scope, values) {
     const input = $('[name="Category-option"]', scope)
     if (!input) return
+    const next = Array.isArray(values) ? values : []
     input.dispatchEvent(
       new CustomEvent(CATEGORY_SET_EVENT, {
-        detail: { values: Array.isArray(values) ? values : [] },
+        detail: { values: next },
       }),
     )
+    if (next.length) return
+    // Widget store() writes the same JSON when bound; this is Authored Defaults
+    // when the set-event has no listener yet.
+    input.setAttribute('data-opp30-selected-values', '[]')
+    input.value = ''
+    input.setCustomValidity(CATEGORY_REQUIRED_MESSAGE)
+  }
+
+  // After a successful create, restore Authored Defaults so the next Create Form
+  // in this page life is a first visit. Category chips live outside native
+  // reset. Do not call this on Edit, Cancel, or a failed submit.
+  function restoreCreateFormAuthoredDefaults(form) {
+    if (!form || form.getAttribute('data-opp-form') !== 'create') return
+    if (typeof form.reset === 'function') form.reset()
+    setOpportunityCategoryValues(form, [])
+    $$('[data-opp-role-value]', form).forEach((chip) => {
+      chip.removeAttribute('aria-selected')
+    })
+    ;['Project-Type', 'Duration'].forEach((name) => {
+      let selected
+      $$('[name="' + name + '"]', form).forEach((control) => {
+        if (control.checked) selected = control
+      })
+      if (selected) selected.dispatchEvent(new Event('change', { bubbles: true }))
+    })
   }
 
   function validateOpportunityPayload(payload) {
@@ -5122,6 +5148,7 @@
             wrap && (wrap.querySelector('.create-opportunities_success') || wrap.querySelector('.w-form-done'))
           if (done) {
             paintOpportunityReviewSuccess(done, payload.title)
+            restoreCreateFormAuthoredDefaults(form)
             form.style.display = 'none'
             done.style.display = 'block'
             const receipt = diagnosticForResponse(result)
