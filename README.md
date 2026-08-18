@@ -125,7 +125,16 @@ Do not discard local changes unless the user explicitly asks.
   again before its Memberstack custom-field projection, so an account change
   stops the workflow instead of writing into the new session and records a safe
   auth-failure receipt when diagnostics are available. The script owns its DOM,
-  readiness, validation, rate-input, and loader fallbacks. The native Webflow
+  readiness, rate-input, and loader fallbacks. After the approved whole-block
+  cutover, it becomes the only validation owner for main section steps 1, 2, 5,
+  6, and 7, using the sanitized published-form contract in
+  `v3/starter-edit-profile/`; Companies and Portfolio remain the sole owners of
+  steps 3 and 4. The main form must not opt into sitewide `utils/wf-validate.js`,
+  and the legacy inline validation owner must be removed under whole-block safety
+  after this controller is released. Until then, live remains dual-owner. Invalid controls
+  remain clickable so the controller can prevent the request, focus the authored
+  visible control, and record a console-only failure receipt; pointer locking is
+  reserved for a validated request's loading state. The native Webflow
   form may include the existing reviewer increment component as step 7;
   the controller normalizes its three hidden JSON slots to the same canonical
   `Reviewers` object used by Build Profile before the authenticated Xano PATCH.
