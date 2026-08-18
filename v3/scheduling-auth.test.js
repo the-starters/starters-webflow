@@ -10,6 +10,8 @@ const V3_STARTER_URL = `${XANO_ORIGIN}/api:tCpV3oqd/starter/get_by_memberstack/v
 const BRAND_PAYMENT_URLS = [
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/setup/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/set-default/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-readiness/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/booking/request/v3`,
 ]
 const PAID_CALL_SETTINGS_URLS = [
   `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/get/v3`,

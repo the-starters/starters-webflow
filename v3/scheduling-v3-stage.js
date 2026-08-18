@@ -34,6 +34,10 @@
     'booking_record/update_paid_booking_price': 'booking_record/update_paid_booking_price/v3',
     'booking_record/update_payment_status': 'booking_record/update_payment_status/v3',
     'booking_record/update_reschedule': 'booking_record/update_reschedule/v3',
+    'brand/booking/request': 'brand/booking/request/v3',
+    'brand/payment-method/setup': 'brand/payment-method/setup/v3',
+    'brand/payment-method/set-default': 'brand/payment-method/set-default/v3',
+    'brand/payment-readiness': 'brand/payment-readiness/v3',
     'brands/customer/get': 'brands/customer/get/v3',
     'brands/update/customer_id': 'brands/update/customer_id/v3',
     'brands/update/payment_method': 'brands/update/payment_method/v3',
@@ -313,7 +317,7 @@
       return originalXanoAuthFetch(request)
     }
 
-    if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return originalFetch(request)
+    if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return blockedResponse(scheduling.route)
 
     return blockedResponse(scheduling.route)
   }
@@ -333,9 +337,7 @@
       return originalXanoAuthFetch(request)
     }
 
-    if (LEGACY_PROVIDER_PATH.test(scheduling.route)) {
-      return originalXanoAuthFetch(request)
-    }
+    if (LEGACY_PROVIDER_PATH.test(scheduling.route)) return blockedResponse(scheduling.route)
 
     return blockedResponse(scheduling.route)
   }

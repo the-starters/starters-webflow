@@ -59,7 +59,8 @@ remain deferred (`paid-call-brand-payment.js`,
 | Clients ("also worked with") | everyone, incl. logged out | native Webflow CMS / also-worked-with multi-reference |
 | Services call cards (Free / Paid Consulting) | owner: live connection state · anonymous + brand: public search record | this file / Nylas, Stripe, or Algolia |
 | Freelance / Retainer rate cards | everyone | this file / Algolia record, cloned from the section's Default card |
-| Booking popups, next-available slot | signed-in members only | this file / Nylas via page embeds |
+| Free booking popup | signed-in Brand members | this file + shared Free initializer / Nylas |
+| Paid booking popup | signed-in Brand members | this file + `paid-call-brand-payment.js` / authenticated Xano + Stripe Elements + Nylas calendar |
 | Utilities | everyone | this file / rate formatting, rating average, dropdowns, anchor scroll, mobile TOC, view-all, see-more |
 
 The runtime no longer calls `api:SYL06lUR/companies`,

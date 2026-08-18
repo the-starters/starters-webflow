@@ -2897,25 +2897,26 @@ node --test v3/starter-dashboard-stripe-connect.test.js
 
 ## Brand paid-call payment method client
 
-`paid-call-brand-payment.js` supplies the authenticated Xano calls needed by a
-native Brand booking UI. It does not create form markup or initialize Stripe
-Elements. Load it after `scheduling-auth.js` only on the approved host and path
-surfaces in the [scheduling auth](#scheduling-auth) boundary. A production Hire
-surface must be added to that boundary before this client can authenticate
-there:
+`paid-call-brand-payment.js` owns the authenticated Paid option inside the
+Designer-authored Book Call modal. It creates no application form markup. It
+mounts Stripe's secure Card Element in `[card-element]`, then replaces the
+Nylas paid-booking submit boundary with the canonical Xano booking command.
+Load it after `scheduling-auth.js` on the approved Hire surfaces:
 
 ```html
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/scheduling-auth.js"></script>
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/paid-call-brand-payment.js"></script>
 ```
 
-The scheduling auth bridge allowlists only these two new paid-call paths:
+The scheduling auth bridge allowlists these paid-call paths:
 
 - `POST /brand/payment-method/setup/v3`
 - `POST /brand/payment-method/set-default/v3`
+- `GET /brand/payment-readiness/v3`
+- `POST /brand/booking/request/v3`
 
 Xano derives the Brand identity and payment environment from the Bearer token.
-The browser sends neither field. A booking controller should use this sequence:
+The browser sends neither field. The controller uses this sequence:
 
 1. Call `StartersPaidCallBrandPayment.createSetupAttempt()` once for the current
    card-setup attempt.
@@ -2929,6 +2930,20 @@ The browser sends neither field. A booking controller should use this sequence:
 5. Retry the returned selection attempt through `.run()` with its captured key.
    Create a new attempt for every later intentional selection, including an
    A-to-B-to-A sequence.
+6. Read readiness again. Only a canonical `bookable=true` result opens the paid
+   calendar.
+7. On the Nylas `detailsConfirmed` event, call `preventDefault()` before any
+   asynchronous work. Submit the selected slot to
+   `brand/booking/request/v3`; never let the public component book the paid call
+   directly.
+
+`hire-profile.js` passes only Free configurations to the legacy shared modal
+initializer. It gives the exact active Paid configuration to this controller.
+The adapter blocks legacy Stripe provider routes on V3 scheduling surfaces.
+The booking payload contains only the Starter slug, configuration ID, selected
+slot, timezone, optional topic/context, and a bounded idempotency key. Price,
+payment method, Brand identity, Starter ownership, and environment stay
+server-owned.
 
 The client validates bounded keys and PaymentMethod IDs before network work.
 It uses `xanoAuthFetch` when the shared bridge is present and otherwise uses the

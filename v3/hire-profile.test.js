@@ -258,6 +258,7 @@ function makeContext({
   getNearestSlot,
   initBookingComponents,
   createScheduler,
+  paidController,
   location = { hostname: 'www.thestarters.com', pathname: '/hire/ashna-rana' },
   schedulingBridge = false,
 } = {}) {
@@ -322,6 +323,7 @@ function makeContext({
     getNearestSlot,
     initBookingComponents,
     createScheduler,
+    StartersPaidCallBrandPayment: paidController,
     formatWithTimezone: () => ({ list: {} }),
     starter_memberstack_id: 'mem_canary',
     stripe_charges: false,
@@ -906,7 +908,7 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(page.freeModalOption.getAttribute('aria-hidden'), null)
   assert.equal(page.freeModalOption.style.display, 'block', 'shared modal init owns Free visibility')
   assert.equal(page.paidModalCta.getAttribute('data-config'), null)
-  assert.equal(page.paidModalOption.style.display, 'block', 'regression callback attempted to reopen Paid')
+  assert.equal(page.paidModalOption.style.display, 'none', 'controller re-closes unavailable Paid')
   assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), '')
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), 'true')
   const guard = context.document.getElementById('hire-booking-modal-availability-guard')
@@ -1002,9 +1004,10 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
   }
 })
 
-test('booking discovery passes one active Free and Paid configuration to the shared modal', async () => {
+test('booking discovery keeps Free on the shared modal and gives Paid to the V3 controller', async () => {
   const page = makePage()
   const bookingCalls = []
+  const paidCalls = []
   const configs = [
     { config_id: 'paid_live', is_paid: true, active: true, data_environment: 'production', payment_environment: 'live' },
     { config_id: 'free_live', is_paid: false, active: true, data_environment: 'production', payment_environment: null },
@@ -1021,6 +1024,12 @@ test('booking discovery passes one active Free and Paid configuration to the sha
     getConfigs: async () => configs,
     getNearestSlot: async () => null,
     initBookingComponents: (...args) => bookingCalls.push(args),
+    paidController: {
+      installPaidBookingController: (options) => {
+        paidCalls.push(options)
+        return true
+      },
+    },
   })
   vm.createContext(context)
   vm.runInContext(source, context)
@@ -1029,15 +1038,18 @@ test('booking discovery passes one active Free and Paid configuration to the sha
   assert.equal(bookingCalls.length, 1)
   assert.deepEqual(
     bookingCalls[0][2].map((record) => record.config_id),
-    ['free_live', 'paid_live'],
+    ['free_live'],
   )
+  assert.equal(paidCalls.length, 1)
+  assert.equal(paidCalls[0].config.config_id, 'paid_live')
+  assert.equal(paidCalls[0].starterSlug, 'ashna-rana')
   assert.equal(page.freeModalCta.getAttribute('data-config'), 'free_live')
   assert.equal(page.paidModalCta.getAttribute('data-config'), 'paid_live')
   assert.equal(page.freeModalOption.getAttribute('data-booking-unavailable'), null)
   assert.equal(page.paidModalOption.getAttribute('data-booking-unavailable'), null)
   assert.equal(page.freeModalOption.getAttribute('aria-hidden'), null)
   assert.equal(page.paidModalOption.getAttribute('aria-hidden'), null)
-  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.freeModalOption.style.display, 'block')
   assert.equal(page.paidModalOption.style.display, 'none')
 })
 
