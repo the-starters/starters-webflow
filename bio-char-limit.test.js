@@ -40,10 +40,33 @@ function bioBlock(source) {
   return source.slice(start, end)
 }
 
+// Position of `needle`, proving it is there first. Ordering assertions written as
+// bare `indexOf(a) < indexOf(b)` pass when a is DELETED, since -1 sorts first, which
+// makes every such guard vacuous against exactly the regression it exists to catch.
+function at(source, needle, label) {
+  const index = source.indexOf(needle)
+  assert.notEqual(index, -1, `${label}: ${JSON.stringify(needle)} must be present`)
+  return index
+}
+
 const BIO_SURFACES = [
   ['v3/build-profile/bio-editor.js', bioBlock(bioEditor)],
   ['starter-edit-profile.js', bioBlock(editProfile)],
 ]
+
+const FULL_SOURCES = [
+  ['v3/build-profile/bio-editor.js', bioEditor],
+  ['starter-edit-profile.js', editProfile],
+]
+
+for (const [label, source] of FULL_SOURCES) {
+  test(`${label}: no word-limit machinery survives anywhere in the file`, () => {
+    // Whole-file, not block-scoped: the counter clone embedded in the edit-profile
+    // controller counts words for other fields, but none of these names may return.
+    assert.doesNotMatch(source, /MAX_WORDS/)
+    assert.doesNotMatch(source, /getQuillWordCount|trimTextToWords|countWordsFromText/)
+  })
+}
 
 for (const [label, source] of BIO_SURFACES) {
   test(`${label}: the bio limit is characters, read from data-max-chars, default 1500`, () => {
@@ -75,27 +98,41 @@ for (const [label, source] of BIO_SURFACES) {
   test(`${label}: the revert baseline advances synchronously, not in a frame`, () => {
     // A burst of keystrokes fires several text-change events before one animation
     // frame runs. A baseline refreshed only in the frame would revert accepted edits.
-    const handler = source.slice(source.indexOf("bioEditor.on('text-change'"))
-    const frame = handler.indexOf('requestAnimationFrame')
-    assert.ok(handler.indexOf('prevCharCount = charCount;') < frame, 'baseline must advance before the frame')
-    assert.equal(handler.slice(frame, handler.indexOf('});', frame)).includes('prevContents'), false)
+    const handler = source.slice(at(source, "bioEditor.on('text-change'", label))
+    const frame = at(handler, 'requestAnimationFrame', label)
+    assert.ok(
+      at(handler, 'prevCharCount = charCount;', label) < frame,
+      'the baseline must advance before the frame',
+    )
+    const frameEnd = handler.indexOf('});', frame)
+    assert.notEqual(frameEnd, -1, `${label}: the frame callback must be closed`)
+    assert.equal(handler.slice(frame, frameEnd).includes('prevContents'), false)
   })
 
   test(`${label}: a restored over-limit bio is grandfathered, not wiped`, () => {
     // Assigning innerHTML leaves a pending Quill mutation. Flushed inside the
     // isCleaning window, it cannot revert the member's own bio to the empty baseline.
-    const restore = source.slice(source.indexOf('waitProfileData('), source.indexOf("bioEditor.root.addEventListener('paste'"))
-    assert.ok(restore.indexOf('isCleaning = true;') < restore.indexOf('bioEditor.root.innerHTML = html;'))
-    assert.ok(restore.indexOf('bioEditor.root.innerHTML = html;') < restore.indexOf('bioEditor.update();'))
-    assert.ok(restore.indexOf('bioEditor.update();') < restore.indexOf('prevContents = bioEditor.getContents();'))
-    assert.ok(restore.indexOf('prevCharCount = getQuillCharCount(bioEditor);') < restore.indexOf('isCleaning = false;'))
+    const restore = source.slice(
+      at(source, 'waitProfileData(', label),
+      at(source, "bioEditor.root.addEventListener('paste'", label),
+    )
+    const step = (needle) => at(restore, needle, `${label} restore path`)
+
+    assert.ok(step('isCleaning = true;') < step('bioEditor.root.innerHTML = html;'))
+    assert.ok(step('bioEditor.root.innerHTML = html;') < step('bioEditor.update();'))
+    assert.ok(step('bioEditor.update();') < step('prevContents = bioEditor.getContents();'))
+    assert.ok(step('prevCharCount = getQuillCharCount(bioEditor);') < step('isCleaning = false;'))
+
+    // Quill's History records the innerHTML restore as an undoable user change, so an
+    // undo would shrink the bio to empty — and shrinking is what the gate allows.
+    assert.ok(step('bioEditor.history?.clear?.();') < step('isCleaning = false;'))
   })
 
   test(`${label}: paste is trimmed to the remaining characters, on a whole character`, () => {
     assert.match(source, /const availableChars = MAX_CHARS - baseCharCount;/)
     assert.match(source, /const allowedPaste = dropSplitSurrogate\(pastedText\.slice\(0, Math\.max\(availableChars, 0\)\)\);/)
     // The <= 0 early return is load-bearing: a negative end slices from the right.
-    assert.ok(source.indexOf('if (availableChars <= 0) {') < source.indexOf('const allowedPaste ='))
+    assert.ok(at(source, 'if (availableChars <= 0) {', label) < at(source, 'const allowedPaste =', label))
   })
 
   test(`${label}: counting normalizes CRLF so one line break is one character`, () => {
@@ -108,8 +145,8 @@ for (const [label, source] of BIO_SURFACES) {
     // The counter write must come after the mirror events, so it survives them.
     const sync = functionSource(source, 'syncQuillValue')
     assert.ok(
-      sync.indexOf("outputHtml.dispatchEvent(new Event('input'") <
-        sync.indexOf('counterSpan.textContent'),
+      at(sync, "outputHtml.dispatchEvent(new Event('input'", label) <
+        at(sync, 'counterSpan.textContent', label),
       'the counter write must be the last statement in syncQuillValue',
     )
     assert.match(sync, /String\(countCharsFromText\(plain\)\)\.padStart\(2, '0'\)/)
@@ -128,6 +165,30 @@ for (const [label, source] of BIO_SURFACES) {
     assert.equal(denominator.match(/warnAuthoring\(/g).length, 2)
   })
 }
+
+test('the two bio blocks are the same block, character for character', () => {
+  // The primary parity guard. Comparing only named functions leaves the restore path,
+  // the text-change handler and the counter-takeover init uncovered, and those are
+  // exactly where the surfaces have drifted before.
+  const editProfileBlock = bioBlock(editProfile).replace('window.activeProfile?.data', 'activeProfile?.data')
+
+  assert.ok(
+    bioBlock(editProfile).includes('window.activeProfile?.data'),
+    'the edit-profile controller reads the profile off window; that is the one sanctioned divergence',
+  )
+  assert.equal(editProfileBlock, bioBlock(bioEditor))
+})
+
+test('each surface names itself in its own warnings', () => {
+  // Declared outside the compared block on purpose, so the console names the script
+  // that is actually loaded without breaking the block-parity assertion above.
+  assert.ok(bioEditor.includes("const LOG_PREFIX = '[bio-editor]';"))
+  assert.ok(editProfile.includes("const LOG_PREFIX = '[starter-edit-profile]';"))
+  for (const [label, source] of BIO_SURFACES) {
+    assert.equal(source.includes('LOG_PREFIX'), true, `${label} must warn through the prefix`)
+    assert.equal(source.includes("const LOG_PREFIX"), false, `${label} must declare it outside the block`)
+  }
+})
 
 test('the two bio blocks share one implementation of the counting contract', () => {
   for (const name of [

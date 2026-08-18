@@ -25,6 +25,7 @@
 		const outputHtml = qs('#bio-html');
 		if (!outputHtml || !outputPlain) return;
 
+		const LOG_PREFIX = '[bio-editor]';
 		const MAX_CHARS = Number(outputPlain.dataset.maxChars) || 1500;
 		const DENOMINATOR_PATTERN = /^(\s*)\/\d+(\s*)$/;
 		let isCleaning = false;
@@ -90,6 +91,8 @@
 				bioEditor.update();
 				prevContents = bioEditor.getContents();
 				prevCharCount = getQuillCharCount(bioEditor);
+				// The restore is not a member edit; undo must not cross it.
+				bioEditor.history?.clear?.();
 				isCleaning = false;
 
 				syncQuillValue();
@@ -256,7 +259,7 @@
 			if (!staging && window.STARTERS_DEBUG !== true) return;
 
 			try {
-				console.warn('[bio-editor] ' + message);
+				console.warn(LOG_PREFIX + ' ' + message);
 			} catch (error) {}
 		}
 

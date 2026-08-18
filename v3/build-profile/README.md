@@ -18,6 +18,23 @@ The files below are source-controlled candidates for self-contained controller b
 | 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor, 1500-character limit, and counter ownership |
 | 14 | `grouped-selects.js` | `e80bb01f28a43ebcb5b28e8ea733bac273985ddfa3235179cdfc6a9a5168ae84` | Grouped multi-select options |
 
+`bio-editor.js` and `field-counters.js` have deliberately diverged from the inline
+bodies they were captured from. The bio limit is now 1500 **characters** rather than
+300 words, the editor owns its counter group, and the generic counter stands down for
+any `.form_input-wr` holding a `[data-editor-id]` element. The `pages` records still
+hash the live blocks and must not be edited to match; `candidateAssets` tracks the
+reviewed repo files, so the byte length and SHA-256 there move with each change and
+`build-profile-ownership.test.js` fails until they do. The character contract itself is
+pinned by [`bio-char-limit.test.js`](../../bio-char-limit.test.js), which also holds
+the two surfaces to a character-for-character identical bio block.
+
+The bio editor logs two staging-only `console.warn` messages when the authored counter
+markup drifts: one when the field wrapper has no `.count-input` element, and one when
+the text node after that element is not an authored `/<number>` denominator. Same
+gating as the module above (`*.webflow.io`, localhost, `127.0.0.1`,
+`*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`), and each is a warning
+only — a drifted counter never blocks the editor or the save.
+
 `canonical-profile-hydrator.js` is a supplemental fallback loaded by the
 existing `profile-photo.js` asset. It does not replace an inline block. After
 the legacy Memberstack/local draft initializes, it reads the canonical
