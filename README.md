@@ -1204,7 +1204,9 @@ blocks invalid submits before Webflow's handler or page controllers see them.
   on clickables outside the form or on wrapper divs that carry the click handler
   (e.g. the `data-opp-submit` button wrappers).
 - `count` is a live character counter ("1,234 / 2,500") — max from the field's
-  `maxlength` or `wf-validate-count-max`. (Finsweet's "inputcounter" is a number
+  `maxlength` or `wf-validate-count-max`. The shown denominator **gates submit**:
+  over it, the field is invalid even when `maxlength` is missing or higher
+  (the tighter of the two wins). (Finsweet's "inputcounter" is a number
   stepper, not a char counter — this fills that gap.)
 - An invalid field with no error slot gets a plain one auto-injected (class
   `wf-validate_error-auto`), so a gated form never blocks submission invisibly.
