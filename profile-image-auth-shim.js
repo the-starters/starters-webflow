@@ -4,22 +4,24 @@
  *
  * The endpoint was auth-hardened on 2026-07-13 (user_v3 Bearer token
  * required, `member_id` input removed, 2MB cap, jpg/png/webp only). The
- * build-profile wizard (`/build-profile/full-profile`) and
- * `/starter-edit-profile` ship inline uploaders that still POST
- * `{ image, member_id }` with no Authorization header → 401.
+ * currently published build-profile wizard (`/build-profile/full-profile`)
+ * and `/starter-edit-profile` inline uploaders still POST
+ * `{ image, member_id }` with no Authorization header → 401. The paired
+ * GitHub controller candidate supplies `source_mutation_id`; older requests
+ * fail closed until that controller and this shim cut over together.
  *
- * This shim wraps window.fetch and, ONLY for unauthenticated POSTs to that
- * endpoint:
+ * This shim wraps window.fetch for POSTs to that endpoint and:
  *   1. trades the Memberstack JWT for a user_v3 token
  *      (api:g1vmSLWh/auth/trade-token/v3 — same bridge as opportunities-3.0.js)
  *   2. downscales the image client-side (longest side ≤ 800px, JPEG q0.8)
  *      so the server's 2MB cap is never the user's problem
- *   3. re-issues the request with the Authorization header and without
- *      `member_id`
+ *   3. validates and forwards the opaque `source_mutation_id`
+ *   4. re-issues the request with the Authorization header and without
+ *      `member_id`; one 401 retrade reuses the same resized bytes and ID
  *
- * Requests that already carry an Authorization header (e.g.
- * complete-profile-photo.js v1.18.0) and every other URL pass through
- * untouched, so the shim is safe to load on any page.
+ * Upload validation and rebuilding also apply when the caller supplies an
+ * Authorization header. Every other URL passes through untouched, so the shim
+ * is safe to load on any page.
  *
  * 2026-07-20 (Phase-2 writer cutover): ALSO injects the Authorization header
  * into the profile-update family so those endpoints can be auth-gated
@@ -102,6 +104,9 @@
   const MAX_DIMENSION = 800 // px, longest side after resize
   const JPEG_QUALITY = 0.8
   const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 // server precondition
+  const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/
+  const MAX_RESIZED_UPLOAD_INTENTS = 8
+  const resizedUploadIntents = new Map()
 
   /* ===================== DOMAIN WRITE MODE ======================= */
   const hostname = String(window.location.hostname || '').toLowerCase()
@@ -196,6 +201,38 @@
     if (!blob) throw new Error('Image encode failed')
     if (blob.size > MAX_UPLOAD_BYTES) throw new Error('Image is too large even after resizing')
     return blob
+  }
+
+  function resizedUploadIntent(sourceMutationId, image) {
+    let intent = resizedUploadIntents.get(sourceMutationId)
+    if (!intent) {
+      while (resizedUploadIntents.size >= MAX_RESIZED_UPLOAD_INTENTS) {
+        resizedUploadIntents.delete(resizedUploadIntents.keys().next().value)
+      }
+      intent = resizeImage(image).then((blob) => ({
+        blob: blob,
+        filename: blob === image && image.name ? image.name : 'profile-photo.jpg',
+      }))
+      resizedUploadIntents.set(sourceMutationId, intent)
+      intent.catch(() => {
+        if (resizedUploadIntents.get(sourceMutationId) === intent) {
+          resizedUploadIntents.delete(sourceMutationId)
+        }
+      })
+    }
+    return intent
+  }
+
+  async function uploadResponseComplete(response) {
+    if (!response.ok) return false
+    const data = await response.clone().json().catch(() => null)
+    return Boolean(
+      data &&
+      typeof data.starter_image === 'string' &&
+      data.starter_image.trim().length > 0 &&
+      typeof data.starter_image_small === 'string' &&
+      data.starter_image_small.trim().length > 0
+    )
   }
 
   /* ==================== AUTH-ONLY INJECTION ======================= */
@@ -411,41 +448,57 @@
 
     if (
       !matchesXanoPath(url, [ENDPOINT_PATH]) ||
-      method !== 'POST' ||
-      hasAuthHeader(inspected)
+      method !== 'POST'
     ) {
       return originalFetch(inspected.input, inspected.init)
     }
 
     return (async () => {
-      log('intercepting unauthenticated upload to', ENDPOINT_PATH)
+      log('intercepting upload to', ENDPOINT_PATH)
       const body = (init && init.body) || (input && input.body)
       let image = null
+      let sourceMutationId = null
       if (typeof FormData !== 'undefined' && body instanceof FormData) {
         image = body.get('image')
+        sourceMutationId = body.get('source_mutation_id')
       }
       if (!image) {
-        log('no image field found, passing through with auth header only')
+        log('blocked upload without image')
+        return new Response(JSON.stringify({
+          message: 'Image upload request is incomplete.',
+          code: 'PROFILE_IMAGE_INPUT_INVALID',
+        }), { status: 400, headers: { 'Content-Type': 'application/json' } })
+      }
+      if (
+        typeof sourceMutationId !== 'string' ||
+        !SOURCE_MUTATION_ID_PATTERN.test(sourceMutationId)
+      ) {
+        log('blocked upload without a valid source mutation ID')
+        return new Response(JSON.stringify({
+          message: 'Image upload request is incomplete.',
+          code: 'PROFILE_IMAGE_MUTATION_ID_INVALID',
+        }), { status: 400, headers: { 'Content-Type': 'application/json' } })
       }
 
-      const token = await ensureXanoToken(originalFetch)
-
-      const outgoing = new FormData()
-      if (image) {
-        const blob = await resizeImage(image)
-        const filename =
-          blob === image && image.name ? image.name : 'profile-photo.jpg'
-        outgoing.append('image', blob, filename)
+      const resized = await resizedUploadIntent(sourceMutationId, image)
+      const upload = async (token) => {
+        const outgoing = new FormData()
+        outgoing.append('image', resized.blob, resized.filename)
+        outgoing.append('source_mutation_id', sourceMutationId)
+        return originalFetch(url, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: outgoing,
+        })
       }
 
-      // deliberately NOT forwarding member_id — the endpoint derives the
-      // caller from the token and ignores it; keep the request minimal
-      const res = await originalFetch(url, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: outgoing,
-      })
-      if (res.status === 401) invalidateXanoToken(token)
+      let token = await ensureXanoToken(originalFetch)
+      let res = await upload(token)
+      if (res.status === 401) {
+        invalidateXanoToken(token)
+        token = await ensureXanoToken(originalFetch)
+        res = await upload(token)
+      }
       log('upload response', res.status)
       // Inline edit-profile uploader is a click-driven fetch (not a native WF
       // submit), so the sitewide posthog-track.js form hook can't see it —
@@ -456,6 +509,9 @@
           status: res.status,
           via: 'edit-profile-shim',
         })
+      }
+      if (await uploadResponseComplete(res)) {
+        resizedUploadIntents.delete(sourceMutationId)
       }
       return res
     })()

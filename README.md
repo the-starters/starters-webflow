@@ -113,7 +113,9 @@ Do not discard local changes unless the user explicitly asks.
 - `profile-image-auth-shim.js` — interim V3 profile auth/image bridge; adds
   Memberstack-derived `user_v3` Bearer auth to profile, Companies, and Portfolio
   mutations, enables `/starter-edit-profile` writes only on the exact Live hosts,
-  and blocks known edit mutations on non-Live hosts
+  and blocks known edit mutations on non-Live hosts. The authoritative photo
+  upload and release-gate contract lives in
+  [`v3/build-profile/README.md`](v3/build-profile/README.md#profile-photo-upload-contract)
 - `starter-edit-profile.js` — page-specific `/starter-edit-profile` form behavior
   migrated from the legacy Webflow footer. It keeps the existing Designer form
   and modal markup, opens the existing success or error modal through the Lumos
