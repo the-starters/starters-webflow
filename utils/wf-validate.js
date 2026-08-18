@@ -38,9 +38,13 @@
  *             field's maxlength, or wf-validate-count-max on the counter
  *             (Finsweet has no char-count solution — their "inputcounter" is
  *             a number stepper — so this fills that gap in our grammar).
- *             wf-validate-count-mode="words" switches it to a word counter
- *             ("312 / 500 words"); its max then comes from the field's
- *             wf-validate-maxwords, or wf-validate-count-max on the counter.
+ *             The shown denominator is the limit: over it, the field is
+ *             invalid and submit is gated, even when the field has no
+ *             maxlength (or a higher one). The tighter of maxlength and
+ *             count-max wins. wf-validate-count-mode="words" switches it to
+ *             a word counter ("312 / 500 words"); its max then comes from
+ *             the field's wf-validate-maxwords, or wf-validate-count-max
+ *             on the counter, and that bound gates the same way.
  *   submit  — mark a clickable OUTSIDE the form (or a non-native div button)
  *             as the form's submitter, so its clicks are gated too. Native
  *             submit buttons inside a bound form don't need it: their clicks
@@ -232,13 +236,32 @@
    */
 
   /**
+   * The tighter of a native/attr bound and a counter denominator. Either
+   * side may be missing (NaN); a missing side is ignored.
+   * @param {string} attrValue
+   * @param {number | null | undefined} countMax
+   * @returns {number} NaN when neither side is a positive bound
+   */
+  const tighterMax = (attrValue, countMax) => {
+    const fromAttr = parseInt(attrValue || '', 10)
+    const candidates = []
+    if (fromAttr > 0) candidates.push(fromAttr)
+    if (countMax > 0) candidates.push(countMax)
+    if (!candidates.length) return NaN
+    return Math.min.apply(null, candidates)
+  }
+
+  /**
    * Min/maxlength enforced manually: the native tooShort/tooLong flags only
    * fire for user-typed ("dirty") values, so JS-set values (autofill, draft
-   * restore, tooling) would silently bypass them.
+   * restore, tooling) would silently bypass them. `countMax` is the counter
+   * denominator (wf-validate-count-max, or maxlength copied onto the group);
+   * when it is set, it is a real limit, not display-only.
    * @param {HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement} el
+   * @param {number | null | undefined} [countMax]
    * @returns {string} empty string when within bounds
    */
-  const lengthMessage = (el) => {
+  const lengthMessage = (el, countMax) => {
     const len = el.value.length
     const min = parseInt(el.getAttribute('minlength') || '', 10)
     if (min > 0 && len > 0 && len < min) {
@@ -248,7 +271,7 @@
         'Please use at least ' + min + ' characters (you are currently using ' + len + ').'
       )
     }
-    const max = parseInt(el.getAttribute('maxlength') || '', 10)
+    const max = tighterMax(el.getAttribute('maxlength'), countMax)
     if (max > 0 && len > max) {
       return (
         el.getAttribute('wf-validate-message-maxlength') ||
@@ -272,11 +295,12 @@
   /**
    * Word-count bounds (wf-validate-minwords / wf-validate-maxwords). The
    * Constraint Validation API has no word rules, so these are enforced here,
-   * mirroring lengthMessage.
+   * mirroring lengthMessage. `countMax` is the word-mode counter denominator.
    * @param {HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement} el
+   * @param {number | null | undefined} [countMax]
    * @returns {string} empty string when within bounds
    */
-  const wordMessage = (el) => {
+  const wordMessage = (el, countMax) => {
     const words = wordCount(el.value)
     const min = parseInt(el.getAttribute('wf-validate-minwords') || '', 10)
     if (min > 0 && words > 0 && words < min) {
@@ -286,7 +310,7 @@
         'Please use at least ' + min + ' words (you are currently using ' + words + ').'
       )
     }
-    const max = parseInt(el.getAttribute('wf-validate-maxwords') || '', 10)
+    const max = tighterMax(el.getAttribute('wf-validate-maxwords'), countMax)
     if (max > 0 && words > max) {
       return (
         el.getAttribute('wf-validate-message-maxwords') ||
@@ -301,12 +325,15 @@
    * Resolve the message for a failed control: per-rule override on the
    * control, then its catch-all override, then the browser's own text.
    * @param {HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement} el
+   * @param {FieldGroup} [group]  supplies countMax so a counter denominator gates
    * @returns {string} empty string when the control is valid
    */
-  const messageFor = (el) => {
-    const lengthMsg = lengthMessage(el)
+  const messageFor = (el, group) => {
+    const charMax = group && !group.countWords ? group.countMax : null
+    const wordMax = group && group.countWords ? group.countMax : null
+    const lengthMsg = lengthMessage(el, charMax)
     if (lengthMsg) return lengthMsg
-    const wordMsg = wordMessage(el)
+    const wordMsg = wordMessage(el, wordMax)
     if (wordMsg) return wordMsg
     const v = el.validity
     if (v.valid) return ''
@@ -378,7 +405,7 @@
     group.els.forEach((el) => {
       if (!isActive(el)) return
       applyMatch(el, form)
-      if (!msg) msg = messageFor(el)
+      if (!msg) msg = messageFor(el, group)
     })
     return msg
   }
