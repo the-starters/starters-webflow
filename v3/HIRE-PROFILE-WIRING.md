@@ -1,6 +1,6 @@
 # `v3/hire-profile.js` — wiring and ownership
 
-Last updated: 2026-08-18
+Last updated: 2026-08-19
 Status: Phase 2 native-CMS source cutover ready for release
 
 ## What this is
@@ -175,7 +175,11 @@ but runtime keeps `[data-availability-element="wrapper"]` hidden. The live flow
 uses the existing modal sequence: Book Call opens `popup-booking-main`, an
 eligible Free or Paid option opens `popup-booking`, and Nylas renders the
 calendar and times there. Valid `/hire/<slug>` paths use the host-classified
-TEST or production route map. Production `/hire/jp-dionisio` remains blocked.
+TEST or production route map. The authored Book Call wrapper stays hidden and
+`aria-hidden="true"` until canonical discovery produces a Free option that the
+shared initializer can own or a Paid option that the V3 controller accepts.
+Production `/hire/jp-dionisio` remains blocked before grant or configuration
+discovery, so the TEST fixture cannot activate on a production host.
 
 Non-call service cards open `generate-contract` for eligible signed-in Brands.
 They use the existing project-form smart-fill attributes to select an exact
@@ -204,12 +208,14 @@ that set to the shared modal. Each record must have a `config_id`, `active ===
 true`, and the host's exact `data_environment` (`test` on the Webflow test host,
 `production` on the production hosts). Free records must have `is_paid ===
 false`. Paid records must have `is_paid === true` and the matching
-`payment_environment` (`test` or `live`). Unknown hosts return no bookable set.
-The client excludes records from another data or payment environment. It rejects
-the complete remaining set if a `config_id` repeats or if more than one active
-Free or Paid record remains. A valid pair is ordered Free then Paid so the
-nearest-slot preview is deterministic. An empty or rejected set does not
-initialize booking components or request a nearest slot.
+`payment_environment` (`test` or `live`), USD currency, and an integer
+`price_cents` of at least 500. Unknown hosts return no bookable set. The client
+excludes records from another data or payment environment and rejects invalid
+Paid prices. It rejects the complete remaining set if a `config_id` repeats or
+if more than one active Free or Paid record remains. A valid pair is ordered
+Free then Paid so the nearest-slot preview is deterministic. An empty or
+rejected set does not reveal the Book Call trigger, initialize booking
+components, or request a nearest slot.
 
 Before it checks page helpers or member identity, `hire-profile.js` hides every
 Designer-authored `[call-type-item]` and removes `data-config` from its booking
@@ -225,7 +231,8 @@ and paid booking command. A call type without one exact accepted configuration
 keeps no `data-config` and retains the structural hide. This keeps an authored
 Paid option closed during startup, when its controller is missing, and whenever
 Paid has no accepted configuration; it does not hide the separate Services call
-cards.
+cards. A Paid-only set also keeps the Book Call trigger closed when the Paid
+controller cannot install.
 
 On the Free Call details screen, the controller hides the booking-form rows for
 `brand_memberstack_id` and `starter_memberstack_id` after Nylas confirms the
