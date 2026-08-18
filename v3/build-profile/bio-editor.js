@@ -8,6 +8,10 @@
  * `#bio-plain` and defaults to 1500. A character is one code unit of the Quill plain
  * text with the single trailing newline stripped, so newlines inside the bio count.
  *
+ * The limit governs GROWTH, not existence. A bio saved under the old 300-word cap can
+ * be ~2000 characters and is grandfathered: it restores intact and can be edited down,
+ * but not up. Only an edit that raises the count while over the limit is reverted.
+ *
  * This block also OWNS the bio counter UI, because the generic field-counters script
  * cannot see Quill's content. At init it drops the legacy `count-by-words` attribute
  * (so the page's inline counter pass counts characters too), rewrites the `/300`
@@ -22,8 +26,10 @@
 		if (!outputHtml || !outputPlain) return;
 
 		const MAX_CHARS = Number(outputPlain.dataset.maxChars) || 1500;
+		const DENOMINATOR_PATTERN = /^(\s*)\/\d+(\s*)$/;
 		let isCleaning = false;
 		let prevContents = null;
+		let prevCharCount = 0;
 
 		// Counter takeover: this block, not field-counters.js, owns this counter group.
 		outputPlain.removeAttribute('count-by-words');
@@ -74,21 +80,35 @@
 					.replaceAll("\u00A0", " ")
 					.replaceAll("&nbsp;", " ");
 
+				// A saved bio may exceed MAX_CHARS under the old word cap. Restore it
+				// intact: silence enforcement across the write, flush Quill's pending
+				// mutation, and adopt the restored document as the baseline. Without
+				// the flush, text-change fires later against the pre-restore baseline
+				// and reverts the member's own bio to empty.
+				isCleaning = true;
 				bioEditor.root.innerHTML = html;
-				syncQuillValue();
-
+				bioEditor.update();
 				prevContents = bioEditor.getContents();
+				prevCharCount = getQuillCharCount(bioEditor);
+				isCleaning = false;
+
+				syncQuillValue();
 			}
 		});
 
 		prevContents = bioEditor.getContents();
+		prevCharCount = getQuillCharCount(bioEditor);
 
 		bioEditor.root.addEventListener('paste', handleQuillPaste);
 
 		bioEditor.on('text-change', () => {
 			if (isCleaning) return;
 
-			if (getQuillCharCount(bioEditor) > MAX_CHARS) {
+			const charCount = getQuillCharCount(bioEditor);
+
+			// Growth is what the limit governs. An over-limit legacy bio stays editable
+			// downward, so only an edit that raises the count while over is reverted.
+			if (charCount > MAX_CHARS && charCount > prevCharCount) {
 				const selection = bioEditor.getSelection();
 
 				isCleaning = true;
@@ -106,14 +126,21 @@
 
 				isCleaning = false;
 
+				prevContents = bioEditor.getContents();
+				prevCharCount = getQuillCharCount(bioEditor);
+
 				syncQuillValue();
 				return;
 			}
 
+			// The baseline must advance synchronously: a burst of keystrokes fires
+			// several text-change events before one animation frame runs, and a revert
+			// that restores a stale snapshot would drop keystrokes that were accepted.
+			prevContents = bioEditor.getContents();
+			prevCharCount = charCount;
+
 			requestAnimationFrame(() => {
 				syncQuillValue();
-
-				prevContents = bioEditor.getContents();
 			});
 		});
 
@@ -134,18 +161,20 @@
 			const baseCharCount = countCharsFromText(stripTrailingNewline(before + after));
 			const availableChars = MAX_CHARS - baseCharCount;
 
+			// Load-bearing: slice() with a negative end counts from the right, so an
+			// already-full editor would keep the tail of the paste instead of nothing.
 			if (availableChars <= 0) {
 				event.preventDefault();
 				return;
 			}
 
-			if (baseCharCount + pastedText.length <= MAX_CHARS) {
+			if (pastedText.length <= availableChars) {
 				return;
 			}
 
 			event.preventDefault();
 
-			const allowedPaste = pastedText.slice(0, availableChars);
+			const allowedPaste = dropSplitSurrogate(pastedText.slice(0, Math.max(availableChars, 0)));
 			if (!allowedPaste) return;
 
 			isCleaning = true;
@@ -163,6 +192,7 @@
 			syncQuillValue();
 
 			prevContents = bioEditor.getContents();
+			prevCharCount = getQuillCharCount(bioEditor);
 		}
 
 		function stripTrailingNewline(text) {
@@ -173,9 +203,13 @@
 			return stripTrailingNewline(quillInstance.getText());
 		}
 
+		// A clipboard newline is CRLF on Windows. Collapsing it keeps one line break
+		// worth one character and keeps a stray \r out of the saved bio. Quill's own
+		// text never contains \r, so this is a no-op for everything else.
 		function normalizeCountText(text) {
 			return (text || '')
 				.replace(/\uFEFF/g, '')
+				.replace(/\r\n?/g, '\n')
 				.replace(/\u00A0/g, ' ');
 		}
 
@@ -187,14 +221,43 @@
 			return countCharsFromText(getPlainQuillText(quillInstance));
 		}
 
+		// slice() counts UTF-16 code units, so a cut can land inside an astral
+		// character such as an emoji. A trailing high surrogate has lost its pair.
+		function dropSplitSurrogate(text) {
+			return /[\uD800-\uDBFF]$/.test(text) ? text.slice(0, -1) : text;
+		}
+
 		function setCounterDenominator(span, maxChars) {
-			const denominator = span?.nextSibling;
-			if (!denominator || denominator.nodeType !== 3) return;
+			if (!span) {
+				warnAuthoring('no .count-input in the bio field wrapper; the counter is unowned');
+				return;
+			}
 
-			const match = (denominator.nodeValue || '').match(/^(\s*)\/\d+(\s*)$/);
-			if (!match) return;
+			const denominator = span.nextSibling;
+			const authored = denominator && denominator.nodeType === 3 ? denominator.nodeValue || '' : '';
 
-			denominator.nodeValue = `${match[1]}/${maxChars}${match[2]}`;
+			if (!DENOMINATOR_PATTERN.test(authored)) {
+				warnAuthoring('the bio counter denominator is not an authored "/<number>" text node');
+				return;
+			}
+
+			denominator.nodeValue = authored.replace(DENOMINATOR_PATTERN, `$1/${maxChars}$2`);
+		}
+
+		// Authoring drift is silent by design in production: a missing counter must
+		// never break the editor. Staging and an explicit debug flag still say so.
+		function warnAuthoring(message) {
+			const host = (window.location || {}).hostname || '';
+			const staging = /(\.|^)webflow\.io$/.test(host) ||
+				host === 'localhost' ||
+				host === '127.0.0.1' ||
+				/(\.|^)trycloudflare\.com$/.test(host);
+
+			if (!staging && window.STARTERS_DEBUG !== true) return;
+
+			try {
+				console.warn('[bio-editor] ' + message);
+			} catch (error) {}
 		}
 
 		function hasAdjacentSpace(quillInstance, index) {
@@ -248,7 +311,9 @@
 		}
 
 		function syncQuillValue() {
-			outputPlain.value = getPlainQuillText(bioEditor);
+			const plain = getPlainQuillText(bioEditor);
+
+			outputPlain.value = plain;
 			outputPlain.dispatchEvent(new Event('change', { bubbles: true }));
 			outputPlain.dispatchEvent(new Event('input', { bubbles: true }));
 
@@ -259,7 +324,7 @@
 			// Last write wins: any counter listener reacting to the events above
 			// counts the textarea value, which is only ever the plain-text mirror.
 			if (counterSpan) {
-				counterSpan.textContent = String(getQuillCharCount(bioEditor)).padStart(2, '0');
+				counterSpan.textContent = String(countCharsFromText(plain)).padStart(2, '0');
 			}
 		}
 

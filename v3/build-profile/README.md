@@ -14,8 +14,8 @@ The files below are source-controlled candidates for self-contained controller b
 | 5 | `company-autocomplete.js` | `eb426e9899ccfc9976c5eb061930f122d54542fa33f4453a0602aae48f842f4c` | Company and logo autocomplete |
 | 6 | `work-dates.js` | `4d8aa2dbd4c7668f37430a73c92049a7a5fa566d99915f5e45a61be5dac0c321` | Work-date validation and current-role state |
 | 7 | `company-experience-crud.js` | `6dc7fa7306d9558fb493cb6a6cfd6196659e0b7005c6d49831ffcc5f3261b5d3` | Company-experience CRUD |
-| 12 | `field-counters.js` | `decbf5b49d1006f8a857602a33e2d89a6270fa8b9355d6311d16188f6a4bfe83` | Authored field counters |
-| 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor and word limit |
+| 12 | `field-counters.js` | `decbf5b49d1006f8a857602a33e2d89a6270fa8b9355d6311d16188f6a4bfe83` | Authored field counters, excluding editor-owned groups |
+| 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor, 1500-character limit, and counter ownership |
 | 14 | `grouped-selects.js` | `e80bb01f28a43ebcb5b28e8ea733bac273985ddfa3235179cdfc6a9a5168ae84` | Grouped multi-select options |
 
 `canonical-profile-hydrator.js` is a supplemental fallback loaded by the
