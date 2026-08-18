@@ -125,7 +125,10 @@ Do not discard local changes unless the user explicitly asks.
   again before its Memberstack custom-field projection, so an account change
   stops the workflow instead of writing into the new session and records a safe
   auth-failure receipt when diagnostics are available. The script owns its DOM,
-  readiness, validation, rate-input, and loader fallbacks. The native Webflow
+  readiness, rate-input, and loader fallbacks. The authoritative validation
+  ownership, published-markup, cutover, and loading-state contract lives in
+  [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md#validation-and-submit-ownership).
+  The native Webflow
   form may include the existing reviewer increment component as step 7;
   the controller normalizes its three hidden JSON slots to the same canonical
   `Reviewers` object used by Build Profile before the authenticated Xano PATCH.

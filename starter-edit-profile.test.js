@@ -1,9 +1,21 @@
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
+const path = require('node:path')
 const vm = require('node:vm')
 
 const source = fs.readFileSync(require.resolve('./starter-edit-profile.js'), 'utf8')
 const diagnosticSource = fs.readFileSync(require.resolve('./utils/workflow-diagnostics.js'), 'utf8')
+const publishedContract = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'v3/starter-edit-profile/published-form-contract.json'),
+  'utf8',
+))
+
+function publishedRequired(stepIndex, id) {
+  const step = publishedContract.steps.find(({ index }) => index === String(stepIndex))
+  const control = step?.controls.find((candidate) => candidate.id === id)
+  assert.ok(control, `published contract step ${stepIndex} must include #${id}`)
+  return control.attributes.required === 'required'
+}
 
 class Target {
   constructor() {
@@ -12,6 +24,8 @@ class Target {
     this.dataset = {}
     this.attributes = new Map()
     this.textContent = ''
+    this.focusCount = 0
+    this.reportValidityCount = 0
   }
 
   addEventListener(type, listener) {
@@ -27,6 +41,8 @@ class Target {
   setAttribute(name, value) { this.attributes.set(name, String(value)) }
   getAttribute(name) { return this.attributes.get(name) ?? null }
   hasAttribute(name) { return this.attributes.has(name) }
+  focus() { this.focusCount += 1 }
+  reportValidity() { this.reportValidityCount += 1; return this.checkValidity?.() ?? true }
 }
 
 function createEnvironment(fetchImpl, {
@@ -38,6 +54,10 @@ function createEnvironment(fetchImpl, {
   setTimeoutImpl = () => 1,
   documentReadyState = 'loading',
   notifyCurrentMemberOnAuthSubscribe = false,
+  profileType = 'full',
+  fieldOverrides = {},
+  missingSelectors = [],
+  requiredCaptureFields = [],
 } = {}) {
   const domReady = []
   const modalEvents = { success: 0, error: 0 }
@@ -48,20 +68,62 @@ function createEnvironment(fetchImpl, {
   const tracked = []
   const copied = []
   const requests = []
-  const fields = {
-    email: Object.assign(new Target(), {
-      value: 'new@example.com',
-      required: true,
+  function createField(selector, defaults = {}) {
+    const field = Object.assign(new Target(), {
+      value: '',
+      required: false,
       disabled: false,
-      checkValidity: () => true,
-    }),
-    phone: Object.assign(new Target(), {
-      value: '+15555555555',
-      required: true,
-      disabled: false,
-      checkValidity: () => true,
-    }),
+      valid: true,
+    }, defaults, fieldOverrides[selector] || {})
+    field.checkValidity = () => field.valid && (!field.required || String(field.value ?? '').trim() !== '')
+    return field
   }
+
+  const globalFields = {
+    email: createField('#email', { value: 'new@example.com', required: publishedRequired(1, 'email') }),
+    phone: createField('#phone', { value: '+15555555555', required: publishedRequired(1, 'phone') }),
+  }
+  const selectorsByStep = {
+    1: {
+      '[name="first-name"]': createField('[name="first-name"]', { value: 'Owned', required: publishedRequired(1, 'first-name') }),
+      '[name="last-name"]': createField('[name="last-name"]', { value: 'Starter', required: publishedRequired(1, 'last-name') }),
+      '[name="email"]': globalFields.email,
+      '[name="phone"]': globalFields.phone,
+      '[name="country"]': createField('[name="country"]', { value: 'US', required: false }),
+      '[name="state"]': createField('[name="state"]', { value: '', required: false }),
+      '[name="city"]': createField('[name="city"]', { value: '', required: false }),
+      '#profile-photo-url': createField('#profile-photo-url', { value: 'https://example.test/profile.jpg' }),
+      '#function-required': createField('#function-required', { value: '1' }),
+      '#roles-required': createField('#roles-required', { value: '1' }),
+      '#subcategories-required': createField('#subcategories-required', { value: '1' }),
+    },
+    2: {
+      '#tagline': createField('#tagline', { value: 'Product strategist', required: publishedRequired(2, 'tagline') }),
+      '#pro-headline': createField('#pro-headline', { value: 'Senior product strategist', required: publishedRequired(2, 'pro-headline') }),
+      '#bio-html': createField('#bio-html', { value: '<p>Profile biography</p>' }),
+    },
+    5: {
+      '#skills-required': createField('#skills-required', { value: '1' }),
+      '#tools-required': createField('#tools-required', { value: '1' }),
+    },
+    6: {
+      '[name="rate"]': createField('[name="rate"]', { value: '125', required: publishedRequired(6, 'rate') }),
+      '#availability-required': createField('#availability-required', { value: '1' }),
+    },
+    7: {
+      '[name="reviewer"]': createField('[name="reviewer"]', { value: JSON.stringify({ fname: 'Owned', lname: 'Reviewer', job: 'Founder', company: 'QA Company', email: 'owned-reviewer@example.com' }) }),
+      '[name="reviewer-2"]': createField('[name="reviewer-2"]', { value: '' }),
+      '[name="reviewer-3"]': createField('[name="reviewer-3"]', { value: '' }),
+    },
+  }
+  const stepFields = selectorsByStep[stepIndex] || {}
+  const absentSelectors = new Set(missingSelectors)
+  const focusTarget = new Target()
+  const captureFields = requiredCaptureFields.map((field, index) => createField(`capture-${index}`, {
+    required: true,
+    ...field,
+  }))
+  const fields = { ...globalFields, ...stepFields }
   const buttonText = { textContent: 'Submit' }
   const button = new Target()
   const step = Object.assign(new Target(), { dataset: { index: String(stepIndex) } })
@@ -84,28 +146,48 @@ function createEnvironment(fetchImpl, {
 
   button.closest = () => step
   button.querySelectorAll = (selector) => selector === '.button_main-text' ? [buttonText] : []
-  step.querySelector = (selector) => selector === '[data-edit-submit]' ? button : null
-  step.querySelectorAll = (selector) => selector === 'input, select, textarea'
-    ? Object.values(fields)
-    : []
+  step.querySelector = (selector) => {
+    if (selector === '[data-edit-submit]') return button
+    if (absentSelectors.has(selector)) return null
+    if (Object.prototype.hasOwnProperty.call(stepFields, selector)) return stepFields[selector]
+    if (selector.includes(',') || selector.startsWith('.ql-editor')) return focusTarget
+    return null
+  }
+  step.querySelectorAll = (selector) => {
+    if (selector === 'input, select, textarea') return Object.values(stepFields)
+    if (selector === '[data-input-capture][required]') return captureFields
+    return []
+  }
   form.querySelector = () => null
   form.querySelectorAll = () => []
   form.formValues = [
-    ['email', fields.email.value],
-    ['phone', fields.phone.value],
-    ...(stepIndex === 2 ? [['tagline', 'Product strategist']] : []),
-    ...(stepIndex === 5 ? [['skill-option', 'Research']] : []),
-    ...(stepIndex === 6 ? [['rate', '125']] : []),
+    ['email', globalFields.email.value],
+    ['phone', globalFields.phone.value],
+    ...(stepIndex === 1 ? [
+      ['first-name', stepFields['[name="first-name"]'].value],
+      ['last-name', stepFields['[name="last-name"]'].value],
+      ['country', stepFields['[name="country"]'].value],
+      ['state', stepFields['[name="state"]'].value],
+      ['city', stepFields['[name="city"]'].value],
+      ['profile-photo-url', stepFields['#profile-photo-url'].value],
+      ['function-option', 'Strategy'],
+      ['function', '1'],
+      ['role-option', 'Product Strategy'],
+      ['roles', '1'],
+      ['subcategories-option', 'Consulting'],
+      ['subcategories', '1'],
+    ] : []),
+    ...(stepIndex === 2 ? [
+      ['tagline', stepFields['#tagline'].value],
+      ['pro-headline', stepFields['#pro-headline'].value],
+      ['bio-html', stepFields['#bio-html'].value],
+    ] : []),
+    ...(stepIndex === 5 ? [['skill-option', 'Research'], ['skills', '1'], ['tool-option', 'Figma'], ['tools', '1']] : []),
+    ...(stepIndex === 6 ? [['rate', stepFields['[name="rate"]'].value], ['availability-option', 'Available'], ['availability', '1']] : []),
     ...(stepIndex === 7 ? [
-      ['reviewer', JSON.stringify({
-        fname: 'Owned',
-        lname: 'Reviewer',
-        job: 'Founder',
-        company: 'QA Company',
-        email: 'owned-reviewer@example.com',
-      })],
-      ['reviewer-2', ''],
-      ['reviewer-3', ''],
+      ['reviewer', stepFields['[name="reviewer"]'].value],
+      ['reviewer-2', stepFields['[name="reviewer-2"]'].value],
+      ['reviewer-3', stepFields['[name="reviewer-3"]'].value],
     ] : []),
   ]
 
@@ -132,8 +214,8 @@ function createEnvironment(fetchImpl, {
       if (selector === "[data-modal-trigger='edit-form-error']") return errorModal
       if (selector === '[data-modal-target="edit-form-success"]') return successTarget
       if (selector === '[data-modal-target="edit-form-error"]') return errorTarget
-      if (selector === '#email') return fields.email
-      if (selector === '#phone' || selector === 'input[name="phone"]') return fields.phone
+      if (selector === '#email') return globalFields.email
+      if (selector === '#phone' || selector === 'input[name="phone"]') return globalFields.phone
       if (selector === `[data-form="step"][data-index="${stepIndex}"]`) return step
       return null
     },
@@ -159,10 +241,10 @@ function createEnvironment(fetchImpl, {
   let currentMember = {
     id: 'mem_test',
     auth: { email: 'old@example.com' },
-    customFields: { 'free-user': '', 'last-name': '', phone: fields.phone.value },
+    customFields: { 'free-user': '', 'last-name': '', phone: globalFields.phone.value },
   }
   const window = {
-    activeProfile: { type: 'full', type_id: 1 },
+    activeProfile: { type: profileType, type_id: profileType === 'consult' ? 2 : 1 },
     MEMBER: currentMember,
     waitProfileData() {},
     waitForMember(callback) { callback(this.MEMBER) },
@@ -254,6 +336,8 @@ function createEnvironment(fetchImpl, {
     errorFeedback,
     counter,
     counterInput,
+    fields,
+    focusTarget,
     window,
     switchMember(member) {
       currentMember = member
@@ -557,6 +641,198 @@ async function testLogoutAndSameMemberReauthenticationInvalidatesSave() {
   assert.deepEqual(environment.modalEvents, { success: 0, error: 1 })
 }
 
+async function testInvalidNativeFieldReportsWithoutStartingRequest() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    workflowDiagnostics: true,
+    fieldOverrides: { '[name="first-name"]': { value: '', valid: false } },
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(environment.fields['[name="first-name"]'].reportValidityCount, 1)
+  assert.equal(environment.button.style.pointerEvents ?? '', '')
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'NATIVE_VALIDATION')
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast.request_started, false)
+}
+
+async function testEmptyMirrorFocusesAuthoredControlWithoutStartingRequest() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    workflowDiagnostics: true,
+    fieldOverrides: { '#function-required': { value: '' } },
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(environment.focusTarget.focusCount, 1)
+  assert.equal(environment.button.style.pointerEvents ?? '', '')
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'MIRROR_VALUE_MISSING')
+}
+
+async function testMissingAuthoredMarkerFailsClosed() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    workflowDiagnostics: true,
+    missingSelectors: ['#profile-photo-url'],
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(environment.button.style.pointerEvents ?? '', '')
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'MARKUP_CONTRACT_MISSING')
+}
+
+async function testProfileHydrationMustFinishBeforeValidationCanWrite() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    profileType: '',
+    workflowDiagnostics: true,
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(environment.button.style.pointerEvents ?? '', '')
+  assert.equal(environment.window.__startersWorkflowDiagnosticLast.error_code, 'PROFILE_NOT_READY')
+}
+
+async function testProfileTypeSelectsOnlyItsOwnedMirrorBranch() {
+  const consultValid = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), {
+    profileType: 'consult',
+    fieldOverrides: { '#roles-required': { value: '' } },
+  })
+  await submit(consultValid)
+  assert.equal(consultValid.requests.length, 1)
+
+  const consultInvalid = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    profileType: 'consult',
+    fieldOverrides: { '#subcategories-required': { value: '' } },
+  })
+  await submit(consultInvalid)
+  assert.equal(consultInvalid.requests.length, 0)
+}
+
+async function testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles() {
+  for (const [stepIndex, selector] of [[5, '#skills-required'], [5, '#tools-required'], [6, '#availability-required']]) {
+    const consult = createEnvironment(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ saved: true }),
+    }), {
+      stepIndex,
+      profileType: 'consult',
+      fieldOverrides: { [selector]: { value: '' } },
+    })
+    await submit(consult)
+    assert.equal(consult.requests.length, 1, `consult step ${stepIndex} ignores ${selector}`)
+
+    const full = createEnvironment(async () => {
+      throw new Error('fetch must not run')
+    }, {
+      stepIndex,
+      fieldOverrides: { [selector]: { value: '' } },
+    })
+    await submit(full)
+    assert.equal(full.requests.length, 0, `full step ${stepIndex} requires ${selector}`)
+  }
+
+  const consultRate = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), {
+    stepIndex: 6,
+    profileType: 'consult',
+    fieldOverrides: { '[name="rate"]': { value: '', required: false, valid: true } },
+  })
+  await submit(consultRate)
+  assert.equal(consultRate.requests.length, 1)
+}
+
+async function testConditionalLocationRequirementTransitions() {
+  const optionalState = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }))
+  await submit(optionalState)
+  assert.equal(optionalState.requests.length, 1)
+
+  const requiredState = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    fieldOverrides: { '[name="state"]': { value: '', required: true, valid: false } },
+  })
+  await submit(requiredState)
+  assert.equal(requiredState.requests.length, 0)
+  assert.equal(requiredState.fields['[name="state"]'].reportValidityCount, 1)
+}
+
+async function testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots() {
+  const partial = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    stepIndex: 7,
+    workflowDiagnostics: true,
+    fieldOverrides: {
+      '[name="reviewer"]': { value: JSON.stringify({ fname: 'Partial' }) },
+    },
+  })
+  await submit(partial)
+  assert.equal(partial.requests.length, 0)
+  assert.equal(partial.window.__startersWorkflowDiagnosticLast.error_code, 'REVIEWER_TUPLE_INCOMPLETE')
+
+  const empty = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), {
+    stepIndex: 7,
+    fieldOverrides: { '[name="reviewer"]': { value: '' } },
+  })
+  await submit(empty)
+  assert.equal(empty.requests.length, 1)
+
+  const absentOptionalSlots = createEnvironment(async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ saved: true }),
+  }), {
+    stepIndex: 7,
+    missingSelectors: ['[name="reviewer-2"]', '[name="reviewer-3"]'],
+  })
+  await submit(absentOptionalSlots)
+  assert.equal(absentOptionalSlots.requests.length, 1)
+}
+
+async function testDynamicRequiredCaptureBlocksBeforeLoading() {
+  const environment = createEnvironment(async () => {
+    throw new Error('fetch must not run')
+  }, {
+    stepIndex: 6,
+    requiredCaptureFields: [{ value: '', valid: false }],
+  })
+
+  await submit(environment)
+
+  assert.equal(environment.requests.length, 0)
+  assert.equal(environment.button.style.pointerEvents ?? '', '')
+}
+
 Promise.all([
   testSuccess(),
   testLateLoadInitializesImmediately(),
@@ -574,6 +850,15 @@ Promise.all([
   testAuthSwitchDuringDiagnosticsDoesNotWrite(),
   testAuthSwitchAfterPatchDoesNotProjectToNewSession(),
   testLogoutAndSameMemberReauthenticationInvalidatesSave(),
+  testInvalidNativeFieldReportsWithoutStartingRequest(),
+  testEmptyMirrorFocusesAuthoredControlWithoutStartingRequest(),
+  testMissingAuthoredMarkerFailsClosed(),
+  testProfileHydrationMustFinishBeforeValidationCanWrite(),
+  testProfileTypeSelectsOnlyItsOwnedMirrorBranch(),
+  testProfileTypeOwnsSkillsToolsAndAvailabilityOnlyForFullProfiles(),
+  testConditionalLocationRequirementTransitions(),
+  testReviewerStepRejectsPartialTupleButAllowsEmptyOptionalSlots(),
+  testDynamicRequiredCaptureBlocksBeforeLoading(),
 ])
   .then(() => console.log('starter-edit-profile tests passed'))
   .catch((error) => {
