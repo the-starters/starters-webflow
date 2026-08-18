@@ -1,6 +1,6 @@
 # Starter Edit Profile browser controllers
 
-The native `/starter-edit-profile` form, fields, and success/error elements stay authored in Webflow. This directory owns the page-specific portfolio and company controllers. It reuses the reviewed profile-photo and work-date assets from `v3/build-profile/`.
+The native `/starter-edit-profile` form, fields, and success/error elements stay authored in Webflow. This directory owns the published-form contract and the page-specific portfolio and company controllers. It reuses the reviewed profile-photo and work-date assets from `v3/build-profile/`.
 
 ## In-place loader replacements
 
@@ -30,11 +30,11 @@ section owns that shared loader contract.
 
 ## Validation and submit ownership
 
-`starter-edit-profile.js` is the only validation owner for its main section-submit
-buttons. It owns steps 1, 2, 5, 6, and 7 through an explicit published-markup
-contract. The Companies controller owns step 3 and the Portfolio controller owns
-step 4. No second controller may disable, intercept, or validate the same submit
-path.
+After the approved whole-block cutover, `starter-edit-profile.js` is the only
+validation owner for its main section-submit buttons. It owns steps 1, 2, 5, 6,
+and 7 through an explicit published-markup contract. The Companies controller
+owns step 3 and the Portfolio controller owns step 4. No second controller may
+disable, intercept, or validate the same submit path.
 
 The main form must not opt into sitewide `utils/wf-validate.js`. Its capture-phase
 submit gate can run before the page controller. The live inline validator must be
