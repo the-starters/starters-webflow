@@ -223,6 +223,13 @@ function validatePublishedFormContract(contract) {
     else if (control.attributes.required !== 'required') errors.push(`#${id} must remain required`)
   }
 
+  const expertise = byIndex.get('5') || { controls: [] }
+  for (const id of ['skills-required', 'tools-required']) {
+    const control = findControl(expertise, id)
+    if (!control) errors.push(`step 5 is missing #${id}`)
+    else if (control.attributes.required !== 'required') errors.push(`#${id} must remain required`)
+  }
+
   const requiredStep6Names = new Set([
     'rate',
     'free-consulting-calls',

@@ -61,6 +61,33 @@ test('ownership gate rejects a missing mirror marker and a lost CRUD boundary', 
   ])
 })
 
+test('semantic gate enforces the step 5 hidden required markers', async (t) => {
+  for (const id of ['skills-required', 'tools-required']) {
+    await t.test(`rejects missing #${id}`, () => {
+      const changed = structuredClone(manifest)
+      const step5 = changed.steps.find((step) => step.index === '5')
+      step5.controls = step5.controls.filter((control) => control.id !== id)
+
+      assert.deepEqual(validatePublishedFormContract(changed), {
+        valid: false,
+        errors: [`step 5 is missing #${id}`],
+      })
+    })
+
+    await t.test(`rejects non-required #${id}`, () => {
+      const changed = structuredClone(manifest)
+      const step5 = changed.steps.find((step) => step.index === '5')
+      const marker = step5.controls.find((control) => control.id === id)
+      delete marker.attributes.required
+
+      assert.deepEqual(validatePublishedFormContract(changed), {
+        valid: false,
+        errors: [`#${id} must remain required`],
+      })
+    })
+  }
+})
+
 test('normalizer exposes structure while dropping text, values, props, styles, URLs, and element IDs', () => {
   const tree = node('Body', {}, [
     node('FormForm', {
