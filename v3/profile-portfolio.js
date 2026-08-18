@@ -7,8 +7,9 @@
  * platform-ops/migrations/2026-08-14-legacy-case-studies/renderer-location-findings.md
  *
  * Renders the section labelled "Highlights" on the profile. It reads Xano
- * Portfolios (#28) through Get_my_portfolios, which resolves the starter via
- * freelancers_v3 (#82). As of 2026-08-15 that table also holds 1,439 imported
+ * Portfolios (#28) through Get_approved_portfolios, which resolves the starter
+ * via freelancers_v3 (#82) and returns approved public rows only. As of
+ * 2026-08-15 that table also holds 1,439 imported
  * legacy V2 case studies, which are TEXT ONLY.
  *
  * Three deliberate changes from the embed:
@@ -24,12 +25,8 @@
  *     as the Videos block already was. Without this, every text-only case study
  *     shows an empty "Images" heading.
  *
- * Coexistence: the legacy on-canvas embed has NO guard of its own, so if this
- * script rendered first the embed would still render a second set of cards on top.
- * Therefore this script STANDS DOWN completely whenever the legacy embed is still
- * present on the page (`legacyEmbedPresent`), and takes over only once the embed
- * has been deleted in the Designer. That makes it safe to install before the
- * cutover; the empty-Images fix lands with the cutover, not before.
+ * Ownership: this CDN file is the only Highlights renderer. The legacy on-canvas
+ * owner-read embed must be removed in the same Webflow whole-block cutover.
  */
 (function () {
   'use strict';
@@ -38,21 +35,6 @@
   var PLACEHOLDER_THUMB =
     'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg';
   var OWNED = 'data-portfolio-rendered';
-
-  /**
-   * True while the legacy on-canvas Code Embed is still installed. It is an
-   * inline <script> (no src) that calls Get_my_portfolios. Detecting it lets this
-   * script stand down rather than double-render, since the embed has no guard.
-   */
-  function legacyEmbedPresent() {
-    var inline = document.querySelectorAll('script:not([src])');
-    for (var i = 0; i < inline.length; i++) {
-      if (inline[i].textContent && inline[i].textContent.indexOf('Get_my_portfolios') !== -1) {
-        return true;
-      }
-    }
-    return false;
-  }
 
   function pick(attrSelector, classSelector, scope) {
     var root = scope || document;
@@ -76,7 +58,7 @@
 
     var XANO_GET_APPROVED_URL =
       XANO_BASE_URL +
-      '/api:PmBJV0AG/Get_my_portfolios?memberstack_id=' +
+      '/api:PmBJV0AG/Get_approved_portfolios?memberstack_id=' +
       encodeURIComponent(memberstackId);
 
     var block = document.querySelector('#portfolio-block');
@@ -213,12 +195,22 @@
       var response = await fetch(XANO_GET_APPROVED_URL);
       var data = await response.json();
 
-      if (!response.ok) {
-        console.error('Get approved portfolios error:', data);
-        return [];
+      if (!response.ok || !Array.isArray(data)) {
+        throw new Error('PUBLIC_PORTFOLIO_READ_FAILED');
       }
 
-      return Array.isArray(data) ? data : [];
+      return data.slice().sort(function (a, b) {
+        var aHasOrder = a.ordinal !== null && a.ordinal !== '' && Number.isFinite(Number(a.ordinal));
+        var bHasOrder = b.ordinal !== null && b.ordinal !== '' && Number.isFinite(Number(b.ordinal));
+        if (aHasOrder !== bHasOrder) return aHasOrder ? -1 : 1;
+
+        var aOrder = aHasOrder ? Number(a.ordinal) : 0;
+        var bOrder = bHasOrder ? Number(b.ordinal) : 0;
+        if (aOrder !== bOrder) {
+          return aOrder - bOrder;
+        }
+        return Number(a.id) - Number(b.id);
+      });
     }
 
     async function getPublicPortfolioImages(portfolioId) {
@@ -251,19 +243,18 @@
 
     if (!wrapper || !template) return;
 
-    // Cutover guard. The legacy embed does not check for us, so "whoever runs
-    // first wins" is NOT safe: it would append a second set of cards. Stand down
-    // entirely while the embed is still on the page.
-    if (legacyEmbedPresent()) {
-      console.info('Portfolio: legacy embed present, CDN renderer standing down');
-      return;
-    }
     if (wrapper.hasAttribute(OWNED)) return;
     wrapper.setAttribute(OWNED, 'cdn');
 
     closeModal();
 
-    var portfolios = await loadPortfolios();
+    var portfolios;
+    try {
+      portfolios = await loadPortfolios();
+    } catch (error) {
+      console.error('Portfolio: approved public read failed');
+      return;
+    }
     var viewAllButton = document.querySelector('[data-btn-view-all]');
 
     if (viewAllButton && portfolios.length < 4) {

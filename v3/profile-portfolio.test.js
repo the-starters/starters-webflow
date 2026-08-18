@@ -10,12 +10,39 @@ const SOURCE = fs.readFileSync(path.join(__dirname, 'profile-portfolio.js'), 'ut
 
 /**
  * Minimal DOM stub. Only the surface `profile-portfolio.js` touches before it
- * decides whether to render: attribute lookups, inline <script> scanning, and
- * the DOMContentLoaded listener.
+ * decides whether to render: attribute lookups and the DOMContentLoaded listener.
  */
-function makeEnv({ legacyEmbedPresent }) {
+function classList() {
+  const values = new Set()
+  return {
+    add(value) { values.add(value) },
+    remove(value) { values.delete(value) },
+    has(value) { return values.has(value) },
+  }
+}
+
+function makeEnv({ response = [], responseOk = true, memberstackId = 'mem_test_starter' } = {}) {
   const listeners = {}
-  let fetched = false
+  const requests = []
+  const appendedIds = []
+  const errors = []
+
+  const template = {
+    classList: classList(),
+    style: {},
+    cloneNode() {
+      const idBlock = { textContent: '' }
+      return {
+        classList: classList(),
+        style: {},
+        querySelector(selector) {
+          if (selector === '.portfolio_card-id') return idBlock
+          return null
+        },
+        get portfolioId() { return idBlock.textContent },
+      }
+    },
+  }
 
   const wrapper = {
     attrs: {},
@@ -25,15 +52,17 @@ function makeEnv({ legacyEmbedPresent }) {
     setAttribute(name, value) {
       this.attrs[name] = value
     },
-    querySelector() {
-      return { classList: { add() {}, remove() {} }, style: {}, querySelector: () => null }
+    querySelector(selector) {
+      if (selector === '[wf-portfolio-element="card"]' || selector === '.portfolio_card') return template
+      return null
     },
-    appendChild() {},
+    appendChild(card) {
+      appendedIds.push(Number(card.portfolioId))
+    },
   }
 
-  const inlineScripts = legacyEmbedPresent
-    ? [{ textContent: "const URL = '/api:PmBJV0AG/Get_my_portfolios?memberstack_id='" }]
-    : [{ textContent: 'console.log("something unrelated")' }]
+  const section = { style: {}, classList: classList() }
+  const block = { style: {}, classList: classList() }
 
   const document = {
     addEventListener(type, handler) {
@@ -44,30 +73,33 @@ function makeEnv({ legacyEmbedPresent }) {
     },
     querySelector(selector) {
       if (selector === '[data-highlights]' || selector === '.case-studies-wrapper') return wrapper
-      if (selector === '[portfolio-section]') return { style: {}, classList: { add() {}, remove() {} } }
+      if (selector === '[portfolio-section]') return section
+      if (selector === '#portfolio-block') return block
       return null
     },
     querySelectorAll(selector) {
-      if (selector === 'script:not([src])') return inlineScripts
+      if (selector === 'script:not([src])') {
+        return [{ textContent: "const URL = '/api:PmBJV0AG/Get_my_portfolios?memberstack_id='" }]
+      }
       return []
     },
     body: { style: {} },
   }
 
   const window = {
-    starter_memberstack_id: 'mem_test_starter',
+    starter_memberstack_id: memberstackId,
     location: { hostname: 'the-starters-3-0.webflow.io' },
     document,
-    fetch() {
-      fetched = true
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) })
+    fetch(url) {
+      requests.push(url)
+      return Promise.resolve({ ok: responseOk, json: () => Promise.resolve(response) })
     },
   }
 
   const context = {
     window,
     document,
-    console: { info() {}, warn() {}, error() {} },
+    console: { info() {}, warn() {}, error(message) { errors.push(message) } },
     fetch: window.fetch,
     setTimeout,
     Promise,
@@ -81,51 +113,61 @@ function makeEnv({ legacyEmbedPresent }) {
   return {
     document,
     wrapper,
-    didFetch: () => fetched,
+    requests,
+    appendedIds,
+    errors,
+    section,
   }
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10))
 
-test('stands down entirely while the legacy on-canvas embed is still installed', async () => {
-  // The legacy embed has no guard of its own, so "whoever runs first wins" would
-  // append a SECOND set of cards. This script must not render at all until the
-  // embed is deleted in the Designer.
-  const env = makeEnv({ legacyEmbedPresent: true })
+test('is the single renderer and reads approved public portfolios only', async () => {
+  const env = makeEnv()
+  env.document.dispatch('DOMContentLoaded')
   env.document.dispatch('DOMContentLoaded')
   await settle()
 
-  assert.equal(env.didFetch(), false, 'must not request portfolios while the embed is live')
-  assert.equal(
-    env.wrapper.hasAttribute('data-portfolio-rendered'),
-    false,
-    'must not claim the wrapper while the embed is live',
-  )
-})
-
-test('takes over once the legacy embed has been removed', async () => {
-  const env = makeEnv({ legacyEmbedPresent: false })
-  env.document.dispatch('DOMContentLoaded')
-  await settle()
-
-  assert.equal(env.didFetch(), true, 'requests portfolios once it owns the section')
+  assert.equal(env.requests.length, 1)
+  assert.match(env.requests[0], /\/Get_approved_portfolios\?memberstack_id=mem_test_starter$/)
   assert.equal(
     env.wrapper.hasAttribute('data-portfolio-rendered'),
     true,
-    'claims the wrapper so a second run cannot duplicate cards',
+    'claims the wrapper so a second CDN run cannot duplicate cards',
   )
 })
 
-test('does not hardcode a starter memberstack id', () => {
-  // The embed carried one starter's literal id because the value came from a CMS
-  // binding; copying that verbatim would show every visitor the same portfolios.
-  assert.equal(/mem_[a-z0-9]{20,}/.test(SOURCE), false)
-  assert.ok(SOURCE.includes('window.starter_memberstack_id'))
+test('uses the current profile owner identity', async () => {
+  const env = makeEnv({ memberstackId: 'mem_dynamic_profile' })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.match(env.requests[0], /memberstack_id=mem_dynamic_profile$/)
 })
 
-test('hides the modal Images block when a portfolio has no images', () => {
-  // Every imported legacy case study is text-only; without this the modal shows
-  // an empty "Images" heading. Mirrors the pre-existing Videos behaviour.
-  assert.ok(SOURCE.includes('toggleModalBlock(modalImages, images.length > 0)'))
-  assert.ok(SOURCE.includes('toggleModalBlock(modalVideos, videos.length > 0)'))
+test('sorts approved rows deterministically before rendering', async () => {
+  const rows = [
+    { id: 2 },
+    { id: 10, ordinal: 2 },
+    { id: 1, ordinal: null },
+    { id: 7, ordinal: 1 },
+  ]
+  const forward = makeEnv({ response: rows })
+  const reverse = makeEnv({ response: rows.slice().reverse() })
+  forward.document.dispatch('DOMContentLoaded')
+  reverse.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(forward.appendedIds, [7, 10, 1, 2])
+  assert.deepEqual(reverse.appendedIds, [7, 10, 1, 2])
+})
+
+test('does not treat a failed public read as an empty portfolio list', async () => {
+  const env = makeEnv({ response: { code: 'blocked' }, responseOk: false })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(env.appendedIds, [])
+  assert.equal(env.section.classList.has('hidden'), false)
+  assert.deepEqual(env.errors, ['Portfolio: approved public read failed'])
 })

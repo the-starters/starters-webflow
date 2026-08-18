@@ -30,17 +30,25 @@ Hire template → Page Settings → Custom Code → **Head Code**:
 | Modal videos | `wf-portfolio-element="videos"` | `.portfolio_modal-videos` |
 
 Also required: the page's existing `starter_memberstack_id` global (or a
-`data-starter-memberstack-id` attribute on any element).
+`data-starter-memberstack-id` attribute on any element). The renderer calls
+Xano `Get_approved_portfolios` (endpoint #305); it must never call the
+owner-only `Get_my_portfolios` route (endpoint #304).
+
+Endpoint #305 returns approved public rows only. The renderer orders rows by
+numeric `ordinal`, puts rows without an ordinal after ordered rows, and uses
+numeric `id` as the tie-breaker. A valid empty array hides the Highlights
+section. An HTTP or response-shape failure does not apply that empty state; it
+stops rendering and writes only a generic error to the console.
 
 The class fallbacks exist so this can ship BEFORE the Designer attributes are
 added. Delete them once every row above has its attribute.
 
 ## Cutover
 
-Safe to install while the legacy embed is still present: whichever runs first
-renders the cards, and the other one exits via the `data-portfolio-rendered`
-guard, so cards can never render twice. Once this script is verified on staging,
-delete the legacy Code Embed in the Designer; nothing else changes.
+The CDN file is the one renderer owner. Before publishing the cutover, back up
+the complete Hire template component and resolve the hidden Code Embed. Remove
+only the embed whose code contains `Get_my_portfolios`, then read the complete
+component back before publishing. Do not leave both renderers installed.
 
 ## Changes from the embed
 
