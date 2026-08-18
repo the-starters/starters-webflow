@@ -1393,6 +1393,22 @@
     return true
   }
 
+  // The delegated Hire click is captured before modal.js runs its bubble-phase
+  // opener. At that point every control still has offsetParent === null, so the
+  // native-validation guard correctly stashes `required`. Restore the authored
+  // required state only after modal.js has called showModal and published the
+  // modal-open event. Step-flow will then see the right constraints when it
+  // paints each step and decides whether Continue is enabled.
+  function syncOpenedProjectModal(event) {
+    var modal = event && event.detail && event.detail.modal
+    if (!modal || !modal.getAttribute || clean(modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
+    var forms = projectForms(modal)
+    if (forms.length !== 1) return false
+    syncDurationFields(forms[0])
+    syncActiveRequired(forms[0])
+    return true
+  }
+
   function projectApi(globalObject) {
     var api = globalObject && globalObject.Opp30 && globalObject.Opp30.API
     return api && typeof api.projectDirectCreate === 'function' ? api.projectDirectCreate : null
@@ -1547,6 +1563,9 @@
 
   function install(documentObject, globalObject) {
     if (!documentObject || !documentObject.addEventListener) return
+    if (globalObject && globalObject.addEventListener) {
+      globalObject.addEventListener('modal-open', syncOpenedProjectModal)
+    }
     documentObject.addEventListener('click', function (event) {
       handleSmartFill(event, documentObject)
       var target = event.target

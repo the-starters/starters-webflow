@@ -172,6 +172,7 @@ function load(options = {}) {
   const consoleLogs = []
   const clipboardWrites = []
   const storage = new Map()
+  const windowListeners = new Map()
   const window = {
     document,
     crypto: { randomUUID: () => 'uuid-123' },
@@ -201,6 +202,14 @@ function load(options = {}) {
       },
     },
     console: { info(...args) { consoleLogs.push(args) } },
+    addEventListener(name, handler) {
+      const listeners = windowListeners.get(name) || []
+      listeners.push(handler)
+      windowListeners.set(name, listeners)
+    },
+    dispatchEvent(event) {
+      for (const listener of windowListeners.get(event.type) || []) listener(event)
+    },
     CustomEvent: class CustomEvent { constructor(name, init) { this.type = name; this.detail = init.detail } },
     Event: class Event { constructor(name) { this.type = name } },
     $memberstackDom: options.memberstack,
@@ -1373,6 +1382,31 @@ test('binds the existing Hire trigger when the selected Starter identity is pres
   assert.equal(api.bindTrigger(trigger, document, window), true)
   assert.equal(form.getAttribute('data-project-form-status'), 'ready')
   assert.equal(trackCalls.some((entry) => entry.name === 'project_form_opened'), true)
+})
+
+test('restores initial required fields when modal-open follows the captured Hire click', () => {
+  const form = projectForm()
+  const feeStructure = nativeField('Fee-Structure', '', { tagName: 'SELECT', required: '' })
+  feeStructure.form = form
+  feeStructure.offsetParent = null
+  form.children.push(feeStructure)
+  const { api, document, window } = load({ form })
+  const trigger = new Element({ 'data-modal-trigger': 'generate-contract' })
+
+  assert.equal(api.bindTrigger(trigger, document, window), true)
+  assert.equal(feeStructure.required, false)
+  assert.equal(feeStructure.getAttribute('required'), null)
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), 'true')
+
+  const modal = new Element({ 'data-modal-target': 'generate-contract', tagName: 'DIALOG' })
+  modal.querySelectorAll = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? [form] : []
+  modal.querySelector = (selector) => selector.includes('[data-project-form-v3="brand"] form') ? form : null
+  feeStructure.offsetParent = {}
+  window.dispatchEvent(new window.CustomEvent('modal-open', { detail: { modal } }))
+
+  assert.equal(feeStructure.required, true)
+  assert.equal(feeStructure.getAttribute('required'), '')
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), null)
 })
 
 test('binds only the clicked Starter modal when duplicate Contract Generation instances are open', () => {
