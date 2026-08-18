@@ -38,13 +38,16 @@
  *             field's maxlength, or wf-validate-count-max on the counter
  *             (Finsweet has no char-count solution — their "inputcounter" is
  *             a number stepper — so this fills that gap in our grammar).
- *             The shown denominator is the limit: over it, the field is
- *             invalid and submit is gated, even when the field has no
- *             maxlength (or a higher one). The tighter of maxlength and
- *             count-max wins. wf-validate-count-mode="words" switches it to
- *             a word counter ("312 / 500 words"); its max then comes from
- *             the field's wf-validate-maxwords, or wf-validate-count-max
- *             on the counter, and that bound gates the same way.
+ *             The shown denominator is the limit: extra keystrokes are
+ *             blocked and paste is truncated to the remaining room; over
+ *             it (prefill / JS-set) the field is invalid and submit is
+ *             gated, even when the field has no maxlength (or a higher
+ *             one). The tighter of maxlength and count-max wins. The count
+ *             slot is hidden while its field's error is showing.
+ *             wf-validate-count-mode="words" switches it to a word counter
+ *             ("312 / 500 words"); its max then comes from the field's
+ *             wf-validate-maxwords, or wf-validate-count-max on the
+ *             counter, and that bound caps input the same way.
  *   submit  — mark a clickable OUTSIDE the form (or a non-native div button)
  *             as the form's submitter, so its clicks are gated too. Native
  *             submit buttons inside a bound form don't need it: their clicks
@@ -93,9 +96,12 @@
  *   wf-validate-minwords / wf-validate-maxwords
  *                               — word-count bounds (whitespace-separated
  *                                 words). The native API has no word rules, so
- *                                 these are enforced here; unlike maxlength
- *                                 they don't block typing — the error shows
- *                                 and submit is gated until within bounds.
+ *                                 these are enforced here. A max (maxwords or
+ *                                 a word-mode count-max) also blocks extra
+ *                                 keystrokes and truncates paste, the same
+ *                                 way maxlength stops character input; the
+ *                                 error remains for values that arrived over
+ *                                 the limit (prefill, JS set).
  *   (no override)               — falls back to the browser's own localized
  *                                 validationMessage.
  *
@@ -183,6 +189,24 @@
   const MARKED_SUBMIT_SELECTOR = '[wf-validate-element="submit"]'
 
   let uid = 0
+
+  /** Fields that already have beforeinput/paste caps, so refresh never doubles them. */
+  const capped = new WeakSet()
+
+  /**
+   * beforeinput types that shrink or replace the value, or that the paste
+   * handler owns. Never block these — blocking Backspace at the limit would
+   * trap the user over it.
+   * @type {Record<string, number>}
+   */
+  const ALLOWED_INPUT = {
+    deleteContentBackward: 1,
+    deleteContentForward: 1,
+    deleteByCut: 1,
+    insertFromPaste: 1,
+    historyUndo: 1,
+    historyRedo: 1,
+  }
 
   /**
    * Pre-existing theme values, remembered the first time we overwrite one with
@@ -483,6 +507,8 @@
         this.updateCount(group)
       })
 
+      this.groups.forEach((group) => this.bindLimit(group))
+
       form.addEventListener('focusout', (e) => this.onLeave(e))
       form.addEventListener('input', (e) => this.onInput(e))
       form.addEventListener('change', (e) => this.onInput(e))
@@ -528,6 +554,7 @@
         }
         if (!group.els.includes(el)) group.els.push(/** @type {HTMLInputElement} */ (el))
       })
+      this.groups.forEach((group) => this.bindLimit(group))
       this.applySubmitState()
     }
 
@@ -703,6 +730,7 @@
         ;(group.messageEl || group.error).textContent = msg || ''
         group.error.style.display = msg ? '' : 'none'
       }
+      if (group.count) group.count.style.display = msg ? 'none' : ''
       if (group.success) group.success.style.display = !msg && group.touched ? '' : 'none'
     }
 
@@ -714,6 +742,118 @@
       const el = /** @type {HTMLElement} */ (e.target)
       const name = el.getAttribute && el.getAttribute('name')
       return name ? this.groups.get(name) : undefined
+    }
+
+    /**
+     * Character and word ceilings that cap typing for this group. Count-max
+     * only participates in the mode the counter is in, so a word counter's
+     * 500 does not also become a 500-character maxlength.
+     * @param {FieldGroup} group
+     * @returns {{charMax: number, wordMax: number, active: boolean}}
+     */
+    limitOf(group) {
+      const el = group.els[0]
+      if (!el) return { charMax: NaN, wordMax: NaN, active: false }
+      const charMax = tighterMax(el.getAttribute('maxlength'), group.countWords ? null : group.countMax)
+      const wordMax = tighterMax(
+        el.getAttribute('wf-validate-maxwords'),
+        group.countWords ? group.countMax : null,
+      )
+      return { charMax, wordMax, active: charMax > 0 || wordMax > 0 }
+    }
+
+    /**
+     * @param {FieldGroup} group
+     * @param {string} value
+     * @returns {boolean}
+     */
+    exceeds(group, value) {
+      const { charMax, wordMax } = this.limitOf(group)
+      if (charMax > 0 && value.length > charMax) return true
+      if (wordMax > 0 && wordCount(value) > wordMax) return true
+      return false
+    }
+
+    /**
+     * @param {HTMLInputElement | HTMLTextAreaElement} el
+     * @param {string} inserted
+     * @returns {string}
+     */
+    nextValue(el, inserted) {
+      const start = el.selectionStart == null ? el.value.length : el.selectionStart
+      const end = el.selectionEnd == null ? start : el.selectionEnd
+      return el.value.slice(0, start) + inserted + el.value.slice(end)
+    }
+
+    /**
+     * Attach beforeinput/paste caps once per field when the group has a max.
+     * @param {FieldGroup} group
+     * @returns {void}
+     */
+    bindLimit(group) {
+      if (!this.limitOf(group).active) return
+      group.els.forEach((el) => {
+        if (capped.has(el)) return
+        capped.add(el)
+        el.addEventListener('beforeinput', (e) => this.onBeforeInput(group, /** @type {HTMLInputElement} */ (el), e))
+        el.addEventListener('paste', (e) => this.onPaste(group, /** @type {HTMLInputElement} */ (el), e))
+      })
+    }
+
+    /**
+     * Block keystrokes that would push the field over its character or word max.
+     * @param {FieldGroup} group
+     * @param {HTMLInputElement | HTMLTextAreaElement} el
+     * @param {InputEvent} e
+     * @returns {void}
+     */
+    onBeforeInput(group, el, e) {
+      if (ALLOWED_INPUT[e.inputType]) return
+      let inserted = e.data || ''
+      if (!inserted && e.inputType === 'insertLineBreak') inserted = '\n'
+      if (!inserted && e.inputType !== 'insertText') return
+      if (this.exceeds(group, this.nextValue(el, inserted))) e.preventDefault()
+    }
+
+    /**
+     * Truncate a paste to the remaining character and/or word room.
+     * @param {FieldGroup} group
+     * @param {HTMLInputElement | HTMLTextAreaElement} el
+     * @param {ClipboardEvent} e
+     * @returns {void}
+     */
+    onPaste(group, el, e) {
+      const clip = e.clipboardData
+      if (!clip || typeof clip.getData !== 'function') return
+      const text = clip.getData('text')
+      if (text == null) return
+      e.preventDefault()
+      const start = el.selectionStart == null ? el.value.length : el.selectionStart
+      const end = el.selectionEnd == null ? start : el.selectionEnd
+      const before = el.value.slice(0, start)
+      const after = el.value.slice(end)
+      const { charMax, wordMax } = this.limitOf(group)
+      let insert = text
+      if (wordMax > 0) {
+        const available = wordMax - wordCount(before) - wordCount(after)
+        if (available <= 0) insert = ''
+        else {
+          const words = insert.trim() ? insert.trim().split(/\s+/).filter(Boolean) : []
+          insert = words.slice(0, available).join(' ')
+        }
+      }
+      if (charMax > 0) {
+        const available = charMax - before.length - after.length
+        if (available <= 0) insert = ''
+        else insert = insert.slice(0, available)
+      }
+      if (!insert) return
+      el.value = before + insert + after
+      if (typeof el.setSelectionRange === 'function') {
+        const pos = before.length + insert.length
+        el.setSelectionRange(pos, pos)
+      }
+      this.onInput({ target: el })
     }
 
     /** Field blurred: first moment an error may appear. @param {Event} e @returns {void} */
