@@ -214,6 +214,22 @@ function makePage({
   const popupNylasContainer = makeElement('div', { 'nylas-container': '' })
   root.appendChild(popupNylasContainer)
 
+  const freeModalOption = makeElement('div', { 'call-type-item': '' })
+  const freeModalCta = makeElement('button', {
+    'booking-popup-open': '',
+    'data-type': 'free',
+  })
+  freeModalOption.appendChild(freeModalCta)
+  root.appendChild(freeModalOption)
+
+  const paidModalOption = makeElement('div', { 'call-type-item': '' })
+  const paidModalCta = makeElement('button', {
+    'booking-popup-open': '',
+    'data-type': 'paid',
+  })
+  paidModalOption.appendChild(paidModalCta)
+  root.appendChild(paidModalOption)
+
   return {
     root,
     servicesList: list,
@@ -225,6 +241,10 @@ function makePage({
     back,
     calendarLive,
     popupNylasContainer,
+    freeModalOption,
+    freeModalCta,
+    paidModalOption,
+    paidModalCta,
   }
 }
 
@@ -860,6 +880,10 @@ test('signed-in Brand keeps Free Call in the existing modal and the inline panel
   assert.equal(freeCard.getAttribute('data-modal-trigger'), 'popup-booking')
   assert.equal(freeCard.getAttribute('data-type'), 'free')
   assert.equal(schedulerCalls, 0, 'the calendar waits for a modal option click')
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'config_free')
+  assert.equal(page.freeModalOption.style.display, 'none', 'shared modal init owns Free visibility')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+  assert.equal(page.paidModalOption.style.display, 'none', 'Paid fails closed without a paid config')
   assert.equal(page.inlineWrapper.style.display, 'none')
   assert.equal(page.inlineWrapper.getAttribute('aria-hidden'), 'true')
 })
@@ -908,6 +932,10 @@ test('booking discovery rejects inactive, mixed-environment, and duplicate confi
 
     assert.equal(bookingComponentCalls, 0)
     assert.equal(nearestSlotCalls, 0)
+    assert.equal(page.freeModalCta.getAttribute('data-config'), '')
+    assert.equal(page.paidModalCta.getAttribute('data-config'), '')
+    assert.equal(page.freeModalOption.style.display, 'none')
+    assert.equal(page.paidModalOption.style.display, 'none')
     assert.ok(context.warnings.some((line) => line.includes('No Configurations found')))
   }
 })
@@ -941,6 +969,10 @@ test('booking discovery passes one active Free and Paid configuration to the sha
     bookingCalls[0][2].map((record) => record.config_id),
     ['free_live', 'paid_live'],
   )
+  assert.equal(page.freeModalCta.getAttribute('data-config'), 'free_live')
+  assert.equal(page.paidModalCta.getAttribute('data-config'), 'paid_live')
+  assert.equal(page.freeModalOption.style.display, 'none')
+  assert.equal(page.paidModalOption.style.display, 'none')
 })
 
 test('signed-in Brand routes non-call services to Start a Project with a valid native service preset', async () => {

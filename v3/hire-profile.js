@@ -151,6 +151,24 @@
       return free.concat(paid);
   }
 
+  function primeBookingModalOptions(configs) {
+      const records = Array.isArray(configs) ? configs : [];
+
+      qsa('[booking-popup-open][data-type]').forEach(function (cta) {
+          const type = cta.getAttribute('data-type');
+          const record = records.find(function (candidate) {
+              return type === 'paid' ? candidate.is_paid === true : candidate.is_paid === false;
+          });
+          const item = cta.closest('[call-type-item]');
+
+          // The shared modal initializer resets only CTAs that already have a
+          // data-config attribute. Prime every authored option so a missing or
+          // stale attribute cannot leave an unavailable Paid card visible.
+          cta.setAttribute('data-config', record ? record.config_id : '');
+          (item || cta).style.display = 'none';
+      });
+  }
+
   // Park the beside-services calendar experiment. The live Hire experience
   // uses the existing two-step modal: Book Call -> Free/Paid -> calendar.
   // Keep the authored panel available for a future opt-in, but never let
@@ -525,6 +543,7 @@
 
           // GET CONFIGS
           const configs = selectBookableConfigurations(await getConfigs(grant_id));
+          primeBookingModalOptions(configs);
           if (
               Array.isArray(configs) &&
               configs.length &&
