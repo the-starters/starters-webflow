@@ -106,6 +106,7 @@
   const JPEG_QUALITY = 0.8
   const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 // server precondition
   const SOURCE_MUTATION_ID_PATTERN = /^[A-Za-z0-9_-]{20,128}$/
+  const resizedUploadIntents = new Map()
 
   /* ===================== DOMAIN WRITE MODE ======================= */
   const hostname = String(window.location.hostname || '').toLowerCase()
@@ -200,6 +201,23 @@
     if (!blob) throw new Error('Image encode failed')
     if (blob.size > MAX_UPLOAD_BYTES) throw new Error('Image is too large even after resizing')
     return blob
+  }
+
+  function resizedUploadIntent(sourceMutationId, image) {
+    let intent = resizedUploadIntents.get(sourceMutationId)
+    if (!intent) {
+      intent = resizeImage(image).then((blob) => ({
+        blob: blob,
+        filename: blob === image && image.name ? image.name : 'profile-photo.jpg',
+      }))
+      resizedUploadIntents.set(sourceMutationId, intent)
+      intent.catch(() => {
+        if (resizedUploadIntents.get(sourceMutationId) === intent) {
+          resizedUploadIntents.delete(sourceMutationId)
+        }
+      })
+    }
+    return intent
   }
 
   /* ==================== AUTH-ONLY INJECTION ======================= */
@@ -447,12 +465,10 @@
         }), { status: 400, headers: { 'Content-Type': 'application/json' } })
       }
 
-      const blob = await resizeImage(image)
-      const filename =
-        blob === image && image.name ? image.name : 'profile-photo.jpg'
+      const resized = await resizedUploadIntent(sourceMutationId, image)
       const upload = async (token) => {
         const outgoing = new FormData()
-        outgoing.append('image', blob, filename)
+        outgoing.append('image', resized.blob, resized.filename)
         outgoing.append('source_mutation_id', sourceMutationId)
         return originalFetch(url, {
           method: 'POST',
@@ -479,6 +495,7 @@
           via: 'edit-profile-shim',
         })
       }
+      if (res.ok) resizedUploadIntents.delete(sourceMutationId)
       return res
     })()
   }

@@ -2,7 +2,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(require.resolve('./profile-photo.js'), 'utf8');
+const controllerSource = fs.readFileSync(require.resolve('./profile-photo.js'), 'utf8');
+const shimSource = fs.readFileSync(
+  require.resolve('../../profile-image-auth-shim.js'),
+  'utf8',
+);
 
 class TestFormData {
   constructor() {
@@ -41,14 +45,17 @@ function element() {
     files: [],
     listeners,
     addEventListener(name, listener) { listeners.set(name, listener); },
-    dispatchEvent() {},
+    dispatchEvent(event) {
+      const listener = listeners.get(event.type);
+      if (listener) listener(event);
+    },
     appendChild() {},
     contains() { return false; },
     querySelector() { return null; },
   };
 }
 
-function createHarness() {
+function createHarness({ cryptoApi } = {}) {
   const label = element();
   const wrap = element();
   const uploadError = element();
@@ -72,6 +79,7 @@ function createHarness() {
     ['#profile-photo-url', photoUrlInput],
   ]);
   let domReady;
+  let resizeCount = 0;
   const uploads = [];
   const uploadStatuses = [500, 500, 200, 200, 200];
   const uuids = [
@@ -84,15 +92,31 @@ function createHarness() {
   const document = {
     addEventListener(name, listener) { if (name === 'DOMContentLoaded') domReady = listener; },
     querySelector(selector) { return elements.get(selector) || null; },
-    createElement() { return element(); },
-  };
-  const window = {
-    crypto: { randomUUID: () => uuids[uuidIndex++] },
-    $memberstackDom: {
-      async updateMemberProfileImage() { return { data: { profileImage: 'https://example.invalid/small.jpg' } }; },
+    createElement(tagName) {
+      if (tagName === 'canvas') {
+        return {
+          getContext() {
+            return {
+              fillRect() {},
+              drawImage() {},
+              set fillStyle(value) {},
+            };
+          },
+          toBlob(resolve) {
+            resolve(new Blob([`encoded-${resizeCount}`], { type: 'image/jpeg' }));
+          },
+        };
+      }
+      return element();
     },
   };
-  const fetch = async (url, options = {}) => {
+  const originalFetch = async (url, options = {}) => {
+    if (String(url).includes('/auth/trade-token/v3')) {
+      return new Response(JSON.stringify({ authToken: 'xano-token' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (String(url).includes('/profile_image')) {
       uploads.push({
         image: options.body.get('image'),
@@ -110,20 +134,49 @@ function createHarness() {
     }
     return new Response('small-image', { status: 200, headers: { 'Content-Type': 'image/jpeg' } });
   };
+  const window = {
+    crypto: cryptoApi === undefined
+      ? { randomUUID: () => uuids[uuidIndex++] }
+      : cryptoApi,
+    location: {
+      hostname: 'thestarters.com',
+      pathname: '/build-profile/full-profile',
+      origin: 'https://thestarters.com',
+    },
+    localStorage: { setItem() {}, removeItem() {} },
+    fetch: originalFetch,
+    $memberstackDom: {
+      async getMemberCookie() { return 'memberstack-token'; },
+      async updateMemberProfileImage() { return { data: { profileImage: 'https://example.invalid/small.jpg' } }; },
+    },
+  };
+  class TestEvent {
+    constructor(type, options = {}) {
+      this.type = type;
+      Object.assign(this, options);
+    }
+
+    preventDefault() {}
+  }
+  class TestURL extends URL {
+    static createObjectURL() {
+      return 'blob:preview';
+    }
+  }
   const context = vm.createContext({
     window,
     document,
-    console: { log() {}, error() {} },
+    console: { log() {}, info() {}, error() {} },
     MEMBER: { id: 'member-id-not-sent' },
     activeProfile: { data: { step_1: { 'profile-photo-url': '' } } },
     waitForMember: (callback) => callback(),
     waitProfileData: (callback) => callback(),
     setLoader() {},
     qsa: () => [],
-    fetch,
+    fetch: originalFetch,
     FormData: TestFormData,
     File: TestFile,
-    Event: class {},
+    Event: TestEvent,
     DataTransfer: class {
       constructor() {
         this.files = [];
@@ -132,16 +185,34 @@ function createHarness() {
     },
     Uint8Array,
     btoa: (value) => Buffer.from(value, 'binary').toString('base64'),
-    URL: { createObjectURL: () => 'blob:preview' },
+    URL: TestURL,
+    Headers,
+    Request,
+    JSON,
     Response,
     Blob,
     Promise,
+    createImageBitmap: async () => {
+      resizeCount += 1;
+      return { width: 1200, height: 800, close() {} };
+    },
     setTimeout: (callback) => callback(),
     requestAnimationFrame: (callback) => callback(),
   });
-  vm.runInContext(source, context);
+  vm.runInContext(shimSource, context);
+  context.fetch = window.fetch;
+  vm.runInContext(controllerSource, context);
   domReady();
-  return { input, label, uploadError, uploads, wrap };
+  return {
+    input,
+    label,
+    preview,
+    uploadError,
+    uploads,
+    wrap,
+    resizeCount: () => resizeCount,
+    TestEvent,
+  };
 }
 
 async function settle() {
@@ -150,15 +221,24 @@ async function settle() {
 }
 
 async function run() {
-  const { input, label, uploadError, uploads, wrap } = createHarness();
+  const {
+    input,
+    label,
+    uploadError,
+    uploads,
+    wrap,
+    resizeCount,
+    TestEvent,
+  } = createHarness();
   const firstFile = {
     name: 'photo.jpg',
     type: 'image/jpeg',
     size: 100,
     lastModified: 123,
   };
+  input.value = '/fake/photo.jpg';
   input.files = [firstFile];
-  input.listeners.get('change')();
+  input.dispatchEvent(new TestEvent('change'));
   await settle();
   assert.equal(uploads.length, 1);
   assert.equal(wrap.style.display, 'block');
@@ -171,6 +251,7 @@ async function run() {
   assert.equal(uploads[0].sourceMutationId, uploads[1].sourceMutationId);
   assert.equal(uploads[0].memberId, null);
   assert.equal(uploads[1].memberId, null);
+  assert.equal(resizeCount(), 1);
 
   const replacementWithSameMetadata = {
     name: 'photo.jpg',
@@ -178,16 +259,21 @@ async function run() {
     size: 100,
     lastModified: 123,
   };
+  input.dispatchEvent(new TestEvent('click'));
+  assert.equal(input.value, '');
+  input.value = '/fake/photo.jpg';
   input.files = [replacementWithSameMetadata];
-  input.listeners.get('change')();
+  input.dispatchEvent(new TestEvent('change'));
   await settle();
   assert.equal(uploads.length, 3);
   assert.notEqual(uploads[2].sourceMutationId, uploads[1].sourceMutationId);
-  assert.equal(uploads[2].image, replacementWithSameMetadata);
+  assert.equal(resizeCount(), 2);
 
   const secondFile = { name: 'new-photo.jpg', type: 'image/jpeg', size: 100 };
+  input.dispatchEvent(new TestEvent('click'));
+  input.value = '/fake/new-photo.jpg';
   input.files = [secondFile];
-  input.listeners.get('change')();
+  input.dispatchEvent(new TestEvent('change'));
   await settle();
   assert.equal(uploads.length, 4);
   assert.notEqual(uploads[3].sourceMutationId, uploads[2].sourceMutationId);
@@ -201,6 +287,20 @@ async function run() {
   assert.equal(uploads.length, 5);
   assert.notEqual(uploads[4].sourceMutationId, uploads[3].sourceMutationId);
   assert.equal(uploads.every((upload) => upload.image && upload.memberId === null), true);
+
+  const unavailable = createHarness({ cryptoApi: {} });
+  unavailable.input.value = '/fake/unavailable.jpg';
+  unavailable.input.files = [firstFile];
+  unavailable.input.dispatchEvent(new unavailable.TestEvent('change'));
+  await settle();
+  assert.equal(unavailable.uploads.length, 0);
+  assert.equal(unavailable.wrap.style.display, 'block');
+  assert.equal(unavailable.preview.style.display, 'block');
+  assert.equal(unavailable.uploadError.style.display, 'block');
+  assert.equal(
+    unavailable.uploadError.textContent,
+    'Image upload failed. Click here to try again.',
+  );
 }
 
 run()

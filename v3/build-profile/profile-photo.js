@@ -161,15 +161,16 @@
         preview.style.display = 'block';
 
         // upload the image to Xano/Webflow and update the profile data with Webflow photo URL
-        const uploadIntent = retry
-          ? pendingUploadIntent
-          : {
-              file,
-              sourceMutationId: createSourceMutationId(),
-            };
-        pendingUploadIntent = uploadIntent;
+        let uploadIntent;
         let wf_photo_data;
         try {
+          uploadIntent = retry
+            ? pendingUploadIntent
+            : {
+                file,
+                sourceMutationId: createSourceMutationId(),
+              };
+          pendingUploadIntent = uploadIntent;
           wf_photo_data = await uploadImage(
             uploadIntent.file,
             uploadIntent.sourceMutationId,
@@ -248,6 +249,10 @@
 
       input.addEventListener('change', () => {
         handleFile(input.files[0]);
+      });
+
+      input.addEventListener('click', () => {
+        input.value = '';
       });
 
       wrap.addEventListener('click', (event) => {
