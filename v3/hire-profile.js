@@ -58,7 +58,15 @@
                   return false;
               });
 
-              cta.setAttribute('data-config', record ? record.config_id : '');
+              if (record) {
+                  cta.setAttribute('data-config', record.config_id);
+              } else {
+                  // The shared initializer registers every CTA that merely has
+                  // data-config, including an empty value. Remove the attribute
+                  // so an unavailable call type cannot pass its Stripe/readiness
+                  // checks and reopen after this fail-closed hide.
+                  cta.removeAttribute('data-config');
+              }
           });
           item.style.display = 'none';
       });
