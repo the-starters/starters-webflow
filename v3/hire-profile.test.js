@@ -22,33 +22,45 @@ const source = fs.readFileSync(require.resolve('./hire-profile.js'), 'utf8')
 /** Parses the selector subset used by hire-profile.js into a predicate. */
 function compile(selector) {
   const parts = selector.trim().split(/\s+/)
-  const last = parts[parts.length - 1]
-  const tests = []
-  let rest = last
+  const matches = parts.map((part) => {
+    const tests = []
+    let rest = part
 
-  const not = rest.match(/:not\(\.([\w-]+)\)/)
-  if (not) {
-    tests.push((el) => !el.classList.contains(not[1]))
-    rest = rest.replace(not[0], '')
-  }
-  for (const m of rest.matchAll(/\[([\w-]+)(?:=(?:"([^"]*)"|([^\]]*)))?\]/g)) {
-    const name = m[1]
-    const want = m[2] !== undefined ? m[2] : m[3]
-    tests.push((el) =>
-      want === undefined ? el.getAttribute(name) !== null : el.getAttribute(name) === want,
-    )
-  }
-  rest = rest.replace(/\[[^\]]*\]/g, '')
-  for (const m of rest.matchAll(/\.([\w-]+)/g)) {
-    const cls = m[1]
-    tests.push((el) => el.classList.contains(cls))
-  }
-  const id = rest.match(/#([\w-]+)/)
-  if (id) tests.push((el) => el.getAttribute('id') === id[1])
-  rest = rest.replace(/[#.][\w-]+/g, '')
-  if (rest) tests.push((el) => el.tag === rest)
+    const not = rest.match(/:not\(\.([\w-]+)\)/)
+    if (not) {
+      tests.push((el) => !el.classList.contains(not[1]))
+      rest = rest.replace(not[0], '')
+    }
+    for (const m of rest.matchAll(/\[([\w-]+)(?:=(?:"([^"]*)"|([^\]]*)))?\]/g)) {
+      const name = m[1]
+      const want = m[2] !== undefined ? m[2] : m[3]
+      tests.push((el) =>
+        want === undefined ? el.getAttribute(name) !== null : el.getAttribute(name) === want,
+      )
+    }
+    rest = rest.replace(/\[[^\]]*\]/g, '')
+    for (const m of rest.matchAll(/\.([\w-]+)/g)) {
+      const cls = m[1]
+      tests.push((el) => el.classList.contains(cls))
+    }
+    const id = rest.match(/#([\w-]+)/)
+    if (id) tests.push((el) => el.getAttribute('id') === id[1])
+    rest = rest.replace(/[#.][\w-]+/g, '')
+    if (rest) tests.push((el) => el.tag === rest)
 
-  return (el) => tests.every((t) => t(el))
+    return (el) => tests.every((test) => test(el))
+  })
+
+  return (el) => {
+    let node = el
+    if (!matches[matches.length - 1](node)) return false
+    for (let index = matches.length - 2; index >= 0; index -= 1) {
+      node = node.parentElement
+      while (node && !matches[index](node)) node = node.parentElement
+      if (!node) return false
+    }
+    return true
+  }
 }
 
 function makeElement(tag = 'div', attrs = {}, classes = []) {
@@ -1095,6 +1107,11 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
   paidCard.appendChild(paidTitle)
   page.servicesList.appendChild(paidCard)
 
+  const decoyServiceSelect = makeElement('select', { name: 'Services' })
+  decoyServiceSelect.options = []
+  page.root.appendChild(decoyServiceSelect)
+
+  const contractDialog = makeElement('dialog', { 'data-modal-target': 'generate-contract' })
   const serviceSelect = makeElement('select', { name: 'Services' })
   serviceSelect.options = [
     { value: '', textContent: 'Select one...' },
@@ -1103,7 +1120,12 @@ test('signed-in Brand routes non-call services to Start a Project with a valid n
     { value: 'Free Call', textContent: 'Free Call' },
     { value: 'Paid Consulting Call', textContent: 'Paid Consulting Call' },
   ]
-  page.root.appendChild(serviceSelect)
+  contractDialog.appendChild(serviceSelect)
+  page.root.appendChild(contractDialog)
+  assert.equal(
+    page.root.querySelector('dialog[data-modal-target="generate-contract"] [name="Services"]'),
+    serviceSelect,
+  )
   assert.equal(page.root.querySelectorAll('#services [data-service-card="component"]').includes(cmsCard), true)
 
   const context = makeContext({
