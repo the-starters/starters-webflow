@@ -59,6 +59,7 @@
   var SMART_FILL_INPUT_SELECTOR = '[data-sp-fill="input"]'
   var CURRENT_DATE_SELECTOR = '[data-set-current-date]'
   var CURRENT_DATE_INIT_ATTR = 'data-set-current-date-inited'
+  var STEP_VISIBLE_EVENT = 'starters:form-flow-step-visible'
   var DEFAULT_DATE_FORMAT = 'mm/dd/yy'
   var MEMBERSTACK_POLL_MS = 100
   var MEMBERSTACK_MAX_TRIES = 50
@@ -1393,14 +1394,7 @@
     return true
   }
 
-  // The delegated Hire click is captured before modal.js runs its bubble-phase
-  // opener. At that point every control still has offsetParent === null, so the
-  // native-validation guard correctly stashes `required`. Restore the authored
-  // required state only after modal.js has called showModal and published the
-  // modal-open event. Step-flow will then see the right constraints when it
-  // paints each step and decides whether Continue is enabled.
-  function syncOpenedProjectModal(event) {
-    var modal = event && event.detail && event.detail.modal
+  function syncProjectFormInModal(modal) {
     if (!modal || !modal.getAttribute || clean(modal.getAttribute('data-modal-target')) !== 'generate-contract') return false
     // `modal` is already the dialog scope. Do not reuse FORM_SELECTOR here: it
     // starts with that same dialog ancestor, and Element.querySelectorAll only
@@ -1413,6 +1407,21 @@
     syncDurationFields(forms[0])
     syncActiveRequired(forms[0])
     return true
+  }
+
+  // The delegated Hire click is captured before modal.js runs its bubble-phase
+  // opener. Restore fields that are visible as soon as showModal completes.
+  // Conditional fields in later steps remain stashed until step-flow announces
+  // that their own destination has become visible.
+  function syncOpenedProjectModal(event) {
+    return syncProjectFormInModal(event && event.detail && event.detail.modal)
+  }
+
+  function syncVisibleProjectStep(event) {
+    var flow = event && event.detail && event.detail.flow
+    if (!flow || !flow.getAttribute || clean(flow.getAttribute('data-form-flow')) !== 'generate-contract') return false
+    var modal = flow.closest && flow.closest('dialog[data-modal-target="generate-contract"]')
+    return syncProjectFormInModal(modal)
   }
 
   function projectApi(globalObject) {
@@ -1571,6 +1580,7 @@
     if (!documentObject || !documentObject.addEventListener) return
     if (globalObject && globalObject.addEventListener) {
       globalObject.addEventListener('modal-open', syncOpenedProjectModal)
+      globalObject.addEventListener(STEP_VISIBLE_EVENT, syncVisibleProjectStep)
     }
     documentObject.addEventListener('click', function (event) {
       handleSmartFill(event, documentObject)

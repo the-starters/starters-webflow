@@ -1384,7 +1384,7 @@ test('binds the existing Hire trigger when the selected Starter identity is pres
   assert.equal(trackCalls.some((entry) => entry.name === 'project_form_opened'), true)
 })
 
-test('restores initial required fields with a selector relative to the opened modal', () => {
+test('restores a hidden Payment requirement only after step-flow shows that destination', () => {
   const form = projectForm()
   const feeStructure = nativeField('Fee-Structure', '', { tagName: 'SELECT', required: '' })
   feeStructure.form = form
@@ -1408,6 +1408,29 @@ test('restores initial required fields with a selector relative to the opened mo
   window.dispatchEvent(new window.CustomEvent('modal-open', { detail: { modal } }))
 
   assert.deepEqual(modalSelectors, ['[data-project-form-v3="brand"] form'])
+  assert.equal(feeStructure.required, true)
+  assert.equal(feeStructure.getAttribute('required'), '')
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), null)
+
+  // Reproduce the real sequence: the next Payment field is hidden at modal-open,
+  // then step-flow makes Payment visible and publishes its scoped handoff.
+  feeStructure.offsetParent = null
+  feeStructure.required = false
+  feeStructure.removeAttribute('required')
+  feeStructure.setAttribute('data-project-required-hidden', 'true')
+  window.dispatchEvent(new window.CustomEvent('modal-open', { detail: { modal } }))
+  assert.equal(feeStructure.required, false)
+  assert.equal(feeStructure.getAttribute('data-project-required-hidden'), 'true')
+
+  const flow = new Element({ 'data-form-flow': 'generate-contract', tagName: 'DIV' })
+  flow.closest = (selector) => selector === 'dialog[data-modal-target="generate-contract"]' ? modal : null
+  const payment = new Element({ 'data-form-flow-element': 'step-2', tagName: 'DIV' })
+  payment.style.display = 'block'
+  feeStructure.offsetParent = {}
+  window.dispatchEvent(new window.CustomEvent('starters:form-flow-step-visible', {
+    detail: { flow, step: payment, flowId: 'generate-contract', stepId: 'step-2' },
+  }))
+
   assert.equal(feeStructure.required, true)
   assert.equal(feeStructure.getAttribute('required'), '')
   assert.equal(feeStructure.getAttribute('data-project-required-hidden'), null)

@@ -315,3 +315,37 @@ test('linear flow: the last step submit stays terminal', () => {
   assert.equal(event.defaultPrevented, false, 'native submit falls through')
   assert.equal(visible(f.s2), true)
 })
+
+test('visible-step owners restore required state before destination validation repaints', () => {
+  const projectInfo = h('div', { 'data-form-flow-step': '', 'data-form-flow-element': 'step-1' })
+  const feeStructure = h('select', { 'data-project-required-hidden': 'true' })
+  feeStructure.value = ''
+  feeStructure.required = false
+  const payment = h('div', { 'data-form-flow-step': '', 'data-form-flow-element': 'step-2' }, [feeStructure])
+  const projectInfoNext = h('button', { 'data-form-flow-action': 'next' })
+  const paymentNext = h('button', { 'data-form-flow-action': 'next' })
+  const paymentContinue = h('div', { class: 'button_main-wrap', 'data-button-theme': 'primary' }, [paymentNext])
+  const flow = h('div', { 'data-form-flow': 'generate-contract', 'data-form-flow-validate': 'true' }, [
+    projectInfo,
+    payment,
+    h('div', { 'data-form-flow-button-group': 'step-1' }, [projectInfoNext]),
+    h('div', { 'data-form-flow-button-group': 'step-2' }, [paymentContinue]),
+  ])
+  const harness = mount(h('body', {}, [flow]))
+  const observed = []
+  harness.window.addEventListener('starters:form-flow-step-visible', (event) => {
+    if (event.detail.flow !== flow || event.detail.step !== payment) return
+    observed.push(payment.style.display)
+    feeStructure.required = true
+    feeStructure.setAttribute('required', '')
+    feeStructure.removeAttribute('data-project-required-hidden')
+  })
+
+  harness.fire(flow, 'click', projectInfoNext)
+
+  assert.deepEqual(observed, ['block'], 'field owner runs only after Payment is visible')
+  assert.equal(feeStructure.required, true)
+  assert.equal(paymentContinue.getAttribute('data-button-theme'), 'disabled')
+  assert.equal(paymentContinue.getAttribute('aria-disabled'), 'true')
+  assert.equal(paymentNext.getAttribute('aria-disabled'), 'true')
+})
