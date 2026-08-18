@@ -200,9 +200,13 @@
       }
 
       return data.slice().sort(function (a, b) {
-        var aOrder = Number(a.ordinal);
-        var bOrder = Number(b.ordinal);
-        if (Number.isFinite(aOrder) && Number.isFinite(bOrder) && aOrder !== bOrder) {
+        var aHasOrder = a.ordinal !== null && a.ordinal !== '' && Number.isFinite(Number(a.ordinal));
+        var bHasOrder = b.ordinal !== null && b.ordinal !== '' && Number.isFinite(Number(b.ordinal));
+        if (aHasOrder !== bHasOrder) return aHasOrder ? -1 : 1;
+
+        var aOrder = aHasOrder ? Number(a.ordinal) : 0;
+        var bOrder = bHasOrder ? Number(b.ordinal) : 0;
+        if (aOrder !== bOrder) {
           return aOrder - bOrder;
         }
         return Number(a.id) - Number(b.id);

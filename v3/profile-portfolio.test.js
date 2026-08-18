@@ -146,11 +146,20 @@ test('uses the current profile owner identity', async () => {
 })
 
 test('sorts approved rows deterministically before rendering', async () => {
-  const env = makeEnv({ response: [{ id: 9 }, { id: 2 }] })
-  env.document.dispatch('DOMContentLoaded')
+  const rows = [
+    { id: 2 },
+    { id: 10, ordinal: 2 },
+    { id: 1, ordinal: null },
+    { id: 7, ordinal: 1 },
+  ]
+  const forward = makeEnv({ response: rows })
+  const reverse = makeEnv({ response: rows.slice().reverse() })
+  forward.document.dispatch('DOMContentLoaded')
+  reverse.document.dispatch('DOMContentLoaded')
   await settle()
 
-  assert.deepEqual(env.appendedIds, [2, 9])
+  assert.deepEqual(forward.appendedIds, [7, 10, 1, 2])
+  assert.deepEqual(reverse.appendedIds, [7, 10, 1, 2])
 })
 
 test('does not treat a failed public read as an empty portfolio list', async () => {
