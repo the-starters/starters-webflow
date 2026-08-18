@@ -84,6 +84,217 @@ test('normalizes canonical Unix seconds once while preserving milliseconds', () 
   )
 })
 
+test('builds the current confirm payload only when booking_ref identities match', () => {
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const salt = Buffer.from('bounded-salt')
+  const bookingRef = Buffer.concat([uuidBytes(configId), uuidBytes(bookingId), salt])
+    .toString('base64url')
+  const payload = api.confirmPayload({
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: bookingRef,
+  }, 'dashboard-confirm:one')
+
+  assert.deepEqual(payload, {
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref_salt: salt.toString('base64url'),
+    idempotency_key: 'dashboard-confirm:one',
+  })
+  assert.equal(api.confirmPayload({
+    booking_id: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+    config_id: configId,
+    booking_ref: bookingRef,
+  }, 'dashboard-confirm:one'), null)
+  assert.equal(api.confirmPayload({
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: 'malformed',
+  }, 'dashboard-confirm:one'), null)
+})
+
+test('Starter Accept sends one canonical request and blocks a double click', async () => {
+  const configId = '11111111-2222-3333-4444-555555555555'
+  const bookingId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+  const uuidBytes = (value) => Buffer.from(value.replace(/-/g, ''), 'hex')
+  const bookingRef = Buffer.concat([
+    uuidBytes(configId),
+    uuidBytes(bookingId),
+    Buffer.from('bounded-salt'),
+  ]).toString('base64url')
+  const booking = {
+    booking_id: bookingId,
+    config_id: configId,
+    booking_ref: bookingRef,
+    status: 'pending',
+  }
+  const listeners = []
+  const requests = []
+  let releaseRequest
+  let restartCount = 0
+  const originalDocument = global.document
+  const originalCrypto = global.crypto
+  const originalFetch = global.xanoAuthFetch
+  const card = {
+    getAttribute(name) {
+      return name === 'data-booking-id' ? bookingId : null
+    },
+  }
+  const button = {
+    attributes: {},
+    closest(selector) {
+      return selector === '[data-booking-id]' ? card : this
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = value
+    },
+  }
+  const event = {
+    target: button,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+  }
+
+  try {
+    global.document = {
+      addEventListener(type, listener, capture) {
+        listeners.push({ type, listener, capture })
+      },
+    }
+    global.crypto = { randomUUID: () => 'one-action' }
+    global.xanoAuthFetch = async (url, options) => {
+      requests.push({ url, options })
+      await new Promise((resolve) => { releaseRequest = resolve })
+      return { ok: true, json: async () => ({ status: 'confirmed' }) }
+    }
+    api.wireBookingActions([{ rows: [booking] }], 'starter', async () => {
+      restartCount += 1
+    })
+    assert.equal(listeners.length, 1)
+    assert.equal(listeners[0].type, 'click')
+    assert.equal(listeners[0].capture, true)
+
+    const first = listeners[0].listener(event)
+    const second = listeners[0].listener(event)
+    await until(() => requests.length === 1 && typeof releaseRequest === 'function')
+    releaseRequest()
+    await Promise.all([first, second])
+
+    assert.equal(requests.length, 1)
+    assert.match(requests[0].url, /\/booking\/confirm\/v3$/)
+    const requestBody = JSON.parse(requests[0].options.body)
+    assert.deepEqual({ ...requestBody, idempotency_key: 'canonical-key' }, {
+      booking_id: bookingId,
+      config_id: configId,
+      booking_ref_salt: Buffer.from('bounded-salt').toString('base64url'),
+      idempotency_key: 'canonical-key',
+    })
+    assert.match(requestBody.idempotency_key, /^dashboard-confirm:[0-9a-f-]+$/)
+    assert.equal(restartCount, 1)
+    assert.equal(button.attributes['aria-busy'], 'false')
+    assert.equal(button.attributes['aria-disabled'], 'false')
+  } finally {
+    global.document = originalDocument
+    global.crypto = originalCrypto
+    global.xanoAuthFetch = originalFetch
+  }
+})
+
+test('only the V3-native Starter Accept action is visible on pending cards', () => {
+  const accept = element({ 'booking-action-btn': 'switch-confirm' })
+  const decline = element({ 'booking-action-btn': 'switch-decline' })
+  const reschedule = element({ 'booking-action-btn': 'reschedule' })
+  const message = element({ 'booking-action-btn': 'message' })
+  const join = element({ 'booking-action-btn': 'join' })
+  const buttons = [accept, decline, reschedule, message, join]
+  const card = {
+    querySelectorAll(selector) {
+      assert.equal(selector, '[booking-card-action-btn], [booking-action-btn]')
+      return buttons
+    },
+  }
+
+  api.configureActionButtons(card, 'starter', 'pending')
+
+  assert.equal(accept.hidden, false)
+  assert.equal(accept.style.display, '')
+  for (const button of [decline, reschedule, message, join]) {
+    assert.equal(button.hidden, true)
+    assert.equal(button.style.display, 'none')
+  }
+})
+
+test('accepted calls keep every legacy action hidden even with a meeting link', async () => {
+  const source = fs.readFileSync(require.resolve('./dashboard-calls.js'), 'utf8')
+  const actions = [
+    element({ 'booking-action-btn': 'switch-confirm' }),
+    element({ 'booking-action-btn': 'switch-decline' }),
+    element({ 'booking-action-btn': 'reschedule' }),
+    element({ 'booking-action-btn': 'message' }),
+    element({ 'booking-action-btn': 'join' }),
+  ]
+  const renderedCards = []
+  const card = element({ 'bookings-item-template': 'calls' })
+  card.cloneNode = () => card
+  card.querySelectorAll = (selector) =>
+    selector === '[booking-card-action-btn], [booking-action-btn]' ? actions : []
+  const list = element()
+  list.appendChild = (rendered) => renderedCards.push(rendered)
+  list.querySelectorAll = (selector) =>
+    selector === '[bookings-item-template]' ? [card] : []
+  const template = element({ 'bookings-item-template': 'calls' })
+  template.cloneNode = () => card
+  const section = element({ 'bookings-section': 'calls' })
+  section.querySelector = (selector) =>
+    ({
+      '[bookings-list="calls"]': list,
+      '[bookings-item-template="calls"]': template,
+      '[bookings-loader="calls"]': element(),
+      '[bookings-empty="calls"]': element(),
+    })[selector] || null
+  const root = element()
+  const document = {
+    documentElement: root,
+    readyState: 'complete',
+    querySelector() {
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector === '[bookings-section]' ? [section] : []
+    },
+  }
+  const window = {
+    $memberstackDom: {
+      async getCurrentMember() {
+        return { id: 'starter-1' }
+      },
+      onAuthChange() {},
+    },
+    document,
+    location: { pathname: '/starter-dashboard' },
+    xanoAuthFetch: async () => ({
+      ok: true,
+      json: async () => [{
+        booking_id: 'confirmed-call',
+        starter_data: { memberstack_id: 'starter-1' },
+        status: 'confirmed',
+        meeting_link: 'https://meet.example/canonical',
+      }],
+    }),
+  }
+
+  vm.runInNewContext(source, { console: { error() {} }, document, Intl, window })
+  await until(() => root.attributes['data-dashboard-calls-v3'] === 'ready')
+
+  assert.equal(renderedCards.length, 1)
+  for (const action of actions) {
+    assert.equal(action.hidden, true)
+    assert.equal(action.style.display, 'none')
+  }
+})
+
 test('canonical V3 component loader includes the dashboard controller', () => {
   const loader = fs.readFileSync(
     require.resolve('./scheduling-v3-stage-component.html'),

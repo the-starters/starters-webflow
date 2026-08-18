@@ -62,6 +62,8 @@ class Element {
     this._listeners = new Map()
     this.focusCalls = []
     this.scrollCalls = []
+    this.selectionStart = undefined
+    this.selectionEnd = undefined
 
     const classes = new Set()
     this._classes = classes
@@ -177,6 +179,10 @@ class Element {
   scrollIntoView(options) {
     this.scrollCalls.push(options)
   }
+  setSelectionRange(start, end) {
+    this.selectionStart = start
+    this.selectionEnd = end
+  }
 
   addEventListener(type, listener) {
     const list = this._listeners.get(type) || []
@@ -241,8 +247,8 @@ function mount(root, options = {}) {
   vm.runInContext(source, context)
 
   /** fire a listener bound on `el` itself (the validator's form listeners) */
-  const fire = (el, type, target) => {
-    const event = makeEvent(type, target || el)
+  const fire = (el, type, target, extra) => {
+    const event = makeEvent(type, target || el, extra)
     ;(el._listeners.get(type) || []).forEach((listener) => listener(event))
     return event
   }
@@ -896,4 +902,166 @@ test('focusin: entering a field on a complete form leaves the submitter enabled'
   app.fire(f.form, 'focusin', f.email)
   assert.equal(isEnabled(f.themed), true, 'no flicker back to disabled')
   assert.equal(f.themed.getAttribute('data-theme'), 'primary')
+})
+
+// ---------------------------------------------------------------------------
+// 7. count-max must gate submit (user: 5000/500 still goes through)
+//
+// The live counter can show a 500 denominator from wf-validate-count-max even
+// when the field has no maxlength, or a much higher one (Webflow embeds often
+// ship maxlength="5000"). Displaying 5,000 / 500 while still submitting is the
+// bug.
+// ---------------------------------------------------------------------------
+
+function countLimitFixture(fieldAttrs, countAttrs) {
+  const brief = h('textarea', Object.assign({ name: 'Brief' }, fieldAttrs))
+  const count = h('div', Object.assign({ 'wf-validate-element': 'count' }, countAttrs))
+  const error = h('div', { 'wf-validate-element': 'error' })
+  const submit = h('button', { type: 'submit' })
+  const form = h(
+    'form',
+    { 'wf-validate-element': 'form', 'wf-validate-submit-disable': '' },
+    [h('div', {}, [brief, error, count]), submit],
+  )
+  return { brief, count, error, submit, form, root: h('body', {}, [form]) }
+}
+
+test('count-max 500: 5000 chars shows 5,000 / 500 and must not submit', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '500' })
+  const app = mount(f.root)
+
+  f.brief.value = 'x'.repeat(5000)
+  app.fire(f.form, 'input', f.brief)
+
+  assert.equal(f.count.textContent, '5,000 / 500')
+  assert.equal(isDisabled(f.submit), true, 'over the shown 500 limit must soft-disable')
+  const event = app.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, true, 'over the shown 500 limit must block submit')
+})
+
+test('count-max 500 + maxlength 5000: 5000 chars still must not submit', () => {
+  const f = countLimitFixture({ maxlength: '5000' }, { 'wf-validate-count-max': '500' })
+  const app = mount(f.root)
+
+  f.brief.value = 'x'.repeat(5000)
+  app.fire(f.form, 'input', f.brief)
+
+  assert.equal(f.count.textContent, '5,000 / 500')
+  assert.equal(isDisabled(f.submit), true)
+  const event = app.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, true)
+})
+
+test('count-max 500: 501 chars is enough to be over-limit (minimised)', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '500' })
+  const app = mount(f.root)
+
+  f.brief.value = 'x'.repeat(500)
+  app.fire(f.form, 'input', f.brief)
+  assert.equal(f.count.textContent, '500 / 500')
+  assert.equal(isEnabled(f.submit), true, 'exactly 500 must still submit')
+
+  f.brief.value = 'x'.repeat(501)
+  app.fire(f.form, 'input', f.brief)
+  assert.equal(f.count.textContent, '501 / 500')
+  assert.equal(isDisabled(f.submit), true, '501 must soft-disable')
+  const event = app.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, true, '501 must block submit')
+  assert.equal(
+    f.error.textContent,
+    'Please use no more than 500 characters (you are currently using 501).',
+  )
+})
+
+test('maxlength 500 control: JS-set 501 chars already blocks without count-max', () => {
+  const f = countLimitFixture({ maxlength: '500' }, {})
+  const app = mount(f.root)
+
+  f.brief.value = 'x'.repeat(501)
+  app.fire(f.form, 'input', f.brief)
+
+  assert.equal(isDisabled(f.submit), true)
+  const event = app.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, true)
+})
+
+test('count-max 5 words: 6 words must not submit', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '5', 'wf-validate-count-mode': 'words' })
+  const app = mount(f.root)
+
+  f.brief.value = 'one two three four five six'
+  app.fire(f.form, 'input', f.brief)
+
+  assert.equal(f.count.textContent, '6 / 5 words')
+  assert.equal(isDisabled(f.submit), true)
+  const event = app.fireDocument('submit', f.form)
+  assert.equal(event.defaultPrevented, true)
+  assert.equal(
+    f.error.textContent,
+    'Please use no more than 5 words (you are currently using 6).',
+  )
+  assert.equal(f.count.style.display, 'none', 'helper hides while the error is showing')
+})
+
+test('count-max 5 words: a 6th word keystroke is blocked', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '5', 'wf-validate-count-mode': 'words' })
+  const app = mount(f.root)
+
+  f.brief.value = 'one two three four five'
+  const blocked = app.fire(f.brief, 'beforeinput', f.brief, {
+    data: ' six',
+    inputType: 'insertText',
+  })
+  assert.equal(blocked.defaultPrevented, true)
+
+  const extendLast = app.fire(f.brief, 'beforeinput', f.brief, {
+    data: 'x',
+    inputType: 'insertText',
+  })
+  assert.equal(extendLast.defaultPrevented, false, 'extending the last word stays at 5')
+
+  const backspace = app.fire(f.brief, 'beforeinput', f.brief, {
+    inputType: 'deleteContentBackward',
+  })
+  assert.equal(backspace.defaultPrevented, false)
+})
+
+test('count-max 5 words: paste is truncated to the remaining room', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '5', 'wf-validate-count-mode': 'words' })
+  const app = mount(f.root)
+
+  f.brief.value = 'one two three '
+  app.fire(f.brief, 'paste', f.brief, {
+    clipboardData: { getData: () => 'four five six seven' },
+  })
+
+  assert.equal(f.brief.value, 'one two three four five')
+  assert.equal(f.count.textContent, '5 / 5 words')
+  assert.equal(isEnabled(f.submit), true)
+})
+
+test('count helper returns once the over-limit error clears', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '5', 'wf-validate-count-mode': 'words' })
+  const app = mount(f.root)
+
+  f.brief.value = 'one two three four five six'
+  app.fireDocument('submit', f.form)
+  assert.equal(f.count.style.display, 'none')
+
+  f.brief.value = 'one two three four five'
+  app.fire(f.form, 'input', f.brief)
+  assert.equal(f.error.style.display, 'none')
+  assert.equal(f.count.style.display, '')
+})
+
+test('count-max 3 chars: a 4th character keystroke is blocked', () => {
+  const f = countLimitFixture({}, { 'wf-validate-count-max': '3' })
+  const app = mount(f.root)
+
+  f.brief.value = 'abc'
+  const blocked = app.fire(f.brief, 'beforeinput', f.brief, {
+    data: 'd',
+    inputType: 'insertText',
+  })
+  assert.equal(blocked.defaultPrevented, true)
 })

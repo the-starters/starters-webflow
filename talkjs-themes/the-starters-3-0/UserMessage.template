@@ -323,9 +323,43 @@ override some properties for avatars showing/hiding
     position: absolute;
     width: 1.8rem;
     height: 1.8rem;
-    top: 1rem;
-    /* Increase the clickable area */
-    margin: -0.1rem;
+    /* Centre the button on its bubble at EVERY bubble height. The vertical
+       offset has to be proportional, never a fixed length: `top` resolves
+       against the bubble (`.message` is `position: relative`), so the previous
+       `top: 1rem` held the button a constant distance below the bubble's TOP
+       edge and put its centre a fixed 28.8px down. That is centred at exactly
+       one bubble height, 57.6px, and wrong at every other by an error that
+       grows with the message — up to 90px on the tallest bubble measured.
+
+       Pinning both `top` and `bottom` over-constrains a box that already has a
+       fixed height, and CSS resolves that by sharing the leftover space
+       equally between the two `auto` vertical margins — which centres it. That
+       is against the bubble's PADDING box, so it is exact only while the
+       bubble's top and bottom borders are equal; an asymmetric border would
+       decentre it by half the difference. Today the bubble has no border to
+       speak of: GlobalCSS overrides this file's `border-width: 1px` with
+       `border: none` at higher specificity, so the padding box and the border
+       box coincide and the residual is 0.00px.
+
+       Do NOT "simplify" this to `top: 50%` plus `transform: translateY(-50%)`.
+       That centres identically, but `transform` is a single slot with no
+       cascade composition, and this button demonstrably takes rules from the
+       `default_v7` base theme — its `display: none` at rest comes from there,
+       not from this file — so any base-theme rule that ever sets a transform
+       on it would silently wipe the centring and drop every menu 14.4px, with
+       nothing failing anywhere. Auto margins hold no property the base theme
+       is likely to want.
+
+       The horizontal margin is not decoration either. It does NOT enlarge the
+       hit area — a margin only offsets the box, whatever this comment used to
+       claim — but `left`/`right: -2.25rem` below resolve against the MARGIN
+       box, so dropping it would move the button 1.6px sideways.
+
+       Keep this rule character-identical to the one in the other Chat Theme,
+       so a later edit to one is an obvious omission in the other. */
+    top: 0;
+    bottom: 0;
+    margin: auto -0.1rem;
     z-index: 1;
     font-size: .5rem;
     border-radius: 50%;

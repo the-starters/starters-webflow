@@ -17,7 +17,7 @@ const onDomReady = (callback) => {
 	callback();
 };
 const PROFILE_WORKFLOW = 'starter_profile_edit';
-const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v1';
+const PROFILE_CONTROLLER_VERSION = 'starter-edit-profile-v3';
 const workflowDiagnosticsControllerScript = document.currentScript;
 const WORKFLOW_DIAGNOSTICS_TIMEOUT_MS = 2000;
 let memberAuthGeneration = 0;
@@ -215,34 +215,152 @@ function stepElement(stepIndex) {
 	return qs(`[data-form="step"][data-index="${stepIndex}"]`);
 }
 
-function isStepValid(stepIndex) {
-	const step = stepElement(stepIndex);
-	if (!step) return false;
+const STEP_VALIDATION_CONTRACT = Object.freeze({
+	1: [
+		{ selector: '[name="first-name"]', kind: 'native' },
+		{ selector: '[name="last-name"]', kind: 'native' },
+		{ selector: '[name="email"]', kind: 'native' },
+		{ selector: '[name="phone"]', kind: 'native' },
+		{ selector: '[name="country"]', kind: 'nativeConditional' },
+		{ selector: '[name="state"]', kind: 'nativeConditional' },
+		{ selector: '[name="city"]', kind: 'nativeConditional' },
+		{ selector: '#profile-photo-url', kind: 'mirror', focusSelector: '[data-profile-photo-input], input[type="file"]' },
+		{ selector: '#function-required', kind: 'mirror', focusSelector: '[name="function-option"], [fs-list-instance="function"] input' },
+		{ selector: '#roles-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="role-option"], [fs-list-instance="roles"] input' },
+		{ selector: '#subcategories-required', kind: 'mirror', profileTypes: ['consult'], focusSelector: '[name="subcategories-option"], [fs-list-instance="subcategories"] input' },
+	],
+	2: [
+		{ selector: '#tagline', kind: 'native' },
+		{ selector: '#pro-headline', kind: 'native' },
+		{ selector: '#bio-html', kind: 'mirror', focusSelector: '.ql-editor, [contenteditable="true"]' },
+	],
+	5: [
+		{ selector: '#skills-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="skill-option"], [fs-list-instance="skills"] input' },
+		{ selector: '#tools-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="tool-option"], [fs-list-instance="tools"] input' },
+	],
+	6: [
+		{ selector: '[name="rate"]', kind: 'nativeConditional' },
+		{ selector: '[data-input-capture][required]', kind: 'nativeGroup' },
+		{ selector: '#availability-required', kind: 'mirror', profileTypes: ['full'], focusSelector: '[name="availability-option"], [fs-list-instance="availability"] input' },
+	],
+	7: [
+		{
+			selector: '[name="reviewer"]',
+			optionalSelectors: ['[name="reviewer-2"]', '[name="reviewer-3"]'],
+			kind: 'reviewerTuple',
+			focusSelector: '[name^="reviewer-fname"], [id^="reviewer-fname"]',
+		},
+	],
+});
 
-	return qsa('input, select, textarea', step).every((field) => {
-		if (field.disabled || !field.required) return true;
-		return typeof field.checkValidity !== 'function' || field.checkValidity();
-	});
+function ruleApplies(rule) {
+	if (!rule.profileTypes?.length) return true;
+	return rule.profileTypes.includes(window.activeProfile?.type || '');
 }
 
-function validateStepSubmit(stepIndex, quiet = true) {
-	const step = stepElement(stepIndex);
-	if (!step) return false;
-	const valid = isStepValid(stepIndex);
-	if (!valid && !quiet) {
-		const invalid = qsa('input, select, textarea', step).find((field) =>
-			typeof field.checkValidity === 'function' && !field.checkValidity()
-		);
-		invalid?.reportValidity?.();
+function nonEmptyValue(field) {
+	if (Array.isArray(field?.value)) return field.value.length > 0;
+	return String(field?.value ?? '').trim() !== '';
+}
+
+function validationFailure(code, rule, element = null) {
+	return { code, rule, element };
+}
+
+function validateReviewerTuple(rule, step) {
+	const failures = [];
+	for (const selector of [rule.selector, ...(rule.optionalSelectors || [])]) {
+		const field = qs(selector, step);
+		if (!field) {
+			if (selector === rule.selector) {
+				failures.push(validationFailure('MARKUP_CONTRACT_MISSING', { ...rule, selector }));
+			}
+			continue;
+		}
+
+		const rawValue = String(field.value ?? '').trim();
+		if (!rawValue) continue;
+
+		let reviewer = null;
+		try {
+			reviewer = JSON.parse(rawValue);
+		} catch (_) {
+			failures.push(validationFailure('REVIEWER_TUPLE_INVALID', { ...rule, selector }, field));
+			continue;
+		}
+
+		const started = reviewer && typeof reviewer === 'object' && Object.values(reviewer).some((value) => String(value ?? '').trim());
+		if (started && (!String(reviewer.fname ?? '').trim() || !String(reviewer.email ?? '').trim())) {
+			failures.push(validationFailure('REVIEWER_TUPLE_INCOMPLETE', { ...rule, selector }, field));
+		}
 	}
-	return valid;
+	return failures;
 }
 
-function checkAllStepsValidity(stepIndex) {
-	const indexes = stepIndex
-		? [stepIndex]
-		: qsa('[data-form="step"][data-index]').map((step) => Number(step.dataset.index));
-	indexes.forEach((index) => validateStepSubmit(index));
+function validateOwnedStep(stepIndex, { report = false } = {}) {
+	const step = stepElement(stepIndex);
+	if (!step) {
+		return {
+			valid: false,
+			failures: [validationFailure('MARKUP_CONTRACT_MISSING', { selector: `[data-form="step"][data-index="${stepIndex}"]` })],
+		};
+	}
+
+	const rules = STEP_VALIDATION_CONTRACT[stepIndex];
+	if (!rules) {
+		return { valid: false, failures: [validationFailure('UNOWNED_STEP', { selector: '' })] };
+	}
+	if (!['full', 'consult'].includes(window.activeProfile?.type || '')) {
+		return { valid: false, failures: [validationFailure('PROFILE_NOT_READY', { selector: '' })] };
+	}
+
+	const failures = [];
+	rules.filter(ruleApplies).forEach((rule) => {
+		if (rule.kind === 'reviewerTuple') {
+			failures.push(...validateReviewerTuple(rule, step));
+			return;
+		}
+
+		if (rule.kind === 'nativeGroup') {
+			qsa(rule.selector, step).forEach((field) => {
+				if (!field.disabled && typeof field.checkValidity === 'function' && !field.checkValidity()) {
+					failures.push(validationFailure('NATIVE_VALIDATION', rule, field));
+				}
+			});
+			return;
+		}
+
+		const field = qs(rule.selector, step);
+		if (!field) {
+			failures.push(validationFailure('MARKUP_CONTRACT_MISSING', rule));
+			return;
+		}
+
+		if (rule.kind === 'mirror') {
+			if (!nonEmptyValue(field)) failures.push(validationFailure('MIRROR_VALUE_MISSING', rule, field));
+			return;
+		}
+
+		if (field.disabled) return;
+		if (rule.kind === 'native' && !field.required) {
+			failures.push(validationFailure('MARKUP_CONTRACT_INVALID', rule, field));
+			return;
+		}
+		if (rule.kind === 'nativeConditional' && !field.required) return;
+		if (typeof field.checkValidity === 'function' && !field.checkValidity()) {
+			failures.push(validationFailure('NATIVE_VALIDATION', rule, field));
+		}
+	});
+
+	if (report && failures.length) {
+		const failure = failures[0];
+		const visibleControl = failure.rule.focusSelector ? qs(failure.rule.focusSelector, step) : null;
+		const reportTarget = visibleControl || failure.element;
+		if (failure.code === 'NATIVE_VALIDATION') reportTarget?.reportValidity?.();
+		else reportTarget?.focus?.();
+	}
+
+	return { valid: failures.length === 0, failures };
 }
 
 function handleCustomSelects() {
@@ -272,7 +390,6 @@ onDomReady(function () {
 		});
 
 		/* inputs */
-		const emailInput = qs('#email');
 		const phoneInput = qs('#phone');
 
 		/* Phone Mask */
@@ -289,32 +406,6 @@ onDomReady(function () {
 					import("https://cdn.jsdelivr.net/npm/intl-tel-input@29.1.1/dist/js/utils.js"),
 			});
 		});
-
-		// === Event listeners ===
-		emailInput.addEventListener('input', () => checkAllStepsValidity(1));
-		emailInput.addEventListener('blur', () => checkAllStepsValidity(1));
-		emailInput.addEventListener('animationstart', (e) => {
-			if (e.animationName === 'onAutoFillStart') checkAllStepsValidity(1);
-		});
-
-		form.addEventListener('input', () => {
-			checkAllStepsValidity();
-		});
-
-		form.addEventListener('change', () => {
-			checkAllStepsValidity();
-		});
-
-		// Polling fallback for autofill
-		let pollCount = 0;
-		const autofillPoller = setInterval(() => {
-			if (emailInput.value.trim() !== '') {
-				checkAllStepsValidity(1);
-				clearInterval(autofillPoller);
-			}
-
-			if (++pollCount >= 20) clearInterval(autofillPoller);
-		}, 100);
 
 		/* METHODS */
 		function applyProfileTypeVisibility(type) {
@@ -407,6 +498,10 @@ onDomReady(function () {
 				Retainer_Rate: 'rate-retainer',
 				Services: 'service',
 			},
+
+			7: {
+				Reviewers: 'reviewer',
+			},
 		};
 
 		initStepSubmits();
@@ -426,13 +521,13 @@ onDomReady(function () {
 				submitButton.addEventListener('click', async (event) => {
 					event.preventDefault();
 
-					if (!isStepValid(stepIndex)) {
-						validateStepSubmit(stepIndex, false);
+					const validation = validateOwnedStep(stepIndex, { report: true });
+					if (!validation.valid) {
 						await workflowDiagnosticsReady;
 						recordProfileDiagnostic(null, {
 							result: 'failed',
 							stage: 'validation',
-							error_code: 'NATIVE_VALIDATION',
+							error_code: validation.failures[0]?.code || 'VALIDATION_FAILED',
 							request_started: false,
 						});
 						return;
@@ -480,7 +575,7 @@ onDomReady(function () {
 				try {
 					return JSON.parse(value);
 				} catch (error) {
-					console.warn('[starter-edit-profile] ignored an invalid service JSON field');
+					console.warn('[starter-edit-profile] ignored an invalid structured form field');
 					return null;
 				}
 			};
@@ -507,6 +602,30 @@ onDomReady(function () {
 					"service-2": requiredServicesFields(service2?.name, service2?.price) ? service2 : null,
 					"service-3": requiredServicesFields(service3?.name, service3?.price) ? service3 : null,
 				});
+			}
+
+			// Reviewers. The native increment-dropdown component stores each slot as
+			// JSON in reviewer, reviewer-2, and reviewer-3 hidden fields. Keep the
+			// same canonical shape as the Build Profile writer.
+			if (Object.prototype.hasOwnProperty.call(payload, 'Reviewers')) {
+				const formData = getFormDataObject();
+				const normalizeReviewer = (reviewer) => {
+					if (!reviewer?.fname || !reviewer?.email) return null;
+
+					return {
+						'first-name': reviewer.fname || '',
+						'last-name': reviewer.lname || '',
+						position: reviewer.job || '',
+						company: reviewer.company || '',
+						email: reviewer.email || '',
+					};
+				};
+
+				payload.Reviewers = {
+					'reviewer-1': normalizeReviewer(parseJson(formData.reviewer)),
+					'reviewer-2': normalizeReviewer(parseJson(formData['reviewer-2'])),
+					'reviewer-3': normalizeReviewer(parseJson(formData['reviewer-3'])),
+				};
 			}
 
 			// Phone

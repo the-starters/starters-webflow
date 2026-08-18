@@ -359,12 +359,10 @@ Test paid Brand to `/brand-dashboard`, an active Talent member to
 redirects but not for the Talent one, which has no quiz to retake; unknown and
 inactive plans are unaffected. On entry, `quiz-main.js` combines the logged-in
 member's saved quiz answers with any homepage-bucket selections.
-Logged-out handling on `/quiz-results` stays entirely with `quiz-results.js`:
-when no test, pending, or saved quiz data exists, it redirects to
-`/quiz` only after Memberstack positively reports that the visitor is logged
-out. It stays put if Memberstack is unavailable or errors, and pending
-pre-signup quizzes and test-mode previews never reach this branch. `/all-starters`
-is excluded from `PAGE_ROLES` permanently (decision 2026-08-03): its content
+Logged-out and missing-data handling on `/quiz-results` stays entirely with
+`quiz-results.js`; the authoritative redirect and query-preservation contract
+is in the [access matrix](ACCESS-MATRIX.md#route-level-access). `/all-starters` is
+excluded from `PAGE_ROLES` permanently (decision 2026-08-03): its content
 gating is Memberstack `data-ms-content` on the page plus list/render-level
 limiting for free Brands, and the Talent role bounce is the only route-level rule
 it gets.
@@ -429,6 +427,28 @@ role only before starting role-specific rendering or requests.
 out for good and is content-gated on the page instead; both quiz pages keep their
 page-controller redirects, and `/quiz-results` and `/all-starters` additionally
 get the role bounce, which is why the sitewide install matters on them.
+
+## Brand Action Items completion marker
+
+After the role bounce allows a paid or free Brand to stay on `/all-starters` or
+`/all-starters/`, the guard records the visit in Memberstack JSON at
+`brandActionItems.allStartersVisitedAt` with an ISO timestamp. It first reads the
+current JSON, preserves every top-level key, shallow-copies every existing
+`brandActionItems` key, and then updates only the visit timestamp. A repeat visit
+refreshes that timestamp.
+
+This is the guard's only Memberstack write. It requires a mapped Brand role, a
+member ID, and both `getMemberJSON` and `updateMemberJSON`; other roles and
+unavailable APIs return without writing. Read or write failures fail quietly and
+do not change the page's routing decision. The marker is Action Items UX state,
+not an access or authorization boundary.
+
+The guard exports `hasBrandAllStartersVisit(memberstack, member)` for
+`dashboard-action-items.js`. That reader uses the same paid/free Brand boundary
+and returns `false` for missing data, unavailable APIs, other roles, or read
+failures. The Action Items behavior and Designer row selector remain owned by
+the [Dashboard Action Items panel](README.md#dashboard-action-items-panel)
+documentation.
 
 ## Integration checklist
 

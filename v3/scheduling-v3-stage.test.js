@@ -19,6 +19,60 @@ function response(data, status = 200) {
   })
 }
 
+function scriptElementModel(html) {
+  const elements = []
+  let cursor = 0
+  while (cursor < html.length) {
+    const start = html.indexOf('<script', cursor)
+    if (start === -1) break
+    let end = start + 7
+    let quote = null
+    while (end < html.length) {
+      const character = html[end]
+      if (quote) {
+        if (character === quote) quote = null
+      } else if (character === '"' || character === "'") {
+        quote = character
+      } else if (character === '>') {
+        break
+      }
+      end += 1
+    }
+    const attributes = new Map()
+    let index = start + 7
+    while (index < end) {
+      while (index < end && /\s/.test(html[index])) index += 1
+      const nameStart = index
+      while (index < end && !/[\s=>]/.test(html[index])) index += 1
+      if (nameStart === index) break
+      const name = html.slice(nameStart, index).toLowerCase()
+      while (index < end && /\s/.test(html[index])) index += 1
+      let value = ''
+      if (html[index] === '=') {
+        index += 1
+        while (index < end && /\s/.test(html[index])) index += 1
+        const delimiter = html[index] === '"' || html[index] === "'" ? html[index++] : null
+        const valueStart = index
+        if (delimiter) {
+          while (index < end && html[index] !== delimiter) index += 1
+          value = html.slice(valueStart, index)
+          if (html[index] === delimiter) index += 1
+        } else {
+          while (index < end && !/\s/.test(html[index])) index += 1
+          value = html.slice(valueStart, index)
+        }
+      }
+      attributes.set(name, value)
+    }
+    elements.push({
+      src: attributes.get('src') || '',
+      defer: attributes.has('defer'),
+    })
+    cursor = end + 1
+  }
+  return elements
+}
+
 function loadStage(options = {}) {
   const nativeRequests = []
   const authenticatedRequests = []
@@ -119,7 +173,7 @@ test('detaches the Nylas element only after the authored success step is ready',
   }
   const { attributes, documentListeners } = loadStage({
     hostname: 'thestarters.com',
-    pathname: '/hire/jp-test',
+    pathname: '/hire/jp-testiz-d',
   })
 
   documentListeners.get('bookedEventInfo')({
@@ -145,7 +199,7 @@ test('keeps the Nylas element mounted when booking fails or success is not shown
   }
   const { documentListeners } = loadStage({
     hostname: 'thestarters.com',
-    pathname: '/hire/jp-test',
+    pathname: '/hire/jp-testiz-d',
   })
   const listener = documentListeners.get('bookedEventInfo')
 
@@ -311,25 +365,51 @@ test('restarts retrying for a scheduler added after the first loop completed', (
   assert.equal(intervals[0].cleared, true)
 })
 
-test('component loader installs auth and routing synchronously before cloned logic', () => {
-  const tags = [...componentSource.matchAll(/<script\b[^>]*src="([^"]+)"[^>]*><\/script>/g)]
+test('component manifest installs auth and routing before deferred controllers', () => {
+  const scripts = scriptElementModel(componentSource)
   assert.deepEqual(
-    tags.map((match) => match[1].split('/').at(-1)),
+    scripts.map((script) => ({
+      file: new URL(script.src).pathname.split('/').at(-1),
+      defer: script.defer,
+    })),
     [
-      'scheduling-auth.js',
-      'scheduling-v3-stage.js',
-      'dashboard-calls.js',
-      'scheduling-availability-init.js',
-      'scheduling-availability-writer.js',
-      'scheduling-availability-section.js',
+      { file: 'scheduling-auth.js', defer: false },
+      { file: 'scheduling-v3-stage.js', defer: false },
+      { file: 'dashboard-calls.js', defer: true },
+      { file: 'scheduling-availability-init.js', defer: true },
+      { file: 'scheduling-availability-writer.js', defer: true },
+      { file: 'scheduling-availability-section.js', defer: true },
+      { file: 'paid-call-settings.js', defer: true },
     ],
   )
-  assert.doesNotMatch(tags[0][0], /\bdefer\b/)
-  assert.doesNotMatch(tags[1][0], /\bdefer\b/)
-  assert.match(tags[2][0], /\bdefer\b/)
-  assert.match(tags[3][0], /\bdefer\b/)
-  assert.match(tags[4][0], /\bdefer\b/)
-  assert.match(tags[5][0], /\bdefer\b/)
+})
+
+test('maps paid-call settings routes only to their exact authenticated V3 endpoints', async () => {
+  const { authenticatedRequests, nativeRequests, window } = loadStage({
+    pathname: '/starter-dashboard',
+  })
+  const routes = [
+    'starter/paid-call-settings/get',
+    'starter/paid-call-settings/upsert',
+    'starter/paid-call-settings/disable',
+  ]
+
+  for (const route of routes) {
+    const result = await window.fetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+    assert.equal(result.status, 200)
+  }
+  const lookalike = await window.fetch(`${API_BASE}${routes[0]}-debug`)
+
+  assert.deepEqual(
+    authenticatedRequests.map((request) => new URL(request.url).pathname),
+    routes.map((route) => `/api:tCpV3oqd/${route}/v3`),
+  )
+  assert.equal(lookalike.status, 410)
+  assert.equal((await lookalike.json()).code, 'SCHEDULING_V3_ROUTE_BLOCKED')
+  assert.equal(nativeRequests.length, 0)
 })
 
 test('does not install on the live profile component or unrelated production paths', () => {
@@ -345,10 +425,11 @@ test('does not install on the live profile component or unrelated production pat
   assert.equal(production.window.fetch, production.nativeFetch)
 })
 
-test('installs only on the approved Hire canary and canonical dashboards across both production hosts', async () => {
+test('installs on valid Hire profiles and canonical dashboards across both production hosts', async () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
-      '/hire/jp-test',
+      '/hire/jp-testiz-d',
+      '/hire/sabina-rahaman',
       '/starter-dashboard',
       '/brand-dashboard',
     ]) {
@@ -357,9 +438,11 @@ test('installs only on the approved Hire canary and canonical dashboards across 
       assert.equal(approved.attributes['data-scheduling-v3-stage'], 'ready')
     }
 
-    const otherProfile = loadStage({ hostname, pathname: '/hire/sabina-rahaman' })
-    assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
-    assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+    for (const pathname of ['/hire', '/hire/two/levels', '/hire/Bad_Slug']) {
+      const otherProfile = loadStage({ hostname, pathname })
+      assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
+      assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+    }
 
     const protectedProfile = loadStage({ hostname, pathname: '/hire/jp-dionisio' })
     assert.equal(protectedProfile.window.__tsSchedulingV3InertRoute, true)
@@ -423,7 +506,7 @@ test('keeps the protected production Test profile inert with both synchronous sc
 test('adds stable booking identity on the exact production Live JP Hire route', () => {
   const { window } = loadStage({
     hostname: 'www.thestarters.com',
-    pathname: '/hire/jp-test',
+    pathname: '/hire/jp-testiz-d',
     brandMemberstackId: 'live-brand-member',
     starterMemberstackId: 'live-starter-member',
   })
@@ -451,14 +534,14 @@ test('keeps the isolated Hire stage separate from the live CMS profile path', ()
   assert.equal(liveTemplate.window.fetch, liveTemplate.nativeFetch)
 })
 
-test('installs on only the approved Test Talent Hire profile path', () => {
+test('installs on valid TEST Hire profile paths', () => {
   const testProfile = loadStage({ pathname: '/hire/jp-dionisio' })
   assert.equal(testProfile.window.__tsSchedulingV3Stage, true)
   assert.equal(testProfile.attributes['data-scheduling-v3-stage'], 'ready')
 
   const otherProfile = loadStage({ pathname: '/hire/sabina-rahaman' })
-  assert.equal(otherProfile.window.__tsSchedulingV3Stage, undefined)
-  assert.equal(otherProfile.window.fetch, otherProfile.nativeFetch)
+  assert.equal(otherProfile.window.__tsSchedulingV3Stage, true)
+  assert.equal(otherProfile.attributes['data-scheduling-v3-stage'], 'ready')
 })
 
 test('uses Brand-safe discovery reads only on the approved real Hire canary', async () => {
@@ -470,7 +553,15 @@ test('uses Brand-safe discovery reads only on the approved real Hire canary', as
     'starter/get_booking_profile/v3',
   )
   assert.equal(
+    hire.window.StarterSchedulingV3Stage.routeMap['starter/get_by_memberstack/v3'],
+    'starter/get_booking_profile/v3',
+  )
+  assert.equal(
     hire.window.StarterSchedulingV3Stage.routeMap['nylas_configurations/get_all'],
+    'nylas_configurations/get_bookable/v3',
+  )
+  assert.equal(
+    hire.window.StarterSchedulingV3Stage.routeMap['nylas_configurations/get_all/v3'],
     'nylas_configurations/get_bookable/v3',
   )
   assert.equal(
@@ -490,6 +581,37 @@ test('uses Brand-safe discovery reads only on the approved real Hire canary', as
     method: 'POST',
     body: JSON.stringify({ grant_id: 'test-grant' }),
   })
+  await hire.window.fetch(`${API_BASE}starter/get_by_memberstack/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ member_id: 'test-talent' }),
+  })
+  await hire.window.fetch(`${API_BASE}nylas_configurations/get_all/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ grant_id: 'test-grant' }),
+  })
+
+  assert.deepEqual(
+    hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
+    [
+      '/api:tCpV3oqd/starter/get_booking_profile/v3',
+      '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
+      '/api:tCpV3oqd/starter/get_booking_profile/v3',
+      '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
+    ],
+  )
+})
+
+test('remaps the versioned Hire helpers that call xanoAuthFetch directly', async () => {
+  const hire = loadStage({ pathname: '/hire/jp-dionisio' })
+
+  await hire.window.xanoAuthFetch(`${API_BASE}starter/get_by_memberstack/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ member_id: 'test-talent' }),
+  })
+  await hire.window.xanoAuthFetch(`${API_BASE}nylas_configurations/get_all/v3`, {
+    method: 'POST',
+    body: JSON.stringify({ grant_id: 'test-grant' }),
+  })
 
   assert.deepEqual(
     hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
@@ -497,6 +619,40 @@ test('uses Brand-safe discovery reads only on the approved real Hire canary', as
       '/api:tCpV3oqd/starter/get_booking_profile/v3',
       '/api:tCpV3oqd/nylas_configurations/get_bookable/v3',
     ],
+  )
+})
+
+test('allows reviewed Brand payment routes on dashboards and Hire', async () => {
+  const dashboard = loadStage({ pathname: '/brand-dashboard' })
+  const hire = loadStage({ pathname: '/hire/jp-dionisio' })
+  const paymentRoutes = [
+    'brand/payment-method/setup/v3',
+    'brand/payment-method/set-default/v3',
+  ]
+
+  for (const route of paymentRoutes) {
+    const dashboardResponse = await dashboard.window.xanoAuthFetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+    const hireResponse = await hire.window.xanoAuthFetch(`${API_BASE}${route}`, {
+      method: 'POST',
+      body: '{}',
+    })
+
+    assert.equal(dashboardResponse.status, 200)
+    assert.equal(hireResponse.status, 200)
+  }
+
+  assert.deepEqual(
+    dashboard.authenticatedRequests.map((request) =>
+      new URL(typeof request === 'string' ? request : request.url).pathname
+    ),
+    paymentRoutes.map((route) => `/api:tCpV3oqd/${route}`),
+  )
+  assert.deepEqual(
+    hire.authenticatedRequests.map((request) => new URL(request.url).pathname),
+    paymentRoutes.map((route) => `/api:tCpV3oqd/${route}`),
   )
 })
 
@@ -600,6 +756,77 @@ test('the real auth bridge authorizes every mapped V3 target', async () => {
   assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
 })
 
+test('dashboard routing reclaims the reviewed auth bridge from a competing page bridge', async () => {
+  const requests = []
+  let tradeCount = 0
+  let competingBridgeCount = 0
+  const attributes = {}
+  const window = {
+    location: {
+      hostname: 'the-starters-3-0.webflow.io',
+      pathname: '/starter-dashboard',
+      href: 'https://the-starters-3-0.webflow.io/starter-dashboard',
+    },
+    fetch: async (request) => {
+      const url = typeof request === 'string' ? request : request.url
+      if (url.includes('/auth/trade-token/v3')) {
+        tradeCount += 1
+        return response({ authToken: 'xano-paid-settings' })
+      }
+      requests.push(request)
+      return response({ ready: true })
+    },
+    setTimeout() {},
+    $memberstackDom: {
+      getMemberCookie: async () => 'memberstack-test-starter',
+      onAuthChange() {},
+    },
+  }
+  const context = {
+    console: { info() {}, warn() {} },
+    document: {
+      documentElement: {
+        setAttribute(name, value) {
+          attributes[name] = value
+        },
+      },
+    },
+    Headers,
+    Object,
+    Request,
+    Response,
+    Set,
+    URL,
+    window,
+  }
+
+  vm.runInNewContext(authSource, context)
+  window.xanoAuthFetch = async (input, init) => {
+    competingBridgeCount += 1
+    return window.fetch(input, init)
+  }
+  vm.runInNewContext(source, context)
+
+  const result = await window.xanoAuthFetch(
+    `${API_BASE}starter/paid-call-settings/get/v3`,
+  )
+  const lookalike = await window.xanoAuthFetch(
+    `${API_BASE}starter/paid-call-settings/get/v3-debug`,
+  )
+
+  assert.equal(result.status, 200)
+  assert.equal(tradeCount, 1)
+  assert.equal(competingBridgeCount, 0)
+  assert.equal(requests.length, 1)
+  assert.equal(
+    requests[0].headers.get('Authorization'),
+    'Bearer xano-paid-settings',
+  )
+  assert.equal(lookalike.status, 410)
+  assert.equal((await lookalike.json()).code, 'SCHEDULING_V3_ROUTE_BLOCKED')
+  assert.equal(attributes['data-scheduling-v3-stage'], 'ready')
+})
+
 test('the real auth bridge authorizes the Brand-safe Hire discovery overrides', async () => {
   const requests = []
   const window = {
@@ -667,17 +894,17 @@ test('routes direct reviewed V3 calls through the auth bridge', async () => {
   assert.equal(new URL(authenticatedRequests[0].url).pathname, '/api:tCpV3oqd/booking/cancel/v3')
 })
 
-test('retains only approved legacy Stripe provider calls', async () => {
+test('blocks legacy Stripe provider calls', async () => {
   const { authenticatedRequests, nativeRequests, window } = loadStage()
 
-  await window.fetch(`${API_BASE}stripe/live/payment_intent/get`, {
+  const response = await window.fetch(`${API_BASE}stripe/live/payment_intent/get`, {
     method: 'POST',
     body: '{}',
   })
 
   assert.equal(authenticatedRequests.length, 0)
-  assert.equal(nativeRequests.length, 1)
-  assert.equal(new URL(nativeRequests[0].url).pathname, '/api:tCpV3oqd/stripe/live/payment_intent/get')
+  assert.equal(nativeRequests.length, 0)
+  assert.equal(response.status, 410)
 })
 
 test('fails closed for held, unsafe, and unclassified scheduling routes', async () => {

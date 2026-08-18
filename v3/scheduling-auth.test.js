@@ -10,6 +10,13 @@ const V3_STARTER_URL = `${XANO_ORIGIN}/api:tCpV3oqd/starter/get_by_memberstack/v
 const BRAND_PAYMENT_URLS = [
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/setup/v3`,
   `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-method/set-default/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/payment-readiness/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/brand/booking/request/v3`,
+]
+const PAID_CALL_SETTINGS_URLS = [
+  `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/get/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/upsert/v3`,
+  `${XANO_ORIGIN}/api:tCpV3oqd/starter/paid-call-settings/disable/v3`,
 ]
 
 function response(data, status = 200) {
@@ -87,16 +94,18 @@ test('installs immediately and takes ownership from the opportunities bridge', (
   assert.notEqual(window.fetch, legacyFetch)
 })
 
-test('does not install on unrelated production Hire paths', () => {
-  const nativeFetch = async () => response({})
-  const { window } = loadBridge(nativeFetch, {
-    hostname: 'www.thestarters.com',
-    pathname: '/hire/sabina-rahaman',
-  })
+test('does not install on malformed or nested production Hire paths', () => {
+  for (const pathname of ['/hire', '/hire/', '/hire/two/levels', '/hire/Bad_Slug']) {
+    const nativeFetch = async () => response({})
+    const { window } = loadBridge(nativeFetch, {
+      hostname: 'www.thestarters.com',
+      pathname,
+    })
 
-  assert.equal(window.__tsSchedulingAuthBridge, undefined)
-  assert.equal(window.xanoAuthFetch, undefined)
-  assert.equal(window.fetch, nativeFetch)
+    assert.equal(window.__tsSchedulingAuthBridge, undefined)
+    assert.equal(window.xanoAuthFetch, undefined)
+    assert.equal(window.fetch, nativeFetch)
+  }
 })
 
 test('blocks every scheduling request on the protected production Test profile', async () => {
@@ -124,10 +133,11 @@ test('blocks every scheduling request on the protected production Test profile',
   }
 })
 
-test('installs on the approved Hire canary and canonical dashboards across both production hosts', () => {
+test('installs on valid Hire profiles and canonical dashboards across both production hosts', () => {
   for (const hostname of ['thestarters.com', 'www.thestarters.com']) {
     for (const pathname of [
-      '/hire/jp-test',
+      '/hire/jp-testiz-d',
+      '/hire/sabina-rahaman',
       '/starter-dashboard',
       '/brand-dashboard',
     ]) {
@@ -247,6 +257,43 @@ test('paid-call Brand payment lookalike paths are not authenticated', async () =
     method: 'POST',
     body: '{}',
   })
+
+  assert.equal(tradeCount, 0)
+  assert.equal(receivedRequest.headers.has('Authorization'), false)
+})
+
+test('paid-call settings endpoints receive the shared Bearer token', async () => {
+  const requests = []
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) {
+      return response({ authToken: 'xano-paid-call-settings' })
+    }
+    requests.push(request)
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  for (const url of PAID_CALL_SETTINGS_URLS) {
+    await window.xanoAuthFetch(url, { method: 'POST', body: '{}' })
+  }
+
+  assert.equal(requests.length, PAID_CALL_SETTINGS_URLS.length)
+  for (const request of requests) {
+    assert.equal(request.headers.get('Authorization'), 'Bearer xano-paid-call-settings')
+  }
+})
+
+test('paid-call settings lookalike paths are not authenticated', async () => {
+  let tradeCount = 0
+  let receivedRequest
+  const nativeFetch = async (request) => {
+    if (requestUrl(request).includes('/auth/trade-token/v3')) tradeCount += 1
+    receivedRequest = request
+    return response({})
+  }
+  const { window } = loadBridge(nativeFetch)
+
+  await window.xanoAuthFetch(PAID_CALL_SETTINGS_URLS[0] + '-debug')
 
   assert.equal(tradeCount, 0)
   assert.equal(receivedRequest.headers.has('Authorization'), false)

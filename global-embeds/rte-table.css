@@ -1,0 +1,89 @@
+/* CDN-served. Load in Head:
+ *   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@vX.Y.Z/global-embeds/rte-table.css">
+ *
+ * One attribute on <table> restyles every row and cell to match the
+ * privacy-policy Finsweet table.
+ *
+ * Markup:
+ *   <table data-rte-table>…</table>
+ *
+ * Header row = <thead> (or <th>). A tbody-only table is all data rows —
+ * use that for continuation tables (C–L) that share a header above.
+ *
+ * Also works on a wrapper (Rich Text / figure):
+ *   <div data-rte-table><table>…</table></div>
+ *
+ * Last column is centered (Collected). Override with
+ * --rte-table-last-align: left on a specific table.
+ *
+ * Sampled 2026-08-17 from /legal/privacy-policy (.fs-table_*).
+ */
+:is(table[data-rte-table], [data-rte-table] table) {
+  --rte-table-border: #ddd;
+  --rte-table-cell-border: var(--border--border, #eee);
+  --rte-table-header-bg: #f4f4f4;
+  --rte-table-stripe-bg: #fbfbfb;
+  --rte-table-text: var(--text-colors--primary, #1e211e);
+  --rte-table-radius: 0.25rem;
+  --rte-table-last-align: center;
+
+  width: 100%;
+  margin-top: 2rem;
+  margin-bottom: 2rem;
+  border-collapse: collapse;
+  border: 1px solid var(--rte-table-border);
+  border-radius: var(--rte-table-radius);
+  text-align: left;
+  color: var(--rte-table-text);
+}
+
+:is(table[data-rte-table], [data-rte-table] table) tbody {
+  border-radius: var(--rte-table-radius);
+}
+
+:is(table[data-rte-table], [data-rte-table] table) tr {
+  text-align: left;
+  border: 1px solid var(--rte-table-border);
+}
+
+:is(table[data-rte-table], [data-rte-table] table) :is(th, td) {
+  border: 1px solid var(--rte-table-cell-border);
+  text-align: left;
+  vertical-align: middle;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 400;
+  line-height: 1.7;
+  color: var(--rte-table-text);
+}
+
+:is(table[data-rte-table], [data-rte-table] table) :is(th, td) * {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  border: 0;
+}
+
+:is(table[data-rte-table], [data-rte-table] table) :is(th, td):last-child {
+  text-align: var(--rte-table-last-align);
+}
+
+:is(table[data-rte-table], [data-rte-table] table) thead tr {
+  background-color: var(--rte-table-header-bg);
+  width: 100%;
+}
+
+:is(table[data-rte-table], [data-rte-table] table) :is(thead th, thead td, th) {
+  padding: 1rem 0.75rem;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+:is(table[data-rte-table], [data-rte-table] table) tbody tr:nth-child(even) {
+  background-color: var(--rte-table-stripe-bg);
+}
+
+:is(table[data-rte-table], [data-rte-table] table) :is(th, td) > :is(div, p) {
+  margin: 0;
+}

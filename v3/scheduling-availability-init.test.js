@@ -65,7 +65,11 @@ function nativeModal() {
 function loadInitializer(options = {}) {
   const init = control({ 'init-availability': '' })
   const update = control({ 'update-availability': '' })
-  const connectionAction = control({ 'calendar-connection-action': '' })
+  const connectionAction = control(
+    options.legacyCalendarAction
+      ? { href: '#calendar' }
+      : { 'calendar-connection-action': '' },
+  )
   // Production still uses the documented legacy class fallback for this row.
   const connectionItem = control({ class: 'dash-hero_action-item' })
   connectionItem.hidden = false
@@ -79,6 +83,8 @@ function loadInitializer(options = {}) {
   const attributes = new Map()
   const storage = new Map(Object.entries(options.storage || {}))
   const events = []
+  let connectionActionAvailable = !options.lateConnectionAction
+  let mutationCallback = null
   const document = {
     body: { style: {} },
     readyState: 'complete',
@@ -98,7 +104,7 @@ function loadInitializer(options = {}) {
         selector ===
         '[init-availability], [update-availability], [calendar-connection-action]'
       ) {
-        return options.withoutControls ? null : init
+        return options.withoutControls || options.lateConnectionAction ? null : init
       }
       return null
     },
@@ -106,8 +112,11 @@ function loadInitializer(options = {}) {
       if (selector === '[availability-step]') return steps
       if (selector === '[init-availability]') return options.withoutControls ? [] : [init]
       if (selector === '[update-availability]') return options.withoutControls ? [] : [update]
-      if (selector === '[calendar-connection-action]') {
-        return options.withoutControls ? [] : [connectionAction]
+      if (
+        selector ===
+        '[calendar-connection-action], .dash-hero_action-item a[href="#calendar"]'
+      ) {
+        return options.withoutControls || !connectionActionAvailable ? [] : [connectionAction]
       }
       if (selector === '[init-availability], [update-availability]') {
         return options.withoutControls ? [] : [init, update]
@@ -141,6 +150,13 @@ function loadInitializer(options = {}) {
     xanoAuthFetch: options.xanoAuthFetch,
     $memberstackDom: options.memberstack,
     lumos: options.lumos,
+    MutationObserver: class MutationObserver {
+      constructor(callback) {
+        mutationCallback = callback
+      }
+      observe() {}
+      disconnect() {}
+    },
     addEventListener(name, listener) {
       if (!windowListeners.has(name)) windowListeners.set(name, [])
       windowListeners.get(name).push(listener)
@@ -182,6 +198,10 @@ function loadInitializer(options = {}) {
     update,
     warnings,
     window,
+    insertConnectionAction() {
+      connectionActionAvailable = true
+      if (mutationCallback) mutationCallback([{ type: 'childList' }])
+    },
   }
 }
 
@@ -458,6 +478,173 @@ test('removes the Calendar Action Item once the canonical connection is ready', 
   assert.equal(result.steps[0].style.display, 'block')
 })
 
+test('removes the published legacy Calendar row without the canonical action attribute', async () => {
+  const result = loadInitializer({
+    legacyCalendarAction: true,
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability: {
+          items: { general: { days: [1], start: '09:00', end: '18:00' } },
+          manager: 'platform',
+        },
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'connected',
+      configurationCount: 1,
+      manager: 'platform',
+    },
+  })
+
+  assert.equal(result.connectionAction.getAttribute('calendar-connection-action'), null)
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+})
+
+test('removes a late Webflow Calendar row after the connected event already fired', async () => {
+  const result = loadInitializer({ lateConnectionAction: true })
+  await settle()
+
+  assert.equal(result.attributes.get('data-scheduling-availability-init'), 'not-applicable')
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'connected',
+      configurationCount: 1,
+      manager: 'platform',
+    },
+  })
+
+  result.insertConnectionAction()
+
+  assert.equal(result.connectionAction.getAttribute('data-calendar-connection-state'), 'connected')
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+})
+
+test('removes the Calendar Action Item when Nylas availability exists without a Google connection', async () => {
+  const availability = {
+    items: { general: { days: [1], start: '09:00', end: '18:00' } },
+    manager: 'platform',
+  }
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability,
+        nylas_grant_id: '',
+        nylas_calendar_id: '',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'reconnect',
+      hasGrant: false,
+      hasCalendar: false,
+      configurationCount: 1,
+      manager: 'platform',
+    },
+  })
+
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+})
+
+test('keeps the Calendar Action Item until Nylas availability exists', async () => {
+  const availability = {
+    items: { general: { days: [1], start: '09:00', end: '18:00' } },
+    manager: 'calendar',
+  }
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability,
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: {
+      state: 'connected',
+      hasGrant: true,
+      hasCalendar: true,
+      configurationCount: 0,
+      manager: 'calendar',
+    },
+  })
+
+  assert.equal(result.connectionAction.style.display, 'flex')
+  assert.equal(result.connectionItem.hidden, false)
+  assert.equal(result.connectionItem.style.display, '')
+})
+
+test('writer reinitialization cannot replace the canonical Nylas count while loading', async () => {
+  const result = loadInitializer({
+    xanoAuthFetch: async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        availability: { items: {}, manager: 'calendar' },
+        nylas_grant_id: 'grant-existing',
+        nylas_calendar_id: 'calendar-existing',
+      }),
+    }),
+  })
+  await settle()
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'connected', configurationCount: 1 },
+  })
+  assert.equal(result.connectionItem.hidden, true)
+
+  result.window.dispatchEvent({
+    type: 'starterSchedulingConnectionStateChanged',
+    detail: { state: 'loading', configurationCount: 0 },
+  })
+
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+  assert.equal(
+    result.window.STARTER_SCHEDULING_CONNECTION.configurationCount,
+    1,
+  )
+
+  await result.window.StarterSchedulingAvailability.initialize()
+
+  assert.equal(result.connectionAction.style.display, 'none')
+  assert.equal(result.connectionItem.hidden, true)
+  assert.equal(result.connectionItem.style.display, 'none')
+  assert.equal(
+    result.window.STARTER_SCHEDULING_CONNECTION.configurationCount,
+    1,
+  )
+})
+
 test('renders partial provider state as reconnect and keeps the CTA actionable', async () => {
   const availability = {
     items: { general: { days: [1], start: '09:00', end: '18:00' } },
@@ -504,13 +691,13 @@ test('restores the Calendar Action Item when a connected provider needs reconnec
 
   result.window.dispatchEvent({
     type: 'starterSchedulingConnectionStateChanged',
-    detail: { state: 'connected' },
+    detail: { state: 'connected', configurationCount: 1 },
   })
   assert.equal(result.connectionItem.hidden, true)
 
   result.window.dispatchEvent({
     type: 'starterSchedulingConnectionStateChanged',
-    detail: { state: 'reconnect' },
+    detail: { state: 'reconnect', configurationCount: 0 },
   })
   assert.equal(result.connectionAction.style.display, 'flex')
   assert.equal(result.connectionItem.hidden, false)

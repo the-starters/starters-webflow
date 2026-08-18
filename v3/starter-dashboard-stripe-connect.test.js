@@ -135,227 +135,107 @@ test('rendering selects authored state without changing its copy', () => {
   assert.equal(root.getAttribute('data-stripe-connect-view'), 'review')
 })
 
-test('connected state gets idempotent Open Stripe and disconnect controls', () => {
-  class FakeControl extends FakeElement {
-    constructor(label = 'Connect Stripe') {
-      super()
-      this.label = new FakeElement()
-      this.label.textContent = label
-      this.link = new FakeElement('A')
-      this.link.setAttribute('href', '#Stripe')
-      this.link.setAttribute('target', '_blank')
-    }
+test('connected Stripe states remove the Action Item root', () => {
+  for (const view of ['incomplete', 'ready', 'review']) {
+    const { root } = stripeRoot()
 
-    cloneNode() {
-      return new FakeControl(this.label.textContent)
-    }
+    api.renderRoots([root], view)
 
-    querySelector(value) {
-      if (value === '.button_main-text') return this.label
-      return null
-    }
-
-    querySelectorAll(value) {
-      return value === 'a, button, [role="button"]' ? [this.link] : []
-    }
+    assert.equal(root.hidden, true, view)
+    assert.equal(root.style.display, 'none', view)
   }
 
-  const { root, states } = stripeRoot()
-  const controls = []
-  const wrapper = {
-    appendChild(control) {
-      controls.push(control)
-    },
+  for (const view of ['loading', 'disconnected', 'error']) {
+    const { root } = stripeRoot()
+
+    api.renderRoots([root], view)
+
+    assert.equal(root.hidden, false, view)
+    assert.equal(root.style.display, '', view)
   }
-  const source = new FakeControl()
-  states.disconnected.querySelector = (value) =>
-    value === '.action-item_button-wrapper > *' ? source : null
-  states.ready.querySelector = (value) => {
-    if (value === '.action-item_button-wrapper') return wrapper
-    const action = value.match(/data-stripe-connect-action="([^"]+)"/)
-    return action
-      ? controls.find(
-          (control) =>
-            control.getAttribute('data-stripe-connect-action') === action[1],
-        ) || null
-      : null
-  }
-
-  const created = api.ensureConnectedControls(root)
-
-  assert.equal(created.length, 2)
-  assert.equal(controls.length, 2)
-  assert.equal(
-    controls[0].getAttribute('data-stripe-connect-action'),
-    'dashboard',
-  )
-  assert.equal(controls[0].label.textContent, 'Open Stripe')
-  assert.equal(controls[0].link.getAttribute('aria-label'), 'Open Stripe')
-  assert.equal(controls[0].link.getAttribute('href'), '#')
-  assert.equal(controls[0].link.getAttribute('target'), null)
-  assert.equal(
-    controls[1].getAttribute('data-stripe-connect-action'),
-    'disconnect',
-  )
-  assert.equal(controls[1].label.textContent, 'Disconnect Stripe')
-  assert.equal(
-    controls[1].link.getAttribute('aria-label'),
-    'Disconnect Stripe',
-  )
-
-  assert.deepEqual(api.ensureConnectedControls(root), [])
-  assert.equal(controls.length, 2)
 })
 
-test('connected state reuses the authored ready control without leaving Connect Stripe visible', () => {
-  class FakeControl extends FakeElement {
-    constructor(label = 'Connect Stripe') {
-      super()
-      this.label = new FakeElement()
-      this.label.textContent = label
-      this.link = new FakeElement('A')
-      this.link.setAttribute('href', '#Stripe')
-      this.link.setAttribute('target', '_blank')
-    }
-
-    cloneNode() {
-      return new FakeControl(this.label.textContent)
-    }
-
-    querySelector(value) {
-      if (value === '.button_main-text') return this.label
-      return null
-    }
-
-    querySelectorAll(value) {
-      return value === 'a, button, [role="button"]' ? [this.link] : []
-    }
+test('status refresh keeps a canonically connected Action Item hidden while polling', async () => {
+  const previous = {
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
   }
+  const { root } = stripeRoot()
+  let resolveStatus
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.fetch = () =>
+    new Promise((resolve) => {
+      resolveStatus = resolve
+    })
+  api.__resetXanoToken()
+  api.renderRoots([root], 'ready')
 
-  const { root, states } = stripeRoot()
-  const authoredReadyControl = new FakeControl()
-  const controls = [authoredReadyControl]
-  const wrapper = {
-    appendChild(control) {
-      controls.push(control)
-    },
+  try {
+    const refresh = api.loadDashboardStatus([root], false)
+    await new Promise(setImmediate)
+
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'loading')
+    assert.equal(root.hidden, true)
+    assert.equal(root.style.display, 'none')
+
+    resolveStatus(response({ connected: true, charges_enabled: true }))
+    await refresh
+    assert.equal(root.hidden, true)
+  } finally {
+    api.__resetXanoToken()
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
   }
-  states.ready.querySelector = (value) => {
-    if (value === '.action-item_button-wrapper') return wrapper
-    if (value === '.action-item_button-wrapper > *') {
-      return authoredReadyControl
-    }
-    const action = value.match(/data-stripe-connect-action="([^"]+)"/)
-    return action
-      ? controls.find(
-          (control) =>
-            control.getAttribute('data-stripe-connect-action') === action[1],
-        ) || null
-      : null
-  }
-
-  const created = api.ensureConnectedControls(root)
-
-  assert.equal(created.length, 2)
-  assert.equal(controls.length, 2)
-  assert.equal(controls[0], authoredReadyControl)
-  assert.equal(
-    controls[0].getAttribute('data-stripe-connect-action'),
-    'dashboard',
-  )
-  assert.equal(controls[0].label.textContent, 'Open Stripe')
-  assert.equal(
-    controls[1].getAttribute('data-stripe-connect-action'),
-    'disconnect',
-  )
-  assert.equal(controls[1].label.textContent, 'Disconnect Stripe')
-  assert.equal(
-    controls.some((control) => control.label.textContent === 'Connect Stripe'),
-    false,
-  )
-
-  assert.deepEqual(api.ensureConnectedControls(root), [])
-  assert.equal(controls.length, 2)
 })
 
-test('incomplete and review states each receive a working disconnect control', () => {
-  class FakeControl extends FakeElement {
-    constructor(label = 'Complete Setup') {
-      super()
-      this.label = new FakeElement()
-      this.label.textContent = label
-      this.link = new FakeElement('A')
-    }
-
-    cloneNode() {
-      return new FakeControl(this.label.textContent)
-    }
-
-    querySelector(value) {
-      if (value === '.button_main-text') return this.label
-      return null
-    }
-
-    querySelectorAll(value) {
-      return value === 'a, button, [role="button"]' ? [this.link] : []
-    }
+test('Dashboard access failure keeps a canonically connected Action Item hidden', async () => {
+  const previous = {
+    console: global.console,
+    fetch: global.fetch,
+    getXanoAuthToken: global.getXanoAuthToken,
+    memberstack: global.$memberstackDom,
+    open: global.open,
   }
-
-  const { root, states } = stripeRoot()
-  const readyControls = []
-  const stateControls = { incomplete: [], review: [] }
-  const disconnectedSource = new FakeControl('Connect Stripe')
-  states.disconnected.querySelector = (value) =>
-    value === '.action-item_button-wrapper > *' ? disconnectedSource : null
-  states.ready.querySelector = (value) => {
-    if (value === '.action-item_button-wrapper') {
-      return { appendChild: (control) => readyControls.push(control) }
-    }
-    const action = value.match(/data-stripe-connect-action="([^"]+)"/)
-    return action
-      ? readyControls.find(
-          (control) =>
-            control.getAttribute('data-stripe-connect-action') === action[1],
-        ) || null
-      : null
+  const { root } = stripeRoot()
+  const stripeTab = {
+    closed: false,
+    close() {
+      this.closed = true
+    },
+    location: { replace() {} },
+    opener: global,
   }
+  global.console = { ...console, error: () => {} }
+  global.getXanoAuthToken = async () => 'shared-xano-token'
+  global.$memberstackDom = {
+    getCurrentMember: async () => ({ data: { id: 'member-123' } }),
+  }
+  global.open = () => stripeTab
+  global.fetch = async () => response({}, { ok: false, status: 503 })
+  api.__resetXanoToken()
+  api.renderRoots([root], 'ready')
 
-  const setupStateNames = ['incomplete', 'review']
-  setupStateNames.forEach((stateName) => {
-    const authored = new FakeControl()
-    const controls = stateControls[stateName]
-    states[stateName].querySelector = (value) => {
-      if (value === '.action-item_button-wrapper') {
-        return { appendChild: (control) => controls.push(control) }
-      }
-      if (value === '.action-item_button-wrapper > *') return authored
-      const action = value.match(/data-stripe-connect-action="([^"]+)"/)
-      return action
-        ? controls.find(
-            (control) =>
-              control.getAttribute('data-stripe-connect-action') === action[1],
-          ) || null
-        : null
-    }
-  })
-
-  api.ensureConnectedControls(root)
-
-  for (const stateName of ['incomplete', 'review']) {
-    assert.equal(stateControls[stateName].length, 1)
+  try {
     assert.equal(
-      stateControls[stateName][0].getAttribute('data-stripe-connect-action'),
-      'disconnect',
+      await api.openDashboardInNewTab(
+        api.createExclusiveRunner(),
+        new FakeElement('A'),
+        [root],
+        'member-123',
+      ),
+      false,
     )
-    assert.equal(
-      stateControls[stateName][0].label.textContent,
-      'Disconnect Stripe',
-    )
+    assert.equal(root.getAttribute('data-stripe-connect-view'), 'error')
+    assert.equal(root.hidden, true)
+    assert.equal(root.style.display, 'none')
+  } finally {
+    api.__resetXanoToken()
+    global.console = previous.console
+    global.fetch = previous.fetch
+    global.getXanoAuthToken = previous.getXanoAuthToken
+    global.$memberstackDom = previous.memberstack
+    global.open = previous.open
   }
-
-  api.ensureConnectedControls(root)
-  assert.equal(stateControls.incomplete.length, 1)
-  assert.equal(stateControls.review.length, 1)
 })
 
 test('the two authored earnings tiles resolve to disconnected and ready states', () => {

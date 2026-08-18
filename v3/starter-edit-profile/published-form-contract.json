@@ -1,0 +1,136 @@
+{
+  "contractVersion": 1,
+  "provenance": {
+    "siteId": "69c573f20f82bd0f3384032c",
+    "pageId": "6a44b2477e93b2d11b905de0",
+    "path": "/starter-edit-profile",
+    "capturedOn": "2026-08-18",
+    "source": "official-data-element-tree-confirmed-against-authenticated-published-page"
+  },
+  "form": {
+    "type": "FormForm",
+    "id": "wf-form-Build-Form-Full-Profile",
+    "attributes": {
+      "id": "wf-form-Build-Form-Full-Profile",
+      "build-profile-form": ""
+    }
+  },
+  "steps": [
+    {
+      "index": "1",
+      "attributes": { "data-form": "step", "data-index": "1" },
+      "controls": [
+        { "type": "FormTextInput", "id": "first-name", "name": "first-name", "attributes": { "id": "first-name", "maxlength": "40", "required": "required", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormTextInput", "id": "last-name", "name": "last-name", "attributes": { "id": "last-name", "maxlength": "40", "required": "required", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormTextInput", "id": "email", "name": "email", "attributes": { "id": "email", "required": "required", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormTextInput", "id": "phone", "name": "phone", "attributes": { "id": "phone", "required": "required", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormSelect", "id": "country", "name": "country", "attributes": { "id": "country", "name": "country", "data-input-capture": "" } },
+        { "type": "FormSelect", "id": "state", "name": "state", "attributes": { "id": "state", "name": "state", "data-input-capture": "" } },
+        { "type": "FormSelect", "id": "city", "name": "city", "attributes": { "id": "city", "name": "city", "data-input-capture": "" } },
+        { "type": "DOM", "id": "profile-photo", "name": "profile-photo", "attributes": { "type": "file", "id": "profile-photo", "name": "profile-photo" } },
+        { "type": "DOM", "id": "profile-photo-url", "name": "profile-photo-url", "attributes": { "type": "text", "id": "profile-photo-url", "name": "profile-photo-url", "required": "required", "data-input-capture": "" } },
+        { "type": "FormTextInput", "id": "function-option", "name": "function-option", "attributes": { "id": "function-option", "ms-code-select": "input", "ms-code-select-max": "1", "edit-form-input": "" } },
+        { "type": "DOM", "id": "function", "name": "function", "attributes": { "type": "text", "id": "function", "name": "function", "ms-code-select": "input-value", "data-input-capture": "" } },
+        { "type": "DOM", "id": "function-required", "name": "function-required", "attributes": { "type": "text", "id": "function-required", "name": "function-required", "required": "required", "ms-code-select": "input-required" } },
+        { "type": "FormTextInput", "id": "role-option", "name": "role-option", "attributes": { "id": "role-option", "ms-code-select": "input", "ms-code-select-max": "3", "edit-form-input": "" } },
+        { "type": "DOM", "id": "roles", "name": "roles", "attributes": { "type": "text", "id": "roles", "name": "roles", "ms-code-select": "input-value", "data-input-capture": "" } },
+        { "type": "DOM", "id": "roles-required", "name": "roles-required", "attributes": { "type": "text", "id": "roles-required", "name": "roles-required", "required": "required", "ms-code-select": "input-required" } },
+        { "type": "FormTextInput", "id": "subcategories-option", "name": "subcategories-option", "attributes": { "id": "subcategories-option", "ms-code-select": "input", "ms-code-select-max": "3", "edit-form-input": "" } },
+        { "type": "DOM", "id": "subcategories", "name": "subcategories", "attributes": { "type": "text", "id": "subcategories", "name": "subcategories", "ms-code-select": "input-value", "data-input-capture": "" } },
+        { "type": "DOM", "id": "subcategories-required", "name": "subcategories-required", "attributes": { "type": "text", "id": "subcategories-required", "name": "subcategories-required", "required": "required", "ms-code-select": "input-required" } }
+      ],
+      "components": ["Button"],
+      "submitMarkers": [""]
+    },
+    {
+      "index": "2",
+      "attributes": { "data-form": "step", "data-index": "2" },
+      "controls": [
+        { "type": "FormTextInput", "id": "tagline", "name": "tagline", "attributes": { "id": "tagline", "maxlength": "80", "required": "required", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormTextarea", "id": "pro-headline", "name": "pro-headline", "attributes": { "id": "pro-headline", "maxlength": "160", "required": "required", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormTextarea", "id": "bio-plain", "name": "bio-plain", "attributes": { "id": "bio-plain", "data-max-words": "300", "count-by-words": "" } },
+        { "type": "FormTextarea", "id": "bio-html", "name": "bio-html", "attributes": { "id": "bio-html", "required": "required", "data-input-capture": "", "data-editor-id": "bio-editor" } },
+        { "type": "FormTextInput", "id": "best-fit-1", "name": "best-fit-1", "attributes": { "id": "best-fit-1", "maxlength": "80", "data-input-capture": "" } },
+        { "type": "FormTextInput", "id": "best-fit-2", "name": "best-fit-2", "attributes": { "id": "best-fit-2", "maxlength": "80", "data-input-capture": "" } },
+        { "type": "FormTextInput", "id": "best-fit-3", "name": "best-fit-3", "attributes": { "id": "best-fit-3", "maxlength": "80", "data-input-capture": "" } }
+      ],
+      "components": ["Button"],
+      "submitMarkers": [""]
+    },
+    {
+      "index": "3",
+      "attributes": { "data-form": "step", "data-index": "3", "scroll-container": "" },
+      "controls": [
+        { "type": "FormTextInput", "id": "also-worked-select", "name": "also-worked-select", "attributes": { "id": "also-worked-select" } },
+        { "type": "DOM", "id": "also-worked-with", "name": "also-worked-with", "attributes": { "type": "text", "id": "also-worked-with", "name": "also-worked-with", "data-input-capture": "" } },
+        { "type": "DOM", "id": "first-company", "name": "first-company", "attributes": { "type": "text", "id": "first-company", "name": "first-company", "required": "required" } }
+      ],
+      "components": ["Companies [Build\\Edit Forms]", "Button"],
+      "submitMarkers": ["companies"]
+    },
+    {
+      "index": "4",
+      "attributes": { "data-form": "step", "data-index": "4" },
+      "controls": [
+        { "type": "DOM", "id": "first-portfolio", "name": "first-portfolio", "attributes": { "type": "text", "id": "first-portfolio", "name": "first-portfolio", "required": "required" } }
+      ],
+      "components": ["Highlights [Build\\Edit Forms]", "Button"],
+      "submitMarkers": ["portfolio"]
+    },
+    {
+      "index": "5",
+      "attributes": { "data-form": "step", "data-index": "5" },
+      "controls": [
+        { "type": "FormTextInput", "id": "skill-option", "name": "skill-option", "attributes": { "id": "skill-option", "ms-code-select": "input", "ms-code-select-max": "15", "ms-code-select-min": "3", "edit-form-input": "" } },
+        { "type": "DOM", "id": "skills", "name": "skills", "attributes": { "type": "text", "id": "skills", "name": "skills", "ms-code-select": "input-value", "data-input-capture": "" } },
+        { "type": "DOM", "id": "skills-required", "name": "skills-required", "attributes": { "type": "text", "id": "skills-required", "name": "skills-required", "required": "required", "ms-code-select": "input-required" } },
+        { "type": "FormTextInput", "id": "tool-option", "name": "tool-option", "attributes": { "id": "tool-option", "ms-code-select": "input", "ms-code-select-max": "20", "ms-code-select-min": "2", "edit-form-input": "" } },
+        { "type": "DOM", "id": "tools", "name": "tools", "attributes": { "type": "text", "id": "tools", "name": "tools", "ms-code-select": "input-value", "data-input-capture": "" } },
+        { "type": "DOM", "id": "tools-required", "name": "tools-required", "attributes": { "type": "text", "id": "tools-required", "name": "tools-required", "required": "required", "ms-code-select": "input-required" } },
+        { "type": "FormTextInput", "id": "industries-option", "name": "industries-option", "attributes": { "id": "industries-option", "ms-code-select": "input", "ms-code-select-max": "10" } },
+        { "type": "DOM", "id": "industries", "name": "industries", "attributes": { "type": "text", "id": "industries", "name": "industries", "ms-code-select": "input-value", "data-input-capture": "" } }
+      ],
+      "components": ["Button"],
+      "submitMarkers": [""]
+    },
+    {
+      "index": "6",
+      "attributes": { "data-form": "step", "data-index": "6" },
+      "controls": [
+        { "type": "FormTextInput", "id": "rate", "name": "rate", "attributes": { "id": "rate", "required": "required", "data-input-capture": "", "edit-form-input": "", "data-non-required": "consult" } },
+        { "type": "FormRadioInput", "id": "yes", "name": "free-consulting-calls", "attributes": { "id": "yes", "required": "required", "data-input-capture": "" } },
+        { "type": "FormRadioInput", "id": "no", "name": "free-consulting-calls", "attributes": { "id": "no", "required": "required", "data-input-capture": "" } },
+        { "type": "FormTextInput", "id": "free-call-description", "name": "free-call-description", "attributes": { "id": "free-call-description", "maxlength": "60", "data-input-capture": "" } },
+        { "type": "FormRadioInput", "id": "yes", "name": "paid-consulting-calls", "attributes": { "id": "yes", "required": "required", "data-input-capture": "" } },
+        { "type": "FormRadioInput", "id": "no", "name": "paid-consulting-calls", "attributes": { "id": "no", "required": "required", "data-input-capture": "" } },
+        { "type": "FormTextInput", "id": "paid-call-description", "name": "paid-call-description", "attributes": { "id": "paid-call-description", "maxlength": "60", "data-input-capture": "" } },
+        { "type": "FormTextInput", "id": "paid-call-rate", "name": "paid-call-rate", "attributes": { "id": "paid-call-rate", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormRadioInput", "id": "yes", "name": "offer-monthly-retainers", "attributes": { "id": "yes", "required": "required", "data-input-capture": "" } },
+        { "type": "FormRadioInput", "id": "no", "name": "offer-monthly-retainers", "attributes": { "id": "no", "required": "required", "data-input-capture": "" } },
+        { "type": "FormTextInput", "id": "description-retainer", "name": "description-retainer", "attributes": { "id": "description-retainer", "maxlength": "200", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormTextInput", "id": "rate-retainer", "name": "rate-retainer", "attributes": { "id": "rate-retainer", "data-input-capture": "", "edit-form-input": "" } },
+        { "type": "FormTextInput", "id": "availability-option", "name": "availability-option", "attributes": { "id": "availability-option", "ms-code-select": "input", "ms-code-select-max": "1", "edit-form-input": "" } },
+        { "type": "DOM", "id": "availability", "name": "availability", "attributes": { "type": "text", "id": "availability", "name": "availability", "ms-code-select": "input-value", "data-input-capture": "" } },
+        { "type": "DOM", "id": "availability-required", "name": "availability-required", "attributes": { "type": "text", "id": "availability-required", "name": "availability-required", "required": "required", "ms-code-select": "input-required", "data-non-required": "consult" } },
+        { "type": "FormRadioInput", "id": "yes", "name": "full-time-placement", "attributes": { "id": "yes", "data-input-capture": "" } },
+        { "type": "FormRadioInput", "id": "no", "name": "full-time-placement", "attributes": { "id": "no", "data-input-capture": "" } }
+      ],
+      "components": ["Profile Form - Services", "Button"],
+      "submitMarkers": [""]
+    },
+    {
+      "index": "7",
+      "attributes": { "data-form": "step", "data-index": "7" },
+      "controls": [
+        { "type": "FormTextInput", "id": "reviewer", "name": "reviewer", "attributes": { "id": "reviewer", "name": "reviewer" } },
+        { "type": "FormTextInput", "id": "reviewer-fname", "name": "reviewer-fname", "attributes": { "id": "reviewer-fname", "name": "reviewer-fname" } },
+        { "type": "FormTextInput", "id": "reviewer-lname", "name": "reviewer-lname", "attributes": { "id": "reviewer-lname", "name": "reviewer-lname" } },
+        { "type": "FormTextInput", "id": "reviewer-job", "name": "reviewer-job", "attributes": { "id": "reviewer-job", "name": "reviewer-job" } },
+        { "type": "FormTextInput", "id": "reviewer-company", "name": "reviewer-company", "attributes": { "id": "reviewer-company", "name": "reviewer-company" } },
+        { "type": "FormTextInput", "id": "reviewer-email", "name": "reviewer-email", "attributes": { "id": "reviewer-email", "name": "reviewer-email" } }
+      ],
+      "components": ["Profile Form - Reviewers", "Button"],
+      "submitMarkers": [""]
+    }
+  ]
+}

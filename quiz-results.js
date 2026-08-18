@@ -317,19 +317,52 @@
                 'primary-role',
             ]),
         )
-        const services = getQuizLeadDripList(
-            getQuizLeadDripValue(record, ['services', 'Services']),
+        const projectedServiceFields = [
+            ['service-1', 'service_1'],
+            ['service-2', 'service_2'],
+            ['service-3', 'service_3'],
+        ]
+        const hasProjectedServices = projectedServiceFields.some((fields) =>
+            fields.some((field) =>
+                Object.prototype.hasOwnProperty.call(record || {}, field),
+            ),
+        )
+        const services = (
+            hasProjectedServices
+                ? projectedServiceFields.map((fields) =>
+                      getQuizLeadDripValue(record, fields),
+                  )
+                : getQuizLeadDripList(
+                      getQuizLeadDripValue(record, ['services', 'Services']),
+                  )
         )
             .map((service) =>
                 normalizeQuizLeadDripText(
                     typeof service === 'object'
-                        ? service.name || service.title
+                        ? service.name || service.title || service.raw
                         : service,
                     100,
                 ),
             )
-            .filter(Boolean)
             .slice(0, 3)
+
+        while (services.length < 3) services.push('')
+
+        const projectedLocationFields = [
+            ['city', 'City'],
+            ['state', 'State_Province'],
+            ['country', 'Country'],
+        ]
+        const hasProjectedLocation = projectedLocationFields.some((fields) =>
+            fields.some((field) =>
+                Object.prototype.hasOwnProperty.call(record || {}, field),
+            ),
+        )
+        const projectedLocation = projectedLocationFields
+            .map((fields) => getQuizLeadDripValue(record, fields))
+            .map((part) => normalizeQuizLeadDripText(part, 60))
+            .filter(Boolean)
+            .join(', ')
 
         return {
             first_name: getQuizLeadDripFirstName(record),
@@ -375,6 +408,7 @@
             ),
             classification: normalizeQuizLeadDripText(
                 getQuizLeadDripValue(record, [
+                    'profile-type',
                     'classification',
                     'Classification',
                     'profile_type_30',
@@ -382,7 +416,9 @@
                 100,
             ),
             location: normalizeQuizLeadDripText(
-                getQuizLeadDripValue(record, ['location', 'Location']),
+                hasProjectedLocation
+                    ? projectedLocation
+                    : getQuizLeadDripValue(record, ['location', 'Location']),
                 120,
             ),
             reviews: formatQuizLeadDripReviews(record),
@@ -1942,7 +1978,7 @@
     'DOMContentLoaded',
     function starterQuizResultsController() {
     const debugLogPrefix = '[Starter Quiz Funnel]'
-    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v20'
+    const recommendationAlgorithmVersion = 'category-subcategory-pairs-v21'
     const featuredFreelancerLimit = 3
     const categoryFreelancerLimit = 5
     // Pool gathered per category before featured picks are drawn off the top,
@@ -4058,6 +4094,12 @@
                         'free-consulting-calls-t-f',
                         'paid-consulting-calls-t-f',
                         'profile-type',
+                        'city',
+                        'state',
+                        'country',
+                        'service-1',
+                        'service-2',
+                        'service-3',
                         'availability',
                         'ranking-points',
                         'review_count',
@@ -6018,6 +6060,49 @@
             : Boolean(value)
     }
 
+    const quizRedirectAttributionParams = [
+        'utm_source',
+        'utm_medium',
+        'utm_campaign',
+        'utm_content',
+        'utm_term',
+        'utm_id',
+    ]
+
+    /**
+     * Keeps safe campaign attribution when the results page sends a visitor
+     * back to the quiz. Do not copy the complete query string: test controls,
+     * member identifiers, and future private values must not cross routes.
+     *
+     * @param {string} target Relative quiz URL, with any required control params.
+     * @param {string} search Current page query string.
+     * @returns {string} Relative target with allowlisted attribution params.
+     */
+    function getQuizRedirectTargetWithAttribution(
+        target,
+        search = window.location.search,
+    ) {
+        const separatorIndex = target.indexOf('?')
+        const pathname =
+            separatorIndex === -1 ? target : target.slice(0, separatorIndex)
+        const targetParams = new URLSearchParams(
+            separatorIndex === -1 ? '' : target.slice(separatorIndex + 1),
+        )
+        const sourceParams = new URLSearchParams(search || '')
+
+        quizRedirectAttributionParams.forEach((name) => {
+            if (targetParams.has(name)) return
+
+            const value = sourceParams.get(name)
+
+            if (value) targetParams.set(name, value)
+        })
+
+        const query = targetParams.toString()
+
+        return query ? `${pathname}?${query}` : pathname
+    }
+
     function getAuthenticatedNoQuizDataRedirectTarget(member) {
         if (
             !member ||
@@ -6224,7 +6309,9 @@
 
         if (authState.isLoggedOut) {
             logQuizFlow('logged-out visitor with no quiz data; redirecting to /quiz')
-            window.location.replace('/quiz')
+            window.location.replace(
+                getQuizRedirectTargetWithAttribution('/quiz'),
+            )
             return
         }
 
@@ -6241,7 +6328,11 @@
                     redirectTarget: authenticatedRedirectTarget,
                 },
             )
-            window.location.replace(authenticatedRedirectTarget)
+            window.location.replace(
+                getQuizRedirectTargetWithAttribution(
+                    authenticatedRedirectTarget,
+                ),
+            )
         }
     }
 
@@ -6864,7 +6955,11 @@
                 'saved quiz has no current taxonomy selections; requiring retake',
             )
             signalQuizResultsReady('taxonomy-reselection')
-            window.location.replace('/quiz?retake=true&taxonomyUpdate=1')
+            window.location.replace(
+                getQuizRedirectTargetWithAttribution(
+                    '/quiz?retake=true&taxonomyUpdate=1',
+                ),
+            )
             return
         }
 

@@ -53,10 +53,30 @@
         /* never break the page */
       }
     }
+    const rejectionError = (reason) => {
+      try {
+        if (reason instanceof Error) return reason
+        if (!reason || typeof reason !== 'object') return new Error(String(reason))
+
+        // Keep only bounded diagnostic fields. Promise rejection objects can
+        // contain request bodies, member data, or circular references.
+        const fields = ['message', 'code', 'status']
+        const details = fields.flatMap((key) => {
+          const value = reason[key]
+          if (!['string', 'number', 'boolean'].includes(typeof value)) return []
+          return [`${key}=${String(value).slice(0, 200)}`]
+        })
+        const err = new Error(details.join(' ') || 'Unhandled rejection object')
+        if (typeof reason.name === 'string' && reason.name.trim()) {
+          err.name = reason.name.trim().slice(0, 80)
+        }
+        return err
+      } catch (e) {
+        return new Error('Unhandled rejection object')
+      }
+    }
     window.addEventListener('error', (e) => send(e.error || new Error(e.message)))
-    window.addEventListener('unhandledrejection', (e) =>
-      send(e.reason instanceof Error ? e.reason : new Error(String(e.reason))),
-    )
+    window.addEventListener('unhandledrejection', (e) => send(rejectionError(e.reason)))
   }
 
   // Sitewide form tracking: delegated `submit` listener fires `form_submitted`

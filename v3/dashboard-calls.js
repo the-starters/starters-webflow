@@ -13,6 +13,7 @@
   const XANO_SCHEDULING_BASE =
     'https://x08a-5ko8-jj1r.n7c.xano.io/api:tCpV3oqd'
   const BOOKINGS_PATH = '/booking_record/get/v3'
+  const CONFIRM_PATH = '/booking/confirm/v3'
   const MEMBERSTACK_TIMEOUT_MS = 10000
   const PROFILE_REFRESH_DELAYS_MS = [0, 150, 300, 600, 1000, 1600, 2500]
   const PROFILE_FORM_SELECTOR = 'form[data-ms-form="profile"]'
@@ -198,6 +199,66 @@
     }[status]
   }
 
+  function decodeBookingRef(compactString) {
+    const compact = clean(compactString)
+    if (!compact || typeof global.atob !== 'function') return null
+    try {
+      const binary = global.atob(compact.replace(/-/g, '+').replace(/_/g, '/'))
+      if (binary.length <= 32) return null
+      const bytes = new Uint8Array(binary.length)
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index)
+      }
+      const uuid = function (offset) {
+        const hex = Array.from(bytes.slice(offset, offset + 16))
+          .map(function (value) { return value.toString(16).padStart(2, '0') })
+          .join('')
+        return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join('-')
+      }
+      const saltBytes = bytes.slice(32)
+      let saltBinary = ''
+      saltBytes.forEach(function (value) { saltBinary += String.fromCharCode(value) })
+      return {
+        config_id: uuid(0),
+        booking_id: uuid(16),
+        salt: global.btoa(saltBinary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+      }
+    } catch (_error) {
+      return null
+    }
+  }
+
+  function confirmPayload(booking, idempotencyKey) {
+    const decoded = decodeBookingRef(booking && booking.booking_ref)
+    const bookingId = clean(booking && booking.booking_id)
+    const configId = clean(booking && booking.config_id)
+    const key = clean(idempotencyKey)
+    if (
+      !decoded || !key ||
+      decoded.booking_id !== bookingId ||
+      decoded.config_id !== configId ||
+      !decoded.salt
+    ) return null
+    return {
+      booking_id: bookingId,
+      config_id: configId,
+      booking_ref_salt: decoded.salt,
+      idempotency_key: key,
+    }
+  }
+
+  function configureActionButtons(card, role, status) {
+    card.querySelectorAll('[booking-card-action-btn], [booking-action-btn]').forEach(function (button) {
+      const action = clean(
+        button.getAttribute('booking-action-btn') ||
+        button.getAttribute('booking-card-action-btn'),
+      )
+      // Accept is the first V3-native mutation. Every other legacy control
+      // stays hidden until it has a current endpoint contract and tests.
+      show(button, role === 'starter' && status === 'pending' && action === 'switch-confirm')
+    })
+  }
+
   function bindCard(card, booking, role) {
     const status = bookingStatus(booking)
     const other = role === 'starter' ? booking.brand_data : booking.starter_data
@@ -234,20 +295,8 @@
     text(brandStatus, '[label-text]', status === 'pending' ? 'Awaiting confirmation' : '')
     show(brandStatus, status === 'pending' && role === 'brand')
 
-    card.querySelectorAll('[booking-card-action-btn]').forEach(function (button) {
-      // The old shared component that owned these mutations was removed from
-      // V3. Do not expose controls that have no identity-safe handler.
-      show(button, false)
-    })
+    configureActionButtons(card, role, status)
 
-    const meetingLink = clean(booking.meeting_link)
-    card
-      .querySelectorAll('[booking-action-btn="join"], [booking-card-action-btn="join"]')
-      .forEach(function (button) {
-        const anchor = button.matches('a') ? button : button.querySelector('a')
-        if (anchor && meetingLink) anchor.href = meetingLink
-        show(button, Boolean(meetingLink) && status === 'confirmed')
-      })
     return card
   }
 
@@ -673,6 +722,60 @@
     return body.map(normalizeBooking)
   }
 
+  function wireBookingActions(refs, role, restart) {
+    if (role !== 'starter' || !global.document || !global.document.addEventListener) return
+    global.document.addEventListener('click', async function (event) {
+      const target = event && event.target
+      const button = target && target.closest
+        ? target.closest('[booking-action-btn="switch-confirm"], [booking-card-action-btn="switch-confirm"]')
+        : null
+      if (!button || button.__startersBookingActionBusy) return
+      if (event.preventDefault) event.preventDefault()
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation()
+      else if (event.stopPropagation) event.stopPropagation()
+
+      const card = button.closest('[data-booking-id]')
+      const bookingId = clean(card && card.getAttribute('data-booking-id'))
+      let booking = null
+      refs.some(function (section) {
+        booking = section.rows.find(function (row) {
+          return clean(row.booking_id) === bookingId
+        }) || null
+        return Boolean(booking)
+      })
+      if (!booking || bookingStatus(booking) !== 'pending') return
+
+      if (!button.__startersBookingActionKey) {
+        const randomUUID = global.crypto && global.crypto.randomUUID
+        if (typeof randomUUID !== 'function') return
+        button.__startersBookingActionKey = 'dashboard-confirm:' + randomUUID.call(global.crypto)
+      }
+      const payload = confirmPayload(booking, button.__startersBookingActionKey)
+      if (!payload || typeof global.xanoAuthFetch !== 'function') return
+
+      button.__startersBookingActionBusy = true
+      button.setAttribute('aria-busy', 'true')
+      button.setAttribute('aria-disabled', 'true')
+      try {
+        const response = await global.xanoAuthFetch(XANO_SCHEDULING_BASE + CONFIRM_PATH, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        const body = await response.json().catch(function () { return null })
+        if (!response.ok || !body) throw new Error('Canonical booking confirmation failed')
+        button.__startersBookingActionKey = ''
+        await restart()
+      } catch (error) {
+        console.error('[dashboard-calls] confirmation failed closed:', error && error.message)
+      } finally {
+        button.__startersBookingActionBusy = false
+        button.setAttribute('aria-busy', 'false')
+        button.setAttribute('aria-disabled', 'false')
+      }
+    }, true)
+  }
+
   function resetIdentityState(refs, role) {
     clearBrandHero(role)
     refs.forEach(function (section) {
@@ -793,6 +896,7 @@
         useSharedMember,
       )
     }
+    wireBookingActions(refs, role, restart)
     if (typeof memberstack.onAuthChange === 'function') {
       memberstack.onAuthChange(function () {
         restart()
@@ -803,6 +907,9 @@
 
   const api = {
     bookingStatus,
+    configureActionButtons,
+    confirmPayload,
+    decodeBookingRef,
     memberOwnsBooking,
     memberMatchesProfile,
     normalizeBooking,
@@ -816,6 +923,7 @@
     roleForPath,
     sectionBookings,
     uniqueBookings,
+    wireBookingActions,
   }
   if (!isCommonJs) configureProjectWrappers()
   if (isCommonJs) module.exports = api

@@ -47,6 +47,22 @@ function sessionStorageDouble(pending, throws) {
   }
 }
 
+function localStorageDouble(throws) {
+  const values = new Map()
+  return {
+    written: [],
+    getItem(key) {
+      if (throws) throw new Error('storage blocked')
+      return values.has(key) ? values.get(key) : null
+    },
+    setItem(key, value) {
+      if (throws) throw new Error('storage blocked')
+      values.set(key, String(value))
+      this.written.push([key, String(value)])
+    },
+  }
+}
+
 function loadGuard(options = {}) {
   const attributes = {}
   const events = []
@@ -63,6 +79,18 @@ function loadGuard(options = {}) {
     options.pending,
     options.storageThrows,
   )
+  const localStorage = localStorageDouble(options.localStorageThrows)
+  let memberJson = options.memberJson || {}
+  const memberJsonUpdates = []
+  const memberJsonMethods = {
+    async getMemberJSON() {
+      return { data: memberJson }
+    },
+    async updateMemberJSON(payload) {
+      memberJson = payload.json
+      memberJsonUpdates.push(payload.json)
+    },
+  }
   const window = {
     CustomEvent: class CustomEvent {
       constructor(name, init) {
@@ -76,6 +104,7 @@ function loadGuard(options = {}) {
       events.push(event)
     },
     location,
+    localStorage,
     setInterval,
     setTimeout,
     clearInterval,
@@ -88,15 +117,18 @@ function loadGuard(options = {}) {
   if (Object.prototype.hasOwnProperty.call(options, 'delayedMember')) {
     window.setTimeout(() => {
       window.$memberstackDom = {
+        ...memberJsonMethods,
         getCurrentMember: async () => ({ data: options.delayedMember }),
       }
     }, options.memberstackDelayMs || 25)
   } else if (Object.prototype.hasOwnProperty.call(options, 'getCurrentMember')) {
     window.$memberstackDom = {
+      ...memberJsonMethods,
       getCurrentMember: options.getCurrentMember,
     }
   } else if (Object.prototype.hasOwnProperty.call(options, 'member')) {
     window.$memberstackDom = {
+      ...memberJsonMethods,
       getCurrentMember: async () => ({
         data: typeof options.member === 'function' ? options.member() : options.member,
       }),
@@ -128,6 +160,8 @@ function loadGuard(options = {}) {
     location,
     window,
     sessionStorage,
+    localStorage,
+    memberJsonUpdates,
   }
 }
 
@@ -1125,6 +1159,56 @@ test('a paid Brand stays on /all-starters and is bounced off /quiz-results', asy
   const bounced = loadGuard({ pathname: '/quiz-results', member: BRAND_PAID })
   await flush()
   assert.equal(bounced.location.replaced, '/brand-dashboard')
+})
+
+test('an allowed Brand visit persists completion in authenticated member JSON', async () => {
+  for (const member of [BRAND_PAID, BRAND_FREE]) {
+    const result = loadGuard({
+      pathname: '/all-starters',
+      member,
+      memberJson: { preserved: true },
+    })
+    await flush()
+    assert.equal(result.memberJsonUpdates.length, 1)
+    assert.equal(result.memberJsonUpdates[0].preserved, true)
+    assert.match(
+      result.memberJsonUpdates[0].brandActionItems.allStartersVisitedAt,
+      /^\d{4}-\d{2}-\d{2}T/,
+    )
+    assert.equal(
+      await result.api.hasBrandAllStartersVisit(
+        result.window.$memberstackDom,
+        member,
+      ),
+      true,
+    )
+  }
+})
+
+test('a denied Talent visit does not complete the Brand browse action', async () => {
+  const result = loadGuard({ pathname: '/all-starters', member: TALENT })
+  await flush()
+  assert.equal(result.location.replaced, '/starter-dashboard')
+  assert.deepEqual(result.memberJsonUpdates, [])
+})
+
+test('failed member JSON persistence never changes /all-starters routing', async () => {
+  const result = loadGuard({
+    pathname: '/all-starters',
+    member: BRAND_PAID,
+  })
+  result.window.$memberstackDom.getMemberJSON = async () => {
+    throw new Error('member JSON blocked')
+  }
+  await flush()
+  assert.equal(result.location.replaced, undefined)
+  assert.equal(
+    await result.api.hasBrandAllStartersVisit(
+      result.window.$memberstackDom,
+      BRAND_PAID,
+    ),
+    false,
+  )
 })
 
 test('the exact paid Brand email can use the production quiz email canary only', async () => {

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Build Profile canonical hydration evidence</title>
+  <style>
+    :root { color-scheme: light; font: 16px/1.45 Inter, system-ui, sans-serif; background: #f4f1eb; color: #17231d; }
+    body { margin: 0; padding: 40px; }
+    main { max-width: 980px; margin: auto; }
+    header { margin-bottom: 24px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    .lede { margin: 0; color: #506159; }
+    .grid { display: grid; grid-template-columns: 1.25fr .75fr; gap: 24px; }
+    .card { background: #fff; border: 1px solid #d9ded9; border-radius: 16px; padding: 24px; box-shadow: 0 8px 24px #20352a12; }
+    h2 { margin: 0 0 18px; font-size: 19px; }
+    label { display: block; margin: 0 0 16px; font-weight: 650; }
+    input { box-sizing: border-box; width: 100%; margin-top: 7px; padding: 11px 12px; border: 1px solid #aeb9b3; border-radius: 8px; background: #fff; font: inherit; }
+    input:disabled { color: #263a30; opacity: 1; }
+    .hint { display: block; margin-top: 5px; color: #68766f; font-size: 13px; font-weight: 400; }
+    .result { display: grid; gap: 12px; }
+    .metric { border-left: 4px solid #1d7d50; background: #f2faf5; padding: 12px 14px; border-radius: 6px; }
+    .metric strong { display: block; }
+    .metric span { color: #4e6258; font-size: 14px; }
+    #status { display: inline-block; padding: 7px 11px; border-radius: 999px; background: #e4f5ea; color: #165c3b; font-weight: 750; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div id="status">Hydrating canonical profile…</div>
+      <h1>Build Profile fallback check</h1>
+      <p class="lede">Native wizard fields after an authenticated canonical read.</p>
+    </header>
+    <div class="grid">
+      <form class="card" aria-label="Native Build Profile wizard">
+        <h2>Step 1 · Your details</h2>
+        <section data-form="step" data-index="1">
+          <label>First name
+            <input name="first-name" disabled>
+            <span class="hint">No draft key, so canonical data must fill this field.</span>
+          </label>
+          <label>Email
+            <input name="email" disabled>
+            <span class="hint">The draft owns an intentional empty value, so this must stay empty.</span>
+          </label>
+          <label>City
+            <input name="city" disabled>
+            <span class="hint">No draft key, so canonical data must fill this field.</span>
+          </label>
+        </section>
+        <section data-form="step" data-index="2">
+          <label>Tagline
+            <input name="tagline" disabled>
+            <span class="hint">The existing draft value must win.</span>
+          </label>
+        </section>
+      </form>
+      <aside class="card">
+        <h2>Observed result</h2>
+        <div class="result">
+          <div class="metric"><strong id="identity">Identity pending</strong><span>Stable Memberstack ID matched canonical readback.</span></div>
+          <div class="metric"><strong id="empty">Empty draft pending</strong><span>Canonical email did not overwrite an owned empty key.</span></div>
+          <div class="metric"><strong id="false">False draft pending</strong><span>Canonical true did not overwrite an owned false key.</span></div>
+          <div class="metric"><strong id="network">Network pending</strong><span>Read-only browser-code boundary.</span></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+  <script>
+    window.__TS_DISABLE_BUILD_PROFILE_CANONICAL_AUTO_INIT__ = true
+    window.MEMBER = { id: 'mem_fixture_starter' }
+    window.waitForMember = function (callback) { callback() }
+    window.activeProfile = {
+      type: 'full', type_id: 'draft-type', last_update: 1,
+      data: {
+        step_1: { email: '' },
+        step_2: { tagline: 'Draft-owned tagline' },
+        step_6: { 'free-consulting-calls': false }
+      }
+    }
+    window.__fixtureRequests = []
+    window.fetch = async function (url, options) {
+      window.__fixtureRequests.push({ url: String(url), method: options && options.method })
+      return {
+        ok: true,
+        status: 200,
+        json: async function () {
+          return {
+            memberstack_id: 'mem_fixture_starter',
+            Profile_Type: 'Full',
+            Profile_Type_ID: 'canonical-type',
+            First_Name: 'Canonical Starter',
+            Email: 'canonical@example.test',
+            City: 'Canonical City',
+            Tagline: 'Canonical tagline',
+            Free_Call_Enabled: true
+          }
+        }
+      }
+    }
+  </script>
+  <script src="/canonical-profile-hydrator.js"></script>
+  <script>
+    window.StartersBuildProfileCanonicalHydrator.hydrate().then(function () {
+      var profile = window.activeProfile
+      var fields = document.querySelectorAll('input')
+      fields.forEach(function (field) {
+        var step = field.closest('[data-index]').getAttribute('data-index')
+        field.value = profile.data['step_' + step][field.name]
+      })
+      var stable = profile.data.step_1['first-name'] === 'Canonical Starter'
+      var emptyOwned = profile.data.step_1.email === ''
+      var falseOwned = profile.data.step_6['free-consulting-calls'] === false
+      var reads = window.__fixtureRequests.filter(function (request) {
+        return request.method === 'POST' && /\/starter\/get$/.test(request.url)
+      }).length
+      var mutations = window.__fixtureRequests.filter(function (request) {
+        return !/\/starter\/get$/.test(request.url)
+      }).length
+      var emails = window.__fixtureRequests.filter(function (request) {
+        return /email|mailchimp|sendgrid/i.test(request.url)
+      }).length
+      document.querySelector('#status').textContent = stable && emptyOwned && falseOwned ? '✓ Hydration verified' : '✕ Verification failed'
+      document.querySelector('#identity').textContent = stable ? 'Identity matched' : 'Identity failed'
+      document.querySelector('#empty').textContent = emptyOwned ? 'Empty draft preserved' : 'Empty draft overwritten'
+      document.querySelector('#false').textContent = falseOwned ? 'False draft preserved' : 'False draft overwritten'
+      document.querySelector('#network').textContent = reads + ' canonical read · ' + mutations + ' mutations · ' + emails + ' emails'
+      window.__fixtureResult = {
+        stableIdentity: stable,
+        emptyDraftPreserved: emptyOwned,
+        falseDraftPreserved: falseOwned,
+        firstName: profile.data.step_1['first-name'],
+        email: profile.data.step_1.email,
+        city: profile.data.step_1.city,
+        tagline: profile.data.step_2.tagline,
+        reads: reads,
+        mutations: mutations,
+        emails: emails,
+        requests: window.__fixtureRequests
+      }
+    }).catch(function (error) {
+      document.querySelector('#status').textContent = '✕ ' + error.message
+      window.__fixtureResult = { error: error.message }
+    })
+  </script>
+</body>
+</html>

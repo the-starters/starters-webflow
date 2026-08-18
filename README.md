@@ -48,7 +48,7 @@ Do not discard local changes unless the user explicitly asks.
 - `quiz-main/quiz-home.js` — homepage hero controller; saves selected category bucket IDs to `sessionStorage.quizSelectedCategories` and redirects to `/quiz` (see `quiz-main/README.md`)
 - `quiz-main/quiz-main.js` — `/quiz` controller: combines homepage bucket selections with saved Memberstack answers, persists draft/ready payloads for results, and owns the signup redirect contract; authoritative restore-order, markup, and redirect contracts live in [`quiz-main/README.md`](quiz-main/README.md#main-controller)
 - `quiz-main/quiz-redirect.js` — `/quiz` member entry redirect by role and quiz state, including the ready-payload safety net for new members; authoritative rules live in [`quiz-main/README.md`](quiz-main/README.md#entry-redirect)
-- `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, stamps the CMS category slugs onto boxed result elements so the **Your expert lineup** TOC and deep links scroll below the sticky navbar, returns logged-out visitors with no pending, test, or saved quiz data to `/quiz`, clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, sends authenticated members whose completion marker has outlived missing or malformed answer JSON to `/quiz?retake=true&quizDataMissing=1`, registers the authenticated [V3 quiz-completion lead email](#v3-quiz-completion-lead-email) only after a finished result is saved, keeps diagnostics opt-in through `starterQuizDebug`, gets its managed Algolia credentials and Starter index from `v3/algolia-environment.js`, sources the Consult-card Subcategory chips and the ranked-role line only from each record's own `categories.lvl1` leaves (role slugs are excluded, a value carrying no `>` delimiter or a blank parent yields no chip at all, and labels print exactly as the index stores them so `UI/UX Design` and `E-Commerce Management` survive intact), recomputes any saved payload stamped with a recommendation version older than `category-subcategory-pairs-v20` so cached role-derived Subcategories cannot keep painting, warns once per page load on staging hosts only when hits carry `categories` but no leaf resolves, and rides the ad-attribution cookies written by `v3/signup-attribution.js` into the same `updateMember` call as `starter-quiz` (Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`, `signup-source`, `signup-referrer`, all verified in the app config; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone, and `signup-source`/`signup-referrer` are write-once so a returning member who merely logged in on `/quiz` keeps the page and referrer their original signup recorded)
+- `quiz-results.js` — quiz-results controller; normalizes saved quiz taxonomy before every results consumer, projects renamed V3 categories to both canonical and legacy `LearnContent` tags during the Learn taxonomy migration, requires a retake when no current category survives retirement, stamps the CMS category slugs onto boxed result elements so the **Your expert lineup** TOC and deep links scroll below the sticky navbar, owns the logged-out and missing-data redirects documented in the [V3 access matrix](v3/ACCESS-MATRIX.md#route-level-access), clears a member-cached pending payload (one carrying `memberstackSavedAt`) as soon as Memberstack positively reports the visitor as logged out so a signed-out browser stops previewing the previous member's results, registers the authenticated [V3 quiz-completion lead email](#v3-quiz-completion-lead-email) only after a finished result is saved, keeps diagnostics opt-in through `starterQuizDebug`, gets its managed Algolia credentials and Starter index from `v3/algolia-environment.js`, sources the Consult-card Subcategory chips and the ranked-role line only from each record's own `categories.lvl1` leaves (role slugs are excluded, a value carrying no `>` delimiter or a blank parent yields no chip at all, and labels print exactly as the index stores them so `UI/UX Design` and `E-Commerce Management` survive intact), recomputes any saved payload stamped with a recommendation version older than `category-subcategory-pairs-v21` so cached recommendations cannot omit current canonical email fields or keep painting role-derived Subcategories, warns once per page load on staging hosts only when hits carry `categories` but no leaf resolves, and rides the ad-attribution cookies written by `v3/signup-attribution.js` into the same `updateMember` call as `starter-quiz` (Memberstack field IDs `utm-source`, `utm-campaign`, `utm-adset`, `utm-content`, `fbclid`, `fbc`, `fbp`, `event-id`, `signup-source`, `signup-referrer`, all verified in the app config; empty cookies are omitted, a failed cookie read degrades to saving `starter-quiz` alone, and `signup-source`/`signup-referrer` are write-once so a returning member who merely logged in on `/quiz` keeps the page and referrer their original signup recorded)
 - `v3/algolia-environment.js` — host-owned TEST/LIVE resolver for managed V3 Algolia clients and indexes; see [`v3/ALGOLIA-ENVIRONMENT-WIRING.md`](v3/ALGOLIA-ENVIRONMENT-WIRING.md) for the exact host contract, markup, fail-closed rules, and release prerequisites
 - `quiz-results-email-tester.js` and `.css` — query-gated production tester for the V3 `/quiz-results` email; binds a native Webflow panel, hydrates the signed-in canary Brand's current saved quiz plus current Starter and Learn records, and sends only through the authenticated Xano endpoint described under [Quiz-results email tester](#quiz-results-email-tester)
 - `quiz-loader/quiz-loader.js` — head-time script for the `/quiz-results` loading component: a synchronous skip-on-refresh paint gate (hides the DevLink `<code-island>` loader host before hydration when the run was already played) plus the "results ready" producer signal `window.StartersQuizLoader.signalReady()` (sets `window.__starterQuizResultsReady` then dispatches `starterQuizResults:ready`)
@@ -71,18 +71,21 @@ Do not discard local changes unless the user explicitly asks.
   contract lives in
   [`v3/AI-RECRUITER-WIRING.md`](v3/AI-RECRUITER-WIRING.md)
 - `v3/saved-starters-roles.js` — `/favorites` saved-list roles chips: one cloned paragraph per delimited role, so the wf-xano list matches the Algolia browse cards; authoritative behavior and constraints live in [`v3/README.md`](v3/README.md#saved-starters-roles-chips)
+- `v3/hire-profile.js` — `/hire/<slug>` runtime controller for booking, Services, rate cards, and page utilities. Experiences and Clients are native Webflow CMS sections; the authoritative ownership, wiring, dependencies, and verification contract is in [`v3/HIRE-PROFILE-WIRING.md`](v3/HIRE-PROFILE-WIRING.md)
 - `v3/profile-portfolio.js` — `/hire/<slug>` portfolio / case-study renderer for the section labelled "Highlights"; reads Xano Portfolios (#28) via `Get_my_portfolios`, binds by custom attribute with legacy class fallbacks, and carries a `data-portfolio-rendered` guard so it can run alongside the legacy on-canvas embed without double-rendering. Wiring and cutover: [`v3/PROFILE-PORTFOLIO-WIRING.md`](v3/PROFILE-PORTFOLIO-WIRING.md)
 - `v3/reviews.js` — V3 public-profile reviews adapter; see [`v3/README.md`](v3/README.md#v3-reviews-frontend) for the authoritative ownership, wiring, and release contract
+- `v3/starter-review-form.js` — native `/review-starter` controller for invited V3 review requests; the authoritative token, analytics, form, endpoint, validation, and replay contract lives in [`v3/README.md`](v3/README.md#invited-starter-review-form)
 - `v3/starter-dashboard-messages.js` — shared Brand/Starter dashboard Messages tile; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for the authoritative data, rendering, and deep-link contract
 - `v3/starter-dashboard-points.js` — authenticated, attribute-driven `/starter-dashboard` points and rank tile; see [`v3/README.md`](v3/README.md#starter-dashboard-points-and-rank-tile) for the authoritative rendering, wiring, and ownership contract
-- `v3/starter-dashboard-stripe-connect.js` — Memberstack-scoped V3 Stripe Connect dashboard and OAuth-callback controller; selects exactly one authored earnings tile, opens the provider-verified connected account, and owns guarded onboarding and confirmed disconnect flows (see [`v3/README.md`](v3/README.md#starter-dashboard-stripe-connect))
-- `v3/paid-call-brand-payment.js` — authenticated Brand payment-method client for paid-call booking surfaces; see [`v3/README.md`](v3/README.md#brand-paid-call-payment-method-client) for its idempotency, identity, and native-Webflow ownership contract
-- `v3/dashboard-action-items.js` — Action Items panel chrome for the Starter and Brand dashboards; feature scripts still own their own rows, while this controller owns only the `data-action-element` loading card, "all caught up" empty card, live `total` badge, `data-action-items-count` attribute, and `actionItemsChanged` event, kept live by a coalesced `MutationObserver`. Rows are matched by `[data-action-element="item"]` or the legacy `.dash-hero_action-item` class — an accepted, temporary exception to the attributes-only rule above (see [`v3/README.md`](v3/README.md#dashboard-action-items-panel))
+- `v3/starter-dashboard-stripe-connect.js` — Memberstack-scoped V3 Stripe Connect dashboard and OAuth-callback controller; the authoritative member-facing behavior and support-owned disconnect boundary live in [`v3/README.md`](v3/README.md#starter-dashboard-stripe-connect)
+- `v3/paid-call-brand-payment.js` — authenticated Brand card-setup and paid-call booking controller for Designer-authored Hire modals; see [`v3/README.md`](v3/README.md#brand-paid-call-payment-method-client) for its idempotency, identity, payment-authority, and native-Webflow ownership contract
+- `v3/dashboard-action-items.js` — shared Starter and Brand dashboard Action Items controller, including the Brand first-opportunity and `/all-starters` onboarding rows; the authoritative behavior and Designer contract live in [`v3/README.md`](v3/README.md#dashboard-action-items-panel)
 - `v3/onboarding-profile-preview.js` — onboarding self-preview `beforeRender` transform for the wf-xano list, including computed roles, category, location, bio, and endpoint-based arming; authoritative page wiring and instance rules live in [`v3/README.md`](v3/README.md#onboarding-profile-preview) and [`v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md`](v3/ONBOARDING-PROFILE-PREVIEW-WIRING.md)
 - `v3/onboarding-done-redirect.js` — read half of the `/starter-onboarding` completion pair: redirects an already-complete member to `/starter-dashboard` and fails open; it installs only with `v3/patch-onboarding-status.js`; authoritative wiring and QA live in [`v3/README.md`](v3/README.md#onboarding-done-redirect) and [`v3/ONBOARDING-DONE-REDIRECT-WIRING.md`](v3/ONBOARDING-DONE-REDIRECT-WIRING.md)
 - `v3/patch-onboarding-status.js` — write half of the same pair: detects Webflow form success, records `onboarding_done` in Xano with retries, emits the shared privacy-safe success/failure receipt, and routes to `/starter-dashboard`; authoritative wiring lives in [`v3/README.md`](v3/README.md#onboarding-patch-status) and [`v3/ONBOARDING-PATCH-STATUS-WIRING.md`](v3/ONBOARDING-PATCH-STATUS-WIRING.md)
 - `v3/build-profile/` — source-controlled Build Profile browser controllers; the authoritative migration scope, exact live-body provenance, loader order, exclusions, and release checks live in [`v3/build-profile/README.md`](v3/build-profile/README.md)
 - `v3/build-profile/profile-photo.js` — provenance-locked Build Profile photo controller
+- `v3/build-profile/canonical-profile-hydrator.js` — canonical Xano fallback for missing Memberstack/local Build Profile draft fields; loaded by the existing profile-photo asset without a Webflow block edit
 - `v3/build-profile/portfolio-crud.js` — provenance-locked Build Profile portfolio mutation controller
 - `v3/build-profile/portfolio-list.js` — provenance-locked Build Profile portfolio list controller
 - `v3/build-profile/company-autocomplete.js` — provenance-locked Build Profile company autocomplete
@@ -122,8 +125,15 @@ Do not discard local changes unless the user explicitly asks.
   again before its Memberstack custom-field projection, so an account change
   stops the workflow instead of writing into the new session and records a safe
   auth-failure receipt when diagnostics are available. The script owns its DOM,
-  readiness, validation, rate-input, and loader fallbacks. The site-wide Webflow
-  Head Code still initializes
+  readiness, rate-input, and loader fallbacks. The authoritative validation
+  ownership, published-markup, cutover, and loading-state contract lives in
+  [`v3/starter-edit-profile/README.md`](v3/starter-edit-profile/README.md#validation-and-submit-ownership).
+  The native Webflow
+  form may include the existing reviewer increment component as step 7;
+  the controller normalizes its three hidden JSON slots to the same canonical
+  `Reviewers` object used by Build Profile before the authenticated Xano PATCH.
+  If that native step is absent, the controller does not send `Reviewers`.
+  The site-wide Webflow Head Code still initializes
   `MEMBER`, `memberReady`, and the matching helper aliases before deferred page
   scripts. Load `intl-tel-input`, Quill, then this deferred `@latest` asset.
   `v3/brand-account-controller.js` must load first with
@@ -142,7 +152,8 @@ Do not discard local changes unless the user explicitly asks.
   see `v3/README.md` for its host, markup, and safety boundary
 - `v3/scheduling-availability-writer.js` — availability form, manager, Nylas scheduler, timezone, and calendar OAuth writer through `window.xanoAuthFetch`; the authoritative host, path, identity, and safety boundary lives in [`v3/README.md`](v3/README.md#booking-stage-availability-writer)
 - `v3/scheduling-availability-section.js` — non-modal counterpart to the writer above for the Designer "Dashboard / Calendar" section on the canonical Starter dashboard: per-item CRUD with an inline edit form per item, connect/disconnect, timezone, and a live bookable-slots preview, reusing the writer's connection/config logic without its modal steps; see [`v3/README.md`](v3/README.md#booking-stage-availability-section) for its markup contract and the OAuth-callback handoff with the writer
-- `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed legacy calls to V3, blocks unclassified routes, and retains only approved legacy Stripe calls; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
+- `v3/paid-call-settings.js` — native Starter paid-call settings controller backed only by canonical Xano get/upsert/disable endpoints; the authoritative Designer wiring, authority, and release gate live in [`v3/PAID-CALL-SETTINGS-WIRING.md`](v3/PAID-CALL-SETTINGS-WIRING.md)
+- `v3/scheduling-v3-stage.js` — hostname/path-gated scheduling compatibility adapter that rewrites reviewed scheduling calls to exact V3 routes and blocks unclassified and legacy Stripe provider routes; see [V3 Scheduling Authentication](#v3-scheduling-authentication)
 - `opportunities-3.0-debug.js` — query-gated opportunity matching QA implementation
 - `v3/messages.js` — self-contained Memberstack + TalkJS inbox bootstrap for `/messages`; see [`v3/README.md`](v3/README.md#brand-and-starter-dashboard-messages-tile) for its existing-conversation and member deep-link contracts
 - `v3/messages-profile.js` — "Message this starter" modal on the `/hire/<slug>` profile template; mounts a TalkJS chatbox into the page's existing modal, lazy-loading the SDK on first open, and redirects logged-out and free-Brand viewers instead
@@ -203,7 +214,8 @@ Attribute-driven components published for reuse across pages. Most carry a
 - `global-embeds/modal/reset-on-close.js` — opt-in `data-modal-reload-on-submit` reload once a modal's form really succeeded, detected from Webflow hiding the `<form>` **and** showing `.w-form-done` so a Designer-visible done block cannot false-positive ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/modal/reset-on-close))
 - `global-embeds/accordions/accordions.js` — `[data-accordion="wrapper"]` accordions with open-by-default (index or `all`), close-previous, close-on-second-click, and open-on-hover options ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/accordions))
 - `global-embeds/custom-scrollbar/custom-scrollbar.js` — custom scrollbar chrome for overflow regions ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/custom-scrollbar))
-- `global-embeds/expert-card/expert-card.js` — the shared Starter card: hover height measurement and layout, driven by the `expert-cards:relayout` event its companion scripts dispatch ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/expert-card))
+- `global-embeds/expert-card/expert-card.js` — the shared Starter card: hover height measurement and layout, driven by the `expert-cards:relayout` event its companion scripts dispatch; the company-list equalize pass caps the height it writes at two line-heights so it cannot undo the clamp in the companion CSS ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/expert-card))
+- `global-embeds/expert-card/expert-card.css` — **CDN-served** company-list companion for the card; load in **Head** from the same jsDelivr ref as `expert-card.js`, not a paste embed. Takes `.expert-card_company-list` out of flex so companies read as one sentence, clamps it to two lines with a trailing ellipsis (`-webkit-line-clamp: 2` on a `-webkit-box`, so the cut is visible rather than a silent height clip), keeps each company name unbreakable (`white-space: nowrap`) so wrap happens between companies not inside "Xero Shoes", and replaces the leading `::before` comma with an `::after` comma glued to its own company (the gap to the next one is margin, so a wrap can never open on a comma), with last-child suppression for all three markup shapes (CMS nested collection, Algolia template siblings, plain paragraphs) ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/expert-card))
 - `global-embeds/featured-expert-card/featured-expert-card.js` — featured-variant Starter card behavior ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/featured-expert-card))
 - `global-embeds/featured-expert-card/featured-expert-card-price.js` — price rendering for the featured Starter card ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/featured-expert-card/featured-expert-card-price))
 - `global-embeds/application-card/application-card.js` — the shared application card used by opportunity and applicant lists ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/application-card))
@@ -214,6 +226,7 @@ Attribute-driven components published for reuse across pages. Most carry a
 - `global-embeds/text-methods/text-methods.js` — the shared `truncateText(text, limit)` helper: word-boundary truncation with an ellipsis, non-string input returning empty. No Docs URL and no owner doc
 - `global-embeds/millify.js` — formats long numbers as `1.2K` / `3.4M` through `data-millify` attributes; formatting adapted from millify v6.1.0 (MIT), diagnostics staging-gated. No Docs URL and no owner doc
 - `global-embeds/logo-wall/logo-wall.js` — **CDN-served** (jsDelivr `defer`, not a paste embed): attribute-driven Logo Wall; CMS logos split round-robin into looping GSAP tracks (`data-logo-wall-element="wrapper|item"`), unique set starts centered, clipped by its own wrapper (the container is the mask; full-bleed is a Designer layout choice), pause-on-hover, off-screen pause, reduced-motion freeze. Every logo is forced `loading="eager"` before the tracks arm — Webflow stamps CMS images lazy and the clipped logos never intersect the viewport, so a lazy wall never fetched them and never animated at all — and readiness waits at most 3s: on timeout the wall arms on the images it has (one dev-host warning) and re-arms once when the stragglers finally land ([docs](https://wf-starter-embeds-docs.vercel.app/docs/global-embeds/logo-wall))
+- `global-embeds/rte-table.css` — **CDN-served** table skin for `[data-rte-table]`: one attribute on `<table>` (or a wrapper) styles every row and cell to match the privacy-policy Finsweet table. `<thead>` / `<th>` get the header bar; a tbody-only table is all data rows. Last column centers by default (Collected); override with `--rte-table-last-align: left`. Load in **Head** from jsDelivr, not a paste embed
 - `global-embeds/logo-wall/logo-wall.css` — **CDN-served** companion structural CSS (overflow mask + flex tracks); load in **Head** from the same jsDelivr ref as the script. It also owns first paint: until the deferred script arms, the wrapper and any raw Webflow CMS chain still inside it (`.w-dyn-list`/`.w-dyn-items`, plus the `display: contents` helper levels the wrapper's gap has to be relayed through) are painted as one clipped, centered row, so the wall never flashes as a tall vertical stack. `data-logo-wall-inited="true"` — written only once the Tracks are built, so a wrapper the script bails on keeps the pre-init row — flips it to the armed Track column. A single-band wall (`data-logo-wall-tracks="1"`, what the homepage uses) is pixel-identical either side of that flip; a multi-band wall grows by its extra rows, so reserve the armed height with a wrapper min-height in Designer. Required: if it does not load, the script leaves the wall static — the original logos only, no clones and no animation.
 
 ### Form embeds (`global-embeds/form-embeds/`)
@@ -275,7 +288,7 @@ These two scripts have no Docs URL and no owner doc. The event plan named below
 owns the shared event vocabulary, not the browser-script wiring.
 
 - `utils/posthog-identity.js` — Memberstack to PostHog identity bridge: `posthog.identify(<memberstack id>)` with persona labels derived from the same customFields `opportunities-3.0.js` gates on, and `posthog.reset()` on logout when the previous identity was a member id so a shared browser cannot chain new anonymous events to the old member. Account ids and capability labels only, never email or name. Load sitewide with `defer`; the head snippet's stub queues calls, so it may run before array.js arrives
-- `utils/posthog-track.js` — the shared `StartersTrack.track(name, props)` funnel-event helper: stamps a consistent `platform` (`v2` / `v3`) property and makes a missing or blocked PostHog unable to break page logic. Event names and properties are defined in `platform-ops/architecture/posthog-funnel-events-plan.md`; renames need a migration note there
+- `utils/posthog-track.js` — the shared `StartersTrack.track(name, props)` funnel-event helper: stamps a consistent `platform` (`v2` / `v3`) property and makes a missing or blocked PostHog unable to break page logic. It also captures uncaught errors and unhandled promise rejections; object rejection reasons expose only bounded `message`, `code`, `status`, and `name` diagnostics so arbitrary request or member data is not sent. Event names and properties are defined in `platform-ops/architecture/posthog-funnel-events-plan.md`; renames need a migration note there
 
 ### Other page scripts
 
@@ -354,8 +367,13 @@ exists, or `none` otherwise, so Mailchimp removes the entire empty review cell.
 Each Starter image comes from Algolia's canonical `profile-photo` field and
 maps to the matching `starter_1_image_url`, `starter_2_image_url`, or
 `starter_3_image_url` property; legacy photo-field aliases remain compatibility
-fallbacks. Recommendations cached before these review fields were added refresh
-before enrollment without changing the quiz revision. When no Learn record is
+fallbacks. The canonical Algolia `profile-type`, `city`, `state`, `country`,
+`service-1`, `service-2`, and `service-3` fields supply each Starter's type,
+comma-separated location, and three fixed service slots. If any canonical
+service slot exists, blank slots stay blank instead of shifting later services
+or falling back to legacy profile metadata. Recommendations cached before these
+email fields were added refresh before enrollment without changing the quiz
+revision. When no Learn record is
 available, it sends the safe `/learn` fallback instead of leaving the email
 empty. Learn interview links use the live V3
 `/learn/interviews-analyses/<slug>` CMS route; legacy
@@ -459,6 +477,12 @@ so loading both scripts does not submit twice. Keep the existing load order:
 <script defer src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/opportunities---create.js"></script>
 ```
 
+After a successful standalone-page create request, the controller returns the
+member to the published merged `/opportunities` feed. It ignores duplicate
+submits while member lookup or the create request is pending, and it does not
+redirect until the create request succeeds. The Brand-feed modal keeps its
+authored inline success screen instead of redirecting.
+
 The form may keep its native submit control; an optional
 `data-opp-submit="create"` control inside the form is still owned by the form's
 submit handler. The Webflow form display name, generated ID, and styling classes
@@ -557,9 +581,10 @@ compatibility bridge in `opportunities-3.0.js` in either script order.
 
 `v3/scheduling-v3-stage.js` installs an exact hostname/path-gated compatibility
 adapter on the pages listed in the authoritative V3 scheduling boundary. It
-rewrites reviewed legacy calls to V3 and sends them through `window.xanoAuthFetch`, blocks #1553,
+rewrites reviewed scheduling calls to exact V3 routes and sends them through the
+reviewed scheduling auth bridge, blocks #1553,
 transcription, `calendars/get_availabilities`, and every other unclassified
-scheduling route, and retains only the approved legacy Stripe provider calls.
+scheduling route, including the legacy Stripe provider routes.
 Use `v3/scheduling-v3-stage-component.html` as the first Code Embed in a clone
 of the existing scheduling component. The shared component used by `detail_hire`
 remains unchanged.
@@ -770,71 +795,49 @@ await window.Opp30.diagnoseOpportunityMatching()
 
 ## Opportunities 3.0 Lifecycle Loading States
 
-Close and Reopen controls can keep their loading appearance in Webflow by using
-valued attributes (Webflow does not reliably preserve empty custom attributes):
+Create, Edit, Close, and Reopen (and any other Opportunity wrap that authored a
+Spinner) use a Button Wrap (`.button_main-wrap`). The native control is an empty
+overlay `.clickable_btn`; the visible label, line/arrow, and
+`[data-button-spinner]` sit together in `.button_main-element`. Designer owns
+the right-side layout. The script only toggles visibility.
 
 ```html
-<div data-opp-element="loading-button" data-opp-loading="false">
-  <span data-opp-element="loading-label">Reopen opportunity</span>
-  <span data-opp-element="loading-hide">Optional helper or icon</span>
-  <span data-opp-element="loading-spinner">...</span>
+<div class="button_main-wrap" data-button-theme="black" data-opp-submit="create">
+  <div class="clickable_wrap">
+    <button type="submit" class="clickable_btn"></button>
+  </div>
+  <div class="button_main-element">
+    <div class="button_main-text">Submit</div>
+    <div class="button_main-line"></div>
+    <div data-button-spinner><!-- Designer-authored Spinner --></div>
+  </div>
 </div>
 ```
 
-Style the label and spinner from the loading-button wrapper's
-`data-opp-loading="false|true"` value. This stable-layout CSS keeps the spinner
-centered without changing the button's dimensions:
+Create and Edit start at `type="submit"` inside that Opportunity form. Close and
+Reopen start at `data-opp-submit` (`reopen` exists; stamp `close` on the Close
+confirm when it is not a submit). Cancel is never chosen.
 
-```css
-[data-opp-element='loading-button'] {
-  position: relative;
-}
+While the request is pending, the script shows the Spinner (`display: flex`),
+fades `.button_main-text` and `.button_main-line` to 60% opacity (or the native
+control when those nodes are absent), and marks the native control busy and
+disabled. The Button Wrap itself is not faded, so the Spinner stays full
+opacity. Idle hides the Spinner (`display: none`) and restores the chrome. A
+wrap with no Spinner still disables and never gets a cloned one. The pending
+helper does not write `data-opp-loading` on Button Wraps and does not match
+`loading-button`. The talent-applied list still uses `data-opp-loading` as its
+own list-fetch flag.
 
-[data-opp-element='loading-button'] [data-opp-element='loading-spinner'] {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  visibility: hidden;
-  opacity: 0;
-}
-
-[data-opp-element='loading-button'][data-opp-loading='true'] {
-  cursor: wait;
-}
-
-[data-opp-element='loading-button'][data-opp-loading='true']
-  [data-opp-element='loading-spinner'] {
-  visibility: visible;
-  opacity: 1;
-}
-
-[data-opp-element='loading-button'][data-opp-loading='true']
-  [data-opp-element='loading-label'],
-[data-opp-element='loading-button'][data-opp-loading='true']
-  [data-opp-element='loading-hide'] {
-  visibility: hidden;
-}
-```
-
-While the lifecycle request is pending, `opportunities-3.0.js` sets the value to
-`true`, adds `is-wf-xano-mutating`, marks the control busy and disabled for
-assistive technology, disables any nested native control, and suppresses
-duplicate writes. The original state is restored after an error or a successful
-no-reload Close/Reopen repaint.
-
-Hiding authored content is opt-in. Use
-`data-opp-element="loading-label"` for the button label or
-`data-opp-element="loading-hide"` for any other child that should become
-invisible while loading. Both use `visibility: hidden` to preserve the button's
-dimensions. Untagged button content remains visible while the spinner runs; the
-script does not add either attribute automatically.
+On bind, a Spinner inside a Button Wrap is forced hidden once so a leftover
+visible node cannot stick. There is no minimum display delay and no fail-open
+hide cap. Pending is also exported as
+`window.Opp30.setOpportunityActionPending(control, pending)` for the Opportunity
+test bridge.
 
 The Close form-flow confirmation remains identified by
-`data-close-opp="confirm-button"`. The script upgrades it to a loading button and,
-when necessary, clones the spinner authored inside the page-level
-`data-modal-trigger="close-opportunity"` control. The form-flow advances only after
-the Close request succeeds; an error leaves the confirmation step open and usable.
+`data-close-opp="confirm-button"`. Pending prefers `[data-opp-submit="close"]` on
+that confirm when present. The form-flow advances only after the Close request
+succeeds; an error leaves the confirmation step open and usable.
 
 The Close modal's shared nav header may remain outside the form-flow steps. Author
 its confirmation title with `data-opp-status="active"` and its success title with
@@ -939,22 +942,29 @@ authenticated Xano `contracts/link/v3`; this route is limited to `sent`,
 `viewed`, and `partial` contract states. `View Signed Contract` instead requests
 the completed PDF from the separate authenticated Xano
 `contracts/download/v3` route and opens the returned PDF through a temporary
-browser object URL. Both paths open in a new tab when the browser permits it and
-fall back to the current tab. No PandaDoc credential or stored contract URL is
-exposed in the page. Xano rechecks Brand or Starter project ownership,
-environment, canonical V3 Standard Contract state, and the live PandaDoc
-document status before returning either a one-hour recipient session or a
-completed PDF. Missing projects, own-contract or legacy rows, non-completed PDF
-requests, wrong owners, and wrong-environment rows fail closed. Neither browser
-path creates, sends, signs, or mutates a PandaDoc document.
+browser object URL. Both paths reserve and open a new tab from the click on the
+Brand and Starter dashboards. They never replace the dashboard in the current
+tab. If the browser blocks the new tab, the controller asks the member to allow
+pop-ups and does not request a contract session. No PandaDoc credential or
+stored contract URL is exposed in the page. Xano rechecks Brand or Starter
+project ownership, environment, canonical V3 Standard Contract state, and the
+live PandaDoc document status before returning either a one-hour recipient
+session or a completed PDF. Missing projects, own-contract or legacy rows,
+non-completed PDF requests, wrong owners, and wrong-environment rows fail
+closed. Neither browser path creates, sends, signs, or mutates a PandaDoc
+document.
 Immediately before a click, the controller must refresh canonical project state;
 a failed or inconsistent refresh does not fall back to cached authorization. A
 missing or rejected contract response closes the pre-opened blank tab and shows
 only the generic `Contract is unavailable. Please try again.` message.
 Returning from PandaDoc refreshes the loaded project page range on `pageshow`,
 window `focus`, or when the page becomes visible. The `focus` path covers a
-separate PandaDoc window that never hides the dashboard. The panel repaints from
-canonical signature state without discarding pagination.
+separate PandaDoc window that never hides the dashboard. These browser signals
+often arrive as one return burst, so they share one in-flight refresh and a
+successful result stays fresh for 30 seconds. A failed refresh starts no
+freshness window, so the next signal retries immediately. Click and project
+mutation refreshes bypass this lifecycle guard and remain immediate. The panel
+repaints from canonical signature state without discarding pagination.
 
 The Webflow-authored panel and compact action fail closed from dashboard boot:
 they stay hidden while Memberstack resolves, while the project list is pending or
@@ -1180,8 +1190,12 @@ blocks invalid submits before Webflow's handler or page controllers see them.
   on clickables outside the form or on wrapper divs that carry the click handler
   (e.g. the `data-opp-submit` button wrappers).
 - `count` is a live character counter ("1,234 / 2,500") — max from the field's
-  `maxlength` or `wf-validate-count-max`. (Finsweet's "inputcounter" is a number
-  stepper, not a char counter — this fills that gap.)
+  `maxlength` or `wf-validate-count-max`. The shown denominator **caps input and
+  gates submit**: extra keystrokes are blocked, paste is truncated to the
+  remaining room, and a value already over the limit (prefill / JS-set) is
+  invalid even when `maxlength` is missing or higher (the tighter of the two
+  wins). The count slot hides while its field's error is showing. (Finsweet's
+  "inputcounter" is a number stepper, not a char counter — this fills that gap.)
 - An invalid field with no error slot gets a plain one auto-injected (class
   `wf-validate_error-auto`), so a gated form never blocks submission invisibly.
 - `minlength`/`maxlength` are enforced by the script itself (native tooShort/tooLong

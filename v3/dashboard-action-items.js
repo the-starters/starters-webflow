@@ -1,11 +1,10 @@
 /**
  * Dashboard 3.0 — Action Items panel controller (starter + brand dashboards).
  *
- * The Action Items panel is shared infrastructure: feature scripts (Stripe
- * Connect, calendar, projects, future sections) own their individual rows and
- * show/hide them; this controller owns only the panel chrome — the loading
- * card, the "all caught up" empty card, and the live count badge. It never
- * shows, hides, or edits a feature row.
+ * The Action Items panel is shared infrastructure. Starter feature scripts own
+ * their Stripe and calendar rows. This controller also owns the two Brand
+ * onboarding rows: post the first opportunity, and visit /all-starters. It
+ * owns the panel chrome, live count badge, and full-wrapper empty state.
  *
  * Designer wiring (grammar authored on the brand dashboard):
  *   data-action-element="wrapper"  — panel scope root (optional; falls back
@@ -42,6 +41,8 @@
     'starterStripeConnectError',
     'starterSchedulingConnectionStateChanged',
     'starterSchedulingAvailabilityError',
+    'starterBrandActionItemsReady',
+    'starterBrandActionItemsError',
   ]
   const TERMINAL_SCHEDULING_STATES = [
     'connected',
@@ -50,6 +51,11 @@
     'error',
   ]
   const CHANGED_EVENT = 'actionItemsChanged'
+  const OPPORTUNITY_CREATED_EVENT = 'starters:opportunity-created'
+  const OPPORTUNITY_API_READY_EVENT = 'starters:opp30-ready'
+  const OPPORTUNITY_API_TIMEOUT_MS = 4000
+  const BRAND_READY_EVENT = 'starterBrandActionItemsReady'
+  const BRAND_ERROR_EVENT = 'starterBrandActionItemsError'
 
   const COUNT_ATTR = 'data-action-items-count'
 
@@ -122,9 +128,134 @@
     )
   }
 
+  function emitNamed(name, detail) {
+    if (
+      typeof global.CustomEvent !== 'function' ||
+      typeof global.dispatchEvent !== 'function'
+    ) {
+      return
+    }
+    global.dispatchEvent(new global.CustomEvent(name, { detail: detail || {} }))
+  }
+
+  async function currentMember() {
+    if (global.memberReady && typeof global.memberReady.then === 'function') {
+      const member = await global.memberReady
+      if (member && member.id) return member
+    }
+    if (
+      global.$memberstackDom &&
+      typeof global.$memberstackDom.getCurrentMember === 'function'
+    ) {
+      const response = await global.$memberstackDom.getCurrentMember()
+      return response && response.data
+    }
+    return null
+  }
+
+  function brandRows(doc) {
+    const postTemplate = doc.querySelector(
+      '[data-project-proposal-template="true"]',
+    )
+    const browseLink = doc.querySelector(
+      '.dash-hero_action-item a[href="/all-starters"]',
+    )
+    return {
+      post:
+        postTemplate && typeof postTemplate.closest === 'function'
+          ? postTemplate.closest('.dash-hero_action-item') || postTemplate
+          : postTemplate,
+      browse:
+        browseLink && typeof browseLink.closest === 'function'
+          ? browseLink.closest('.dash-hero_action-item')
+          : null,
+    }
+  }
+
+  function responseHasOpportunity(response) {
+    if (!response || typeof response !== 'object') return false
+    if (Number(response.itemsTotal) > 0) return true
+    return Array.isArray(response.items) && response.items.length > 0
+  }
+
+  function opportunityApi() {
+    const api = global.Opp30 && global.Opp30.API
+    return api && typeof api.brandOppList === 'function' ? api : null
+  }
+
+  function waitForOpportunityApi() {
+    const ready = opportunityApi()
+    if (ready) return Promise.resolve(ready)
+
+    return new Promise(function (resolve, reject) {
+      let settled = false
+      const finish = function (api, error) {
+        if (settled) return
+        settled = true
+        global.clearTimeout(timeout)
+        global.removeEventListener(OPPORTUNITY_API_READY_EVENT, onReady)
+        if (api) resolve(api)
+        else reject(error)
+      }
+      const onReady = function () {
+        const api = opportunityApi()
+        if (api) finish(api)
+      }
+      const timeout = global.setTimeout(function () {
+        finish(null, new Error('Opportunity API unavailable'))
+      }, OPPORTUNITY_API_TIMEOUT_MS)
+      global.addEventListener(OPPORTUNITY_API_READY_EVENT, onReady)
+      onReady()
+    })
+  }
+
+  async function mountBrandActionItems(doc) {
+    if (!global.location || global.location.pathname !== '/brand-dashboard') {
+      return false
+    }
+    const rows = brandRows(doc)
+    if (!rows.post && !rows.browse) return false
+
+    const hidePost = function () {
+      show(rows.post, false)
+    }
+    global.addEventListener(OPPORTUNITY_CREATED_EVENT, hidePost)
+
+    try {
+      const member = await currentMember()
+      if (!member || !member.id) throw new Error('Member unavailable')
+      const memberstack = global.$memberstackDom
+      const routeGuard = global.StartersV3RouteGuard
+      if (
+        rows.browse &&
+        routeGuard &&
+        typeof routeGuard.hasBrandAllStartersVisit === 'function' &&
+        (await routeGuard.hasBrandAllStartersVisit(memberstack, member))
+      ) {
+        show(rows.browse, false)
+      }
+
+      const opportunities = await waitForOpportunityApi()
+      const response = await opportunities.brandOppList('', 1, 1)
+      if (responseHasOpportunity(response)) hidePost()
+      emitNamed(BRAND_READY_EVENT)
+      return true
+    } catch (error) {
+      emitNamed(BRAND_ERROR_EVENT, { message: error && error.message })
+      return false
+    }
+  }
+
   function createPanel(scope) {
+    const wrapper =
+      typeof scope.getAttribute === 'function' &&
+      scope.getAttribute(ELEMENT_ATTR) === 'wrapper'
+        ? scope
+        : null
     const panel = {
       scope,
+      wrapper,
+      wrapperHidden: false,
       loading: scope.querySelector(elementSelector('loading')),
       empty: scope.querySelector(elementSelector('empty')),
       total: scope.querySelector(elementSelector('total')),
@@ -133,6 +264,10 @@
     }
 
     panel.render = function render() {
+      // A controller-hidden wrapper makes every descendant rect zero. Restore
+      // it synchronously for measurement, then apply the settled result before
+      // the browser paints. The observer ignores these wrapper-only writes.
+      if (panel.wrapperHidden) show(panel.wrapper, true)
       const count = countPendingItems(scope)
       if (!panel.settled && count > 0) panel.settled = true
 
@@ -143,6 +278,8 @@
       if (countTarget && typeof countTarget.setAttribute === 'function') {
         countTarget.setAttribute(COUNT_ATTR, String(count))
       }
+      panel.wrapperHidden = Boolean(panel.wrapper && panel.settled && count === 0)
+      show(panel.wrapper, !panel.wrapperHidden)
 
       if (count !== panel.lastCount) {
         panel.lastCount = count
@@ -218,6 +355,8 @@
       })
     })
 
+    mountBrandActionItems(doc)
+
     global.setTimeout(function () {
       panels.forEach(function (panel) {
         panel.settle()
@@ -225,9 +364,24 @@
     }, SETTLE_TIMEOUT_MS)
 
     if (typeof global.MutationObserver === 'function') {
-      const observer = new global.MutationObserver(
-        createRenderScheduler(renderAll),
-      )
+      const scheduleRender = createRenderScheduler(renderAll)
+      const wrappers = panels
+        .map(function (panel) {
+          return panel.wrapper
+        })
+        .filter(Boolean)
+      const observer = new global.MutationObserver(function (records) {
+        const wrapperOnly =
+          records.length > 0 &&
+          records.every(function (record) {
+            return (
+              record.type === 'attributes' &&
+              wrappers.indexOf(record.target) !== -1 &&
+              (record.attributeName === 'style' || record.attributeName === 'hidden')
+            )
+          })
+        if (!wrapperOnly) scheduleRender()
+      })
       scopes.forEach(function (scope) {
         observer.observe(scope === doc ? doc.body || doc : scope, {
           subtree: true,
@@ -243,6 +397,8 @@
 
   const testApi = {
     CHANGED_EVENT,
+    BRAND_ERROR_EVENT,
+    BRAND_READY_EVENT,
     COUNT_ATTR,
     ITEM_SELECTOR,
     SETTLE_EVENTS,
@@ -254,6 +410,10 @@
     createRenderScheduler,
     isPendingItem,
     mount,
+    mountBrandActionItems,
+    brandRows,
+    responseHasOpportunity,
+    waitForOpportunityApi,
     resolveScopes,
     setTotal,
     shouldSettle,

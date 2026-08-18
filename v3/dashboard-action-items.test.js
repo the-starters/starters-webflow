@@ -163,7 +163,10 @@ test('render before settle keeps loading visible and hides empty', () => {
   const loading = element({ attrs: { 'data-action-element': 'loading' } })
   const empty = element({ attrs: { 'data-action-element': 'empty' } })
   const total = element({ attrs: { 'data-action-element': 'total' }, text: '4' })
-  const scope = element({ children: [loading, empty, total] })
+  const scope = element({
+    attrs: { 'data-action-element': 'wrapper' },
+    children: [loading, empty, total],
+  })
 
   const panel = api.createPanel(scope)
   const count = panel.render()
@@ -173,6 +176,7 @@ test('render before settle keeps loading visible and hides empty', () => {
   assert.equal(empty.style.display, 'none')
   assert.equal(total.textContent, '0')
   assert.equal(scope.attributes['data-action-items-count'], '0')
+  assert.equal(scope.style.display, '')
 })
 
 test('visible items settle the panel and update the badge', () => {
@@ -192,10 +196,13 @@ test('visible items settle the panel and update the badge', () => {
   assert.equal(total.textContent, '2')
 })
 
-test('settle with zero items shows the empty card', () => {
+test('settle with zero items hides the full action-items wrapper', () => {
   const loading = element({ attrs: { 'data-action-element': 'loading' } })
   const empty = element({ attrs: { 'data-action-element': 'empty' } })
-  const scope = element({ children: [loading, empty] })
+  const scope = element({
+    attrs: { 'data-action-element': 'wrapper' },
+    children: [loading, empty],
+  })
 
   const panel = api.createPanel(scope)
   panel.render()
@@ -204,6 +211,25 @@ test('settle with zero items shows the empty card', () => {
   panel.settle()
   assert.equal(loading.style.display, 'none')
   assert.equal(empty.style.display, '')
+  assert.equal(scope.hidden, true)
+  assert.equal(scope.style.display, 'none')
+})
+
+test('a new pending item restores a wrapper hidden after settlement', () => {
+  const pending = row({ height: 0 })
+  const scope = element({
+    attrs: { 'data-action-element': 'wrapper' },
+    children: [pending],
+  })
+  const panel = api.createPanel(scope)
+
+  panel.settle()
+  assert.equal(scope.style.display, 'none')
+
+  pending.height = 20
+  assert.equal(panel.render(), 1)
+  assert.equal(scope.hidden, false)
+  assert.equal(scope.style.display, '')
 })
 
 test('render emits actionItemsChanged only when the count changes', () => {
@@ -306,4 +332,169 @@ test('render scheduler falls back to setTimeout without rAF', async () => {
   assert.equal(renders, 1)
 
   if (previous) global.requestAnimationFrame = previous
+})
+
+function brandDocument(post, browse) {
+  const link = { closest: () => browse }
+  return {
+    querySelector(selector) {
+      if (selector === '[data-project-proposal-template="true"]') return post
+      if (selector === '.dash-hero_action-item a[href="/all-starters"]') {
+        return link
+      }
+      return null
+    },
+  }
+}
+
+function installBrandGlobals({ list, visited = false, installApi = true }) {
+  const listeners = new Map()
+  global.location = { pathname: '/brand-dashboard' }
+  global.memberReady = Promise.resolve({ id: 'brand-1' })
+  if (installApi) global.Opp30 = { API: { brandOppList: list } }
+  global.$memberstackDom = {}
+  global.StartersV3RouteGuard = {
+    hasBrandAllStartersVisit: async (_memberstack, member) =>
+      member.id === 'brand-1' && visited,
+  }
+  global.CustomEvent = function (type, init) {
+    return { type, detail: init && init.detail }
+  }
+  global.addEventListener = (type, listener) => {
+    const handlers = listeners.get(type) || []
+    handlers.push(listener)
+    listeners.set(type, handlers)
+  }
+  global.removeEventListener = (type, listener) => {
+    const handlers = listeners.get(type) || []
+    listeners.set(
+      type,
+      handlers.filter((handler) => handler !== listener),
+    )
+  }
+  global.dispatchEvent = (event) => {
+    ;(listeners.get(event.type) || []).forEach((listener) => listener(event))
+    return true
+  }
+  return listeners
+}
+
+function clearBrandGlobals() {
+  ;[
+    'location',
+    'memberReady',
+    'Opp30',
+    '$memberstackDom',
+    'StartersV3RouteGuard',
+    'CustomEvent',
+    'addEventListener',
+    'removeEventListener',
+    'dispatchEvent',
+  ].forEach((name) => delete global[name])
+}
+
+test('Brand post action resolves the authored template to its outer action row', () => {
+  const post = row()
+  const browse = row()
+  const template = {
+    closest(selector) {
+      return selector === '.dash-hero_action-item' ? post : null
+    },
+  }
+
+  const rows = api.brandRows(brandDocument(template, browse))
+  assert.equal(rows.post, post)
+  assert.equal(rows.browse, browse)
+})
+
+test('Brand actions hide after a canonical post and member-scoped browse visit', async () => {
+  const post = row()
+  const browse = row()
+  installBrandGlobals({
+    list: async () => ({ items: [{ id: 7 }], itemsTotal: 1 }),
+    visited: true,
+  })
+
+  try {
+    assert.equal(
+      await api.mountBrandActionItems(brandDocument(post, browse)),
+      true,
+    )
+    assert.equal(post.style.display, 'none')
+    assert.equal(browse.style.display, 'none')
+  } finally {
+    clearBrandGlobals()
+  }
+})
+
+test('Brand actions remain until completed and a successful create hides only the template', async () => {
+  const post = row()
+  const browse = row()
+  installBrandGlobals({
+    list: async () => ({ items: [], itemsTotal: 0 }),
+  })
+
+  try {
+    await api.mountBrandActionItems(brandDocument(post, browse))
+    assert.notEqual(post.style.display, 'none')
+    assert.notEqual(browse.style.display, 'none')
+
+    global.dispatchEvent({ type: 'starters:opportunity-created' })
+    assert.equal(post.style.display, 'none')
+    assert.notEqual(browse.style.display, 'none')
+  } finally {
+    clearBrandGlobals()
+  }
+})
+
+test('Brand canonical read failures leave unfinished rows visible and settle as an error', async () => {
+  const post = row()
+  const browse = row()
+  const listeners = installBrandGlobals({
+    list: async () => {
+      throw new Error('canonical read failed')
+    },
+    visited: true,
+  })
+  let errors = 0
+  listeners.set('starterBrandActionItemsError', [() => {
+    errors += 1
+  }])
+
+  try {
+    assert.equal(
+      await api.mountBrandActionItems(brandDocument(post, browse)),
+      false,
+    )
+    assert.notEqual(post.style.display, 'none')
+    assert.equal(browse.style.display, 'none')
+    assert.equal(errors, 1)
+  } finally {
+    clearBrandGlobals()
+  }
+})
+
+test('Brand opportunity check waits for the shared API to become ready', async () => {
+  const post = row()
+  const browse = row()
+  installBrandGlobals({
+    list: async () => ({ items: [{ id: 9 }], itemsTotal: 1 }),
+    installApi: false,
+  })
+
+  try {
+    const mounted = api.mountBrandActionItems(brandDocument(post, browse))
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    global.Opp30 = {
+      API: {
+        brandOppList: async () => ({ items: [{ id: 9 }], itemsTotal: 1 }),
+      },
+    }
+    global.dispatchEvent({ type: 'starters:opp30-ready' })
+
+    assert.equal(await mounted, true)
+    assert.equal(post.style.display, 'none')
+  } finally {
+    clearBrandGlobals()
+  }
 })

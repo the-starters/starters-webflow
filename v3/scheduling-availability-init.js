@@ -31,6 +31,10 @@
 
   let activeAvailability = null
   let activeConnectionState = 'loading'
+  let activeConfigurationCount = 0
+  let connectionActionObserver = null
+  const CALENDAR_ACTION_SELECTOR =
+    '[calendar-connection-action], .dash-hero_action-item a[href="#calendar"]'
 
   function setStatus(value) {
     document.documentElement.setAttribute(STATUS_ATTRIBUTE, value)
@@ -280,25 +284,24 @@
   }
 
   function renderConnectionAction(state, availability) {
-    const actions = Array.from(document.querySelectorAll('[calendar-connection-action]'))
+    const actions = Array.from(document.querySelectorAll(CALENDAR_ACTION_SELECTOR))
     actions.forEach(function (action) {
       // The Calendar entry is a pending Action Item, not a second settings
-      // launcher. Once the canonical provider state is connected, remove the
-      // full authored row so the shared Action Items controller can recalculate
-      // its badge. The class fallback matches dashboard-action-items.js and is
-      // the documented exception until every legacy row has the item attribute.
+      // launcher. It tracks the Nylas availability configuration only. Google
+      // grant and calendar state remain available to the scheduling controls,
+      // but do not decide whether this Action Item is complete.
       const item =
         typeof action.closest === 'function'
           ? action.closest('[data-action-element="item"], .dash-hero_action-item')
           : null
-      const isConnected = state === 'connected'
+      const hasNylasAvailability = activeConfigurationCount > 0
       if (item) {
-        item.hidden = isConnected
-        item.style.display = isConnected ? 'none' : ''
+        item.hidden = hasNylasAvailability
+        item.style.display = hasNylasAvailability ? 'none' : ''
       }
       action.setAttribute('data-calendar-connection-state', state)
       action.setAttribute('aria-busy', state === 'loading' ? 'true' : 'false')
-      action.style.display = isConnected ? 'none' : 'flex'
+      action.style.display = hasNylasAvailability ? 'none' : 'flex'
       bindStep(action, function () {
         if (activeConnectionState === 'error') return 'config-request-error'
         if (activeConnectionState === 'connected') {
@@ -310,6 +313,31 @@
           ? 'how-to-manage'
           : 'setup-form'
       })
+    })
+  }
+
+  function reconcileLateConnectionAction() {
+    if (document.querySelectorAll(CALENDAR_ACTION_SELECTOR).length) return
+    if (connectionActionObserver || typeof window.MutationObserver !== 'function') return
+
+    connectionActionObserver = new window.MutationObserver(function () {
+      if (!document.querySelectorAll(CALENDAR_ACTION_SELECTOR).length) return
+      connectionActionObserver.disconnect()
+      connectionActionObserver = null
+
+      // Webflow can add the authored dashboard row after deferred page scripts
+      // have already emitted the canonical Nylas state. Reapply that live state
+      // when the row arrives so returning users do not keep a stale action item.
+      const connection = window.STARTER_SCHEDULING_CONNECTION
+      if (connection && typeof connection === 'object') {
+        setConnectionState(connection.state, connection)
+      } else {
+        renderConnectionAction(activeConnectionState, activeAvailability)
+      }
+    })
+    connectionActionObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
     })
   }
 
@@ -353,9 +381,18 @@
   function setConnectionState(state, detail) {
     const allowed = ['loading', 'disconnected', 'connected', 'reconnect', 'error']
     activeConnectionState = allowed.indexOf(state) > -1 ? state : 'error'
+    if (
+      activeConnectionState !== 'loading' &&
+      activeConnectionState !== 'error' &&
+      detail &&
+      Object.prototype.hasOwnProperty.call(detail, 'configurationCount')
+    ) {
+      activeConfigurationCount = Number(detail.configurationCount) || 0
+    }
     document.documentElement.setAttribute(CONNECTION_STATUS_ATTRIBUTE, activeConnectionState)
     window.STARTER_SCHEDULING_CONNECTION = Object.assign({}, detail || {}, {
       state: activeConnectionState,
+      configurationCount: activeConfigurationCount,
     })
     renderConnectionAction(activeConnectionState, activeAvailability)
     if (activeAvailability) renderState(activeAvailability, activeConnectionState, false)
@@ -450,6 +487,8 @@
     const detail = (event && event.detail) || {}
     setConnectionState(detail.state, detail)
   })
+
+  reconcileLateConnectionAction()
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initialize, { once: true })

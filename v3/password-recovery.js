@@ -17,7 +17,11 @@
  *   data-password-recovery-login="brand"
  *   data-password-recovery-login="talent"
  *
- * When both are present, an unknown origin shows both choices. A known origin
+ * Recovery Email Hint (the address submitted on Forgot Password) fills:
+ *
+ *   [data-password-recovery-email]
+ *
+ * When both login choices are present, an unknown origin shows both. A known origin
  * shows only the matching choice. JavaScript never creates form or link markup.
  */
 ;(function () {
@@ -33,6 +37,7 @@
   ])
   var ORIGINS = new Set(['brand', 'talent'])
   var ORIGIN_STORAGE_KEY = 'thestarters:v3-password-origin'
+  var HINT_STORAGE_KEY = 'thestarters:v3-password-email'
   var ORIGIN_QUERY_KEY = 'from'
   var BRAND_LOGIN_PATH = '/login'
   var TALENT_LOGIN_PATH = '/starter-login'
@@ -96,6 +101,76 @@
     try {
       window.sessionStorage.setItem(ORIGIN_STORAGE_KEY, origin)
     } catch (error) {}
+  }
+
+  function readHint() {
+    try {
+      var value = window.sessionStorage.getItem(HINT_STORAGE_KEY)
+      return typeof value === 'string' && value !== '' ? value : null
+    } catch (error) {
+      return null
+    }
+  }
+
+  function storeHint(email) {
+    if (typeof email !== 'string') return
+    if (!email.replace(/^\s+|\s+$/g, '')) return
+    try {
+      window.sessionStorage.setItem(HINT_STORAGE_KEY, email)
+    } catch (error) {}
+  }
+
+  function clearHint() {
+    try {
+      window.sessionStorage.removeItem(HINT_STORAGE_KEY)
+    } catch (error) {}
+  }
+
+  function captureForgotHint(form) {
+    if (!form || typeof form.querySelector !== 'function') return
+    if (typeof form.checkValidity === 'function' && !form.checkValidity()) return
+    var input = form.querySelector('[data-ms-member="email"]')
+    if (!input || typeof input.value !== 'string') return
+    storeHint(input.value)
+  }
+
+  function bindForgotHintCapture() {
+    elements('form[data-ms-form="forgot-password"]').forEach(function (form) {
+      if (form.__startersPasswordHintBound) return
+      if (typeof form.addEventListener !== 'function') return
+      form.__startersPasswordHintBound = true
+      form.addEventListener(
+        'submit',
+        function () {
+          captureForgotHint(form)
+        },
+        true,
+      )
+    })
+  }
+
+  function fillHintSurface() {
+    var hint = readHint()
+    if (!hint) return
+    elements('[data-password-recovery-email]').forEach(function (surface) {
+      var textNode = surface.firstChild
+      if (textNode && textNode.nodeType === 3 && !textNode.nextSibling) {
+        textNode.nodeValue = hint
+        return
+      }
+      surface.textContent = hint
+    })
+  }
+
+  function fillForgotEmail() {
+    var hint = readHint()
+    if (!hint) return
+    elements('form[data-ms-form="forgot-password"]').forEach(function (form) {
+      if (!form || typeof form.querySelector !== 'function') return
+      var input = form.querySelector('[data-ms-member="email"]')
+      if (!input) return
+      input.value = hint
+    })
   }
 
   function queryOrigin(search) {
@@ -258,6 +333,12 @@
     var configuredForms = configureForm(pathname, origin)
     configureRetryLinks(pathname, origin)
     configureLoginChoices(pathname, origin)
+    if (pathname === FORGOT_PATH) {
+      bindForgotHintCapture()
+      fillForgotEmail()
+    }
+    if (pathname === RESET_PATH) fillHintSurface()
+    if (pathname === SUCCESS_PATH) clearHint()
     return configuredForms
   }
 
