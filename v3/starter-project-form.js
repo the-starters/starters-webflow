@@ -72,9 +72,9 @@
 
   function debugEnabled(globalObject) {
     if (!globalObject) return false
-    var search = clean(globalObject.location && globalObject.location.search)
-    if (/(?:\?|&)starterProjectDebug=1(?:&|$)/.test(search)) return true
     try {
+      var search = clean(globalObject.location && globalObject.location.search)
+      if (/(?:\?|&)starterProjectDebug=1(?:&|$)/.test(search)) return true
       return globalObject.localStorage && globalObject.localStorage.getItem('starters:project-debug') === '1'
     } catch (error) {
       return false
@@ -82,10 +82,14 @@
   }
 
   function debugLog(globalObject, eventName, detail) {
-    if (!debugEnabled(globalObject)) return
-    var logger = globalObject.console && globalObject.console.info
-    if (typeof logger !== 'function') return
-    logger.call(globalObject.console, '[StarterProjectV3]', eventName, detail || {})
+    try {
+      if (!debugEnabled(globalObject)) return
+      var logger = globalObject.console && globalObject.console.info
+      if (typeof logger !== 'function') return
+      logger.call(globalObject.console, '[StarterProjectV3]', eventName, detail || {})
+    } catch (error) {
+      return
+    }
   }
 
   function positiveId(value) {
@@ -558,7 +562,6 @@
         current.options = normalizeOptions(response)
         debugLog(globalObject, 'options_response', {
           eligible_count: current.options.length,
-          blocked_reason: clean(response && response.blocked_reason) || null,
         })
         current.optionsLoaded = true
         clearSelectedBrand(form)

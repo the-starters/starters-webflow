@@ -166,8 +166,8 @@ console for controller bind, Brand-option request/result/error, submit
 request/result/error, and member-scope reset.
 
 The entries can include Xano Brand or project row IDs, HTTP status, lifecycle
-state, eligible count, and the server blocked reason. They never include member
-IDs, email, tokens, idempotency keys, contract payloads, or project scope.
+state, and eligible count. They never include member IDs, email, tokens,
+idempotency keys, contract payloads, project scope, or free-form server text.
 
 For a multi-navigation session, an operator can set local storage key
 `starters:project-debug` to `1`. Remove it after the test. The URL flag is the

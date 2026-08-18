@@ -320,7 +320,10 @@ test('emits opt-in diagnostics without member IDs, tokens, or payload fields', a
   const loaded = load({
     noDocument: true,
     debug: true,
-    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+    projectOptions: async () => ({
+      counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+      blocked_reason: 'starter mem_starter cannot use sample@example.com for project_scope',
+    }),
   })
 
   await loaded.api.loadOptions(loaded.form, loaded.window)
@@ -330,8 +333,23 @@ test('emits opt-in diagnostics without member IDs, tokens, or payload fields', a
   assert.match(output, /options_response/)
   assert.match(output, /eligible_count/)
   assert.doesNotMatch(output, /mem_starter/)
+  assert.doesNotMatch(output, /sample@example\.com/)
   assert.doesNotMatch(output, /idempotency_key/)
   assert.doesNotMatch(output, /project_scope/)
+})
+
+test('diagnostic logger failures do not interrupt options or submit', async () => {
+  const loaded = load({
+    noDocument: true,
+    debug: true,
+    counterparties: [{ counterparty_id: 31, company_name: 'Brand', hiring_manager_name: 'Brand Member' }],
+  })
+  loaded.window.console.info = () => { throw new Error('console unavailable') }
+
+  assert.equal((await loaded.api.loadOptions(loaded.form, loaded.window)).length, 1)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'ready')
+  assert.equal(await loaded.api.submit(loaded.form, loaded.window, loaded.document), true)
+  assert.equal(loaded.form.getAttribute('data-starter-project-status'), 'success')
 })
 
 test('normalizes and renders the authenticated Starter profile into scoped bindings', async () => {
