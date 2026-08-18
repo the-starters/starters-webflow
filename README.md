@@ -821,7 +821,9 @@ flag.
 
 On bind, a Spinner that is a direct child of a Button Wrap is forced hidden
 once so a leftover visible node cannot stick. There is no minimum display delay
-and no fail-open hide cap.
+and no fail-open hide cap. Pending is also exported as
+`window.Opp30.setOpportunityActionPending(control, pending)` for the Opportunity
+test bridge.
 
 The Close form-flow confirmation remains identified by
 `data-close-opp="confirm-button"`. Pending prefers `[data-opp-submit="close"]` on

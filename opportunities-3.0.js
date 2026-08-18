@@ -5211,7 +5211,7 @@
 
   window.addEventListener('modal-open', (e) => {
     const modal = e.detail && e.detail.modal
-      prepareOpportunitySpinners()
+    prepareOpportunitySpinners()
     if (modal) {
       prepareOpportunityForms(modal)
       initOpportunityCategorySelects(modal)
@@ -5268,16 +5268,19 @@
     if (createBtn && !createPageForm && !onCreatePage)
       createBtn.addEventListener('click', async () => {
         const modal = $('[data-modal-target="post-opportunity"]')
+        const form =
+          (modal && $('[data-opp-form="create"]', modal)) || $('[data-opp-form="create"]')
+        const pendingBtn = opportunityFormSubmitControl(form) || createBtn
         const payload = readOpportunityForm(modal)
         const validationMessage = validateOpportunityPayload(payload)
         if (validationMessage) {
           return showOpportunityError(
-            createBtn,
+            pendingBtn,
             validationMessage,
             validationDiagnostic('opportunity_create', 'opportunity', 'INVALID_FORM'),
           )
         }
-        await guard(createBtn, () => API.brandOppCreate(payload))
+        await guard(pendingBtn, () => API.brandOppCreate(payload))
       })
     else if (createBtn && (createPageForm || onCreatePage)) {
       log('skipped generic create click binding on full-page create form')
@@ -5459,7 +5462,7 @@
         if (onSuccess) {
           await onSuccess(result)
           // No-reload flows can expose the same control again later (for
-          // example Reopen -> Close -> Reopen). Restore the valued loading
+          // example Reopen -> Close -> Reopen). Restore the Spinner pending
           // state after the authoritative repaint/success transition.
           setOpportunityActionPending(btn, false)
         } else location.reload()
@@ -5952,7 +5955,7 @@
     wireMemberScopeAuthChange()
     initOpportunityCategorySelects()
     prepareOpportunityStatusControls()
-      prepareOpportunitySpinners()
+    prepareOpportunitySpinners()
     wireModals()
     const p = location.pathname
     const normalizedPath = normalizedPagePath(p)
