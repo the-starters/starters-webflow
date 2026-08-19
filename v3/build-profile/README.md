@@ -31,9 +31,9 @@ the two surfaces to a character-for-character identical bio block.
 The bio editor logs two staging-only `console.warn` messages when the authored counter
 markup drifts: one when the field wrapper has no `.count-input` element, and one when
 the text node after that element is not an authored `/<number>` denominator. Same
-gating as the module above (`*.webflow.io`, localhost, `127.0.0.1`,
-`*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`), and each is a warning
-only — a drifted counter never blocks the editor or the save.
+gating as the `submit-diagnostics.js` warning described below (`*.webflow.io`,
+localhost, `127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`),
+and each is a warning only — a drifted counter never blocks the editor or the save.
 
 `canonical-profile-hydrator.js` is a supplemental fallback loaded by the
 existing `profile-photo.js` asset. It does not replace an inline block. After
