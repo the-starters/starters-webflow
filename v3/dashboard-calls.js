@@ -238,7 +238,10 @@
     if (!pill.querySelector('[label-text]')) pill.textContent = statusLabel(status, role)
     show(pill, true)
     const group = pill.closest && pill.closest('[booking-element-wrap]')
-    if (group) show(group, true)
+    if (group) {
+      show(group, true)
+      group.style.display = 'flex'
+    }
   }
 
   function paidBooking(booking) {
