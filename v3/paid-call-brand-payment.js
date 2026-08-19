@@ -14,6 +14,7 @@
   const SETUP_PATH = '/brand/payment-method/setup/v3'
   const SET_DEFAULT_PATH = '/brand/payment-method/set-default/v3'
   const READINESS_PATH = '/brand/payment-readiness/v3'
+  const AVAILABILITY_PATH = '/scheduler/get_availability/v3'
   const BOOKING_PATH = '/brand/booking/request/v3'
   const STRIPE_PUBLIC_KEY_TEST =
     'pk_test_51MMhu4AW8v1kanawI48Is1kTMhsz4XbB1XVOjw5xxLiFlKXuehHSFWhApJiUKquc8bmwjtuSTlTMitYjjShjB6aQ00Dhe2oFlX'
@@ -21,6 +22,7 @@
     'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
+  const bookingSurfaceGenerations = new WeakMap()
 
   function createAttemptKey(prefix) {
     const safePrefix = String(prefix || 'attempt').replace(/[^a-z0-9_-]/gi, '-')
@@ -95,6 +97,48 @@
 
   function getReadiness() {
     return authenticatedRequest(READINESS_PATH, 'GET')
+  }
+
+  function availabilityQuery(config, nowMs) {
+    const configId = String((config && config.config_id) || '').trim()
+    const grantId = String((config && config.grant_id) || '').trim()
+    const duration = Number(config && config.duration)
+    if (!configId || !grantId || !Number.isInteger(duration) || duration <= 0) {
+      throw new Error('A valid paid-call service is required')
+    }
+    const start = Math.floor(Number(nowMs === undefined ? Date.now() : nowMs) / 1000) + 24 * 60 * 60
+    const end = start + 14 * 24 * 60 * 60
+    const query = new URLSearchParams({
+      grant_id: grantId,
+      configuration_id: configId,
+      start_time: String(start),
+      end_time: String(end),
+      region: 'us',
+    })
+    return AVAILABILITY_PATH + '?' + query.toString()
+  }
+
+  function normalizeAvailabilitySlots(result, config) {
+    const durationMs = Number(config && config.duration) * 60 * 1000
+    const rows = Array.isArray(result && result.time_slots) ? result.time_slots : []
+    return rows.map(function (slot) {
+      const startSeconds = Number(slot && slot.start_time)
+      const endSeconds = Number(slot && slot.end_time)
+      const start = startSeconds * 1000
+      const end = Number.isFinite(endSeconds) && endSeconds > startSeconds
+        ? endSeconds * 1000
+        : start + durationMs
+      return { start, end }
+    }).filter(function (slot) {
+      return Number.isFinite(slot.start) && Number.isFinite(slot.end) && slot.end > slot.start
+    }).sort(function (a, b) {
+      return a.start - b.start
+    })
+  }
+
+  async function getPaidAvailability(config, nowMs) {
+    const result = await authenticatedRequest(availabilityQuery(config, nowMs), 'GET')
+    return normalizeAvailabilitySlots(result, config)
   }
 
   function createSetupAttempt(idempotencyKey) {
@@ -200,13 +244,217 @@
       : '$' + (cents / 100).toFixed(2)
   }
 
+  function applyStyles(node, styles) {
+    Object.keys(styles).forEach(function (name) {
+      node.style[name] = styles[name]
+    })
+    return node
+  }
+
+  function calendarDateKey(timestamp, timezone) {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      timeZone: timezone,
+    }).formatToParts(new Date(timestamp))
+    const values = {}
+    parts.forEach(function (part) { values[part.type] = part.value })
+    return [values.year, values.month, values.day].join('-')
+  }
+
+  function localDateFromKey(key) {
+    const parts = String(key || '').split('-').map(Number)
+    return new Date(parts[0], parts[1] - 1, parts[2])
+  }
+
+  function localDateKey(date) {
+    return [
+      String(date.getFullYear()),
+      String(date.getMonth() + 1).padStart(2, '0'),
+      String(date.getDate()).padStart(2, '0'),
+    ].join('-')
+  }
+
+  async function mountPaidCalendar(options) {
+    const settings = options || {}
+    const container = settings.container
+    const config = settings.config
+    const onConfirm = settings.onConfirm
+    const isCurrent = typeof settings.isCurrent === 'function'
+      ? settings.isCurrent
+      : function () { return true }
+    if (!container || !global.document || typeof onConfirm !== 'function') {
+      throw new Error('The authored paid-call calendar is unavailable')
+    }
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const slots = await getPaidAvailability(config)
+    if (!isCurrent()) return { slots: [], stale: true }
+    container.textContent = ''
+    container.setAttribute('data-paid-calendar-state', slots.length ? 'ready' : 'empty')
+
+    const status = applyStyles(global.document.createElement('p'), {
+      color: '#6f746d',
+      fontSize: '13px',
+      margin: '0',
+    })
+    status.setAttribute('data-paid-calendar-element', 'status')
+    if (!slots.length) {
+      status.textContent = 'No available times were found in the next 14 days.'
+      container.appendChild(status)
+      return { slots: [] }
+    }
+
+    const groups = {}
+    const dateKeys = []
+    slots.forEach(function (slot) {
+      const key = calendarDateKey(slot.start, timezone)
+      if (!groups[key]) {
+        groups[key] = []
+        dateKeys.push(key)
+      }
+      groups[key].push(slot)
+    })
+    let selectedDate = dateKeys[0]
+    let selectedSlot = null
+
+    const shell = applyStyles(global.document.createElement('div'), {
+      display: 'grid',
+      gap: '16px',
+      width: '100%',
+    })
+    shell.setAttribute('data-paid-calendar-element', 'shell')
+    const calendarHost = global.document.createElement('div')
+    calendarHost.setAttribute('data-paid-calendar-element', 'month')
+    const times = applyStyles(global.document.createElement('div'), {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(104px, 1fr))',
+      gap: '8px',
+    })
+    times.setAttribute('data-paid-calendar-element', 'times')
+    const confirm = applyStyles(global.document.createElement('button'), {
+      padding: '12px 16px',
+      border: '1px solid #1f211d',
+      borderRadius: '6px',
+      background: '#1f211d',
+      color: '#ffffff',
+      cursor: 'pointer',
+    })
+    confirm.type = 'button'
+    confirm.disabled = true
+    confirm.textContent = 'Request paid call'
+    confirm.setAttribute('data-paid-calendar-element', 'confirm')
+
+    function renderTimes() {
+      times.textContent = ''
+      selectedSlot = null
+      confirm.disabled = true
+      groups[selectedDate].forEach(function (slot) {
+        const button = global.document.createElement('button')
+        button.type = 'button'
+        button.textContent = new Intl.DateTimeFormat('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: timezone,
+        }).format(new Date(slot.start))
+        button.setAttribute('data-paid-calendar-slot', String(slot.start))
+        button.setAttribute('aria-pressed', 'false')
+        applyStyles(button, {
+          padding: '10px 11px',
+          border: '1px solid transparent',
+          borderRadius: '6px',
+          background: '#f3f4ef',
+          color: '#1f211d',
+          cursor: 'pointer',
+        })
+        button.addEventListener('click', function () {
+          Array.from(times.querySelectorAll('[data-paid-calendar-slot]')).forEach(function (candidate) {
+            candidate.setAttribute('aria-pressed', candidate === button ? 'true' : 'false')
+            candidate.style.background = candidate === button ? '#1f211d' : '#f3f4ef'
+            candidate.style.color = candidate === button ? '#ffffff' : '#1f211d'
+          })
+          selectedSlot = slot
+          confirm.disabled = false
+          status.textContent = ''
+        })
+        times.appendChild(button)
+      })
+    }
+
+    const $ = global.jQuery
+    if ($ && $.fn && $.fn.datepicker) {
+      $(calendarHost).datepicker({
+        dateFormat: 'yy-mm-dd',
+        defaultDate: localDateFromKey(selectedDate),
+        minDate: localDateFromKey(dateKeys[0]),
+        maxDate: localDateFromKey(dateKeys[dateKeys.length - 1]),
+        showOtherMonths: true,
+        selectOtherMonths: false,
+        beforeShowDay: function (date) {
+          const available = Boolean(groups[localDateKey(date)])
+          return [available, available ? 'scheduling-preview-available-date' : '', available ? 'Available' : 'Unavailable']
+        },
+        onSelect: function (dateText) {
+          selectedDate = dateText
+          renderTimes()
+        },
+      })
+    } else {
+      applyStyles(calendarHost, {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(112px, 1fr))',
+        gap: '8px',
+      })
+      dateKeys.forEach(function (key) {
+        const button = global.document.createElement('button')
+        button.type = 'button'
+        button.textContent = new Intl.DateTimeFormat('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          timeZone: timezone,
+        }).format(new Date(groups[key][0].start))
+        button.addEventListener('click', function () {
+          selectedDate = key
+          renderTimes()
+        })
+        calendarHost.appendChild(button)
+      })
+    }
+
+    confirm.addEventListener('click', async function () {
+      if (!selectedSlot || confirm.disabled) return
+      confirm.disabled = true
+      status.textContent = 'Sending your request...'
+      try {
+        await onConfirm({
+          start: selectedSlot.start,
+          end: selectedSlot.end,
+          timezone,
+        })
+      } catch (error) {
+        console.error('[paid-call] booking failed', error)
+        status.textContent = 'We could not book this call. Please try again.'
+        confirm.disabled = false
+      }
+    })
+
+    shell.appendChild(calendarHost)
+    shell.appendChild(times)
+    shell.appendChild(confirm)
+    shell.appendChild(status)
+    container.appendChild(shell)
+    renderTimes()
+    return { slots, timezone }
+  }
+
   function installPaidBookingController(options) {
     const settings = options || {}
     const config = settings.config
-    const createScheduler = settings.createScheduler
     const document = global.document
     const priceText = canonicalPaidPrice(config)
-    if (!document || !config || config.is_paid !== true || !config.config_id || !priceText || typeof createScheduler !== 'function') {
+    if (!document || !config || config.is_paid !== true || !config.config_id || !config.grant_id || !priceText) {
       return false
     }
     const ctas = Array.from(document.querySelectorAll(
@@ -224,7 +472,6 @@
     })
     if (bindings.some(function (binding) { return !binding.item || !binding.price })) return false
 
-    let scheduler = null
     let cardElement = null
     let cardSetupInstalled = false
     let cardSetupAttempt = null
@@ -234,6 +481,25 @@
     let bookingLock = false
     let bookingAttempt = null
     let bookingFingerprint = ''
+    let activePaidGeneration = 0
+
+    function nextSurfaceGeneration() {
+      const generation = (bookingSurfaceGenerations.get(container) || 0) + 1
+      bookingSurfaceGenerations.set(container, generation)
+      return generation
+    }
+
+    function ownsSurface(generation) {
+      return bookingSurfaceGenerations.get(container) === generation
+    }
+
+    function claimPaidSurface() {
+      const generation = nextSurfaceGeneration()
+      activePaidGeneration = generation
+      container.textContent = 'Loading available times...'
+      container.setAttribute('data-paid-calendar-state', 'loading')
+      return generation
+    }
 
     function fieldValue(selector) {
       const field = popup.querySelector(selector)
@@ -242,56 +508,53 @@
 
     function showBookingError(error) {
       console.error('[paid-call] booking failed', error)
+      container.setAttribute('data-paid-calendar-state', 'error')
+      container.textContent = 'We could not load the calendar. Please try again.'
       const message = popup.querySelector('[paid-call-text]')
       if (message) message.textContent = 'We could not book this call. Please try again.'
     }
 
-    function mountScheduler() {
-      scheduler = createScheduler(
-        config.config_id,
-        settings.brandName || '',
-        settings.brandEmail || '',
-      )
-      if (!scheduler) throw new Error('The scheduling calendar is unavailable')
-      const inherited = scheduler.eventOverrides || {}
-      scheduler.eventOverrides = Object.assign({}, inherited, {
-        detailsConfirmed: function (event, connector) {
-          // This must happen before any await. Xano, not the public Scheduler
-          // component, owns the paid booking mutation.
-          event.preventDefault()
-          if (bookingLock) return
-          const store = connector && connector.schedulerStore
-          const slot = store && store.get('selectedTimeslot')
-          const selectedTimezone = store && store.get('selectedTimezone')
-          const start = slot && new Date(slot.start_time).getTime()
-          const end = slot && new Date(slot.end_time).getTime()
-          const fingerprint = String(start) + '|' + String(end)
-          if (!bookingAttempt || bookingFingerprint !== fingerprint) {
-            bookingFingerprint = fingerprint
-            bookingAttempt = createBookingAttempt({
-              starter_slug: settings.starterSlug,
-              config_id: config.config_id,
-              start,
-              end,
-              timezone: selectedTimezone,
-              topic: fieldValue('[name="topic"], [booking-topic]'),
-              context: fieldValue('[name="context"], [booking-context]'),
-            })
-          }
-          bookingLock = true
-          Promise.resolve(bookingAttempt.run()).then(function (result) {
-            const successText = popup.querySelector('[booking-success-text]')
-            if (successText) {
-              successText.textContent = 'Your paid call request was sent. We will notify you when the Starter confirms it.'
-            }
-            switchStep(popup, 'success')
-            return result
-          }).catch(showBookingError).finally(function () {
-            bookingLock = false
-          })
-        },
+    async function submitBooking(slot) {
+      if (bookingLock) return
+      const fingerprint = String(slot.start) + '|' + String(slot.end)
+      if (!bookingAttempt || bookingFingerprint !== fingerprint) {
+        bookingFingerprint = fingerprint
+        bookingAttempt = createBookingAttempt({
+          starter_slug: settings.starterSlug,
+          config_id: config.config_id,
+          start: slot.start,
+          end: slot.end,
+          timezone: slot.timezone,
+          topic: fieldValue('[name="topic"], [booking-topic]'),
+          context: fieldValue('[name="context"], [booking-context]'),
+        })
+      }
+      bookingLock = true
+      try {
+        const result = await bookingAttempt.run()
+        const successText = popup.querySelector('[booking-success-text]')
+        if (successText) {
+          successText.textContent = 'Your paid call request was sent. We will notify you when the Starter confirms it.'
+        }
+        switchStep(popup, 'success')
+        return result
+      } finally {
+        bookingLock = false
+      }
+    }
+
+    async function mountCalendar(generation) {
+      if (!ownsSurface(generation)) return
+      const mount = typeof settings.mountCalendar === 'function'
+        ? settings.mountCalendar
+        : mountPaidCalendar
+      const result = await mount({
+        container,
+        config,
+        onConfirm: submitBooking,
+        isCurrent: function () { return ownsSurface(generation) },
       })
-      return scheduler
+      return ownsSurface(generation) ? result : undefined
     }
 
     async function installCardSetup(onReady) {
@@ -345,7 +608,7 @@
           statusText.textContent = 'Card saved.'
           const close = document.querySelector('[popup-stripe-card-close]')
           if (close) close.click()
-          onReady()
+          await onReady()
         } catch (error) {
           errorText.textContent = error.message || 'Card setup failed'
           statusText.textContent = ''
@@ -359,23 +622,34 @@
     async function paidClick(event) {
       event.preventDefault()
       if (paidClickLock) return
+      const generation = claimPaidSurface()
       paidClickLock = true
       try {
         const readiness = await getReadiness()
+        if (!ownsSurface(generation)) return
         if (readiness.bookable) {
-          mountScheduler()
+          await mountCalendar(generation)
           return
         }
-        await installCardSetup(mountScheduler)
+        await installCardSetup(function () { return mountCalendar(activePaidGeneration) })
+        if (!ownsSurface(generation)) return
         const openCard = document.querySelector('[popup-stripe-card-open]')
         if (!openCard) throw new Error('The payment form opener is unavailable')
         openCard.click()
       } catch (error) {
-        showBookingError(error)
+        if (ownsSurface(generation)) showBookingError(error)
       } finally {
         paidClickLock = false
       }
     }
+
+    Array.from(document.querySelectorAll(
+      '[call-type-item] [booking-popup-open][data-type="free"][data-config]',
+    )).forEach(function (cta) {
+      if (typeof cta.addEventListener === 'function') {
+        cta.addEventListener('click', nextSurfaceGeneration, true)
+      }
+    })
 
     bindings.forEach(function (binding) {
       const cta = binding.cta
@@ -391,6 +665,7 @@
     SETUP_PATH,
     SET_DEFAULT_PATH,
     READINESS_PATH,
+    AVAILABILITY_PATH,
     BOOKING_PATH,
     XANO_BASE,
     authenticatedRequest,
@@ -401,8 +676,12 @@
     createAttemptKey,
     createDefaultSelectionAttempt,
     createSetupAttempt,
+    availabilityQuery,
     getReadiness,
+    getPaidAvailability,
     installPaidBookingController,
+    mountPaidCalendar,
+    normalizeAvailabilitySlots,
     validateKey,
     validatePaymentMethodId,
   }

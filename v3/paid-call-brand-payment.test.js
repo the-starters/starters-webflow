@@ -12,6 +12,42 @@ function response(body, options = {}) {
   }
 }
 
+class CalendarElement {
+  constructor(tagName) {
+    this.tagName = tagName
+    this.style = {}
+    this.attrs = {}
+    this.children = []
+    this.listeners = {}
+    this.disabled = false
+    this._textContent = ''
+  }
+
+  set textContent(value) {
+    this._textContent = String(value || '')
+    this.children = []
+  }
+
+  get textContent() {
+    return this._textContent
+  }
+
+  setAttribute(name, value) { this.attrs[name] = String(value) }
+  getAttribute(name) { return this.attrs[name] || null }
+  appendChild(child) { this.children.push(child); return child }
+  addEventListener(name, listener) { this.listeners[name] = listener }
+  querySelectorAll(selector) {
+    const attribute = selector.match(/^\[([^\]]+)\]$/)?.[1]
+    const matches = []
+    function visit(node) {
+      if (attribute && Object.prototype.hasOwnProperty.call(node.attrs, attribute)) matches.push(node)
+      node.children.forEach(visit)
+    }
+    this.children.forEach(visit)
+    return matches
+  }
+}
+
 test('setup retries reuse one bounded attempt key', async () => {
   const previous = global.xanoAuthFetch
   const requests = []
@@ -137,6 +173,143 @@ test('readiness uses an authenticated GET with no browser authority payload', as
   }
 })
 
+test('paid availability uses one authenticated read with no booking authority', async () => {
+  const previous = global.xanoAuthFetch
+  const requests = []
+  global.xanoAuthFetch = async (url, options) => {
+    requests.push({ url, options })
+    return response({
+      time_slots: [
+        { start_time: 1787001800 },
+        { start_time: 1787000000, end_time: 1787000900 },
+      ],
+    })
+  }
+  try {
+    const config = {
+      config_id: 'config_paid',
+      grant_id: 'grant_test',
+      duration: 15,
+    }
+    const slots = await api.getPaidAvailability(config, 1786900000000)
+    const url = new URL(requests[0].url)
+    assert.equal(url.pathname.endsWith(api.AVAILABILITY_PATH), true)
+    assert.equal(url.searchParams.get('configuration_id'), 'config_paid')
+    assert.equal(url.searchParams.get('grant_id'), 'grant_test')
+    assert.equal(requests[0].options.method, 'GET')
+    assert.equal(requests[0].options.body, undefined)
+    assert.deepEqual(slots, [
+      { start: 1787000000000, end: 1787000900000 },
+      { start: 1787001800000, end: 1787002700000 },
+    ])
+  } finally {
+    global.xanoAuthFetch = previous
+  }
+})
+
+test('paid availability fails closed before a request when service identity is incomplete', () => {
+  assert.throws(
+    () => api.availabilityQuery({ config_id: 'config_paid', duration: 15 }),
+    /valid paid-call service/,
+  )
+})
+
+test('paid calendar renders dates and times and submits only the selected slot', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = new CalendarElement('div')
+  const submissions = []
+  global.document = {
+    createElement(tagName) { return new CalendarElement(tagName) },
+  }
+  global.jQuery = undefined
+  global.xanoAuthFetch = async () => response({
+    time_slots: [
+      { start_time: 1787000000, end_time: 1787000900 },
+      { start_time: 1787001800, end_time: 1787002700 },
+    ],
+  })
+
+  try {
+    const result = await api.mountPaidCalendar({
+      container,
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 15,
+      },
+      async onConfirm(slot) { submissions.push(slot) },
+    })
+    assert.equal(result.slots.length, 2)
+    assert.equal(container.getAttribute('data-paid-calendar-state'), 'ready')
+    const timeButtons = container.querySelectorAll('[data-paid-calendar-slot]')
+    const confirm = container.querySelectorAll('[data-paid-calendar-element]')
+      .find((node) => node.getAttribute('data-paid-calendar-element') === 'confirm')
+    assert.equal(timeButtons.length, 2)
+    assert.equal(confirm.disabled, true)
+    timeButtons[1].listeners.click()
+    assert.equal(confirm.disabled, false)
+    await confirm.listeners.click()
+    assert.equal(submissions.length, 1)
+    assert.deepEqual(submissions[0], {
+      start: 1787001800000,
+      end: 1787002700000,
+      timezone: result.timezone,
+    })
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
+test('a stale Paid availability response preserves the newer shared surface', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = new CalendarElement('div')
+  let resolveAvailability
+  let current = true
+  global.document = {
+    createElement(tagName) { return new CalendarElement(tagName) },
+  }
+  global.jQuery = undefined
+  global.xanoAuthFetch = async () => new Promise((resolve) => {
+    resolveAvailability = () => resolve(response({
+      time_slots: [{ start_time: 1787000000, end_time: 1787000900 }],
+    }))
+  })
+
+  try {
+    const pending = api.mountPaidCalendar({
+      container,
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 15,
+      },
+      isCurrent() { return current },
+      async onConfirm() {},
+    })
+    current = false
+    container.textContent = 'Free scheduler'
+    resolveAvailability()
+    const result = await pending
+    assert.equal(result.stale, true)
+    assert.equal(container.textContent, 'Free scheduler')
+    assert.equal(container.children.length, 0)
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
 test('booking retries reuse one key and omit identity, price, card, and environment authority', async () => {
   const previous = global.xanoAuthFetch
   const requests = []
@@ -204,8 +377,14 @@ test('invalid canonical Paid price leaves the authored option hidden and unchang
   }
   try {
     assert.equal(api.installPaidBookingController({
-      config: { config_id: 'config_paid', is_paid: true, currency: 'usd', price_cents: 0 },
-      createScheduler() {},
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+        is_paid: true,
+        currency: 'usd',
+        price_cents: 0,
+      },
     }), false)
     assert.equal(price.textContent, '$50')
     assert.equal(item.style.display, 'none')
@@ -214,7 +393,7 @@ test('invalid canonical Paid price leaves the authored option hidden and unchang
   }
 })
 
-test('paid Scheduler final submit is prevented and owned by one canonical Xano command', async () => {
+test('paid calendar selection is owned by one canonical Xano command', async () => {
   const previous = {
     document: global.document,
     xanoAuthFetch: global.xanoAuthFetch,
@@ -239,7 +418,7 @@ test('paid Scheduler final submit is prevented and owned by one canonical Xano c
     { style: {}, getAttribute: () => 'default' },
     { style: {}, getAttribute: () => 'success' },
   ]
-  const container = {}
+  const container = new CalendarElement('div')
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return container
@@ -265,18 +444,25 @@ test('paid Scheduler final submit is prevented and owned by one canonical Xano c
     }
     return response({ booking_id: 'booking_one', status: 'pending' })
   }
-  let scheduler
-  let schedulerCount = 0
+  let calendarOptions
+  let calendarCount = 0
   try {
     assert.equal(api.installPaidBookingController({
-      config: { config_id: 'config_paid', is_paid: true, currency: 'usd', price_cents: 500 },
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+        is_paid: true,
+        currency: 'usd',
+        price_cents: 500,
+      },
       starterSlug: 'jp-testiz-d',
       brandName: 'Brand Test',
       brandEmail: 'brand@example.com',
-      createScheduler() {
-        schedulerCount += 1
-        scheduler = { eventOverrides: {} }
-        return scheduler
+      mountCalendar(options) {
+        calendarCount += 1
+        calendarOptions = options
+        return Promise.resolve({ slots: [] })
       },
     }), true)
     assert.equal(priceText.textContent, '$5')
@@ -285,34 +471,94 @@ test('paid Scheduler final submit is prevented and owned by one canonical Xano c
     assert.equal(requests.filter(({ url }) => url.endsWith(api.READINESS_PATH)).length, 1)
     resolveReadiness()
     await Promise.all([firstClick, secondClick])
-    assert.equal(schedulerCount, 1)
-    assert.equal(typeof scheduler.eventOverrides.detailsConfirmed, 'function')
-
-    let prevented = false
-    const connector = {
-      scheduler: {
-        bookTimeslot() { throw new Error('direct Nylas booking must not run') },
-      },
-      schedulerStore: {
-        get(name) {
-          if (name === 'selectedTimezone') return 'Pacific/Auckland'
-          return {
-            start_time: new Date(1787000000000),
-            end_time: new Date(1787001800000),
-          }
-        },
-      },
-    }
-    scheduler.eventOverrides.detailsConfirmed({
-      preventDefault() { prevented = true },
-    }, connector)
-    assert.equal(prevented, true, 'preventDefault must run synchronously')
-    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(calendarCount, 1)
+    await Promise.all([
+      calendarOptions.onConfirm({
+        start: 1787000000000,
+        end: 1787001800000,
+        timezone: 'Pacific/Auckland',
+      }),
+      calendarOptions.onConfirm({
+        start: 1787000000000,
+        end: 1787001800000,
+        timezone: 'Pacific/Auckland',
+      }),
+    ])
     const bookingRequests = requests.filter(({ url }) => url.endsWith(api.BOOKING_PATH))
     assert.equal(bookingRequests.length, 1)
     assert.equal(JSON.parse(bookingRequests[0].options.body).timezone, 'Pacific/Auckland')
     assert.equal(successText.textContent.includes('paid call request was sent'), true)
     assert.equal(steps[1].style.display, 'flex')
+  } finally {
+    global.document = previous.document
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
+test('Free selection invalidates a pending Paid readiness response', async () => {
+  const previous = {
+    document: global.document,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  let resolveReadiness
+  const container = new CalendarElement('div')
+  container.textContent = 'Free scheduler'
+  const price = { textContent: '$50' }
+  const item = {
+    style: {},
+    querySelector(selector) { return selector === '[call-type-price]' ? price : null },
+  }
+  const paid = {
+    attrs: { 'data-config': 'config_paid' },
+    getAttribute(name) { return this.attrs[name] || null },
+    setAttribute(name, value) { this.attrs[name] = value },
+    closest() { return item },
+  }
+  const freeListeners = {}
+  const free = {
+    addEventListener(name, listener) { freeListeners[name] = listener },
+  }
+  const popup = {
+    querySelector(selector) {
+      if (selector === '[nylas-container]') return container
+      return null
+    },
+  }
+  global.document = {
+    querySelector(selector) {
+      if (selector === '[popup-booking]') return popup
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector.includes('data-type="free"') ? [free] : [paid]
+    },
+  }
+  global.xanoAuthFetch = async () => new Promise((resolve) => {
+    resolveReadiness = () => resolve(response({ bookable: true }))
+  })
+  let mounts = 0
+
+  try {
+    assert.equal(api.installPaidBookingController({
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+        is_paid: true,
+        currency: 'usd',
+        price_cents: 500,
+      },
+      mountCalendar() { mounts += 1 },
+    }), true)
+    const pending = paid.onclick({ preventDefault() {} })
+    assert.equal(container.textContent, 'Loading available times...')
+    assert.equal(container.getAttribute('data-paid-calendar-state'), 'loading')
+    freeListeners.click()
+    container.textContent = 'Free scheduler'
+    resolveReadiness()
+    await pending
+    assert.equal(mounts, 0)
+    assert.equal(container.textContent, 'Free scheduler')
   } finally {
     global.document = previous.document
     global.xanoAuthFetch = previous.xanoAuthFetch
@@ -340,7 +586,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
   }
   const popup = {
     querySelector(selector) {
-      if (selector === '[nylas-container]') return {}
+      if (selector === '[nylas-container]') return new CalendarElement('div')
       return null
     },
   }
@@ -397,9 +643,16 @@ test('card setup retries reuse the same setup and default-selection attempts', a
 
   try {
     assert.equal(api.installPaidBookingController({
-      config: { config_id: 'config_paid', is_paid: true, currency: 'USD', price_cents: 1250 },
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+        is_paid: true,
+        currency: 'USD',
+        price_cents: 1250,
+      },
       starterSlug: 'jp-testiz-d',
-      createScheduler() { return { eventOverrides: {} } },
+      mountCalendar() { return Promise.resolve({ slots: [] }) },
     }), true)
     assert.equal(priceText.textContent, '$12.50')
     await cta.onclick({ preventDefault() {} })

@@ -657,7 +657,6 @@
                           ),
                           brandName: brand_name,
                           brandEmail: brand_email,
-                          createScheduler: window.createScheduler,
                       });
                   bookingSurfaceAvailable = bookingSurfaceAvailable || installed === true;
                   if (!installed) {
