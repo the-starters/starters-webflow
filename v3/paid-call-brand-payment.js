@@ -452,11 +452,17 @@
   function installPaidBookingController(options) {
     const settings = options || {}
     const config = settings.config
+    const grantId = String(settings.grantId || (config && config.grant_id) || '').trim()
+    const duration = Number(config && config.duration)
     const document = global.document
     const priceText = canonicalPaidPrice(config)
-    if (!document || !config || config.is_paid !== true || !config.config_id || !config.grant_id || !priceText) {
+    if (!document || !config || config.is_paid !== true || !config.config_id || !grantId || !Number.isInteger(duration) || duration <= 0 || !priceText) {
       return false
     }
+    const availabilityConfig = Object.assign({}, config, {
+      grant_id: grantId,
+      duration,
+    })
     const ctas = Array.from(document.querySelectorAll(
       '[call-type-item] [booking-popup-open][data-type="paid"][data-config]',
     )).filter(function (cta) {
@@ -482,6 +488,7 @@
     let bookingAttempt = null
     let bookingFingerprint = ''
     let activePaidGeneration = 0
+    let queuedPaidGeneration = 0
 
     function nextSurfaceGeneration() {
       const generation = (bookingSurfaceGenerations.get(container) || 0) + 1
@@ -550,7 +557,7 @@
         : mountPaidCalendar
       const result = await mount({
         container,
-        config,
+        config: availabilityConfig,
         onConfirm: submitBooking,
         isCurrent: function () { return ownsSurface(generation) },
       })
@@ -619,11 +626,7 @@
       cardSetupInstalled = true
     }
 
-    async function paidClick(event) {
-      event.preventDefault()
-      if (paidClickLock) return
-      const generation = claimPaidSurface()
-      paidClickLock = true
+    async function runPaidSelection(generation) {
       try {
         const readiness = await getReadiness()
         if (!ownsSurface(generation)) return
@@ -638,6 +641,21 @@
         openCard.click()
       } catch (error) {
         if (ownsSurface(generation)) showBookingError(error)
+      }
+    }
+
+    async function paidClick(event) {
+      event.preventDefault()
+      if (paidClickLock && ownsSurface(activePaidGeneration)) return
+      queuedPaidGeneration = claimPaidSurface()
+      if (paidClickLock) return
+      paidClickLock = true
+      try {
+        while (queuedPaidGeneration) {
+          const generation = queuedPaidGeneration
+          queuedPaidGeneration = 0
+          await runPaidSelection(generation)
+        }
       } finally {
         paidClickLock = false
       }
