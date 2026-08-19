@@ -1,5 +1,54 @@
 # V3 browser scripts
 
+## Opportunity-alert email preferences
+
+`opp-alerts-unsubscribe.js` binds the native Webflow content on the V3
+opportunity-alert unsubscribe page. Keep the visible page structure in Webflow
+and load one deferred controller:
+
+```html
+<script
+  defer
+  src="https://cdn.jsdelivr.net/gh/the-starters/starters-webflow@latest/v3/opp-alerts-unsubscribe.js"
+></script>
+```
+
+The page root must use `id="oa-unsub"`. Inside that root, author one element for
+each controller role:
+
+- `data-oa="intro"` for the initial explanation;
+- `data-oa="unsub"` for the **Unsubscribe me** button;
+- `data-oa="resub"` for the initially hidden **Re-subscribe** button; and
+- `data-oa="status"` for the initially hidden result or retry message.
+
+The email link supplies the Memberstack member ID as the `m` query parameter.
+If `m` is absent, the controller hides the unsubscribe button and tells the
+member to use the link from their email. It sends no request during page load.
+Only an explicit button click posts to the existing Xano
+`notifications/unsubscribe` endpoint, with exactly these JSON fields:
+
+```json
+{
+  "memberstack_id": "<value from m>",
+  "resubscribe": false
+}
+```
+
+The unsubscribe button sends `resubscribe: false`; after success, it hides the
+intro and unsubscribe button, shows the success message, and reveals the
+re-subscribe button. The re-subscribe button sends `resubscribe: true` and, on
+success, confirms that opportunity alerts are active again. A failed request
+restores the clicked button for retry and shows the authored status element with
+`data-state="err"`; success uses `data-state="ok"`. The controller does not
+read credentials, add authorization headers, or change any V2 page or script.
+
+Run its focused static check and test with:
+
+```sh
+node --check v3/opp-alerts-unsubscribe.js
+node --test v3/opp-alerts-unsubscribe.test.js
+```
+
 ## Shared password recovery
 
 `password-recovery.js` consolidates the Brand and Talent password-recovery
