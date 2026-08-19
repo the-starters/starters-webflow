@@ -327,17 +327,44 @@ test('read-only details stay available while expired requests cannot be accepted
   assert.equal(reschedule.hidden, true)
 })
 
-test('CSS-hidden status wrappers become visible with the role-aware lifecycle variant', () => {
+test('important CSS-hidden status wrappers become visible with the role-aware lifecycle variant', () => {
   const label = element()
   const group = element({ 'booking-element-wrap': 'status' })
+  let inlineDisplay = ''
+  let inlineDisplayPriority = ''
+  group.style = {
+    get display() {
+      return inlineDisplay
+    },
+    set display(value) {
+      inlineDisplay = value
+      inlineDisplayPriority = ''
+    },
+    getPropertyPriority(name) {
+      return name === 'display' ? inlineDisplayPriority : ''
+    },
+    setProperty(name, value, priority) {
+      if (name !== 'display') return
+      inlineDisplay = value
+      inlineDisplayPriority = priority || ''
+    },
+  }
   const computedDisplay = (target) => {
     if (target.hidden || target.style.display === 'none') return 'none'
+    if (
+      target.authoredImportantDisplay &&
+      target.style.getPropertyPriority('display') !== 'important'
+    ) {
+      return target.authoredImportantDisplay
+    }
     return target.style.display || target.authoredDisplay || 'block'
   }
-  group.authoredDisplay = 'none'
+  group.authoredImportantDisplay = 'none'
   const pill = element({ 'booking-element': 'status' })
   pill.querySelector = (selector) => selector === '[label-text]' ? label : null
-  pill.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
+  pill.closest = (selector) => (
+    selector === '[booking-element-wrap="status"]' ? group : null
+  )
   const card = {
     querySelector(selector) {
       return selector === '[booking-element="status"]' ? pill : null
@@ -347,6 +374,7 @@ test('CSS-hidden status wrappers become visible with the role-aware lifecycle va
   assert.equal(computedDisplay(group), 'none')
   api.paintStatusPill(card, 'pending', 'starter')
   assert.equal(computedDisplay(group), 'flex')
+  assert.equal(group.style.getPropertyPriority('display'), 'important')
   assert.equal(label.textContent, 'Pending')
   assert.equal(pill.hidden, false)
   assert.equal(
@@ -364,6 +392,30 @@ test('CSS-hidden status wrappers become visible with the role-aware lifecycle va
     pill.classList.contains('w-variant-89402c65-e26d-c236-91e7-76e9135a2d42'),
     true,
   )
+})
+
+test('status pill painting does not force a non-status authored wrapper visible', () => {
+  const label = element()
+  const genericGroup = element({ 'booking-element-wrap': '' })
+  genericGroup.style.display = 'none'
+  const pill = element({ 'booking-element': 'status' })
+  pill.querySelector = (selector) => selector === '[label-text]' ? label : null
+  pill.closest = (selector) => (
+    selector === '[booking-element-wrap]'
+      ? genericGroup
+      : null
+  )
+  const card = {
+    querySelector(selector) {
+      return selector === '[booking-element="status"]' ? pill : null
+    },
+  }
+
+  api.paintStatusPill(card, 'pending', 'starter')
+
+  assert.equal(genericGroup.hidden, false)
+  assert.equal(genericGroup.style.display, 'none')
+  assert.equal(label.textContent, 'Pending')
 })
 
 function detailModalHarness() {

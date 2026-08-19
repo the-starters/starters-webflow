@@ -237,10 +237,10 @@
     text(pill, '[label-text]', statusLabel(status, role))
     if (!pill.querySelector('[label-text]')) pill.textContent = statusLabel(status, role)
     show(pill, true)
-    const group = pill.closest && pill.closest('[booking-element-wrap]')
+    const group = pill.closest && pill.closest('[booking-element-wrap="status"]')
     if (group) {
       show(group, true)
-      group.style.display = 'flex'
+      group.style.setProperty('display', 'flex', 'important')
     }
   }
 
