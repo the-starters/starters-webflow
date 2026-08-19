@@ -580,6 +580,10 @@ test('confirmed Paid Call details show per-call price and hide every unsupported
     assert.equal(action.style.display, 'none')
   }
 
+  api.populateDetailModal(view.modal, booking, 'brand')
+  assert.equal(view.fields.price.textContent, '$25.00')
+  assert.equal(view.priceUnit.textContent, '/Call')
+
   booking.status = 'cancelled'
   api.populateDetailModal(view.modal, booking, 'brand')
   assert.equal(view.fields.status.textContent, 'Cancelled')

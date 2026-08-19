@@ -517,12 +517,13 @@
     const siblings = parent && parent.children
       ? Array.prototype.slice.call(parent.children)
       : []
-    const legacyUnit = siblings.find(function (candidate) {
-      return candidate !== field && clean(candidate.textContent).toLowerCase() === '/hr'
+    const priceUnit = siblings.find(function (candidate) {
+      const unit = clean(candidate.textContent).toLowerCase()
+      return candidate !== field && (unit === '/hr' || unit === '/call')
     })
-    if (legacyUnit) {
-      legacyUnit.textContent = '/Call'
-      show(legacyUnit, shouldShow)
+    if (priceUnit) {
+      priceUnit.textContent = '/Call'
+      show(priceUnit, shouldShow)
     } else if (shouldShow) {
       field.textContent = clean(value) + ' / Call'
     }
