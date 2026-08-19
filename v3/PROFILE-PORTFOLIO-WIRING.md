@@ -57,3 +57,6 @@ component back before publishing. Do not leave both renderers installed.
 3. The modal's Images block hides when a portfolio has no images, matching the
    Videos behaviour. Needed because the 1,439 imported legacy case studies are
    text-only and would otherwise show an empty "Images" heading.
+4. The renderer shows the first three case studies initially. It shows the
+   `data-btn-view-all` control only when more case studies exist. Selecting the
+   control reveals all remaining case studies and hides the control.

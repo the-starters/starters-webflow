@@ -25,6 +25,7 @@ function makeEnv({ response = [], responseOk = true, memberstackId = 'mem_test_s
   const listeners = {}
   const requests = []
   const appendedIds = []
+  const appendedCards = []
   const errors = []
 
   const template = {
@@ -35,6 +36,8 @@ function makeEnv({ response = [], responseOk = true, memberstackId = 'mem_test_s
       return {
         classList: classList(),
         style: {},
+        attrs: {},
+        setAttribute(name, value) { this.attrs[name] = value },
         querySelector(selector) {
           if (selector === '.portfolio_card-id') return idBlock
           return null
@@ -56,8 +59,29 @@ function makeEnv({ response = [], responseOk = true, memberstackId = 'mem_test_s
       if (selector === '[wf-portfolio-element="card"]' || selector === '.portfolio_card') return template
       return null
     },
+    querySelectorAll(selector) {
+      if (selector === '[data-portfolio-item]') {
+        return appendedCards.filter((card) =>
+          Object.prototype.hasOwnProperty.call(card.attrs, 'data-portfolio-item'),
+        )
+      }
+      return []
+    },
     appendChild(card) {
+      appendedCards.push(card)
       appendedIds.push(Number(card.portfolioId))
+    },
+  }
+
+  const buttonListeners = []
+  const viewAllButton = {
+    style: {},
+    addEventListener(type, handler) {
+      if (type === 'click') buttonListeners.push(handler)
+    },
+    click() {
+      const event = { preventDefault() {} }
+      buttonListeners.forEach((handler) => handler(event))
     },
   }
 
@@ -75,6 +99,7 @@ function makeEnv({ response = [], responseOk = true, memberstackId = 'mem_test_s
       if (selector === '[data-highlights]' || selector === '.case-studies-wrapper') return wrapper
       if (selector === '[portfolio-section]') return section
       if (selector === '#portfolio-block') return block
+      if (selector === '[data-btn-view-all]') return viewAllButton
       return null
     },
     querySelectorAll(selector) {
@@ -115,8 +140,10 @@ function makeEnv({ response = [], responseOk = true, memberstackId = 'mem_test_s
     wrapper,
     requests,
     appendedIds,
+    appendedCards,
     errors,
     section,
+    viewAllButton,
   }
 }
 
@@ -160,6 +187,32 @@ test('sorts approved rows deterministically before rendering', async () => {
 
   assert.deepEqual(forward.appendedIds, [7, 10, 1, 2])
   assert.deepEqual(reverse.appendedIds, [7, 10, 1, 2])
+})
+
+test('shows three case studies first and reveals all from View all', async () => {
+  const env = makeEnv({ response: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }, { id: 5 }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(
+    env.appendedCards.map((card) => card.style.display),
+    ['', '', '', 'none', 'none'],
+  )
+  assert.equal(env.viewAllButton.style.display, '')
+
+  env.viewAllButton.click()
+
+  assert.deepEqual(env.appendedCards.map((card) => card.style.display), ['', '', '', '', ''])
+  assert.equal(env.viewAllButton.style.display, 'none')
+})
+
+test('hides View all when the profile has three or fewer case studies', async () => {
+  const env = makeEnv({ response: [{ id: 1 }, { id: 2 }, { id: 3 }] })
+  env.document.dispatch('DOMContentLoaded')
+  await settle()
+
+  assert.deepEqual(env.appendedCards.map((card) => card.style.display), ['', '', ''])
+  assert.equal(env.viewAllButton.style.display, 'none')
 })
 
 test('does not treat a failed public read as an empty portfolio list', async () => {

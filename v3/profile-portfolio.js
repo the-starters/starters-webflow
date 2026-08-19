@@ -12,7 +12,7 @@
  * 2026-08-15 that table also holds 1,439 imported
  * legacy V2 case studies, which are TEXT ONLY.
  *
- * Three deliberate changes from the embed:
+ * Four deliberate changes from the embed:
  *
  *  1. memberstackId is read from the page's existing `starter_memberstack_id`
  *     global instead of being hardcoded. In the embed the value came from a CMS
@@ -24,6 +24,8 @@
  *  3. The modal's Images block is hidden when a portfolio has no images, exactly
  *     as the Videos block already was. Without this, every text-only case study
  *     shows an empty "Images" heading.
+ *  4. Only three case studies show initially. The authored View all control
+ *     reveals the complete approved set when more case studies exist.
  *
  * Ownership: this CDN file is the only Highlights renderer. The legacy on-canvas
  * owner-read embed must be removed in the same Webflow whole-block cutover.
@@ -35,6 +37,7 @@
   var PLACEHOLDER_THUMB =
     'https://cdn.prod.website-files.com/plugins/Basic/assets/placeholder.60f9b1840c.svg';
   var OWNED = 'data-portfolio-rendered';
+  var INITIAL_VISIBLE_COUNT = 3;
 
   function pick(attrSelector, classSelector, scope) {
     var root = scope || document;
@@ -257,8 +260,18 @@
     }
     var viewAllButton = document.querySelector('[data-btn-view-all]');
 
-    if (viewAllButton && portfolios.length < 4) {
-      viewAllButton.style.display = 'none';
+    if (viewAllButton) {
+      viewAllButton.style.display =
+        portfolios.length > INITIAL_VISIBLE_COUNT ? '' : 'none';
+
+      viewAllButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        var cards = wrapper.querySelectorAll('[data-portfolio-item]');
+        cards.forEach(function (card) {
+          card.style.display = '';
+        });
+        viewAllButton.style.display = 'none';
+      });
     }
 
     template.classList.add('hidden');
@@ -275,8 +288,11 @@
       if (block) block.classList.remove('hidden');
     }
 
-    portfolios.forEach(function (portfolio) {
-      wrapper.appendChild(createCard(portfolio));
+    portfolios.forEach(function (portfolio, index) {
+      var card = createCard(portfolio);
+      card.setAttribute('data-portfolio-item', '');
+      if (index >= INITIAL_VISIBLE_COUNT) card.style.display = 'none';
+      wrapper.appendChild(card);
     });
   });
 })();
