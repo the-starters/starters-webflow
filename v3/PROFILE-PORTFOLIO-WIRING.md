@@ -24,6 +24,7 @@ Hire template → Page Settings → Custom Code → **Head Code**:
 | --- | --- | --- |
 | Card list wrapper | `data-highlights` ✅ already present | `.case-studies-wrapper` |
 | Card template | `wf-portfolio-element="card"` | `.portfolio_card` |
+| View all control | `data-btn-view-all` | None |
 | Section | `portfolio-section` ✅ already present | `.profile-hightlights_wr` |
 | Modal | `wf-portfolio-element="modal"` | `.portfolio_modal-component` |
 | Modal images | `wf-portfolio-element="images"` | `.portfolio_modal-images` |
@@ -57,3 +58,6 @@ component back before publishing. Do not leave both renderers installed.
 3. The modal's Images block hides when a portfolio has no images, matching the
    Videos behaviour. Needed because the 1,439 imported legacy case studies are
    text-only and would otherwise show an empty "Images" heading.
+4. The renderer shows the first three case studies initially. It shows the
+   `data-btn-view-all` control only when more case studies exist. Selecting the
+   control reveals all remaining case studies and hides the control.
