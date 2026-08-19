@@ -67,7 +67,10 @@ those systems.
    unexplained drift.
 2. Run the published-form contract, controller behavior, ownership, syntax, and
    browser-secret tests.
-3. Release through no-mistakes, semver, and jsDelivr purge.
+3. For the shared profile-photo asset, follow the server-idempotency and cutover
+   gate in the [authoritative upload contract](../build-profile/README.md#profile-photo-upload-contract).
+   Release the other approved assets through no-mistakes, semver, and jsDelivr
+   purge.
 4. Save exact complete-location backups and compare the validation block with the
    whole-block sentinel inventory.
 5. Remove only the exact inline validation owner after the CDN candidate is served;

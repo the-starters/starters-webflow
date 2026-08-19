@@ -47,6 +47,8 @@ function loadShim({
   memberstackToken = 'memberstack-token',
   origin = `https://${hostname}`,
   fetchImpl,
+  createImageBitmapImpl = async () => null,
+  documentImpl,
 }) {
   const calls = []
   const window = {
@@ -80,6 +82,8 @@ function loadShim({
     URL,
     JSON,
     Promise,
+    createImageBitmap: createImageBitmapImpl,
+    document: documentImpl,
   })
   vm.runInContext(source, context)
   return { window, calls, localStorage }
@@ -171,14 +175,16 @@ async function run() {
 
   {
     const { window, calls } = loadShim({ hostname: 'www.thestarters.com' })
-    for (const [path, method] of mutationCases) {
+    for (const [path, method] of mutationCases.filter(
+      ([path]) => !path.includes('/build_profile/starter/profile_image'),
+    )) {
       const response = await window.fetch(
         `https://x08a-5ko8-jj1r.n7c.xano.io${path}`,
         { method, headers: { Authorization: 'Bearer existing-token' } },
       )
       assert.equal(response.status, 200)
     }
-    assert.equal(calls.length, mutationCases.length)
+    assert.equal(calls.length, mutationCases.length - 1)
   }
 
   {
@@ -668,6 +674,241 @@ async function run() {
   }
 
   {
+    const endpoint =
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
+    const { window, calls } = loadShim({ hostname: 'thestarters.com' })
+    for (const authorization of [null, 'Bearer existing-token']) {
+      for (const sourceMutationId of [null, 'short id', 'person@example.com']) {
+        const body = new FormData()
+        body.append('image', new Blob(['image-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
+        if (sourceMutationId !== null) body.append('source_mutation_id', sourceMutationId)
+        const headers = authorization ? { Authorization: authorization } : undefined
+        const response = await window.fetch(endpoint, { method: 'POST', headers, body })
+        assert.equal(response.status, 400)
+        assert.equal((await response.json()).code, 'PROFILE_IMAGE_MUTATION_ID_INVALID')
+      }
+    }
+    assert.equal(calls.length, 0)
+  }
+
+  {
+    const endpoint =
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
+    const sourceMutationId = '123e4567-e89b-12d3-a456-426614174000'
+    let tradeCount = 0
+    let bitmapCount = 0
+    let encodeCount = 0
+    const attempts = []
+    const resizedBytes = 'resized-upload-bytes'
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      createImageBitmapImpl: async () => {
+        bitmapCount += 1
+        return { width: 1600, height: 1200, close() {} }
+      },
+      documentImpl: {
+        createElement(name) {
+          assert.equal(name, 'canvas')
+          return {
+            getContext() {
+              return {
+                fillRect() {},
+                drawImage() {},
+              }
+            },
+            toBlob(resolve, type, quality) {
+              encodeCount += 1
+              assert.equal(type, 'image/jpeg')
+              assert.equal(quality, 0.8)
+              resolve(new Blob([resizedBytes], { type }))
+            },
+          }
+        },
+      },
+      fetchImpl: async (input, init) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          tradeCount += 1
+          return new Response(JSON.stringify({
+            authToken: tradeCount === 1 ? 'stale-token' : 'fresh-token',
+          }), { status: 200 })
+        }
+        const image = init.body.get('image')
+        attempts.push({
+          authorization: new Headers(init.headers).get('Authorization'),
+          imageBytes: Buffer.from(await image.arrayBuffer()).toString('hex'),
+          sourceMutationId: init.body.get('source_mutation_id'),
+          memberId: init.body.get('member_id'),
+        })
+        return new Response('{}', { status: attempts.length === 1 ? 401 : 200 })
+      },
+    })
+    const body = new FormData()
+    body.append('image', new Blob(['same-upload-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
+    body.append('source_mutation_id', sourceMutationId)
+    body.append('member_id', 'legacy-member-id-must-not-pass')
+    const response = await window.fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer existing-token' },
+      body,
+    })
+    assert.equal(response.status, 200)
+    assert.equal(tradeCount, 2)
+    assert.equal(bitmapCount, 1)
+    assert.equal(encodeCount, 1)
+    assert.deepEqual(attempts, [
+      {
+        authorization: 'Bearer stale-token',
+        imageBytes: Buffer.from(resizedBytes).toString('hex'),
+        sourceMutationId,
+        memberId: null,
+      },
+      {
+        authorization: 'Bearer fresh-token',
+        imageBytes: Buffer.from(resizedBytes).toString('hex'),
+        sourceMutationId,
+        memberId: null,
+      },
+    ])
+  }
+
+  {
+    const endpoint =
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
+    const sourceMutationId = '123e4567-e89b-12d3-a456-426614174010'
+    let bitmapCount = 0
+    let encodeCount = 0
+    let uploadCount = 0
+    const attempts = []
+    const resizedBytes = 'resized-visible-retry-bytes'
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      createImageBitmapImpl: async () => {
+        bitmapCount += 1
+        return { width: 1600, height: 1200, close() {} }
+      },
+      documentImpl: {
+        createElement() {
+          return {
+            getContext() {
+              return { fillRect() {}, drawImage() {} }
+            },
+            toBlob(resolve) {
+              encodeCount += 1
+              resolve(new Blob([resizedBytes], { type: 'image/jpeg' }))
+            },
+          }
+        },
+      },
+      fetchImpl: async (input, init) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          return new Response(JSON.stringify({ authToken: 'xano-token' }), {
+            status: 200,
+          })
+        }
+        uploadCount += 1
+        const image = init.body.get('image')
+        attempts.push({
+          imageBytes: Buffer.from(await image.arrayBuffer()).toString('hex'),
+          sourceMutationId: init.body.get('source_mutation_id'),
+        })
+        if (uploadCount === 1) {
+          return new Response(JSON.stringify({
+            starter_image: '   ',
+            starter_image_small: '\n',
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+        }
+        return new Response(JSON.stringify({
+          starter_image: 'https://example.invalid/photo.jpg',
+          starter_image_small: 'https://example.invalid/photo-small.jpg',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      },
+    })
+    const makeBody = () => {
+      const body = new FormData()
+      body.append('image', new Blob(['original-upload-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
+      body.append('source_mutation_id', sourceMutationId)
+      return body
+    }
+    const incomplete = await window.fetch(endpoint, { method: 'POST', body: makeBody() })
+    assert.deepEqual(await incomplete.json(), {
+      starter_image: '   ',
+      starter_image_small: '\n',
+    })
+    const completed = await window.fetch(endpoint, { method: 'POST', body: makeBody() })
+    assert.equal(completed.status, 200)
+    assert.equal(bitmapCount, 1)
+    assert.equal(encodeCount, 1)
+    assert.equal(attempts.length, 2)
+    assert.deepEqual(attempts[0], attempts[1])
+  }
+
+  {
+    const endpoint =
+      'https://x08a-5ko8-jj1r.n7c.xano.io/api:KZf7nFnk/build_profile/starter/profile_image'
+    const sourceMutationId = '123e4567-e89b-12d3-a456-426614174011'
+    let bitmapCount = 0
+    let encodeCount = 0
+    const attempts = []
+    const resizedBytes = 'resized-malformed-retry-bytes'
+    const { window } = loadShim({
+      hostname: 'thestarters.com',
+      createImageBitmapImpl: async () => {
+        bitmapCount += 1
+        return { width: 1600, height: 1200, close() {} }
+      },
+      documentImpl: {
+        createElement() {
+          return {
+            getContext() {
+              return { fillRect() {}, drawImage() {} }
+            },
+            toBlob(resolve) {
+              encodeCount += 1
+              resolve(new Blob([resizedBytes], { type: 'image/jpeg' }))
+            },
+          }
+        },
+      },
+      fetchImpl: async (input, init) => {
+        if (String(input).includes('/auth/trade-token/v3')) {
+          return new Response(JSON.stringify({ authToken: 'xano-token' }), {
+            status: 200,
+          })
+        }
+        const image = init.body.get('image')
+        attempts.push({
+          imageBytes: Buffer.from(await image.arrayBuffer()).toString('hex'),
+          sourceMutationId: init.body.get('source_mutation_id'),
+        })
+        if (attempts.length === 1) {
+          return new Response('not-json', {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response(JSON.stringify({
+          starter_image: 'https://example.invalid/photo.jpg',
+          starter_image_small: 'https://example.invalid/photo-small.jpg',
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      },
+    })
+    const makeBody = () => {
+      const body = new FormData()
+      body.append('image', new Blob(['original-upload-bytes'], { type: 'image/jpeg' }), 'photo.jpg')
+      body.append('source_mutation_id', sourceMutationId)
+      return body
+    }
+    const malformed = await window.fetch(endpoint, { method: 'POST', body: makeBody() })
+    assert.equal(await malformed.text(), 'not-json')
+    const completed = await window.fetch(endpoint, { method: 'POST', body: makeBody() })
+    assert.equal(completed.status, 200)
+    assert.equal(bitmapCount, 1)
+    assert.equal(encodeCount, 1)
+    assert.equal(attempts.length, 2)
+    assert.deepEqual(attempts[0], attempts[1])
+  }
+
+  {
     const { window, localStorage, calls } = loadShim({
       hostname: 'the-starters-3-0.webflow.io',
       pathname: '/build-profile/full-profile',
@@ -688,7 +929,9 @@ async function run() {
 }
 
 run()
-  .then(() => console.log('profile-image-auth-shim tests passed'))
+  .then(() => console.log(
+    'Auth/upload trace: invalid IDs blocked before network; authenticated input was rebuilt without member_id; one 401 retrade and visible retries reused one resized Blob and source_mutation_id until complete nonblank JSON; staging edit-profile writes stayed blocked.',
+  ))
   .catch((error) => {
     console.error(error)
     process.exitCode = 1
