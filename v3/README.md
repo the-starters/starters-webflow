@@ -580,9 +580,9 @@ Accepted values are root-relative same-origin paths. A value must start with `/`
 must not start with `//` or `/\` (both protocol-relative, so both leave the
 site), and must contain no ASCII control characters — the URL parser strips tab,
 LF and CR before parsing, so `/<tab>/evil.example` would otherwise resolve to
-`https://evil.example/`. Anything else is ignored, with a warning on staging
-hosts only (`*.webflow.io`, localhost, `127.0.0.1`, `*.trycloudflare.com`, or
-`window.STARTERS_DEBUG === true`). Signup forms injected after
+`https://evil.example/`. Anything else is ignored, with a warning on
+[staging hosts only](../README.md#staging-only-console-diagnostics). Signup
+forms injected after
 `DOMContentLoaded` are out of scope — call `window.StartersMsRedirect.apply()`
 after injecting one. The behaviour is demonstrated end to end, including the
 attribute-versus-Memberstack race timing, in
@@ -995,8 +995,8 @@ marker is cleared without a write rather than retried on every page forever.
 debugging, `window.StartersAttribution.rearm()` reports (and, where a signup form
 has appeared since load, starts) the signup watch, and
 `window.StartersAttribution.release` reports the shipped version.
-Console warnings are staging-only (`*.webflow.io`, localhost, `127.0.0.1`,
-`*.trycloudflare.com`) or with `window.STARTERS_DEBUG === true`, so production
+Console warnings are
+[staging-only](../README.md#staging-only-console-diagnostics), so production
 stays silent.
 
 Run its focused tests with:
@@ -1134,8 +1134,8 @@ binding or backfill, not an unbound responsive copy.
 
 Triggers injected after `DOMContentLoaded` are out of scope; call
 `window.StartersMessagesProfile.apply()` after injecting one. Warnings name the
-offending slug and appear on staging hosts only (`*.webflow.io`, localhost,
-`127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`).
+offending slug and appear on
+[staging hosts only](../README.md#staging-only-console-diagnostics).
 Conversations opened this way carry `custom.source = "hire-page"` and
 `custom.slug`, which cannot be backfilled onto conversations created earlier.
 
@@ -1388,8 +1388,9 @@ gave up permanently, leaving the list unsplit. `push()` is correct for both
 shapes, queueing until after `init(document)` either way.
 
 If the instance is genuinely absent after boot, the module splits whatever is
-already rendered and warns once on staging, local, and Cloudflare tunnel hosts
-(or with `window.STARTERS_DEBUG`). Production stays silent.
+already rendered and warns once, under the repo-wide
+[staging-only diagnostics gate](../README.md#staging-only-console-diagnostics).
+Production stays silent.
 
 Requires Xano endpoint #1506 to return a `roles` field, which it does as of
 2026-07-29. With no value bound the module emits zero chips and leaves the card
@@ -1588,9 +1589,10 @@ render is already on screen. Script-tag order relative to the wf-xano tag does n
 matter (verified against the library's boot guard and queue drain — see the wiring
 doc).
 
-If the instance is genuinely absent after boot, the module warns once on staging,
-local, and Cloudflare tunnel hosts (or with `window.STARTERS_DEBUG`) and stays
-silent in production. The warning earns its place: with no transform the binds
+If the instance is genuinely absent after boot, the module warns once, under the
+repo-wide
+[staging-only diagnostics gate](../README.md#staging-only-console-diagnostics),
+and stays silent in production. The warning earns its place: with no transform the binds
 resolve against the envelope, the template's
 `wf-xano-if="First_Name|Last_Name|Professional_Headline"` guard hides the card,
 and the page shows its empty state to a member who has a complete profile.
@@ -1598,11 +1600,12 @@ and the page shows its empty state to a member who has a complete profile.
 A staging-only `?ms=<memberstack_id>` tester renders any member's card, applied
 through `instance.setParam()` on **every** armed instance (which reloads, so the
 settled-state belt is skipped when an override is in play — and a `?ms=` load
-therefore makes four GETs on a two-form page: two initial, two reloads). It is honored on `*.webflow.io`, `localhost`,
-`127.0.0.1`, and `*.trycloudflare.com` only. The host predicate is deliberately
-anchored tighter than the loose one the sibling modules share, because here it
-gates a data read rather than a `console.warn`, and `STARTERS_DEBUG` — which may
-be set in production — must never unlock it.
+therefore makes four GETs on a two-form page: two initial, two reloads). It is
+honored on staging hosts only, and unlike the shared
+[console-diagnostics gate](../README.md#staging-only-console-diagnostics) it
+deliberately ignores `STARTERS_DEBUG`: here the predicate gates a data read
+rather than a `console.warn`, and `STARTERS_DEBUG` — which may be set in
+production — must never unlock it.
 
 The endpoint is still public with a hardcoded demo `memberstack_id`. The wiring
 doc carries the Xano authentication spec and the two-attribute embed flip; treat

@@ -14,9 +14,26 @@ The files below are source-controlled candidates for self-contained controller b
 | 5 | `company-autocomplete.js` | `eb426e9899ccfc9976c5eb061930f122d54542fa33f4453a0602aae48f842f4c` | Company and logo autocomplete |
 | 6 | `work-dates.js` | `4d8aa2dbd4c7668f37430a73c92049a7a5fa566d99915f5e45a61be5dac0c321` | Work-date validation and current-role state |
 | 7 | `company-experience-crud.js` | `6dc7fa7306d9558fb493cb6a6cfd6196659e0b7005c6d49831ffcc5f3261b5d3` | Company-experience CRUD |
-| 12 | `field-counters.js` | `decbf5b49d1006f8a857602a33e2d89a6270fa8b9355d6311d16188f6a4bfe83` | Authored field counters |
-| 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor and word limit |
+| 12 | `field-counters.js` | `decbf5b49d1006f8a857602a33e2d89a6270fa8b9355d6311d16188f6a4bfe83` | Authored field counters, excluding editor-owned groups |
+| 13 | `bio-editor.js` | `91671c4ed05806b2ed306f50c265954ef0c36714f59c77f721e2510370c9273f` | Bio editor, 1500-character limit, and counter ownership |
 | 14 | `grouped-selects.js` | `e80bb01f28a43ebcb5b28e8ea733bac273985ddfa3235179cdfc6a9a5168ae84` | Grouped multi-select options |
+
+`bio-editor.js` and `field-counters.js` have deliberately diverged from the inline
+bodies they were captured from. The bio limit is now 1500 **characters** rather than
+300 words, the editor owns its counter group, and the generic counter stands down for
+any `.form_input-wr` holding a `[data-editor-id]` element. The `pages` records still
+hash the live blocks and must not be edited to match; `candidateAssets` tracks the
+reviewed repo files, so the byte length and SHA-256 there move with each change and
+`build-profile-ownership.test.js` fails until they do. The character contract itself is
+pinned by [`bio-char-limit.test.js`](../../bio-char-limit.test.js), which also holds
+the two surfaces to a character-for-character identical bio block.
+
+The bio editor logs two staging-only `console.warn` messages when the authored counter
+markup drifts: one when the field wrapper has no `.count-input` element, and one when
+the text node after that element is not an authored `/<number>` denominator. Same
+[staging-only gate](../../README.md#staging-only-console-diagnostics) as every other
+console diagnostic here, and each is a warning only — a drifted counter never blocks
+the editor or the save.
 
 `canonical-profile-hydrator.js` is a supplemental fallback loaded by the
 existing `profile-photo.js` asset. It does not replace an inline block. After
@@ -74,10 +91,10 @@ on a state change, so a stale visible error is never charged to the retry that
 follows it. Errors stay on the form.
 
 Because the CTA is now the only way out of a successful submit, a success state
-with no link to `/starter-onboarding` is a dead end. The module logs a staging-only
-`console.warn` in that case (`*.webflow.io`, localhost, `127.0.0.1`,
-`*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`). It is a warning only
-and never blocks init. The same invariant is enforced at release time by
+with no link to `/starter-onboarding` is a dead end. The module logs a
+[staging-only](../../README.md#staging-only-console-diagnostics) `console.warn` in
+that case. It is a warning only and never blocks init. The same invariant is
+enforced at release time by
 `build-profile-wiring-audit.js`, which also owns the exact rule the CTA's `href`
 has to satisfy — see [Build-profile Videsigns wiring audit](../../README.md#build-profile-videsigns-wiring-audit).
 

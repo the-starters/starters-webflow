@@ -212,9 +212,9 @@ learns that anyone finished.
 
 This is the canonical walk for the pair — it exercises both files, so run it
 here rather than in the read half's doc. Run it behind the Webflow password on
-`the-starters-3-0.webflow.io`, or through `./dev-tunnel.sh` (both modules
-deliberately allow `localhost`, `127.0.0.1`, `*.webflow.io`, and
-`*.trycloudflare.com` so the tunnel loop works). Open the console — staging is
+`the-starters-3-0.webflow.io`, or through `./dev-tunnel.sh` (both modules'
+[staging gate](../README.md#staging-only-console-diagnostics) covers the
+quick-tunnel hostname, so the tunnel loop works). Open the console — staging is
 chatty, production is silent.
 
 1. **Logged out.** Open `/starter-onboarding`. The page renders, no redirect,

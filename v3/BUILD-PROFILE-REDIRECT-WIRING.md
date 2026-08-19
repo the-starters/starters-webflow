@@ -171,8 +171,8 @@ body rather than a freelancer envelope and answers `'build-profile'`,
 `funnelDestination()` is the read-and-decide half and is safe to call by hand on
 staging: it returns the destination (or `null` to stay) without navigating.
 
-Diagnostics narrate every decision on staging only — `*.webflow.io`, `localhost`,
-`127.0.0.1`, `*.trycloudflare.com`, or `window.STARTERS_DEBUG === true`.
+Diagnostics narrate every decision on
+[staging only](../README.md#staging-only-console-diagnostics).
 Production is completely silent, including on failure paths.
 
 ## Release gate

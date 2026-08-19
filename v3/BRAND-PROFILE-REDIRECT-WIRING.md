@@ -245,8 +245,9 @@ QA, or step 3 of the walk below will look like a module bug.
 ## Staging QA order
 
 Run it behind the Webflow password on `the-starters-3-0.webflow.io`, or through
-`./dev-tunnel.sh` (the module deliberately allows `localhost`, `127.0.0.1`,
-`*.webflow.io`, and `*.trycloudflare.com` so the tunnel loop works). Open the
+`./dev-tunnel.sh` (the module's
+[staging gate](../README.md#staging-only-console-diagnostics) covers the quick-tunnel
+hostname, so the tunnel loop works). Open the
 console — staging is chatty, production is silent. The prefix is
 `[starters brand-profile-redirect]`.
 

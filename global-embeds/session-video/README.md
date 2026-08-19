@@ -326,9 +326,9 @@ destination is wired — consuming them is separate work.
 `window.StartersSessionVideo` exposes `release`, `status()` for per-root state,
 and `reveal()` to force the wall.
 
-`console` diagnostics are emitted on staging hosts (`*.webflow.io`, `localhost`,
-`127.0.0.1`, `*.trycloudflare.com`) and when `window.STARTERS_DEBUG === true`;
-production is silent.
+`console` diagnostics use the repo-wide
+[staging-only console diagnostics](../../README.md#staging-only-console-diagnostics)
+gate; production is silent.
 
 Every Vimeo call is routed through a `safe()` wrapper, because `play()` rejects
 with `NotAllowedError` when autoplay is refused and with `PlayInterrupted`
