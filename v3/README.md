@@ -2041,11 +2041,16 @@ The authored View Details trigger opens the existing `popup-booking-info`
 dialog. Before Webflow opens it, the controller binds the selected canonical
 row to the authored fields. `is_paid` is authoritative when present, with
 `paid_meeting` retained as the compatibility fallback. Free calls never show
-price, payment, charge, or refund copy. Only the base content state and one
+price, payment, charge, or refund copy. Paid calls show the canonical price as
+a per-call amount, replacing only the adjacent exact Designer-authored legacy
+`/hr` unit; when that unit is absent, the price field carries the `/ Call`
+suffix without generating markup. Only the base content state and one
 applicable pending message can be visible. Confirmed calls can show their
-canonical meeting link; cancelled and archived calls cannot. Reschedule stays
-hidden and its delegated trigger fails closed until a populated V3 reschedule
-flow exists, so the empty authored reschedule dialog cannot open.
+canonical meeting link; cancelled and archived calls cannot. Every authored
+payment or booking action stays hidden except Close, Back, and the Starter's
+eligible pending-call Accept action. Reschedule also fails closed at its
+delegated trigger until a populated V3 reschedule flow exists, so the empty
+authored reschedule dialog cannot open.
 
 The Starter pending card and details dialog expose only the Designer-authored
 Accept control while the canonical response window remains open. Before the
@@ -2054,8 +2059,7 @@ canonical `booking_ref`, requires its booking and configuration IDs to match the
 row, and supplies a per-attempt idempotency key. A successful response refreshes
 the canonical list, which moves the accepted row from Starter Call Requests to
 Starter Calls while it remains in Brand Calls. All other legacy mutation
-controls, including Decline, Reschedule, Message, and Join, stay hidden until
-they have current V3-safe endpoint contracts.
+controls stay hidden until they have current V3-safe endpoint contracts.
 Loading, empty, and error displays reuse the authored elements instead of
 generating UI. The filter wrapper stays hidden during identity resolution and
 on errors, and is shown only when the member's full canonical booking rows for
