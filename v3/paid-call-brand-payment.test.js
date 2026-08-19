@@ -266,6 +266,50 @@ test('paid calendar renders dates and times and submits only the selected slot',
   }
 })
 
+test('a stale Paid availability response preserves the newer shared surface', async () => {
+  const previous = {
+    document: global.document,
+    jQuery: global.jQuery,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  const container = new CalendarElement('div')
+  let resolveAvailability
+  let current = true
+  global.document = {
+    createElement(tagName) { return new CalendarElement(tagName) },
+  }
+  global.jQuery = undefined
+  global.xanoAuthFetch = async () => new Promise((resolve) => {
+    resolveAvailability = () => resolve(response({
+      time_slots: [{ start_time: 1787000000, end_time: 1787000900 }],
+    }))
+  })
+
+  try {
+    const pending = api.mountPaidCalendar({
+      container,
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 15,
+      },
+      isCurrent() { return current },
+      async onConfirm() {},
+    })
+    current = false
+    container.textContent = 'Free scheduler'
+    resolveAvailability()
+    const result = await pending
+    assert.equal(result.stale, true)
+    assert.equal(container.textContent, 'Free scheduler')
+    assert.equal(container.children.length, 0)
+  } finally {
+    global.document = previous.document
+    global.jQuery = previous.jQuery
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
 test('booking retries reuse one key and omit identity, price, card, and environment authority', async () => {
   const previous = global.xanoAuthFetch
   const requests = []
@@ -374,7 +418,7 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
     { style: {}, getAttribute: () => 'default' },
     { style: {}, getAttribute: () => 'success' },
   ]
-  const container = {}
+  const container = new CalendarElement('div')
   const popup = {
     querySelector(selector) {
       if (selector === '[nylas-container]') return container
@@ -451,6 +495,76 @@ test('paid calendar selection is owned by one canonical Xano command', async () 
   }
 })
 
+test('Free selection invalidates a pending Paid readiness response', async () => {
+  const previous = {
+    document: global.document,
+    xanoAuthFetch: global.xanoAuthFetch,
+  }
+  let resolveReadiness
+  const container = new CalendarElement('div')
+  container.textContent = 'Free scheduler'
+  const price = { textContent: '$50' }
+  const item = {
+    style: {},
+    querySelector(selector) { return selector === '[call-type-price]' ? price : null },
+  }
+  const paid = {
+    attrs: { 'data-config': 'config_paid' },
+    getAttribute(name) { return this.attrs[name] || null },
+    setAttribute(name, value) { this.attrs[name] = value },
+    closest() { return item },
+  }
+  const freeListeners = {}
+  const free = {
+    addEventListener(name, listener) { freeListeners[name] = listener },
+  }
+  const popup = {
+    querySelector(selector) {
+      if (selector === '[nylas-container]') return container
+      return null
+    },
+  }
+  global.document = {
+    querySelector(selector) {
+      if (selector === '[popup-booking]') return popup
+      return null
+    },
+    querySelectorAll(selector) {
+      return selector.includes('data-type="free"') ? [free] : [paid]
+    },
+  }
+  global.xanoAuthFetch = async () => new Promise((resolve) => {
+    resolveReadiness = () => resolve(response({ bookable: true }))
+  })
+  let mounts = 0
+
+  try {
+    assert.equal(api.installPaidBookingController({
+      config: {
+        config_id: 'config_paid',
+        grant_id: 'grant_test',
+        duration: 30,
+        is_paid: true,
+        currency: 'usd',
+        price_cents: 500,
+      },
+      mountCalendar() { mounts += 1 },
+    }), true)
+    const pending = paid.onclick({ preventDefault() {} })
+    assert.equal(container.textContent, 'Loading available times...')
+    assert.equal(container.getAttribute('data-paid-calendar-state'), 'loading')
+    freeListeners.click()
+    container.textContent = 'Free scheduler'
+    resolveReadiness()
+    await pending
+    assert.equal(mounts, 0)
+    assert.equal(container.textContent, 'Free scheduler')
+  } finally {
+    global.document = previous.document
+    global.xanoAuthFetch = previous.xanoAuthFetch
+  }
+})
+
 test('card setup retries reuse the same setup and default-selection attempts', async () => {
   const previous = {
     document: global.document,
@@ -472,7 +586,7 @@ test('card setup retries reuse the same setup and default-selection attempts', a
   }
   const popup = {
     querySelector(selector) {
-      if (selector === '[nylas-container]') return {}
+      if (selector === '[nylas-container]') return new CalendarElement('div')
       return null
     },
   }

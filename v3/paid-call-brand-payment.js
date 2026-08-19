@@ -22,6 +22,7 @@
     'pk_live_51MMhu4AW8v1kanawUQQjQTpTWBAsdVusIXoXSA26AcTHtZPYbJt6sr98ishd7cs5DXx4QeSMHw45QqrTuzftXaJm005MjZL3sz'
   const MAX_KEY_LENGTH = 128
   const MAX_PAYMENT_METHOD_LENGTH = 128
+  const bookingSurfaceGenerations = new WeakMap()
 
   function createAttemptKey(prefix) {
     const safePrefix = String(prefix || 'attempt').replace(/[^a-z0-9_-]/gi, '-')
@@ -280,11 +281,15 @@
     const container = settings.container
     const config = settings.config
     const onConfirm = settings.onConfirm
+    const isCurrent = typeof settings.isCurrent === 'function'
+      ? settings.isCurrent
+      : function () { return true }
     if (!container || !global.document || typeof onConfirm !== 'function') {
       throw new Error('The authored paid-call calendar is unavailable')
     }
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     const slots = await getPaidAvailability(config)
+    if (!isCurrent()) return { slots: [], stale: true }
     container.textContent = ''
     container.setAttribute('data-paid-calendar-state', slots.length ? 'ready' : 'empty')
 
@@ -476,6 +481,25 @@
     let bookingLock = false
     let bookingAttempt = null
     let bookingFingerprint = ''
+    let activePaidGeneration = 0
+
+    function nextSurfaceGeneration() {
+      const generation = (bookingSurfaceGenerations.get(container) || 0) + 1
+      bookingSurfaceGenerations.set(container, generation)
+      return generation
+    }
+
+    function ownsSurface(generation) {
+      return bookingSurfaceGenerations.get(container) === generation
+    }
+
+    function claimPaidSurface() {
+      const generation = nextSurfaceGeneration()
+      activePaidGeneration = generation
+      container.textContent = 'Loading available times...'
+      container.setAttribute('data-paid-calendar-state', 'loading')
+      return generation
+    }
 
     function fieldValue(selector) {
       const field = popup.querySelector(selector)
@@ -519,15 +543,18 @@
       }
     }
 
-    async function mountCalendar() {
+    async function mountCalendar(generation) {
+      if (!ownsSurface(generation)) return
       const mount = typeof settings.mountCalendar === 'function'
         ? settings.mountCalendar
         : mountPaidCalendar
-      return mount({
+      const result = await mount({
         container,
         config,
         onConfirm: submitBooking,
+        isCurrent: function () { return ownsSurface(generation) },
       })
+      return ownsSurface(generation) ? result : undefined
     }
 
     async function installCardSetup(onReady) {
@@ -595,23 +622,34 @@
     async function paidClick(event) {
       event.preventDefault()
       if (paidClickLock) return
+      const generation = claimPaidSurface()
       paidClickLock = true
       try {
         const readiness = await getReadiness()
+        if (!ownsSurface(generation)) return
         if (readiness.bookable) {
-          await mountCalendar()
+          await mountCalendar(generation)
           return
         }
-        await installCardSetup(mountCalendar)
+        await installCardSetup(function () { return mountCalendar(activePaidGeneration) })
+        if (!ownsSurface(generation)) return
         const openCard = document.querySelector('[popup-stripe-card-open]')
         if (!openCard) throw new Error('The payment form opener is unavailable')
         openCard.click()
       } catch (error) {
-        showBookingError(error)
+        if (ownsSurface(generation)) showBookingError(error)
       } finally {
         paidClickLock = false
       }
     }
+
+    Array.from(document.querySelectorAll(
+      '[call-type-item] [booking-popup-open][data-type="free"][data-config]',
+    )).forEach(function (cta) {
+      if (typeof cta.addEventListener === 'function') {
+        cta.addEventListener('click', nextSurfaceGeneration, true)
+      }
+    })
 
     bindings.forEach(function (binding) {
       const cta = binding.cta
