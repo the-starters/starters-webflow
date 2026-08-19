@@ -444,6 +444,11 @@ function detailModalHarness() {
     fields[name] = field
     groups.push(group)
   })
+  const priceUnit = element()
+  priceUnit.textContent = '/hr'
+  const priceParent = element()
+  priceParent.children = [fields.price, priceUnit]
+  fields.price.parentElement = priceParent
   const duplicatePayment = element({ 'booking-element-wrap': '' })
   duplicatePayment.textContent = 'Your card ending in 1234 will be charged for this call.'
   duplicatePayment.querySelector = () => null
@@ -461,7 +466,23 @@ function detailModalHarness() {
   const cancel = element({ 'booking-action-btn': 'cancel' })
   const reschedule = element({ 'booking-action-btn': 'reschedule' })
   const accept = element({ 'booking-action-btn': 'switch-confirm' })
-  const actions = [close, back, cancel, reschedule, accept]
+  const confirmPayment = element({ 'payment-action-btn': 'confirm' })
+  const changePayment = element({ 'payment-action-btn': 'change-card' })
+  const createIntent = element({ 'payment-action-btn': 'create-intent' })
+  const addPayment = element({ 'payment-action-btn': 'add-card' })
+  const legacyPayment = element({ 'booking-pm-action': 'confirm' })
+  const actions = [
+    close,
+    back,
+    cancel,
+    reschedule,
+    accept,
+    confirmPayment,
+    changePayment,
+    createIntent,
+    addPayment,
+    legacyPayment,
+  ]
   const modal = element({ 'popup-booking-info': '' })
   modal.querySelector = (selector) => {
     const match = selector.match(/^\[booking-element="(.+)"\]$/)
@@ -472,7 +493,7 @@ function detailModalHarness() {
   modal.querySelectorAll = (selector) => ({
     '[booking-popup-content]': [base, confirmation],
     '[booking-element-wrap]': groups,
-    '[booking-action-btn], [booking-card-action-btn]': actions,
+    '[booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': actions,
     '[reschedule-blocked-info]': [blocked],
   })[selector] || []
 
@@ -486,6 +507,7 @@ function detailModalHarness() {
     modal,
     pendingDuplicate,
     pendingOne,
+    priceUnit,
   }
 }
 
@@ -526,7 +548,7 @@ test('Free Call details hide paid copy, duplicate copy, and unsupported actions'
   assert.equal(view.actions[4].hidden, true)
 })
 
-test('Paid Call details show canonical price and meeting link but hide stale status copy', () => {
+test('confirmed Paid Call details show per-call price and hide every unsupported payment control', () => {
   const view = detailModalHarness()
   const booking = {
     booking_id: 'paid-one',
@@ -545,6 +567,7 @@ test('Paid Call details show canonical price and meeting link but hide stale sta
   assert.equal(view.fields['paid-meeting'].textContent, 'Paid Call')
   assert.equal(view.fields.status.textContent, 'Upcoming')
   assert.equal(view.fields.price.textContent, '$25.00')
+  assert.equal(view.priceUnit.textContent, '/Call')
   assert.equal(view.fields.price.hidden, false)
   assert.equal(view.fields['payment-status-text'].textContent, 'Payment method confirmed.')
   assert.equal(view.fields['payment-status-text'].hidden, false)
@@ -552,6 +575,10 @@ test('Paid Call details show canonical price and meeting link but hide stale sta
   assert.equal(view.pendingOne.hidden, true)
   assert.equal(view.pendingDuplicate.hidden, true)
   assert.equal(view.actions[4].hidden, true)
+  for (const action of view.actions.slice(5)) {
+    assert.equal(action.hidden, true)
+    assert.equal(action.style.display, 'none')
+  }
 
   booking.status = 'cancelled'
   api.populateDetailModal(view.modal, booking, 'brand')
@@ -614,6 +641,7 @@ test('delegated View Details binds the selected canonical booking before Webflow
     assert.equal(view.modal.attributes['data-booking-id'], 'selected-paid')
     assert.equal(view.fields['paid-meeting'].textContent, 'Paid Call')
     assert.equal(view.fields.price.textContent, '$45.00')
+    assert.equal(view.priceUnit.textContent, '/Call')
     assert.equal(view.fields['starter-name'].textContent, 'Selected Starter')
   } finally {
     global.document = originalDocument
@@ -750,6 +778,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   const modalGroup = element({ 'booking-element-wrap': '' })
   modalField.closest = (selector) => selector === '[booking-element-wrap]' ? modalGroup : null
   const modalAction = element({ 'booking-action-btn': 'switch-close' })
+  const modalPaymentAction = element({ 'payment-action-btn': 'confirm' })
   const modal = element({
     'popup-booking-info': '',
     open: '',
@@ -761,7 +790,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   modal.close = () => { modalCloseCount += 1 }
   modal.querySelectorAll = (selector) => ({
     '[booking-element]': [modalField],
-    '[booking-popup-content], [pending-info-text], [booking-action-btn], [booking-card-action-btn]': [modalAction],
+    '[booking-popup-content], [pending-info-text], [booking-action-btn], [booking-card-action-btn], [payment-action-btn], [booking-pm-action], [data-btn-payment], [popup-stripe-card-open], [pm-use-this]': [modalAction, modalPaymentAction],
   })[selector] || []
   const section = element({ 'bookings-section': 'calls' })
   section.querySelector = (selector) =>
@@ -844,6 +873,8 @@ test('auth changes clear identity state and stale requests cannot render', async
   modalField.style.display = ''
   modalAction.hidden = false
   modalAction.style.display = ''
+  modalPaymentAction.hidden = false
+  modalPaymentAction.style.display = ''
   const closesBeforeAuthChange = modalCloseCount
 
   currentMember = {
@@ -863,6 +894,7 @@ test('auth changes clear identity state and stale requests cannot render', async
   assert.equal(modalField.hidden, true)
   assert.equal(modalGroup.hidden, true)
   assert.equal(modalAction.hidden, true)
+  assert.equal(modalPaymentAction.hidden, true)
   await until(() => requests.length === 2 && root.attributes['data-dashboard-calls-v3'] === 'ready')
   assert.deepEqual(requests, ['member-a', 'member-b'])
   assert.equal(name.textContent, 'Member B')

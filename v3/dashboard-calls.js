@@ -25,6 +25,15 @@
     'w-variant-89402c65-e26d-c236-91e7-76e9135a2d42',
     'w-variant-f48ad750-f9e7-4b94-4998-3df752bfb037',
   ]
+  const DETAIL_ACTION_SELECTOR = [
+    '[booking-action-btn]',
+    '[booking-card-action-btn]',
+    '[payment-action-btn]',
+    '[booking-pm-action]',
+    '[data-btn-payment]',
+    '[popup-stripe-card-open]',
+    '[pm-use-this]',
+  ].join(', ')
   const DASHBOARD_ROLES = {
     '/starter-dashboard': 'starter',
     '/starter-dashboard---availability-stage': 'starter',
@@ -491,6 +500,34 @@
     if (group) show(group, shouldShow)
   }
 
+  function setBookingPrice(modal, value, visible) {
+    const field = bookingField(modal, 'price')
+    if (!field) return
+    const shouldShow = visible !== false && clean(value) !== ''
+    if (shouldShow) field.textContent = clean(value)
+    show(field, shouldShow)
+    const group = field.closest && field.closest('[booking-element-wrap]')
+    if (group) show(group, shouldShow)
+
+    // Webflow currently authors the legacy `/hr` unit without its own custom
+    // attribute. Anchor the repair to the canonical price hook and only touch
+    // an adjacent exact legacy unit. This preserves the Designer-owned markup
+    // while making the canonical per-call price unambiguous.
+    const parent = field.parentElement
+    const siblings = parent && parent.children
+      ? Array.prototype.slice.call(parent.children)
+      : []
+    const legacyUnit = siblings.find(function (candidate) {
+      return candidate !== field && clean(candidate.textContent).toLowerCase() === '/hr'
+    })
+    if (legacyUnit) {
+      legacyUnit.textContent = '/Call'
+      show(legacyUnit, shouldShow)
+    } else if (shouldShow) {
+      field.textContent = clean(value) + ' / Call'
+    }
+  }
+
   function hideDuplicateDetailCopy(modal) {
     if (!modal || typeof modal.querySelectorAll !== 'function') return
     modal.querySelectorAll('[booking-element-wrap]').forEach(function (group) {
@@ -507,7 +544,7 @@
   function configureDetailActions(modal, role, status, booking, now) {
     if (!modal || typeof modal.querySelectorAll !== 'function') return
     modal
-      .querySelectorAll('[booking-action-btn], [booking-card-action-btn]')
+      .querySelectorAll(DETAIL_ACTION_SELECTOR)
       .forEach(function (button) {
         const action = clean(
           button.getAttribute('booking-action-btn') ||
@@ -551,7 +588,7 @@
     setBookingField(modal, 'context', booking.call_context, true)
     setBookingField(modal, 'start-date', formatDate(booking.start, timezone), true)
     setBookingField(modal, 'duration', formatDuration(booking.duration), true)
-    setBookingField(modal, 'price', formatPrice(booking.price, isPaid), isPaid)
+    setBookingPrice(modal, formatPrice(booking.price, isPaid), isPaid)
     setBookingField(modal, 'payment-status-text', paymentText, isPaid)
     setBookingField(modal, 'reschedule-reason', booking.rescheduled_reason, Boolean(booking.rescheduled_reason))
     setBookingField(modal, 'cancel-reason', booking.cancelled_reason, Boolean(booking.cancelled_reason))
@@ -617,7 +654,7 @@
     })
     modal
       .querySelectorAll(
-        '[booking-popup-content], [pending-info-text], [booking-action-btn], [booking-card-action-btn]',
+        '[booking-popup-content], [pending-info-text], ' + DETAIL_ACTION_SELECTOR,
       )
       .forEach(function (element) {
         show(element, false)
