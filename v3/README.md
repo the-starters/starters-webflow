@@ -2122,6 +2122,10 @@ Runtime contract:
   `error`.
 - Each valid section reports `data-bookings-state="loading"`, `ready`, `empty`,
   or `error`.
+- A status pill reveals its exact `[booking-element-wrap="status"]` wrapper. For
+  existing Designer markup with an empty `[booking-element-wrap]` value, the
+  controller reveals that wrapper only when it owns the matched
+  `[booking-element="status"]` pill.
 - Designer-authored duplicate dashboard tiles whose heading is exactly `Calls`
   or `Call Requests` are hidden when they do not carry `[bookings-section]`.
 
