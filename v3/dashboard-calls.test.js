@@ -327,9 +327,14 @@ test('read-only details stay available while expired requests cannot be accepted
   assert.equal(reschedule.hidden, true)
 })
 
-test('status pills show the role-aware canonical lifecycle and exact variant', () => {
+test('CSS-hidden status wrappers become visible with the role-aware lifecycle variant', () => {
   const label = element()
-  const group = element()
+  const group = element({ 'booking-element-wrap': 'status' })
+  const computedDisplay = (target) => {
+    if (target.hidden || target.style.display === 'none') return 'none'
+    return target.style.display || target.authoredDisplay || 'block'
+  }
+  group.authoredDisplay = 'none'
   const pill = element({ 'booking-element': 'status' })
   pill.querySelector = (selector) => selector === '[label-text]' ? label : null
   pill.closest = (selector) => selector === '[booking-element-wrap]' ? group : null
@@ -339,7 +344,9 @@ test('status pills show the role-aware canonical lifecycle and exact variant', (
     },
   }
 
+  assert.equal(computedDisplay(group), 'none')
   api.paintStatusPill(card, 'pending', 'starter')
+  assert.equal(computedDisplay(group), 'flex')
   assert.equal(label.textContent, 'Pending')
   assert.equal(pill.hidden, false)
   assert.equal(

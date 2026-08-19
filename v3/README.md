@@ -1973,7 +1973,9 @@ Webflow owns all call-section markup. Each section must provide:
   `[booking-filter="<status>"]` controls, with the section's filter controls
   wrapped by `.tabs-button_component.is-dashboard`; and
 - card value slots using the existing `[booking-element]`, `[label-text]`,
-  `[payment-status-wrap]`, and `[brand-status]` attributes.
+  `[payment-status-wrap]`, and `[brand-status]` attributes. The status pill's
+  authored `[booking-element-wrap="status"]` wrapper can start hidden in
+  Designer CSS; painting the pill reveals that wrapper as a flex container.
 
 The script clones the authored item template in pages of six, deduplicates by
 canonical booking ID, and sorts newest first. Starter pending rows appear under
